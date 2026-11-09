@@ -165,8 +165,9 @@ export interface ConversationDeps {
   docsDirs?: (projectId: string) => Promise<readonly string[]>;
   /**
    * The addresses of a repository project's pull requests that are open on the host now (L-17),
-   * so `# Your files` says which done tasks' PRs wait and which are merged; null when the host
-   * did not answer (the block then says their state is not known). Absent: as null.
+   * asked only when the model calls files_list (d1109-chat-guard: no turn waits on GitHub; the
+   * facts' `# Your files` reads the app's merge records); null when the host did not answer
+   * (files_list then says their state is not known). Absent: as null.
    */
   openPullRequests?: (projectId: string) => Promise<readonly string[] | null>;
   /**
@@ -825,6 +826,8 @@ export class ConversationAgent {
       ...(this.deps.sandboxReady ? { sandboxReady: this.deps.sandboxReady } : {}),
       ...(this.deps.chfPerUsd ? { chfPerUsd: this.deps.chfPerUsd } : {}),
       folderOf: (id) => this.folderOf(id),
+      // d1109-chat-guard: files_list asks the host for the open pull requests when called.
+      ...(this.deps.openPullRequests ? { openPullRequests: this.deps.openPullRequests } : {}),
     }))
       tools.register(noteRecordsRead(t, turn));
     // The chat mode's tier, effort and target from the tables in force (ADR 0039).
@@ -1453,12 +1456,11 @@ export class ConversationAgent {
     );
     if (working) blocks.push(working);
     if (project) {
-      const open = await (this.deps.openPullRequests?.(project.id) ?? Promise.resolve(null)).catch(
-        () => null,
-      );
+      // d1109-chat-guard (D3-5): the merges that wait come from the app's own merge records, so
+      // no turn waits on GitHub before its first model call; files_list asks GitHub on demand.
       const files = filesBlock(
         await this.folderOf(project.id),
-        await repositoryFacts(store, project, open).catch(() => null),
+        await repositoryFacts(store, project).catch(() => null),
       );
       if (files) blocks.push(files);
     }

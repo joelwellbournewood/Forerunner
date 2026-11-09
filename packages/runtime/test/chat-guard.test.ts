@@ -1,15 +1,25 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { GitHubHost } from "@forerunner/capabilities";
 import { type CommandDef, type CommandPorts, defaultRegistry } from "@forerunner/commands";
-import { join, type SimulatedClock } from "@forerunner/platform";
+import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore, type TaskRow } from "@forerunner/state";
-import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
+import {
+  FakeGitHost,
+  FakeProvider,
+  type ScriptedReply,
+  textReply,
+  toolReply,
+} from "@forerunner/testenv";
+import { MemoryVault } from "@forerunner/vault";
 import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { ConversationAgent, type ConversationDeps } from "../src/conversation/agent.ts";
+import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../src/injection/scan.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
+import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { flatPricing, harness } from "./helpers.ts";
 
 /**
@@ -544,5 +554,194 @@ describe("d1109-chat-guard, run C: a change after a record is read back first (C
     expect(stop.pendingConfirmation).toBeNull();
     expect(w.kills.map((k) => k.scope)).toEqual(["all"]);
     await w.store.close();
+  });
+});
+
+/**
+ * CG-4 (D3-5, D3-8, L-17): on a repository project every chat turn waited for GitHub's list of
+ * open pull requests before its first model call (compose.ts openPullRequests, awaited in the
+ * facts), so with GitHub slow or away the first word waited, whatever was asked. The waiting
+ * merges now come from the app's own merge records (Merge and the watcher keep them), and
+ * files_list asks the host only when it is called. Composed on the fake GitHub, whose request
+ * log is what is asserted.
+ */
+describe("d1109-chat-guard, run C: no chat turn waits on GitHub (CG-4)", {
+  timeout: 120_000,
+}, () => {
+  const FULL = "alice/app";
+  const apps: RuntimeApp[] = [];
+  const hosts: FakeGitHost[] = [];
+  afterAll(async () => {
+    for (const a of apps.splice(0)) await a.close().catch(() => undefined);
+    for (const h of hosts.splice(0)) await h.stop().catch(() => undefined);
+  });
+
+  async function repoWorld(replies: ScriptedReply[]) {
+    const clock = new SimulatedClock("2026-11-09T09:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-chat-guard-gh-"));
+    folders.push(home);
+    const host = await FakeGitHost.start({ rootDir: join(home, "host"), clock });
+    hosts.push(host);
+    host.createUser({ login: "alice", name: "Alice", email: "alice@example.test" });
+    await host.createRepo({
+      owner: "alice",
+      name: "app",
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": "# app\n" },
+    });
+    const token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock });
+    const prs: string[] = [];
+    for (const [branch, file] of [
+      ["fr/style", "styles.css"],
+      ["fr/readme", "NOTES.md"],
+    ] as const) {
+      await host.seedCommit(FULL, { [file]: "x\n" }, `Add ${file}`, branch);
+      prs.push(
+        (
+          await github.createPullRequest(
+            { owner: "alice", name: "app" },
+            { title: file, body: "", head: branch, base: "main" },
+          )
+        ).htmlUrl,
+      );
+    }
+    const env = { FORERUNNER_HOME: home };
+    const vault = new MemoryVault();
+    await vault.set(SECRET_NAMES.github, token);
+    const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
+    const provider = new FakeProvider({ replies, clock, latency: "none" });
+    const rt = await composeRuntime({
+      env,
+      dirs: appDirs({ env }),
+      config: {
+        version: 1,
+        profile: "default",
+        timezone: "UTC",
+        githubApiBase: host.baseUrl,
+        anthropicApiBase: "http://an.test",
+        repos: [],
+        credentials: { github: true, anthropic: false, anthropicSubscription: false },
+        stateUrl,
+      },
+      clock,
+      stateUrl,
+      vault,
+      provider,
+      registryDir: join(process.cwd(), "evals", "registry"),
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+    });
+    apps.push(rt);
+    const project = await rt.store.project.insert({
+      name: "App",
+      goal: "Ship the app",
+      repos: [FULL],
+      stage: "build",
+      status: "active",
+      budget_usd_micro: 10_000_000,
+      autonomy_level: 2,
+      summary_cache: {},
+      data_assets: [],
+      settings: { members: [rt.agent.id] },
+      small_project_mode: false,
+      active: true,
+    });
+    const done = async (title: string, url: string, n: number) => {
+      const t = await rt.store.task.insert({
+        project_id: project.id,
+        title,
+        outcome: `${title} done`,
+        acceptance_criteria: ["works"],
+        risk_tier: 1,
+        status: "done",
+        priority: 1,
+        depends_on: [],
+        budget_usd_micro: 1_000_000,
+        reason: "critic accepted",
+        pr_url: url,
+        branch: `fr/${n}`,
+        author_agent: rt.agent.id,
+      });
+      return rt.store.mergeRecord.pin({
+        task_id: t.id,
+        project_id: project.id,
+        agent_id: rt.agent.id,
+        pr_number: n,
+        pr_url: url,
+        reviewed_head_sha: "a".repeat(40),
+      });
+    };
+    // "Style the page" waits for the person's Merge (the gate's sentence on its record); the
+    // README was merged in the app (Merge, the watcher).
+    const style = await done("Style the page", prs[0] as string, 1);
+    await rt.store.mergeRecord.move(style.id, "left_to_you", {
+      sentence: "#1 waits for you to merge it: press Merge on the Overview.",
+      last_outcome: "not_allowed",
+    });
+    const readme = await done("Write the README", prs[1] as string, 2);
+    await rt.store.mergeRecord.move(readme.id, "merged", { merge_sha: "b".repeat(40) });
+    const chat = (text: string) =>
+      (rt.conversation as ConversationAgent).chat({
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        projectId: project.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    const pulls = () =>
+      host
+        .requests()
+        .filter((r) => r.method === "GET" && /\/repos\/alice\/app\/pulls$/.test(r.path));
+    return { rt, host, provider, chat, pulls, prs };
+  }
+
+  it("ten chat turns on a repository project make no request for its pull requests; the facts carry the waiting merge and the merged one from the app's records", async () => {
+    const w = await repoWorld([textReply("One merge waits for you.", { ttftMs: 0, times: 10 })]);
+    const before = w.pulls().length;
+    for (let i = 0; i < 10; i++) await w.chat(`what is left? (${i})`);
+    // At 7d6b34a each turn asked GitHub first: ten GET /repos/alice/app/pulls.
+    expect(w.pulls().length - before).toBe(0);
+    const facts = String(w.provider.calls.at(-1)?.request.messages.at(-1)?.content ?? "");
+    expect(facts).toContain(
+      'Waiting for your Merge: "Style the page": #1 waits for you to merge it: press Merge on the Overview.',
+    );
+    expect(facts).toContain(`Merged: "Write the README" ${w.prs[1]}`);
+    expect(facts).not.toContain("merges it on GitHub");
+  });
+
+  it("one files_list call asks the host once and says which pull requests wait and which are merged; with the host away it says their state is not known", async () => {
+    const w = await repoWorld([
+      toolReply("files_list", {}, "Looking.", { ttftMs: 0 }),
+      textReply("Here they are.", { ttftMs: 0 }),
+      toolReply("files_list", {}, "Looking.", { ttftMs: 0 }),
+      textReply("GitHub did not answer.", { ttftMs: 0 }),
+    ]);
+    // The README's pull request was merged on GitHub: only "Style the page"'s is open.
+    await fetch(`${w.host.baseUrl}/repos/${FULL}/pulls/2/merge`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${w.host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ merge_method: "merge" }),
+    });
+    const before = w.pulls().length;
+    await w.chat("where are my files?");
+    expect(w.pulls().length - before).toBe(1);
+    const result = text((w.provider.calls[1]?.request.messages.at(-1)?.content as unknown[]) ?? []);
+    expect(result).toContain(`Open on GitHub, waiting for a merge: "Style the page" ${w.prs[0]}`);
+    expect(result).toContain(`Merged or closed on GitHub: "Write the README" ${w.prs[1]}`);
+    // GitHub away: the answer says so, and the turn's first model call was made before it.
+    await w.host.stop();
+    await w.chat("and now?");
+    const away = text((w.provider.calls[3]?.request.messages.at(-1)?.content as unknown[]) ?? []);
+    expect(away).toContain(
+      "Whether its pull requests are merged is not known: GitHub did not answer.",
+    );
   });
 });

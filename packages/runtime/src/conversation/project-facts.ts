@@ -16,6 +16,7 @@ import {
   taskDisplay,
 } from "../daemon/task-display.ts";
 import { parseRepoRef } from "../loop/docs.ts";
+import { mergeModeOf } from "../loop/merge-mode.ts";
 import type { IntakeState } from "../session/intake.ts";
 import { type LastSessionOutcome, stopWords } from "../session/result.ts";
 
@@ -401,48 +402,111 @@ export function emptyTasksLine(plan: PlanState | null): string {
   }
 }
 
+/** A done task's pull request, as the files block and files_list name it. */
+export interface TaskPullRequest {
+  title: string;
+  url: string;
+}
+
 /** What `filesBlock` says about a repository project (`repositoryFacts`). */
 export interface RepositoryFacts {
   fullName: string;
-  /** The done tasks' pull requests (all of them when `merged` is null). */
-  pullRequests: { title: string; url: string }[];
   /**
-   * The done tasks' pull requests no longer open on the host (merged or closed, L-17); null when
-   * the host's open pull requests are not known.
+   * Done tasks whose merge waits for the person, each with its merge record's sentence (why it
+   * waits and what to do: "#4 waits for you to merge it: press Merge on the Overview.").
    */
-  merged?: { title: string; url: string }[] | null;
+  waiting: (TaskPullRequest & { sentence: string })[];
+  /** Done tasks whose merge goes on by itself (after a Merge, under way, waiting for checks). */
+  merging: (TaskPullRequest & { sentence: string })[];
+  /** Done tasks whose pull request was merged. */
+  merged: TaskPullRequest[];
+  /** Done tasks whose pull request was closed without merging. */
+  closed: TaskPullRequest[];
+  /** Done tasks with a pull request and no merge record (accepted before ADR 0111): no state. */
+  unknown: TaskPullRequest[];
 }
 
-/**
- * A repository project's name and its done tasks' pull requests, for `filesBlock`. With the
- * host's open pull requests (`open`, L-17) they are split into those that wait for the person
- * and those already merged or closed.
- */
-export async function repositoryFacts(
+/** "#4" for a pull request in a sentence. */
+const prName = (n: number) => `#${n}`;
+
+/** The done tasks of a project that have a pull request, in run order. */
+export async function donePullRequests(
   store: Pick<StateStore, "task">,
-  project: Pick<ProjectRow, "id" | "repos">,
-  open: readonly string[] | null = null,
-): Promise<RepositoryFacts | null> {
+  projectId: string,
+): Promise<(TaskPullRequest & { taskId: string })[]> {
+  const tasks = await store.task.list({ project_id: projectId } as never, { limit: 2000 });
+  return runOrder(tasks)
+    .filter((t) => t.status === "done" && !!t.pr_url)
+    .map((t) => ({ taskId: t.id, title: t.title, url: t.pr_url ?? "" }));
+}
+
+/** The repository a project is linked to ("owner/name"), or null for a folder project. */
+export function repositoryNameOf(project: Pick<ProjectRow, "repos">): string | null {
   const first = project.repos[0]?.trim() ?? "";
   // A local folder (spec A.4) is an absolute path, not a repository on a host.
   if (!first || isAbsolute(first)) return null;
   const ref = parseRepoRef(first);
-  if (!ref) return null;
-  const tasks = await store.task.list({ project_id: project.id } as never, { limit: 2000 });
-  const done = runOrder(tasks)
-    .filter((t) => t.status === "done" && !!t.pr_url)
-    .map((t) => ({ title: t.title, url: t.pr_url ?? "" }));
-  if (open === null)
-    return { fullName: `${ref.owner}/${ref.name}`, pullRequests: done, merged: null };
-  return {
-    fullName: `${ref.owner}/${ref.name}`,
-    pullRequests: done.filter((p) => open.includes(p.url)),
-    merged: done.filter((p) => !open.includes(p.url)),
+  return ref ? `${ref.owner}/${ref.name}` : null;
+}
+
+/**
+ * A repository project's name and where each done task's merge stands, from the app's own merge
+ * records (d1109-chat-guard, ADR 0114: Merge and the watcher keep them, within the watcher's
+ * minute), never from GitHub, so a chat turn's first word waits on nothing. Before (7d6b34a)
+ * every turn asked GitHub for the open pull requests first (L-17) and waited for its answer or
+ * its timeout, whatever was asked. A done task without a record (one accepted before ADR 0111)
+ * is listed without a state; files_list asks the host when it is called.
+ */
+export async function repositoryFacts(
+  store: Pick<StateStore, "task" | "mergeRecord">,
+  project: Pick<ProjectRow, "id" | "repos"> & Partial<Pick<ProjectRow, "settings">>,
+): Promise<RepositoryFacts | null> {
+  const fullName = repositoryNameOf(project);
+  if (!fullName) return null;
+  const facts: RepositoryFacts = {
+    fullName,
+    waiting: [],
+    merging: [],
+    merged: [],
+    closed: [],
+    unknown: [],
   };
+  const mode = mergeModeOf(project.settings);
+  for (const pr of await donePullRequests(store, project.id)) {
+    const record = await store.mergeRecord.forTask(pr.taskId);
+    const item = { title: pr.title, url: pr.url };
+    if (!record || record.pr_url !== pr.url) {
+      facts.unknown.push(item);
+      continue;
+    }
+    const said = record.sentence.trim();
+    const name = prName(record.pr_number);
+    if (record.state === "merged") facts.merged.push(item);
+    else if (record.state === "left_to_you" && record.last_outcome === "closed")
+      facts.closed.push(item);
+    else if (record.state === "left_to_you")
+      facts.waiting.push({ ...item, sentence: said || `${name} waits for you to merge it.` });
+    else if (record.state === "queued" && record.approval === "none" && mode === "you")
+      // Accepted, and "You press Merge" leaves it for the click (the merge gate's sentence).
+      facts.waiting.push({
+        ...item,
+        sentence: said || `${name} waits for you to merge it: press Merge on the Overview.`,
+      });
+    else
+      facts.merging.push({
+        ...item,
+        sentence:
+          said ||
+          (record.state === "waiting_checks"
+            ? `${name} merges when its checks pass.`
+            : `${name} is being merged.`),
+      });
+  }
+  return facts;
 }
 
 /** Up to ten '"Title" url' items, then "and N more" (design §5 rule 5). */
-function prList(prs: readonly { title: string; url: string }[]): string {
+export function prList(prs: readonly TaskPullRequest[]): string {
   return `${prs
     .slice(0, 10)
     .map((p) => `"${p.title}" ${p.url}`)
@@ -451,28 +515,30 @@ function prList(prs: readonly { title: string; url: string }[]): string {
 
 /**
  * `# Your files`: where the project's files are. A folder project: its folder. A repository
- * project (ADR 0106): the repository and each done task's pull request, since the work waits
- * there until the person merges it, and this computer's copy of the default branch. Before
- * (live, 2026-11-01) the chat said "the files are in the project folder you already set up"
- * with no folder named; on a repository project it would have named the docs clone, which
- * holds none of the unmerged work.
+ * project (ADR 0106): the repository, this computer's copy of the default branch, then where
+ * each done task's merge stands from the app's merge records (d1109-chat-guard): the merges that
+ * wait for the person with the record's sentence, those going on by themselves, those merged or
+ * closed, and the pull requests no record speaks for. Before (live, 2026-11-01) the chat said
+ * "the files are in the project folder you already set up" with no folder named; until
+ * d1109-chat-guard it told the model "the person merges it on GitHub", while Merge is in the
+ * app (D3-8).
  */
 export function filesBlock(folder: string | null, repository?: RepositoryFacts | null): string {
   if (!repository) return folder ? `# Your files\nThe project's folder: ${folder}` : "";
   const lines = [
     "# Your files",
-    `The repository: ${repository.fullName}. Each task's work is a pull request there; the person merges it on GitHub, and until then the work is not on the default branch.`,
+    `The repository: ${repository.fullName}. Each task's work is a pull request there; it is on the default branch once it is merged.`,
   ];
-  // L-17: with the host's open pull requests known, which wait and which are merged already.
-  if (repository.merged) {
-    if (repository.pullRequests.length)
-      lines.push(
-        `Pull requests that wait for the person to merge: ${prList(repository.pullRequests)}`,
-      );
-    if (repository.merged.length)
-      lines.push(`Already merged or closed on GitHub: ${prList(repository.merged)}`);
-  } else if (repository.pullRequests.length)
-    lines.push(`Pull requests of finished tasks: ${prList(repository.pullRequests)}`);
   if (folder) lines.push(`This computer's copy of the default branch: ${folder}`);
+  for (const p of repository.waiting.slice(0, 10))
+    lines.push(`Waiting for your Merge: "${p.title}": ${p.sentence}`);
+  if (repository.waiting.length > 10)
+    lines.push(`And ${repository.waiting.length - 10} more waiting for your Merge.`);
+  for (const p of repository.merging.slice(0, 10))
+    lines.push(`Merging by itself: "${p.title}": ${p.sentence}`);
+  if (repository.merged.length) lines.push(`Merged: ${prList(repository.merged)}`);
+  if (repository.closed.length) lines.push(`Closed without merging: ${prList(repository.closed)}`);
+  if (repository.unknown.length)
+    lines.push(`Pull requests of finished tasks: ${prList(repository.unknown)}`);
   return lines.join("\n");
 }

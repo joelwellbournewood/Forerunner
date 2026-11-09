@@ -11,7 +11,13 @@ import {
   taskDisplay,
 } from "../daemon/task-display.ts";
 import { taskView } from "../daemon/views.ts";
-import { lastSessionBlock, tasksBlock } from "./project-facts.ts";
+import {
+  donePullRequests,
+  lastSessionBlock,
+  prList,
+  repositoryNameOf,
+  tasksBlock,
+} from "./project-facts.ts";
 
 /**
  * The chat's read-only tools (design §3.9: "It can look up more (a task's runs and report, a
@@ -28,6 +34,32 @@ export interface ReadToolDeps {
   /** The project's folder (a linked folder, its checkout, or the data-dir workspace). */
   folderOf?: (projectId: string) => Promise<string | null>;
   chfPerUsd?: () => number;
+  /**
+   * The addresses of a repository project's pull requests open on the host now, or null when
+   * the host did not answer: asked by files_list when it is called (d1109-chat-guard, L-17 on
+   * demand), never by a turn's facts. Absent: files_list says nothing of the host.
+   */
+  openPullRequests?: (projectId: string) => Promise<readonly string[] | null>;
+}
+
+/**
+ * What files_list says about a repository project's pull requests, asked from the host now: the
+ * done tasks' pull requests still open there (waiting for a merge) and those no longer open
+ * (merged or closed), or that their state is not known when the host did not answer.
+ */
+async function hostPullRequestLines(deps: ReadToolDeps, project: ProjectRow): Promise<string[]> {
+  if (!deps.openPullRequests || !repositoryNameOf(project)) return [];
+  const prs = await donePullRequests(deps.store, project.id);
+  if (!prs.length) return [];
+  const open = await deps.openPullRequests(project.id).catch(() => null);
+  if (open === null)
+    return ["Whether its pull requests are merged is not known: GitHub did not answer."];
+  const waiting = prs.filter((p) => open.includes(p.url));
+  const gone = prs.filter((p) => !open.includes(p.url));
+  return [
+    ...(waiting.length ? [`Open on GitHub, waiting for a merge: ${prList(waiting)}`] : []),
+    ...(gone.length ? [`Merged or closed on GitHub: ${prList(gone)}`] : []),
+  ];
 }
 
 const projectParam = z
@@ -217,14 +249,23 @@ export function readTools(deps: ReadToolDeps): ToolSpec[] {
       const project = await projectOf(deps, input.project);
       if (typeof project === "string") return err(project);
       const folder = (await deps.folderOf?.(project.id)) ?? null;
-      if (!folder) return ok(`${project.name} has no folder yet: nothing written.`, "files");
+      const prs = await hostPullRequestLines(deps, project);
+      if (!folder)
+        return ok(
+          [`${project.name} has no folder yet: nothing written.`, ...prs].join("\n"),
+          "files",
+        );
       const files = await listFiles(folder, 100);
       if (!files.length)
-        return ok(`The folder of ${project.name} is ${folder}. Nothing written yet.`, "files");
+        return ok(
+          [`The folder of ${project.name} is ${folder}. Nothing written yet.`, ...prs].join("\n"),
+          "files",
+        );
       return ok(
         [
           `The folder of ${project.name} is ${folder}. Files, newest first:`,
           ...files.map((f) => `- ${f.path} (${f.at})`),
+          ...prs,
         ].join("\n"),
         "files",
       );

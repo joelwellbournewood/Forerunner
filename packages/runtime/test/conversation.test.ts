@@ -1207,9 +1207,12 @@ describe("chat context: where the files are (live, 2026-11-01; ADR 0106)", () =>
     await w.chat("where are my files?");
     const facts = w.firstUser();
     expect(facts).toContain("# Your files");
+    // d1109-chat-guard (D3-8): Merge is in the app; the block no longer says the person merges
+    // it on GitHub.
     expect(facts).toContain(
-      "The repository: o/game. Each task's work is a pull request there; the person merges it on GitHub, and until then the work is not on the default branch.",
+      "The repository: o/game. Each task's work is a pull request there; it is on the default branch once it is merged.",
     );
+    expect(facts).not.toContain("merges it on GitHub");
     expect(facts).toContain(
       'Pull requests of finished tasks: "Create the page skeleton in index.html" https://github.com/o/game/pull/2',
     );
@@ -1221,17 +1224,24 @@ describe("chat context: where the files are (live, 2026-11-01; ADR 0106)", () =>
     // Live (2026-11-02): "where are my files?" answered that PRs 4 and 6 wait and "until you
     // merge them on GitHub, the work is not on the default branch", five minutes after the
     // person had merged #4. The block listed done tasks' PRs without their merge state.
-    const open = ["https://github.com/o/game/pull/6"];
+    // d1109-chat-guard (D3-5): the states come from the app's merge records (Merge and the
+    // watcher keep them), not from GitHub on every turn; the host is asked only by files_list.
+    let asked = 0;
     const w = await setup([textReply("#4 is merged; #6 waits.")], {
       docs: { "README.md": "# Game\n" },
-      agentDeps: { openPullRequests: async () => open },
+      agentDeps: {
+        openPullRequests: async () => {
+          asked++;
+          return ["https://github.com/o/game/pull/6"];
+        },
+      },
     });
     await w.store.project.patch(w.game, { repos: ["o/game"] });
-    for (const [title, n] of [
-      ["Add the page", 4],
-      ["Check the page", 6],
-    ] as const)
-      await w.store.task.insert({
+    for (const [title, n, state] of [
+      ["Add the page", 4, "merged"],
+      ["Check the page", 6, "left_to_you"],
+    ] as const) {
+      const t = await w.store.task.insert({
         project_id: w.game,
         title,
         outcome: `${title} is done`,
@@ -1240,15 +1250,30 @@ describe("chat context: where the files are (live, 2026-11-01; ADR 0106)", () =>
         branch: `fr/${n}`,
         pr_url: `https://github.com/o/game/pull/${n}`,
       });
+      const record = await w.store.mergeRecord.pin({
+        task_id: t.id,
+        project_id: w.game,
+        agent_id: w.alice,
+        pr_number: n,
+        pr_url: `https://github.com/o/game/pull/${n}`,
+        reviewed_head_sha: "a".repeat(40),
+      });
+      await w.store.mergeRecord.move(record.id, state, {
+        sentence:
+          state === "left_to_you"
+            ? `#${n} waits for you to merge it: press Merge on the Overview.`
+            : "",
+        last_outcome: state === "left_to_you" ? "not_allowed" : "merged",
+      });
+    }
     await w.chat("where are my files?");
     const facts = w.firstUser();
     expect(facts).toContain(
-      'Pull requests that wait for the person to merge: "Check the page" https://github.com/o/game/pull/6',
+      'Waiting for your Merge: "Check the page": #6 waits for you to merge it: press Merge on the Overview.',
     );
-    expect(facts).toContain(
-      'Already merged or closed on GitHub: "Add the page" https://github.com/o/game/pull/4',
-    );
+    expect(facts).toContain('Merged: "Add the page" https://github.com/o/game/pull/4');
     expect(facts).not.toContain('Pull requests of finished tasks: "Add the page"');
+    expect(asked).toBe(0);
     await w.store.close();
   });
 
