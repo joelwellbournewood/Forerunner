@@ -23,17 +23,19 @@ import { useClient, useIdentity } from "../../store/context.tsx";
 import { useIntakeStatus } from "./IntakeBanner.tsx";
 
 /**
- * What the dialog says when the start did not hand back a session to open (U-003). A waiting
- * start runs in order behind the ones already waiting, never replaced (U-043), so the notice
- * says how many come first.
- */
-/**
  * The line in place of what the session runs while the agent drafts a plan (TR-12): a Start
- * waits for it, so saying "This session runs ..." read as if it started at once.
+ * waits for it, so saying "This session runs ..." read as if it started at once. W15-39: "it"
+ * named the session or the plan; it names the plan.
  */
 export const PLANNING_WAIT_LINE =
-  "Your agent is drafting a plan; this session starts once it is ready.";
+  "Your agent is drafting a plan; this session starts once the plan is ready.";
 
+/**
+ * What the dialog says when the start did not hand back a session to open (U-003). A waiting
+ * start runs in order behind the ones already waiting, never replaced (U-043), so the notice
+ * says how many come first. While the agent drafts a plan, that is what it waits for, with or
+ * without starts ahead (W15-39: with one ahead it said "your agent is in another session").
+ */
 export function startNotice(
   result: StartSessionView["result"],
   ahead = 0,
@@ -46,8 +48,10 @@ export function startNotice(
   switch (result) {
     case "queued":
       // TR-12: what it waits for is a plan the agent drafts, not a session the person can see.
-      if (opts.planning && ahead === 0)
-        return "Queued: your agent is drafting a plan. This one starts when the plan is ready.";
+      if (opts.planning)
+        return ahead > 0
+          ? `Queued: your agent is drafting a plan, and ${before} This one starts after them, once the plan is ready.`
+          : "Queued: your agent is drafting a plan. This one starts when the plan is ready.";
       return ahead > 0
         ? `Queued: your agent is in another session, and ${before} This one starts after them.`
         : "Queued: your agent is in another session. This one starts when that one ends.";

@@ -703,7 +703,8 @@ describe("leftovers7-tailrun, wave 13: Start while a plan is drafted (TR-12)", (
     await user.click(screen.getByTestId("start-session"));
     const dialog = await screen.findByTestId("start-session-dialog");
     expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
-      /^Your agent is drafting a plan; this session starts once it is ready\.$/,
+      // W15-39 (w15-words): the plan, not "it" (before: "starts once it is ready").
+      /^Your agent is drafting a plan; this session starts once the plan is ready\.$/,
     );
     // Before: 'This session runs "..." (about CHF ...)' and "Starts after the current session".
     expect(dialog).not.toHaveTextContent("This session runs");

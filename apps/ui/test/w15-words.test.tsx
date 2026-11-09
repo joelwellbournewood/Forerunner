@@ -473,4 +473,33 @@ describe("w15-words, wave 15 run B", () => {
       expect(line).not.toHaveTextContent("Menu");
     });
   });
+  describe("W15-39: the Start dialog while a plan is drafted", () => {
+    it("the planning line names the plan; a second Start still says the plan is being drafted", async () => {
+      const user = userEvent.setup();
+      const harness = createHarness({ startOutcome: "queued", agentPlanning: true });
+      renderApp("/projects/proj_atlas", harness);
+      await screen.findByTestId("summary");
+      const start = async () => {
+        await user.click(screen.getByTestId("start-session"));
+        const dialog = await screen.findByTestId("start-session-dialog");
+        expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
+          /^Your agent is drafting a plan; this session starts once the plan is ready\.$/,
+        );
+        await user.click(within(dialog).getByTestId("confirm-start-session"));
+        return within(dialog).findByTestId("start-session-notice");
+      };
+      expect(await start()).toHaveTextContent(
+        "Queued: your agent is drafting a plan. This one starts when the plan is ready.",
+      );
+      await user.click(within(screen.getByTestId("start-session-dialog")).getByText("Close"));
+      await waitFor(() => expect(screen.queryByTestId("start-session-dialog")).toBeNull());
+      const second = await start();
+      // Before: "Queued: your agent is in another session, and 1 other start waits ..." while
+      // the person sees "Drafting the plan", not a session.
+      expect(second).toHaveTextContent(
+        "Queued: your agent is drafting a plan, and 1 other start waits before this one; they run one after the other, in order. This one starts after them, once the plan is ready.",
+      );
+      expect(second).not.toHaveTextContent("another session");
+    });
+  });
 });
