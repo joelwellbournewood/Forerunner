@@ -213,7 +213,10 @@ function DrawerBody({
             {detail.cards.map((c) => (
               <li key={c.requestId}>
                 {c.question}{" "}
-                <Link to="/inbox" className="text-blue-700 hover:underline dark:text-blue-300">
+                <Link
+                  to={`/inbox#card-${encodeURIComponent(c.requestId)}`}
+                  className="text-blue-700 hover:underline dark:text-blue-300"
+                >
                   Open
                 </Link>
               </li>

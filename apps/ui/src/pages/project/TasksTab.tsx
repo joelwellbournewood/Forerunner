@@ -300,7 +300,15 @@ export function TasksTab({
   const start = (task: TaskView, key: TaskActionKey) => {
     if (key === "edit") return setOpen(task.id);
     if (key === "dependencies") return setEditingDeps(task);
-    if (key === "answer") return navigate("/inbox");
+    // "Opens its card in the Inbox": that card, as Home's Answer does (later #55's sibling).
+    if (key === "answer") {
+      const card = displayOf(task).blocker;
+      return navigate(
+        card?.kind === "card" && card.requestId
+          ? `/inbox#card-${encodeURIComponent(card.requestId)}`
+          : "/inbox",
+      );
+    }
     if (key === "take_out") return setTakingOut(task);
     setPending({ task, action: key });
   };

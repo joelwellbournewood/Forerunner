@@ -83,6 +83,48 @@ describe("polish-words, wave 13: the Tasks screen", () => {
     expect(within(drawer).getByTestId("drawer-action-cancel")).toBeInTheDocument();
   });
 
+  it("Answer on the row and the drawer's Open go to the task's own card in the Inbox, as Home's Answer does (later #55 sibling)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "t_deploy", "Deploy the page", {
+      status: "needs_human",
+      specialist: "ops-deploy",
+      riskTier: 3,
+    });
+    addCard(harness, "req_signoff", "t_deploy", {
+      key: "critic:signoff",
+      task_id: "t_deploy",
+      reason: "verdict",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const row = await rowOf("t_deploy");
+    await user.click(within(row).getByTestId("action-answer"));
+    // The Inbox opens at that card (`useScrollToHash` marks it), not at the top of the list.
+    await waitFor(() =>
+      expect(document.getElementById("card-req_signoff")).toHaveAttribute("data-targeted", "true"),
+    );
+  });
+
+  it("the drawer's Open beside a card links to that card", async () => {
+    const harness = createHarness();
+    addTask(harness, "t_deploy", "Deploy the page", {
+      status: "needs_human",
+      specialist: "ops-deploy",
+      riskTier: 3,
+    });
+    addCard(harness, "req_signoff", "t_deploy", {
+      key: "critic:signoff",
+      task_id: "t_deploy",
+      reason: "verdict",
+    });
+    renderApp("/projects/proj_atlas/tasks?task=t_deploy", harness);
+    const cards = await screen.findByTestId("drawer-cards");
+    expect(within(cards).getByRole("link", { name: "Open" })).toHaveAttribute(
+      "href",
+      "/inbox#card-req_signoff",
+    );
+  });
+
   it("Cancel on a paused task says its work is set aside in the drawer as in the dialog (P7-21)", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
