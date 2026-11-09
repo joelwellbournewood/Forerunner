@@ -3639,7 +3639,11 @@ describe("the UI client against the real daemon: the plan card (design §3.3)", 
     await rt.intake.inFlight(project.id);
     const request = String(intakeCalls[before]?.messages[0]?.content);
     expect(request).toContain(
-      "Web access: this project's research reads only these websites and their subdomains: developer.mozilla.org. Plan no research that needs another website",
+      "Web access: this project's research reads only these websites and their subdomains: developer.mozilla.org.",
+    );
+    // W15-33: what to plan instead, and never from the model's own knowledge.
+    expect(request).toContain(
+      "Research works only from these websites and the project's files, never from the model's own knowledge. Plan no research that needs another website; where the brief needs one, plan a task for the person to give the sources",
     );
   }, 60_000);
 

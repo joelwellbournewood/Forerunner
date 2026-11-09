@@ -5607,7 +5607,11 @@ plan writer) is told to plan no web work only when the install has no page reade
 (`IntakeDeps.webSpecialists`, composed as `webFetchOn`; `NO_WEB_RULE`), and is told an
 "Only these websites" list (`onlyWebsitesLines` in the planning request: plan no research that
 needs another website; a list with nothing usable on it, which R-failopen reads as no website,
-says research reads no website instead of naming none, TR-5). Tests: `specialist-handover.test.ts`,
+says research reads no website instead of naming none, TR-5; W15-33: both say research works
+only from the listed sites and the project's files, never from the model's own knowledge, and
+that a brief needing another site gets a task for the person to give the sources, which the
+research waits on; `NO_WEB_RULE` says the same, and `SMALL_PLAN_RULES` allows that person task).
+Tests: `specialist-handover.test.ts`,
 `research-web.test.ts`, the U-044 case in `intake.test.ts`.
 
 **Web research (`src/session/web-sources.ts`, `src/wiring/web-ports.ts`, ADR 0107).** The

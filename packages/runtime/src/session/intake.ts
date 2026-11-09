@@ -475,19 +475,22 @@ export function onlyWebsitesLines(project: Pick<ProjectRow, "settings">): string
   if (rule.mode !== "only") return [];
   // TR-5 (a sibling of R-failopen): an "only" list with nothing usable on it reads no website;
   // before, the planner read "...only these websites and their subdomains: . Plan no research
-  // ...", naming nothing.
+  // ...", naming nothing. W15-33 (live check 2, research F11): the line said what not to plan,
+  // never what to plan instead, and the planner planned research "from the researcher's own
+  // knowledge" with URLs it would not read; now it says research works from the project's files
+  // (and the listed sites), never from memory, and a brief that needs the web gets a person task.
   if (!rule.only.length)
     return [
-      "Web access: this project's research reads no website (its list of websites is empty). Plan no research that needs a website; where the brief needs one, say in the decision record that this project reads no website.",
+      "Web access: this project's research reads no website (its list of websites is empty). Research works only from the files the project holds, never from the model's own knowledge: plan no research task that needs a website or figures from memory. Where the brief needs the web, plan a task for the person to give the sources (or to add websites in Settings), make the research wait on it, and say so in the decision record.",
     ];
   return [
-    `Web access: this project's research reads only these websites and their subdomains: ${rule.only.join(", ")}. Plan no research that needs another website; where the brief needs one, say in the decision record that it is outside this project's websites.`,
+    `Web access: this project's research reads only these websites and their subdomains: ${rule.only.join(", ")}. Research works only from these websites and the project's files, never from the model's own knowledge. Plan no research that needs another website; where the brief needs one, plan a task for the person to give the sources, make the research wait on it, and say in the decision record that it is outside this project's websites.`,
   ];
 }
 
 /** The planning rule when no specialist reaches the web on this install (U-044, ADR 0107). */
 export const NO_WEB_RULE =
-  "Web access: no specialist on this install can read the web (the web page reader is turned off). Plan no task that needs the web: research works only from the sources the project already holds, and the decision record says what had to be assumed.";
+  "Web access: no specialist on this install can read the web (the web page reader is turned off). Plan no task that needs the web: research works only from the sources the project already holds, never from the model's own knowledge, and the decision record says what had to be assumed.";
 
 /**
  * What a small plan is (design §3.3: a one-line brief gets one to three tasks and a README, the
@@ -498,8 +501,8 @@ export const SMALL_PLAN_RULES: readonly string[] = [
   'Size. With "Plan size: small" (a short brief, a sentence or two) the plan is small:',
   "one milestone with one to three tasks that build what the brief asks for and check that it",
   "works. No reviewer, deploy (ops-deploy), marketing (writer-marketing) or research task unless",
-  "the brief asks for one. No person task unless the work cannot start without an answer or the",
-  "brief says the human will give content (the rule above): choose",
+  "the brief asks for one. No person task unless the work cannot start without an answer, the",
+  "brief says the human will give content (the rule above), or the web access line asks for one: choose",
   "the simplest setup (plain files in the project's folder, opened or run locally) and say so in",
   "the decision record. Leave riskTier out: Forerunner's critic reviews every task that builds or changes files.",
   "docs: only README.md and the decision record, each under 1500",

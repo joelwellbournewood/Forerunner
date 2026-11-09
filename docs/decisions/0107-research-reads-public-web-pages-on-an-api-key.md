@@ -410,3 +410,10 @@ and write dialog.md", and the order was carried into the next brief (live check 
    review reads the pages of the task's earlier runs after the run's own, marked as read by an
    earlier run. A page whose text was not kept (a row written before) is named under "Evidence
    not available".
+4. **The planner is told what to plan instead (W15-33).** Under an empty "only" list the plan
+   offered research "from the researcher's own knowledge" with addresses it would not read (live
+   check 2, research F11). The planning lines now say research works only from the listed sites
+   and the project's files, never from the model's own knowledge, and that a brief needing
+   another site gets a task for the person to give the sources, which the research waits on.
+   Not built: a plan-card line under such a researcher task ("reads no website ... Add websites
+   in Settings or Change the plan").

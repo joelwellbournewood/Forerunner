@@ -22,6 +22,7 @@ import {
   NO_WEB_RULE,
   onlyWebsitesLines,
   parseIntakeReply,
+  SMALL_PLAN_RULES,
 } from "../src/session/intake.ts";
 import { type PlannerContext, StaticPlanner } from "../src/session/runner.ts";
 import { WEB_ACCESS_SETTING } from "../src/wiring/web-access.ts";
@@ -1511,7 +1512,8 @@ describe("leftovers7-tailrun, wave 13: the planner's web line for an empty list 
       settings: { [WEB_ACCESS_SETTING]: { mode: "only", only: [], never: [] } },
     });
     expect(empty).toEqual([
-      "Web access: this project's research reads no website (its list of websites is empty). Plan no research that needs a website; where the brief needs one, say in the decision record that this project reads no website.",
+      // W15-33: what to plan instead, and never from the model's own knowledge.
+      "Web access: this project's research reads no website (its list of websites is empty). Research works only from the files the project holds, never from the model's own knowledge: plan no research task that needs a website or figures from memory. Where the brief needs the web, plan a task for the person to give the sources (or to add websites in Settings), make the research wait on it, and say so in the decision record.",
     ]);
     // Before: "...only these websites and their subdomains: . Plan no research ...".
     expect(empty.join(" ")).not.toContain(": .");
@@ -1520,5 +1522,22 @@ describe("leftovers7-tailrun, wave 13: the planner's web line for an empty list 
     });
     expect(listed[0]).toContain("only these websites and their subdomains: mozilla.org.");
     expect(onlyWebsitesLines({ settings: {} })).toEqual([]);
+  });
+});
+
+describe("w15-review, wave 15", () => {
+  it("W15-33: under an 'only' list the planner is told research works from the listed sites and the project's files, never from memory, and a brief needing another site gets a person task", () => {
+    const listed = onlyWebsitesLines({
+      settings: { [WEB_ACCESS_SETTING]: { mode: "only", only: ["mozilla.org"], never: [] } },
+    }).join(" ");
+    expect(listed).toContain("never from the model's own knowledge");
+    expect(listed).toContain("plan a task for the person to give the sources");
+    const none = onlyWebsitesLines({
+      settings: { [WEB_ACCESS_SETTING]: { mode: "only", only: [], never: [] } },
+    }).join(" ");
+    expect(none).toContain("Research works only from the files the project holds");
+    expect(none).toContain("figures from memory");
+    expect(NO_WEB_RULE).toContain("never from the model's own knowledge");
+    expect(SMALL_PLAN_RULES.join(" ")).toContain("or the web access line asks for one");
   });
 });
