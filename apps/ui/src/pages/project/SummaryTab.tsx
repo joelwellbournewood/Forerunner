@@ -28,6 +28,20 @@ import { QueueSection } from "./QueueSection.tsx";
  * session. No stage, no queue form with types and priorities, no Peers in solo mode, no zero
  * counts.
  */
+/**
+ * Lines with keys that stay unique when two read alike (W14-7, polish-words: two tasks titled
+ * "Write the guide" gave the Next list two equal keys, and React a duplicate-key error per
+ * render): the text and how many times it came before.
+ */
+export function withKeys(lines: readonly string[]): { text: string; key: string }[] {
+  const seen = new Map<string, number>();
+  return lines.map((text) => {
+    const n = (seen.get(text) ?? 0) + 1;
+    seen.set(text, n);
+    return { text, key: `${text}#${n}` };
+  });
+}
+
 export function SummaryTab({ projectId, project }: { projectId: string; project?: ProjectCard }) {
   return (
     <div className="space-y-6" data-testid="summary-tab">
@@ -158,8 +172,8 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
               // What became of what the session left for you (C-54): the summary is the record
               // of its end, these lines are true now.
               <ul className="mt-1" data-testid="last-result-since">
-                {data.lastSession.since.map((s) => (
-                  <li key={s}>{s}</li>
+                {withKeys(data.lastSession.since).map(({ text, key }) => (
+                  <li key={key}>{text}</li>
                 ))}
               </ul>
             ) : null}
@@ -183,8 +197,8 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
             Next
           </h2>
           <ul className="text-sm" data-testid="next">
-            {next.map((s) => (
-              <li key={s}>{s}</li>
+            {withKeys(next).map(({ text, key }) => (
+              <li key={key}>{text}</li>
             ))}
           </ul>
         </section>

@@ -468,6 +468,39 @@ describe("polish-words, wave 13: the words a person reads (design §5)", () => {
     expect(violations(said, 100)).toEqual([]);
   });
 
+  it("the session result's failed line reads the run's report plain, cut at a word (L-18)", () => {
+    const lines = sessionResultLines({
+      outcome: {
+        done: [],
+        failed: [
+          {
+            id: "t",
+            title: "Write the page",
+            reason:
+              "The run changed no file. It reported: **Result: the check fails.** The page links `styles.css`, which `README.md` names, but this branch does not have it, so the check cannot pass until a later task adds it to the branch.",
+          },
+        ],
+        needsYou: [],
+        leftOver: [],
+        waiting: [],
+        waitingForDocker: [],
+        stopReason: "queue_empty",
+        spentChfMicro: 20_000,
+      },
+      inReview: [],
+      leftOutForBudget: [],
+      sessionCapChfMicro: 1_000_000,
+      openTasks: 1,
+    });
+    const failed = lines.find((l) => l.startsWith('"Write the page" failed'));
+    expect(failed).toMatch(
+      /^"Write the page" failed: the run changed no file\. It reported: Result/,
+    );
+    expect(failed).not.toMatch(/\*\*|`/);
+    // Cut at a word: never half a word before the ellipsis.
+    expect(failed).not.toMatch(/\w…\w/);
+  });
+
   it("a sign-off card is its own kind; a failed-task card stays a retry card (C-21, L-9)", async () => {
     const { cardKindOf } = await import("../src/daemon/task-words.ts");
     const signoff = (reason: string) => ({ change_card: { key: "critic:signoff", reason } });

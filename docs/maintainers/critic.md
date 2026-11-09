@@ -236,7 +236,11 @@ evidence, so a light read grades the diff by reading. The section titles are con
 ### Rules in code (`rules.ts`)
 
 Applied to every verdict, tier 0 included, and recorded as `adjustments` so the review shows
-what the model said and what the code made of it:
+what the model said and what the code made of it. When a rule changes the verdict to a revise
+or an escalate, the shown summary says why first and the model's words follow without the verdict
+word they no longer carry (`ruledSummary`, C-19, polish-words: 'Sent back: the check "test"
+failed. 1 changed file matches the brief.', not "Accepted: …" under a sent-back review; a
+sign-off's card says itself that it waits):
 
 0. `escalate_needs_reason` (ADR 0042): an `escalate` must stand on a ground the code can see,
    checked by `rules.ts#escalationCheck` in this order: a critical or high finding (verified or

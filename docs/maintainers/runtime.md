@@ -47,7 +47,8 @@ Action classes map to decisions per level 0–4. `destructive`, `financial`, `cr
 `permission_change` and `capability_grant` need a human at every level. Level 0 proposes only,
 level 1 runs routine work after plan approval (the approval is of one plan, bound by its
 `plan_id`: "Plan approval" under Sessions), level 2 frees routine reversible work, level 3
-also merges reviewed PRs and deploys to staging, level 4 everything else. The merge of a
+also deploys to staging, level 4 everything else; no level merges a reviewed PR since
+merge-in-app (`FREE_AT.merge_pr` is null: the project's merge mode or the person's Merge does, P7-13). The merge of a
 reviewed PR is a `merge_pr` tool call the session runner makes after an accepting review
 (`src/loop/merge.ts`, "Merge of a reviewed PR" under the core loop; its gate `mayMerge` and the
 merge record, ADR 0111): unattended, so at level 2
@@ -3187,7 +3188,7 @@ pending too); `mergeable: false` is a conflict (the files from `GitOps.conflictF
 worktree is there).
 
 **What the record says.** Merged: `merged` with `merge_sha`, `method: "merge"`, the approval and
-who gave it (`approved_by`: `autonomy level 3`, or the person), and every `onMerged` listener is
+who gave it (`approved_by`: the merge mode's setting, or the person; no autonomy level merges, P7-13), and every `onMerged` listener is
 called (`ReviewedPrMerge.onMerged(listener)` / `merged(event)`: compose logs it and emits the
 project event; 'dependent-branches' and 'merged-copy' subscribe, and 'dependent-branches' calls
 `merged` for PRs the watcher sees merged on GitHub). Checks still running or the host silent
@@ -3626,7 +3627,7 @@ its page from the GitHub API base: `api.github.com` is github.com, GitHub Enterp
 git host serve pages at the API's origin) and then no `folder`, since this install's docs clone
 holds only the default branch. `GET /projects/:id/pull-requests` (`projectPullRequests`, served
 by `docs-routes.ts`) reads the host's open PRs when asked and lists those that wait for the
-person: each done task's (the critic accepted it and nothing merged it: below level 3 the merge is
+person: each done task's (the critic accepted it and nothing merged it: under "You press Merge" the merge is
 the person's) and Forerunner's docs PRs ("Project status (docs/status.md)", "The project's
 standard docs", "The project's docs from the plan"), sorted by number; a PR of a task still
 running or in review, or of someone else's, is not listed; a host that does not answer is
@@ -6404,7 +6405,8 @@ distinct for two ids of one minute.
 
 `loop-merge.test.ts` (spec J.9, ADR 0062; the runner with `PrTaskExecutor` and
 `ReviewedPrMerge` on the testenv fake git host over REST and git smart HTTP, its own hooks
-with an approval port that would approve anything): at level 3 an accepted task's PR is
+with an approval port that would approve anything): under the merge mode that merges (no level merges since
+merge-in-app, P7-13) an accepted task's PR is
 merged on the host (state closed, the file on `main`), one allowed `merge_pr` audit row, no
 approval asked, the task's reason, `merges`, `handoff.merges`, the `pr.merged` event and the
 summary record it; at level 2 the hooks refuse it (`autonomy_insufficient: autonomy level 2`
@@ -6426,7 +6428,7 @@ pending while no CI on either merges, a conflicting PR is refused before the mer
 real worktree and bare repository, a host that still shows the reviewed head right after the
 rebase push is waited for and the rebased head merged (not taken for a moved head). The
 daemon (`composeRuntime` on the fake git host as its configured API base, the token in the
-vault, a token issued from `RuntimeApp.sessionGrant`): at level 3 `RuntimeApp.merge` merges
+vault, a token issued from `RuntimeApp.sessionGrant`): under the merge mode that merges `RuntimeApp.merge` merges
 the PR on the host with an allowed `audit_log` row, at level 2 it writes the
 `autonomy_insufficient` refusal and the PR stays open, so a grant without `merge_pr` fails
 both. `hooks.test.ts` has the unattended rule itself (refused at 2 and for an

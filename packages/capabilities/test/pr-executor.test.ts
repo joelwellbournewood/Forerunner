@@ -592,7 +592,8 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
       identity,
     }).execute(ctx);
     expect(noChange.outcome).toBe("failed");
-    expect(noChange.summary).toContain("no changes");
+    // L-18 (polish-words): what went wrong first, then the run's own report, plain.
+    expect(noChange.summary).toMatch(/^The run changed no file\./);
     const noRepo = await new PrTaskExecutor({
       store: w.store,
       clock: w.clock,

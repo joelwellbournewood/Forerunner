@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createClient } from "../src/api/client.ts";
 import { reviewLevelChoices, specialistName } from "../src/lib/task-actions.ts";
 import { TASKS } from "./fixtures.ts";
@@ -252,5 +252,38 @@ describe("polish-words, wave 13: the Inbox plan card", () => {
   });
 });
 
-// Keep `render` imported for later cases of this file (the session page).
+describe("polish-words, wave 13: same-titled tasks on the Overview (W14-7)", () => {
+  it("two tasks titled alike render two Next lines with no duplicate-key error", async () => {
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    });
+    try {
+      const harness = createHarness();
+      // Running ranks first in Next (at most three lines).
+      addTask(harness, "t_guide_1", "Write the guide", {
+        status: "in_progress",
+        claimedBy: "agent_1",
+      });
+      addTask(harness, "t_guide_2", "Write the guide", {
+        status: "in_progress",
+        claimedBy: "agent_1",
+      });
+      renderApp("/projects/proj_atlas", harness);
+      const next = await screen.findByTestId("next");
+      await waitFor(() =>
+        expect(
+          within(next)
+            .getAllByRole("listitem")
+            .filter((li) => li.textContent?.startsWith('"Write the guide"')),
+        ).toHaveLength(2),
+      );
+      expect(errors.filter((e) => /same key|two children with the same key/i.test(e))).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// Keep `render` imported for later cases of this file.
 void render;

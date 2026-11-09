@@ -455,13 +455,14 @@ describe("data import: github repository", { timeout: 120_000 }, () => {
       expect(sample.kind).toBe("entries");
       expect(sample.entries?.some((e) => /escaped|passwd:/.test(e))).toBe(false);
 
-      // An empty repository: cloned, refused at the default branch, and the clone removed.
+      // An empty repository with no token to write it: its first commit is refused, said in
+      // words (C-55, polish-words: `firstPushFailedWords`, never git's output), and the clone
+      // removed.
       await host.createRepo({ owner: "acme", name: "empty", private: false });
       await expect(
         base.importGitHubRepo({ repo: "acme/empty" }, h.projectId, { actor: human }),
       ).rejects.toMatchObject({
-        code: "validation",
-        message: expect.stringMatching(/default branch/),
+        message: expect.stringMatching(/^acme\/empty is empty and .*Try again\.$/),
       });
       expect(existsSync(join(reposDir, "acme", "empty"))).toBe(false);
 
@@ -589,6 +590,28 @@ describe("data import: github repository", { timeout: 120_000 }, () => {
       expect(await h.assets.list(h.projectId)).toEqual([]);
       expect((await h.store.project.mustGet(h.projectId)).repos).toEqual([]);
       expect(host.requests().length).toBe(requests);
+      expect(JSON.stringify(logs)).not.toContain(token.token);
+    },
+  );
+
+  it.skipIf(skipReason())(
+    "an empty repository gets its first commit and the migration branch from it, never git's 'is not a commit' (C-55)",
+    async () => {
+      const empty = await host.createRepo({ owner: "acme", name: "empty-data", private: true });
+      const result = await importer.importGitHubRepo(
+        { repo: host.cloneUrl("acme/empty-data"), tokenRef: "secret:github_token" },
+        h.projectId,
+        { actor: human },
+      );
+      ImportResultView.parse(result);
+      // The first commit is on main, and the migration branch starts from it.
+      const branches = (
+        await git(["for-each-ref", "--format=%(refname:short)", "refs/heads"], { cwd: empty.dir })
+      )
+        .split(/\r?\n/)
+        .filter(Boolean);
+      expect(branches).toContain("main");
+      expect(JSON.stringify(result)).not.toMatch(/is not a commit|fatal:/);
       expect(JSON.stringify(logs)).not.toContain(token.token);
     },
   );

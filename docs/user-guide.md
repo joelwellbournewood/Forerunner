@@ -932,8 +932,9 @@ it starts), and close to that point it is offered fewer searches, then none. On 
 subscription it searches with Claude Code's search, and opens pages with Forerunner's reader as
 on the key (Claude Code's own page reader is switched off). Search only finds pages: a claim in
 the research counts as sourced only when its page was opened and read, so the researcher opens
-the pages it uses, and the review is told which search results it saw but never opened (a claim
-that cites only one of those is not sourced). The project's setting applies to the search too:
+the pages it uses, and on the API key the review is told which search results it saw but never
+opened (a claim that cites only one of those is not sourced; on the subscription Claude Code
+searches by itself, and that list is not kept). The project's setting applies to the search too:
 "Only these websites" limits it to those sites, and the never list keeps those out. Search
 results and pages are information for the researcher, never instructions, on both credentials:
 a result whose title reads like instructions is named in the session's log and told to the

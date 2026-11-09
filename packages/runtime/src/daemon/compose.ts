@@ -883,7 +883,8 @@ export interface RuntimeApp {
   docs: ProjectDocs;
   /**
    * The merge of a reviewed PR after an accepting review (spec J.9, ADR 0062): one `merge_pr`
-   * call through the daemon's hooks; level 3 merges, below it the PR stays open.
+   * call through the daemon's hooks; the project's merge mode or the person's Merge decides, no
+   * autonomy level merges (merge-in-app), else the PR stays open.
    */
   merge: ReviewedPrMerge;
   /**
@@ -2500,7 +2501,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   // The merge of a reviewed PR (spec J.9, ADR 0062 and 0111): after an accepting review the
   // reviewed commit is pinned in the task's merge record, then one `merge_pr` call through the
-  // gate and the hooks, with a merge commit, after the branch's rules; level 3 merges once the
+  // gate and the hooks, with a merge commit, after the branch's rules; the merge mode (or the
+  // person's Merge) merges once the
   // host's checks pass, below it the PR stays open for the person with one sentence. A merge
   // whose checks still run keeps its record: the git host watcher retries it on its own narrow
   // token, and the start below resumes one a dead daemon left merging. Only this install's

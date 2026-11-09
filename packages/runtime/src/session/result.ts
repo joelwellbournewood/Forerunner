@@ -1,6 +1,6 @@
 import { formatChf } from "@forerunner/billing";
 import type { StateStore, TaskRow, WaitingTask } from "@forerunner/state";
-import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
+import { plainReason } from "../daemon/task-words.ts";
 import { moneyWordsFirst } from "./money-words.ts";
 import { namesOf } from "./recovery.ts";
 import {
@@ -206,7 +206,8 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
       if (o.failed.length === 1 && o.failed[0]) {
         const f0 = o.failed[0];
         // The stored reason may carry a run id or "(s)" (writing rules §5: neither is shown).
-        const reason = plainPlurals(withoutIds(f0.reason)).replace(/\s*\(\s*\)/g, "");
+        // L-18 (polish-words): plain (no markdown) and cut at a word, as the Tasks row reads it.
+        const reason = plainReason(f0.reason, 160).replace(/\s*\(\s*\)/g, "");
         return [`"${f0.title}" failed: ${lowerFirst(noDot(reason)) || "no reason given"}.`];
       }
       return o.failed.length > 1 ? [`${namesOf(titlesOf(o.failed))} failed.`] : [];

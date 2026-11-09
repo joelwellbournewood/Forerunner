@@ -364,6 +364,16 @@ export function openedForAnotherTask(pr: Pick<PullRequestInfo, "body">, taskId: 
   return !!named && named.toLowerCase() !== taskId.toLowerCase();
 }
 
+/**
+ * A run that changed no file (L-18, polish-words): "The run changed no file." first, then its own
+ * report, plain (no markdown) and on one line, which the reason and the failed-task card cut at
+ * a word.
+ */
+export function emptyChangeSummary(report: string): string {
+  const said = plainReport(report).replace(/\s+/g, " ").trim();
+  return said ? `The run changed no file. It reported: ${said}` : "The run changed no file.";
+}
+
 /** A model's report as plain text for a commit message: no markdown marks, no lesson lines. */
 export function plainReport(text: string): string {
   return withoutLessons(text)
@@ -880,7 +890,9 @@ export class PrTaskExecutor implements TaskExecutor {
       return {
         ...result,
         outcome: "failed",
-        summary: `${result.summary}\n(no changes were made in the worktree)`,
+        // L-18 (polish-words): what went wrong first, in plain words; the run's own report
+        // after it without markdown (it read "failed: **Result: …** `README.md` …").
+        summary: emptyChangeSummary(result.summary),
         checksPassed: false,
       };
     }
