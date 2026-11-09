@@ -16,6 +16,7 @@ import {
   LoopTaskExecutor,
   NO_WEB_ACCESS_LINE,
   NO_WEB_SEARCH_LINE,
+  REFUSED_PAGE_ACTION,
   retryConstraints,
   WEB_RULE_WINS_LINE,
   webRuleRefuses,
@@ -414,8 +415,74 @@ describe("w15-review, wave 15", () => {
     expect(brief).toContain(
       "- [medium] The summary has four bullets, not five -> Write five bullets in dialog.md",
     );
+    // The finding itself stays (design §4.6): only its order to read a refused page is replaced.
+    expect(brief).toContain(
+      `- [high] dialog.md is missing; the refusal is probably wrong -> ${REFUSED_PAGE_ACTION}`,
+    );
     expect(brief).toContain(WEB_RULE_WINS_LINE);
     expect(brief).toContain(RULE);
+  });
+
+  it("W15-25: under a site rule every finding reaches the retry brief; a host in a finding's words or an action that reads no page is no reason to drop it", async () => {
+    // The reviewer's probe (fixup): the first finding names refused hosts in its description,
+    // the second names a library that looks like a host ("socket.io"); neither action asks for
+    // a page. Both were dropped, and the retry got no findings at all.
+    const findings = [
+      {
+        severity: "high",
+        description:
+          "The free-tier figures for vercel.com and netlify.com have no source the run read: they come from memory.",
+        required_action: "Remove those figures or mark them as not verified under Uncertainty.",
+      },
+      {
+        severity: "high",
+        description:
+          "The report says socket.io is required but the brief asks for plain WebSocket.",
+        required_action: "Drop socket.io from the recommendation.",
+      },
+    ];
+    const w = await world({
+      specialist: "researcher",
+      settings: { web_access: { mode: "only", only: ["developer.mozilla.org"], never: [] } },
+      attempt: 2,
+      findings,
+      replies: [{ text: "Removed the figures." }],
+    });
+    const brief = w.provider.calls[0]?.messages[0]?.content as string;
+    expect(brief).toContain("Critic findings to resolve (each must be addressed with evidence):");
+    for (const f of findings)
+      expect(brief).toContain(`- [${f.severity}] ${f.description} -> ${f.required_action}`);
+    expect(brief).toContain(WEB_RULE_WINS_LINE);
+    // The same through the function, for each way an action may ask for a refused page.
+    const refuses = webRuleRefuses(
+      webAccessOf({ web_access: { mode: "only", only: ["developer.mozilla.org"], never: [] } }),
+    );
+    const orders = (required_action: string, description = "The pricing table has no source.") =>
+      retryConstraints(1, [{ severity: "high", description, required_action }], {
+        refusesHost: refuses,
+      }).join("\n");
+    for (const action of [
+      "Fetch https://vercel.com/pricing and add its figures",
+      "Read netlify.com/pricing and cite it",
+      "Cite vercel.com for each figure",
+      "Verify the figures against https://vercel.com/pricing",
+      "Remove the figures; then open vercel.com/pricing and quote its table",
+      "Take the free-tier figures from https://vercel.com/pricing",
+    ])
+      expect(orders(action), action).toContain(
+        `- [high] The pricing table has no source. -> ${REFUSED_PAGE_ACTION}`,
+      );
+    for (const action of [
+      "Remove the vercel.com figures",
+      "Drop socket.io from the recommendation and read notes.md",
+      "Fetch https://developer.mozilla.org/en-US/docs/Web/API/WebSocket and cite it",
+      "Mark the vercel.com figure as not verified",
+      "Remove the quote from vercel.com and the access dates for netlify.com",
+      "Use plain WebSocket instead of socket.io on the server",
+    ])
+      expect(orders(action), action).toContain(
+        `- [high] The pricing table has no source. -> ${action}`,
+      );
   });
 
   it("W15-25: a finding naming a host is an order as before where the rule refuses nothing, and for a specialist that reads no pages", () => {
@@ -428,8 +495,9 @@ describe("w15-review, wave 15", () => {
     expect(refuses?.("developer.mozilla.org")).toBe(true);
     expect(refuses?.("10.1.2.3")).toBe(false);
     expect(webRuleRefuses(webAccessOf({}))).toBeNull();
-    expect(retryConstraints(1, [finding], { refusesHost: refuses }).join("\n")).not.toContain(
-      "Fix the link",
+    // Fixing a link reads no page: under the rule it stays an order too (fixup of W15-25).
+    expect(retryConstraints(1, [finding], { refusesHost: refuses }).join("\n")).toContain(
+      "Fix the link to developer.mozilla.org",
     );
     expect(retryConstraints(1, [finding], { refusesHost: null }).join("\n")).toContain(
       "Fix the link to developer.mozilla.org",

@@ -518,6 +518,13 @@ export const WEB_RULE_WINS_LINE =
   "The project's rule on which websites research may read comes before any finding: do not read a page it refuses, even where a review asked for one; say in the report what the rule kept out.";
 
 /**
+ * What a retry brief says in place of a finding's required action that asks for a page the
+ * project's site rule refuses (W15-25): the finding stays, its order to read the page does not.
+ */
+export const REFUSED_PAGE_ACTION =
+  "The page this asks for is one the project's rule refuses: do not read it; meet the finding from what the rule allows, or say in the report what the rule kept out.";
+
+/**
  * Whether the project's "Web pages research may read" refuses a host (W15-25): outside an "only"
  * list, or on the "never" list. Null when the rule refuses nothing by name (any public website).
  */
@@ -547,31 +554,70 @@ export function hostsNamedIn(text: string): string[] {
   return [...out];
 }
 
+/**
+ * Where a required action's order starts: the start of a clause, or after "and", "then", "to" …
+ * A word in that place is an order ("Fetch …", "then open …"); the same word elsewhere is a noun
+ * ("Remove the quote from …", "the access dates").
+ */
+const ORDER_AT = String.raw`(?:^\s*|\b(?:and|then|or|to|also|first|please|must|should|now)\s+|[,:]\s*)`;
+/** An order to read a page: the host it names after the word is the page ("Fetch https://…"). */
+const READS_A_PAGE = new RegExp(
+  `${ORDER_AT}(?:(?:re-?)?(?:fetch|read|open|visit|browse|load|retrieve|consult|download|access|scrape|crawl|cite|quote)|look\\s+up|go\\s+to|web_fetch)\\b`,
+  "i",
+);
+/** An order to check against a page, or take from one: the host after "against" / "from". */
+const READS_A_PAGE_FOR = new RegExp(
+  `${ORDER_AT}(?:(?:check|cross-check|verify|confirm|compare)\\b[^.;!?\\n]*?\\b(?:against|on|at|with)|(?:source|take|get|pull|copy|use)\\b[^.;!?\\n]*?\\bfrom)\\b`,
+  "i",
+);
+
+/**
+ * Whether a finding's required action asks for a page of a host the site rule refuses (W15-25):
+ * an order to read ("Fetch …", "then open …", "Cite …", "Verify … against …", "Take … from …")
+ * followed by the host in the same clause. An action that removes, marks or fixes something is
+ * an order, whatever host it names; a host only in the finding's description is no order at all.
+ */
+export function asksForRefusedPage(
+  requiredAction: string,
+  refusesHost: (host: string) => boolean,
+): boolean {
+  const refusedAfter = (text: string) => hostsNamedIn(text).some((h) => refusesHost(h));
+  for (const clause of requiredAction.split(/(?<=[.;!?])\s+|\n/)) {
+    const read = READS_A_PAGE.exec(clause);
+    if (read && refusedAfter(clause.slice(read.index))) return true;
+    const from = READS_A_PAGE_FOR.exec(clause);
+    if (from && refusedAfter(clause.slice(from.index + from[0].length))) return true;
+  }
+  return false;
+}
+
 /** The constraint lines a brief carries for a retry (spec D.2): the rung and the open findings. */
 export function retryConstraints(
   attempt: number,
   openFindings: readonly { severity: string; description: string; required_action: string }[],
   /**
    * `kept`: the second rung kept the specialist (no stand-in of its kind), nothing was handed
-   * over. `refusesHost`: the project's site rule (`webRuleRefuses`); a finding that orders a
-   * page of a host it refuses is no order (W15-25).
+   * over. `refusesHost`: the project's site rule (`webRuleRefuses`); a required action that
+   * asks for a page of a host it refuses is replaced by `REFUSED_PAGE_ACTION` (W15-25).
    */
   opts: { kept?: boolean; refusesHost?: ((host: string) => boolean) | null } = {},
 ): string[] {
   const lines: string[] = [];
   // W15-25 (live check 2, research F7): a review that did not know the site rule ordered a
-  // fetch of a page the rule refuses, and the order was carried into the next brief. An order
-  // naming a host the rule refuses is dropped here; the brief says once that the rule wins (the
-  // rule's own line follows in the brief).
+  // fetch of a page the rule refuses, and the order was carried into the next brief. Every
+  // finding still reaches the brief (design §4.6); only a required action that asks to read a
+  // page of a refused host is replaced, and the brief says once that the rule wins (the rule's
+  // own line follows in the brief). A host named elsewhere ("Remove the vercel.com figures",
+  // "socket.io") is no reason to drop a finding: the retry would go on blind.
   const refusesHost = opts.refusesHost;
-  const refused = (f: { description: string; required_action: string }) =>
-    !!refusesHost &&
-    hostsNamedIn(`${f.description}\n${f.required_action}`).some((h) => refusesHost(h));
-  const outside = openFindings.filter((f) => !isReviewNote(f) && refused(f));
+  const actionOf = (f: { required_action: string }) =>
+    refusesHost && asksForRefusedPage(f.required_action, refusesHost)
+      ? REFUSED_PAGE_ACTION
+      : f.required_action;
   // L-4 (live, 2026-11-02): the critic's notes ([info]) and problems the task did not cause
   // ("... (not caused by this task)") are not orders. As orders, a retry "resolved" an unrelated
   // failing test by rewriting code outside its task and ran out of budget unreviewed.
-  const orders = openFindings.filter((f) => !isReviewNote(f) && !refused(f));
+  const orders = openFindings.filter((f) => !isReviewNote(f));
   const notes = openFindings.filter(isReviewNote);
   // The "findings below" line only when findings follow (design §4.6): a retry after an error
   // has none, and its brief said so anyway.
@@ -595,9 +641,9 @@ export function retryConstraints(
   if (orders.length) {
     lines.push("Critic findings to resolve (each must be addressed with evidence):");
     for (const f of orders.slice(0, 20))
-      lines.push(`- [${f.severity}] ${f.description} -> ${f.required_action}`);
+      lines.push(`- [${f.severity}] ${f.description} -> ${actionOf(f)}`);
   }
-  if (outside.length || (refusesHost && orders.length)) lines.push(WEB_RULE_WINS_LINE);
+  if (refusesHost && orders.length) lines.push(WEB_RULE_WINS_LINE);
   if (notes.length) {
     lines.push(
       "Notes from the review, for your information only: they are not part of this task. Do not change code for them; if one stops your task, say so under 'Questions for the person:'.",
