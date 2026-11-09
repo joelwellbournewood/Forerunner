@@ -155,7 +155,7 @@ export async function tryPages(opts: TryPagesOptions): Promise<TryPagesOutcome> 
   if (!browser) {
     const probe = resolveChromiumExecutable(opts.env ?? process.env);
     if (!probe.ok) return { unavailable: "no Chromium, Edge or Chrome was found on this computer" };
-    const started = await launchBrowser(opts, probe.executablePath);
+    const started = await launchBrowser(opts, probe.executablePath, logger);
     if ("unavailable" in started) return started;
     browser = started.browser;
     unsandboxed = started.unsandboxed;
@@ -208,12 +208,19 @@ export async function tryPages(opts: TryPagesOptions): Promise<TryPagesOutcome> 
 async function launchBrowser(
   opts: TryPagesOptions,
   executablePath: string | undefined,
+  logger: Logger,
 ): Promise<{ browser: Browser; unsandboxed: string | null } | { unavailable: string }> {
   const launch = opts.launch ?? ((o: LaunchOptions) => chromium.launch(o));
   const base: LaunchOptions = {
     headless: true,
-    timeout: 60_000,
+    timeout: BROWSER_START_TIMEOUT_MS,
     ...(executablePath ? { executablePath } : {}),
+  };
+  // W15-49: the person's line says it in plain words (design §5 rule 8); Playwright's own text
+  // ("browserType.launch: Timeout 60000ms exceeded.") goes to the log.
+  const didNotStart = (e: unknown) => {
+    logger.warn("the browser did not start for the page try", { error: firstLine(e) });
+    return { unavailable: browserDidNotStart(e) };
   };
   try {
     return { browser: await launch({ ...base, chromiumSandbox: true }), unsandboxed: null };
@@ -221,7 +228,7 @@ async function launchBrowser(
     // R-sandbox: only the browser's own word that its sandbox cannot start drops it; a timeout
     // or any other failure is a browser that did not start.
     const why = sandboxRefusalOf(e);
-    if (why === null) return { unavailable: `the browser did not start (${firstLine(e)})` };
+    if (why === null) return didNotStart(e);
     if (opts.requireBrowserSandbox)
       return {
         unavailable: `the browser could not start with its own sandbox on this computer (${why}), and a page of a full-review task is only opened with it`,
@@ -229,9 +236,23 @@ async function launchBrowser(
     try {
       return { browser: await launch({ ...base, chromiumSandbox: false }), unsandboxed: why };
     } catch (e2) {
-      return { unavailable: `the browser did not start (${firstLine(e2)})` };
+      return didNotStart(e2);
     }
   }
+}
+
+/** How long the browser has to start before a page try gives up on it. */
+export const BROWSER_START_TIMEOUT_MS = 60_000;
+
+/**
+ * Why a page was not tried when its browser did not start, in plain words (W15-49): a start
+ * that ran out of time says so; the critic judges the page from its files either way.
+ */
+export function browserDidNotStart(e: unknown): string {
+  const timedOut = /\btimeout\b[^\n]*\bexceeded\b|\btimed out\b/i.test(firstLine(e));
+  return timedOut
+    ? "the browser did not start within a minute; the page was judged from its files"
+    : "the browser did not start; the page was judged from its files";
 }
 
 /** The error's first line, without terminal escape codes (Playwright colours where it is forced). */

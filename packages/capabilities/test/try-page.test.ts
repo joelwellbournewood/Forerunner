@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "@forerunner/platform";
+import { join, type Logger } from "@forerunner/platform";
 import type { Browser, LaunchOptions } from "playwright";
 import { afterAll, describe, expect, it } from "vitest";
-import { tryPages } from "../src/browser/try-page.ts";
+import { browserDidNotStart, tryPages } from "../src/browser/try-page.ts";
 
 /**
  * How the page try starts its browser (C-17, R-1; ADR 0110), without a real Chromium: a launcher
@@ -145,7 +145,9 @@ describe("the page try's browser (C-17, R-1)", () => {
       });
       expect(calls.map((c) => c.chromiumSandbox)).toEqual([true]);
       expect(r).toEqual({
-        unavailable: "the browser did not start (browserType.launch: Timeout 60000ms exceeded.)",
+        // W15-49: plain words; Playwright's own text goes to the log.
+        unavailable:
+          "the browser did not start within a minute; the page was judged from its files",
       });
     });
   }
@@ -194,5 +196,43 @@ describe("the page try's browser (C-17, R-1)", () => {
     expect((l.browser as Browser & { closed: number }).closed).toBe(1);
     expect(closedServer).toBe(1);
     expect("unavailable" in r && r.unavailable).toMatch(/^the screenshots could not be stored \(/);
+  });
+});
+
+describe("w15-review, wave 15", () => {
+  it("W15-49: a browser that never starts reads in plain words, and the exception text goes to the log", async () => {
+    const { root, out } = folder();
+    const warned: { msg: string; data: unknown }[] = [];
+    const logger = {
+      warn: (msg: string, data?: unknown) => warned.push({ msg, data }),
+      info: () => undefined,
+      error: () => undefined,
+      debug: () => undefined,
+    } as unknown as Logger;
+    const r = await tryPages({
+      root,
+      pages: ["index.html"],
+      outDir: out,
+      widths: [1280],
+      logger,
+      launch: async () => {
+        throw new Error(
+          "browserType.launch: Timeout 60000ms exceeded.\nCall log:\n  - <launching>",
+        );
+      },
+      serve: async () => ({ server: { close: (cb) => cb?.() }, origin: "http://127.0.0.1:1" }),
+      env: { FORERUNNER_BROWSER_EXECUTABLE: process.execPath },
+    });
+    const words = JSON.stringify(r);
+    expect(words).not.toContain("browserType");
+    expect(words).not.toContain("ms exceeded");
+    expect(r).toEqual({
+      unavailable: "the browser did not start within a minute; the page was judged from its files",
+    });
+    expect(JSON.stringify(warned)).toContain("browserType.launch: Timeout 60000ms exceeded.");
+    // Any other failure to start: no "within a minute", no exception text.
+    expect(browserDidNotStart(new Error("spawn ENOENT /usr/bin/chromium"))).toBe(
+      "the browser did not start; the page was judged from its files",
+    );
   });
 });
