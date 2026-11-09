@@ -16,7 +16,7 @@ import {
 import { stepLine } from "../src/session/runner.ts";
 import { searchSeenOf, webSourceEvidence } from "../src/session/web-sources.ts";
 import { serverDomainOf, webSearchListsResolver } from "../src/wiring/web-ports.ts";
-import { WEB_SEARCH_TASK_CAP, WebSearchMarks } from "../src/wiring/web-search.ts";
+import { WebSearchMarks } from "../src/wiring/web-search.ts";
 import { FakeHeadroom, ProxyableScriptedProvider, seedWorld } from "./context-helpers.ts";
 import { flatPricing, harness, issue, type ScriptReply } from "./helpers.ts";
 

@@ -4993,7 +4993,7 @@ function pricingForProvider(
  * install's release feed names on github.com; null for another feed or none.
  */
 export function pairingGuideUrl(feed: UpdateConfig["feed"]): string | null {
-  if (!feed || feed.kind !== "github" || feed.apiBase) return null;
+  if (feed?.kind !== "github" || feed.apiBase) return null;
   return `https://github.com/${encodeURIComponent(feed.owner)}/${encodeURIComponent(feed.repo)}/blob/HEAD/docs/setup-guide.md#what-to-set-up-first-the-shared-state-service`;
 }
 

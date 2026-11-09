@@ -721,7 +721,7 @@ describe("leftovers7-tailrun, wave 13: the Start check reads, and asks the run's
     const offered: string[][] = [];
     const sdkQuery: QueryLike = ({ options }) => {
       sdkCalls++;
-      offered.push(((options ?? {}).allowedTools as string[] | undefined) ?? []);
+      offered.push((options?.allowedTools as string[] | undefined) ?? []);
       return (async function* () {
         yield { type: "system", subtype: "init", session_id: "cc", tools: [] };
         yield {

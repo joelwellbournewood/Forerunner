@@ -1285,7 +1285,7 @@ export function cutOffNote(maxOut: number, where: string, kept: boolean): string
  */
 function appendText(messages: ChatMessage[], text: string): void {
   const last = messages.at(-1);
-  if (!last || last.role !== "user") {
+  if (last?.role !== "user") {
     messages.push({ role: "user", content: [{ type: "text", text }] });
     return;
   }
