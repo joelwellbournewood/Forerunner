@@ -382,6 +382,18 @@ export function criticVerdict(
   };
 }
 
+/** Where flagged content came from, as the notification's title names it (P7-22). */
+const SOURCE_WORDS: Readonly<Record<string, string>> = {
+  web_page: "a web page",
+  email: "an email",
+  repo_file: "a repository file",
+  issue_comment: "an issue comment",
+  agent_output: "an agent's answer",
+  tool_output: "a tool's result",
+  attachment: "an attachment",
+  voice_transcript: "a voice transcript",
+};
+
 /**
  * The report's summary for a notification body: where the content came from and how many
  * instruction-like passages the scan found, never the passages themselves (ADR 0047: a
@@ -395,6 +407,9 @@ export function criticVerdict(
  */
 export function summarizeInjection(report: InjectionReport, origin?: string): string {
   const total = report.matches.length;
+  // A run's flag names the tool that read it ("email_read", "web_fetch"): no words of the
+  // person's either (P7-22), so the kind of content stands for it ("from an email").
+  if (!origin || /^[a-z][a-z0-9_]*$/i.test(origin)) origin = SOURCE_WORDS[report.source];
   const action = "Open the session to read them.";
   const build = (from: string | undefined) =>
     `Ignored ${total} ${total === 1 ? "passage" : "passages"}${from ? ` from ${from}` : ""} that read like instructions. ${action}`;
@@ -405,18 +420,6 @@ export function summarizeInjection(report: InjectionReport, origin?: string): st
   const text = build(short);
   return text.length <= NOTIFICATION_BODY_MAX ? text : cut(build(undefined), NOTIFICATION_BODY_MAX);
 }
-
-/** Where flagged content came from, as the notification's title names it (P7-22). */
-const SOURCE_WORDS: Readonly<Record<string, string>> = {
-  web_page: "a web page",
-  email: "an email",
-  repo_file: "a repository file",
-  issue_comment: "an issue comment",
-  agent_output: "an agent's answer",
-  tool_output: "a tool's result",
-  attachment: "an attachment",
-  voice_transcript: "a voice transcript",
-};
 
 /**
  * Prompt injection seen and ignored (scenario 6): always urgent, the human is told where and

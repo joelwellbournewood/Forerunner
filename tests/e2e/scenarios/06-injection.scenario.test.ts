@@ -405,16 +405,19 @@ describe("scenario 6: injection", () => {
       expect(r).toMatchObject({ urgency: "urgent", outcome: "delivered" });
       expect(r.notification.sessionId).toBe(result.sessionId);
       expect(r.notification.projectId).toBe(w.project.id);
-      // ADR 0047's facts (the count, where from, the rules that fired with their counts), in
-      // one line within 140 characters (design §5.1, phase E #80); never the passages.
-      expect(r.notification.body).toMatch(/^Ignored \d+ passages? from \S+ \(/);
-      expect(r.notification.body).toMatch(/\bignore_previous\b/);
-      expect(r.notification.body).toMatch(/\bexfiltrate\b/);
+      // ADR 0047's facts (the count and where from) in one line within 140 characters (design
+      // §5.1, phase E #80); never the passages. The rules that fired are no words of the
+      // person's (P7-22, polish-words; ADR 0047 amended 2026-11-09): they stay in the audit row
+      // and the session log; nor is the tool's name ("email_read").
+      expect(r.notification.body).toMatch(
+        /^Ignored \d+ passages? from (a web page|an email) that read like instructions\. Open the session to read them\.$/,
+      );
+      expect(r.notification.body).not.toMatch(/ignore_previous|exfiltrate|_read|web_fetch/);
       expect(r.notification.body.length).toBeLessThanOrEqual(140);
     }
     expect(records.map((r) => r.notification.title).sort()).toEqual([
-      "Instructions found in email content were ignored",
-      "Instructions found in web_page content were ignored",
+      "Instructions in a web page were ignored",
+      "Instructions in an email were ignored",
     ]);
     const sessionEvents = await w.eventsOf(result.sessionId);
     const notified = sessionEvents.filter(

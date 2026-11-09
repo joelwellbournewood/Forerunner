@@ -4562,12 +4562,12 @@ ignored, nothing was refused; the session, run, agent, human, the tool and sourc
 `input_summary`, the passage count, rules and score in `result_summary`) and one urgent
 notification through `notifications.injectionFlagged` with the run's session and project.
 The producer's title names the source and its body (`summarizeInjection`) the number of
-passages, the origin and the rules that fired (a count beside a rule that fired more than
-once), never the passages: they are in the tool call's own audit row and the session log the
+passages and where from, never the passages: they are in the tool call's own audit row and the session log the
 notification links to. The body is one line within 140 characters ("Ignored 4 passages from
-email_read (approval_bypass, exfiltrate, ignore_previous, new_identity). Open the session to
-read them."): a long origin is shortened to its host first, then the rule list ends in "and 2
-more". Before (phase E #80) it was "Content from … (web_page) contained 4 instruction-like
+an email that read like instructions. Open the session to read them."): a long origin is
+shortened to its host, and a run's origin, the tool that read it ("email_read"), is said as the
+kind of content; the rules that fired stay in the audit row and the session log (P7-22,
+polish-words; ADR 0047 amended 2026-11-09). Before (phase E #80) it was "Content from … (web_page) contained 4 instruction-like
 passage(s). They were ignored:", one line per rule and the score, up to 1000 characters.
 Failures to notify are logged, never fail the run. The Reviews tab's finding words are read
 like its summaries (`findingView`: plurals as the number says, no ids), so the session check's

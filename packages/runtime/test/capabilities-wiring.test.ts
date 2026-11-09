@@ -550,9 +550,10 @@ describe("the sandboxed browser and agent email wired into the daemon", () => {
       expect(r.notification.sessionId).toBe(session.id);
       expect(r.notification.projectId).toBe(projectId);
       // ADR 0047's facts in one line within 140 characters (design §5.1, phase E #80): the
-      // count and where it came from; no rule ids (P7-22, ADR 0047 amended 2026-11-09).
+      // count and where it came from; no rule ids (P7-22, ADR 0047 amended 2026-11-09), and
+      // the kind of content, never the tool that read it ("from browser_read").
       expect(r.notification.body).toMatch(
-        /^Ignored \d+ passages? from \S+ that read like instructions\. Open the session to read them\.$/,
+        /^Ignored \d+ passages? from (a web page|an email) that read like instructions\. Open the session to read them\.$/,
       );
       expect(r.notification.body.length).toBeLessThanOrEqual(140);
       expect(r.notification.body).not.toContain(HIDDEN_MARKER);
