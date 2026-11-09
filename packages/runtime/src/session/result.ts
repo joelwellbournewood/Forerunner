@@ -72,8 +72,15 @@ export interface LastSessionOutcome {
 export interface ResultFacts {
   outcome: LastSessionOutcome;
   inReview: NamedTask[];
-  /** Ready tasks left out because they did not fit the work budget, with their estimate. */
-  leftOutForBudget: (NamedTask & { estimateChfMicro: number })[];
+  /**
+   * Ready tasks left out because they did not fit the work budget, with their estimate and why
+   * (D4: `one_large`, a second task larger than the session; `no_room`, too little was left for
+   * a task larger than the session; `after_others` or absent, it did not fit after the others).
+   */
+  leftOutForBudget: (NamedTask & {
+    estimateChfMicro: number;
+    reason?: "after_others" | "one_large" | "no_room";
+  })[];
   /** The session's cap, in CHF (the "this session's CHF 0.90 was used" line). */
   sessionCapChfMicro: number;
   /**

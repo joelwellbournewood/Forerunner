@@ -17,7 +17,7 @@ import {
   type WaitingTask,
 } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
-import { REVIEW_RESUMED_EVENT } from "../daemon/event-audience.ts";
+import { REVIEW_RESUMED_EVENT, TOOK_LARGER_EVENT } from "../daemon/event-audience.ts";
 import { couldNotWords } from "../daemon/event-lines.ts";
 import { cardKindOf, holdsTask, isDockerCard, isPausedByPerson } from "../daemon/task-words.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
@@ -203,14 +203,35 @@ export interface PlanItem {
   rationale?: string;
 }
 
+/**
+ * Why a ready task was left out of a session's plan for its budget (U-040; D4, the owner's
+ * decision of 2026-11-09): `after_others`, it fits the work budget but not after the tasks before
+ * it; `one_large`, its figure alone is more than the work budget and another such task already
+ * takes what is left (one a session); `no_room`, its figure alone is more than the work budget
+ * and the tasks before it leave less than a fifth of it (`OVERSIZED_MIN_ROOM_SHARE`).
+ */
+export type LeftOutReason = "after_others" | "one_large" | "no_room";
+
+/** A planned item left out for the budget, with why (absent on a plan written before D4). */
+export interface LeftOutItem extends PlanItem {
+  reason?: LeftOutReason;
+}
+
 export interface SessionPlan {
   items: PlanItem[];
   estimateUsdMicro: number;
   summary: string;
   /** Planned items that did not fit the work budget (`cutPlanToBudget`, U-040), in order. */
-  leftOutForBudget?: PlanItem[];
-  /** The work budget the plan was cut to, set with `leftOutForBudget`. */
+  leftOutForBudget?: LeftOutItem[];
+  /** The work budget the plan was cut to, set with `leftOutForBudget` or `oversized`. */
   workBudgetUsdMicro?: number;
+  /**
+   * D4 (d1109-oversize-start): the first ready task whose figure alone is more than the work
+   * budget, with that figure. The runner holds it out of the queue and takes it after the work
+   * that fits, with what is left of the work budget (`roomUsdMicro`, set once taken: its item in
+   * `items` then carries that room as its planned figure).
+   */
+  oversized?: PlanItem & { roomUsdMicro?: number };
 }
 
 export interface PlannerContext {
@@ -1217,7 +1238,11 @@ export class SessionRunner {
         budget,
         keptWork,
       });
-      plan = cutPlanToBudget(plan, Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare)));
+      /** What the session's tasks may spend: its cap less the review reserve. */
+      const workBudgetUsdMicro = Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare));
+      // D4: the first task whose figure alone is more than the work budget is held apart
+      // (`plan.oversized`) and taken after the work that fits, with what is left.
+      plan = cutPlanToBudget(plan, workBudgetUsdMicro);
       /** Every task row the session planned, by id (the start's ready tasks, then each re-plan). */
       const knownTasks = new Map<string, TaskRow>(readyTasks.map((t) => [t.id, t]));
       // What cannot run is named, never silent (U-040): the ready tasks that wait on a task not
@@ -1248,7 +1273,19 @@ export class SessionRunner {
                 taskId: i.taskId,
                 title: i.title,
                 estimateUsdMicro: i.estimateUsdMicro,
+                ...(i.reason ? { reason: i.reason } : {}),
               })),
+              workBudgetUsdMicro: plan.workBudgetUsdMicro,
+            }
+          : {}),
+        // D4: the task larger than the work budget the session takes after the work that fits.
+        ...(plan.oversized
+          ? {
+              oversized: {
+                taskId: plan.oversized.taskId,
+                title: plan.oversized.title,
+                estimateUsdMicro: plan.oversized.estimateUsdMicro,
+              },
               workBudgetUsdMicro: plan.workBudgetUsdMicro,
             }
           : {}),
@@ -1292,11 +1329,19 @@ export class SessionRunner {
           });
         }
       }
+      /**
+       * What this session plans to run (D4): the items that fit, then the task larger than the
+       * work budget it takes with what is left. At levels 0 and 1 the person approves both.
+       */
+      const planned = (p: SessionPlan): PlanItem[] =>
+        p.oversized && !p.items.some((i) => i.taskId === p.oversized?.taskId)
+          ? [...p.items, p.oversized]
+          : p.items;
       try {
         await this.deps.onPlanned?.({
           sessionId: session.id,
           projectId: project?.id ?? null,
-          plan,
+          plan: { ...plan, items: planned(plan) },
         });
       } catch (e) {
         this.logger.warn("plan hook failed", { sessionId: session.id, error: errorMessage(e) });
@@ -1309,11 +1354,16 @@ export class SessionRunner {
       // since the human looked (a task added, removed or reordered) is asked again. An empty
       // plan (no task ready, or the approved tasks were done meanwhile) asks nothing: there is
       // nothing to approve, and the session ends `completed` having run nothing.
-      const approval = planApprovalOf(opts.planApproved, plan.items);
-      if ((autonomy === 0 || autonomy === 1) && approval !== "approved" && plan.items.length > 0) {
+      const approvalItems = planned(plan);
+      const approval = planApprovalOf(opts.planApproved, approvalItems);
+      if (
+        (autonomy === 0 || autonomy === 1) &&
+        approval !== "approved" &&
+        approvalItems.length > 0
+      ) {
         const changed = approval === "changed";
         const approvedPlanId = typeof opts.planApproved === "string" ? opts.planApproved : null;
-        const planId = planIdOf(session.id, plan.items);
+        const planId = planIdOf(session.id, approvalItems);
         const request = await store.humanRequest.insert({
           human_id: agent.owner_human_id,
           project_id: project?.id ?? null,
@@ -1329,7 +1379,7 @@ export class SessionRunner {
                 ]
               : []),
           ].join(" "),
-          steps: plan.items.map(
+          steps: approvalItems.map(
             (i) =>
               `${i.title} (${i.specialist}, about ${formatChf(
                 usdToChfMicro(
@@ -1354,7 +1404,7 @@ export class SessionRunner {
         await emit("session.plan_filed", {
           requestId: request.id,
           planId,
-          items: plan.items.length,
+          items: approvalItems.length,
           changed,
           approvedPlanId,
         });
@@ -1364,11 +1414,12 @@ export class SessionRunner {
           await emit("session.plan_approved", {
             planId: opts.planApproved,
             approvedSessionId: parsePlanId(opts.planApproved)?.sessionId ?? null,
-            items: plan.items.length,
+            items: approvalItems.length,
           });
         }
         // Nothing runnable means nothing is consumed, reviewed or graded (design §4.8).
-        if (plan.items.length === 0) stopReason = NOTHING_RUNNABLE;
+        // D4: a task larger than the work budget runs too, after the work that fits.
+        if (approvalItems.length === 0) stopReason = NOTHING_RUNNABLE;
         // 3. Execute, claim-before-work, inbox re-check between tasks. The session keeps going
         // (design §4.2): once the plan is run it looks again and takes the tasks that became
         // ready meanwhile (their dependencies finished), the ones the critic sent back (the next
@@ -1388,7 +1439,66 @@ export class SessionRunner {
         /** Tasks not to take again in this session (a peer holds it, the sandbox, a limit). */
         const notAgain = new Set<string>();
         /** At levels 0 and 1 only what the person approved runs (its retries included). */
-        const onlyThese = autonomy < 2 ? new Set(plan.items.map((i) => i.taskId)) : null;
+        const onlyThese = autonomy < 2 ? new Set(approvalItems.map((i) => i.taskId)) : null;
+        /**
+         * D4: the task larger than the work budget, held out of the queue until the work that
+         * fits is done and a re-plan adds nothing (`takeHeld`); one a session. `takenId`: the
+         * one the session took (it may come back ready, sent back by the critic or a retry, and
+         * is then held again).
+         */
+        let held: PlanItem | null = plan.oversized ?? null;
+        let takenId: string | null = null;
+        /**
+         * Takes the held task with what is left of the work budget (D4), when that is at least a
+         * fifth of it and the session still takes new work; else it is left out (`no_room`).
+         * Its planned figure becomes that room: the plan row and the session review measure what
+         * it was allowed to spend. The run itself is capped as every run is (its own budget left,
+         * else its specialist's limit per run, the work budget left, the hooks' outer caps).
+         */
+        const takeHeld = async (): Promise<PlanItem | null> => {
+          const item = held;
+          if (!item) return null;
+          held = null;
+          const room = budget.workRemainingUsdMicro();
+          const current = plan as SessionPlan;
+          if (budget.noNewWork || room < oversizedMinRoomUsdMicro(workBudgetUsdMicro)) {
+            notAgain.add(item.taskId);
+            plan = {
+              ...current,
+              leftOutForBudget: [
+                ...(current.leftOutForBudget ?? []).filter((l) => l.taskId !== item.taskId),
+                { ...item, reason: "no_room" },
+              ],
+              workBudgetUsdMicro,
+            };
+            return null;
+          }
+          takenId = item.taskId;
+          const taken: PlanItem = { ...item, estimateUsdMicro: room };
+          plan = {
+            ...current,
+            items: [...current.items, taken],
+            estimateUsdMicro: current.estimateUsdMicro + room,
+            oversized: { ...item, roomUsdMicro: room },
+            workBudgetUsdMicro,
+          };
+          const fresh = await store.session.mustGet(session.id);
+          session = await store.session.setPlan(
+            fresh.id,
+            fresh.version,
+            plan as never,
+            `took "${item.title}", larger than this session's work budget, with what is left`,
+            { agentId: agent.id },
+          );
+          await emit(TOOK_LARGER_EVENT, {
+            taskId: item.taskId,
+            title: item.title,
+            estimateUsdMicro: item.estimateUsdMicro,
+            roomUsdMicro: room,
+            workBudgetUsdMicro,
+          });
+          return taken;
+        };
         /** Tasks whose run failed with a transient error and were tried again at once. */
         const transientRetried = new Set<string>();
         /** How often a credential stopped each task and the next one took over (U-078). */
@@ -1400,6 +1510,8 @@ export class SessionRunner {
             (t) =>
               !notAgain.has(t.id) &&
               !queued.has(t.id) &&
+              // D4: the held task waits for the work that fits; it is not planned again.
+              t.id !== held?.taskId &&
               (runsOf.get(t.id) ?? 0) < MAX_RUNS_PER_TASK_IN_SESSION &&
               (!onlyThese || onlyThese.has(t.id)),
           );
@@ -1454,12 +1566,22 @@ export class SessionRunner {
             Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare)) -
               budget.snapshot().sessionSpentUsdMicro,
           );
-          const cut = cutPlanToBudget(next, room);
+          // A task larger than the whole work budget is told apart from one that only does not
+          // fit what is left (D4): the first is held for after the work that fits.
+          const cut = cutPlanToBudget(next, room, workBudgetUsdMicro);
+          const cutLeftOut: LeftOutItem[] = [...(cut.leftOutForBudget ?? [])];
+          if (cut.oversized) {
+            // One a session: the session holds the first; another one waits for the next
+            // session. The one it took, back ready (sent back, tried again), is held again.
+            if (held === null && (takenId === null || takenId === cut.oversized.taskId))
+              held = cut.oversized;
+            else cutLeftOut.push({ ...cut.oversized, reason: "one_large" });
+          }
           const current = plan as SessionPlan;
-          const leftOut = (cut.leftOutForBudget ?? []).filter(
+          const leftOut = cutLeftOut.filter(
             (i) => !(current.leftOutForBudget ?? []).some((l) => l.taskId === i.taskId),
           );
-          for (const i of cut.leftOutForBudget ?? []) notAgain.add(i.taskId);
+          for (const i of cutLeftOut) notAgain.add(i.taskId);
           if (cut.items.length === 0 && leftOut.length === 0) return [];
           plan = {
             ...current,
@@ -1497,11 +1619,19 @@ export class SessionRunner {
           budget.checkWallClock(clock.now());
           if (queue.length === 0) {
             // "Stop after this task" (the pause port marks the row `paused`): nothing more.
-            if (budget.noNewWork || (await store.session.get(session.id))?.status === "paused")
-              break;
-            const more = await replan();
-            if (more.length === 0) break;
-            queue.push(...more);
+            if ((await store.session.get(session.id))?.status === "paused") break;
+            if (!budget.noNewWork) {
+              const more = await replan();
+              if (more.length > 0) {
+                queue.push(...more);
+                continue;
+              }
+            }
+            // D4: the work that fits is done and nothing new is ready: the task larger than the
+            // work budget is taken with what is left (or left out when too little is left).
+            const larger = await takeHeld();
+            if (!larger) break;
+            queue.push(larger);
             continue;
           }
           const item = queue.shift() as PlanItem;
@@ -2736,6 +2866,8 @@ export class SessionRunner {
           id: i.taskId,
           title: i.title,
           estimateChfMicro: usdToChfMicro(Math.max(0, Math.round(i.estimateUsdMicro)), rate),
+          // D4: why it waits (a second task larger than the session, or too little left).
+          ...(i.reason ? { reason: i.reason } : {}),
         })),
       sessionCapChfMicro: usdToChfMicro(opts.budgetCapUsdMicro, rate),
       ...(plan?.workBudgetUsdMicro !== undefined
@@ -3773,31 +3905,76 @@ export function planReason(plan: Pick<SessionPlan, "summary">): string {
 }
 
 /**
+ * The least share of the work budget a task larger than the session is taken with (D4): a fifth,
+ * the share a run keeps to wrap up (`WRAP_UP_SHARE` in `enforcement/budget.ts`), so less room
+ * would be mostly that reserve.
+ */
+export const OVERSIZED_MIN_ROOM_SHARE = 0.2;
+
+/** The least room, in micro-USD, a larger task is taken with in a session of this work budget. */
+export function oversizedMinRoomUsdMicro(workBudgetUsdMicro: number): number {
+  return Math.max(1, Math.ceil(workBudgetUsdMicro * OVERSIZED_MIN_ROOM_SHARE));
+}
+
+/**
  * The plan within the work budget (U-040): items are taken in the planner's order, and one
  * that does not fit what is left is left out while the smaller ones after it still go in
  * (before, the first item that did not fit ended the plan, so one large task emptied it). The
- * items left out are on the plan as `leftOutForBudget`, in order, for the summary to name.
+ * items left out are on the plan as `leftOutForBudget`, in order and with why, for the summary
+ * to name.
+ *
+ * D4 (the owner's decision of 2026-11-09, "it should get a warning, but it should get done
+ * anyway"): a task whose figure alone is more than the work budget (`workBudgetUsdMicro`, the
+ * session's cap less the review reserve) can never fit, so the first one in the planner's order
+ * is returned apart as `oversized`, for the runner to take after the work that fits with what is
+ * left; when the items that fit leave less than a fifth of the work budget it is left out
+ * (`no_room`), and any other such task too (`one_large`: one a session). `roomUsdMicro` is what
+ * the items may take: the work budget at a session's start, what is left of it at a re-plan.
  */
-export function cutPlanToBudget(plan: SessionPlan, workBudgetUsdMicro: number): SessionPlan {
+export function cutPlanToBudget(
+  plan: SessionPlan,
+  roomUsdMicro: number,
+  workBudgetUsdMicro: number = roomUsdMicro,
+): SessionPlan {
   const items: PlanItem[] = [];
-  const leftOut: PlanItem[] = [];
+  const leftOut: { item: LeftOutItem; at: number }[] = [];
+  let larger: { item: PlanItem; at: number } | null = null;
   let total = 0;
-  for (const item of plan.items) {
-    if (total + item.estimateUsdMicro > workBudgetUsdMicro) {
-      leftOut.push(item);
-      continue;
+  plan.items.forEach((item, at) => {
+    if (item.estimateUsdMicro > workBudgetUsdMicro) {
+      if (larger === null) larger = { item, at };
+      else leftOut.push({ item: { ...item, reason: "one_large" }, at });
+      return;
+    }
+    if (total + item.estimateUsdMicro > roomUsdMicro) {
+      leftOut.push({ item: { ...item, reason: "after_others" }, at });
+      return;
     }
     items.push(item);
     total += item.estimateUsdMicro;
+  });
+  let oversized: PlanItem | undefined;
+  const held = larger as { item: PlanItem; at: number } | null;
+  if (held) {
+    if (roomUsdMicro - total >= oversizedMinRoomUsdMicro(workBudgetUsdMicro)) oversized = held.item;
+    else {
+      // The tasks that fit leave too little: no larger task starts in this session.
+      leftOut.push({ item: { ...held.item, reason: "no_room" }, at: held.at });
+      for (const l of leftOut) if (l.item.reason === "one_large") l.item.reason = "no_room";
+    }
   }
+  leftOut.sort((a, b) => a.at - b.at);
+  const left = leftOut.map((l) => l.item);
   return {
     items,
     estimateUsdMicro: total,
     summary:
-      leftOut.length > 0
-        ? `${plan.summary} (${leftOut.length} ${leftOut.length === 1 ? "item" : "items"} cut to fit the budget)`
+      left.length > 0
+        ? `${plan.summary} (${left.length} ${left.length === 1 ? "item" : "items"} cut to fit the budget)`
         : plan.summary,
-    ...(leftOut.length > 0 ? { leftOutForBudget: leftOut, workBudgetUsdMicro } : {}),
+    ...(left.length > 0 || oversized ? { workBudgetUsdMicro } : {}),
+    ...(left.length > 0 ? { leftOutForBudget: left } : {}),
+    ...(oversized ? { oversized } : {}),
   };
 }
 

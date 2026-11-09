@@ -21,6 +21,13 @@ export type EventAudience = "person" | "detail";
  */
 export const REVIEW_RESUMED_EVENT = "critic.review_resumed";
 
+/**
+ * D4 (d1109-oversize-start): the session took the task larger than its work budget after the
+ * work that fits, with what was left ('Took "Build the shop", larger than this session's work
+ * budget, with about CHF 2.80 left.'). Once, when taken.
+ */
+export const TOOK_LARGER_EVENT = "session.took_larger";
+
 /** The types a person reads by default; every other type is a detail. */
 export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "session.started",
@@ -31,6 +38,7 @@ export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "session.error",
   "session.ended",
   "session.sandbox_waiting",
+  TOOK_LARGER_EVENT,
   "task.started",
   "task.files",
   "task.finished",
