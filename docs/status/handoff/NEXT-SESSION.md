@@ -15,13 +15,14 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
-## Status at 2026-11-09 20:20 UTC (wave 15 merged; run C step 1 running; paused until 2026-11-15)
+## Status at 2026-11-09 23:45 UTC (wave 15 and run C step 1 merged; paused until 2026-11-15)
 
 **Paused by the owner's request** ("let some things finish if they are ongoing, but then stop
 and schedule to continue next weekly reset on sunday morning"): run C's first sub-run (C1) and
-the spec revision for the owner's latest answers finish tonight; nothing new starts. A
+the spec revision for the owner's latest answers finished tonight; nothing new starts. A
 scheduled message resumes this session on Sunday 2026-11-15 at 05:30 UTC (after the weekly
-reset), with the steps in "Roadmap from 2026-11-15" below.
+reset), with the steps in "Roadmap from 2026-11-15" below. **Head: 53b7bab** (C1 merged);
+CI and the Desktop app workflow were running on it at the pause: check them first.
 
 The weekly limit reset on 2026-11-08 at 05:00 UTC and the work resumed then, on the included
 plan (no paid extra usage). Session `claude/nifty-knuth-f9udt0` carries on; its scheduled
@@ -195,8 +196,19 @@ check-ins pick the work up if a run stops.
   C3 starts-engine, chat-depth; C4 onerepo-join, selftasks-run; C5 cred-engine, run-visible;
   C6 cred-screens, selftasks-chat (waves 17 to 22 for ports). ADRs 0114 to 0120, U-089 to
   U-096. About 30 to 42 hours of agent work, then live check 4 (cap USD 6). The areas and rules
-  are in `phaseE.json`. **C1 is running** (run `wf_15a781ce-056`, started 19:00 UTC on
-  7d6b34a: chat-guard, oversize-start, sessions).
+  are in `phaseE.json` (C2 to C6 already revised for the answers below). **C1 merged and
+  pushed at 53b7bab** (run `wf_15a781ce-056`, 4.5 hours): d1109-chat-guard (what chat reads from
+  any record is data, wrapped and scanned; a change chat is asked for after reading a record is
+  read back first, Stop all too; records are a channel of the injection suite; no chat turn
+  waits on GitHub), d1109-oversize-start (a task larger than one session starts with a
+  warning, never refused), d1109-sessions (every project lists its sessions, one CHF figure
+  each). Two areas needed a fix-up after review (3 blocking problems, all fixed); unit 5,225,
+  UI 1,120, integration, e2e, the live harness, injection 65 of 65, Playwright 35 and the bench
+  smoke 25 of 25 green; 33 signed commits. Reports: `runC-C1-*.json`. Left by the reviews, for
+  C2 and later: the chat read-backs are counted in the Inbox badge; `resolveProject` and
+  POST /chat accept another person's project (collaboration); the held task's 'Took' line can be
+  written before its claim; the budget card's Continue still offers the whole estimate (C2's
+  oversize-pause); a few session-list words (`runC-C1-merge.json` problems_left).
 - **The owner's answers to the ten questions (2026-11-09 evening)**, recorded in
   `owner-decisions-2026-11-09.md`: (1) every person runs their own Forerunner with their own
   API key and subscription, and two people on one repository work in ONE project through
@@ -209,7 +221,8 @@ check-ins pick the work up if a run stops.
   suggests changes to tasks the person wrote; (8) one credential setting for all projects; (9)
   with "start by itself" on, pull request comments and CI results start nothing; (10) the five
   old sandbox pull requests were closed. A revision of run C's C2 to C6 specs and a wave 8
-  re-plan brief (`wave8-replan-brief.md`) are being made from them (run `wf_bcf2e096-ae5`).
+  re-plan brief (`wave8-replan-brief.md`) were made from them (run `wf_bcf2e096-ae5`, checked
+  adversarially): 10 owner questions stay open, each with a default built meanwhile.
 - **The plan files are on GitHub:** branch `claude/nifty-knuth-f9udt0-backup/plan-files`
   (refreshed after wave 13 merged). It holds the wave 7 and 8 specs, the owner's decisions,
   the leftovers and their triage, each wave's results, the collaboration audit, the workflow
@@ -223,11 +236,11 @@ check-ins pick the work up if a run stops.
   branches".
 - **Roadmap from 2026-11-15** (in order; each step merged with CI and the Desktop app workflow
   green on Windows and Linux before the next):
-  1. Check tonight's results: C1's merge, the answers revision (put its C2 to C6 areas into
-     `phaseE.json`), live check 3 if it ran (triage its findings into run C's later sub-runs or
-     a small fix wave).
+  1. Check CI and the Desktop app workflow on 53b7bab (or the docs commit after it) and live
+     check 3 if it ran (triage its findings into run C's later sub-runs or a small fix wave).
+     The revised C2 to C6 areas are already in `phaseE.json`.
   2. Live check 3 on 7d6b34a if it has not run (cap USD 3).
-  3. Run C, C2 to C6 (about 5 to 7 hours each): C2 onerepo-link, chat-recall, oversize-pause
+  3. Run C, C2 to C6 (about 5 to 7 hours each; C2's base is 53b7bab or later): C2 onerepo-link, chat-recall, oversize-pause
      (with the hold removed); C3 starts-engine, chat-depth; C4 onerepo-join, selftasks-run;
      C5 cred-engine, run-visible; C6 cred-screens, selftasks-chat. Args from
      `workflow-scripts/build-runC-args.cjs`.
