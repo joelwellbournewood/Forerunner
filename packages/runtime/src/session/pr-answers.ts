@@ -1,7 +1,6 @@
 import {
   isRebaseConflictRequest,
   REBASE_CONFLICT_KEY,
-  REDO_FROM_BASE_FIELD,
   rebaseConflictAnswer,
 } from "@forerunner/capabilities";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
