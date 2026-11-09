@@ -80,9 +80,15 @@ export function mergesAfterLabel(after: readonly number[]): string {
  */
 export const OWED_FOLDER_CHANGES = "owed_folder_changes";
 
-/** TM-4: the one sentence of that wait, with the way out. Polish owns the words. */
+/**
+ * TM-4: the one sentence of that wait, with the ways out the code keeps: the changes taken out
+ * of the folder (the next check rebuilds the branch), or a redo (its run sets them aside and
+ * does the task again without them). Never "commit them": the rebuild starts from the branch as
+ * GitHub has it, so a commit made in the folder would be on no branch afterwards (the review of
+ * wave 13). Polish owns the words.
+ */
 export function owedFolderSentence(pr: number): string {
-  return `#${pr} waits for the changes left in its task's folder: commit or remove them, or redo the task.`;
+  return `#${pr} waits for changes left in its task's folder: take them out or redo the task.`;
 }
 
 /** TM-4: the Tasks row's label for that wait (with `owedFolderSentence` as the line under it). */

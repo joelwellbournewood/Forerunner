@@ -383,9 +383,14 @@ This closes the known gaps of the two amendments above ('dependent-branches' and
 5. **A merge that waits for the task folder's changes says why.** A rebuild never sweeps in
    changes nobody committed, so a task folder holding some keeps its rebuild owed and the merge
    waits (R-lock is unchanged). The merge step now writes that wait on the record when it meets
-   it, and the Overview's row and the Tasks row say it in one sentence with the way out (commit
-   or remove the changes, or redo the task), instead of "Merging…" with no reason; the folder's
-   warning is logged once per such state instead of at every poll.
+   it, and the Overview's row and the Tasks row say it in one sentence with the ways out (take
+   the changes out of the folder, or redo the task), instead of "Merging…" with no reason; the
+   folder's warning is logged once per such state instead of at every poll. The sentence offers
+   only ways out the code keeps: taken out, the next check rebuilds the branch and the record
+   says what came of it; a redo sets the changes aside and does the task again, and its record
+   waits for the person's Merge again. It does not offer "commit them" (its first wording did,
+   and the review of this amendment showed the commit dropped): the rebuild starts from the
+   branch as GitHub has it, so a commit made in the folder would be on no branch afterwards.
 6. **A conflict that goes away says again what was said before.** The conflict notice keeps what
    the record said before it (its outcome and sentence, and the head it was given on) on its
    card, and the words of a card it took over. When GitHub says the pull request merges cleanly

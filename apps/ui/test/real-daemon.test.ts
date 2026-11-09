@@ -11038,7 +11038,7 @@ describe("leftovers7-tailmerge, wave 13", () => {
       async () => JSON.stringify(await rt.store.mergeRecord.forTask(b.task.id)),
       30_000,
     );
-    const sentence = `#${b.pr.number} waits for the changes left in its task's folder: commit or remove them, or redo the task.`;
+    const sentence = `#${b.pr.number} waits for changes left in its task's folder: take them out or redo the task.`;
     // Before: the row read "Merging…" (state queued) with no reason, and the Tasks row
     // "Accepted · merging", for as long as the folder held the change.
     const row = (await client.projectPullRequests(project.id)).waiting.find(

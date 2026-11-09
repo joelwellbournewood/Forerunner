@@ -345,10 +345,14 @@ never repeats work that is already in the default branch:
 - While #8's task folder is busy (a run, a merge under way, a change nobody committed), its
   rebuild waits and is tried again at every check (about a minute), also after Forerunner
   restarts; until it ran, nothing merges #8, not even your Merge (the row waits). When what
-  holds it is a change nobody committed in the task's folder, the row says so: "#8 waits for the
-  changes left in its task's folder: commit or remove them, or redo the task." (its task row:
-  "Accepted · merge waits for you"); once they are put away, the rebuild runs at the next check
-  and your Merge goes on. In a chain
+  holds it is a change nobody committed in the task's folder, the row says so: "#8 waits for
+  changes left in its task's folder: take them out or redo the task." (its task row: "Accepted ·
+  merge waits for you"). Take them out (move a file you want to keep somewhere else, put a
+  changed file back as it was): the rebuild runs at the next check and the row then says what
+  came of it (rebuilt without a closed pull request, it waits for your Merge again). Or press
+  **Redo**: the task is done again without them, reviewed again, and waits for your Merge. Do
+  not commit them in that folder: the rebuild starts from GitHub's copy of the branch, so the
+  commit would be dropped. In a chain
   (#8 builds on #6, which builds on #4), #8 follows #6 once #6 is rebuilt.
 
 **A pull request that no longer merges cleanly.** When another merge changes the same lines as a

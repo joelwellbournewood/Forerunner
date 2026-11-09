@@ -3273,9 +3273,15 @@ committed, so a folder holding some keeps the rebuild owed; the PR executor logs
 such state (`heldByChanges`), not at every poll. When a merge reaches the owed record (the
 person's Merge, the automatic mode's), `ReviewedPrMerge.sayOwedWait` looks at the folder (no
 wait for its lock: a busy one changes nothing) and writes `last_outcome` `owed_folder_changes`
-(`OWED_FOLDER_CHANGES`, `owedFolderSentence` in `loop/merge-mode.ts`: "#8 waits for the changes
-left in its task's folder: commit or remove them, or redo the task.") on the record, keeping its
-state; a clean folder takes the words back, and so does `settleOwed` once the rebuild ran.
+(`OWED_FOLDER_CHANGES`, `owedFolderSentence` in `loop/merge-mode.ts`: "#8 waits for changes left
+in its task's folder: take them out or redo the task.") on the record, keeping its state; a clean
+folder takes the words back, and so does `settleOwed` once the rebuild ran. The sentence offers
+only ways out the code keeps (the review of wave 13): the changes taken out of the folder (the
+next check rebuilds the branch and the record says what came of it: a rebuild without a closed
+dependency waits for the person again), or a redo (its run sets them aside, as a cut-short
+run's, and does the task again; the critic reviews it and the record waits for the person's
+Merge again). Never "commit them": the rebuild starts from the branch as GitHub has it
+(`rebuildIn`'s `createBranch(branch, origin/<branch>)`), so such a commit would end on no branch.
 `owedMergeWait(record)` reads it for the Overview's row (`pull-requests.ts` `owedWaitOf`:
 `waiting_checks` with the sentence, no Merge, so the row reads again when the project changes)
 and the Tasks row (`task-words.ts` `owedFolderWait`: "Accepted · merge waits for you" with the

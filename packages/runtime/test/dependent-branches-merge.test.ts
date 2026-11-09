@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { GitHubHost, PrTaskExecutor } from "@forerunner/capabilities";
@@ -1246,7 +1246,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
       await prs.merge(project, prB, m.w.human);
       await prs.idle();
       expect((await m.pr(b.id)).merged).toBe(false);
-      const sentence = `#${prB} waits for the changes left in its task's folder: commit or remove them, or redo the task.`;
+      const sentence = `#${prB} waits for changes left in its task's folder: take them out or redo the task.`;
       // Before: the row read "Merging…" (state queued) and the Tasks row "Accepted · merging",
       // with no reason, until the folder was cleaned.
       const { waiting, row } = await screens(m, b.id);
@@ -1383,5 +1383,84 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     const { waiting, row } = await screens(m, a.id);
     expect(waiting.map((w) => w.number)).not.toContain(pr.number);
     expect(row.label).toBe(`Failed: ${sentence}`);
+  });
+
+  /**
+   * TM-4's wait, as the person meets it: A <- B, a file left in B's folder, A closed (B owes a
+   * rebuild), the person's Merge on B. The row's sentence offers only ways out the code keeps
+   * (the review of wave 13: "commit them" was offered, and the rebuild then reset the branch to
+   * GitHub's, so the person's commit was on no branch and the file gone from the folder).
+   */
+  async function mergeWaitingForFolder() {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    const folder = join(m.worktreeRoot, safeSegment(b.id));
+    writeFileSync(join(folder, "notes.txt"), "my notes\n");
+    await m.close(a.id);
+    await m.poll();
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const prs = new ProjectPullRequests({ store: m.w.store, host: m.github, merge: m.merge });
+    await prs.merge(project, prB, m.w.human);
+    await prs.idle();
+    const sentence = `#${prB} waits for changes left in its task's folder: take them out or redo the task.`;
+    const { waiting, row } = await screens(m, b.id);
+    expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({
+      canMerge: false,
+      sentence,
+    });
+    expect(row).toMatchObject({ label: "Accepted · merge waits for you", detail: sentence });
+    return { m, a, b, prA, prB, folder };
+  }
+
+  it("the folder's wait, way out 'take them out': the person moves the file out of the folder; the next check rebuilds the branch, the file is where the person put it, and the row says what came of the rebuild with its Merge (TM-4, review fix-up)", async () => {
+    const { m, b, prA, prB, folder } = await mergeWaitingForFolder();
+    const kept = join(mkdtempSync(join(tmpdir(), "fr-mine-")), "notes.txt");
+    roots.push(join(kept, ".."));
+    renameSync(join(folder, "notes.txt"), kept);
+    await m.poll();
+    // The person's file is theirs, as they left it, and never went to GitHub.
+    expect(readFileSync(kept, "utf8")).toBe("my notes\n");
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+    // B was rebuilt without A: it waits for the person again, with the rebuild's warning and
+    // Merge (before, the user guide said "your Merge goes on"; nothing merges it unasked).
+    const warning = `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it before you merge it, or send it back.`;
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "rebuilt_without",
+      rebuild_owed_for: null,
+      sentence: warning,
+    });
+    const { waiting } = await screens(m, b.id);
+    expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({
+      canMerge: true,
+      sentence: warning,
+    });
+    expect((await m.pr(b.id)).merged).toBe(false);
+  });
+
+  it("the folder's wait, way out 'redo the task': the redo does the task again without the folder's changes, the critic reviews it, and the row waits for the person's Merge again; nothing merges unasked (TM-4, review fix-up)", async () => {
+    const { m, b, prB, folder } = await mergeWaitingForFolder();
+    const done = await m.w.store.task.mustGet(b.id);
+    await m.w.store.task.reopen(b.id, done.version, "ready", "Redo asked by you");
+    await m.w.store.task.patch(b.id, { attempt: done.attempt + 1 });
+    await m.session();
+    await m.poll();
+    expect((await m.w.store.task.mustGet(b.id)).status).toBe("done");
+    // The redo set the folder's changes aside: the folder is clean and the pull request holds
+    // only the task's own file, rebuilt without the closed dependency.
+    expect(existsSync(join(folder, "notes.txt"))).toBe(false);
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+    // The person's earlier Merge is not carried over to the redone work: it waits for them.
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      rebuild_owed_for: null,
+      sentence: `#${prB} waits for you to merge it: press Merge on the Overview.`,
+    });
+    const { waiting, row } = await screens(m, b.id);
+    expect(waiting.find((w) => w.number === prB)?.merge).toMatchObject({ canMerge: true });
+    expect(row.label).toBe("Accepted · waiting for you to merge");
+    expect((await m.pr(b.id)).merged).toBe(false);
   });
 });
