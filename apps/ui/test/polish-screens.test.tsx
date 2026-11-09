@@ -517,6 +517,26 @@ describe("setup opens on the step not done (later #28, P-welcome)", () => {
     await waitFor(async () => expect(await current()).toBe("setup-step-Claude"));
   });
 
+  it("there, the Claude step says the saved key was refused, never '✓ An API key is saved.'", async () => {
+    // Review of later #28: "Anthropic refused your API key" → "Save a new key" opened this step,
+    // which said "✓ An API key is saved." above "Replace the API key".
+    const harness = createHarness({
+      ...setupWith({ github: true, anthropicApiKey: true }),
+      billingOrder: { sources: [{ kind: "api_key", blocked: "refused" }] },
+    } as Parameters<typeof createHarness>[0]);
+    renderApp("/setup", harness);
+    expect(await screen.findByTestId("setup-refused")).toHaveTextContent(
+      "Anthropic refused the saved API key. Paste a new one below.",
+    );
+    expect(screen.queryByTestId("setup-saved")).toBeNull();
+    // A new key that passes its check replaces it: the step then says it is saved.
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Replace the API key"), "sk-ant-api03-new-key");
+    await user.click(screen.getByTestId("setup-anthropic-check"));
+    expect(await screen.findByTestId("setup-saved")).toHaveTextContent("An API key is saved.");
+    expect(screen.queryByTestId("setup-refused")).toBeNull();
+  });
+
   it("a fresh install still opens on Welcome", async () => {
     renderApp(
       "/setup",

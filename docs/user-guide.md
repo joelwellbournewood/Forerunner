@@ -764,7 +764,8 @@ says so ("Until then your tasks go on with your API key, which costs money."). C
 setup and reviews use your other credential either way. No task fails because of
 it, and neither does the plan of a new project: its page says "Planning waits for a new API
 key: save one in Settings." instead of "Planning failed", with no Try again. Save a new key
-with **Save a new key** on the card or on the project page (the setup assistant): the card
+with **Save a new key** on the card or on the project page (the setup assistant, open on its
+Claude step: "Anthropic refused the saved API key. Paste a new one below."): the card
 closes, the mark goes, and the waiting work starts by itself: the tasks run, and the plan is
 drafted and waits in the Inbox for your approval. At a usage limit a plan waits the same way
 ("Planning waits until 15:40 (your subscription's limit) and starts by itself.") and is

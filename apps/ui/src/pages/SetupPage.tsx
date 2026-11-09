@@ -225,6 +225,21 @@ function SecretBox({
   );
 }
 
+/**
+ * A saved credential Anthropic refused (review of later #28): "Save a new key" on the refused
+ * card opens the Claude step, which said "✓ An API key is saved." above "Replace the API key".
+ */
+function Refused({ children }: { children: ReactNode }) {
+  return (
+    <p
+      data-testid="setup-refused"
+      className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+    >
+      {children}
+    </p>
+  );
+}
+
 function Saved({ children }: { children: ReactNode }) {
   return (
     <p
@@ -273,6 +288,9 @@ export function SetupPage() {
   const [name, setName] = useState("");
   const [timezone, setTimezone] = useState("");
   const [claudeMode, setClaudeMode] = useState<"key" | "subscription">("key");
+  // Which saved Claude credentials Anthropic refused (from the credential order): saved, but
+  // their step is not done.
+  const [refused, setRefused] = useState({ apiKey: false, subscription: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SetupCheckView | null>(null);
@@ -309,10 +327,20 @@ export function SetupPage() {
           void client
             .billingOrder()
             .then(
-              (o) => o.sources.some((x) => x.blocked === "refused" && x.kind !== "plan_credits"),
-              () => false,
+              (o) => {
+                const was = (kind: string) =>
+                  o.sources.some((x) => x.blocked === "refused" && x.kind === kind);
+                return { apiKey: was("api_key"), subscription: was("subscription") };
+              },
+              () => ({ apiKey: false, subscription: false }),
             )
-            .then((refused) => setStep(firstStep(s, refused)));
+            .then((r) => {
+              setRefused(r);
+              if (r.subscription && !r.apiKey && !s.credentials.anthropicApiKey) {
+                setClaudeMode("subscription");
+              }
+              setStep(firstStep(s, r.apiKey || r.subscription));
+            });
         }
       },
       (e) =>
@@ -350,6 +378,9 @@ export function SetupPage() {
     if (r) {
       setResult(r);
       setStatus(r.status);
+      // A new credential that passed its check replaces the refused one.
+      if (r.ok && r.kind === "api_key") setRefused((x) => ({ ...x, apiKey: false }));
+      if (r.ok && r.kind === "subscription") setRefused((x) => ({ ...x, subscription: false }));
     }
   };
 
@@ -496,7 +527,13 @@ export function SetupPage() {
                 <li>Click "Create Key", name it "Forerunner", and copy it.</li>
                 <li>Paste it here. It starts with sk-ant-api.</li>
               </ol>
-              {creds.anthropicApiKey ? <Saved>An API key is saved.</Saved> : null}
+              {creds.anthropicApiKey ? (
+                refused.apiKey ? (
+                  <Refused>Anthropic refused the saved API key. Paste a new one below.</Refused>
+                ) : (
+                  <Saved>An API key is saved.</Saved>
+                )
+              ) : null}
               <SecretBox
                 label={creds.anthropicApiKey ? "Replace the API key" : "API key"}
                 placeholder="sk-ant-api03-…"
@@ -518,7 +555,15 @@ export function SetupPage() {
                 <li>Copy the token it prints. It starts with sk-ant-oat.</li>
                 <li>Paste it here.</li>
               </ol>
-              {creds.subscription ? <Saved>A subscription token is saved.</Saved> : null}
+              {creds.subscription ? (
+                refused.subscription ? (
+                  <Refused>
+                    Anthropic refused the saved subscription token. Paste a new one below.
+                  </Refused>
+                ) : (
+                  <Saved>A subscription token is saved.</Saved>
+                )
+              ) : null}
               <SecretBox
                 label={creds.subscription ? "Replace the subscription token" : "Subscription token"}
                 placeholder="sk-ant-oat01-…"
