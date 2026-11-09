@@ -674,7 +674,8 @@ paid ("CHF 0.80 on your API key", "CHF 0.80 of your Claude subscription's allowa
 you did not start says how it started ("started on its schedule"). Drafting the plan from your
 brief is a row too ("Drafted a plan of 5 tasks; you approved it.", or "Planning failed: …" with
 the words the project page showed). A session Forerunner closed during counts only the time it
-worked, not the time Forerunner was closed. **Show older sessions** shows 20 more. A row opens the
+worked, not the time Forerunner was closed. **Show older sessions** shows 20 more; the rows you
+see stay on the list while a session starts or ends, with the new one at the top. A row opens the
 session's page. When chat about the project cost anything, one line under the list says so
 ("Chat about this project: CHF 0.30.") with **Open Chat**. A session's amount is the same on its
 row, its page and the Overview, read from the cost ledger when you look: a later rate or a cost

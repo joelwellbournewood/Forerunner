@@ -40,7 +40,9 @@ newest 100 raw rows with the stored result, and:
    on the row (the session page and the header have it).
 4. **Order and paging.** Newest first by start (created_at, then id), 20 a page, at most 50,
    "Show older sessions" with an opaque keyset cursor (the last row's start and id), which stays
-   valid across a restart; a session starting meanwhile never shifts or repeats a row.
+   valid across a restart; a session starting meanwhile never shifts or repeats a row. On screen
+   too: once older pages are shown, the tab reads on down to the oldest row shown and keeps the
+   cursor after it, so a session that ends meanwhile joins the top and pushes no row out of view.
 5. **Listed**: every session of the project that ran a task, spent money or works now, planning
    calls included; never the conversation's row, never a session that ended without a run and
    without a ledger row (an automatic start that found nothing is not news, design §4.8).

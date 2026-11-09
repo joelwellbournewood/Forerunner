@@ -224,6 +224,111 @@ describe("d1109-sessions, run C: the Sessions tab (SL-7)", () => {
     expect(within(tab).queryByTestId("sessions-older")).toBeNull();
   });
 
+  it("after Show older sessions, a session that ends keeps every row on screen once, in order, and Show older goes on from the oldest shown", async () => {
+    // Review of d1109-sessions (bench walk9): with 22 rows shown, a session ended and the
+    // heading said "23 sessions" over 22 rows; the 20th row of the old first page fell between
+    // the re-read first page and the older page already shown, and Show older could not bring
+    // it back. The ADR's rule: a session starting or ending meanwhile never shifts or repeats rows.
+    const user = userEvent.setup();
+    const { harness, urls } = recording();
+    const t = Date.now();
+    const ended = (i: number) =>
+      row({
+        id: `sess_${String(i).padStart(2, "0")}`,
+        startedAt: new Date(t - (i + 1) * HOUR).toISOString(),
+        gist: `Did 1 task: "Page ${i + 1}".`,
+        countsWords: "1 done",
+      });
+    harness.daemon.state.projectSessions.proj_atlas = Array.from({ length: 45 }, (_, i) =>
+      ended(i),
+    );
+    const s = working(harness);
+    renderApp("/projects/proj_atlas/sessions", harness, liveEvents(harness));
+    const tab = await screen.findByTestId("sessions-tab");
+    const shown = () =>
+      within(tab)
+        .getAllByTestId("session-row")
+        .map((r) => r.getAttribute("href"));
+    await waitFor(() => expect(shown()).toHaveLength(20));
+    await user.click(within(tab).getByTestId("sessions-older"));
+    await waitFor(() => expect(shown()).toHaveLength(40));
+    expect(within(tab).getByTestId("sessions-heading")).toHaveTextContent("46 sessions");
+
+    // The working session ends: the daemon lists it first among the ended ones.
+    s.status = "completed";
+    harness.daemon.state.projectSessions.proj_atlas = [
+      row({ id: "sess_live", startedAt: s.startedAt as string, gist: "Nothing finished." }),
+      ...(harness.daemon.state.projectSessions.proj_atlas ?? []),
+    ];
+    await act(async () => {
+      for (const l of harness.daemon.state.listeners) {
+        l("session.changed", { ...s });
+        l("project.changed", { id: "proj_atlas" });
+      }
+    });
+    await waitFor(() => expect(within(tab).queryByTestId("session-row-working")).toBeNull(), {
+      timeout: 10_000,
+    });
+    // Every session that was on screen still is, once, newest first, with the one that ended
+    // on top; nothing older than the oldest shown row slipped in.
+    const expected = [
+      "/sessions/sess_live",
+      ...Array.from({ length: 40 }, (_, i) => `/sessions/sess_${String(i).padStart(2, "0")}`),
+    ];
+    await waitFor(() => expect(shown()).toEqual(expected), { timeout: 10_000 });
+    expect(within(tab).getByTestId("sessions-heading")).toHaveTextContent("46 sessions");
+
+    // Show older goes on after the oldest row shown (sess_39), never repeating one.
+    const asked = urls.length;
+    await user.click(within(tab).getByTestId("sessions-older"));
+    await waitFor(() => expect(shown()).toHaveLength(46));
+    const sent = urls.slice(asked).find((u) => u.includes("before="));
+    const before = new URL(sent ?? "http://x").searchParams.get("before");
+    expect(JSON.parse(Buffer.from(before ?? "", "base64url").toString("utf8"))[1]).toBe("sess_39");
+    expect(new Set(shown()).size).toBe(46);
+    expect(shown().at(-1)).toBe("/sessions/sess_44");
+    expect(within(tab).queryByTestId("sessions-older")).toBeNull();
+  }, 30_000);
+
+  it("with every session shown, one that ends makes the rows equal the count, and no Show older comes back", async () => {
+    // The bench's case: 21 ended and one working; Show older brought the last one.
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const t = Date.now();
+    harness.daemon.state.projectSessions.proj_atlas = Array.from({ length: 21 }, (_, i) =>
+      row({
+        id: `sess_${String(i).padStart(2, "0")}`,
+        startedAt: new Date(t - (i + 1) * HOUR).toISOString(),
+      }),
+    );
+    const s = working(harness);
+    renderApp("/projects/proj_atlas/sessions", harness, liveEvents(harness));
+    const tab = await screen.findByTestId("sessions-tab");
+    const shown = () =>
+      within(tab)
+        .getAllByTestId("session-row")
+        .map((r) => r.getAttribute("href"));
+    await waitFor(() => expect(shown()).toHaveLength(20));
+    await user.click(within(tab).getByTestId("sessions-older"));
+    await waitFor(() => expect(shown()).toHaveLength(21));
+    s.status = "completed";
+    harness.daemon.state.projectSessions.proj_atlas = [
+      row({ id: "sess_live", startedAt: s.startedAt as string }),
+      ...(harness.daemon.state.projectSessions.proj_atlas ?? []),
+    ];
+    await act(async () => {
+      for (const l of harness.daemon.state.listeners) l("project.changed", { id: "proj_atlas" });
+    });
+    await waitFor(() => expect(within(tab).queryByTestId("session-row-working")).toBeNull(), {
+      timeout: 10_000,
+    });
+    await waitFor(() => expect(shown()).toHaveLength(22), { timeout: 10_000 });
+    expect(within(tab).getByTestId("sessions-heading")).toHaveTextContent("22 sessions");
+    expect(new Set(shown()).size).toBe(22);
+    expect(shown()).toContain("/sessions/sess_19");
+    expect(within(tab).queryByTestId("sessions-older")).toBeNull();
+  }, 30_000);
+
   it("the working row follows the session: a new task and its project's change re-read it", async () => {
     const harness = createHarness();
     harness.daemon.state.projectSessions.proj_atlas = atlasRows();
