@@ -398,3 +398,47 @@ This closes the known gaps of the two amendments above ('dependent-branches' and
    offered: a rebuild's warning ("#8 was rebuilt without #4 ..."), or "builds on #X, which was
    not merged". Before, the sentence was emptied, and a rebuilt record (whose head is not the
    reviewed commit) read "changed after the review" with no Merge.
+
+## Amendment: the merge side of live check 2 ('w15-merge', 2026-11-09)
+
+Live check 2 ran the merge journeys with the real model on forerunner-sandbox and found, among
+others, a false conflict in a chain, a person's commit that a rebuild could drop, a Merge that
+answered "Merging #23." while it waited, and cards that did not start the work or never closed.
+Each point keeps R-lock, R-chain, R-conflict and R-owed: nothing merges an unrebuilt head.
+
+1. **A chain with a busy middle waits for the middle.** In a chain A <- B <- C, a task after
+   one whose rebuild could not run cleanly in the same pass (its folder busy or holding the
+   person's changes, its push held, a step failed, its rebuild conflicted) is not rebuilt onto
+   that one's old head, which still holds the work that went away. It stays owed (`waits`) and
+   follows once the middle is rebuilt. Before, C was rebuilt onto B's old head merged into main,
+   which gave a false add/add conflict and a card when B changed A's file.
+2. **A clean rebuild ends a stale rebuild conflict.** A rebuild with the same own change on a
+   record that says its rebuild conflicted gives it the plain wait for the person's Merge again
+   and withdraws its rebuild card; a rebuild tried again that conflicts in the same words files no
+   second card.
+3. **A person's commit in a task's folder is never dropped.** A rebuild starts the branch from
+   GitHub's, so before it reset a commit the person made in the folder, which then was on no
+   branch. A commit GitHub's branch lacks now holds the rebuild, unless it is Forerunner's own
+   unpushed step (a base merge before its push, work in progress); one nobody can tell holds it
+   (fails closed). The row says "#8 waits for a commit made in its task's folder: push it to
+   GitHub or undo it." Forerunner's own rebuild whose push did not go through is put back at once,
+   and one a stop of the app cut short is put back at the next try, markers included.
+4. **The folder's wait is said at the poll, and the press keeps the approval.** The poll that
+   finds a rebuild held by the folder writes the wait on the record, also on a record waiting for
+   the person's Merge (over a plain wait only), so the row says it, with the folder and Open
+   folder, before any press, and offers no Merge. A press made anyway answers that sentence,
+   never "Merging #N."; its approval is kept and the merge goes on once the folder is clean and
+   the rebuild ran (unless the rebuild dropped work its review read).
+5. **The conflict notice and Redo.** The Tasks tab's Redo of a done task answers its open merge
+   card as the card's own Redo does (closed "redone", the next run starts from main); it starts no
+   session (the owner question on Tasks-row actions stays open). A notice whose record moved on
+   closes once the pull request merges cleanly. A null `mergeable` is read again within the poll
+   (1, 2, 4 and 8 s), so a notice comes and goes in one poll.
+6. **Words.** The head-moved sentence offers "… merge it yourself or redo the task." (no button
+   sent anything back); a done task's Tasks label follows its record's outcome as the Overview
+   row does; a merge waiting because GitHub did not answer says so; the emptied-branch sentences
+   read "The redo from main changed nothing, so #4 was closed.", "The last run changed nothing and
+   #4 held no change, so it was closed." and "The main branch already has this change.", and the
+   up-to-date comment "This task's work no longer changes anything on main, so this pull request is
+   closed. Its branch is kept." Text Forerunner writes on GitHub names a session by its start
+   time; the ids code reads are in a hidden mark.
