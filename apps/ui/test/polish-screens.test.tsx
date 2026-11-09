@@ -384,6 +384,21 @@ describe("Settings says what is true (later #43, P7-32, W14-8)", () => {
     );
   });
 
+  it("a project without a budget reads 'no budget' on its row, never 'CHF 0.00'", async () => {
+    const harness = createHarness();
+    const atlas = harness.daemon.state.projects.find((p) => p.id === "proj_atlas");
+    if (!atlas) throw new Error("fixture changed");
+    atlas.budget = money(0);
+    renderApp("/settings", harness);
+    const rows = await screen.findAllByTestId("setting-row");
+    const row = rows.find(
+      (r) =>
+        r.dataset.key === "project.budget" &&
+        within(r).getByTestId("setting-scope").textContent?.includes("Atlas"),
+    ) as HTMLElement;
+    expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent(/^no budget$/);
+  });
+
   it("a project's budget takes 0 as no budget and says so; the monthly cap's 0 is refused with why", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

@@ -733,7 +733,9 @@ const BASIC_EXPLAIN: Partial<Record<string, string>> = {
 
 /** A setting's value as a row shows it: money in CHF, the slider's stop, else in words. */
 function SettingValue({ setting }: { setting: SettingView }) {
-  if (isMoney(setting.value)) return <Money value={setting.value} />;
+  // later #43: a project's budget of 0 reads "no budget", never "CHF 0.00".
+  const words = describeSetting(setting);
+  if (isMoney(setting.value)) return words ? <>{words}</> : <Money value={setting.value} />;
   if (isSlider(setting.key)) return <>{speedQualityLabel(setting.value)}</>;
   return <>{describeSetting(setting) ?? renderValue(setting.value)}</>;
 }
