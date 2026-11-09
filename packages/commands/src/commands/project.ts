@@ -121,6 +121,11 @@ const createParams = z.object({
 });
 export type ProjectCreateParams = z.infer<typeof createParams>;
 
+/** A name another project has, as the dashboard's create says it (one sentence, what to do). */
+function duplicateProjectWords(name: string): string {
+  return `There is already a project called "${name}". Pick another name.`;
+}
+
 function createSentence(p: ProjectCreateParams): string {
   return `Created the project ${p.name}${p.switch ? " and made it the active project" : ""}. Undo.`;
 }
@@ -136,8 +141,8 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
   async plan(params, ctx) {
     const existing = await ctx.store.project.byName(params.name);
     if (existing) {
-      throw new ForerunnerError("validation", `a project named ${params.name} already exists`, {
-        details: { projectId: existing.id },
+      throw new ForerunnerError("validation", duplicateProjectWords(existing.name), {
+        details: { cause: "duplicate_name", projectId: existing.id },
       });
     }
     return buildCard({
@@ -155,22 +160,30 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
   async run(params, ctx) {
     const existing = await ctx.store.project.byName(params.name);
     if (existing) {
-      throw new ForerunnerError("validation", `a project named ${params.name} already exists`, {
-        details: { projectId: existing.id },
+      throw new ForerunnerError("validation", duplicateProjectWords(existing.name), {
+        details: { cause: "duplicate_name", projectId: existing.id },
       });
     }
     const human = await ctx.store.human.mustGet(ctx.humanId);
-    const project = await ctx.store.project.insert({
-      name: params.name,
-      goal: params.goal,
-      repos: params.repos,
-      autonomy_level: human.default_autonomy,
-      ...authorOf(ctx),
-    });
+    // W15-36: the New project dialog's creation is the daemon's own (`ports.createProject`: the
+    // brief, the plan from it or the doc set), so one click is this one command and one row.
+    const project = ctx.ports.createProject
+      ? await ctx.ports.createProject({
+          name: params.name,
+          goal: params.goal,
+          repos: params.repos,
+        })
+      : await ctx.store.project.insert({
+          name: params.name,
+          goal: params.goal,
+          repos: params.repos,
+          autonomy_level: human.default_autonomy,
+          ...authorOf(ctx),
+        });
     // The standard doc set (spec G.5): the daemon's port scaffolds it as the dashboard's
     // create does; a port that fails never fails the creation (the daemon records the gap).
     try {
-      await ctx.ports.projectCreated?.(project.id);
+      if (!ctx.ports.createProject) await ctx.ports.projectCreated?.(project.id);
     } catch (e) {
       log("commands").warn("project docs hook failed", {
         projectId: project.id,

@@ -3629,7 +3629,13 @@ dashboard gets back already names the PR, unless the body asks for the intake
 (`intake: true`), which drafts the set on approval and scaffolds the templates on a rejection
 (`IntakeService.docs`); `project.create` by chat, voice or the palette reaches it through the
 command port `projectCreated` (`@forerunner/commands`, commands.md), in the background so the
-reply does not wait for a clone (`scaffoldProjectDocs`, the same never-failing call). With a
+reply does not wait for a clone (`scaffoldProjectDocs`, the same never-failing call). W15-36:
+`POST /projects` with `switch: true` (the New project dialog) runs `project.create` with the
+switch through the registry, its port `createProject` for that one call being
+`createProjectRecord` itself (`createAndSwitch` in `server.ts`, `CommandLoop.execute`'s `ports`
+option), so the creation and the active project are one change log row whose Undo archives the
+project and puts the previous active project back, from the row alone (tested after a restart:
+real-daemon "w15-chat, wave 15"). With a
 repository it clones or fetches `<worktrees>/docs/<project id>` (the install's token scoped
 to the clone URL's http(s) origin by `gitAuthFor`, ADR 0069; a local or ssh remote gets no
 token), checks out `fr/docs-scaffold` (`DOCS_SCAFFOLD_BRANCH`; from `origin/fr/docs-scaffold`

@@ -17,7 +17,7 @@ import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import type { ZodType } from "zod";
+import type { ZodType, z } from "zod";
 import { cardFate } from "../conversation/card-fate.ts";
 import { readTranscript, TRANSCRIPT_SHOW_LIMIT } from "../conversation/transcript.ts";
 import { createDataRoutes } from "../data/routes.ts";
@@ -881,13 +881,65 @@ export function createDaemonApp(
     return c.json(await Promise.all(rows.map((p) => projectCardOf(p.id))));
   });
 
+  /**
+   * W15-36: the New project dialog's create as one change: `project.create` (switch on) in the
+   * registry, whose port is this route's own creation, so the change log has one row ("Created
+   * the project X and made it the active project.") and its Undo archives the project and puts
+   * the previous active project back, from the row alone (after a restart too).
+   */
+  const createAndSwitch = async (
+    body: z.infer<typeof CreateProjectBody>,
+  ): Promise<Awaited<ReturnType<typeof createProjectRecord>>> => {
+    const turn: CommandTurn = {
+      humanId: rt.human.id,
+      agentId: rt.agent.id,
+      activeProjectId: (await rt.commands.activeProject(rt.human.id)) ?? null,
+      sessionId: await conversationSessionId(rt),
+      source: "ui",
+      wordsUsed: `New project: ${body.name}`,
+      deviceId: null,
+    };
+    let made: Awaited<ReturnType<typeof createProjectRecord>> | null = null;
+    const r = await rt.commands.execute(
+      {
+        name: "project.create",
+        params: { name: body.name, goal: body.goal, repos: body.repos ?? [], switch: true },
+      },
+      turn,
+      {
+        ports: {
+          createProject: async () => {
+            made = await createProjectRecord(rt, body);
+            return made;
+          },
+        },
+      },
+    );
+    if (r.status !== "done" || !made)
+      throw new ForerunnerError(
+        (r.code as ErrorCode | undefined) ?? "validation",
+        r.reason ?? "The project was not created.",
+        {
+          details: {
+            ...(r.reason?.startsWith("There is already a project called")
+              ? { cause: "duplicate_name" }
+              : {}),
+          },
+        },
+      );
+    return made;
+  };
+
   app.post("/projects", async (c) => {
     const body = await parse(c, CreateProjectBody);
     // The same path an accepted source proposal takes, and the chat's `project.create` through
     // its port (create-project.ts, spec A.4, G.5): the row, the brief, and the standard doc
     // set as a pull request on the linked repository or the project's workspace (deferred to
     // the intake's approval with `intake: true`); the creation never fails on the docs.
-    const p = await createProjectRecord(rt, body);
+    // W15-36: `switch: true` (the New project dialog) makes it the active project in the same
+    // change: `project.create` in the change log, this creation as its port, one row whose Undo
+    // removes it and makes the previous project active again (also after a restart).
+    const p = body.switch ? await createAndSwitch(body) : await createProjectRecord(rt, body);
     // PM intake (spec A.2): asked for, the proposal is drafted in the background and lands in
     // the inbox; the card answers now. A failure is recorded on the project (the status route).
     // The card is read first, saying the plan is being drafted, so the draft starts as the

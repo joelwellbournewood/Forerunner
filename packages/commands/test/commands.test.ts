@@ -1456,7 +1456,8 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
           ctx: w.ctx(),
         }),
       ).reason,
-    ).toMatch(/already exists/);
+      // W15-36: the dashboard's words for a name another project has.
+    ).toBe('There is already a project called "Game". Pick another name.');
 
     done(
       await w.executor.execute({

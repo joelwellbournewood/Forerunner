@@ -1600,6 +1600,42 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       repos: parsed.data.repos ?? [],
     };
     state.projects.push(project);
+    // As the daemon (W15-36): `switch: true` (the New project dialog) makes it the active
+    // project in the same change, one Changes row whose Undo removes it and puts the previous
+    // active project back.
+    if (parsed.data.switch === true) {
+      const previous = state.projects.find((p) => p.active && p.id !== project.id);
+      for (const p of state.projects) p.active = p.id === project.id;
+      state.changes.unshift({
+        id: nextId("chg"),
+        humanId: ME.id,
+        agentId: "agent_alice",
+        wordsUsed: `New project: ${project.name}`,
+        commands: [
+          {
+            name: "project.create",
+            params: {
+              name: project.name,
+              goal: project.goal,
+              repos: project.repos ?? [],
+              switch: true,
+            },
+          },
+        ],
+        before: { project_id: null, active_project: previous?.id ?? null },
+        after: { project_id: project.id, active_project: project.id },
+        scope: "global",
+        projectId: project.id,
+        expiresAt: null,
+        undoState: "undoable",
+        undoneAt: null,
+        source: "ui",
+        sentence: `Created the project ${project.name} and made it the active project. Undo.`,
+        undoable: true,
+        createdAt: new Date().toISOString(),
+        version: 1,
+      });
+    }
     // As the daemon: a brief with `intake: true` is drafted in the background (U-046).
     if (parsed.data.intake === true)
       state.intake[project.id] = {
@@ -5950,6 +5986,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       unknown
     > | null;
     const project = state.projects.find((p) => p.id === entry.projectId);
+    // W15-36: the New project dialog's create: the project goes, the previous one is active.
+    if (first?.name === "project.create" && project) {
+      state.projects = state.projects.filter((p) => p.id !== project.id);
+      const back = typeof before?.active_project === "string" ? before.active_project : null;
+      for (const p of state.projects) p.active = p.id === back;
+      emit("project.changed", { id: project.id });
+    }
     if (first?.name === "autonomy.set" && project && typeof before?.autonomyLevel === "number") {
       project.autonomyLevel = before.autonomyLevel;
       emit("project.changed", { id: project.id });

@@ -12,6 +12,7 @@ import type {
   ChangeSource,
   HumanRequestRow,
   JsonValue,
+  ProjectRow,
   RiskLevel,
   StateStore,
 } from "@forerunner/state";
@@ -308,6 +309,13 @@ export interface CommandPorts {
    * logs one that throws; the creation never fails on it.
    */
   projectCreated?(projectId: string): Promise<void>;
+  /**
+   * W15-36: the New project dialog's creation, as `POST /projects` makes it (the brief, the
+   * plan from the brief or the standard doc set, the members): given for one call by that route,
+   * so the dialog's create is one `project.create` with one Changes row. Absent: the command
+   * inserts the row itself and calls `projectCreated`.
+   */
+  createProject?(params: { name: string; goal: string; repos: string[] }): Promise<ProjectRow>;
   /**
    * The price table in force (built-ins plus `<config>/pricing.json` and adopted rows), for a
    * setting whose effect quotes a price (`fast_mode`, spec D.20, ADR 0057). Default: the

@@ -12374,4 +12374,52 @@ describe("w15-chat, wave 15", () => {
       await rt.close();
     }
   }, 60_000);
+
+  // W15-36 (wave 13 polish-screens): New project wrote the creation (no row) and then a
+  // project.switch row, "Switched the active project to …", whose Undo only switched back.
+  it("New project writes one Changes row; its Undo removes the project and makes the previous one active again, also after a restart (W15-36)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-w15-new-project-"));
+    const env = { FORERUNNER_HOME: home };
+    const persisted = {
+      env,
+      dirs: appDirs({ env }),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+    };
+    let { rt, client } = await composeW15(persisted);
+    try {
+      const old = await client.createProject({ name: "Old garden", goal: "A garden page" });
+      const switched = await client.executeCommands({
+        commands: [{ name: "project.switch", params: { project: old.id } }],
+        wordsUsed: "Switch project: Old garden",
+        source: "ui",
+      });
+      expect(switched.status).toBe("done");
+      const before = (await client.changes({ limit: 200 })).map((c) => c.id);
+      // What the New project dialog sends.
+      const created = await client.createProject({
+        name: "New garden",
+        goal: "A garden club page",
+        switch: true,
+      });
+      const rows = (await client.changes({ limit: 200 })).filter((c) => !before.includes(c.id));
+      expect(rows.map((r) => r.sentence)).toEqual([
+        "Created the project New garden and made it the active project. Undo.",
+      ]);
+      expect(rows[0]?.projectId).toBe(created.id);
+      expect((await client.me()).activeProjectId).toBe(created.id);
+      // The project is the dashboard's: its folder is scaffolded as at any creation.
+      expect((await client.project(created.id)).folder).toContain(created.id);
+      // The daemon starts again on the same home; the row's Undo still works.
+      await rt.close();
+      ({ rt, client } = await composeW15(persisted));
+      const row = (await client.changes({ limit: 200 })).find((c) => c.id === rows[0]?.id);
+      expect(row?.undoable).toBe(true);
+      const undone = await client.undoChange(rows[0]?.id ?? "");
+      expect(undone.status).toBe("done");
+      expect((await client.projects()).map((p) => p.name)).not.toContain("New garden");
+      expect((await client.me()).activeProjectId).toBe(old.id);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

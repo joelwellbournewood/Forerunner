@@ -1276,6 +1276,13 @@ export const CreateProjectBody = z.object({
    * `POST /projects/:id/intake` later.
    */
   intake: z.boolean().optional(),
+  /**
+   * W15-36: make it the active project in the same change (the New project dialog). The
+   * creation is then `project.create` in the change log, one row whose Undo removes the project
+   * and makes the previous one active again; before, the dialog sent a `project.switch` after
+   * it, and Changes showed that row ("Switched the active project to …") for the click.
+   */
+  switch: z.boolean().optional(),
 });
 
 /** `POST /projects/:id/intake`: an optional brief in place of the one kept at creation. */
