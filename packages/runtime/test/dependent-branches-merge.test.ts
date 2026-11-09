@@ -1286,7 +1286,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     // A is closed: B is rebuilt without it, and waits for the person with its warning.
     await m.close(a.id);
     await m.poll();
-    const warning = `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it before you merge it, or send it back.`;
+    const warning = `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it, then merge it or redo the task.`;
     expect(await m.record(b.id)).toMatchObject({
       state: "left_to_you",
       last_outcome: "rebuilt_without",
@@ -1425,7 +1425,7 @@ describe("leftovers7-tailmerge, wave 13", { timeout: 240_000 }, () => {
     expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
     // B was rebuilt without A: it waits for the person again, with the rebuild's warning and
     // Merge (before, the user guide said "your Merge goes on"; nothing merges it unasked).
-    const warning = `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it before you merge it, or send it back.`;
+    const warning = `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it, then merge it or redo the task.`;
     expect(await m.record(b.id)).toMatchObject({
       state: "left_to_you",
       last_outcome: "rebuilt_without",
