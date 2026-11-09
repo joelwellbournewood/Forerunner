@@ -93,9 +93,12 @@ export function quotedWords(text: string | null | undefined, max = 160): string 
   let t = text
     .replace(/\*\*\s*(?:summary|criteria|report)\s*:?\s*\*\*\s*[:\-–—]?/gi, " ")
     .split(/\n\s*(?:\*\*criteria\*\*|#+\s|criteria:)/i)[0] as string;
+  // W15-58: only a blockquote marker at a line's start goes; a "<file>" in the words stays whole
+  // (before, every ">" was stripped: "node wc.js <file").
   t = t
     .replace(/\[stand-in model\]\s*/gi, "")
-    .replace(/[*`#>]+/g, "")
+    .replace(/^[ \t]*>+[ \t]?/gm, "")
+    .replace(/[*`#]+/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^[:;,.\-–—]+\s*/, "");

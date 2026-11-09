@@ -359,7 +359,8 @@ reads `"<title>" failed 4 times. The <specialist> said: "<its report>"` (`retryC
 `quotedWords` of the run's final report passed in `FollowupContext.workReport`, the critic's
 summary only when the run reported nothing; a heading's own punctuation goes with the heading,
 so "**Summary**: I made …" is quoted from "I made", never as ": I made …" (live L-12,
-2026-11-02); no ladder, ceiling or "attempt(s)") with
+2026-11-02); only a blockquote marker at a line's start is dropped, so "node wc.js <file>" stays
+whole, W15-58; no ladder, ceiling or "attempt(s)") with
 `RETRY_CARD_OPTIONS` (Try again, Mark done anyway, Cancel task; `signoffOptionsFor(reason)`).
 The specialist is named by `saidByName`, which the session log uses too: "writer-marketing" is
 "the writer", "migration-specialist" "the migration specialist", "data-analyst" "the data

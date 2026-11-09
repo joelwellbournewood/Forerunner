@@ -231,9 +231,18 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
         if (sentBack) return `${head} Trying again.`;
         return `${head} The critic reviewed it.`;
       }
-      const why = reportWords(s("summary"), 100)
-        ?.replace(/^(sent back for rework|accepted)\s*:\s*/i, "")
-        .replace(/[.\s]+$/, "");
+      // W15-58: why it went back is the review's blocking finding, once (the runner carries
+      // it); the model's summary starts with what passed. An event written before says the
+      // summary, without its own "Sent back:".
+      const blocking = s("blocking");
+      const why = (
+        blocking
+          ? cutAtWord(plainLine(blocking), 140)
+          : reportWords(s("summary"), 100)?.replace(
+              /^(sent back(?: for (?:rework|changes))?|accepted)\s*:\s*/i,
+              "",
+            )
+      )?.replace(/[.\s]+$/, "");
       if (decision === "accepted") return `The critic accepted ${taskName(p)}.`;
       if (decision === "human") return `${capital(taskName(p))} needs your decision (Inbox).`;
       if (decision === "blocked_by_findings")

@@ -334,3 +334,48 @@ describe("session log lines in plain words (U-074)", () => {
     }
   });
 });
+
+describe("w15-review, wave 15", () => {
+  it("W15-58: the sent-back line names the blocking finding once, keeps '<file>' whole, and is one line", () => {
+    // Live check 2 (research F1): "The critic sent "Build wc.js command…" back: Sent back: Tried
+    // node wc.js: it exited with code 1: Usage: node wc.js <file. Trying again."
+    const summary =
+      "Sent back: Tried node wc.js: it exited with code 1: Usage: node wc.js <file>. wc.js meets all six criteria and the tests cover each one.";
+    const withFinding = describeEvent("critic.verdict", {
+      taskId: "t1",
+      title: "Build wc.js command line word counter",
+      verdict: "revise",
+      decision: "retry",
+      summary,
+      blocking: "Tried node wc.js: it exited with code 1: Usage: node wc.js <file>",
+    });
+    expect(withFinding).toBe(
+      'The critic sent "Build wc.js command line word counter" back: Tried node wc.js: it exited with code 1: Usage: node wc.js <file>. Trying again.',
+    );
+    // An event written before the finding was carried: the summary, without its own "Sent back:".
+    const older = describeEvent("critic.verdict", {
+      taskId: "t1",
+      title: "Build wc.js command line word counter",
+      verdict: "revise",
+      decision: "retry",
+      summary,
+    });
+    expect(older).not.toContain("back: Sent back:");
+    expect(older).toContain("Usage: node wc.js <file>");
+    // Live check 2 (run RUN-5): the model's summary starts with what passed; the line says why
+    // the work went back, from the review's own finding.
+    const line = describeEvent("critic.verdict", {
+      taskId: "t2",
+      title: "Write the club page",
+      verdict: "revise",
+      decision: "retry",
+      summary:
+        "The page exists and its links work. The heading the brief asks for is missing from index.html.",
+      blocking: "index.html has no <h1> heading; criterion 2 asks for one",
+    });
+    expect(line).toBe(
+      'The critic sent "Write the club page" back: index.html has no <h1> heading; criterion 2 asks for one. Trying again.',
+    );
+    for (const l of [withFinding, older, line]) expect(l).not.toContain("\n");
+  });
+});

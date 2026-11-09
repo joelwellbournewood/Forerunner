@@ -384,6 +384,18 @@ export interface TaskExecutor {
   prepareReview?(task: TaskRow): Promise<{ worktree?: string } | null>;
 }
 
+/** The finding a review sent the work back for (W15-58): its first blocking one, else its first. */
+function blockingFindingOf(
+  findings: readonly { severity: string; description: string }[],
+): string | undefined {
+  const order = ["critical", "high", "medium", "low"];
+  for (const level of order) {
+    const f = findings.find((x) => x.severity === level && x.description.trim());
+    if (f) return f.description.trim();
+  }
+  return undefined;
+}
+
 /**
  * The specialist of the task's latest work run (not the critic's review), from any session:
  * who ran it last, so a hand-over in a later session still says from whom.
@@ -3325,6 +3337,10 @@ export class SessionRunner {
             }
           : {}),
         summary: outcome.summary.slice(0, 400),
+        // W15-58: the finding the work went back for, which the log's line names.
+        ...(blockingFindingOf(outcome.findings)
+          ? { blocking: blockingFindingOf(outcome.findings)?.slice(0, 400) }
+          : {}),
       },
       outcome.costUsdMicro,
     );

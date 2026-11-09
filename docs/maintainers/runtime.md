@@ -6081,7 +6081,11 @@ line says it: `critic.verdict` and `critic.review_failed` carry `couldNot` and `
 read 'The designer could not do "Style the page": "The work needs …". Trying again.' (design §5,
 "Log line"), "… It needs your decision (Inbox).", "… The critic accepted it anyway." or "… Its
 review did not run; it waits in the Inbox.". "Could not" is read from the report's first
-sentence only. The four-attempt task now reads in six lines (`session-log-person.test.ts`, and
+sentence only. A sent-back line names why, once (W15-58): `critic.verdict` carries `blocking`,
+the review's first finding by severity (`blockingFindingOf` in the runner), and reads 'The critic
+sent "X" back: <that finding>. Trying again.'; an event written before uses the summary without
+its own "Sent back:" (live check 2: "back: Sent back: …", and a model summary that starts with
+what passed). The four-attempt task now reads in six lines (`session-log-person.test.ts`, and
 the role-played failing task in `apps/ui/test/real-daemon.test.ts`).
 
 A person line comes from `personLine` (`daemon/event-lines.ts`): one line, the task's title in

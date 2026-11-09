@@ -387,3 +387,14 @@ describe("quotedWords: the specialist's own words on a card", () => {
     expect(quotedWords("**Report** - Wrote index.html.")).toBe("Wrote index.html.");
   });
 });
+
+describe("w15-review, wave 15", () => {
+  it("W15-58: quoted words keep '<file>' whole; only a blockquote marker at a line's start goes", () => {
+    expect(quotedWords("Usage: node wc.js <file> prints the count.")).toBe(
+      "Usage: node wc.js <file> prints the count.",
+    );
+    expect(quotedWords("> I wrote index.html with an <h1> heading.")).toBe(
+      "I wrote index.html with an <h1> heading.",
+    );
+  });
+});
