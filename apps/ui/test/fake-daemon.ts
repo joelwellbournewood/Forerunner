@@ -252,6 +252,11 @@ export interface FakeDaemonOptions {
    */
   startOutcome?: "started" | "queued" | "deferred";
   /**
+   * leftovers7-tailrun TR-12: the agent drafts a plan now (a planning call holds it), as the
+   * daemon's `planning`; with `startOutcome: "queued"` a Start waits for the plan.
+   */
+  agentPlanning?: boolean;
+  /**
    * With `startOutcome: "queued"`: the project the agent's other session works on. A start on
    * it with nothing ready waits for that session; on any other project it is refused, as the
    * daemon's `busyHere` decides (later #38). Unset: a project none of the tests start.
@@ -480,7 +485,15 @@ export interface FakeDaemonState {
    * R-startcred (leftovers7-web): per project, the wait every ready task's credential meets now
    * (as `RuntimeApp.billing.waits.now`): the Start check says "Nothing can run yet. <text>".
    */
-  credentialWaitNow: Record<string, { text: string; save: { label: string; to: string } | null }>;
+  credentialWaitNow: Record<
+    string,
+    {
+      text: string;
+      save: { label: string; to: string } | null;
+      /** leftovers7-tailrun TR-2: no Start kept the wait yet: `text` is the whole sentence, Start stays on. */
+      startable?: boolean;
+    }
+  >;
   /**
    * Where each project's files are on this computer (design §3.10), as the daemon's card says
    * (`folder`); a project without an entry has none yet. `files` are what `GET
@@ -914,6 +927,7 @@ function fakeStartCheck(
     blocked,
     monthLeft: money(FAKE_MONTH_LEFT_USD_MICRO),
     busy: opts.busy ?? false,
+    planning: false,
     waitingForSandbox:
       sandbox && !sandbox.ready && sandboxTasks.length > 0
         ? {
@@ -2379,6 +2393,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         busyHere: options.busyProjectId === id,
       },
     );
+    // leftovers7-tailrun TR-12: a planning call holds the agent, as the daemon says it.
+    if (options.agentPlanning) {
+      view.busy = true;
+      view.planning = true;
+    }
     // As the daemon: with no task yet because the plan waits (or is drafted), the button is
     // the plan card (design §3.3, §3.6).
     const intake = state.intake[id]?.state;
@@ -2409,10 +2428,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (credentialWait && !view.blocked && view.runnable.length > 0)
       view.blocked = {
         kind: "nothing_runnable",
-        sentence: `Nothing can run yet. ${credentialWait.text}`,
+        sentence: credentialWait.startable
+          ? credentialWait.text
+          : `Nothing can run yet. ${credentialWait.text}`,
         action: credentialWait.save
           ? { kind: "link", label: credentialWait.save.label, to: credentialWait.save.to }
           : null,
+        ...(credentialWait.startable ? { startable: true } : {}),
       };
     return c.json(view);
   });
@@ -2825,7 +2847,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (budgetCard?.key === "task:budget_stop") {
       const task = state.tasks.find((t) => t.id === r.taskId);
       const read = budgetStopAnswer(parsed.data.answer as never);
-      const moved = !task || task.status !== "needs_human";
+      const moved = task?.status !== "needs_human";
       let budget: number | null = null;
       let more: number | null = null;
       if (task && !moved && read === "continue") {
@@ -2866,7 +2888,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (cannotRun?.key === "task:cannot_run") {
       const task = state.tasks.find((t) => t.id === r.taskId);
       const read = cannotRunAnswer(parsed.data.answer as never);
-      const moved = !task || task.status !== "needs_human";
+      const moved = task?.status !== "needs_human";
       if (task && !moved && read === "retry") {
         task.status = "ready";
         task.reason = "you asked to try again in the Inbox";
@@ -3536,7 +3558,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // U-078 (the credential chooser), as the daemon: where each specialist's task runs here
     // (for `?project=`) and why, and Settings' "What each can do here".
     const projectId = c.req.query("project") || null;
-    for (const sp of view.specialists) sp.runsOn = runsOnFor(sp.name, projectId, null);
+    // leftovers7-tailrun TR-11: the words New task typed so far, as the daemon reads them.
+    const typed = {
+      title: c.req.query("title") ?? "",
+      outcome: c.req.query("outcome") ?? "",
+      acceptance_criteria: (c.req.query("criteria") ?? "")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean),
+    };
+    const words = typed.title || typed.outcome || typed.acceptance_criteria.length ? typed : null;
+    for (const sp of view.specialists) sp.runsOn = runsOnFor(sp.name, projectId, words);
     view.credentials = abilityTable(chooserFactsNow(), savedKinds());
     return c.json(view);
   });
@@ -6134,7 +6166,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     setup.restartNeeded =
       (c.github && !setupStartedWith.github) ||
       (c.anthropicApiKey && !setupStartedWith.anthropicApiKey) ||
-      (c.subscription && !setupStartedWith.subscription);
+      // leftovers7-tailrun TR-10: a subscription saved beside an API key is served at once.
+      (c.subscription && !setupStartedWith.subscription && !setupStartedWith.anthropicApiKey);
   };
   app.get("/setup", (c) => c.json(setup));
   app.post("/setup/profile", async (c) => {

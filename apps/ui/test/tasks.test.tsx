@@ -1610,3 +1610,47 @@ describe("Take this work out (merged-actions, the owner's decision of 2026-11-02
     );
   });
 });
+
+/**
+ * leftovers7-tailrun, wave 13 (TR-11, R-newtaskwords): New task's runs-on line was computed from
+ * the specialist only, never from the typed words, so a task whose outcome needs the owner's
+ * decision ran on the API key while New task said nothing about it.
+ */
+describe("leftovers7-tailrun, wave 13: New task's runs-on line reads the typed words (TR-11)", () => {
+  it("words that need the owner's decision show the API-key line before Create", async () => {
+    const user = userEvent.setup();
+    // Both credentials, the subscription first.
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await screen.findAllByTestId("task-row");
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    const who = within(dialog).getByTestId("task-who") as HTMLSelectElement;
+    await waitFor(() =>
+      expect([...who.options].map((o) => o.value)).toEqual(expect.arrayContaining(["coder"])),
+    );
+    await user.selectOptions(who, "coder");
+    // Plain words: the person's first choice, nothing to say.
+    await user.type(within(dialog).getByTestId("task-title"), "Write the hosting page");
+    expect(within(dialog).queryByTestId("task-who-note")).toBeNull();
+    // Words that need the owner's decision: only the API key can ask them while it works.
+    await user.type(
+      within(dialog).getByTestId("task-outcome"),
+      "The page names the owner's choice of hosting",
+    );
+    // Before: no line (the coder alone runs on the subscription here).
+    await waitFor(
+      () =>
+        expect(within(dialog).getByTestId("task-who-note")).toHaveTextContent(
+          "Runs on your API key: only it can ask you questions while it works here.",
+        ),
+      { timeout: 5_000 },
+    );
+    // The words decide it: once they no longer need the owner, the line goes.
+    await user.clear(within(dialog).getByTestId("task-outcome"));
+    await user.type(within(dialog).getByTestId("task-outcome"), "The page lists three hosts");
+    await waitFor(() => expect(within(dialog).queryByTestId("task-who-note")).toBeNull(), {
+      timeout: 5_000,
+    });
+  });
+});

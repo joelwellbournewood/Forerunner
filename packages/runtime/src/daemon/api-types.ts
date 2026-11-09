@@ -1494,7 +1494,9 @@ export const StartCheckView = z.object({
    * Why a Start now would do nothing (design §3.6), in one sentence with the button that
    * unblocks it: sessions are stopped (Stop all), no Claude credential, or nothing can run.
    * Null when a session would work. `action.kind` says what the button does: `resume` (Allow
-   * sessions again), `link` (open `action.to`).
+   * sessions again), `link` (open `action.to`). `startable` (TR-2): the work waits for a
+   * credential's reset and no Start kept that wait yet; Start stays on, since its session keeps
+   * the wait and the work then starts at the reset (the check itself records nothing).
    */
   blocked: z
     .object({
@@ -1507,6 +1509,7 @@ export const StartCheckView = z.object({
           to: z.string().nullable(),
         })
         .nullable(),
+      startable: z.boolean().optional(),
     })
     .nullable()
     .default(null),
@@ -1517,6 +1520,11 @@ export const StartCheckView = z.object({
    * and what that session finishes makes more tasks ready, so it is never "nothing can run".
    */
   busy: z.boolean().default(false),
+  /**
+   * TR-12: what makes it busy is a plan the agent drafts now (a New project's brief), not a
+   * session: a Start waits for the plan, and the dialog says so. False from an older daemon.
+   */
+  planning: z.boolean().default(false),
 });
 export type StartCheckView = z.infer<typeof StartCheckView>;
 
@@ -3017,7 +3025,7 @@ export const DAEMON_ROUTES = {
     "GET /audit/export?agentId=&sessionId=&from=&to=&format=jsonl|csv (spec S.9: the audit log as a file download, streamed in pages; the install's human's rows and their agents' with the summaries as stored; Content-Disposition names the file; 404 for another human's agent, 400 for a bad format, timestamp or window)",
   settings: "GET /settings?scope=&scopeId=",
   modelSettings:
-    "GET /settings/models (ModelSettingsView, spec D.4: per agent mode and per specialist the model, effort, max tokens, speed mode and timeout in force with the effort-table or registry default and the source; temperature only when the provider's acceptsTemperature flag is true; per specialist its limitation on this install in words, e.g. Cannot read the web on this computer when it works from the web and the install has no web access, ADR 0107, else null, and runsOn: where a task of it runs here and why, U-078, for the project ?project= names; credentials: the What each can do here table; changed through POST /commands/execute with model.settings.set)",
+    "GET /settings/models (ModelSettingsView, spec D.4: per agent mode and per specialist the model, effort, max tokens, speed mode and timeout in force with the effort-table or registry default and the source; temperature only when the provider's acceptsTemperature flag is true; per specialist its limitation on this install in words, e.g. Cannot read the web on this computer when it works from the web and the install has no web access, ADR 0107, else null, and runsOn: where a task of it runs here and why, U-078, for the project ?project= names and, TR-11, for the words ?title=, ?outcome= and ?criteria= (one per line) New task has typed; credentials: the What each can do here table; changed through POST /commands/execute with model.settings.set)",
   updateProjectSettings:
     "PUT /projects/:id/settings { version, settings } (merged; mirror schedule follows)",
   mirrorSync:

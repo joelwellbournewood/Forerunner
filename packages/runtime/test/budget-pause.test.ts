@@ -779,6 +779,12 @@ describe("a review refused at the project's budget pauses the task (leftovers of
     expect(cards.map((q) => [q.title, q.status])).toEqual([
       ['"Review page" paused at the project\'s budget of CHF 0.01', "open"],
     ]);
+    // leftovers7-tailrun, wave 13 (TR-14): the coder finished; only the review waits. Before:
+    // "It stopped before it could say where it stood; its work so far is kept."
+    expect(String(cards[0]?.body)).toMatch(
+      /^The work is done; its review waits for room in the budget\./,
+    );
+    expect(String(cards[0]?.body)).not.toContain("It stopped before it could say where it stood");
     expect(((cards[0]?.choices ?? []) as Json[]).map((c) => c.label)).toEqual(["Cancel task"]);
     expect(((cards[0]?.links ?? []) as Json[]).map((l) => l.label)).toEqual(["Open Settings"]);
     // The session log says the review paused, never that the critic sent it back.

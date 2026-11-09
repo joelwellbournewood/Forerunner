@@ -124,20 +124,36 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+/** How `redactValues` replaces a value. */
+export interface RedactOptions {
+  /**
+   * Keep the text's lines where they were: a value that spans lines is replaced by the marker
+   * and as many line breaks as it held, so a numbered view of the text (Claude Code's Read)
+   * shows every other line under the number it had (leftovers7-tailrun TR-1).
+   */
+  keepLines?: boolean;
+}
+
 /**
  * Scrub every value (and its JSON-escaped, URL-encoded, base64, base64url with and without
- * padding, and hex forms) out of `text`. Longest values first so a value that contains
- * another is replaced whole.
+ * padding, and hex forms; a value that spans lines with either line ending, as a file
+ * checked out on Windows holds it) out of `text`. Longest values first so a value that
+ * contains another is replaced whole.
  */
 export function redactValues(
   text: string,
   values: Iterable<string>,
   marker = "[REDACTED]",
+  opts: RedactOptions = {},
 ): string {
   const needles = new Set<string>();
   for (const v of values) {
     if (typeof v !== "string" || v.length < MIN_REDACT_LENGTH) continue;
     needles.add(v);
+    if (v.includes("\n")) {
+      needles.add(v.replace(/\r?\n/g, "\r\n"));
+      needles.add(v.replace(/\r\n/g, "\n"));
+    }
     const json = JSON.stringify(v).slice(1, -1);
     if (json !== v) needles.add(json);
     const url = encodeURIComponent(v);
@@ -157,7 +173,8 @@ export function redactValues(
   let out = text;
   for (const needle of [...needles].sort((a, b) => b.length - a.length)) {
     if (needle.length >= MIN_REDACT_LENGTH && out.includes(needle)) {
-      out = out.split(needle).join(marker);
+      const breaks = opts.keepLines ? "\n".repeat(needle.split("\n").length - 1) : "";
+      out = out.split(needle).join(marker + breaks);
     }
   }
   return out;
@@ -182,8 +199,8 @@ export class SecretResolver {
     });
   }
 
-  redact(text: string): string {
-    return redactValues(text, this.values);
+  redact(text: string, opts?: RedactOptions): string {
+    return redactValues(text, this.values, undefined, opts);
   }
 
   /** How many distinct values this resolver has handed out. */

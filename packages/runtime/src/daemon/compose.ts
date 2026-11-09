@@ -208,13 +208,7 @@ import {
   StoreSharedSecretService,
   sharedSecretNamesFor,
 } from "../secrets/index.ts";
-import {
-  CODE_COMMANDS_SETTING,
-  codeCommandsOf,
-  MID_SESSION_LIMIT_SETTING,
-  midSessionLimitOf,
-  type TaskBillingPort,
-} from "../session/billing.ts";
+import { CODE_COMMANDS_SETTING, codeCommandsOf, type TaskBillingPort } from "../session/billing.ts";
 import {
   type BudgetStopSyncResult,
   syncBudgetStopAnswers,
@@ -232,6 +226,7 @@ import {
   type CredentialWait,
   credentialWaitOf,
   saveLink,
+  startKeepsWaitSentence,
   waitSentence,
 } from "../session/credential-wait.ts";
 import { DependentBranches } from "../session/dependent-branches.ts";
@@ -318,6 +313,7 @@ import {
   RouterTaskBilling,
   sdkHostCommandsEnabled,
   seedBillingSources,
+  waitingOf,
 } from "../wiring/billing-pick.ts";
 import {
   credentialFor,
@@ -845,11 +841,15 @@ export interface RuntimeApp {
       credentialSaved(kind: "api_key" | "subscription"): Promise<number>;
       /**
        * R-startcred: when no ready task of the project can run now because its credential rests
-       * or was refused, the wait's sentence and where to save a new credential; else null.
+       * or was refused, the wait's sentence and where to save a new credential; else null. Only
+       * reads (TR-2): `startable` when no Start kept the wait of a resting credential yet, so a
+       * Start still does something (its session keeps the wait), and `text` says so in full.
        */
-      now(
-        projectId: string,
-      ): Promise<{ text: string; save: { label: string; to: string } | null } | null>;
+      now(projectId: string): Promise<{
+        text: string;
+        save: { label: string; to: string } | null;
+        startable?: boolean;
+      } | null>;
     };
   };
   chfPerUsd: () => number;
@@ -1574,6 +1574,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const rowFor = (ref: string) => billingRows.find((r) => r.credential_ref === ref && r.enabled);
   const hasKey = await vault.has(SECRET_NAMES.anthropic);
   const hasOauth = await vault.has(SECRET_NAMES.anthropicOauth);
+  // TR-10: whether a Claude subscription is saved now, for the sessions' grant (Claude Code's
+  // tools): set at the start and when one is saved in the setup assistant (`credentialSaved`),
+  // so a subscription saved while the daemon runs is served without a restart.
+  let subscriptionSaved = hasOauth;
   const billingSourceId =
     (hasKey ? rowFor(SECRET_NAMES.anthropic)?.id : undefined) ??
     (hasOauth ? rowFor(SECRET_NAMES.anthropicOauth)?.id : undefined) ??
@@ -3188,7 +3192,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       ...tools.names(),
       ...capabilityTools().map((t) => t.name),
       ...extensions.bridgedTools().map((t) => t.name),
-      ...(hasOauth ? claudeCodeToolNames() : []),
+      ...(subscriptionSaved ? claudeCodeToolNames() : []),
       // Anthropic's web search on an API key ('web-search'): the provider runs it, so it is no
       // registered tool; a run token carries it only where the executor offers the run search.
       ...(webSearchOn ? [WEB_SEARCH_TOOL] : []),
@@ -3508,32 +3512,24 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   /**
    * Whether a task of the project would run now, as its own pick would decide (R-refusedstays,
-   * R-startcred): the billing pick of each ready task (its specialist's needs and its words, the
-   * person's 'When my first choice runs out mid-session'), read-only. The wait the first of them
-   * meets when none can run; null when one can (or the project has no ready task).
+   * R-startcred): the billing pick of each ready task, read-only, with the request its next run
+   * makes (TR-3: the executor's `nextRunBillingRequest`: its specialist and the ladder's
+   * stand-in, the tier that attempt starts on, its needs with the person's answers, the person's
+   * 'When my first choice runs out mid-session'). The wait the first of them meets when none can
+   * run; null when one can, or when a task runs without a pick (a task for the person), or the
+   * project has no ready task.
    */
+  const nextRunProbe = makeLoop(undefined, false);
   const credentialWaitNow = async (projectId: string): Promise<CredentialWait | null> => {
     const ready = await store.task.readyTasks(projectId, { limit: 20 }).catch(() => []);
-    const prefs = (await store.human.get(human.id).catch(() => undefined))?.notify_prefs;
-    const mode = midSessionLimitOf(prefs?.[MID_SESSION_LIMIT_SETTING]);
     let first: CredentialWait | null = null;
     for (const task of ready) {
-      const spec = specialists(canonicalSpecialistName(task.specialist ?? "coder"));
-      const needs = needsOf({
-        registryTools: spec?.registryTools ?? spec?.allowedTools ?? [],
-        task,
-        codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
-      });
+      const request = await nextRunProbe
+        .nextRunBillingRequest(task, { agentId: agent.id, ownerHumanId: human.id })
+        .catch(() => null);
+      if (!request) return null;
       try {
-        await taskBilling.pick({
-          agentId: agent.id,
-          agentOwnerHumanId: human.id,
-          runner: "pc",
-          modelTier: "sonnet",
-          purpose: "session",
-          needs,
-          ...(mode === "wait" ? { waitOnRest: true } : {}),
-        });
+        await taskBilling.pick(request);
         return null;
       } catch (e) {
         const wait = credentialWaitOf(e);
@@ -3632,21 +3628,24 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             error: errorMessage(e),
           }),
       );
+      if (kind === "subscription") subscriptionSaved = true;
       await taskBilling.credentialSaved(kind);
       return credentialWaits.wake();
     },
     now: async (projectId) => {
       const wait = await credentialWaitNow(projectId);
       if (!wait) return null;
-      // The words say the work starts by itself (at the reset, or once a new credential is
-      // saved): the wait is kept on its source, as a session that met it would keep it.
-      await taskBilling
-        .noteWait(wait.sourceId, projectId, agent.id)
-        .catch((e: unknown) =>
-          logger.warn("the wait for a credential was not kept", { error: errorMessage(e) }),
-        );
+      // TR-2: looking records nothing (the Start dialog's check, the stopped bar's read). A
+      // wait a Start or a session already kept on its source starts by itself, and says so; a
+      // reset nobody kept a wait for says what Start does, and Start stays pressable: its
+      // session meets the wait and keeps it (the executor's `noteWait`).
+      const words = { timezone: human.timezone, nowMs: clock.now() };
+      const source = await store.billingSource.get(wait.sourceId).catch(() => undefined);
+      const kept = !!source && waitingOf(source.limits).some((w) => w.projectId === projectId);
+      if (wait.reason !== "refused" && !kept)
+        return { text: startKeepsWaitSentence(wait, words), save: null, startable: true };
       return {
-        text: waitSentence(wait, { timezone: human.timezone, nowMs: clock.now() }),
+        text: waitSentence(wait, words),
         save: wait.reason === "refused" ? saveLink(wait.kind) : null,
       };
     },

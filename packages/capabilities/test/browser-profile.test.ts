@@ -254,6 +254,43 @@ describe("the agent browser starts with Chromium's own sandbox (W6-30)", () => {
       ),
     ).toMatch(/Failed to move to new namespace/);
   });
+
+  // leftovers7-tailrun, wave 13 (TR-8): Playwright colours its call log where colour is forced
+  // (it printed "\u001b[2m  - <launching> ..." on the bench), so the `<launching>` filter missed
+  // the command line and a path holding a marker's words read as the browser's refusal.
+  it("TR-8: a coloured call log's command line is never read as the browser's refusal; a coloured refusal is read, without its colour", () => {
+    const dim = (s: string) => `\u001b[2m${s}\u001b[22m`;
+    const commandLine =
+      "  - <launching> /usr/bin/chromium --user-data-dir=/home/a/No usable sandbox/profile --remote-debugging-pipe about:blank";
+    expect(
+      sandboxRefusalOf(
+        new Error(
+          `browserType.launchPersistentContext: Timeout 60000ms exceeded.\nCall log:\n${dim(commandLine)}\n${dim("  - <launched> pid=4242")}`,
+        ),
+      ),
+    ).toBeNull();
+    // Each mark alone: the colour before the dash, between the dash and the tag, and 8-bit CSI.
+    for (const line of [
+      `\u001b[2m  - <launching> /tmp/setuid sandbox/chromium`,
+      `  - \u001b[2m<launching>\u001b[22m /tmp/SUID sandbox/chromium`,
+      `\u009b2m- <launching> /tmp/sandboxing failed/chromium`,
+    ])
+      expect(sandboxRefusalOf(new Error(`browserType.launch: Timeout\n${line}`))).toBeNull();
+    // Playwright's own first line, coloured, is not the browser's words either.
+    expect(
+      sandboxRefusalOf(
+        new Error(`\u001b[31mbrowserType.launch: No usable sandbox in path\u001b[39m`),
+      ),
+    ).toBeNull();
+    // The browser's own refusal, coloured, is still read, and said without the escape codes.
+    expect(
+      sandboxRefusalOf(
+        new Error(
+          `browserType.launch: Target page closed\n\u001b[31m[pid=9][err] No usable sandbox! Update your kernel\u001b[39m`,
+        ),
+      ),
+    ).toBe("[pid=9][err] No usable sandbox! Update your kernel");
+  });
 });
 
 describe("a navigation interrupted by the same page is tried once more (R-9)", () => {

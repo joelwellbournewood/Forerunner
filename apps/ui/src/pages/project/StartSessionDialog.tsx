@@ -19,13 +19,27 @@ import { useIntakeStatus } from "./IntakeBanner.tsx";
  * start runs in order behind the ones already waiting, never replaced (U-043), so the notice
  * says how many come first.
  */
-export function startNotice(result: StartSessionView["result"], ahead = 0): string {
+/**
+ * The line in place of what the session runs while the agent drafts a plan (TR-12): a Start
+ * waits for it, so saying "This session runs ..." read as if it started at once.
+ */
+export const PLANNING_WAIT_LINE =
+  "Your agent is drafting a plan; this session starts once it is ready.";
+
+export function startNotice(
+  result: StartSessionView["result"],
+  ahead = 0,
+  opts: { planning?: boolean } = {},
+): string {
   const before =
     ahead === 1
       ? "1 other start waits before this one; they run one after the other, in order."
       : `${ahead} other starts wait before this one; they run one after the other, in order.`;
   switch (result) {
     case "queued":
+      // TR-12: what it waits for is a plan the agent drafts, not a session the person can see.
+      if (opts.planning && ahead === 0)
+        return "Queued: your agent is drafting a plan. This one starts when the plan is ready.";
       return ahead > 0
         ? `Queued: your agent is in another session, and ${before} This one starts after them.`
         : "Queued: your agent is in another session. This one starts when that one ends.";
@@ -236,9 +250,14 @@ export function StartSessionDialog({
   const intake = useIntakeStatus(projectId, { enabled: open }).data?.state ?? null;
   const problem = budgetProblem(budget, data?.monthLeft ?? null);
   const blocked = data?.blocked ?? null;
+  // leftovers7-tailrun TR-2: work that waits for a credential's reset no Start has kept a wait
+  // for yet: the line says what Start does, and Start keeps the wait (looking records nothing).
+  const stops = !!blocked && !blocked.startable;
   // What a session would run is said only when it can start: above "Claude is not connected"
   // or "Sessions are stopped", "This session runs ..." contradicted the disabled Start.
-  const plan = data && !blocked ? planSentence(data) : null;
+  // TR-12: while the agent drafts a plan, a Start waits for it: the line says that instead.
+  const planning = !!data?.planning && !blocked;
+  const plan = data && !blocked ? (planning ? PLANNING_WAIT_LINE : planSentence(data)) : null;
   // While the plan from the brief waits for approval, is being drafted or waits for a Claude
   // credential (U-078), the daemon's one
   // sentence names it with its one link (startBlocked); nothing is said twice (wave 2 handoff:
@@ -249,7 +268,7 @@ export function StartSessionDialog({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy || !identity || blocked || problem) return;
+    if (busy || !identity || stops || problem) return;
     const chf = budget.trim() ? chfToMicro(budget.replace(",", ".")) : null;
     setBusy(true);
     setError(null);
@@ -266,7 +285,7 @@ export function StartSessionDialog({
       });
       setNote("");
       // The person stays where they were (design §3.6); the session can be opened from here.
-      setNotice(startNotice(started.result, started.ahead));
+      setNotice(startNotice(started.result, started.ahead, { planning }));
       setStartedId(started.session?.id ?? null);
       setCheckTick((n) => n + 1);
     } catch (err) {
@@ -401,7 +420,7 @@ export function StartSessionDialog({
             #38), so it never reads "Starts after the current session". */}
         {notice ? null : (
           <p className="text-xs text-neutral-500" data-testid="start-session-explain">
-            {data?.busy && !blocked
+            {data?.busy && !blocked && !planning
               ? "Starts after the current session; then works until nothing more can run, the budget is used, or you stop it."
               : "Start: works until nothing more can run, the budget is used, or you stop it."}
           </p>
@@ -411,7 +430,7 @@ export function StartSessionDialog({
           <Button
             variant="primary"
             type="submit"
-            disabled={busy || !identity || !!blocked || !!problem}
+            disabled={busy || !identity || stops || !!problem}
             data-testid="confirm-start-session"
           >
             {busy ? "Starting…" : "Start"}

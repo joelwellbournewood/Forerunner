@@ -24,6 +24,11 @@ import {
 } from "./helpers/email-world.ts";
 
 let world: World | undefined;
+/** The world of the running test (TR-16: the closure asserted it with `!`). */
+function mustWorld(): World {
+  if (!world) throw new Error("no email world");
+  return world;
+}
 
 afterEach(async () => {
   await world?.stop();
@@ -265,7 +270,7 @@ describe("EmailPolicy blocked content", () => {
       identity: world.identity,
       sentLog: world.sentLog,
       approvals: world.approvals,
-      mailboxFor: async () => world!.mailbox,
+      mailboxFor: async () => mustWorld().mailbox,
       clock: world.clock,
       classifier: new ModelContentClassifier(provider, "fake-haiku"),
     });

@@ -101,6 +101,21 @@ export class TaskRepo extends Repository<TaskRow> {
   }
 
   /**
+   * Adds `usdMicro` to the task's spent figure (`actual_cost_usd_micro`) in one statement, so
+   * two additions landing together (a run's cost after it returned, and the tail a stopped
+   * run reported later) both count (leftovers7-tailrun TR-13). The ledger stays the truth;
+   * this is the task's own counter, as `session.recordSpend` is the session's.
+   */
+  async addCost(id: string, usdMicro: number): Promise<TaskRow> {
+    const [row] = await this.updateWhere({}, '"id" = ?', [id], {
+      set: ['"actual_cost_usd_micro" = "actual_cost_usd_micro" + ?'],
+      params: [Math.max(0, Math.round(usdMicro))],
+    });
+    if (!row) return this.mustGet(id);
+    return row;
+  }
+
+  /**
    * Claim in ONE atomic update: succeeds when the task is unclaimed, held by the same
    * agent, or the previous claim has expired, and the task is ready / claimed / in_progress.
    * A ready task becomes claimed; an in_progress task keeps its status (re-claim by holder).

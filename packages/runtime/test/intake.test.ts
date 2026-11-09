@@ -20,9 +20,11 @@ import {
   intakeDocsBranch,
   intakeKey,
   NO_WEB_RULE,
+  onlyWebsitesLines,
   parseIntakeReply,
 } from "../src/session/intake.ts";
 import { type PlannerContext, StaticPlanner } from "../src/session/runner.ts";
+import { WEB_ACCESS_SETTING } from "../src/wiring/web-access.ts";
 import { ScriptedProvider, type ScriptReply } from "./helpers.ts";
 
 /** A coder task's plan estimate at the top of its calibrated band ('cost', L-22). */
@@ -807,6 +809,47 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect(runs.every((r) => r.prompt_version !== "")).toBe(true);
   });
 
+  // leftovers7-tailrun, wave 13 (TR-7): the hold on the agent (R-planningstart) was released
+  // only by the insert's catch, the start's catch and the calls' finally; a throw between the
+  // session's start and that try (its first message, its budget) left the agent held, so every
+  // later session start waited in the scheduler's queue until Forerunner restarted.
+  it("TR-7: a throw after the planning session started releases the hold on the agent and closes the session", async () => {
+    let held = 0;
+    const service = new IntakeService({
+      store: rt.store,
+      clock,
+      tokens: rt.tokens,
+      driver: rt.driver,
+      provider,
+      pricing: { estimate: () => 1, cost: () => 1 },
+      billingSourceId: rt.billingSourceId,
+      modelConfig: rt.modelConfig,
+      human: rt.human,
+      agent: rt.agent,
+      gitHost: host,
+      projectsRoot: rt.data.assets.projectsRoot,
+      worktreeRoot: join(home, "wt-hold"),
+      holdAgent: () => {
+        held++;
+        return () => {
+          held--;
+        };
+      },
+    });
+    // The first message cannot be built (a fault in the brief's words, say).
+    (service as unknown as { userMessage: () => string }).userMessage = () => {
+      throw new Error("the first message could not be built");
+    };
+    const projectId = await createProject({ name: "Held", goal: "g", brief: "b" });
+    await expect(service.propose(projectId)).rejects.toThrow(
+      "the first message could not be built",
+    );
+    // Before: held stayed 1 and the planning session stayed running.
+    expect(held).toBe(0);
+    const sessions = await rt.store.session.list({ project_id: projectId } as never, { limit: 5 });
+    expect(sessions.map((s) => s.status)).toEqual(["failed"]);
+  });
+
   it("an install with a web reader plans web work on an API key too; only one without any is told to plan none (U-044, ADR 0107)", async () => {
     // This install has no Claude subscription: every specialist run goes through the loop
     // driver, where the researcher and the science-evaluator read the web through `web_fetch`
@@ -1456,4 +1499,26 @@ describe("PM intake: Change the plan keeps the person's words until the new plan
       await after.close();
     }
   }, 60_000);
+});
+
+/**
+ * leftovers7-tailrun, wave 13 (TR-5): the planner's line for a project whose "only these
+ * websites" list holds nothing usable (R-failopen reads such a list as no website).
+ */
+describe("leftovers7-tailrun, wave 13: the planner's web line for an empty list (TR-5)", () => {
+  it("names no website and says research reads none; a list names its sites", () => {
+    const empty = onlyWebsitesLines({
+      settings: { [WEB_ACCESS_SETTING]: { mode: "only", only: [], never: [] } },
+    });
+    expect(empty).toEqual([
+      "Web access: this project's research reads no website (its list of websites is empty). Plan no research that needs a website; where the brief needs one, say in the decision record that this project reads no website.",
+    ]);
+    // Before: "...only these websites and their subdomains: . Plan no research ...".
+    expect(empty.join(" ")).not.toContain(": .");
+    const listed = onlyWebsitesLines({
+      settings: { [WEB_ACCESS_SETTING]: { mode: "only", only: ["mozilla.org"], never: [] } },
+    });
+    expect(listed[0]).toContain("only these websites and their subdomains: mozilla.org.");
+    expect(onlyWebsitesLines({ settings: {} })).toEqual([]);
+  });
 });

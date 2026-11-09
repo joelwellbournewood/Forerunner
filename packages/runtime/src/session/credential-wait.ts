@@ -187,6 +187,20 @@ export function waitSentence(
 }
 
 /**
+ * The Start check's sentence for work that waits for a credential's reset while no Start has
+ * kept that wait yet (leftovers7-tailrun TR-2): looking at the check records nothing, so the
+ * sentence says what Start does ("Nothing can run until 15:40 (your subscription's limit).
+ * Press Start and it runs then."), and Start keeps the wait so the work starts at the reset.
+ */
+export function startKeepsWaitSentence(
+  wait: CredentialWait,
+  opts: { timezone?: string; nowMs: number },
+): string {
+  const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
+  return `Nothing can run until ${at} (${limitOf(wait.kind)}). Press Start and it runs then.`;
+}
+
+/**
  * A waiting task's row (design §2: a status, then one line of why): label and detail, with what
  * the project's status sentence says of the waiting tasks (`line`: "Waiting for a new API key",
  * "Waiting until 15:40 (your subscription's limit)") and the link that unblocks a refusal.

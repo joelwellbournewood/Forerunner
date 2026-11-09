@@ -112,6 +112,20 @@ const PERSONS_ANSWER =
 const RECORDED_ANSWER =
   /\b(?:follow(?:s|ed|ing)?|appl(?:y|ies|ied|ying)|implement(?:s|ed|ing)?|per|according\s+to|respect(?:s|ed|ing)?|keep(?:s|ing)?\s+to)\s+(?:the\s+)?(?:human|person|owner)'s\s+(?:answers?|decisions?|choices?|confirmation)\b|\b(?:human|person|owner)'s\s+(?:answers?|decisions?|choices?|confirmation)\s+(?:(?:recorded|written|documented|kept)\s+)?(?:in|from|at)\s+\S*[/.]\S*/i;
 
+/** Every recorded answer in a text (`RECORDED_ANSWER`), to take out before the need is read. */
+const RECORDED_ANSWERS = new RegExp(RECORDED_ANSWER.source, "gi");
+
+/**
+ * Whether a text asks for the person's answer (`PERSONS_ANSWER`) beyond the answers it says are
+ * already recorded (TR-6): each recorded answer is taken out first, so "Follow the owner's
+ * decision in docs/x and get the owner's confirmation before deploying" still needs the
+ * confirmation, and "Follow the owner's decision in docs/x" alone needs nobody. Before, a
+ * recorded answer anywhere took the need out of the whole text.
+ */
+function asksPersonsAnswer(text: string): boolean {
+  return PERSONS_ANSWER.test(text.replace(RECORDED_ANSWERS, " "));
+}
+
 /**
  * Whether a task is the person's to do: planned for "person" (the explicit field on the row,
  * or `planned`, the plan item's specialist), or, for rows from plans made
@@ -124,8 +138,11 @@ export function isPersonTask(
 ): boolean {
   for (const named of [planned, task.specialist])
     if (named && canonicalSpecialistName(named) === PERSON_SPECIALIST) return true;
+  // TR-6 (a sibling of R-personsanswers): a legacy title that follows a recorded answer ("Follow
+  // the owner's decision in docs/decisions/0001") is a specialist's work, as `needsPersonsAnswers`
+  // reads it; before, the title made it the person's own task.
   return (
-    LEGACY_TITLE.test(task.title) || ASK_TITLE.test(task.title) || PERSONS_ANSWER.test(task.title)
+    LEGACY_TITLE.test(task.title) || ASK_TITLE.test(task.title) || asksPersonsAnswer(task.title)
   );
 }
 
@@ -224,7 +241,7 @@ export function needsPersonsAnswers(task: {
   // decision in docs/decisions/0001" moved the task onto the API key (money); a decision already
   // recorded, which the task follows, is not one.
   return [task.title, task.outcome, ...task.acceptance_criteria].some(
-    (t) => NEEDS_PERSON.test(t) || (PERSONS_ANSWER.test(t) && !RECORDED_ANSWER.test(t)),
+    (t) => NEEDS_PERSON.test(t) || asksPersonsAnswer(t),
   );
 }
 
@@ -656,6 +673,23 @@ export async function withoutAnswersOn(
     }
   }
   return found ? { questions: questions.slice(0, MAX_PERSON_QUESTIONS) } : null;
+}
+
+/**
+ * Whether the person already answered what `task`'s words ask of them (its questions answered
+ * in the Inbox, or "Go ahead without" pressed), so its runs no longer need a credential that
+ * can ask (`needsOf`'s `answered`). False for a task whose words ask nothing. The run's pick and
+ * the Start check read it here, so they agree (leftovers7-tailrun TR-3).
+ */
+export async function personAnswered(
+  store: WithoutStore,
+  task: Parameters<typeof needsPersonsAnswers>[0] & { id: string },
+): Promise<boolean> {
+  if (!needsPersonsAnswers(task)) return false;
+  return (
+    (await wentAheadWithout(store, task.id).catch(() => false)) ||
+    (await answersBlockFor(store, task.id).catch(() => "")) !== ""
+  );
 }
 
 /** Whether the person went ahead without answering on this task (`withoutAnswersOn`). */

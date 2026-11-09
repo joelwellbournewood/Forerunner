@@ -1657,6 +1657,14 @@ export function defineStateSuite(target: SuiteTarget): void {
         session = await store.session.mustGet(session.id);
         expect(session.spent_usd_micro).toBe(3_500);
         expect(session.steps).toBe(3);
+        // TR-13: a task's spent figure grows the same way, in one statement each.
+        const costed = await store.task.insert({ project_id: s.project.id, title: "costed" });
+        await Promise.all([
+          store.task.addCost(costed.id, 1_000),
+          store.task.addCost(costed.id, 2_500),
+          store.task.addCost(costed.id, 0),
+        ]);
+        expect((await store.task.mustGet(costed.id)).actual_cost_usd_micro).toBe(3_500);
         expect((await store.session.active(s.alice.id)).map((x) => x.id)).toContain(session.id);
         await expectCode(
           store.session.setStatus(session.id, session.version, "planned"),

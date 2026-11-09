@@ -149,10 +149,15 @@ export function createSetupRoutes(deps: SetupRoutesDeps): Hono {
       name: shownHumanName(human?.name ?? config?.humanName ?? ""),
       timezone: human?.timezone ?? config?.timezone ?? "UTC",
       credentials,
+      // TR-10: a subscription saved while the daemon runs with an API key is served at once
+      // (its billing row and Claude Code's tools come with `onClaudeCredentialSaved`); only a
+      // daemon that started with no Claude credential at all has no model to give it.
       restartNeeded:
         (credentials.github && !before.github) ||
         (credentials.anthropicApiKey && !before.anthropicApiKey) ||
-        (credentials.subscription && !before.subscription),
+        (credentials.subscription &&
+          !before.subscription &&
+          !(before.anthropicApiKey && deps.onClaudeCredentialSaved)),
       links: { anthropicKeys: ANTHROPIC_KEYS_URL, githubToken: GITHUB_TOKEN_URL },
       githubPermissions: CREDENTIAL_REQUESTS.github.scopes,
     };

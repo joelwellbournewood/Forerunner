@@ -493,6 +493,11 @@ export class Scheduler {
     return this.active.has(agentId);
   }
 
+  /** A planning call holds the agent's one session now (`hold`, R-planningstart; TR-12). */
+  isHeld(agentId: string): boolean {
+    return this.holds.has(agentId);
+  }
+
   /**
    * Work of the agent that holds its one session outside a start (R-planningstart: a planning
    * call runs on a session row of its own, which the runner's one-session rule counts): a start

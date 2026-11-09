@@ -791,10 +791,15 @@ drafted and waits in the Inbox for your approval. At a usage limit a plan waits 
 ("Planning waits until 15:40 (your subscription's limit) and starts by itself.") and is
 drafted at that time. Home and the project page say what a project waits for ("Waiting for a
 new API key: 2 tasks"), and so does the Start dialog ("Nothing can run yet. Waits for a new API
-key: save one in Settings.", with **Save a new key**) instead of what a session would run. If
+key: save one in Settings.", with **Save a new key**) instead of what a session would run.
+Opening the Start dialog changes nothing: when your credential rests until a reset and no
+session has met that yet, the dialog says "Nothing can run until 15:40 (your API key's limit).
+Press Start and it runs then." and **Start** stays on; press it (or **Continue where it
+stopped**) and the work starts by itself at 15:40. Only looking starts nothing. If
 you add a Claude subscription instead of a new key, the work that waited starts by itself on the
 subscription when your order lets it go there (with no order chosen, tasks use the
-subscription first); under **Wait** a first choice that rests or was refused still holds its
+subscription first), with no restart, and once no work waits on the refused key its card closes
+("Closed: it no longer needs you."; it comes back if work needs that key again); under **Wait** a first choice that rests or was refused still holds its
 work. A session you start while a new project's plan is being drafted waits for the planning to
 finish ("queued") and then runs. A review waits the same way: when the critic's review of a finished
 task meets a limit or a refusal and no other credential can do it, the task goes back to Ready
@@ -836,7 +841,9 @@ ends with a small table, **What each can do here**:
   that need commands** (Settings → Advanced, Other settings) sends them to the API key instead
   ("The API key (runs their tests; costs money)"; Forerunner asks you to confirm).
 
-New task says the same sentence when you pick who does it.
+New task says the same sentence when you pick who does it, for the words you typed: a task whose
+words need your answer ("uses the owner's choice of hosting") says "Runs on your API key: only it
+can ask you questions while it works here." before you press Create.
 
 A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
 never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). A task
@@ -884,7 +891,8 @@ December."), links Settings, and the task goes on by itself once you raised that
 removed it) in Settings, or the new month began; until then it stays paused with its card.
 The same holds when the limit is reached by the critic's review rather than by the run: the
 task pauses at that limit with the same card ('"Contact page" paused before its review: the
-project's budget of CHF 0.01 has no room for it.' in the log), it does not count as a failed
+project's budget of CHF 0.01 has no room for it.' in the log; the card says "The work is done;
+its review waits for room in the budget."), it does not count as a failed
 try, and once it goes on its next session finishes it and the critic reviews it once.
 
 **A paused task keeps its work.** Forerunner's own code saves what the run did, whatever the

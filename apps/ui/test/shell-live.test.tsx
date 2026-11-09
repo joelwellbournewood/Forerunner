@@ -159,3 +159,25 @@ describe("the install-wide stream's session frame (wave 1 handoff)", () => {
     expect(elapsedWords(null, now)).toBeNull();
   });
 });
+
+describe("leftovers7-tailrun, wave 13: Continue keeps a credential wait (TR-2)", () => {
+  it("Continue where it stopped starts a project whose work waits for a reset nobody kept", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    running(harness);
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Nothing can run until 09:30 (your API key's limit). Press Start and it runs then.",
+      save: null,
+      startable: true,
+    };
+    renderApp("/", harness, { pollIntervalMs: 40 });
+    await user.click(await screen.findByTestId("kill-switch"));
+    await user.click(await screen.findByTestId("kill-confirm-stop"));
+    const bar = await screen.findByTestId("kill-banner");
+    await user.click(within(bar).getByTestId("kill-continue"));
+    // Before: the bar skipped a project whose check named any wait, so nothing kept it and the
+    // work did not start at the reset.
+    await waitFor(() => expect(postedCalls(harness, "/sessions")).toHaveLength(1));
+    expect(postedCalls(harness, "/sessions")[0]?.body).toMatchObject({ projectId: "proj_atlas" });
+  });
+});

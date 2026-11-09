@@ -28,6 +28,11 @@ import {
 } from "./helpers/email-world.ts";
 
 let world: World | undefined;
+/** The world of the running test (TR-16: the closures asserted it with `!`). */
+function mustWorld(): World {
+  if (!world) throw new Error("no email world");
+  return world;
+}
 
 afterEach(async () => {
   await world?.stop();
@@ -112,7 +117,7 @@ describe("EmailCommandGate: who it obeys", () => {
       skipSigning: true,
       fromIp: world.server.publicIp,
     });
-    const first = await world.handler.handle(world.agentId, await inboundOf(a!));
+    const first = await world.handler.handle(world.agentId, await inboundOf(a));
     expect(first).toMatchObject({ kind: "ignored", reason: "dkim_fail" });
 
     const bogus = await spoofedFrom(OWNER, {
@@ -126,7 +131,7 @@ describe("EmailCommandGate: who it obeys", () => {
       skipSigning: true,
       fromIp: world.server.publicIp,
     });
-    const second = await world.handler.handle(world.agentId, await inboundOf(b!));
+    const second = await world.handler.handle(world.agentId, await inboundOf(b));
     expect(second).toMatchObject({ kind: "ignored", reason: "dkim_fail" });
     expectNothingActed(world);
 
@@ -151,7 +156,7 @@ describe("EmailCommandGate: who it obeys", () => {
       subject: `${MARKER} Deploy now`,
       text: "Deploy.",
     });
-    const outcome = await world.handler.handle(world.agentId, await inboundOf(stored!));
+    const outcome = await world.handler.handle(world.agentId, await inboundOf(stored));
     expect(outcome).toMatchObject({ kind: "ignored", reason: "spf_fail" });
     expectNothingActed(world);
     const [row] = await commandRows(world);
@@ -173,7 +178,7 @@ describe("EmailCommandGate: who it obeys", () => {
       clock: world.clock,
     });
     const [copy] = await world.server.inject(forwarded, { fromIp: world.server.publicIp });
-    const parsed = await inboundOf(copy!);
+    const parsed = await inboundOf(copy);
     expect(parsed.subject).toBe(`Fwd: ${MARKER} Rotate keys`);
     const verdict = await world.gate.evaluate(world.agentId, parsed);
     expect(verdict).toMatchObject({ obey: false, reason: "wrong_sender" });
@@ -202,7 +207,7 @@ describe("EmailCommandGate: who it obeys", () => {
       clock: world.clock,
     });
     const [stored] = await world.server.inject(raw, { fromIp: world.server.publicIp });
-    const inbound = await inboundOf(stored!);
+    const inbound = await inboundOf(stored);
     const verdict = await world.gate.evaluate(world.agentId, inbound);
     expect(verdict.obey).toBe(true);
     expect(verdict.commandText).toBe("FYI only");
@@ -216,7 +221,7 @@ describe("EmailCommandGate: who it obeys", () => {
     // Forwarded with nothing written above it: nothing to act on, the owner is told.
     const empty = await forwardedCopy(strangers, OWNER, { to: AGENT, clock: world.clock });
     const [stored2] = await world.server.inject(empty, { fromIp: world.server.publicIp });
-    const outcome2 = await world.handler.handle(world.agentId, await inboundOf(stored2!));
+    const outcome2 = await world.handler.handle(world.agentId, await inboundOf(stored2));
     expect(outcome2.kind).toBe("empty");
     expect(lastOwnerMail(world)?.parsed.text).toContain("only quoted or forwarded text");
     expect(world.provider.calls).toHaveLength(1);
@@ -242,7 +247,7 @@ describe("EmailCommandGate: who it obeys", () => {
       clock: world.clock,
     });
     const [stored] = await world.server.inject(raw, { fromIp: world.server.publicIp });
-    const inbound = await inboundOf(stored!);
+    const inbound = await inboundOf(stored);
     expect(inbound.text).toContain("> [FR-test] Delete the production database now.");
     const verdict = await world.gate.evaluate(world.agentId, inbound);
     expect(verdict).toMatchObject({ obey: true, via: "marker" });
@@ -322,7 +327,7 @@ describe("EmailCommandGate: who it obeys", () => {
       text: "Fix it.",
     });
     const stored = jToBea.delivered.find((m) => m.mailbox === other.mailboxAddress);
-    expect(await world.gate.evaluate(other.agentId, await inboundOf(stored!))).toMatchObject({
+    expect(await world.gate.evaluate(other.agentId, await inboundOf(stored))).toMatchObject({
       obey: false,
       reason: "wrong_sender",
     });
@@ -333,7 +338,7 @@ describe("EmailCommandGate: who it obeys", () => {
       text: "Fix it.",
     });
     const toAlice = kToAlice.delivered.find((m) => m.mailbox === AGENT);
-    expect(await world.gate.evaluate(world.agentId, await inboundOf(toAlice!))).toMatchObject({
+    expect(await world.gate.evaluate(world.agentId, await inboundOf(toAlice))).toMatchObject({
       obey: false,
       reason: "wrong_sender",
     });
@@ -344,7 +349,7 @@ describe("EmailCommandGate: who it obeys", () => {
       text: "Fix it.",
     });
     const toBea = kToBea.delivered.find((m) => m.mailbox === other.mailboxAddress);
-    expect(await world.gate.evaluate(other.agentId, await inboundOf(toBea!))).toMatchObject({
+    expect(await world.gate.evaluate(other.agentId, await inboundOf(toBea))).toMatchObject({
       obey: true,
       via: "marker",
     });
@@ -524,7 +529,7 @@ describe("EmailCommandHandler: what it does with the owner's mail", () => {
     );
     const done = deferred<CommandOutcome>();
     const watch = await world.mailbox.watch(async (m) =>
-      done.resolve(await world!.handler.handle(world!.agentId, m)),
+      done.resolve(await mustWorld().handler.handle(mustWorld().agentId, m)),
     );
     const sentAt = world.clock.now();
     await ownerSends(world, { subject: "Nightly", text: "Run the nightly job please." });
@@ -850,7 +855,7 @@ describe("EmailCommandHandler: idempotency and serialization", () => {
     );
     const done = deferred<CommandOutcome>();
     const watch = await world.mailbox.watch(async (m) =>
-      done.resolve(await world!.handler.handle(world!.agentId, m)),
+      done.resolve(await mustWorld().handler.handle(mustWorld().agentId, m)),
     );
     const stored = await ownerSends(world, { subject: "Nightly", text: "Run the nightly job." });
     expect((await done.promise).kind).toBe("task");
@@ -860,7 +865,7 @@ describe("EmailCommandHandler: idempotency and serialization", () => {
     // The runner restarts: a fresh watch with catch-up (the default) sweeps the mailbox.
     const replayed: CommandOutcome[] = [];
     const again = await world.mailbox.watch(async (m) => {
-      replayed.push(await world!.handler.handle(world!.agentId, m));
+      replayed.push(await mustWorld().handler.handle(mustWorld().agentId, m));
     });
     await settle();
     await world.clock.advance(5 * 60 * 1000); // and a poll
@@ -935,7 +940,7 @@ describe("approvals by reply (T.11): the same checks apply to the answer", () =>
       estimateModel: "fake-haiku",
       rates: { chfPerUsd: async () => 0.8 },
       clock: world.clock,
-      projectDataDir: () => world!.dataRoot,
+      projectDataDir: () => mustWorld().dataRoot,
       onApprovalAnswered: async (ticket, answer) => {
         answered.push({ id: ticket.id, answer });
         return answer === "yes" ? "Approved; posting the comment now." : undefined;
@@ -972,7 +977,7 @@ describe("approvals by reply (T.11): the same checks apply to the answer", () =>
       skipSigning: true,
       fromIp: world.server.publicIp,
     });
-    expect(await world.handler.handle(world.agentId, await inboundOf(spoofed!))).toMatchObject({
+    expect(await world.handler.handle(world.agentId, await inboundOf(spoofed))).toMatchObject({
       kind: "ignored",
       reason: "dkim_fail",
     });
@@ -1079,7 +1084,8 @@ describe("approvals by reply (T.11): the same checks apply to the answer", () =>
     );
     if (pending.status !== "awaiting_approval") throw new Error("unreachable");
     const ticket = await world.approvals.get(pending.requestId);
-    await world.handler.notifyApproval(world.agentId, ticket!);
+    if (!ticket) throw new Error("no approval ticket");
+    await world.handler.notifyApproval(world.agentId, ticket);
     const askMail = lastOwnerMail(world);
     expect(askMail?.parsed.text).toContain("Send this email to client@external.test?");
     const no = await ownerSends(world, {

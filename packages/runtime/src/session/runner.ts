@@ -1738,9 +1738,11 @@ export class SessionRunner {
           // never started, and its wait's line says so.
           if (result.outcome !== "usage_limit")
             await sayStarted(result.specialist ?? runItem.specialist);
+          // TR-13: added in one statement, so the tail a stopped run reports later (added the
+          // same way, `lateRunCost`) is never written over by this.
+          if (result.costUsdMicro) await store.task.addCost(task.id, result.costUsdMicro);
           task = await store.task.mustGet(task.id);
           await store.task.patch(task.id, {
-            actual_cost_usd_micro: task.actual_cost_usd_micro + result.costUsdMicro,
             ...(result.prUrl ? { pr_url: result.prUrl } : {}),
             ...(result.branch ? { branch: result.branch } : {}),
             ...(task.owner_agent_id ? {} : { owner_agent_id: agent.id }),
@@ -2073,6 +2075,8 @@ export class SessionRunner {
                   runId: result.runId ?? null,
                   stop,
                   handoff: null,
+                  // TR-14: the specialist finished; only the review waits for room.
+                  reviewWaits: true,
                   now: clock.nowIso(),
                   chfPerUsd: rate,
                 });

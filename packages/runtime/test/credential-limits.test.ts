@@ -16,6 +16,8 @@ import type {
 } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { openRefusedCards } from "../src/session/credential-wait.ts";
+import { filePersonQuestions } from "../src/session/person-questions.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { waitingOf } from "../src/wiring/billing-pick.ts";
 import { AcceptingCriticProvider, ScriptedProvider, type ScriptReply } from "./helpers.ts";
@@ -618,6 +620,150 @@ describe("credential waits: the Start check, another credential, a failed start,
       expect(created.id).toBeTruthy();
     } finally {
       rt.scheduler.stop();
+      await rt.kill.stop("all", "test over", { by: "you", freeze: false });
+    }
+  }, 120_000);
+});
+
+/**
+ * leftovers7-tailrun, wave 13: the Start check only reads (TR-2) and asks the pick the run will
+ * make (TR-3).
+ */
+describe("leftovers7-tailrun, wave 13: the Start check reads, and asks the run's own pick (TR-2, TR-3)", () => {
+  /** The API key rests until `until` (its usage limit), as a refused call of another project left it. */
+  async function keyRests(rt: RuntimeApp, until: string) {
+    const key = (await rt.store.billingSource.list({} as never, { limit: 20 })).find(
+      (s) => s.kind === "api_key",
+    );
+    if (!key) throw new Error("no api_key source");
+    await rt.store.billingSource.patch(key.id, {
+      limits: { ...key.limits, restingUntil: until },
+    });
+    return key.id;
+  }
+
+  it("TR-3: a task whose questions the person answered: the Start check says it runs, as the run's own pick does", async () => {
+    const clock = new SimulatedClock("2026-11-09T14:00:00Z");
+    let sdkCalls = 0;
+    const sdkQuery: QueryLike = () => {
+      sdkCalls++;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "cc", tools: [] };
+        yield {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "Set it up. Lesson: none.",
+          total_cost_usd: 0,
+        };
+      })();
+    };
+    const w = world(clock, { sdkQuery });
+    await w.vault.set(SECRET_NAMES.anthropic, GOOD);
+    await w.vault.set(SECRET_NAMES.anthropicOauth, OAUTH);
+    const { rt, req } = await w.start();
+    try {
+      const project = await rt.store.project.insert({
+        name: "Site",
+        goal: "A site",
+        autonomy_level: 2,
+      });
+      // Its words need the person's answer: until they answer, only a credential that can ask
+      // them while it works may run it (the API key here).
+      const task = await rt.store.task.insert({
+        project_id: project.id,
+        title: "Set up the hosting",
+        outcome: "The site is hosted where the owner's choice of hosting says",
+        acceptance_criteria: ["the site is reachable"],
+        risk_tier: 0,
+        status: "needs_human",
+        priority: 5,
+        est_cost_usd_micro: 50_000,
+        reason: "seed",
+      });
+      // A specialist asked; the person pressed Go ahead without in the Inbox: the task is ready
+      // again and no longer needs to ask.
+      const { request } = await filePersonQuestions(rt.store, {
+        task,
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        source: "specialist",
+        questions: ["Where should the site be hosted?"],
+      });
+      const inbox = await json<InboxView>(req("/inbox"));
+      const card = inbox.requests.find((r) => r.id === request.id) as HumanRequestView | undefined;
+      const without = card?.choices?.find((c) => c.label === "Go ahead without")?.label;
+      expect(without, JSON.stringify(card?.choices)).toBeDefined();
+      const answered = await req(`/requests/${request.id}/answer`, {
+        version: card?.version,
+        answer: without,
+      });
+      expect(answered.status).toBe(200);
+      expect((await rt.store.task.mustGet(task.id)).status).toBe("ready");
+      // The API key rests (another project's session met its limit); the subscription serves.
+      await keyRests(rt, "2026-11-09T15:40:00Z");
+      // Before: "Nothing can run yet. Waits until 16:40 (your API key's limit) and starts by
+      // itself." (the check still needed the person's answer and asked with tier "sonnet").
+      const check = await json<StartCheckView>(req(`/projects/${project.id}/start-check`));
+      expect(check.blocked).toBeNull();
+      expect(check.runnable.map((t) => t.title)).toEqual(["Set up the hosting"]);
+      // The run's own pick: the subscription takes it.
+      await run(rt, project.id);
+      expect(sdkCalls).toBeGreaterThan(0);
+    } finally {
+      await rt.kill.stop("all", "test over", { by: "you", freeze: false });
+    }
+  }, 120_000);
+
+  it("TR-10: a subscription takes the work of a refused key: setup needs no restart, its runs get Claude Code's tools, and the refused key's card closes", async () => {
+    const clock = new SimulatedClock("2026-11-09T14:00:00Z");
+    let sdkCalls = 0;
+    const offered: string[][] = [];
+    const sdkQuery: QueryLike = ({ options }) => {
+      sdkCalls++;
+      offered.push(((options ?? {}).allowedTools as string[] | undefined) ?? []);
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "cc", tools: [] };
+        yield {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "Wrote it. Lesson: none.",
+          total_cost_usd: 0,
+        };
+      })();
+    };
+    const w = world(clock, { sdkQuery });
+    await w.vault.set(SECRET_NAMES.anthropic, REFUSED);
+    const { rt, req } = await w.start();
+    try {
+      const { project } = await twoTasks(rt);
+      await run(rt, project.id);
+      // The key was refused: one card says so, and the work waits on the key.
+      expect(await openRefusedCards(rt.store, rt.human.id)).toHaveLength(1);
+      // The person adds a Claude subscription instead of a new key.
+      const saved = await json<{ ok: boolean; status: { restartNeeded: boolean } }>(
+        req("/setup/anthropic", { value: OAUTH }),
+      );
+      expect(saved.ok).toBe(true);
+      // Before: true, though the running daemon serves the subscription at once.
+      expect(saved.status.restartNeeded).toBe(false);
+      await until("the waiting work to run on the subscription", async () =>
+        sdkCalls > 0 ? null : `sdk calls ${sdkCalls}`,
+      );
+      // Its runs get Claude Code's own tools (before: the grant was read at the start, without
+      // a subscription, so the subscription's runs could not read or edit a file).
+      expect(offered[0]).toContain("Read");
+      // Nothing waits on the refused key any more: its card is closed (before: it kept saying
+      // "The work that needs it waits and starts by itself then.").
+      await until("the refused key's card to close", async () => {
+        const open = await openRefusedCards(rt.store, rt.human.id);
+        return open.length === 0 ? null : `${open.length} open`;
+      });
+      const inbox = await json<InboxView>(req("/inbox"));
+      const card = inbox.requests.find((r) => /refused your API key/.test(r.title ?? ""));
+      expect(card?.status).not.toBe("open");
+    } finally {
       await rt.kill.stop("all", "test over", { by: "you", freeze: false });
     }
   }, 120_000);

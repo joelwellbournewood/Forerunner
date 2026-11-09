@@ -473,6 +473,13 @@ export interface IntakeDeps {
 export function onlyWebsitesLines(project: Pick<ProjectRow, "settings">): string[] {
   const rule = webAccessOf(project.settings);
   if (rule.mode !== "only") return [];
+  // TR-5 (a sibling of R-failopen): an "only" list with nothing usable on it reads no website;
+  // before, the planner read "...only these websites and their subdomains: . Plan no research
+  // ...", naming nothing.
+  if (!rule.only.length)
+    return [
+      "Web access: this project's research reads no website (its list of websites is empty). Plan no research that needs a website; where the brief needs one, say in the decision record that this project reads no website.",
+    ];
   return [
     `Web access: this project's research reads only these websites and their subdomains: ${rule.only.join(", ")}. Plan no research that needs another website; where the brief needs one, say in the decision record that it is outside this project's websites.`,
   ];
@@ -1579,17 +1586,6 @@ export class IntakeService {
       release();
       throw e;
     }
-    // One budget for both calls: the retry spends what the first left.
-    const budget = new SessionBudget({
-      sessionId: session.id,
-      budgetUsdMicro,
-      stepCap: 4,
-      deadlineMs: clock.now() + INTAKE_CALLS * planning.timeoutMs,
-      reserveShare: 0,
-    });
-    const messages: ChatMessage[] = [
-      { role: "user", content: this.userMessage(project, brief, truncated, ask.size) },
-    ];
     const firstRunId = `intake_${session.id}`;
     let outcome: "completed" | "failed" = "failed";
     let note = "";
@@ -1615,7 +1611,21 @@ export class IntakeService {
         shortened: read.shortened,
       };
     };
+    // TR-7: everything after the session started is inside this try, so whatever throws (the
+    // first message, the budget, a call) closes the session and releases the hold on the agent
+    // in the finally; before, a throw here left the agent held and every start queued.
     try {
+      // One budget for both calls: the retry spends what the first left.
+      const budget = new SessionBudget({
+        sessionId: session.id,
+        budgetUsdMicro,
+        stepCap: 4,
+        deadlineMs: clock.now() + INTAKE_CALLS * planning.timeoutMs,
+        reserveShare: 0,
+      });
+      const messages: ChatMessage[] = [
+        { role: "user", content: this.userMessage(project, brief, truncated, ask.size) },
+      ];
       for (let call = 1; ; call++) {
         const runId = call === 1 ? firstRunId : `${firstRunId}_${call}`;
         const result = await this.oneCall({

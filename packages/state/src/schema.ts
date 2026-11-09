@@ -225,7 +225,11 @@ export const ENTITIES: Record<string, EntityDef> = {
       json("depends_on", "Task ids that must be done first.", { default: [] }),
       money("budget_usd_micro", "Cap for this task in micro-USD.", { default: 0 }),
       money("est_cost_usd_micro", "Estimate before the run.", { default: 0 }),
-      money("actual_cost_usd_micro", "Recorded after the runs.", { default: 0 }),
+      money(
+        "actual_cost_usd_micro",
+        "Recorded after the runs: each run's cost, and the tail a stopped run reported later, each added in one statement (`task.addCost`).",
+        { default: 0 },
+      ),
       text("owner_agent_id", "Agent responsible for the task.", nullableRef("agent")),
       text("specialist", "Specialist name chosen for the task.", { nullable: true }),
       int("attempt", "Retry counter; failed -> ready increments it.", { default: 0 }),

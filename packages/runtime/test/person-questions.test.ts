@@ -9,6 +9,7 @@ import {
   filePersonQuestions,
   isPersonTask,
   listedQuestions,
+  needsPersonsAnswers,
   PERSON_QUESTIONS_KEY_PREFIX,
   personQuestionsCardOf,
   questionsForTask,
@@ -479,5 +480,49 @@ describe("the critic path: a run that needs the person's answers (U-022)", () =>
     } finally {
       await w.close();
     }
+  });
+});
+
+/**
+ * leftovers7-tailrun, wave 13 (TR-6): siblings of R-personsanswers. `isPersonTask` read "the
+ * owner's decision" in a legacy title as a question for the person even where the decision is
+ * already recorded and followed; and a recorded decision took the need away from the whole text,
+ * so a separate confirmation in the same sentence was lost.
+ */
+describe("leftovers7-tailrun, wave 13: a recorded answer is no question; another need in the same text still is (TR-6)", () => {
+  const words = (title: string, outcome = "", criteria: string[] = []) => ({
+    title,
+    outcome,
+    acceptance_criteria: criteria,
+  });
+
+  it("isPersonTask and the questions agree on a recorded answer", () => {
+    for (const title of [
+      "Follow the owner's decision in docs/decisions/0001",
+      "Deploy per the person's choice in docs/hosting.md",
+    ]) {
+      // Before: a legacy title with "the owner's decision" was the person's own task, so no
+      // specialist ever followed the recorded decision.
+      expect(isPersonTask({ title, specialist: null }), title).toBe(false);
+      expect(needsPersonsAnswers(words(title)), title).toBe(false);
+    }
+    // A decision still to be made is the person's, in both.
+    expect(isPersonTask({ title: "Get the owner's decision on pricing", specialist: null })).toBe(
+      true,
+    );
+    expect(needsPersonsAnswers(words("Get the owner's decision on pricing"))).toBe(true);
+  });
+
+  it("a text with a recorded answer and a separate confirmation still needs the person", () => {
+    const text =
+      "Follow the owner's decision in docs/x and get the owner's confirmation before deploying";
+    // Before: the recorded decision took the whole text out, so no need was left.
+    expect(needsPersonsAnswers(words("Deploy the site", text))).toBe(true);
+    expect(needsPersonsAnswers(words(text))).toBe(true);
+    expect(isPersonTask({ title: text, specialist: null })).toBe(true);
+    // The recorded part alone needs nobody.
+    expect(
+      needsPersonsAnswers(words("Deploy the site", "Follow the owner's decision in docs/x")),
+    ).toBe(false);
   });
 });

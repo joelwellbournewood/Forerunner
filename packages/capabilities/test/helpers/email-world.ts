@@ -301,7 +301,10 @@ export async function ownerSends(world: World, opts: OwnerMailOptions): Promise<
   return delivered;
 }
 
-export function inboundOf(stored: StoredMessage): Promise<InboundEmail> {
+export function inboundOf(stored: StoredMessage | undefined): Promise<InboundEmail> {
+  // A message the server did not store is a failed setup, said in words (TR-16: the call sites
+  // asserted it with `!`).
+  if (!stored) throw new Error("no message was stored");
   return parseInboundEmail(stored.raw, { id: stored.id, receivedAt: stored.receivedAt });
 }
 

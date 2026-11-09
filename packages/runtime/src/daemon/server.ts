@@ -1354,7 +1354,11 @@ export function createDaemonApp(
     const monthLeftUsd = await monthLeftUsdMicro();
     // Busy: a Start waits for the running session ("Starts after the current session"), on
     // whichever project it runs; whether that is a reason to wait or to refuse is the blocker's.
-    const busy = rt.scheduler.isActive(rt.agent.id);
+    // TR-12: a planning call holds the agent too (R-planningstart), and a Start waits for it:
+    // `planning` says so, so the dialog names the plan, not a session.
+    const sessionRuns = rt.scheduler.isActive(rt.agent.id);
+    const planning = !sessionRuns && rt.scheduler.isHeld(rt.agent.id);
+    const busy = sessionRuns || planning;
     const blocked = await startBlocked(r, projectId, rt.agent.id, { credentialWait: true });
     const view: StartCheckView = {
       projectId: r.projectId,
@@ -1366,6 +1370,7 @@ export function createDaemonApp(
       later: r.later.map(named),
       blocked,
       busy,
+      planning,
       monthLeft: monthLeftUsd === null ? null : money(monthLeftUsd, rate),
       waiting: r.waiting.map((w) => ({
         taskId: w.taskId,
@@ -2488,10 +2493,27 @@ export function createDaemonApp(
     // U-078 (the credential chooser): where a task of each specialist runs here and why, for the
     // project `?project=` names (New task asks for its own), and Settings' table.
     const projectId = c.req.query("project") || null;
+    // TR-11 (R-newtaskwords): New task sends the words typed so far (`title`, `outcome`, the
+    // criteria one per line), so the line says where a task with these words runs (its words may
+    // need the person's answers, which only a credential that can ask meets); without them, the
+    // specialist's line as before.
+    const typed = {
+      title: (c.req.query("title") ?? "").slice(0, 500),
+      outcome: (c.req.query("outcome") ?? "").slice(0, 2000),
+      acceptance_criteria: (c.req.query("criteria") ?? "")
+        .slice(0, 4000)
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean),
+    };
+    const task = typed.title || typed.outcome || typed.acceptance_criteria.length ? typed : null;
     const specialists = rt.registry.runnableSpecialists();
     const runsOn = new Map<string, CredentialRunsOn | null>();
     for (const d of specialists)
-      runsOn.set(d.name, await rt.chooser.forTask({ specialist: d.name, projectId }));
+      runsOn.set(
+        d.name,
+        await rt.chooser.forTask({ specialist: d.name, projectId, ...(task ? { task } : {}) }),
+      );
     return c.json(
       buildModelSettingsView({
         provider: rt.provider
