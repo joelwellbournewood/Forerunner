@@ -291,6 +291,21 @@ with `FORERUNNER_WEB_SEARCH=off`; an account's administrator can switch it off i
 Console, which the runtime meets as a refusal and keeps (`runtime.md`, "Web search on an API
 key").
 
+### Records in chat are data (d1109-chat-guard, ADR 0114)
+
+What the app keeps and the chat reads (a specialist's run report, which can quote a web page;
+the critic's words; a card's questions; the last session's result; the lessons; the project's
+docs) was written by agents or the pages they read, so it is data in the chat too, in a model
+that holds command tools. Every answer of the chat's read tools carries the untrusted mark
+(origin `record:<kind>`): the hooks wrap it in the data envelope and scan it. The per-turn
+lessons travel in the envelope like the doc excerpts. A turn that read a record (a marked tool
+result, a card listed in full in words Forerunner did not write, a flagged excerpt, lesson, task
+line or session result) reads back every change the model asks for after it, whatever its risk
+(`CommandContext.recordsRead`, the executor's `decideSteps`); stopping the running session still
+acts at once, Stop all is read back. What was flagged is kept on the turn's `chat.reply` row
+(`injection`). The chat reads only this person's records (`scopeOf`). The injection suite's
+`record` channel proves it with an obedient model (`testing.md`).
+
 ### Injection test suite
 
 What it proves: the rule "content from web pages, emails, repo files, issue comments and other

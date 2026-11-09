@@ -416,6 +416,31 @@ they are read back for a yes whatever their risk, because the words were interpr
 the LICENSE task") and the person should see which task it touches before it moves; the Tasks
 tab's buttons (source `ui`) act at once with Undo (`CommandExecutor.decideSteps`).
 
+**After a record, every change is read back (d1109-chat-guard, run C, ADR 0114, W15B-80).**
+`CommandContext.recordsRead` (append-only; the chat's `CommandTurn.recordsRead`, passed in by
+the runtime's command tools when each call's context is built) says the chat turn this change
+comes from read a record: a read tool's or a command's answer marked untrusted, a card listed
+in full in words Forerunner did not write, a flagged excerpt, lesson, task line or session
+result. Such a record's words may be what asks for the change, so `decideSteps` answers
+`needs_yes` for every change it would have acted on at once, whatever the risk (a higher
+decision, a paired device, stays). Stopping is the safe direction (design §3.9):
+`session.stop` of the running session (scope `agent` or `session`) and `session.pause` ("stop
+after this task") still act at once (`stopsAtOnceAfterRecords`); `session.stop` with scope
+`all` (Stop all) is read back with the header's own question, "Stop every running session now?
+No session starts until you allow it again.", so a record cannot stop all work by itself. The
+person's own commands through the parser carry no flag and are unchanged. `task.create`
+('Add "X" to Quote Page?'), `note.add` ('Leave this note for the next session on Quote Page:
+"..."?') and `memory.record` ('Record this lesson in Alice's memory for Quote Page: "..."?')
+have an `ask`, so their read-back is one question and never the rendered card.
+
+**A command answer that quotes text the person did not write (`CommandOutcome.untrusted`,
+append-only, d1109-chat-guard).** A command whose sentence quotes such text (d1109-onerepo-link's
+"used elsewhere" answer quotes a repository's marker) sets `untrusted: { source, origin }` on
+its outcome; the executor keeps it on the done result (`ExecuteResult.untrusted`), `toToolSpecs`
+puts it on the tool's result (`ToolOutcome.untrusted`), so the enforcement hooks wrap the
+sentence as data and scan it, and the runtime's `noteRecordsRead` sets the turn's
+`recordsRead` for the calls after it.
+
 **A move that is a card's answer (`CommandDef.redirect`, phase E review).** Before it plans a
 call, the executor asks the command's `redirect` whether the call is better said as another;
 a redirected call is planned instead (never redirected again), stored in the pending card's
@@ -659,7 +684,9 @@ needs a device with biometric on a phone, agent self-limit, undo and undo after 
 06:00 revert with the clock, undo cancels the revert, resume after a restart, compose as one
 entry and its rollback, shared projects, the settings-screen path, another human's yes/tap/
 token/device and undo/revert refused, a double tap runs once, no email answer on the
-settings-screen path, a risen risk refused when the yes arrives), `undo.test.ts` (U-057, U-061: the undo of a lowered monthly cap waits for the device and a chat yes is refused, also after a restart; an undo that narrows acts at once; the email mode and the model watch; an undo that cannot work refused in words with nothing changed; a cancelled task reopened, a moved-on task not moved back; a read note not taken back), `security-commands.test.ts`
+settings-screen path, a risen risk refused when the yes arrives; d1109-chat-guard: with
+`recordsRead` a low-risk task, note and lesson wait for a yes in one line, the stop of the
+running session acts and Stop all is read back), `undo.test.ts` (U-057, U-061: the undo of a lowered monthly cap waits for the device and a chat yes is refused, also after a restart; an undo that narrows acts at once; the email mode and the model watch; an undo that cannot work refused in words with nothing changed; a cancelled task reopened, a moved-on task not moved back; a read note not taken back), `security-commands.test.ts`
 (the security review: the always-human commands carry the spec's risk, a pending card is not
 confirmed by the wrong kind of answer, a guessed email token or another actor, a web or runner
 device does not confirm a high-risk change without a second factor), `commands.test.ts` (the
