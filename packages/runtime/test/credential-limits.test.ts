@@ -768,3 +768,43 @@ describe("leftovers7-tailrun, wave 13: the Start check reads, and asks the run's
     }
   }, 120_000);
 });
+
+/**
+ * w15-run, wave 15 (W15-22, the review of leftovers7-tailrun): `credentialWaitNow` let the first
+ * ready task decide for the whole project: a task for the person (no billing request) or a
+ * request that threw read as "can run", so the Start check said nothing of the wait and a wake
+ * took the project off the resting key.
+ */
+describe("w15-run, wave 15: a person's task does not decide the project's credential wait (W15-22)", () => {
+  it("with the person's task first and the coder's waiting on the key's limit, the Start check names the wait and a wake before the reset starts nothing", async () => {
+    const clock = new SimulatedClock("2026-11-09T14:00:00Z");
+    const w = world(clock, { limitMs: 100 * 60_000 });
+    await w.vault.set(SECRET_NAMES.anthropic, LIMITED);
+    const { rt, req } = await w.start();
+    const { project, a, b } = await twoTasks(rt);
+    await run(rt, project.id);
+    for (const t of [a, b]) expect((await rt.store.task.mustGet(t.id)).status).toBe("ready");
+    // A task only the person can do, first in the run order.
+    await rt.store.task.insert({
+      project_id: project.id,
+      title: "Choose the club's colours",
+      outcome: "The colours are chosen",
+      acceptance_criteria: ["two colours"],
+      risk_tier: 0,
+      status: "ready",
+      priority: 9,
+      specialist: "person",
+      est_cost_usd_micro: 0,
+      reason: "seed",
+    });
+    const check = await json<StartCheckView>(req(`/projects/${project.id}/start-check`));
+    expect(check.blocked?.sentence ?? "").toContain("16:40");
+    expect((await rt.billing.waits.now(project.id)) ?? null).not.toBeNull();
+    // Before the reset a wake leaves the project on the resting key: no session starts.
+    expect(await rt.billing.waits.wake()).toBe(0);
+    const sessions = await rt.store.session.list({ project_id: project.id } as never, {
+      limit: 10,
+    });
+    expect(sessions.map((s) => s.trigger)).toEqual(["manual"]);
+  }, 120_000);
+});

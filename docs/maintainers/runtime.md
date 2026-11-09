@@ -570,7 +570,12 @@ each ready task, read-only, with the request its next run makes (TR-3:
 `LoopTaskExecutor.nextRunBillingRequest`, the specialist and the ladder's stand-in, the tier that
 attempt starts on, its needs with the person's answers read by `personAnswered`; before, tier
 "sonnet" and no answers, so a task whose questions were answered still needed the person), so
-'Wait' still holds work to a first choice that rests or was refused) and requests one session start each (`budget_reset`) while the project has ready work.
+'Wait' still holds work to a first choice that rests or was refused; `runNowProbe` under it skips a
+task that gets no billing request (a task for the person, an unknown specialist) and counts a
+request or pick that fails otherwise as unknown, never as "can run", so only a task whose pick
+succeeds takes the project off the wait: W15-22, before, the first such task decided for the whole
+project, the Start check said nothing of the wait and a wake started a session before the reset;
+test `credential-limits.test.ts` "w15-run, wave 15") and requests one session start each (`budget_reset`) while the project has ready work.
 `credentialSaved` also seeds a billing row for a credential of a kind the install had none of
 (`seedBillingSources`: a subscription saved while only a refused key was could serve nothing
 until a restart), and a subscription saved so turns on Claude Code's tools in the sessions' grant

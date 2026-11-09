@@ -3521,37 +3521,44 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
    * R-startcred): the billing pick of each ready task, read-only, with the request its next run
    * makes (TR-3: the executor's `nextRunBillingRequest`: its specialist and the ladder's
    * stand-in, the tier that attempt starts on, its needs with the person's answers, the person's
-   * 'When my first choice runs out mid-session'). The wait the first of them meets when none can
-   * run; null when one can, or when a task runs without a pick (a task for the person), or the
-   * project has no ready task.
+   * 'When my first choice runs out mid-session'). `runs`: a task's pick succeeded now; `wait`:
+   * the wait the first of them meets when none can run. A task that gets no billing request (a
+   * task for the person, an unknown specialist) says nothing either way and is skipped, and a
+   * request or pick that fails otherwise is unknown, never "runs" (W15-22: either decided the
+   * whole project "can run", so the Start check said nothing of the wait and a wake took the
+   * project off the resting source).
    */
   const nextRunProbe = makeLoop(undefined, false);
-  const credentialWaitNow = async (projectId: string): Promise<CredentialWait | null> => {
+  const runNowProbe = async (
+    projectId: string,
+  ): Promise<{ runs: boolean; wait: CredentialWait | null }> => {
     const ready = await store.task.readyTasks(projectId, { limit: 20 }).catch(() => []);
     let first: CredentialWait | null = null;
     for (const task of ready) {
       const request = await nextRunProbe
         .nextRunBillingRequest(task, { agentId: agent.id, ownerHumanId: human.id })
-        .catch(() => null);
-      if (!request) return null;
+        .catch(() => undefined);
+      // Unknown (the request failed) or none (no billing): this task decides nothing.
+      if (!request) continue;
       try {
         await taskBilling.pick(request);
-        return null;
+        return { runs: true, wait: null };
       } catch (e) {
         const wait = credentialWaitOf(e);
-        if (!wait) return null;
-        first ??= wait;
+        if (wait) first ??= wait;
       }
     }
-    return first;
+    return { runs: false, wait: first };
   };
+  const credentialWaitNow = async (projectId: string): Promise<CredentialWait | null> =>
+    (await runNowProbe(projectId)).wait;
   const credentialWaits: RuntimeApp["billing"]["waits"] = {
     wake: async () => {
       // R-refusedstays: a project kept on a source that cannot serve is taken too when another
       // credential serves its work now (a subscription saved while the only key is refused).
       const ready = await taskBilling.takeReady(async (projectId) => {
         const work = await store.task.readyTasks(projectId, { limit: 1 }).catch(() => []);
-        return work.length > 0 && (await credentialWaitNow(projectId)) === null;
+        return work.length > 0 && (await runNowProbe(projectId)).runs;
       });
       let started = 0;
       const plans: { projectId: string; sourceId: string; agentId: string }[] = [];
