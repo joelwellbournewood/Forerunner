@@ -33,18 +33,18 @@ GitHub refuses deletions from it, so the owner deletes it).
 - `workflow-scripts/`: the workflow scripts that run the waves (`forerunner-phase-e6.js` runs
   wave 7's groups, `forerunner-phase-f.js` phase F).
 
-## Where the round stands
+## Where the round stands (2026-11-09 20:15 UTC)
 
-Wave 7 groups 1 to 5 are merged into `claude/nifty-knuth-f9udt0`. Group 5 (merged-actions,
-sites) ends at fa1a86f; CI and the Desktop app workflow are green on it. The four
-`claude/nifty-knuth-f9udt0-backup/fix-*` branches from group 3 are no longer needed: all their
-commits are in that branch. Delete them on GitHub.
-
-Group 6 has three waves. Wave 12 merged leftovers7-merge and leftovers7-session at ca2c58d but
-broke before their review, and leftovers7-web never started. Wave 14 is running from ca2c58d:
-leftovers7-web, the review and fix-up of the two merged areas, and leftovers7-merge2 (the five
-merge problems wave 12 did not start). Next: wave 13 (polish, two areas), live check 2, and wave
-8 (`frbench/collab/`). The plan is in docs/status/handoff/NEXT-SESSION.md.
+Wave 7 (groups 1 to 6) is merged; wave 15 (live check 2's fix wave) is merged: run A at 3600089
+and run B at 7d6b34a, CI and the Desktop app workflow green on both. Run C builds the owner's
+decisions of 2026-11-09 (`frbench/owner-decisions-2026-11-09.md`; plan `frbench/runC-plan.json`):
+six sub-runs C1 to C6. C1 (chat-guard, oversize-start, sessions) was started on 7d6b34a at
+19:00 UTC on 2026-11-09; the session then stopped, as the owner asked, until the weekly reset on
+Sunday 2026-11-15. Live check 3 (`frbench/live3/BRIEF.md`, cap USD 3) runs in session
+session_01RnhAjgpiRyyCw2BQVPP536 once the owner says yes there, else on resume. The four
+`claude/nifty-knuth-f9udt0-backup/fix-*` branches are fully merged (SHAs in
+`frbench/backup-branch-shas.txt`): the owner deletes them. The plan is in
+docs/status/handoff/NEXT-SESSION.md on claude/nifty-knuth-f9udt0.
 
 ## Restore on a fresh machine
 
@@ -63,7 +63,21 @@ git archive origin/backup/plan-files workflow-scripts | tar -x -C /tmp/frbench
 The first command fetches the backup. The second recreates `/tmp/frbench`. The third puts the
 scripts in `/tmp/frbench/workflow-scripts`. Copy them from there into the session's workflow scripts folder.
 
-## Resume
+## Resume (from 2026-11-15)
+
+1. Restore as above; the run C args builder is `workflow-scripts/build-runC-args.cjs`
+   (`node build-runC-args.cjs <sub-run index 0-5> <base sha>` writes
+   `/tmp/frbench/runC-C<n>-args.json`).
+2. Make sure the run C areas of the next sub-run are in `/tmp/frbench/phaseE.json` (they were
+   inserted before C1; the revised C2 to C6 areas from `runC-plan.json` replace them once the
+   answers revision is done: see NEXT-SESSION.md).
+3. Start `workflow-scripts/forerunner-phase-e6.js` with those args, from the main checkout as the
+   session's working folder; one sub-run at a time, each merged with CI and the Desktop app
+   workflow green before the next.
+
+## Resume (older notes)
+
+
 
 Start `forerunner-phase-e6.js` for the next group with the args described in
 NEXT-SESSION.md. Wave 14 is merged (ce13bb1; its reports are `wave7g6c-*.json`). Wave 13 (polish-words,

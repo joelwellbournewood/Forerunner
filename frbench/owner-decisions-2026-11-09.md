@@ -157,3 +157,52 @@ the roll-up ("All this sounds good except the status line ..."), and are NOT ope
   not start still needs the person (or the hands-off setting).
 - The agent changes its own tasks without asking from Standard up; at Advisor and Assisted it
   asks first on one card (the session lead's proposal, confirmed by the owner).
+
+## Answers to the ten questions, 2026-11-09 ~20:05 UTC (verbatim, then the reading)
+
+1. Two people on separate Forerunners, one repository: "im not sure what you mean by this, but if
+   multiple people will be running it they will be using their own api and subscription and
+   running it on their pc." / "if 2 people are working on the same project they should be able
+   to work seamlessly in the same git. Isnt this already built in cleanly?"
+   - Reading (D9): every person runs their own Forerunner on their own PC with their own API key
+     and subscription. Two people on one repository work in ONE project: the second person's
+     Forerunner recognises the repository's project (its id in the repository) and joins it as
+     the same project, never a second one and never a take-over; they coordinate through GitHub
+     (pull requests, the status issue as the noticeboard, the repository guide). No shared
+     database or server is required. Not built cleanly today: two installs on one repository
+     share only git; each keeps its own task list and cards, so both can plan the same work.
+     Wave 8 is re-planned around this (GitHub is the meeting place); run C's onerepo-link offers
+     'Work on it together' (join the same project) instead of 'Take it over' for a project that
+     is used on another computer.
+2. Chat thinking longer: "as much as needed, but if it will switch models and do an expensive
+   task, it should warn/ask first." Model: "whatever is appropriate."
+   - Reading: no daily cap of its own; chat may think longer on the same model as needed
+     (within the budgets and the monthly cap); before it switches to a stronger model or does
+     something expensive it asks in one line with the cost and time ('This needs a stronger
+     model: about CHF 0.15 and 20 seconds. Go ahead?'). 'Expensive' default: more than CHF 0.10
+     for one answer. The model is chosen by the need, never above the project's highest model.
+3. "For all work." (the yes on 'Use your API key until …?' covers all work and chat until the
+   stop ends; matches the default).
+4. Order when never chosen: "it should use the order that the user specifies, I thought we
+   talked about that already. There should be a nice clean options menu."
+   - Reading: one order for every call (tasks, chat, planning, reviews, the task check, jobs),
+     the one the person picks in one clean options menu; until they pick, the default preset
+     (subscription first) for everything; no hidden split.
+5. A task too big for its session: "As i said, it should work on tasks even when it cannot
+   complete them, and be able to wrap up and continue next time. Again, I thought we talked
+   about this."
+   - Reading: no special ordering: the larger task runs in its normal turn (priority, then the
+     plan's order) like any task, works until the wrap-up line, wraps up and continues next
+     time. C1's d1109-oversize-start builds 'after the tasks that fit'; a follow-up item in C2
+     (d1109-oversize-pause) removes that hold.
+6. Calibration: "sure, but also please explain what function this serves." (keep it monthly,
+   show it in the running-session bar; explained to the owner).
+7. "sure" (the agent only suggests changes to tasks the person wrote, one card, at every level).
+8. "sure" (one credential setting for all projects).
+9. "fine" (with 'Start by itself' on, pull request comments and CI results do not start a
+   session).
+10. "yes": forerunner-sandbox #1, #2, #3, #6 and #7 closed 2026-11-09 20:10 UTC.
+
+Also: "Take these answers into account, specify the roadmap, and start to wrap up for this
+session. You can let some things finish if they are ongoing, but then stop and schedule to
+continue next weekly reset on sunday morning."
