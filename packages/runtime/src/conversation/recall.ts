@@ -1152,14 +1152,23 @@ const norm = (s: string) =>
     .trim();
 
 /**
+ * The words that carry meaning, as the word match reads them (the memory's `docTerms`: no
+ * "what", "did", "the"), so two questions are not alike for their question words alone ("what
+ * did we decide about the plan?" is not "what is left?"; the bench walk found that).
+ */
+function contentWords(text: string): string {
+  return docTerms(text).join(" ");
+}
+
+/**
  * The letter-pattern similarity of the words to a title or one of its earlier titles (the
  * memory's HashedNgramEmbedder: character 3- to 5-grams and words), 0 to 1. A typo ("stlye the
  * page") stays close to its title; another title of the same words is further.
  */
 export function titleSimilarity(words: string, titles: readonly string[]): number {
-  const v = embedder.embed(words);
+  const v = embedder.embed(contentWords(words));
   let best = 0;
-  for (const t of titles) best = Math.max(best, cosine(v, embedder.embed(t)));
+  for (const t of titles) best = Math.max(best, cosine(v, embedder.embed(contentWords(t))));
   return best;
 }
 
@@ -1203,11 +1212,11 @@ export function rankRecords(
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s);
   const phrases = [words, ...also].filter((s) => s.trim());
-  const qVecs = phrases.map((p) => embedder.embed(p));
+  const qVecs = phrases.map((p) => embedder.embed(contentWords(p)));
   const sims = records.map((r) => {
     let best = 0;
     for (const title of [r.title, ...r.earlier]) {
-      const t = embedder.embed(title);
+      const t = embedder.embed(contentWords(title));
       for (const v of qVecs) best = Math.max(best, cosine(v, t));
     }
     return best;

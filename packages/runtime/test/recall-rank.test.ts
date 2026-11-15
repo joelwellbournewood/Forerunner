@@ -164,3 +164,38 @@ describe("d1109-chat-recall, run C: CR-7 the golden set", () => {
       for (const h of await ask({ words, project: "all" })) expect(h).not.toMatch(/Kim|garden/i);
   });
 });
+
+describe("d1109-chat-recall, run C: the bench walk's finding", () => {
+  it("a question is not matched to an earlier question for its question words alone ('what did we decide about the plan?' finds the plan's decision, not a newer 'what is left?')", async () => {
+    const { rankRecords } = await import("../src/conversation/recall.ts");
+    const record = (
+      kind: "decisions" | "conversation",
+      title: string,
+      body: string,
+      at: string,
+    ) => ({
+      kind,
+      key: `${kind}:${title}`,
+      at,
+      projectId: "p",
+      projectName: "Quote Page",
+      title,
+      earlier: [],
+      body,
+      who: null,
+      open: async () => "",
+      link: null,
+    });
+    const ranked = rankRecords(
+      [
+        record("decisions", "The plan for Quote Page", "Approved.", "2026-11-15T15:40:00.000Z"),
+        record("conversation", "what is left?", "what is left?", "2026-11-15T15:42:00.000Z"),
+      ],
+      "what did we decide about the plan",
+      [],
+      { projectId: "p" },
+    );
+    expect(ranked[0]?.record.title).toBe("The plan for Quote Page");
+    expect(ranked.map((h) => h.record.title)).not.toContain("what is left?");
+  });
+});
