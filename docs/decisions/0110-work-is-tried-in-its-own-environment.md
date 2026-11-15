@@ -243,3 +243,8 @@ dependencies and no test script ("its package.json names no test script"). The s
 brief names the check ("its package.json scripts as they were before your task, or node --test,
 pytest, cargo test or go test"). Nothing is tried that was not before: "Reviewed and tried" still
 comes from the tries, and the check shows under See what was checked.
+
+Review of 'l3-handoff-checks' (2026-11-15): the check's output names the command as a person
+types it ("node --test wc.test.js -> exit 0 in 95 ms"), never the path of the app's own Node on
+this computer, in See what was checked and in what the critic reads; a Node older than 18 is
+told as "Node.js 18 or later is not installed where the checks run", not as no Node at all.

@@ -713,7 +713,8 @@ booked after the session ended moves all three together; a message already sent 
 it said then.
 
 A session's page lists **Tasks in this session**: each task it worked on, what happened to it
-there ("Done", "Failed", "Paused at its budget of CHF 0.40"), what it is now when that changed
+there ("Done", "Failed", "Paused at its budget of CHF 0.40", or "Paused before its budget of CHF
+0.40 ran out" when it stopped to wrap up first), what it is now when that changed
 ("now: Done") and what this session spent on it; while a task runs, its amount follows the
 session's spend within a second. A title opens the task with its runs. A session
 that ended to wait for a Claude credential reads "Stopped to wait for a Claude credential", and

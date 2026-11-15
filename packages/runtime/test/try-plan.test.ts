@@ -712,7 +712,9 @@ describe("l3-handoff-checks, run L3", () => {
     expect(js).toMatchObject({
       name: "node --test",
       language: "JavaScript",
-      missing: "Node.js is not installed where the checks run",
+      // An older Node fails the probe too: the line names the version it needs (fixup review:
+      // "Node.js is not installed" was wrong for a Node 16).
+      missing: "Node.js 18 or later is not installed where the checks run",
     });
     expect(js?.candidates).toEqual([
       {
@@ -813,15 +815,18 @@ describe("l3-handoff-checks, run L3", () => {
   it("L3-research-4: run through the check runner, the real node passes a passing file and fails a failing one with its output", async () => {
     // As the critic runs a check on this computer: no forced colour, NO_COLOR=1 (a coloured
     // console.log of the count would fail the file's own assertion).
+    const ran: string[] = [];
     const plain =
       (root: string) =>
-      (argv: readonly string[], o: { timeoutMs: number; env?: Record<string, string> }) =>
-        run(argv, {
+      (argv: readonly string[], o: { timeoutMs: number; env?: Record<string, string> }) => {
+        ran.push(argv.join(" "));
+        return run(argv, {
           cwd: root,
           allowFailure: true,
           timeoutMs: o.timeoutMs,
           env: withoutForcedColour({ ...process.env, NO_COLOR: "1", ...(o.env ?? {}) }),
         });
+      };
     const pass = folder({ "wc.js": WC, "wc.test.js": WC_TEST });
     const js = markerChecks(pass).find((m) => m.language === "JavaScript");
     expect(js).toBeDefined();
@@ -832,7 +837,11 @@ describe("l3-handoff-checks, run L3", () => {
       result: { name: "node --test", passed: true, required: true },
     });
     const okOut = "result" in ok ? ok.result.output : "";
-    expect(okOut.startsWith(`${process.execPath} --test wc.test.js -> exit 0 in `)).toBe(true);
+    // It ran with the Node it was given; its output names the command as a person types it,
+    // never that Node's path on this computer (fixup review of l3-handoff-checks).
+    expect(ran).toContain(`${process.execPath} --test wc.test.js`);
+    expect(okOut.startsWith("node --test wc.test.js -> exit 0 in ")).toBe(true);
+    expect(okOut).not.toContain(process.execPath);
     expect(okOut).toMatch(/# pass 1/);
     const failing = folder({ "wc.js": WC, "wc.test.js": WC_TEST.replace('"3"', '"4"') });
     const fjs = markerChecks(failing).find((m) => m.language === "JavaScript");

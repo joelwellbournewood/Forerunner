@@ -9207,6 +9207,12 @@ describe("the UI client against the real daemon: a paused task keeps its work an
     expect(said ?? "").toContain(
       `ran out: it spent ${/^It spent (CHF \d+\.\d\d)/.exec(card?.body ?? "")?.[1]}`,
     );
+    // The session page's "Tasks in this session" row says it the same way (fixup review of
+    // l3-handoff-checks: before, "Paused at its budget of CHF 0.04" above "paused before ...").
+    const here = await client.sessionTasks(started.session?.id ?? "");
+    expect(here.tasks.map((t) => [t.title, t.here])).toEqual([
+      ["Write the guide in guide.md", "Paused before its budget of CHF 0.04 ran out"],
+    ]);
     const labels = (card?.choices ?? []).map((c) => c.label);
     expect(labels[0]).toMatch(/^Continue \(CHF \d+\.\d\d more\)$/);
     expect(labels.slice(1)).toEqual(["Cancel task"]);

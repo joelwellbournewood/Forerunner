@@ -11,7 +11,7 @@ import {
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
-import { workingNowBlock } from "../src/conversation/project-facts.ts";
+import { lastSessionBlock, workingNowBlock } from "../src/conversation/project-facts.ts";
 import { composeRuntime, type DynamicCaps, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
@@ -1614,6 +1614,34 @@ describe("l3-handoff-checks, run L3", () => {
       expect(left(["- nothing", "- write the tests"]).leftToDo).toEqual(["write the tests"]);
     });
 
+    it("near siblings of the live line (fixup review): a reason after a full stop, 'No further work is required to meet the criteria', and a 'though' that names work", () => {
+      for (const line of [
+        "Nothing is needed for the two criteria. Each listed page gives its address and was opened.",
+        "No further work is required to meet the acceptance criteria.",
+        "No more work is needed to satisfy the criteria.",
+        "Nothing. Both criteria are met.",
+      ])
+        expect(left([`- ${line}`]).leftToDo, line).toEqual([]);
+      // The live shape with a full stop: the observation after it is a note, as with a colon.
+      expect(
+        left([
+          "- Nothing is needed for the two criteria. Each listed page gives its address and was opened.",
+          "- The list isn't exhaustive.",
+        ]),
+      ).toEqual({ stopped: "here.", leftToDo: [], optional: ["The list isn't exhaustive."] });
+      for (const line of [
+        "Nothing for the criteria, though the tests need a rewrite",
+        "Nothing for the criteria, although the README is out of date",
+        "Nothing for the criteria. The tests still fail.",
+        "Nothing. Write the tests.",
+      ])
+        expect(left([`- ${line}`]).leftToDo, line).toEqual([line]);
+      // About one criterion only: what follows it stays work.
+      expect(
+        left(["- No further work is required to meet criterion 1.", "- write the tests"]).leftToDo,
+      ).toEqual(["write the tests"]);
+    });
+
     it("the earlier W15-14 cases still read as they did", () => {
       expect(parseHandoff(LIVE_F4_REPORT)).toMatchObject({ leftToDo: [] });
       expect(left(["- write the last section", "- (optional) add a print style"])).toMatchObject({
@@ -1703,6 +1731,8 @@ describe("l3-handoff-checks, run L3", () => {
         submitReply({}, { times: Number.POSITIVE_INFINITY }),
         closingReply(),
         ...works(title, 30_000, PAUSE_REPORT),
+        // A budget too small to wrap up in: the hooks stop it (no wrap-up heard).
+        ...works("Tiny guide", 5_000, PAUSE_REPORT),
       ],
     });
     let rt: RuntimeApp;
@@ -1766,6 +1796,19 @@ describe("l3-handoff-checks, run L3", () => {
       };
       const row = list.rows.find((s) => s.id === r.sessionId);
       expect(row?.gist).toBe(`"${title}" paused before its budget of ${cap} ran out.`);
+      // The session page's "Tasks in this session" row, right above that result (fixup review:
+      // before, 'Paused at its budget of CHF 0.15' beside 'paused before ... ran out').
+      const here = (await (await req(`/sessions/${r.sessionId}/tasks`)).json()) as {
+        tasks: Json[];
+      };
+      expect(here.tasks.map((t) => [t.title, t.here])).toEqual([
+        [title, `Paused before its budget of ${cap} ran out`],
+      ]);
+      // What the chat is told of the last session says it the same way (before: 'Paused:
+      // "..." at its budget of CHF 0.15' under its 'Result: ... paused before ... ran out').
+      const told = lastSessionBlock(await rt.store.project.mustGet(r.projectId));
+      expect(told).toContain(`\nPaused: "${title}" before its budget of ${cap} ran out\n`);
+      expect(told).not.toContain("at its budget");
     }, 60_000);
 
     it("the notification of the card names the task and that it paused before its budget ran out, whole, within its length", async () => {
@@ -1793,19 +1836,43 @@ describe("l3-handoff-checks, run L3", () => {
         const list = (await (await req(`/projects/${projectId}/sessions`)).json()) as {
           rows: Json[];
         };
+        const here = (await (await req(`/sessions/${sessionId}/tasks`)).json()) as {
+          tasks: Json[];
+        };
         return {
           title: card?.title,
           body: card?.body,
           lists: card?.lists,
           summary: session.summary,
           gist: list.rows.find((s) => s.id === sessionId)?.gist,
+          here: here.tasks.map((t) => t.here),
         };
       };
       const before = await read();
       expect(before.title).toBe(`"${title}" paused before its budget ran out`);
+      expect(before.here).toEqual([expect.stringMatching(/^Paused before its budget of CHF /)]);
       await rt.close();
       ({ rt, req } = await compose(home, clock, fake));
       expect(await read()).toEqual(before);
+    }, 60_000);
+
+    it("a run its budget stopped (it heard no wrap-up) still reads 'Paused at its budget of CHF N' on the session page, as its result says", async () => {
+      const r = await runOne(req, rt, "Tiny guide", { budgetUsdMicro: 12_500 });
+      expect(r.runs[0]?.outcome).toBe("budget_exceeded");
+      const at =
+        /"Tiny guide" paused at (its budget of CHF \d+\.\d\d): continue or cancel it in the Inbox\./.exec(
+          String(r.session.summary),
+        );
+      expect(at, String(r.session.summary)).not.toBeNull();
+      const here = (await (await req(`/sessions/${r.sessionId}/tasks`)).json()) as {
+        tasks: Json[];
+      };
+      expect(here.tasks.map((t) => [t.title, t.here])).toEqual([
+        ["Tiny guide", `Paused at ${at?.[1]}`],
+      ]);
+      expect(lastSessionBlock(await rt.store.project.mustGet(r.projectId))).toContain(
+        `\nPaused: "Tiny guide" at ${at?.[1]}\n`,
+      );
     }, 60_000);
   });
 });

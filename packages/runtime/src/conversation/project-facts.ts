@@ -180,8 +180,14 @@ export function lastSessionBlock(project: ProjectRow, chfPerUsd = 1): string {
     for (const f of out.failed ?? [])
       lines.push(`Failed: ${quote(f.title)}${f.reason ? `: ${plainReason(f.reason, 300)}` : ""}`);
     if (out.needsYou?.length) lines.push(`Needs the person: ${names(out.needsYou).join(", ")}`);
-    // budget-resume: paused at a budget, its card offers Continue or Cancel.
-    for (const p of out.paused ?? []) lines.push(`Paused: ${quote(p.title)} at ${p.limit}`);
+    // budget-resume: paused at a budget, its card offers Continue or Cancel; a run that heard the
+    // wrap-up paused before the limit ran out, as the Result line says (L3-research-2).
+    for (const p of out.paused ?? [])
+      lines.push(
+        p.before
+          ? `Paused: ${quote(p.title)} before ${p.limit} ran out`
+          : `Paused: ${quote(p.title)} at ${p.limit}`,
+      );
     if (out.leftOver?.length) lines.push(`Not reached: ${names(out.leftOver).join(", ")}`);
     if (out.waitingForDocker?.length)
       lines.push(`Waiting for Docker: ${names(out.waitingForDocker).join(", ")}`);

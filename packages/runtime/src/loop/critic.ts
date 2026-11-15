@@ -1212,7 +1212,8 @@ type MarkerOutcome =
  * go.mod or Cargo.lock it rewrote is put back, and the check's output says so. `node`: the Node
  * a "node" command runs with (L3-research-4: the process sandbox starts the daemon's own Node,
  * as a try does, since a person's computer may have none on its PATH; the runner image has
- * `node`).
+ * `node`). The check's output names the command as a person types it ("node --test wc.test.js"),
+ * never that Node's path on this computer (fixup review of l3-handoff-checks).
  */
 export async function runMarkerCheck(
   m: MarkerCheck,
@@ -1224,23 +1225,11 @@ export async function runMarkerCheck(
   let out: MarkerOutcome;
   let note: string | null = null;
   const node = opts.node;
-  const withNode = (argv: string[]) =>
-    node && argv[0] === "node" ? [node, ...argv.slice(1)] : argv;
+  const run: ExecFn = node
+    ? (argv, o) => exec(argv[0] === "node" ? [node, ...argv.slice(1)] : argv, o)
+    : exec;
   try {
-    out = await markerCheckIn(
-      node
-        ? {
-            ...m,
-            candidates: m.candidates.map((c) => ({
-              ...c,
-              argv: withNode(c.argv),
-              probe: withNode(c.probe),
-            })),
-          }
-        : m,
-      exec,
-      root,
-    );
+    out = await markerCheckIn(m, run, root);
   } finally {
     note = restore();
   }

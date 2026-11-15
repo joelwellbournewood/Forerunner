@@ -481,7 +481,7 @@ export function markerChecks(root: string | undefined): MarkerCheck[] {
         if (/^\s*(?:#|ℹ)\s*tests 0\b/m.test(output)) return "node --test found no tests in them";
         return null;
       },
-      missing: "Node.js is not installed where the checks run",
+      missing: "Node.js 18 or later is not installed where the checks run",
     });
   return out;
 }

@@ -63,21 +63,28 @@ const MAX_ITEM_CHARS = 200;
  * is about or a reason, not both); a criterion may be named by its number ("Nothing for
  * criterion 1."). The words that say done are whole words ("incomplete" says nothing is done;
  * review of W15-14). `NOT_NOTHING` still reads the whole line, so a reason that names work
- * ("Nothing for the criteria: but the tests still fail") keeps the line an item.
+ * ("Nothing for the criteria: but the tests still fail") keeps the line an item. Near siblings
+ * of the live line (fixup review of l3-handoff-checks): the reason may follow a full stop
+ * ("Nothing is needed for the two criteria. Each listed page ... was opened."), what it is about
+ * may be "to meet" or "to satisfy" the criteria, and "No further work is required to meet the
+ * acceptance criteria." names what there is no more of.
  */
-const ABOUT = String.raw`\s+(?:for|in|by|under|within)\s[^.;:]*?\b(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)(?:\s*(?:#?\d+|\([a-z0-9]\))(?:\s*(?:,|and|&)\s*(?:#?\d+|\([a-z0-9]\)))*)?`;
-const REASON = String.raw`\s*[:;,(\u2013\u2014-]\s*[\s\S]*`;
+const ABOUT = String.raw`\s+(?:for|in|by|under|within|to\s+(?:meet|satisfy|fulfil+|cover|pass))\s[^.;:]*?\b(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)(?:\s*(?:#?\d+|\([a-z0-9]\))(?:\s*(?:,|and|&)\s*(?:#?\d+|\([a-z0-9]\)))*)?`;
+/** What starts a reason: punctuation, or a full stop and the next sentence. */
+const AFTER = String.raw`\s*(?:[:;,(\u2013\u2014-]|\.\s)`;
+const REASON = String.raw`${AFTER}\s*[\s\S]*`;
 const NOTHING = new RegExp(
-  String.raw`^(?:nothing|none|no(?:thing)? (?:more|left|else|further)|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:${ABOUT}(?:${REASON})?|\s*[:;,(\u2013\u2014-]\s*[\s\S]*?\b(?:criteri(?:a|on)|complete[ds]?|done|finished|met)\b[\s\S]*)?[\s.!)]*$`,
+  String.raw`^(?:nothing|none|no(?:thing)? (?:more|left|else|further)(?:\s+(?:work|changes?|steps?|items?|actions?|tasks?))?|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:${ABOUT}(?:${REASON})?|${AFTER}\s*[\s\S]*?\b(?:criteri(?:a|on)|complete[ds]?|done|finished|met)\b[\s\S]*)?[\s.!)]*$`,
   "i",
 );
 /**
  * A "nothing" that goes on to name work ("Nothing - but the README is incomplete", "Nothing:
- * the criteria are not met yet", "... except the tests still fail") is work left (review of
- * W15-14): read as nothing, unfinished work went to review instead of a pause.
+ * the criteria are not met yet", "... except the tests still fail", "..., though the tests need
+ * a rewrite") is work left (review of W15-14): read as nothing, unfinished work went to review
+ * instead of a pause.
  */
 const NOT_NOTHING =
-  /\b(?:but|except|however|yet|not|never|still|missing|incomplete|unfinished|fail(?:s|ed|ing)?|broken)\b|n't\b/i;
+  /\b(?:but|except|however|(?:al)?though|yet|not|never|still|missing|incomplete|unfinished|fail(?:s|ed|ing)?|broken)\b|n't\b/i;
 const isNothing = (text: string) => NOTHING.test(text) && !NOT_NOTHING.test(text);
 /**
  * A criterion named on its own ("criterion 2", "criteria 1 and 3", "the first criterion"): a

@@ -747,7 +747,13 @@ function hereOf(
   if (has(record.done)) return { words: "Done", key: "done" };
   if (has(record.failed)) return { words: "Failed", key: "failed" };
   const paused = record.paused.find((t) => t.id === taskId);
-  if (paused) return { words: `Paused at ${paused.limit}`, key: "answer" };
+  // L3-research-2 (fixup review): a run that heard the wrap-up paused before its limit ran out,
+  // as the session's result right under this row says; a hard stop paused at it.
+  if (paused)
+    return {
+      words: paused.before ? `Paused before ${paused.limit} ran out` : `Paused at ${paused.limit}`,
+      key: "answer",
+    };
   if (has(record.needsYou)) return { words: "Needed your answer", key: "answer" };
   if (has(record.cancelled)) return { words: "Cancelled", key: "cancelled" };
   return { words: "Worked on", key: null };

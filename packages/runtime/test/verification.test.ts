@@ -1602,6 +1602,12 @@ describe("l3-handoff-checks, run L3", () => {
     expect(seen?.checks.map((c) => [c.name, c.passed])).toEqual([["node --test", true]]);
     expect(seen?.checks[0]?.output).toMatch(/--test wc\.test\.js -> exit 0 in \d+ ms/);
     expect(seen?.checks[0]?.output).toMatch(/# pass 2/);
+    // The command as a person types it, never the path of the app's own Node on this computer
+    // (fixup review: "/opt/node22/bin/node --test ..."; on a person's PC a path in their user
+    // folder), in the drawer and in what the critic reads.
+    expect(seen?.checks[0]?.output).toMatch(/^node --test wc\.test\.js -> exit 0 in \d+ ms\n/);
+    expect(JSON.stringify(seen)).not.toContain(process.execPath);
+    expect(JSON.stringify(reviewCalls(w)[0]?.request.messages)).not.toContain(process.execPath);
     // Before: "the project has test files (wc.test.js) that no check ran: there is no
     // package.json to run them".
     expect(JSON.stringify(seen?.notChecked)).not.toMatch(/no check ran|no package\.json/);
@@ -1638,6 +1644,7 @@ describe("l3-handoff-checks, run L3", () => {
     expect(seen?.checks.map((c) => [c.name, c.passed])).toEqual([["node --test", false]]);
     expect(seen?.checks[0]?.output).toMatch(/# fail 1/);
     expect(seen?.checks[0]?.output).toContain("counts the words of a file");
+    expect(seen?.checks[0]?.output).toMatch(/^node --test wc\.test\.js -> exit 1 in \d+ ms\n/);
     expect(leases.every((l) => l.kind === "process" && l.destroyed())).toBe(true);
     await w.close();
   }, 120_000);

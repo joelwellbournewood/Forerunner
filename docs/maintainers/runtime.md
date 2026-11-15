@@ -2151,7 +2151,11 @@ budget-stop; the owner's decision of 2026-11-02).**
   or the task (`aboutWholeSet`; not one criterion, `ONE_CRITERION`) makes the list's other items
   that name no criterion `optional` notes, so a caveat beside it, "The list isn't exhaustive.
   ...", no longer pauses finished work; an item that names a criterion stays work, a bare
-  "nothing" moves nothing) and decides: a run is paused when it stopped
+  "nothing" moves nothing; the near siblings of that line read the same way, review of
+  l3-handoff-checks: a reason after a full stop, "Nothing is needed for the two criteria. Each
+  listed page gives its address and was opened." (`AFTER`), what it is about said "to meet" or
+  "to satisfy" the criteria, "No further work is required to meet the acceptance criteria.", and
+  "though" or "although" names work, as "but" does) and decides: a run is paused when it stopped
   at a budget of any level (`stoppedBy: "budget"`), or when it heard the wrap-up in this run and
   listed at least one item (`stoppedBy: "wrap_up"`); a run that ends normally without a wrap-up,
   or after one with nothing left, is reviewed as usual. The result is `TaskExecutionResult`
@@ -2312,7 +2316,11 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   0.40: continue or cancel it in the Inbox.'; a run that heard the wrap-up, `before` on the entry
   (the runner sets it from the card's `stopped_by`, L3-research-2): '"X" paused before its budget
   of CHF 0.15 ran out: continue or cancel it in the Inbox.', and the Sessions list's gist '"X"
-  paused before its budget of CHF 0.15 ran out.' (`sessionGist`); at a limit no Continue lifts, `waits` on the entry,
+  paused before its budget of CHF 0.15 ran out.' (`sessionGist`), the session page's "Tasks in
+  this session" row "Paused before its budget of CHF 0.15 ran out" (`hereOf`; a hard stop keeps
+  "Paused at its budget of CHF 0.15") and the chat's fact 'Paused: "X" before its budget of CHF
+  0.15 ran out' (`lastSessionBlock`; review of l3-handoff-checks: the row and the fact said
+  "at" right beside the result's "before"); at a limit no Continue lifts, `waits` on the entry,
   '"X" paused at the project's budget of CHF 0.01: it goes on by itself once that limit is raised
   or resets.', since its card offers only Cancel; a mix points to the cards), fed by
   `LastSessionOutcome.paused` (tasks with an open budget card, out of `needsYou`; the runner sets
@@ -2755,9 +2763,13 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   `projectFileList`, so never `node_modules`, a dot folder such as `.forerunner-try` or the Local
   only folder) and no package.json, or one whose scripts name no real test and that has no
   dependencies (`nodeTestApplies`), the check is `node --test <the files>` (at most 100, by
-  name), probed with `node -e` for Node 18 or later; `runMarkerCheck(m, exec, root, { node })`
+  name), probed with `node -e` for Node 18 or later (none, or an older one: "Node.js 18 or later
+  is not installed where the checks run"); `runMarkerCheck(m, exec, root, { node })`
   runs a "node" command with the daemon's own Node (`process.execPath`) in the process sandbox
-  and without a lease, the image's `node` in a container (as a try does). A missing package
+  and without a lease, the image's `node` in a container (as a try does); the check's output
+  names the command as a person types it, "node --test wc.test.js -> exit 0 in 95 ms", never that
+  Node's path on this computer (review of l3-handoff-checks: "/opt/node22/bin/node --test ...",
+  on a person's PC a path in their user folder, in the drawer and the critic's request). A missing package
   ("Cannot find module 'x'" / "Cannot find package 'x'", not the project's own file or a
   built-in), tests written for another runner's globals (`describe`, `it`, `expect` not defined)
   and "tests 0" are "not run, because ...". `untestedFiles` tells of the test files no check

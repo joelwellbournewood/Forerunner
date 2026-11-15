@@ -462,3 +462,12 @@ amendment of 'w15-run' (point 2) too narrow, and the card's words cut.
    stopped" and "Left to do" (three, then "and N more"). A hard stop keeps '"X" paused at its
    budget of CHF 0.15'. The session's result and the Sessions list say "paused before ... ran
    out" for such a run too.
+
+   Review of 'l3-handoff-checks' (2026-11-15): the session page's "Tasks in this session" row
+   reads "Paused before its budget of CHF 0.15 ran out" for such a run, as the result right under
+   it does, and the chat's facts of the last session say 'Paused: "X" before its budget of CHF
+   0.15 ran out' (both said "at" beside "before"); a hard stop keeps "Paused at ...". The near
+   siblings of point 1's line read as nothing too: a reason after a full stop ("Nothing is needed
+   for the two criteria. Each listed page gives its address and was opened."), "to meet" or "to
+   satisfy" the criteria, and "No further work is required to meet the acceptance criteria.";
+   "though" and "although" name work, as "but" does.
