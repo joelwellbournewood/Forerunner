@@ -285,8 +285,10 @@ them as you left them; an open file or task stays on its own tab.
   and review. Ask "what is going on?", "what failed and why?", "what is left?". Tell it what to
   change: "add a task: …" (a ready task, with **Undo**), "make the FAQ task depend on the README
   task", "skip the LICENSE task" or "cancel …" (it is cancelled, as with Cancel on its row: a run
-  or review going on stops and what it changed is removed, or its pull request stays open; the
-  read-back says which), "skip … for now" or "pause …" (a pause), "resume …", "try … again",
+  or review going on stops and what it changed is removed, or its pull request stays open on
+  GitHub, named with what to do: "#43 stays open on GitHub: close it there if you do not want it.";
+  the read-back says which; the Overview then lists that pull request under "Cancelled, still open
+  on GitHub" with **Open** and no Merge until you close it on GitHub, and Chat names it too), "skip … for now" or "pause …" (a pause), "resume …", "try … again",
   "start working now" (the reply links the session it started), "stop" (stops the running
   session now; its task is ready again), "stop after this task",
   "stop everything" (Stop all) and "resume" (allows sessions again), "note: …" for the next
@@ -377,12 +379,19 @@ never repeats work that is already in the default branch:
 - **#4 merged with Squash or Rebase on GitHub**: #8 is rebuilt on the default branch with only
   its own commits (GitHub shows a force-push on it) and the "Builds on" line goes. Its own change
   is the one the critic accepted, so nothing else changes: it still waits for you, or merges by
-  itself where Forerunner merges.
+  itself where Forerunner merges. A **Merge** you press on #8 a moment after merging #4 there,
+  before Forerunner's next look, does the rebuild first and answers "Merging #8." as usual.
 - **#4 closed without merging, or its task redone or cancelled**: #8 is rebuilt without #4. It was
   reviewed with #4's changes, so it no longer merges by itself: one Inbox card says so ("#8 was
   rebuilt without #4, which was closed. It was reviewed with #4's changes, so it waits for you:
   look at it, then merge it or redo the task."). Look at it on GitHub, then merge it
-  yourself, or press **Redo** on its task.
+  yourself, or press **Redo** on its task. The card's Details say the same: "Look at #8 on GitHub:
+  it no longer holds the changes of #4", "Then press Merge here, or Redo to do the task again from
+  main". This happens also when you press **Merge** on #8 a moment after closing #4, before
+  Forerunner's next look at GitHub: the press checks #8 first and answers with that sentence at
+  once; nothing is merged, and #4's closed work never reaches the default branch through #8. Once
+  #8 (or any pull request a card is about) is merged, by you on GitHub or with Merge in the app,
+  its cards close by themselves; under Answered they read "Closed: #8 was merged.".
 - If #8 cannot be rebuilt without #4 (it changes #4's own files), its branch stays as it was and
   one card says so ("#8 could not be rebuilt without #4, which was closed: both change
   src/page.ts. It waits for you: redo the task, or merge it on GitHub only if you want #4's
@@ -523,7 +532,9 @@ seen within about a minute; closing it without merging offers the button again.
 the critic accepted: a commit pushed to the branch afterwards is never merged by Forerunner, and
 the pull request waits for you with one Inbox card that says why in one sentence ("#4 changed
 after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.", under the title '"X" changed after the review'); **I merged
-it** and **Leave it open** close the card. It always makes a merge commit, so a pull
+it** and **Leave it open** close the card. A Merge you press on such a pull request answers that
+sentence at once (never "Merging #4." first), and a card whose pull request is then merged on
+GitHub closes by itself. It always makes a merge commit, so a pull
 request that carries another's work brings that work to the default branch as it is, and GitHub
 marks the other pull request merged too; it never rebases or force-pushes a branch, and when the
 default branch moved meanwhile the two are combined by the merge commit. It reads the branch's

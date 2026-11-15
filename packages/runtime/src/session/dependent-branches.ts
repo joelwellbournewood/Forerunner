@@ -9,6 +9,8 @@ import {
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type { JsonObject, MergeRecordRow, StateStore, TaskRow } from "@forerunner/state";
 import {
+  type BranchCheckOptions,
+  type BranchVerdict,
   fileLeftOpenRequest,
   headMovedSentence,
   leftOpenSteps,
@@ -17,6 +19,7 @@ import {
   type MergedEvent,
   REBUILD_CARD_OPTIONS,
   type ReviewedPrMerge,
+  rebuildSteps,
 } from "../loop/merge.ts";
 import {
   folderWaitOver,
@@ -63,6 +66,8 @@ export interface DependentBranchesDeps {
   merge: Pick<ReviewedPrMerge, "merged">;
   executor: Pick<PrTaskExecutor, "rebuildDependents" | "rebuildTask" | "mergeMethodOf"> &
     Partial<Pick<PrTaskExecutor, "conflictsWithBase">>;
+  /** L3-github-2: merge cards were closed (compose tells the Inbox, `inbox.changed`). */
+  cardsClosed?: () => void;
 }
 
 /**
@@ -152,6 +157,14 @@ function reviewedChangeBefore(record: MergeRecordRow, r: DependentRebuild): bool
 /** A rebuild that could not run: the worktree was busy (or dirty), the push was held, a step failed. */
 const OWES: ReadonlySet<DependentOutcome["result"]> = new Set(["busy", "held", "failed", "waits"]);
 
+/** What a branch check before a merge leaves to the person (L3-github-1, `settleRecord`). */
+const LEFT_BY_CHECK: ReadonlySet<string> = new Set([
+  "rebuilt_without",
+  "rebuilt_changed",
+  "rebuild_conflict",
+  "head_moved",
+]);
+
 export class DependentBranches {
   private readonly logger = log("dependent-branches");
   /**
@@ -231,9 +244,137 @@ export class DependentBranches {
     await this.rebuildFor(task.project_id, task.id);
   }
 
-  /** `ReviewedPrMerge.onMerged`: every merge, Forerunner's own and those seen on GitHub. */
+  /**
+   * `ReviewedPrMerge.onMerged`: every merge, Forerunner's own and those seen on GitHub. The
+   * task's merge cards close first (L3-github-2), then what built on it is rebuilt.
+   */
   async dependencyMerged(e: MergedEvent): Promise<void> {
+    await this.closeMergeCards(e.task.id, e.record.pr_url);
     await this.rebuildFor(e.task.project_id, e.task.id);
+  }
+
+  /**
+   * L3-github-2: every open card of a task's merge (its head moved, a rebuild, a rebuild that
+   * conflicted, a conflict notice) is closed once that pull request is merged, by Forerunner or
+   * seen merged on GitHub, whatever the card offered: it no longer needs the person (design
+   * §3.8, "a card whose task has moved on is closed with a line saying so"; its Answered line
+   * reads "Closed: #33 was merged.", from `closed: "merged"`). Before (live check 3, G5, G7, G8)
+   * nothing closed them: the head-moved card stayed in Needs you for 30 minutes and through a
+   * restart, the chat repeated it as "never merged", and a rebuild card's Merge answered
+   * "Merging #42." for a pull request merged on GitHub. Returns how many were closed.
+   */
+  private async closeMergeCards(taskId: string, prUrl: string): Promise<number> {
+    const { store } = this.deps;
+    let closed = 0;
+    const rows = await store.humanRequest.list({ task_id: taskId, status: "open" } as never, {
+      limit: 50,
+    });
+    for (const row of rows) {
+      const card = (row.change_card ?? {}) as JsonObject;
+      if (card.key !== MERGE_LEFT_OPEN_KEY) continue;
+      // A card about another pull request of the task (an earlier one, before a redo) stays.
+      if (typeof card.pr_url === "string" && card.pr_url && card.pr_url !== prUrl) continue;
+      try {
+        const marked = await store.humanRequest.patch(row.id, {
+          change_card: { ...card, closed: "merged" },
+        });
+        await store.humanRequest.withdraw(marked.id, marked.version);
+        closed++;
+      } catch (e) {
+        this.logger.warn("merge card not closed", { taskId, error: errorMessage(e) });
+      }
+    }
+    if (closed) {
+      this.logger.info("merge cards closed: the pull request is merged", { taskId, closed });
+      this.deps.cardsClosed?.();
+    }
+    return closed;
+  }
+
+  /**
+   * L3-github-2: the project's merge cards still open for a pull request whose merge record says
+   * merged (an earlier version left them open, or a listener did not run), closed once per poll
+   * by the sweep. True when one was.
+   */
+  private async closeMergedCards(projectId: string, tasks: readonly TaskRow[]): Promise<boolean> {
+    const { store } = this.deps;
+    let closed = 0;
+    const open = await store.humanRequest.list({ project_id: projectId, status: "open" } as never, {
+      limit: 500,
+    });
+    const taskIds = new Set(
+      open
+        .filter((r) => (r.change_card as JsonObject | null)?.key === MERGE_LEFT_OPEN_KEY)
+        .map((r) => r.task_id)
+        .filter((id): id is string => !!id),
+    );
+    for (const taskId of taskIds) {
+      if (!tasks.some((t) => t.id === taskId)) continue;
+      const record = await store.mergeRecord.forTask(taskId);
+      if (record?.state !== "merged") continue;
+      closed += await this.closeMergeCards(taskId, record.pr_url);
+    }
+    return closed > 0;
+  }
+
+  /**
+   * L3-github-1 (R-lock, ADR 0111 amended 2026-11-15): what a task's branch holds, checked right
+   * before a merge outside a session and at the person's press (compose wires it into the merge
+   * step, `ReviewedPrMerge.checkBranchesWith`), as `mergePort` checks it before the session's
+   * merge: `rebuildTask` reads each dependency the branch holds on GitHub and takes out work
+   * that went away (a pull request closed, a task redone or cancelled), and the record is
+   * settled before the push (`settleRecord`: a review that read that work is void, with one
+   * sentence and one card; one that only dropped what main has moves to the rebuilt head). A
+   * check that could not run (the folder busy, GitHub silent) leaves the record owing the
+   * rebuild, so no merge goes ahead until the sweep ran it. Before (live check 3, G7) only the
+   * watcher's next poll looked, and a Merge pressed seconds after a dependency's close merged
+   * the closed work into main. `o.pressed` (the person's press asks it before its answer): a
+   * branch that holds commits the review did not read files its "changed after the review" card
+   * also over a record that waited for the click, as the press's own head check does.
+   */
+  async checkBeforeMerge(task: TaskRow, o: BranchCheckOptions = {}): Promise<BranchVerdict> {
+    const { store } = this.deps;
+    const none: BranchVerdict = { left: null, owed: false };
+    if (!task.pr_url || !task.branch || !(task.depends_on ?? []).length) return none;
+    const before = await store.mergeRecord.forTask(task.id);
+    if (!before || before.state === "merged" || before.pr_url !== task.pr_url) return none;
+    const rebuilt = await this.deps.executor.rebuildTask(task, {
+      beforePush: (r, pr) => this.settleRecord(r, pr, o.pressed === true),
+    });
+    if (OWES.has(rebuilt.result)) {
+      const record = await store.mergeRecord.forTask(task.id);
+      if (record && record.state !== "merged" && !record.rebuild_owed_for) {
+        await store.mergeRecord.oweRebuild(task.id, await this.owedFor(task));
+        await this.sayFolderWait(rebuilt);
+      }
+      this.logger.warn("branch not checked before its merge: the rebuild is owed", {
+        taskId: task.id,
+        result: rebuilt.result,
+      });
+      return { left: null, owed: true };
+    }
+    // R-conflict: what this poll read of its pull request is from before the rebuild.
+    if (rebuilt.result !== "unchanged") this.seen.delete(task.id);
+    const now = await store.mergeRecord.forTask(task.id);
+    const left =
+      !!now &&
+      now.state === "left_to_you" &&
+      LEFT_BY_CHECK.has(now.last_outcome ?? "") &&
+      (now.last_outcome !== before.last_outcome || now.sentence !== before.sentence);
+    if (left)
+      this.logger.info("branch checked before its merge: left to the person", {
+        taskId: task.id,
+        outcome: now?.last_outcome,
+      });
+    return { left: left ? (now ?? null) : null, owed: false };
+  }
+
+  /** The dependency a check that could not run owes the rebuild for: the first not merged. */
+  private async owedFor(task: TaskRow): Promise<string> {
+    const ids = task.depends_on ?? [];
+    for (const id of ids)
+      if ((await this.deps.store.mergeRecord.forTask(id))?.state !== "merged") return id;
+    return ids[0] ?? task.id;
   }
 
   /**
@@ -266,7 +407,15 @@ export class DependentBranches {
       }
     }
     for (const dependencyId of todo.keys()) await this.rebuildFor(projectId, dependencyId);
-    return this.conflictNotices(projectId);
+    // L3-github-2: a merge card still open for a pull request whose record says merged.
+    const closed = await this.closeMergedCards(projectId, tasks).catch((e: unknown) => {
+      this.logger.warn("merged pull requests' cards not closed", {
+        projectId,
+        error: errorMessage(e),
+      });
+      return false;
+    });
+    return (await this.conflictNotices(projectId)) || closed;
   }
 
   /**
@@ -693,10 +842,12 @@ export class DependentBranches {
    * person needs to know, before any merge could follow the new head. Returns true: the push
    * goes on (a merge already under way then finds its head moved, and the record's new word
    * stands: `ReviewedPrMerge` does not follow a head when the record was moved meanwhile).
+   * `pressed`: the person's press asked the check (`checkBeforeMerge`).
    */
   private async settleRecord(
     r: DependentRebuild,
     pr: { number: number; url: string },
+    pressed = false,
   ): Promise<boolean> {
     const { store } = this.deps;
     const record = await store.mergeRecord.forTask(r.taskId);
@@ -732,7 +883,7 @@ export class DependentBranches {
       // the record moved its reviewed head onto it, the Overview offered Merge under "Reviewed
       // by the critic", and a Merge the person pressed during the folder's wait merged it.
       if (!reviewedChangeBefore(record, r)) {
-        await this.changedAfterReview(task, record, pr);
+        await this.changedAfterReview(task, record, pr, pressed);
         return true;
       }
       // Only what main already has was dropped: the same reviewed change on the new head.
@@ -765,17 +916,21 @@ export class DependentBranches {
    * moved (`head_moved`: no Merge on the Overview, "merge it yourself or redo the task"). A
    * Merge the person pressed before (kept while the folder waited) or the automatic mode's is
    * dropped, and one card says why; a record that already waited for the person's Merge says
-   * it on its row only, as the merge step does. Said once: a later rebuild finds it said.
+   * it on its row only, as the merge step does, unless the person's press asked the check
+   * (`pressed`): the press is the attempt, so its card is filed, as `ReviewedPrMerge.
+   * headMovedNow` files it for a head the press saw moved (review of fix/l3-merge, sibling).
+   * Said once: a later rebuild finds it said.
    */
   private async changedAfterReview(
     task: TaskRow | undefined,
     record: MergeRecordRow,
     pr: { number: number; url: string },
+    pressed = false,
   ): Promise<void> {
     const { store } = this.deps;
     const sentence = headMovedSentence(pr.number);
     if (record.last_outcome === "head_moved" && record.sentence === sentence) return;
-    const wasLeft = record.state === "left_to_you";
+    const wasLeft = record.state === "left_to_you" && !pressed;
     const moved = await store.mergeRecord.move(record.id, "left_to_you", {
       sentence,
       last_outcome: "head_moved",
@@ -847,6 +1002,8 @@ export class DependentBranches {
     const options = [
       ...(rebuild === "conflict" ? REBUILD_CARD_OPTIONS.conflict : REBUILD_CARD_OPTIONS.rebuilt),
     ];
+    // L3-github-7: a rebuild's own Details (before: the head-moved card's steps).
+    const steps = rebuildSteps(rebuild, pr.number, without);
     const { store } = this.deps;
     try {
       const open = (
@@ -856,6 +1013,8 @@ export class DependentBranches {
         await store.humanRequest.patch(open.id, {
           why: `The critic accepted "${task.title}", but pull request #${pr.number} was not merged. ${sentence}`,
           options,
+          // Its Details follow what it says now (a head-moved card a rebuild takes over).
+          steps,
           change_card: {
             ...((open.change_card ?? {}) as JsonObject),
             sentence,
@@ -882,6 +1041,7 @@ export class DependentBranches {
         },
         card: { rebuild, without },
         options,
+        steps,
       });
     } catch (e) {
       this.logger.warn("rebuild card not filed", { taskId: task.id, error: errorMessage(e) });

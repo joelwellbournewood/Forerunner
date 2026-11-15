@@ -181,6 +181,8 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
     executor,
   });
   merge.onMerged((e) => dependents.dependencyMerged(e));
+  // L3-github-1: the merge step checks the branch before a merge outside a session.
+  merge.checkBranchesWith((task, o) => dependents.checkBeforeMerge(task, o));
   const watcher = new GitHostWatcher({
     store: w.store,
     clock: w.clock,
@@ -2453,6 +2455,7 @@ describe("w15-tail, wave 15 run B: the words a conflict notice keeps, across a r
     });
     const dependents = new DependentBranches({ store: w.store, clock: w.clock, merge, executor });
     merge.onMerged((e) => dependents.dependencyMerged(e));
+    merge.checkBranchesWith((task, o) => dependents.checkBeforeMerge(task, o));
     const watcher = new GitHostWatcher({
       store: w.store,
       clock: w.clock,
@@ -2526,5 +2529,444 @@ describe("w15-tail, wave 15 run B: the words a conflict notice keeps, across a r
       last_outcome: "rebuilt_without",
       sentence: warning,
     });
+  });
+});
+
+describe("l3-merge, run L3", { timeout: 240_000 }, () => {
+  type ChainWorld = Awaited<ReturnType<typeof chainWorld>>;
+  const rebuiltWithout = (b: number, a: number, how = "which was closed") =>
+    `#${b} was rebuilt without #${a}, ${how}. It was reviewed with #${a}'s changes, so it waits for you: look at it, then merge it or redo the task.`;
+  const changedAfterReview = (pr: number) =>
+    `#${pr} changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.`;
+  /** The Overview's Merge, as compose wires it: the merge step itself, answered at once. */
+  async function press(m: ChainWorld, n: number) {
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const prs = new ProjectPullRequests({ store: m.w.store, host: m.github, merge: m.merge });
+    const answer = await prs.merge(project, n, m.w.human);
+    await prs.idle();
+    await m.host.settle();
+    return answer;
+  }
+  async function overviewRow(m: ChainWorld, n: number) {
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const view = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(project);
+    return view.waiting.find((r) => r.number === n);
+  }
+  const mainFiles = (m: ChainWorld) => m.hostGit("ls-tree", "-r", "--name-only", "main");
+  const asPerson = (dir: string) => (args: string[]) =>
+    run(["git", "-C", dir, "-c", "user.name=Pat", "-c", "user.email=pat@example.test", ...args], {
+      allowFailure: true,
+    });
+  /** A commit someone pushes on GitHub: a file on `branch`, or main merged into it (`mergeMain`). */
+  async function pushTo(
+    m: ChainWorld,
+    branch: string,
+    o: { file?: string; mergeMain?: boolean } = {},
+  ): Promise<void> {
+    const dir = mkdtempSync(join(tmpdir(), "fr-l3-push-"));
+    try {
+      // Through the fake GitHub's git endpoint, so its pull request follows the push as
+      // GitHub's does (a push straight into the bare repository leaves its listing behind).
+      const auth = `http.extraheader=AUTHORIZATION: basic ${Buffer.from(`x-access-token:${m.token}`).toString("base64")}`;
+      await run(["git", "-c", auth, "clone", "-q", "--branch", branch, m.host.cloneUrl(FULL), dir]);
+      await run([
+        "git",
+        "-C",
+        dir,
+        "config",
+        "http.extraheader",
+        auth.slice("http.extraheader=".length),
+      ]);
+      const g = asPerson(dir);
+      if (o.mergeMain) {
+        await g(["fetch", "-q", "origin", "main"]);
+        await g(["merge", "-q", "--no-edit", "origin/main"]);
+      }
+      if (o.file) {
+        writeFileSync(join(dir, o.file), "pushed on GitHub after the review\n");
+        await g(["add", o.file]);
+        await g(["commit", "-q", "-m", `Add ${o.file}`]);
+      }
+      await g(["push", "-q", "origin", `HEAD:${branch}`]);
+      // GitHub's pull request follows the push (the fake host updates it after the push).
+      await m.host.settle();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  /** The open cards of a task as the Inbox shows them (title, body, Details, options). */
+  async function openViews(m: ChainWorld, taskId: string) {
+    const rows = await m.w.store.humanRequest.list({ task_id: taskId, status: "open" } as never);
+    return requestViews(m.w.store, rows);
+  }
+  /** The line a card shows under Answered once it is closed or answered. */
+  async function answeredLine(m: ChainWorld, id: string) {
+    const [view] = await requestViews(m.w.store, [await m.w.store.humanRequest.mustGet(id)]);
+    return view?.outcome;
+  }
+
+  it("L3-github-1: A closed on GitHub, then Merge pressed on B before any poll: B is not merged, its pull request is rebuilt without A, the press says so at once, one card; nothing merges it later", async () => {
+    // Live check 3, step G7: "#46 closed_at 06:32:50, #48 merged_at 06:32:55 ... kite/club.txt
+    // on main" after the press answered "Merging #48." (the watcher read the close at 06:33:19).
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    expect((await overviewRow(m, prB))?.merge?.first).toEqual([prA]);
+    await m.close(a.id);
+    const answer = await press(m, prB);
+    const sentence = rebuiltWithout(prB, prA);
+    expect(answer).toEqual({ state: "refused", sentence, order: [] });
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await mainFiles(m)).not.toContain(m.fileOf("Add page"));
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      sentence,
+      last_outcome: "rebuilt_without",
+    });
+    expect(await m.cards(b.id)).toEqual([
+      { title: `"Add footer" was rebuilt without pull request #${prA}`, body: sentence },
+    ]);
+    // Nothing merges it by itself: the retry pass and the watcher's polls leave it to the person.
+    await m.merge.retryWaiting();
+    await m.poll();
+    await m.merge.retryWaiting();
+    await m.host.settle();
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await m.cards(b.id)).toHaveLength(1);
+    // Its row says so, with Merge for after the person's look.
+    expect((await overviewRow(m, prB))?.merge).toMatchObject({
+      canMerge: true,
+      sentence,
+      first: [],
+    });
+  });
+
+  it("L3-github-1: a merge the app makes by itself (Merge automatically after review) whose dependency was closed before the watcher read it: the retry rebuilds B first and merges nothing (defence in the merge step)", async () => {
+    const m = await chainWorld({ level: 2, mode: "after_review" });
+    // A waits for the person (its checks fail); B's checks still run when it is accepted.
+    const a = await m.runTask("Add page", {
+      afterPr: (pr) => m.check(pr.headSha, "completed", "failure"),
+    });
+    const b = await m.runTask("Add footer", {
+      dependsOn: [a.id],
+      afterPr: (pr) => m.check(pr.headSha, "in_progress"),
+    });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    expect(await m.record(b.id)).toMatchObject({ state: "waiting_checks" });
+    // A is closed and B's checks pass; the retry runs before any poll read the close (the
+    // watcher's read of #A was cut short, say).
+    await m.close(a.id);
+    await m.check((await m.pr(b.id)).head.sha, "completed", "success");
+    await m.merge.retryWaiting();
+    await m.host.settle();
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await mainFiles(m)).not.toContain(m.fileOf("Add page"));
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+    const sentence = rebuiltWithout(prB, prA);
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      sentence,
+      last_outcome: "rebuilt_without",
+    });
+    expect(await m.cards(b.id)).toEqual([
+      { title: `"Add footer" was rebuilt without pull request #${prA}`, body: sentence },
+    ]);
+    await m.poll();
+    await m.merge.retryWaiting();
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await m.cards(b.id)).toHaveLength(1);
+  });
+
+  it("L3-github-1, control: a poll between the close and the press: B was rebuilt without A, and the person's Merge after their look merges B's own file only", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    await m.close(a.id);
+    await m.poll();
+    expect((await m.record(b.id)).last_outcome).toBe("rebuilt_without");
+    const answer = await press(m, prB);
+    expect(answer).toEqual({ state: "queued", sentence: `Merging #${prB}.`, order: [prB] });
+    expect((await m.pr(b.id)).merged).toBe(true);
+    const files = await mainFiles(m);
+    expect(files).toContain(m.fileOf("Add footer"));
+    expect(files).not.toContain(m.fileOf("Add page"));
+  });
+
+  it("L3-github-1, sibling: A redone and cancelled after both were accepted, Merge pressed on B before any poll: B is rebuilt without A's work, never merged with it", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    // The person redoes A, then cancels it (A's pull request stays open on GitHub).
+    let row = await m.w.store.task.mustGet(a.id);
+    await m.w.store.task.reopen(a.id, row.version, "ready", "Redo asked by you", {
+      agentId: m.w.alice,
+    });
+    row = await m.w.store.task.mustGet(a.id);
+    await m.w.store.task.transition(a.id, row.version, "cancelled", "you cancelled it", {
+      agentId: m.w.alice,
+    });
+    const answer = await press(m, prB);
+    const sentence = rebuiltWithout(prB, prA, "whose task was cancelled");
+    expect(answer).toEqual({ state: "refused", sentence, order: [] });
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await mainFiles(m)).not.toContain(m.fileOf("Add page"));
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+  });
+
+  it("L3-github-2: the rebuilt-without card closes once B is merged on GitHub (Closed: #B was merged.), its Details give a rebuild's steps (L3-github-7), and a poll after a restart keeps it closed", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    await m.close(a.id);
+    await m.poll();
+    const [card] = await openViews(m, b.id);
+    expect(card?.choices?.map((c) => c.label)).toEqual(["Merge", "Redo"]);
+    // L3-github-7: the steps of a rebuild, not those of commits pushed after the review.
+    expect(card?.details).toEqual([
+      `Look at #${prB} on GitHub: it no longer holds the changes of #${prA}`,
+      "Then press Merge here, or Redo to do the task again from main",
+    ]);
+    // The person merges B on GitHub; the watcher's next poll reads it.
+    expect((await m.github.mergePullRequest(REPO, prB)).merged).toBe(true);
+    await m.poll();
+    expect(await m.record(b.id)).toMatchObject({ state: "merged", last_outcome: "merged_on_host" });
+    // Before: the card stayed in Needs you with Merge and Redo, through restarts.
+    expect(await openViews(m, b.id)).toEqual([]);
+    expect(await answeredLine(m, card?.id ?? "")).toBe(`Closed: #${prB} was merged.`);
+  });
+
+  it("L3-github-2: the 'changed after the review' card closes once its pull request is merged on GitHub; a card an earlier version left open for a merged pull request is closed at the next poll", async () => {
+    const m = await chainWorld({ level: 2 });
+    const t = await m.runTask("Link trips page");
+    const pr = await m.prNumber(t.id);
+    const branch = (await m.w.store.task.mustGet(t.id)).branch ?? "";
+    await pushTo(m, branch, { file: "theirs.txt" });
+    await press(m, pr);
+    const [card] = await openViews(m, t.id);
+    expect(card?.title).toBe('"Link trips page" changed after the review');
+    expect(card?.choices?.map((c) => c.label)).toEqual(["I merged it", "Leave it open"]);
+    // The person looks at the new commits and merges it on GitHub, as the card says.
+    expect((await m.github.mergePullRequest(REPO, pr)).merged).toBe(true);
+    await m.poll();
+    expect(await m.record(t.id)).toMatchObject({ state: "merged" });
+    expect(await openViews(m, t.id)).toEqual([]);
+    expect(await answeredLine(m, card?.id ?? "")).toBe(`Closed: #${pr} was merged.`);
+    // A card an earlier version left open for a merged pull request is closed by the next poll.
+    const stale = await fileLeftOpenRequest(m.w.store, {
+      task: await m.w.store.task.mustGet(t.id),
+      sessionId: null,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+      outcome: {
+        taskId: t.id,
+        prUrl: (await m.w.store.task.mustGet(t.id)).pr_url ?? "",
+        status: "head_moved",
+        reason: "PR left open for you",
+        sentence: changedAfterReview(pr),
+      },
+    });
+    await m.poll();
+    expect((await m.w.store.humanRequest.mustGet(stale.id)).status).toBe("withdrawn");
+  });
+
+  it("L3-github-2: Forerunner's own merge (the Overview's Merge) closes the task's open merge card too", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    await m.close(a.id);
+    await m.poll();
+    const [card] = await openViews(m, b.id);
+    expect(card).toBeDefined();
+    expect((await press(m, prB)).state).toBe("queued");
+    expect((await m.pr(b.id)).merged).toBe(true);
+    expect(await openViews(m, b.id)).toEqual([]);
+    expect(await answeredLine(m, card?.id ?? "")).toBe(`Closed: #${prB} was merged.`);
+  });
+
+  it("L3-github-2: a rebuild card's Merge applied after its pull request was merged on GitHub says it is merged, never 'Merging #N.'", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    await m.close(a.id);
+    await m.poll();
+    const [row] = await m.w.store.humanRequest.list({ task_id: b.id, status: "open" } as never);
+    if (!row) throw new Error("no rebuild card");
+    const [view] = await requestViews(m.w.store, [row]);
+    // The person presses the card's Merge while B is merged on GitHub; the answer is applied
+    // after the watcher read the merge.
+    await m.w.store.humanRequest.answer(
+      row.id,
+      row.version,
+      view?.choices?.[0]?.label ?? "",
+      m.w.human,
+    );
+    expect((await m.github.mergePullRequest(REPO, prB)).merged).toBe(true);
+    await m.poll();
+    await syncPrAnswers({
+      store: m.w.store,
+      clock: m.w.clock,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+      merge: m.merge,
+    });
+    expect(await answeredLine(m, row.id)).toBe(`#${prB} was merged on GitHub already.`);
+  });
+
+  it("L3-github-3: Merge pressed on a pull request whose branch got a commit on GitHub answers with the head-moved sentence at once: nothing merged, the record says head_moved, one card", async () => {
+    const m = await chainWorld({ level: 2 });
+    const t = await m.runTask("Add page");
+    const pr = await m.prNumber(t.id);
+    const branch = (await m.w.store.task.mustGet(t.id)).branch ?? "";
+    await pushTo(m, branch, { file: "theirs.txt" });
+    const answer = await press(m, pr);
+    // Before: {"state":"queued","sentence":"Merging #1.","order":[1]}.
+    expect(answer).toEqual({ state: "refused", sentence: changedAfterReview(pr), order: [] });
+    expect((await m.pr(t.id)).merged).toBe(false);
+    expect(await m.record(t.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "head_moved",
+      sentence: changedAfterReview(pr),
+    });
+    expect(await m.cards(t.id)).toEqual([
+      { title: '"Add page" changed after the review', body: changedAfterReview(pr) },
+    ]);
+    expect((await overviewRow(m, pr))?.merge).toMatchObject({
+      canMerge: false,
+      sentence: changedAfterReview(pr),
+    });
+  });
+
+  it("L3-github-3, counter-case: a head that keeps the reviewed change (main merged into the branch, GitHub's Update branch) is merged on the press, with no refusal", async () => {
+    const m = await chainWorld({ level: 2 });
+    const t = await m.runTask("Add page");
+    const pr = await m.prNumber(t.id);
+    const branch = (await m.w.store.task.mustGet(t.id)).branch ?? "";
+    await m.host.seedCommit(FULL, { "NOTES.md": "# notes\n" }, "Notes on main", "main");
+    await pushTo(m, branch, { mergeMain: true });
+    expect((await m.pr(t.id)).head.sha).not.toBe((await m.record(t.id)).reviewed_head_sha);
+    const answer = await press(m, pr);
+    expect(answer).toEqual({ state: "queued", sentence: `Merging #${pr}.`, order: [pr] });
+    expect((await m.pr(t.id)).merged).toBe(true);
+    expect(await mainFiles(m)).toContain(m.fileOf("Add page"));
+  });
+
+  // Review of fix/l3-merge (blocking): the press's branch check rebuilt B onto main and moved
+  // its record to the rebuilt head, then the head check compared that head with the listing read
+  // before the rebuild, took the rebuild's own push for a commit pushed after the review, and
+  // refused the press with "changed after the review" (record head_moved, no Merge for good, a
+  // card about commits nobody pushed). At the base the same press merged B.
+  for (const method of ["squash", "rebase"] as const)
+    it(`L3-github-3 fix-up: A ${method}-merged on GitHub, then Merge pressed on B before any poll: the press's check rebuilds B onto main and B is merged, never refused as changed after the review`, async () => {
+      const m = await chainWorld({ level: 2 });
+      const a = await m.runTask("Add page");
+      const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+      const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+      const reviewed = await m.record(b.id);
+      await m.github.mergePullRequest(REPO, prA, { method });
+      const answer = await press(m, prB);
+      // Before the fix-up: {"state":"refused","sentence":"#2 changed after the review: ..."}.
+      expect(answer).toEqual({ state: "queued", sentence: `Merging #${prB}.`, order: [prB] });
+      expect((await m.pr(b.id)).merged).toBe(true);
+      const files = await mainFiles(m);
+      expect(files).toContain(m.fileOf("Add page"));
+      expect(files).toContain(m.fileOf("Add footer"));
+      // B was merged as rebuilt onto main: A's change is on main once (its own merge).
+      expect(
+        (await m.hostGit("log", "--format=%H", "main", "--", m.fileOf("Add page"))).split("\n"),
+      ).toHaveLength(1);
+      const record = await m.record(b.id);
+      expect(record).toMatchObject({ state: "merged", own_change_id: reviewed.own_change_id });
+      expect(record.last_outcome).not.toBe("head_moved");
+      expect(record.reviewed_head_sha).not.toBe(reviewed.reviewed_head_sha);
+      expect(await m.cards(b.id)).toEqual([]);
+      expect((await m.w.store.task.mustGet(b.id)).reason).not.toContain("not the reviewed commit");
+    });
+
+  it("L3-github-3 fix-up, chain of three: A squash-merged, Merge pressed on C (waits for B, which waits for A) before any poll: B and C are rebuilt onto main by the press's check and merge in order", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const c = await m.runTask("Add notes", { dependsOn: [b.id] });
+    const [prA, prB, prC] = [
+      await m.prNumber(a.id),
+      await m.prNumber(b.id),
+      await m.prNumber(c.id),
+    ];
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    const answer = await press(m, prC);
+    expect(answer).toEqual({
+      state: "queued",
+      sentence: `Merging #${prB} and #${prC} in order.`,
+      order: [prB, prC],
+    });
+    expect((await m.pr(b.id)).merged).toBe(true);
+    expect((await m.pr(c.id)).merged).toBe(true);
+    for (const t of [a, b, c])
+      expect(
+        (await m.hostGit("log", "--format=%H", "main", "--", m.fileOf(t.title))).split("\n"),
+      ).toHaveLength(1);
+    for (const t of [b, c]) {
+      expect((await m.record(t.id)).last_outcome).not.toBe("head_moved");
+      expect(await m.cards(t.id)).toEqual([]);
+    }
+  });
+
+  it("L3-github-3 fix-up, sibling: a commit pushed to B's branch on GitHub and A squash-merged, Merge pressed on B before any poll: refused at once as changed after the review, nothing merged, one card", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    const reviewed = await m.record(b.id);
+    await pushTo(m, (await m.w.store.task.mustGet(b.id)).branch ?? "", { file: "theirs.txt" });
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    const answer = await press(m, prB);
+    expect(answer).toEqual({ state: "refused", sentence: changedAfterReview(prB), order: [] });
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await mainFiles(m)).not.toContain("theirs.txt");
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "head_moved",
+      sentence: changedAfterReview(prB),
+      reviewed_head_sha: reviewed.reviewed_head_sha,
+    });
+    expect(await m.cards(b.id)).toEqual([
+      { title: '"Add footer" changed after the review', body: changedAfterReview(prB) },
+    ]);
+  });
+
+  it("L3-github-3 fix-up, sibling: the press's head check reads the pull request again, so a listing from before a rebuild Forerunner pushed itself (the watcher's poll between the press's read and its check) is no head move", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    // The head the press's read listed, a moment before the watcher's poll rebuilt B.
+    const listed = (await m.pr(b.id)).head.sha;
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    const rebuilt = await m.record(b.id);
+    expect(rebuilt.reviewed_head_sha).not.toBe(listed);
+    expect(rebuilt.reviewed_head_sha).toBe((await m.pr(b.id)).head.sha);
+    const task = await m.w.store.task.mustGet(b.id);
+    // Before: "#2 changed after the review: ...", the record head_moved and one card.
+    expect(await m.merge.headMovedNow(task, listed)).toBeNull();
+    expect(await m.record(b.id)).toMatchObject({
+      state: rebuilt.state,
+      last_outcome: rebuilt.last_outcome,
+      reviewed_head_sha: rebuilt.reviewed_head_sha,
+    });
+    expect(await m.cards(b.id)).toEqual([]);
+    expect(await press(m, prB)).toEqual({
+      state: "queued",
+      sentence: `Merging #${prB}.`,
+      order: [prB],
+    });
+    expect((await m.pr(b.id)).merged).toBe(true);
   });
 });

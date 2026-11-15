@@ -370,11 +370,12 @@ describe("Tasks tab (design §3.5)", () => {
     expect(postedCalls(harness, "/tasks/t_run/action").map((c) => c.body)).toEqual([
       { version: 1, action: "cancel" },
     ]);
-    // Being reviewed, with a pull request: the review stops, the pull request stays open.
+    // Being reviewed, with a pull request: the review stops, the pull request stays open, named
+    // with what to do about it (L3-github-10, run L3).
     await user.click(within(await rowOf("t_pr")).getByTestId("action-cancel"));
     const review = await screen.findByTestId("action-dialog");
     expect(within(review).getByTestId("action-explain")).toHaveTextContent(
-      "Drops it. Its review stops now; its pull request stays open.",
+      "Drops it. Its review stops now; #7 stays open on GitHub: close it there if you do not want it.",
     );
   });
 

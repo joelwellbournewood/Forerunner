@@ -12,6 +12,7 @@ import {
 } from "../daemon/task-display.ts";
 import { taskView } from "../daemon/views.ts";
 import {
+  cancelledPullRequests,
   donePullRequests,
   lastSessionBlock,
   prList,
@@ -56,15 +57,23 @@ export interface ReadToolDeps {
 async function hostPullRequestLines(deps: ReadToolDeps, project: ProjectRow): Promise<string[]> {
   if (!deps.openPullRequests || !repositoryNameOf(project)) return [];
   const prs = await donePullRequests(deps.store, project.id);
-  if (!prs.length) return [];
+  // L3-github-10: a cancelled task's pull request, which a cancel leaves open on GitHub.
+  const dropped = await cancelledPullRequests(deps.store, project.id);
+  if (!prs.length && !dropped.length) return [];
   const open = await deps.openPullRequests(project.id).catch(() => null);
   if (open === null)
     return ["Whether its pull requests are merged is not known: GitHub did not answer."];
   const waiting = prs.filter((p) => open.includes(p.url));
   const gone = prs.filter((p) => !open.includes(p.url));
+  const leftOpen = dropped.filter((p) => open.includes(p.url));
   return [
     ...(waiting.length ? [`Open on GitHub, waiting for a merge: ${prList(waiting)}`] : []),
     ...(gone.length ? [`Merged or closed on GitHub: ${prList(gone)}`] : []),
+    ...(leftOpen.length
+      ? [
+          `Still open on GitHub although their task was cancelled (close them there if not wanted): ${prList(leftOpen)}`,
+        ]
+      : []),
   ];
 }
 

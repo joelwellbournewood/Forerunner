@@ -2557,8 +2557,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // gone is left to the person); the default branch's head once per poll retries a rebuild that
   // could not run and drops a dependency redone or cancelled; the session's merge port rebuilds
   // an accepted task that holds work which went away while it was reviewed.
-  const dependentBranches = new DependentBranches({ store, clock, merge, executor });
+  const dependentBranches = new DependentBranches({
+    store,
+    clock,
+    merge,
+    executor,
+    // L3-github-2: a merged pull request's cards closed; the Inbox and its count follow.
+    cardsClosed: () => events.emit("inbox", {}),
+  });
   merge.onMerged((e) => dependentBranches.dependencyMerged(e));
+  // L3-github-1 (R-lock): the person's Merge, a card's Merge and the retry check the branch
+  // against what it builds on right before they merge, as the session's merge port does.
+  merge.checkBranchesWith((task, o) => dependentBranches.checkBeforeMerge(task, o));
   // The Overview's pull requests and the person's Merge in the app (merge-in-app): what each
   // waiting pull request's Merge does (from its merge record and the repository's rules), and
   // the click, answered at once, the merges in dependency order through the merge step above.

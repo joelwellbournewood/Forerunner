@@ -1173,8 +1173,11 @@ export const ProjectPullRequestView = z.object({
   /**
    * A done task's work, one of Forerunner's docs PRs (scaffold, plan's docs, status), or the pull
    * request that takes a merged task's work out (`take_out`, merged-actions; `taskId` is that task).
+   * `cancelled` (L3-github-10): a cancelled task's pull request still open on GitHub, listed
+   * under its own heading with Open and no Merge (`merge.canMerge` false, the sentence says to
+   * close it there or reopen the task) until GitHub says it is closed; it waits for no merge.
    */
-  kind: z.enum(["task", "docs", "take_out"]),
+  kind: z.enum(["task", "docs", "take_out", "cancelled"]),
   taskId: z.string().nullable(),
   /** The task's title, or what the docs PR holds in words. */
   title: z.string(),

@@ -6,6 +6,7 @@ import {
 import {
   cancelWorkKind,
   cancelWorkLine as cancelWorkWords,
+  prNumberOf,
 } from "@forerunner/runtime/daemon/cancel-words";
 import type { TaskAction, TaskView } from "../api/client.ts";
 
@@ -145,7 +146,7 @@ export function cancelWorkLine(
     pullRequest: !!task.prUrl,
     ownFolder: false,
   });
-  return kind ? cancelWorkWords(kind) : null;
+  return kind ? cancelWorkWords(kind, prNumberOf(task.prUrl)) : null;
 }
 
 /**

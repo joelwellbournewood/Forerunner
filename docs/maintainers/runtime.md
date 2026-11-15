@@ -3668,6 +3668,77 @@ conflict notice), `dependent-branches-restart.test.ts` (the runtime composed twi
 squash while the app was closed; a squash seen while the dependent's folder was busy, rebuilt at
 the first poll after the restart; a conflict notice said once across a restart).
 
+**Every Merge outside a session checks the branch first; merged pull requests close their cards
+(l3-merge, run L3, ADR 0111 amended 2026-11-15).** Live check 3: Merge pressed on #48 a second
+after its dependency #46 was closed on GitHub answered "Merging #48." and merged #46's closed work
+into main (only the watcher's next poll looked at what #48 held); cards about a pull request stayed
+open in Needs you after it was merged on GitHub, through restarts, and the chat repeated them as
+"never merged"; a press on a pull request with a commit pushed after the review answered "Merging
+#40." and the refusal came 4 s later. Now:
+- `ReviewedPrMerge.checkBranchesWith(check)` (compose wires `DependentBranches.checkBeforeMerge`,
+  as `chainWorld` does) and `checkBranchNow(task)` → `BranchVerdict { left, owed }`: `run()` calls
+  it for every merge outside a session (the person's, a card's, the retry pass), before the gate.
+  `checkBeforeMerge` runs `PrTaskExecutor.rebuildTask` with `settleRecord` as `beforePush` (the
+  session's `mergePort` check): work that went away (closed, redone, cancelled) is taken out and a
+  review that read it is void (`left`: the record waits for the person with the rebuild's sentence
+  and one card, `run` returns it unmerged); a rebuild that only dropped what main has moves the
+  record to the rebuilt head and the merge goes on; one that could not run marks the record owed
+  for the first unmerged dependency (`owed`, R-lock: nothing claims it until the sweep ran it).
+  Only a task with `depends_on` and a pull request is checked.
+- `ProjectPullRequests.merge` (the press): `read()` keeps the open pull requests the view was read
+  from. A chain task that builds on a pull request no longer listed open and not merged on its
+  record (`buildsOnGone`) is checked before the answer: `left` refuses with the record's sentence,
+  `owed` with `notCheckedSentence` ("#48 is not merged yet: Forerunner first checks what it holds of
+  the work it builds on. Press Merge again in a minute.") unless the folder's wait says why (W15-05).
+  Then a chain record whose listed head differs from its reviewed commit asks
+  `ReviewedPrMerge.headMovedNow(task, head)`: a head that keeps the reviewed change
+  (`keepsOwnChange`, Update branch) answers null and the press goes on; any other is settled as the
+  step settles a press whose head moved (`settle(..., pressed = true)`: the record `head_moved`,
+  the task's reason, one card even over a record that waited for the click) and the press is
+  refused with `headMovedSentence`. Nothing of the chain is approved or merged then.
+  The head check skips a task whose branch check just moved its record's reviewed head
+  (`rebuiltNow`: a dependency squash- or rebase-merged on GitHub before any poll, so the check
+  rebuilt the branch onto main and pushed it): the listing is from before that push, and the
+  check's own `settleRecord` already judged the branch as GitHub had it. Before (review of
+  fix/l3-merge), the head check took that push for a commit pushed after the review and refused the
+  press with "changed after the review", the row lost its Merge, and B was never merged.
+  The press asks the check with `{ pressed: true }` (`BranchCheckOptions`, threaded through
+  `checkBeforeMerge` and `settleRecord` to `changedAfterReview`): a branch that holds a commit the
+  review did not read files its "changed after the review" card also over a record that waited
+  for the click, as `headMovedNow` does. The merge step's own check (`run()`) passes nothing.
+  `headMovedNow` itself reads the pull request again (`host.getPullRequest`) before it judges:
+  a listing from before a push Forerunner made itself (the watcher's poll rebuilt the branch and
+  moved the record between the press's read and its check) whose fresh head is the reviewed
+  commit, or a pull request no longer open, is no head move; the record, the reason and the card
+  name the fresh head.
+- `settle` files no second card beside an open merge card of the task: that card takes the new
+  words (`openMergeCardOf`, options `MERGE_LEFT_OPEN_OPTIONS`, `leftOpenSteps`).
+- `DependentBranches.dependencyMerged` (every merge, Forerunner's and seen on GitHub) first closes
+  every open `merge:left_open` card of the task for that pull request (`closeMergeCards`: marked
+  `closed: "merged"`, then withdrawn; `request-words.ts` reads "Closed: #33 was merged."), and
+  `sweep` closes one an earlier version left open for a record that says merged
+  (`closeMergedCards`). `applyRebuildMerge` (`pr-answers.ts`) on a record already merged records
+  "#42 was merged on GitHub already." (or "... merged already.") instead of "Merging #42.".
+- The rebuild card's Details are a rebuild's (`rebuildSteps` in `loop/merge.ts`, L3-github-7):
+  "Look at #42 on GitHub: it no longer holds the changes of #35" and "Then press Merge here, or
+  Redo to do the task again from main" (rebuilt onto main: "it was rebuilt onto main"; a rebuild
+  that conflicted: "Redo does the task again from main, without the changes of #35" and "Or merge
+  #42 on GitHub if you want those changes too"); an open card a rebuild takes over takes them too.
+- A cancelled task's pull request still open on GitHub (L3-github-10, ADR 0105 amended) is a view
+  row of `kind: "cancelled"` (`merge` blocked, `canMerge` false, `cancelledOpenSentence`), out of
+  every chain; the press and Open this version refuse it; it leaves the list once GitHub closes it.
+- What remains (ADR 0111 amendment point 4): a merge made on GitHub's website of a dependent that
+  still holds a closed dependency is not said on the closed task's record.
+Tests: `dependent-branches-merge.test.ts` "l3-merge, run L3" (the press before any poll, the retry
+that comes before the watcher read the close, the control with a poll between, a dependency
+redone and cancelled, the cards closed by a merge on GitHub and by the Overview's Merge, a card
+left open by an earlier version, a rebuild card's Merge after the merge, the moved head and its
+Update-branch counter-case; the fix-up's dependency squash- and rebase-merged before the press, a
+chain of three, a pushed commit with the squash, and a listing from before the watcher's rebuild),
+`l3-merge.test.ts` (words, the cancelled
+rows, the chat facts), `real-daemon.test.ts` "l3-merge, run L3" (through the client, with a
+restart; the squash before the press).
+
 **Memory (`MemoryLoop`, spec G, E.5, N.4).** Private memory stays on this PC (spec "never
 leave that PC", ADR 0002, ADR 0083): with a shared state (a `FORERUNNER_STATE_URL` that is not
 `sqlite:`, i.e. paired and hybrid mode) `composeRuntime` opens the private index

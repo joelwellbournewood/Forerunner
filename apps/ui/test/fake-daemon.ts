@@ -572,6 +572,15 @@ export interface FakeDaemonState {
     | { state: "left_to_you" | "blocked"; sentence: string }
     | { state: "waiting_checks" }
     | null;
+  /**
+   * l3-merge, run L3: what the daemon's press finds before it merges anything, by
+   * `<project id>#<number>` (a test sets it): the pull request's head moved on GitHub since the
+   * review (L3-github-3: `blocked`, "#N changed after the review: ..."), or its branch still
+   * holds work that was closed and is rebuilt without it (L3-github-1: `left_to_you`, "#N was
+   * rebuilt without #M, ..."). The press is refused at once with that sentence, as the daemon's
+   * `ProjectPullRequests.merge` answers it, and the row then says it as the merge step leaves it.
+   */
+  pullRequestPressFinds: Record<string, { row: "blocked" | "left_to_you"; sentence: string }>;
   /** How many times `GET /projects/:id/pull-requests` was read, by project (the Overview's polling). */
   pullRequestReads: Record<string, number>;
   /** How many times `GET /projects` was read (leftovers7-merge: the list follows other changes). */
@@ -1107,6 +1116,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     pullRequests: clone(PROJECT_PULL_REQUESTS),
     pullRequestMerges: {},
     pullRequestMergeOutcome: null,
+    pullRequestPressFinds: {},
     pullRequestReads: {},
     projectListReads: 0,
     holdSessions: false,
@@ -7314,6 +7324,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         sentence: row.merge.sentence ?? `#${number} cannot be merged here: merge it on GitHub.`,
         order: [],
       });
+    // l3-merge, run L3: what the press finds before it merges (`pullRequestPressFinds`).
+    const finds = state.pullRequestPressFinds[`${id}#${number}`];
+    if (finds) {
+      delete state.pullRequestPressFinds[`${id}#${number}`];
+      row.merge = {
+        state: finds.row,
+        canMerge: finds.row === "left_to_you",
+        sentence: finds.sentence,
+        first: [],
+      };
+      return c.json({ state: "refused", sentence: finds.sentence, order: [] });
+    }
     const order = [...(row.merge?.first ?? []), number];
     const merging = state.pullRequestMerges[id] ?? [];
     state.pullRequestMerges[id] = merging;
@@ -7345,7 +7367,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!Number.isInteger(number) || number <= 0)
       return errorBody(c, 400, "validation", "not a pull request number");
     const prs = state.pullRequests[id];
-    const row = prs?.waiting.find((r) => r.number === number);
+    // A cancelled task's open pull request (L3-github-10) does not wait to be merged either.
+    const row = prs?.waiting.find((r) => r.number === number && r.kind !== "cancelled");
     if (!prs || !row)
       return c.json({
         state: "refused",
