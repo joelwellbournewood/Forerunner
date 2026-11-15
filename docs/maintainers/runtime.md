@@ -1086,7 +1086,15 @@ process runs is ended at once (`endDeadSession`, stop reason `stopped_after_task
 records each, in order, before the task ends: a model call adds its cost and one step to the
 session row (`SessionRepo.recordSpend`), a tool result adds one step and a `task.step` event
 with a short line (`stepLine`: "read index.html", "wrote styles.css", "ran node --check
-script.js: failed", "asked you a question (Inbox)"). The stream of `GET /sessions/:id/events`
+script.js: failed", "asked you a question (Inbox)"). A refused step carries the hook's code
+(`TaskStep.deniedCode`, from `tool_denied`) and its line says what was refused and why
+(`refusedLine`, run L3, live check 3, L3-run-7: before, every refusal read "was not allowed to
+use write file", beside the coder's other writes): "was not allowed to write
+/tmp/players-readme.json (outside the project's folder)", "was not allowed to read the web page
+example.com/x (not a site this task may read)", "was not allowed to use delete repo (not one of
+its tools)", "was not allowed to run npm publish without you" (autonomy), "…: you said no" (an
+approval refused), "could not write src/a.js: the call was not valid" (its input did not
+parse); a code it does not know reads "was not allowed to <what>". The stream of `GET /sessions/:id/events`
 sends the row as a `session.changed` frame whenever its steps, spend or status change, so the
 session page's steps and spend move during a run (before: "Steps 0 / 200" and "CHF 0.00" until
 the end). The end of the session still writes the ledger's total.

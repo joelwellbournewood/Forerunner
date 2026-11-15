@@ -9,6 +9,7 @@ import {
   type SpecialistSpec,
 } from "../src/session/executor.ts";
 import type { QueueNote } from "../src/session/next-session.ts";
+import { stepLine, type TaskStep } from "../src/session/runner.ts";
 import { flatPricing, harness, issue, registry, ScriptedProvider } from "./helpers.ts";
 
 /**
@@ -540,8 +541,104 @@ describe("live steps (design §4.14)", () => {
         // This harness's token allows no path, so the read is refused: a step all the same.
         isError: true,
         denied: true,
+        // L3-run-7: why, for the line that says what was refused.
+        deniedCode: "path_not_allowed",
       },
       { kind: "model", costUsdMicro: expect.any(Number) },
     ]);
+  });
+});
+
+/**
+ * l3-small, run L3 (live check 3, L3-run-7): the drawer and the session log read "was not allowed
+ * to use write file" among the coder's writes, when only its write to /tmp/players-readme.json
+ * (outside the project's folder) was refused. The line names what was refused and why.
+ */
+describe("l3-small, run L3: a refused step says what was refused (L3-run-7)", () => {
+  let w: World;
+  afterEach(async () => {
+    await w.store.close();
+  });
+
+  it("a write outside the folder reads 'was not allowed to write /tmp/players-readme.json (outside the project's folder)'; a tool it was not given says so", async () => {
+    w = await world();
+    const task = await add(w, "Write the players readme");
+    const provider = new ScriptedProvider(
+      [
+        {
+          tools: [
+            { name: "write_file", input: { path: "/tmp/players-readme.json", text: "{}" } },
+            { name: "delete_repo", input: { repo: "o/kite" } },
+          ],
+        },
+        { text: "Wrote it." },
+      ],
+      w.h.clock,
+    );
+    const steps: TaskStep[] = [];
+    const exec = new LoopTaskExecutor({
+      store: w.store,
+      clock: w.h.clock,
+      tokens: w.h.tokens,
+      driver: new LoopAgentDriver({ hooks: w.h.hooks, kill: w.h.kill, clock: w.h.clock }),
+      provider,
+      pricing: flatPricing,
+      tools: registry(),
+      billingSourceId: "bs",
+      specialists: (n) =>
+        n === "coder" ? { ...coder, allowedTools: ["write_file", "read_file"] } : undefined,
+    });
+    await exec.execute({
+      task,
+      session: await w.store.session.mustGet(w.session),
+      token: issue(w.h, {
+        agentId: w.agent,
+        ownerHumanId: w.human,
+        projectId: w.project,
+        allowedTools: ["write_file", "read_file"],
+        budgetUsdMicro: 5_000_000,
+        sessionId: w.session,
+      }),
+      budget: new SessionBudget({
+        sessionId: w.session,
+        budgetUsdMicro: 5_000_000,
+        stepCap: 100,
+        deadlineMs: w.h.clock.now() + 3_600_000,
+        reserveShare: 0.2,
+      }),
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+      signal: new AbortController().signal,
+      onStep: (st) => steps.push(st),
+    });
+    // The lines the session log and the drawer show (`task.step`'s text is `stepLine`).
+    const lines = steps.flatMap((st) => (st.kind === "tool" ? [stepLine(st)] : []));
+    expect(lines).toEqual([
+      "was not allowed to write /tmp/players-readme.json (outside the project's folder)",
+      "was not allowed to use delete repo (not one of its tools)",
+    ]);
+  });
+
+  it("each kind of refusal says what it was and why, never only the tool's name", () => {
+    const refused = (name: string, input: unknown, deniedCode?: string) =>
+      stepLine({ kind: "tool", name, input, isError: true, denied: true, deniedCode });
+    expect(refused("read_file", { path: "/etc/hosts" }, "path_not_allowed")).toBe(
+      "was not allowed to read /etc/hosts (outside the project's folder)",
+    );
+    expect(refused("cc:Write", { file_path: "/tmp/a.json" }, "path_not_allowed")).toBe(
+      "was not allowed to write /tmp/a.json (outside the project's folder)",
+    );
+    expect(refused("web_fetch", { url: "https://example.com/x?y=1" }, "domain_not_allowed")).toBe(
+      "was not allowed to read the web page example.com/x (not a site this task may read)",
+    );
+    expect(refused("run_command", { command: "rm -rf build" }, "approval_required")).toBe(
+      "was not allowed to run rm -rf build: you said no",
+    );
+    expect(refused("run_command", { command: "npm publish" }, "autonomy_insufficient")).toBe(
+      "was not allowed to run npm publish without you",
+    );
+    expect(refused("write_file", { path: "src/a.js" }, "validation")).toBe(
+      "could not write src/a.js: the call was not valid",
+    );
+    expect(refused("write_file", { path: "src/a.js" })).toBe("was not allowed to write src/a.js");
   });
 });

@@ -447,7 +447,15 @@ async function lastWorkSpecialist(store: StateStore, taskId: string): Promise<st
 /** One step of a task's run, as the executor reports it to the runner (`onStep`). */
 export type TaskStep =
   | { kind: "model"; costUsdMicro: number }
-  | { kind: "tool"; name: string; input?: unknown; isError: boolean; denied?: boolean }
+  | {
+      kind: "tool";
+      name: string;
+      input?: unknown;
+      isError: boolean;
+      denied?: boolean;
+      /** Why a denied step was refused: the hook's code (`path_not_allowed`, ...). */
+      deniedCode?: string;
+    }
   /** A line of the run's own (its budget line, its wrap-up, ADR 0112): the log says `text`. */
   | { kind: "note"; text: string };
 
@@ -699,6 +707,51 @@ function webPageName(url: string): string {
 }
 
 /**
+ * What a refused tool step would have done, as a verb phrase ("write /tmp/a.json", "read the web
+ * page example.com/x", "run npm test"), for the line that says it was refused.
+ */
+function refusedWhat(name: string, step: Extract<TaskStep, { kind: "tool" }>, path: string) {
+  const cut = (s: string) => (s.length > 80 ? `${s.slice(0, 79)}…` : s);
+  if (/^(read_file|read)$/.test(name)) return `read ${cut(path || "a file")}`;
+  if (/^(write_file|write|edit|multiedit)$/.test(name)) return `write ${cut(path || "a file")}`;
+  if (/^(list_dir|ls|glob)$/.test(name)) return `look at ${cut(path || "a folder")}`;
+  if (/^(run_command|bash)$/.test(name)) {
+    const cmd = inputField(step.input, "command", "argv", "cmd");
+    return `run ${cut(cmd || "a command")}`;
+  }
+  if (name === "web_fetch" || name === "webfetch") {
+    const url = inputField(step.input, "url");
+    return url ? `read the web page ${cut(webPageName(url))}` : "read a web page";
+  }
+  return `use ${name.replace(/_/g, " ")}`;
+}
+
+/**
+ * The line of a refused step (l3-small, run L3; live check 3, L3-run-7): what was refused and
+ * why, in words. Before, every refusal read "was not allowed to use write file", beside the
+ * coder's other writes, when only one path outside the folder was refused.
+ */
+function refusedLine(name: string, step: Extract<TaskStep, { kind: "tool" }>, path: string) {
+  const what = refusedWhat(name, step, path);
+  switch (step.deniedCode) {
+    case "path_not_allowed":
+      return `was not allowed to ${what} (outside the project's folder)`;
+    case "domain_not_allowed":
+      return `was not allowed to ${what} (not a site this task may read)`;
+    case "tool_not_allowed":
+      return `was not allowed to use ${name.replace(/_/g, " ")} (not one of its tools)`;
+    case "approval_required":
+      return `was not allowed to ${what}: you said no`;
+    case "autonomy_insufficient":
+      return `was not allowed to ${what} without you`;
+    case "validation":
+      return `could not ${what}: the call was not valid`;
+    default:
+      return `was not allowed to ${what}`;
+  }
+}
+
+/**
  * One tool step in the person's words (design §3.7: "read index.html", "wrote styles.css",
  * "ran node --check: ok"); one short line, never the tool's output.
  */
@@ -707,7 +760,7 @@ export function stepLine(step: Extract<TaskStep, { kind: "tool" }>): string {
   const raw = inputField(step.input, "path", "file_path", "file");
   const path = raw === "." || raw === "./" ? "" : raw;
   const cut = (s: string) => (s.length > 80 ? `${s.slice(0, 79)}…` : s);
-  if (step.denied) return `was not allowed to use ${name.replace(/_/g, " ")}`;
+  if (step.denied) return refusedLine(name, step, path);
   const failed = step.isError ? " (failed)" : "";
   if (/^(read_file|read)$/.test(name)) return `read ${cut(path || "a file")}${failed}`;
   if (/^(write_file|write|edit|multiedit)$/.test(name))
