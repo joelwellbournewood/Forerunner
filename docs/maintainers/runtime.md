@@ -1329,7 +1329,10 @@ progress, room for a fifth, no Stop after this task and runs left, the task goes
 the session (`TASK_CONTINUES_EVENT` = `session.task_continues`: 'The coder goes on with "X"
 from where it stopped.'), with no card between (OP-5). Else the card stores `no_progress`,
 `kept_checks` {passed, failed}, `estimate_usd_micro`, `estimate_left_usd_micro` and
-`run_spent_usd_micro` (OP-8); a card without them reads and answers as before. Continue at the
+`run_spent_usd_micro` (OP-8); a card without them reads and answers as before. Both estimates
+are priced as the planner and the Start check price the task (`Planner.wholeEstimateOf`: the
+learned estimate when there is one, then what is left once the kept work is counted, within the
+task's budget), so the card's Continue and the next Start's plan agree. Continue at the
 session's budget asks for at least what lets the estimate left fit the next session's work
 budget (`continueUsdMicro`'s floor, OP-6). A no-progress card is never made ready by itself:
 `wakeBudgetWaits` leaves it out and, once its outer limit changed and has room, withdraws it

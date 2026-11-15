@@ -33,7 +33,6 @@ import {
   estimateLeftUsdMicro,
   type KeptWork,
   keptWorkFor,
-  planEstimateUsdMicro,
   withinTaskBudget,
 } from "../estimates/model.ts";
 import {
@@ -285,6 +284,13 @@ export interface PlannerContext {
 
 export interface Planner {
   plan(ctx: PlannerContext): Promise<SessionPlan>;
+  /**
+   * d1109-oversize-pause (OP-6, OP-8): the whole estimate the plan prices a task from (the learned
+   * estimate, else its own figure, its budget or the default), before its kept work is counted.
+   * A pause's card stores it and what is left of it, so the card's Continue and the next Start
+   * price the task alike. Absent: the task's own figure.
+   */
+  wholeEstimateOf?(task: TaskRow): number | undefined;
 }
 
 export interface TaskExecutionResult {
@@ -3768,11 +3774,19 @@ export class SessionRunner {
       });
     }
     const fresh = (await store.task.get(task.id)) ?? task;
+    // Priced as the planner and the Start check price it (the learned estimate when there is
+    // one), so the card's Continue and the next Start's plan agree on what is left.
     const estimateUsdMicro =
-      fresh.est_cost_usd_micro > 0
+      this.deps.planner.wholeEstimateOf?.(fresh) ??
+      (fresh.est_cost_usd_micro > 0
         ? fresh.est_cost_usd_micro
-        : (item.wholeEstimateUsdMicro ?? item.estimateUsdMicro);
-    const left = estimateLeftUsdMicro(estimateUsdMicro, await keptWorkFor(store, fresh));
+        : (item.wholeEstimateUsdMicro ?? item.estimateUsdMicro));
+    const left = {
+      usdMicro: withinTaskBudget(
+        estimateLeftUsdMicro(estimateUsdMicro, await keptWorkFor(store, fresh)).usdMicro,
+        fresh,
+      ),
+    };
     return {
       progress,
       ...(checks
@@ -4462,6 +4476,18 @@ export class StaticPlanner implements Planner {
     private readonly defaultEstimateUsdMicro = 500_000,
     private readonly estimates?: EstimatePort,
   ) {}
+  wholeEstimateOf(t: TaskRow): number {
+    return this.estimates
+      ? this.estimates.estimate({
+          specialist: t.specialist,
+          risk_tier: t.risk_tier,
+          est_cost_usd_micro: t.est_cost_usd_micro,
+          budget_usd_micro: t.budget_usd_micro,
+          outcome: t.outcome,
+          acceptance_criteria: t.acceptance_criteria,
+        }).usdMicro
+      : t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro;
+  }
   async plan(ctx: PlannerContext): Promise<SessionPlan> {
     const free = ctx.readyTasks.filter(
       (t) => !t.claimed_by || (t.claim_expires && t.claim_expires < ctx.brief.generatedAt),
@@ -4480,15 +4506,11 @@ export class StaticPlanner implements Planner {
         taskId: t.id,
         title: t.title,
         specialist: t.specialist ?? "coder",
-        estimateUsdMicro: this.estimates
-          ? planEstimateUsdMicro(this.estimates, t, kept)
-          : withinTaskBudget(
-              estimateLeftUsdMicro(
-                t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
-                kept,
-              ).usdMicro,
-              t,
-            ),
+        // `planEstimateUsdMicro` with the learned estimates, the task's own figure without.
+        estimateUsdMicro: withinTaskBudget(
+          estimateLeftUsdMicro(this.wholeEstimateOf(t), kept).usdMicro,
+          t,
+        ),
       });
     }
     return {

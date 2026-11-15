@@ -9,6 +9,7 @@ import { budgetPauseDetailOf, budgetPauseLabelOf } from "../src/daemon/task-word
 import { describeEvent } from "../src/daemon/views.ts";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
+import type { EstimatePort } from "../src/estimates/model.ts";
 import { keptWorkChecker } from "../src/loop/kept-work-check.ts";
 import { ProcessSandbox } from "../src/sandbox/process.ts";
 import {
@@ -29,6 +30,7 @@ import {
   type TaskExecutionResult,
   type TaskExecutor,
 } from "../src/session/runner.ts";
+import { startCheck } from "../src/session/start-check.ts";
 import { taskContextBlock } from "../src/session/task-context.ts";
 import { seedWorld } from "./context-helpers.ts";
 
@@ -134,13 +136,13 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
       return result;
     },
   };
-  const runner = () =>
+  const runner = (planner: StaticPlanner = new StaticPlanner()) =>
     new SessionRunner({
       store,
       clock,
       tokens: new TokenIssuer({ now: () => clock.now() }),
       kill: new KillSwitch(),
-      planner: new StaticPlanner(),
+      planner,
       executor,
       keptWorkCheck: keptWorkChecker({
         store,
@@ -148,8 +150,8 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
         redact: (t) => redactValues(t, [SECRET]),
       }),
     });
-  const start = (budgetUsd = 3) =>
-    runner().start({
+  const start = (budgetUsd = 3, planner?: StaticPlanner) =>
+    runner(planner).start({
       agentId: w.agent,
       projectId: w.project,
       trigger: "manual",
@@ -261,6 +263,26 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
     const [run] = await workRuns(shop.id);
     expect(keptOf(run?.artifacts)?.checks).toBeUndefined();
     expect((await cardOf(shop.id))?.change_card).not.toHaveProperty("kept_checks");
+  }, 60_000);
+
+  it("OP-6, OP-8: the card's estimate and what is left of it are the ones the next Start prices the task at (the learned estimate, not the task's first figure)", async () => {
+    const shop = await add();
+    // The learned estimate differs from the task's own figure (CHF 0.80 there): the planner and
+    // the Start dialog price the task at it.
+    const learned: EstimatePort = {
+      estimate: () => ({ usdMicro: usd(2.4) }) as ReturnType<EstimatePort["estimate"]>,
+    };
+    const planner = new StaticPlanner(500_000, learned);
+    steps.push({ outcome: "paused", source: "session", content: "one" });
+    await start(3, planner);
+    const card = await cardOf(shop.id);
+    const next = await startCheck({ store, estimates: learned }, w.project, usd(3));
+    const priced = [...next.runnable, ...next.overBudget].find((t) => t.taskId === shop.id);
+    expect(priced?.estimateUsdMicro).toBe(usd(2.1));
+    expect(card?.change_card).toMatchObject({
+      estimate_usd_micro: usd(2.4),
+      estimate_left_usd_micro: usd(2.1),
+    });
   }, 60_000);
 
   it("OP-5: a pause at its specialist's limit with progress goes on at once in the session, with no card between; the log says so once", async () => {

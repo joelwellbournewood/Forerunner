@@ -143,7 +143,9 @@ I thought we talked about this." No special ordering.
    ready again by itself: not by the next Start, not by a raised or reset outer limit (the card
    becomes one question once the limit has room).
 7. **Continue's floor (OP-6):** at the session's budget, at least what lets the estimate left fit
-   the next session's work budget (the estimate left over one less the reserve share).
+   the next session's work budget (the estimate left over one less the reserve share). The card
+   prices the estimate left as the next Start does (the planner's learned estimate less the kept
+   work), so its button and the Start dialog never disagree about the same task.
 
 Who starts the next session follows ADR 0118 (d1109-starts-engine, C3), which keeps the larger
 task at its place, the `after_large` tasks after it and the no-progress guard.
