@@ -72,7 +72,7 @@ import {
   workingNowBlock,
 } from "./project-facts.ts";
 import { readTools } from "./read-tools.ts";
-import { namedSources, RecallScope, type RecordSource } from "./recall.ts";
+import { namedSources, RecallScope, type RecordSource, STATUS_DOC_RE } from "./recall.ts";
 import { scopeOf } from "./scope.ts";
 import { completeSentencesOf, SentenceGate } from "./sentences.ts";
 import {
@@ -636,9 +636,6 @@ function openRequestsFact(
     shown: shown.map((r) => ({ id: r.row.id, names: r.names })),
   };
 }
-
-/** The project's status doc, left out of the docs a chat turn retrieves. */
-const STATUS_DOC_RE = /^docs\/status\.md$/i;
 
 /** The data envelope's origin of the lessons a chat turn carries (d1109-chat-guard). */
 const LESSONS_ORIGIN = "lessons";

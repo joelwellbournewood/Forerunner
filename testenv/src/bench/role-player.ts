@@ -1560,9 +1560,12 @@ function recordLines(result: string): string[] {
 
 /**
  * d1109-chat-recall: a question about the past is looked up as a real model with recall would:
- * recall with the person's words, recall_open of the first hit, then an answer that names what it
- * found in the record's own words (the stand-in quotes; a real model writes its own sentence).
- * Nothing found: it says what it looked through. Null for a line about now, or no recall tool.
+ * recall with the person's words, recall_open of the first strong hit, then an answer that names
+ * what it found in the record's own words (the stand-in quotes; a real model writes its own
+ * sentence). Nothing found, or only weak hits (the rules: "never present a weak hit as fact"):
+ * it says what it looked through; before the review of d1109-chat-recall it opened a weak r1, so
+ * the bench never showed the looked-through answer while any word matched. Null for a line about
+ * now, or no recall tool.
  */
 function recallPlay(req: ModelRequest, calls: ReturnType<typeof pastToolCalls>): Answer | null {
   const names = (req.tools ?? []).map((t) => t.name);
@@ -1575,8 +1578,9 @@ function recallPlay(req: ModelRequest, calls: ReturnType<typeof pastToolCalls>):
       toolCalls: [{ name: "recall", input: { words: line.replace(/[?.!]+$/, "") } }],
     };
   const lines = recordLines(last.result ?? "");
-  if (last.name === "recall" && lines.some((l) => l.startsWith("r1 [")))
-    return { text: "Opening it.", toolCalls: [{ name: "recall_open", input: { ref: "r1" } }] };
+  const strong = lines.map((l) => /^(r\d+) \[[^\]]*, strong\] /.exec(l)?.[1]).find(Boolean);
+  if (last.name === "recall" && strong)
+    return { text: "Opening it.", toolCalls: [{ name: "recall_open", input: { ref: strong } }] };
   if (last.name === "recall")
     return text(
       `${STAND_IN} Nothing recorded matches. ${lines.find((l) => l.startsWith("Looked through:")) ?? ""}`.trim(),

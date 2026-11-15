@@ -4289,9 +4289,19 @@ words. Each read and recall tool says what it does through `ChatRequest.onStep`
 (`src/conversation/recall-steps.ts`, `stepLine`: "Looking through last week's sessions…",
 "Reading the decision of 4 Nov…"; at most 80 characters, record names from the store cut at 40,
 search words quoted only when the person said each of them); d1109-chat-depth shows them. The
+command tools do not call `onStep` yet: `stepLine` has their words ("Preparing the change…",
+"Keeping that for later…"), and wiring them is d1109-chat-depth's. The
 records a reply names among those it opened are kept on its `chat.reply` row as
 `sources.records` (`namedSources`, at most three, `{kind, title, date, link}`), read by
 `readTranscript` and served as `ChatReplyView.sources` and `ConversationTurnView.reply.sources`.
+A session's title is "The session of Sun 15 Nov", with its start time ("… at 18:22") when
+another of the project's sessions started that day, so hits and sources tell them apart. A
+link is the app's own path; a line of the conversation outside any project has none (that
+conversation is the shell's panel, not a page; before the review it was "/talk", which no route
+serves). The Inbox, Overview and Changes links (`?answered=`, `?request=`, `?decision=`,
+`?projectId=`) open the right page but those pages do not focus the record yet: d1109-chat-depth
+reads them when it draws the From line. The documents kind and the per-turn doc excerpts share
+one `STATUS_DOC_RE` (recall.ts).
 Tests: `chat-recall.test.ts` (composed, every kind, the restart), `recall-rank.test.ts` (the
 golden set), `recall-steps.test.ts`, the record channel's record-005 and record-006, and
 `real-daemon.test.ts` "d1109-chat-recall, run C".

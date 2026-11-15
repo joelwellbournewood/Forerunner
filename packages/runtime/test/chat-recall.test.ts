@@ -1347,3 +1347,63 @@ describe("d1109-chat-recall, run C: run L3's leftovers", () => {
     await w.store.close();
   });
 });
+
+describe("d1109-chat-recall, run C: the review's fix-up", () => {
+  it("two sessions of one day are told apart by their start time in the hit and the reply's source; one alone on its day keeps the date only", async () => {
+    const w = await setup();
+    // Two more sessions on Thu 12 Nov (10:00 and 15:30 in Zurich), beside those of 3 and 6 Nov.
+    await session(w, "2026-11-12T09:00:00.000Z", {}, 100_000, "Checked the links.");
+    await session(w, "2026-11-12T14:30:00.000Z", {}, 200_000, "Checked the images.");
+    w.reply([
+      toolReply("recall", { kinds: ["sessions"], from: "2026-11-12", to: "2026-11-12" }),
+      toolReply("recall_open", { ref: "r1" }),
+      textReply("The session of Thu 12 Nov at 15:30 checked the images."),
+    ]);
+    const res = await w.chat("what did the sessions of today do?");
+    const [search] = w.results(2);
+    const lines = inner(search).split("\n");
+    expect(lines[0]).toMatch(
+      /^r1 \[session, Thu 12 Nov, Quote Page, strong\] The session of Thu 12 Nov at 15:30: /,
+    );
+    expect(lines[1]).toMatch(
+      /^r2 \[session, Thu 12 Nov, Quote Page, strong\] The session of Thu 12 Nov at 10:00: /,
+    );
+    expect(res.sources?.records).toEqual([
+      expect.objectContaining({ kind: "session", title: "The session of Thu 12 Nov at 15:30" }),
+    ]);
+    // The session of 6 Nov is the only one of its day: its title keeps the date alone.
+    const [alone] = await lookups(w, [
+      { tool: "recall", input: { kinds: ["sessions"], from: "2026-11-06", to: "2026-11-06" } },
+    ]);
+    expect(inner(alone).split("\n")[0]).toMatch(/\] The session of Fri 6 Nov: /);
+    await w.store.close();
+  });
+
+  it("a line of the conversation outside any project is a source with no link (that conversation has no page; before, '/talk', which no route serves); a project's line links to its Chat", async () => {
+    const w = await setup();
+    w.reply([textReply("Noted.")]);
+    await w.chat("Das Logo bleibt dunkelblau", null);
+    w.reply([
+      toolReply("recall", { words: "Logo dunkelblau", kinds: ["conversation"] }),
+      toolReply("recall_open", { ref: "r1" }),
+      textReply('You said "Das Logo bleibt dunkelblau".'),
+    ]);
+    const res = await w.chat("what did I say about the logo?", null);
+    const records = res.sources?.records ?? [];
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ kind: "conversation", link: null });
+    w.reply([textReply("Noted.")]);
+    await w.chat("Der Kopf bleibt hell", w.quote);
+    w.reply([
+      toolReply("recall", { words: "Kopf hell", kinds: ["conversation"] }),
+      toolReply("recall_open", { ref: "r1" }),
+      textReply('You said "Der Kopf bleibt hell".'),
+    ]);
+    const inProject = await w.chat("what did I say about the header?", w.quote);
+    expect(inProject.sources?.records?.[0]).toMatchObject({
+      kind: "conversation",
+      link: `/projects/${w.quote}/chat`,
+    });
+    await w.store.close();
+  });
+});

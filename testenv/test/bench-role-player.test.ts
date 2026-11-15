@@ -1148,6 +1148,39 @@ describe("bench role-player: critic and chat", () => {
     expect(r.text).toMatch(/unrecognised role/);
     expect(lines(log)[0]?.role).toBe("unknown");
   });
+
+  it("plays recall for a question about the past: opens the first strong hit, and says nothing matches when every hit is weak, as the rules ask (the review of d1109-chat-recall: it opened a weak r1)", async () => {
+    const { p } = player();
+    const line = "what did I say about the pizza oven?";
+    const first = await call(p, chat(line, ["recall", "recall_open"]));
+    expect(first.calls).toEqual([
+      expect.objectContaining({ name: "recall", input: { words: line.slice(0, -1) } }),
+    ]);
+    const after = (result: string) =>
+      call(p, {
+        ...chat(line, ["recall", "recall_open"]),
+        messages: [
+          ...chat(line).messages,
+          {
+            role: "assistant",
+            content: [{ type: "tool_use", id: "x", name: "recall", input: { words: line } }],
+          },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "x", content: result }] },
+        ],
+      });
+    const looked = "Looked through: everything recorded of Quote Page, any date.";
+    const weak = await after(
+      `r1 [task, Sun 15 Nov, Quote Page, weak] Write the guide: Done.\nr2 [card, Sun 15 Nov, Quote Page, weak] Say where it goes.\n${looked}`,
+    );
+    expect(weak.calls).toEqual([]);
+    expect(weak.text).toBe(`${STAND_IN} Nothing recorded matches. ${looked}`);
+    const strong = await after(
+      `r1 [task, Sun 15 Nov, Quote Page, weak] Write the guide: Done.\nr2 [card, Sun 15 Nov, Quote Page, strong] Where is the oven?: You answered "In the yard". (you)\n${looked}`,
+    );
+    expect(strong.calls).toEqual([
+      expect.objectContaining({ name: "recall_open", input: { ref: "r2" } }),
+    ]);
+  });
 });
 
 describe("bench role-player: the prompt cache ('cost', L-15)", () => {

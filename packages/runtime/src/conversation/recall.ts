@@ -412,6 +412,12 @@ async function sessionHits(
       store,
       own.map((r) => r.id),
     );
+    // Two sessions of one day are told apart by their start time (the review of b9433c8: four
+    // hits and sources read "The session of Sun 15 Nov" on the bench); one alone keeps its date.
+    const dayOf = (r: SessionRow) =>
+      localDate(Date.parse(r.started_at ?? r.created_at), c.deps.timeZone);
+    const perDay = new Map<string, number>();
+    for (const r of own) perDay.set(dayOf(r), (perDay.get(dayOf(r)) ?? 0) + 1);
     for (const row of own) {
       const spend = spends.get(row.id);
       const view = await sessionRowView(store, row, {
@@ -428,7 +434,11 @@ async function sessionHits(
         at,
         projectId: p.id,
         projectName: p.name,
-        title: `The session of ${dateWords(at, c.deps.timeZone, c.today)}`,
+        title: `The session of ${dateWords(at, c.deps.timeZone, c.today)}${
+          (perDay.get(dayOf(row)) ?? 0) > 1
+            ? ` at ${timeWords(at, c.deps.timeZone, c.today).split(" ").pop()}`
+            : ""
+        }`,
         earlier: [],
         body: result && !view.gist.includes(result) ? `${summary} ${result}` : summary,
         detail: summary,
@@ -845,7 +855,9 @@ async function conversationHits(
             ),
           ].join("\n");
         },
-        link: project ? `/projects/${project.id}/chat` : "/talk",
+        // The conversation outside any project is the shell's panel, not a page: no link (the
+        // review of b9433c8: "/talk" opened Not found).
+        link: project ? `/projects/${project.id}/chat` : null,
       });
     }
   }
@@ -907,8 +919,11 @@ async function lessonHits(
   return { records: out, bound: null };
 }
 
-/** The project's status doc stays out (design §3.9): its sessions come in any order. */
-const STATUS_DOC_RE = /^docs\/status\.md$/i;
+/**
+ * The project's status doc stays out (design §3.9): its sessions come in any order. One
+ * constant for the documents kind and the per-turn doc excerpts (agent.ts reads it from here).
+ */
+export const STATUS_DOC_RE = /^docs\/status\.md$/i;
 
 async function documentHits(
   c: KindContext,
