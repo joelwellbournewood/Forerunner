@@ -1,3 +1,4 @@
+import { taskNoteText } from "@forerunner/commands";
 import { openStore, type StateStore, type TaskRow } from "@forerunner/state";
 import { afterEach, describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
@@ -7,6 +8,7 @@ import {
   retryConstraints,
   type SpecialistSpec,
 } from "../src/session/executor.ts";
+import type { QueueNote } from "../src/session/next-session.ts";
 import { flatPricing, harness, issue, registry, ScriptedProvider } from "./helpers.ts";
 
 /**
@@ -105,7 +107,7 @@ async function run(
   w: World,
   task: TaskRow,
   provider: ScriptedProvider,
-  extra: { sessionNote?: string } = {},
+  extra: { sessionNote?: string; notes?: QueueNote[] } = {},
 ) {
   const exec = new LoopTaskExecutor({
     store: w.store,
@@ -310,27 +312,35 @@ describe("what a specialist is told (design §4.6)", () => {
       outcome: "error",
       artifacts: [{ error: "Claude did not answer (model call failed)." }],
     });
-    // The person's note on the task, given with Try again in the app.
+    // The person's note on the task, typed with Try again in the app: the command queues it as
+    // a note that names the task (`taskNoteText`), and the session hands it to this brief. The
+    // change log's row says the button's label; that label is never quoted as the person's note
+    // (l3-small, L3-github-4: "## The person's note on this task "Try again"").
     await w.store.changeLog.record({
       human_id: w.human,
       agent_id: w.agent,
-      words_used: "Use the colours of the logo",
-      commands: [
-        {
-          name: "task.transition",
-          params: { task: task.id, to: "ready", reason: "Use the colours of the logo" },
-        },
-      ],
+      words_used: "Try again",
+      commands: [{ name: "task.transition", params: { task: task.id, to: "ready" } }],
       project_id: w.project,
       source: "ui",
     } as never);
     const provider = new ScriptedProvider([{ text: "Styled it." }], w.h.clock);
-    await run(w, task, provider);
+    await run(w, task, provider, {
+      notes: [
+        {
+          id: "q1",
+          kind: "note",
+          text: taskNoteText(task, "Use the colours of the logo"),
+          priority: 0,
+        },
+      ],
+    });
     const brief = provider.calls[0]?.messages[0]?.content as string;
     expect(brief).toContain("## The previous attempt");
     expect(brief).toContain("It failed: Claude did not answer (model call failed).");
-    expect(brief).toContain("## The person's note on this task");
-    expect(brief).toContain("Use the colours of the logo");
+    expect(brief.split("Use the colours of the logo").length).toBe(2);
+    expect(brief).not.toContain("## The person's note on this task");
+    expect(brief).not.toContain('"Try again"');
     expect(brief).not.toContain("findings below");
     expect(retryConstraints(1, [])).toEqual([
       "Attempt 2: the previous attempt did not pass; what it said is under The previous attempt.",

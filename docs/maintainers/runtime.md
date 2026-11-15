@@ -6389,11 +6389,21 @@ of a dependency, from `personAnswersOn` in `person-questions.ts`, said to be the
 answers with the decision record they are also in, "do not ask the person these questions
 again"; before, the next task's coder asked the same seven questions again because its brief
 held only the plan's promise for the person's task), `## The previous attempt`
-(the last worker run's report, or "It failed: <the error in words>"), `## The person's note on
-this task` (the words of the person's newest change-log row naming the task) and `## Note for
+(the last worker run's report, or "It failed: <the error in words>") and `## Note for
 this session (from the person)` (`SessionStartOptions.note`, from the Start dialog through
 `POST /sessions` `note` and `StartRequest.note`; also on the session's handoff). Everything quoted
-is data. The run row's `artifacts` keep `{ report }` (the redacted final text, cut to 1,500
+is data. The person's notes on the task are not a section of the block: a note typed with an
+action ("Note for the agent (optional)") is queued by the command as a note that names the task
+(`taskNoteText`) and reaches the brief once, under "Left for this session by the human"
+(`renderQueueNotes`), used up by the work that finished (design §4.7). Until run L3 a section
+`## The person's note on this task` quoted the newest change-log row's `words_used` naming the
+task, and for a change made in the app that is the button's label when nothing was typed: the
+coder read '"Redo"' and '"Edit Write the kite guide in kite/guide/"' as the person's words, and a
+typed note came twice and never ran out (live check 3, L3-github-4; `brief-person-note.test.ts`
+drives Redo, Edit, Stop and Resume through the routes). With the section gone, an agent's own
+command turn, which records the person's `human_id` beside its words, cannot reach a brief as
+the person's note either. The run row's
+`artifacts` keep `{ report }` (the redacted final text, cut to 1,500
 characters) or `{ error }` (the error in words) for that. `retryConstraints` writes "the brief
 was improved with the critic's findings below" only when findings follow; a first retry
 without findings points to the previous attempt instead. A run that ended on an error is
