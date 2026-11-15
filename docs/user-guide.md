@@ -235,7 +235,11 @@ them as you left them; an open file or task stays on its own tab.
   If you quit Forerunner while a task is **Being reviewed**, it reads **Ready** when you open it
   again, the Inbox's Update names it ("… is ready again"), and the next **Start** runs and
   reviews it. Every action asks for an optional **note for the agent**, which goes into the task's
-  next brief (for a cancelled task, once you reopen it), and has one **Undo** right after it
+  next brief once (for a cancelled task, once you reopen it); with the field left empty the
+  agent is told nothing (the button you pressed is not passed on as your words). Two tasks with
+  the same title are named apart in Chat by what tells them apart: "Write the guide #17", "Write
+  the guide (the paused one)" or "(the older one)"; a word Chat gave you keeps working after the
+  task is paused or gets its pull request. Every action has one **Undo** right after it
   that puts the task back as it was, its card in the Inbox included; each is listed in
   Changes. Click a task's title to open it: what done looks like and the criteria, what it
   waits for and what waits on it, its runs (who ran each one, with **Open the session**, that
@@ -344,8 +348,9 @@ repository just created on GitHub, with nothing in it, gets a first commit from 
 default branch (the project's docs, or a README), so its tasks have something to start from; if
 that cannot be done, the task says so ("… is empty and Forerunner could not make its first commit
 …") and what to do. The project's status file (`docs/status.md`) stays in the app: each
-session's update is under **Docs**, Status ("kept in the app"), and no pull request is opened
-for it. After every merge (in the app or on GitHub) and at the end of each session Forerunner
+session's update is under **Docs**, Status ("kept in the app"), named by when the session
+started ("Session started 2026-11-15 05:46 UTC") with how it ended and what it spent ("Done.
+Spent CHF 0.09."), and no pull request is opened for it. After every merge (in the app or on GitHub) and at the end of each session Forerunner
 brings this computer's copy of the repository up to date, so **Docs** and **Files** show what
 is merged on GitHub, including what you merged a minute ago. To have it on GitHub instead, turn on **Status pull request** for the project (Settings,
 Advanced, Other settings): each session then adds its update to one pull request of its own,
