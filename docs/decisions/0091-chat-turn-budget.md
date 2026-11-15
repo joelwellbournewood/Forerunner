@@ -54,3 +54,17 @@ it. Every `chat.reply` row records `turnBudgetUsdMicro`.
 - Size the cap with the loop's `maxTokensCeiling`: its first call reads the model's limit from the
   Models API (up to 5 s), a latency a voice turn cannot afford.
 - No ceiling: rejected above (USD 1.9 for one turn on Opus 5.5 with a large context).
+
+## Amendment 2026-11-15: the claim guard's step stays inside the turn (l3-chat-claims)
+
+Live check 3 (L3-run-1): the chat model answered "research may read any public website again"
+with "I've asked for confirmation" and called no tool. A reply that claims a change or a yes no
+command of the turn backs now gets one more model step with a short nudge
+(`ConversationAgent.chat`, `CLAIM_NUDGE` in `src/conversation/claims.ts`). That step is part of
+the same turn: it runs under the same `SessionBudget` (this ADR's budget, its step cap and its
+deadline) and the same capability token, and only while the turn's four model calls
+(`CHAT_MAX_MODEL_CALLS`, the loop's `maxTurns` before) are not used up; its cost is booked on the
+turn's `chat.reply` row with the first run's. No step is added when the turn ran out of calls,
+time or money: the claim is replaced with "Nothing changed, and nothing waits for your yes. Say it
+again to try once more." So the turn's spend bound is unchanged; a turn whose reply makes no
+unbacked claim costs exactly what it did.

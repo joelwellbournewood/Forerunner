@@ -114,3 +114,20 @@ added at once, and the turn's GitHub request came before its first model call.
   holds without it.
 - **Keep asking GitHub per turn with a short timeout.** Still a wait on every turn and a wrong
   answer when it times out; the app's merge records are what Merge and the watcher write.
+
+## Amendment 2026-11-15: the history says what each turn did, and is read like the records (l3-chat-claims)
+
+Run L3 (live check 3, L3-run-1), before C2 and C3. The history a chat turn sends carried each
+earlier reply's prose only, so a change read as claimed in words, and the live model claimed "I've
+asked for confirmation" with no tool. Each earlier reply that changed something now ends with
+"The app did: <the change log's sentence without its Undo.>" (`actionLines` in
+`src/conversation/transcript.ts`), from the stored row, so the history stays byte-stable for the
+prompt cache. Those sentences quote task titles agents may write, and a reply may quote a record
+it read: the history's assistant messages are scanned like the facts' records (this ADR's
+read-back after records): instruction-like text there makes the turn read every change back and
+is kept as `injection` with `where: "history"`. The record channel gains the place
+`chat_history` (injection case record-007). The person's own lines in the history are not
+scanned: they are the person's words. The prompt (`conversation-agent.md` 1.2.2) and
+`CHAT_RETRIEVAL_RULES` say what the line means and that no yes is claimed without "Needs
+confirmation" in the turn; a code guard holds the reply to that (ADR 0091's amendment of the same
+date).

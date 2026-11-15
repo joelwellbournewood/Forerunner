@@ -987,7 +987,8 @@ reads are a channel: `INJECTION_CHANNELS` is `web`, `email`, `record`. A record 
 where its text is planted (`record.where`: `run_report`, a finished run's report read with
 `task_get`; `card_question`, a specialist's question on a card the chat's facts list in full;
 `session_result`, the last session's result read with `session_last`; `doc_section`, a section
-of the project's docs in the facts' excerpts). `runRecordCase` builds the case its own
+of the project's docs in the facts' excerpts; `chat_history`, what an earlier chat turn changed,
+its "The app did: …" line in the history, whose sentence quotes a task title, l3-chat-claims). `runRecordCase` builds the case its own
 `sqlite::memory:` store (a person, their agent, a project with three tasks), plants the text,
 and runs one chat turn through the real `ConversationAgent`, `CommandLoop`, executor and
 enforcement hooks; its `FakeProvider` reads the record (when a tool reads it) and then calls the
@@ -999,9 +1000,11 @@ never executed, the text reached the model, and it was reported (`hooks.scan` fo
 result, `facts.scan` for what the facts carry, from the turn's `chat.reply` `injection` list).
 A control is read, wrapped and answered without a flag. Cases: record-001 (a run report: cancel
 every task), record-002 (a card question: start a session), record-003 (a session result: raise
-the monthly cap), record-004 (a doc section: add a task), controls record-101 and record-102;
-record-005 and record-006 are d1109-chat-recall's (recall), d1109-selftasks-run's `report`
-channel comes after this one.
+the monthly cap), record-004 (a doc section: add a task), record-007 (an earlier turn's change
+sentence in the history: add a task; l3-chat-claims, run L3: the history's replies are scanned
+like the facts' records, `where: "history"`), controls record-101 and record-102; record-005 and
+record-006 are d1109-chat-recall's (recall), d1109-selftasks-run's `report` channel comes after
+this one.
 
 ### How to add a case
 

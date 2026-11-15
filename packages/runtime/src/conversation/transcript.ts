@@ -182,9 +182,40 @@ const cap = (s: string) =>
   s.length > HISTORY_LINE_CHARS ? `${s.slice(0, HISTORY_LINE_CHARS - 1)}…` : s;
 
 /**
+ * How an earlier reply's changes start in the history (l3-chat-claims): "The app did: <the
+ * change's sentence>". The conversation agent's rules tell the model what the line means.
+ */
+export const HISTORY_ACTION_LEAD = "The app did: ";
+
+/**
+ * What an earlier reply changed, one line per change, in the change log's own sentence without
+ * its "Undo." (l3-chat-claims, live check 3's L3-run-1). Before, the history carried the model's
+ * prose alone ("Done. For the Reading rules project, research may now only read …"): a change
+ * that read as claimed in words, which the model copied one turn later with no tool ("I've asked
+ * for confirmation"). A sentence the reply already says (a command's own reply, no model) is not
+ * repeated; a reply that changed nothing gets no line. From the stored row only, so the history
+ * is the same bytes on every turn and after a restart (the prompt cache keeps its prefix).
+ */
+export function actionLines(reply: TranscriptReply): string[] {
+  const out: string[] = [];
+  for (const a of reply.actions) {
+    const said = a.summary
+      .trim()
+      .replace(/\s*\bUndo\.?$/, "")
+      .trim();
+    const sentence = said && said !== "done" ? said : `${a.kind.split("+").join(" and ")}.`;
+    if (reply.text.includes(sentence)) continue;
+    const line = `${HISTORY_ACTION_LEAD}${sentence}`;
+    if (!out.includes(line)) out.push(line);
+  }
+  return out;
+}
+
+/**
  * The earlier turns as alternating user and assistant messages, newest last, within
  * `maxTokens` (counted with the provider's counter on the text sent): the oldest turns are
- * dropped first. A turn without a reply is the person's line alone, merged with the next.
+ * dropped first. A turn without a reply is the person's line alone, merged with the next. A
+ * reply that changed something ends with what the app did (`actionLines`).
  */
 export function historyMessages(
   turns: readonly TranscriptTurn[],
@@ -200,7 +231,8 @@ export function historyMessages(
       const last = out.at(-1);
       if (last?.role === "user") last.content = `${last.content}\n\n${said}`;
       else out.push({ role: "user", content: said });
-      const reply = cap((t.reply?.text ?? "").trim());
+      const did = t.reply ? actionLines(t.reply).map(cap) : [];
+      const reply = [cap((t.reply?.text ?? "").trim()), ...did].filter(Boolean).join("\n\n");
       if (reply) out.push({ role: "assistant", content: reply });
     }
     // The turn's own line follows as a user message: the history ends with the assistant.
