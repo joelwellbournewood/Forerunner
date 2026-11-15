@@ -16,6 +16,7 @@ import { benchOptionsFromEnv, createRolePlayer } from "./role-player.ts";
  */
 export * from "./call-log.ts";
 export * from "./plans.ts";
+export * from "./recall-home.ts";
 export * from "./role-player.ts";
 export * from "./roles.ts";
 

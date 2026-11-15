@@ -73,3 +73,12 @@ the change sentences of the commands that ran, or the read-back of the turn's Ye
 change I asked about earlier still waits for your yes" when an earlier card does). So the turn's
 spend bound is unchanged; a turn whose reply makes no unbacked claim costs exactly what it did,
 and a negated sentence ("I've changed nothing") is no claim and costs no step.
+
+## Amendment 2026-11-15: room for a lookup (d1109-chat-recall)
+
+A chat turn may now search with `recall`, open a hit with `recall_open`, answer and make a
+change, with the claim guard's nudge after it: the turn's model calls go from 4 to 6
+(`CHAT_MAX_MODEL_CALLS`) and the default budget's room from 3 to 5 calls priced as the first
+(`CHAT_TURN_CALL_ROOM`). The USD 0.25 ceiling stays (an Opus turn with about 6,000 tokens of
+context is held at it), and a Haiku turn keeps USD 0.05 until its context passes about 95,000
+tokens. No new spending path: a lookup is a call of the turn, booked like any other.

@@ -123,6 +123,10 @@ schema and the snapshot disagree.
    service reports `schema_migrations.version`; a client whose `MIGRATIONS.length` is lower
    refuses to sync and asks for an update.
 
+A new read on an existing table needs no migration when an index serves it: `event.ofTypes`
+(d1109-chat-recall) filters by `session_id` and `type` and orders by `seq` on the session and
+seq index, on both dialects; the conformance suite covers it on SQLite and Postgres.
+
 ### Re-creating the v1 baseline
 
 Only before v1 has shipped anywhere (no installed database, no shared service). Run

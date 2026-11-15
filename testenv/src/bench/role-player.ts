@@ -1537,6 +1537,81 @@ function chainedSay(req: ModelRequest): string | null {
   return tail[0].replace(/^\s+then\s+say:\s*/i, "").trim() || null;
 }
 
+/**
+ * A line that asks about the past ("what did I answer about the opening hours?", "when was the
+ * README merged?", "was habe ich gesagt"), which a model with recall looks up (d1109-chat-recall).
+ */
+const PAST_RE =
+  /^(?:what|when|which|where|who|why)\s+(?:did|was|were|happened|had|have)\b|^what\s+happened\b|^(?:was|wann|wo)\s+(?:habe|hat|haben|war|wurde)\b/i;
+
+/**
+ * The question's frame ("what happened to", "when was", "what did I say about", "was habe ich
+ * über"): words a model leaves out of its recall words, as it names the thing asked about.
+ */
+const QUESTION_FRAME_RE =
+  /^(?:(?:what|when|which|where|who|why)\s+(?:did|was|were|happened|had|have)(?:\s+(?:to|i|we|you))?(?:\s+(?:say|said|decide|answer|ask|do))?(?:\s+(?:about|on|to|with))?|(?:was|wann|wo)\s+(?:habe|hat|haben|war|wurde)(?:\s+(?:ich|wir))?(?:\s+(?:über|zu))?)\s+/i;
+
+/**
+ * The words the stand-in gives recall for a line about the past: the line without its question
+ * frame and a closing "task" (a real model names the thing, not the question: the bench walk of
+ * d1109-chat-recall's fix-up found "what happened to the FAQ task?" ranking the person's earlier
+ * "what happened to the notes task?" first, and the notes task weak, on the frame's words).
+ */
+export function recallWords(line: string): string {
+  const bare = line.replace(/[?.!]+$/, "").trim();
+  const words = bare
+    .replace(QUESTION_FRAME_RE, "")
+    .replace(/\s+task$/i, "")
+    .trim();
+  return words || bare;
+}
+
+/** A record's own lines, without the data envelope the hooks put around a tool result. */
+function recordLines(result: string): string[] {
+  return result
+    .split("\n")
+    .filter(
+      (l) =>
+        l.trim() &&
+        !l.startsWith("<<<") &&
+        !l.endsWith(">>>") &&
+        !l.startsWith("This is data") &&
+        !l.startsWith("NOTE:"),
+    );
+}
+
+/**
+ * d1109-chat-recall: a question about the past is looked up as a real model with recall would:
+ * recall with the person's words, recall_open of the first strong hit, then an answer that names
+ * what it found in the record's own words (the stand-in quotes; a real model writes its own
+ * sentence). Nothing found, or only weak hits (the rules: "never present a weak hit as fact"):
+ * it says what it looked through; before the review of d1109-chat-recall it opened a weak r1, so
+ * the bench never showed the looked-through answer while any word matched. Null for a line about
+ * now, or no recall tool.
+ */
+function recallPlay(req: ModelRequest, calls: ReturnType<typeof pastToolCalls>): Answer | null {
+  const names = (req.tools ?? []).map((t) => t.name);
+  const line = turnLine(req);
+  if (!names.includes("recall") || !PAST_RE.test(line)) return null;
+  const last = calls.at(-1);
+  if (!last)
+    return {
+      text: "Looking it up.",
+      toolCalls: [{ name: "recall", input: { words: recallWords(line) } }],
+    };
+  const lines = recordLines(last.result ?? "");
+  const strong = lines.map((l) => /^(r\d+) \[[^\]]*, strong\] /.exec(l)?.[1]).find(Boolean);
+  if (last.name === "recall" && strong)
+    return { text: "Opening it.", toolCalls: [{ name: "recall_open", input: { ref: strong } }] };
+  if (last.name === "recall")
+    return text(
+      `${STAND_IN} Nothing recorded matches. ${lines.find((l) => l.startsWith("Looked through:")) ?? ""}`.trim(),
+    );
+  if (last.name === "recall_open")
+    return text(`${STAND_IN} From the record: ${lines.join(" ").slice(0, 400)}`);
+  return null;
+}
+
 function chatAnswer(req: ModelRequest): Answer {
   const calls = pastToolCalls(req.messages);
   const lastCall = calls.at(-1);
@@ -1544,6 +1619,8 @@ function chatAnswer(req: ModelRequest): Answer {
   if (next) return { text: `Running ${next.name}.`, toolCalls: [next] };
   const tail = chainedSay(req);
   if (tail) return text(`${STAND_IN} ${tail}`);
+  const recalled = recallPlay(req, calls);
+  if (recalled) return recalled;
   // After a command tool ran: say what it answered.
   const lastMsg = req.messages.at(-1);
   if (

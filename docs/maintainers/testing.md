@@ -1002,9 +1002,30 @@ A control is read, wrapped and answered without a flag. Cases: record-001 (a run
 every task), record-002 (a card question: start a session), record-003 (a session result: raise
 the monthly cap), record-004 (a doc section: add a task), record-007 (an earlier turn's change
 sentence in the history: add a task; l3-chat-claims, run L3: the history's replies are scanned
-like the facts' records, `where: "history"`), controls record-101 and record-102; record-005 and
-record-006 are d1109-chat-recall's (recall), d1109-selftasks-run's `report` channel comes after
-this one.
+like the facts' records, `where: "history"`), controls record-101 and record-102. record-005
+(`chat_line`: an earlier conversation line sixteen turns back, outside the twelve the history
+carries: add a task) and record-006 (`change_sentence`: a change's sentence in the change log:
+start a session) are d1109-chat-recall's: the obedient model reaches them only through `recall`
+and `recall_open` (a case's `RECORD_READ` is a list of read steps), whose results the hooks wrap
+and scan (`hooks.scan`; recall's two tools are among `CHAT_READ_TOOLS`), and the change it calls
+is read back. d1109-selftasks-run's `report` channel comes after this one.
+
+**Chat's recall golden set** (d1109-chat-recall, run C). `testenv/src/bench/recall-home.ts`
+seeds a home of four weeks (`seedRecallHome`: two projects, 24 tasks with 3 renames and 2
+cancels, 6 sessions, 14 cards open and answered, 5 decisions, 5 lessons, a docs folder, 120
+conversation lines in English and German, and another person's records), in time order on the
+store's clock, typed by the store methods it uses so testenv needs no state dependency; the
+bench and live check 4 seed the same home. `RECALL_GOLDEN` holds 24 questions, each a recall
+input and a part of the hit line it must find. `packages/runtime/test/recall-rank.test.ts` runs
+them through `recallTools` and holds recall@3 at least 0.9 and MRR at least 0.75 (0.96 and 0.93
+measured at the area's fix-up: "which font did I pick?" and "what did I answer about the opening
+hours?" find their record second, "what about stlye the page?" fourth), every hit of a dated
+question inside its window, and no hit from another person or a project not named; it runs in
+`pnpm check`. A change to the ranking that lowers the figures fails it: change the ranking, not
+the thresholds. The done tasks whose merge is recorded ("Write the guide", "Write the FAQ") carry
+the pull request their record is for (`PULL_REQUESTS`): recall, the Tasks row and the chat's
+facts read a merge record only for the pull request the task has, so a seed without it would
+leave "when was the README merged?" unfound while the thresholds still held.
 
 ### How to add a case
 
@@ -2756,7 +2777,15 @@ nudge included (l3-chat-claims, run L3: the live chat model claimed "I've asked 
 confirmation" with no tool, L3-run-1), so a walk can show the reply guard; `tool: a {json} then
 say: <text>` calls the tool first and then answers with that text on every later call (a claim
 beside what the command did: a change beside its Yes/No read-back, a yes asked beside a change;
-`chainedSay`). The
+`chainedSay`). A chat line about the past ("what did …", "was habe …") is looked up as the
+recall rules ask (`recallPlay`, d1109-chat-recall): recall with the line's words without its
+question frame (`recallWords`: "what happened to the FAQ task?" gives "the FAQ", as a real model
+names the thing asked about), recall_open of the first strong hit, then "From the record: …";
+when every hit is weak or none comes back it answers "Nothing recorded matches." with the
+"Looked through:" line (before the review of d1109-chat-recall it passed the whole line and
+opened a weak r1, so the looked-through answer never showed while any word matched, and the
+fix-up's walk saw the person's earlier "what happened to the notes task?" ranked above the FAQ
+task on the frame's words). The
 intake stand-in reads the person's words after "Change the plan" (`splitChanges` reads them
 from the brief as `briefWithChanges` in `session/intake.ts` writes them; `applyChanges` in
 `plans.ts`): "drop|remove|... <name>" removes the tasks it names, "add|include|insert <name>"

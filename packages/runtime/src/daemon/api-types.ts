@@ -1018,6 +1018,23 @@ export const ChatPendingView = z.object({
 export type ChatPendingView = z.infer<typeof ChatPendingView>;
 
 /**
+ * A record a chat reply rests on (d1109-chat-recall, ADR 0114): one the reply names among those
+ * recall_open opened in its turn, with where the person opens it (the task drawer, the session's
+ * page, the Inbox's Answered list, the Overview's decision, the Changes page, the Docs tab).
+ * d1109-chat-depth draws the reply's From line from it.
+ */
+export const RecordSourceView = z.object({
+  /** session, task, card, decision, lesson, document, change, spending or conversation. */
+  kind: z.string(),
+  title: z.string(),
+  /** Its date in the person's words ("4 Nov"). */
+  date: z.string(),
+  /** The app's own path that opens it; null when nothing does. */
+  link: z.string().nullable(),
+});
+export type RecordSourceView = z.infer<typeof RecordSourceView>;
+
+/**
  * One turn of a conversation as the Chat tab and Talk show it (design §3.9): what the person
  * said and the reply, with the changes it made (each with whether its Undo still works) and
  * the read-back it showed, if any.
@@ -1061,6 +1078,8 @@ export const ConversationTurnView = z.object({
        * (expired, or dropped for a newer change); null when the reply read back none.
        */
       card: z.enum(["waiting", "yes", "no", "expired"]).nullable().optional(),
+      /** The records the reply rests on (d1109-chat-recall), at most three; absent for none. */
+      sources: z.array(RecordSourceView).optional(),
     })
     .nullable(),
 });
@@ -1088,6 +1107,8 @@ export const ChatReplyView = z.object({
   cost: Money,
   transcriptId: z.string(),
   activeProjectId: z.string().nullable(),
+  /** The records the reply rests on (d1109-chat-recall), at most three; absent for none. */
+  sources: z.array(RecordSourceView).optional(),
 });
 export type ChatReplyView = z.infer<typeof ChatReplyView>;
 

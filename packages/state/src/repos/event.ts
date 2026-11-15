@@ -78,6 +78,30 @@ export class EventRepo {
     );
   }
 
+  /**
+   * The newest events of a session whose type is one of `types`, newest first, at most `limit`
+   * (d1109-chat-recall: the chat's lines, `chat.human` and `chat.reply`, without reading every
+   * tool and token event between them); `beforeSeq` reads the page before an earlier one. One
+   * query on both dialects through the base repository; no migration (the session and seq
+   * index serves it).
+   */
+  ofTypes(
+    sessionId: string,
+    types: readonly string[],
+    opts: { beforeSeq?: number; limit: number },
+  ): Promise<EventRow[]> {
+    if (!types.length) return Promise.resolve([]);
+    const params: unknown[] = [sessionId, ...types];
+    let sql = `SELECT * FROM "event" WHERE "session_id" = ? AND "type" IN (${types.map(() => "?").join(", ")})`;
+    if (opts.beforeSeq !== undefined) {
+      sql += ` AND "seq" < ?`;
+      params.push(Math.floor(opts.beforeSeq));
+    }
+    sql += ` ORDER BY "seq" DESC LIMIT ?`;
+    params.push(Math.max(0, Math.floor(opts.limit)));
+    return this.base.rows(sql, params);
+  }
+
   get(id: string): Promise<EventRow | undefined> {
     return this.base.get(id);
   }

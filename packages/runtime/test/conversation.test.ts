@@ -1119,17 +1119,18 @@ describe("a reply cut off at max_tokens", () => {
     expect(res.reply).toBe("The menu is next.");
     const reply = (await w.log()).find((e) => e.type === "chat.reply");
     expect(reply?.payload).toMatchObject({ outcome: "completed" });
-    // The budget is three calls priced as the loop priced the first one (input as sent, the
-    // whole 1024 cap), above USD 0.05 and below the USD 0.25 ceiling.
+    // The budget is five calls priced as the loop priced the first one (input as sent, the
+    // whole 1024 cap; three before d1109-chat-recall's lookups), above USD 0.05 and held at the
+    // USD 0.25 ceiling.
     const first = w.provider.calls[0]?.request;
     const input = w.provider.countTokens(
       (first?.system ?? "") + JSON.stringify(first?.messages) + JSON.stringify(first?.tools),
     );
     const budget = (reply?.payload as { turnBudgetUsdMicro?: number } | undefined)
       ?.turnBudgetUsdMicro;
-    expect(budget).toBe(3 * OPUS_PRICING.estimate(input, 1024));
+    expect(budget).toBe(Math.min(250_000, 5 * OPUS_PRICING.estimate(input, 1024)));
     expect(budget).toBeGreaterThan(50_000);
-    expect(budget).toBeLessThan(250_000);
+    expect(budget).toBeLessThanOrEqual(250_000);
     await w.store.close();
   });
 

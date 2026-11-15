@@ -1142,8 +1142,12 @@ describe("l3-chat-claims, run L3", () => {
     await w.store.close();
   });
 
-  it("the nudge stays inside the turn's four model calls: a claim on the fourth is replaced at once (L3-run-1)", async () => {
+  // d1109-chat-recall: a turn may make six model calls (a search, an open, the answer, a
+  // command and the nudge); four before.
+  it("the nudge stays inside the turn's six model calls: a claim on the sixth is replaced at once (L3-run-1)", async () => {
     const w = await setup([
+      toolReply("tasks_list", {}),
+      toolReply("tasks_list", {}),
       toolReply("tasks_list", {}),
       toolReply("tasks_list", {}),
       toolReply("tasks_list", {}),
@@ -1151,7 +1155,7 @@ describe("l3-chat-claims, run L3", () => {
       textReply("never sent", { ttftMs: 0 }),
     ]);
     const res = await w.chat("research may read any public website again");
-    expect(w.provider.calls).toHaveLength(4);
+    expect(w.provider.calls).toHaveLength(6);
     expect(res.reply).toBe(TRUE_LINE);
     expect((await replyRows(w)).at(-1)?.claimGuard).toEqual({
       kind: "asked",
@@ -1167,7 +1171,8 @@ describe("l3-chat-claims, run L3", () => {
       new URL("../../../evals/registry/principals/conversation-agent.md", import.meta.url),
       "utf8",
     );
-    expect(prompt).toContain('version: "1.2.2"');
+    // d1109-chat-recall bumped it to 1.3.0 ("What you look up"); these lines stay.
+    expect(prompt).toContain('version: "1.3.0"');
     expect(prompt).toContain(
       'A reply that changed something ends with the\n  app\'s own line "The app did: …"; a reply without it changed nothing, whatever it says.',
     );

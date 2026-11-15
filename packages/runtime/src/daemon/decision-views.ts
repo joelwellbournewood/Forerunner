@@ -17,6 +17,11 @@ export async function decisionViews(
   store: StateStore,
   project: ProjectRow,
   docsDirs: readonly string[],
+  /**
+   * The newest decisions read at most (d1109-chat-recall's bounded read); absent, every current
+   * one, as the Overview has always read them.
+   */
+  opts: { limit?: number } = {},
 ): Promise<DecisionView[]> {
   const names = new Map<string, string>();
   const nameOf = async (humanId: string | null): Promise<string> => {
@@ -26,7 +31,14 @@ export async function decisionViews(
     return names.get(humanId) as string;
   };
   const out: DecisionView[] = [];
-  for (const d of await store.decision.current(project.id)) {
+  const current =
+    opts.limit === undefined
+      ? await store.decision.current(project.id)
+      : await store.decision.list({ project_id: project.id, superseded_by: null } as never, {
+          orderBy: "created_at desc",
+          limit: opts.limit,
+        });
+  for (const d of current) {
     const who = await nameOf(d.decided_by);
     for (const [i, pair] of plainRows(d).entries())
       out.push({

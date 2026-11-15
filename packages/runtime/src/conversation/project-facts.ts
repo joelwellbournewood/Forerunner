@@ -2,6 +2,7 @@ import { formatChf, usdToChfMicro } from "@forerunner/billing";
 import { isAbsolute } from "@forerunner/platform";
 import type {
   HumanRequestRow,
+  MergeRecordRow,
   ProjectRow,
   SessionRow,
   StateStore,
@@ -17,7 +18,7 @@ import {
   taskDisplay,
 } from "../daemon/task-display.ts";
 import { parseRepoRef } from "../loop/docs.ts";
-import { mergeModeOf } from "../loop/merge-mode.ts";
+import { type MergeMode, mergeModeOf } from "../loop/merge-mode.ts";
 import type { IntakeState } from "../session/intake.ts";
 import { type LastSessionOutcome, stopWords } from "../session/result.ts";
 
@@ -549,34 +550,63 @@ export async function repositoryFacts(
   for (const pr of await donePullRequests(store, project.id)) {
     const record = await store.mergeRecord.forTask(pr.taskId);
     const item = { title: pr.title, url: pr.url };
-    if (!record || record.pr_url !== pr.url) {
-      facts.unknown.push(item);
-      continue;
-    }
-    const said = record.sentence.trim();
-    const name = prName(record.pr_number);
-    if (record.state === "merged") facts.merged.push(item);
-    else if (record.state === "left_to_you" && record.last_outcome === "closed")
-      facts.closed.push(item);
-    else if (record.state === "left_to_you")
-      facts.waiting.push({ ...item, sentence: said || `${name} waits for you to merge it.` });
-    else if (record.state === "queued" && record.approval === "none" && mode === "you")
-      // Accepted, and "You press Merge" leaves it for the click (the merge gate's sentence).
-      facts.waiting.push({
-        ...item,
-        sentence: said || `${name} waits for you to merge it: press Merge on the Overview.`,
-      });
-    else
-      facts.merging.push({
-        ...item,
-        sentence:
-          said ||
-          (record.state === "waiting_checks"
-            ? `${name} merges when its checks pass.`
-            : `${name} is being merged.`),
-      });
+    const stand = mergeStandOf(record, pr.url, mode);
+    if (!stand) facts.unknown.push(item);
+    else if (stand.kind === "merged" || stand.kind === "closed") facts[stand.kind].push(item);
+    else facts[stand.kind].push({ ...item, sentence: stand.sentence });
   }
   return facts;
+}
+
+/** Where a done task's merge stands (`mergeStandOf`). */
+export type MergeStand =
+  | { kind: "merged" }
+  | { kind: "closed" }
+  | { kind: "waiting"; sentence: string }
+  | { kind: "merging"; sentence: string };
+
+/**
+ * Where a done task's merge stands, from its merge record (ADR 0111), as the chat's `# Your
+ * files` says it: merged, closed without merging, waiting for the person's Merge, or merging by
+ * itself, the last two with the record's sentence (the merge gate's when it has none). Null when
+ * the record is not for the pull request the task has now (none, or an older one a redo
+ * replaced): nothing is known of that one, as the Tasks row (`loadTaskDisplayContext`) reads it.
+ * The one classification of a done task's merge in the chat: `repositoryFacts` and recall's
+ * tasks kind both read it (fixup of d1109-chat-recall: recall said "waits for your Merge" for a
+ * pull request closed without merging while the same turn's facts said it was closed; design §5
+ * rules 9 and 10).
+ */
+export function mergeStandOf(
+  record:
+    | Pick<
+        MergeRecordRow,
+        "pr_url" | "pr_number" | "state" | "approval" | "sentence" | "last_outcome"
+      >
+    | undefined,
+  prUrl: string | null | undefined,
+  mode: MergeMode,
+): MergeStand | null {
+  if (!record || !prUrl || record.pr_url !== prUrl) return null;
+  const said = record.sentence.trim();
+  const name = prName(record.pr_number);
+  if (record.state === "merged") return { kind: "merged" };
+  if (record.state === "left_to_you" && record.last_outcome === "closed") return { kind: "closed" };
+  if (record.state === "left_to_you")
+    return { kind: "waiting", sentence: said || `${name} waits for you to merge it.` };
+  if (record.state === "queued" && record.approval === "none" && mode === "you")
+    // Accepted, and "You press Merge" leaves it for the click (the merge gate's sentence).
+    return {
+      kind: "waiting",
+      sentence: said || `${name} waits for you to merge it: press Merge on the Overview.`,
+    };
+  return {
+    kind: "merging",
+    sentence:
+      said ||
+      (record.state === "waiting_checks"
+        ? `${name} merges when its checks pass.`
+        : `${name} is being merged.`),
+  };
 }
 
 /** Up to ten '"Title" url' items, then "and N more" (design §5 rule 5). */

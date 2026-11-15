@@ -131,3 +131,45 @@ scanned: they are the person's words. The prompt (`conversation-agent.md` 1.2.2)
 `CHAT_RETRIEVAL_RULES` say what the line means and that no yes is claimed without "Needs
 confirmation" in the turn; a code guard holds the reply to that (ADR 0091's amendment of the same
 date).
+
+## Amendment 2026-11-15: chat looks up anything recorded (d1109-chat-recall)
+
+Sub-run C2. The owner (2026-11-09): "chat should be able to intelligently/ selectively recall
+anything that has been recorded". Built:
+
+- **Two layers.** The facts of every turn stay as they were (this project's tasks, its open
+  cards in full and other projects' as a count, the last session, what runs, the files, doc
+  excerpts and lessons for the line, the recent conversation). Everything older or elsewhere is
+  reached on demand with two read-only tools, `recall {words, also, kinds, from, to, project}`
+  and `recall_open {ref}`, registered after the four read tools on every turn.
+- **Kinds.** Earlier lines of the person's conversations (what they said and what chat
+  answered), sessions (d1109-sessions' gist, how each ended, its CHF), tasks (status in design
+  §2's words, runs, earlier titles from task.update's change log, the merge from the merge
+  record), cards and the answers given (the Inbox's words), decisions (the Overview's), lessons
+  (the memory port with the principal's grant), the project's documents (the doc set chat already
+  reads; docs/status.md out), changes (the Changes page's row words, `changeRowViews`, the
+  function GET /changes uses) and spending (the ledger's CHF). Not searched, and the rules say
+  so: Inbox Updates, notifications and session log lines (they repeat sessions, cards and
+  changes).
+- **Ranking in code.** BM25 over the words and their other words fused by reciprocal rank with
+  the letter patterns of titles, boosts for an exact title and this project, strong or weak; no
+  model, no network, no index. A golden set of 24 questions over a seeded home holds it.
+- **Dates and bounds.** From and to are dates in the person's zone; at most 8 hits in 1,500
+  tokens, an open in 2,000, counted on the wrapped text; references valid in their turn only;
+  never an id or a credential's shape; only this person's records (`scopeOf`).
+- **Quoted as data.** Every result is marked untrusted (records `agent_output` with origin
+  `record:recall` or `record:<kind>`, documents `repo_file`): the hooks wrap and scan it and every
+  change after a lookup is read back. The record channel gains record-005 (an earlier
+  conversation line) and record-006 (a change's sentence).
+- **Model-facing text is code.** `CHAT_RECALL_RULES` after `CHAT_RETRIEVAL_RULES`; the two
+  definitions; `conversation-agent.md` 1.3.0 ("What you look up"; "say what you looked through"
+  in place of "I don't have that here"). The spec's bound of at most 700 more input tokens for a
+  status question could not hold with these texts as fixed: on the stand-in's counter the rules
+  and the two definitions alone are about 640 tokens and their schemas about 150; the test holds
+  the status turn to exactly those additions and the prompt's lookup lines (about 1,050 tokens).
+- **Sources.** The records a reply names among those it opened are kept on its row
+  (`sources.records`, at most three, each with where it opens) and served by the conversation
+  view and the chat reply; d1109-chat-depth draws the From line.
+- **The history.** An earlier reply whose own words read like instructions (it quoted a record)
+  is left out of the history in one line, so a record's words reach no later call and later
+  turns are not all read back; its "The app did:" lines stay and are scanned as before.

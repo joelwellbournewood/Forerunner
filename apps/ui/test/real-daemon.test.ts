@@ -69,6 +69,7 @@ import {
   standInFetch,
 } from "../../../testenv/src/provider/messages-api.ts";
 import { type ScriptedReply, textReply, toolReply } from "../../../testenv/src/provider/replies.ts";
+import { streamChat } from "../src/api/chat-stream.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { formatChf, formatMoney } from "../src/lib/money.ts";
@@ -18387,4 +18388,128 @@ describe("d1109-onerepo-link, run C", () => {
       await rt.close();
     }
   }, 120_000);
+});
+
+describe("d1109-chat-recall, run C", () => {
+  /**
+   * Chat looks up anything recorded (the owner's D3 of 2026-11-09, ADR 0114, U-092): the bench's
+   * stand-in (the role-player) plays recall and recall_open for a question about the past; the
+   * reply names the answer and its date, and the turn keeps the record it rests on
+   * (reply.sources), served by the conversation view before and after the daemon composes again
+   * on the same home.
+   */
+  async function open(home: string) {
+    const provider = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock: new SystemClock(),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client };
+  }
+
+  it("POST /chat/stream: 'what did I answer about the opening hours?' looks the card up and names the answer and its date; GET /projects/:id/conversation keeps the card as the turn's source, also after a restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-d1109-chat-recall-"));
+    const a = await open(home);
+    let projectId = "";
+    let sources: unknown;
+    try {
+      const project = await a.client.createProject({
+        name: "Bakery",
+        goal: "A page for the bakery",
+      });
+      projectId = project.id;
+      const t = await a.rt.store.task.insert({
+        project_id: project.id,
+        title: "Ask for the opening hours",
+        outcome: "The opening hours are known.",
+        status: "done",
+        specialist: "person",
+      } as never);
+      const card = await a.rt.store.humanRequest.insert({
+        human_id: a.rt.human.id,
+        project_id: project.id,
+        task_id: t.id,
+        kind: "decision",
+        why: "What are the opening hours?",
+        steps: ["What are the opening hours?"],
+        options: ["Cancel the task"],
+        risk: "low",
+        change_card: { key: `person_questions:${t.id}`, outcome: "answered" },
+      } as never);
+      const answered = await a.rt.store.humanRequest.answer(
+        card.id,
+        card.version,
+        {
+          answers: [{ question: "What are the opening hours?", answer: "Mon to Fri 9 to 18" }],
+        } as never,
+        a.rt.human.id,
+      );
+      const day = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/Zurich",
+        day: "numeric",
+        month: "short",
+      }).format(new Date(answered.answered_at ?? ""));
+      const me = await a.client.me();
+      const agentId = (await a.client.agents())[0]?.id ?? "";
+      const reply = await streamChat(a.client, {
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text: "what did I answer about the opening hours?",
+        source: "text",
+      });
+      expect(reply.reply).toContain("Mon to Fri 9 to 18");
+      expect(reply.reply).toContain(day);
+      expect(reply.reply).not.toMatch(/\br1\b|[0-9a-f]{8}-[0-9a-f]{4}-/);
+      const source = {
+        kind: "card",
+        title: '"Ask for the opening hours" needs your answers',
+        date: day,
+        link: `/inbox?answered=${card.id}`,
+      };
+      expect(reply.sources).toEqual([source]);
+      const view = await a.client.conversation(project.id);
+      sources = view.turns.at(-1)?.reply?.sources;
+      expect(sources).toEqual([source]);
+    } finally {
+      await a.rt.close();
+    }
+    // The daemon composes again on the same home: the turn keeps its source.
+    const b = await open(home);
+    try {
+      const view = await b.client.conversation(projectId);
+      expect(view.turns.at(-1)?.reply?.sources).toEqual(sources);
+      expect(view.turns.at(-1)?.reply?.text).toContain("Mon to Fri 9 to 18");
+    } finally {
+      await b.rt.close();
+    }
+  });
 });

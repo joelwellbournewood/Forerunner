@@ -209,3 +209,39 @@ describe("d1109-oversize-start, run C: the Start check's larger task", () => {
     );
   });
 });
+
+describe("d1109-chat-recall, run C: a reply's sources", () => {
+  it("the fake daemon's chat reply and conversation turn carry the records a reply rests on, parsed by the daemon's schemas", async () => {
+    const { ChatReplyView, ConversationView } = await import(
+      "@forerunner/runtime/daemon/api-types"
+    );
+    const { createHarness } = await import("./helpers.tsx");
+    const harness = createHarness();
+    const source = {
+      kind: "card",
+      title: '"Ask for the opening hours" needs your answers',
+      date: "5 Nov",
+      link: "/inbox?answered=req_1",
+    };
+    harness.daemon.state.nextChatReply = "You answered Mon to Fri 9 to 18 on 5 Nov.";
+    harness.daemon.state.nextChatSources = [source];
+    const headers = { authorization: "Bearer test-token", "content-type": "application/json" };
+    const res = await harness.daemon.app.request("/chat", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        humanId: "human_1",
+        agentId: "agent_alice",
+        projectId: "proj_atlas",
+        projectTab: true,
+        text: "what did I answer about the opening hours?",
+        source: "text",
+      }),
+    });
+    expect(ChatReplyView.parse(await res.json()).sources).toEqual([source]);
+    const view = await harness.daemon.app.request("/projects/proj_atlas/conversation", { headers });
+    expect(ConversationView.parse(await view.json()).turns.at(-1)?.reply?.sources).toEqual([
+      source,
+    ]);
+  });
+});

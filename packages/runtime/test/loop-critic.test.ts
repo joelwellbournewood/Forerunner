@@ -717,3 +717,41 @@ describe("critic in the loop", () => {
     await w.close();
   });
 });
+
+describe("d1109-chat-recall, run C: the resolved finding's lesson (L3-left-7)", () => {
+  // Run L3 took the critic's no-fix placeholder out of Reviews, the drawer, the cards and the
+  // chat's task lines; the lesson written for a resolved finding still said "-> Resolve it and
+  // show the evidence", which chat's recall, the per-turn lessons and the Memory screen quote.
+  it("a finding with no fix named is kept as what it found, without the placeholder", async () => {
+    const w = await loopWorld({ replies: [submitReply(), closingReply()] });
+    const task = await w.addTask("Add clamp");
+    const earlier = await w.store.review.insert({
+      task_id: task.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 30,
+      confidence: 0.9,
+      verdict: "revise",
+      evidence: [],
+      summary: "earlier",
+      author_agent: w.criticAgent,
+    });
+    await w.store.finding.insert({
+      review_id: earlier.id,
+      task_id: task.id,
+      severity: "medium",
+      description: "Docs not updated",
+      required_action: "Resolve it and show the evidence",
+      status: "open",
+      fingerprint: "fp-docs-nofix",
+      author_agent: w.criticAgent,
+    });
+    await w.start(w.runner(doneExecutor(w)));
+    const lessons = await w.store.lesson.search({ scope: "agent_private", ownerAgentId: w.alice });
+    const lesson = lessons.find((l) => l.tags.includes("critic-finding"));
+    expect(lesson?.text).toBe(
+      'Critic finding resolved on "Add clamp" (coder): [medium] Docs not updated',
+    );
+    await w.close();
+  });
+});
