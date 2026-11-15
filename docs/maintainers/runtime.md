@@ -3960,7 +3960,13 @@ the note "kept in the app: no status pull request (Settings turns it on)"). `set
 status_pull_request` (`SETTING_SPECS`, low risk, a `project.status_pull_request` row in
 `GET /settings` only for a project on a host repository, `parseRepoRef` of `repos[0]` and not an absolute path, since a linked local folder opens no pull request) turns the following on. With a
 repository and the setting on it is committed as `docs: status after the session started <time>` (W15-08: the
-session by its start time, `sessionWords`, never its id) on Forerunner's own status
+session by its start time, `sessionWords`, never its id; since run L3 the file's own entry too:
+`writeSessionStatus` passes the session's `started_at` as the update's `startedAt`, so the entry
+reads `### Session started 2026-11-15 05:46 UTC`, and the runner's `note` says how it ended in
+the Sessions list's words, `endedStatusText` and the spend, "Done. Spent CHF 0.24." or "Ended: 1
+task needs you. Spent CHF 0.09."; before, GitHub's Files changed and the Docs tab showed `###
+2026-11-15 session <id>` and "Note: stop reason completed; spent CHF 0.09", live check 3,
+L3-github-6) on Forerunner's own status
 branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status",
 its body ending in the project's hidden mark `docsPrMarker`, `<!-- forerunner:pr project=<id> -->`):
 a later session adds its commit to the open PR and comments the entry on it; once the PR is

@@ -53,6 +53,15 @@ async function show(bare: string, ref: string, path: string): Promise<string | n
   return r.code === 0 ? r.stdout : null;
 }
 
+/**
+ * The heading of a session's entry in docs/status.md: named by when it started, never by its id
+ * (W15-08; l3-small, run L3, L3-github-6).
+ */
+async function startedHeading(w: LoopWorld, sessionId: string): Promise<string> {
+  const at = (await w.store.session.mustGet(sessionId)).started_at ?? "";
+  return `### Session started ${at.slice(0, 10)} ${at.slice(11, 16)} UTC\n`;
+}
+
 async function docsFor(w: LoopWorld, root: string, bare: string | null) {
   const host = new MemoryGitHost("alice");
   if (bare) await host.createRepo({ ...REPO, private: true, cloneUrl: bare });
@@ -124,11 +133,12 @@ describe("project docs at session end (spec G.5)", () => {
     const status = await show(bare, STATUS_BRANCH, STATUS_DOC);
     expect(status).not.toBeNull();
     expect(status).toContain("maintained-by: forerunner");
-    expect(status).toContain(`### 2026-10-20 session ${result.sessionId}`);
+    expect(status).toContain(await startedHeading(w, result.sessionId));
+    expect(status).not.toContain(result.sessionId);
     expect(status).toContain("- Done: Add clamp");
     expect(status).toMatch(/## Done\n\n- Add clamp\n/);
-    // The ledger's CHF for USD 0.30 (U-074).
-    expect(status).toContain("- Note: stop reason completed; spent CHF 0.24");
+    // The ledger's CHF for USD 0.30 (U-074); how it ended in words (L3-github-6).
+    expect(status).toContain("- Note: Done. Spent CHF 0.24.");
     expect(await show(bare, "fr/add-clamp", "src/x.ts")).toBe("export const x = 1;\n");
     expect(await show(bare, STATUS_BRANCH, "src/x.ts")).toBeNull();
     expect(await show(bare, "main", STATUS_DOC)).toBeNull();
@@ -172,8 +182,9 @@ describe("project docs at session end (spec G.5)", () => {
     );
     expect(prs[0]?.body).not.toContain(result.sessionId);
     const status = await show(bare, branch, STATUS_DOC);
-    expect(status).toContain(`session ${result.sessionId}`);
+    expect(status).toContain(await startedHeading(w, result.sessionId));
     expect(status).toContain("- Blocked: Deploy to staging");
+    expect(status).toContain("- Note: Ended: 1 task needs you. Spent CHF");
     expect(status).toMatch(/## Blocked\n\n- Deploy to staging\n/);
     // The top sections are the project's state, so a task this session never ran is listed.
     expect(status).toMatch(/## Next\n\n- Write the runbook\n/);
@@ -190,8 +201,11 @@ describe("project docs at session end (spec G.5)", () => {
     const again = await w.start(w.runner(doneExecutor(w, { checksPassed: true }), { docs }));
     expect(again.completed).toEqual([second.id]);
     const twice = await show(bare, STATUS_BRANCH, STATUS_DOC);
-    expect(twice).toContain(`session ${again.sessionId}`);
-    expect(twice).toContain(`session ${result.sessionId}`);
+    // Two entries, each named by when its session started (they may share the minute).
+    expect(twice).toContain(await startedHeading(w, again.sessionId));
+    expect(twice).toContain(await startedHeading(w, result.sessionId));
+    expect(twice?.match(/^### Session started /gm)).toHaveLength(2);
+    expect(twice).not.toContain(again.sessionId);
     expect(twice).toMatch(/## Done\n\n- Add retries\n/);
     expect((await host.listPullRequests(REPO, { state: "open" })).map((p) => p.head.ref)).toEqual([
       branch,
@@ -223,7 +237,7 @@ describe("project docs at session end (spec G.5)", () => {
     const dir = docs.statusDocRoot(await w.store.project.mustGet(w.project));
     expect(dir).toBe(docs.statusInAppDir(project.id));
     const text = await readFile(join(dir ?? "", fromPosix(STATUS_DOC)), "utf8");
-    expect(text).toContain(`### 2026-10-20 session ${result.sessionId}`);
+    expect(text).toContain(await startedHeading(w, result.sessionId));
     expect(text).toContain("- Done: Add clamp");
     expect(w.events.find((e) => e.type === "docs.status_written")?.payload).toMatchObject({
       location: "app",
@@ -280,7 +294,7 @@ describe("project docs at session end (spec G.5)", () => {
     const file = join(root, "projects", w.project, WORKSPACE_DIR, fromPosix(STATUS_DOC));
     expect(existsSync(file)).toBe(true);
     const status = await readFile(file, "utf8");
-    expect(status).toContain(`### 2026-10-20 session ${result.sessionId}`);
+    expect(status).toContain(await startedHeading(w, result.sessionId));
     expect(status).toContain("- Done: Add clamp");
     expect(w.events.find((e) => e.type === "docs.status_written")?.payload).toMatchObject({
       location: "data_dir",
@@ -392,7 +406,9 @@ describe("project docs at session end (spec G.5)", () => {
     expect(result.completed).toHaveLength(1);
     const prs = await host.listPullRequests(REPO, { state: "open" });
     expect(prs.map((p) => p.head.ref)).toEqual([STATUS_BRANCH]);
-    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain(`session ${result.sessionId}`);
+    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain(
+      await startedHeading(w, result.sessionId),
+    );
     // Back on main after the write: the status waits in its PR, main is unchanged.
     expect(await show(bare, "main", STATUS_DOC)).toContain("maintained-by: forerunner");
     await w.close();
@@ -542,7 +558,9 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
     expect(order).toEqual(["write", "refresh"]);
     expect(written).toMatchObject({ location: "repo", branch: STATUS_BRANCH });
     expect(refreshed).toEqual({ refreshed: true });
-    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain("session s-1");
+    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain(
+      "### Session ended 2026-11-03 09:00 UTC\n",
+    );
     const git = new GitOps({ cwd: clone, identity });
     expect(await git.currentBranch()).toBe("main");
     expect(await readFile(join(clone, "notes.md"), "utf8")).toBe("# notes\n");
@@ -870,7 +888,9 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
       session: { id: "s-3" } as SessionRow,
       update: update("s-3"),
     });
-    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain("session s-3");
+    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain(
+      "### Session ended 2026-11-03 09:00 UTC\n",
+    );
     expect(await show(bare, STATUS_BRANCH, "Local only/notes.txt")).toBe(
       "the team's shared note\n",
     );
@@ -954,8 +974,11 @@ describe("w15-merge, wave 15", () => {
     blocked: [],
     next: [],
   });
-  const session = (id: string): SessionRow =>
-    ({ id, started_at: "2026-11-09T04:12:00.000Z" }) as SessionRow;
+  // A later session starts later: since run L3 (L3-github-6) a session's entry in docs/status.md
+  // is named by its start, so two sessions are told apart by it, not by their ids.
+  const session = (id: string, startedAt = "2026-11-09T04:12:00.000Z"): SessionRow =>
+    ({ id, started_at: startedAt }) as SessionRow;
+  const LATER = "2026-11-09T05:20:00.000Z";
   const headOf = async (bare: string, ref: string) =>
     (await run(["git", "--git-dir", bare, "rev-parse", ref])).stdout.trim();
 
@@ -1014,7 +1037,11 @@ describe("w15-merge, wave 15", () => {
     expect(await docs.docsInPullRequests(b)).toEqual([]);
     expect((await docs.docsInPullRequests(a)).map((d) => d.number)).toEqual([prA?.number]);
     // A's next session adds to its own pull request, as before.
-    await docs.writeSessionStatus({ project: a, session: session("s-a2"), update: update("s-a2") });
+    await docs.writeSessionStatus({
+      project: a,
+      session: session("s-a2", LATER),
+      update: update("s-a2"),
+    });
     expect((await host.listPullRequestComments(REPO, prA?.number ?? 0)).length).toBe(commentsA + 1);
     // A's pull request closed: B's next status opens B's own, with B's mark.
     await host.updatePullRequest(REPO, prA?.number ?? 0, { state: "closed" });
@@ -1116,7 +1143,11 @@ describe("w15-merge, wave 15", () => {
     const id = "0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e5f";
     const next = "0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e60";
     await docs.writeSessionStatus({ project: a, session: session(id), update: update(id) });
-    await docs.writeSessionStatus({ project: a, session: session(next), update: update(next) });
+    await docs.writeSessionStatus({
+      project: a,
+      session: session(next, LATER),
+      update: update(next),
+    });
     const [pr] = await host.listPullRequests(REPO, { state: "open", head: STATUS_BRANCH });
     const visible = (s: string) => s.replace(/<!--[\s\S]*?-->/g, "");
     expect(visible(pr?.body ?? "")).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
@@ -1194,6 +1225,68 @@ describe("w15-merge, wave 15", () => {
     expect(out.location).toBe("data_dir");
     const autocrlf = await run(["git", "-C", workspace, "config", "--local", "core.autocrlf"]);
     expect(autocrlf.stdout.trim()).toBe("false");
+    await w.close();
+  });
+});
+
+/**
+ * l3-small, run L3 (live check 3, L3-github-6; W15-08): the status pull request's file still read
+ * '### 2026-11-15 session 01a1ddbe-2b5e-7624-a194-e62a9e74accd' and '- Note: stop reason completed;
+ * spent CHF 0.09' on GitHub, and the Docs tab showed the same. The session is named by when it
+ * started, and how it ended is said in the words the Sessions list uses.
+ */
+describe("l3-small, run L3: the status file names the session by its start, in words (L3-github-6)", () => {
+  const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i;
+
+  it("the status pull request's docs/status.md has no id: 'Session started <when> UTC' and 'Done. Spent CHF 0.24.'", async () => {
+    const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
+    await w.store.project.patch(w.project, {
+      repos: ["o/sample"],
+      settings: { status_pull_request: true },
+    });
+    const { root, bare } = await bareRepo();
+    const { host, docs } = await docsFor(w, root, bare);
+    await w.addTask("Add clamp", { risk_tier: 1 });
+    const result = await w.start(
+      w.runner(prExecutor(w, root, bare, host, "fr/add-clamp"), { docs }),
+    );
+    const started = (await w.store.session.mustGet(result.sessionId)).started_at ?? "";
+    const when = `${started.slice(0, 10)} ${started.slice(11, 16)} UTC`;
+    const status = (await show(bare, STATUS_BRANCH, STATUS_DOC)) ?? "";
+    expect(status).toContain(`## Sessions\n\n### Session started ${when}\n`);
+    expect(status).toContain("- Note: Done. Spent CHF 0.24.\n");
+    expect(status).not.toContain(result.sessionId);
+    expect(status).not.toMatch(UUID);
+    expect(status).not.toContain("stop reason");
+    await w.close();
+  });
+
+  it("the copy the Docs tab reads says the same, and a session stopped by the person says so", async () => {
+    const w = await loopWorld();
+    const { root, bare } = await bareRepo();
+    const { docs } = await docsFor(w, root, bare);
+    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    const id = "0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e5f";
+    await docs.writeSessionStatus({
+      project,
+      session: { id, started_at: "2026-11-15T05:46:30.000Z" } as SessionRow,
+      update: {
+        sessionId: id,
+        endedAt: "2026-11-15T05:59:00.000Z",
+        done: ["Write the kite guide"],
+        inFlight: [],
+        blocked: [],
+        next: [],
+        note: "Stopped by you. Spent CHF 0.09.",
+      },
+    });
+    const text = await readFile(
+      join(docs.statusInAppDir(project.id), fromPosix(STATUS_DOC)),
+      "utf8",
+    );
+    expect(text).toContain("### Session started 2026-11-15 05:46 UTC\n");
+    expect(text).toContain("- Note: Stopped by you. Spent CHF 0.09.\n");
+    expect(text).not.toMatch(UUID);
     await w.close();
   });
 });

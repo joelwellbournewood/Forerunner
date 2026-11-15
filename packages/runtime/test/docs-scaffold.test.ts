@@ -400,7 +400,12 @@ describe("standard doc set at project creation (G.5)", () => {
       created: true,
     });
     const status = await show(gammaBare, branch, "docs/status.md");
-    expect(status).toContain(`### 2026-03-05 session ${result.sessionId}`);
+    // Named by when the session started, never by its id (l3-small, run L3, L3-github-6).
+    const started = (await rt.store.session.mustGet(result.sessionId)).started_at ?? "";
+    expect(status).toContain(
+      `### Session started ${started.slice(0, 10)} ${started.slice(11, 16)} UTC\n`,
+    );
+    expect(status).not.toContain(result.sessionId);
     expect(status).toContain("Add a clamp");
     expect(await show(gammaBare, "main", "docs/status.md")).toBeNull();
     const prs = await host.listPullRequests({ owner: "o", name: "gamma" }, { state: "open" });

@@ -139,6 +139,7 @@ import {
 } from "./sandbox-gate.ts";
 import {
   budgetStopReasonOf,
+  endedStatusText,
   type PersonStop,
   personStopOf,
   stopLimitWords,
@@ -2908,6 +2909,14 @@ export class SessionRunner {
       } else {
         const items = plan.items;
         const titleOf = (id: string) => items.find((i) => i.taskId === id)?.title ?? id;
+        // How it ended, as the Sessions list says it (the handoff's blocked and paused), never
+        // the raw stop reason (L3-github-6: "Note: stop reason completed; spent CHF 0.09").
+        const pausedIds = new Set((outcome.paused ?? []).map((t) => t.id));
+        const waits = uniq([...needsHuman, ...failed]);
+        const endedNote = `${endedStatusText(status, stopReason, {
+          needYou: waits.filter((id) => !pausedIds.has(id)).length,
+          paused: waits.filter((id) => pausedIds.has(id)).length,
+        })}. Spent ${formatChf(spentChf)}.`;
         try {
           docsOutcome = await this.deps.docs.writeSessionStatus({
             project,
@@ -2927,7 +2936,7 @@ export class SessionRunner {
                 ...outcome.waitingForDocker.map((t) => `${t.title} (waits for Docker)`),
               ],
               next: endState.readyNow.map((t) => t.title),
-              note: `stop reason ${stopReason}; spent ${formatChf(spentChf)}`,
+              note: endedNote,
             },
           });
           await emit("docs.status_written", { ...docsOutcome });

@@ -856,7 +856,12 @@ export class ProjectDocs implements ProjectDocsPort {
     update: SessionStatusUpdate;
   }): Promise<SessionStatusOutcome> {
     const { project, session } = input;
-    const update: StatusUpdate = { ...input.update, state: await this.projectState(project.id) };
+    // The entry is named by when the session started, never its id (W15-08, L3-github-6).
+    const update: StatusUpdate = {
+      ...input.update,
+      startedAt: session.started_at ?? session.created_at ?? null,
+      state: await this.projectState(project.id),
+    };
     const target = await this.deps.repoFor(project);
     if (!target) return this.statusInFolder(project, session, update);
     // C-57: unless the person turned the status pull request on, a repository project's status

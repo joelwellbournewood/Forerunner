@@ -187,10 +187,16 @@ export interface StatusLists {
 
 /** What a session reports into `docs/status.md` at its end. */
 export interface StatusUpdate extends StatusLists {
+  /** The session's id: for the caller's records, never written into the doc (W15-08). */
   sessionId: string;
-  /** ISO-8601 UTC instant the session ended (from the Clock); the entry is dated by it. */
+  /** ISO-8601 UTC instant the session ended (from the Clock). */
   endedAt: string;
-  /** One line for the session entry: the stop reason, the spend. */
+  /**
+   * ISO-8601 UTC instant the session started: its entry is named by it ("Session started
+   * 2026-11-15 05:46 UTC"), as the status pull request names it. Without it, by its end.
+   */
+  startedAt?: string | null;
+  /** One line for the session entry, in words: how it ended and what it spent. */
   note?: string;
   /**
    * The project's current state for the four top sections (every open task, not only this
@@ -265,10 +271,29 @@ function sectionText(s: DocSection): string {
   return `${[...head, ...(head.length ? [""] : []), ...body].join("\n")}\n`;
 }
 
-/** The "### <date> session <id>" entry for one session. */
+/** "2026-11-15 05:46 UTC" for an ISO instant; the instant as written when it is no date. */
+function whenWords(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return oneLine(iso);
+  const at = new Date(t).toISOString();
+  return `${at.slice(0, 10)} ${at.slice(11, 16)} UTC`;
+}
+
+/**
+ * The heading of one session's entry: "### Session started 2026-11-15 05:46 UTC", or "###
+ * Session ended ..." when its start is not known. Never its id (W15-08, l3-small, run L3: on
+ * GitHub the status pull request's file read "### 2026-11-15 session 01a1ddbe-2b5e-...").
+ */
+function sessionHeading(u: StatusUpdate): string {
+  return u.startedAt
+    ? `### Session started ${whenWords(u.startedAt)}`
+    : `### Session ended ${whenWords(u.endedAt)}`;
+}
+
+/** The "### Session started <when>" entry for one session. */
 function sessionEntry(u: StatusUpdate): string[] {
   const lines = [
-    `### ${u.endedAt.slice(0, 10)} session ${oneLine(u.sessionId)}`,
+    sessionHeading(u),
     "",
     `- Done: ${joined(u.done)}`,
     `- In flight: ${joined(u.inFlight)}`,
@@ -293,9 +318,9 @@ function splitEntries(lines: string[]): string[][] {
  * The next text of `docs/status.md` after a session: the four standard sections rewritten
  * from the update (the project state when given, else the session's lists), every other
  * section and the frontmatter kept as they are, sections the doc lacks added before the
- * session log, and a dated entry for the session put first under "## Sessions" (an entry
- * for the same session id is replaced, so a rerun changes nothing; the log keeps the newest
- * `MAX_STATUS_SESSIONS`). A missing doc starts from the template.
+ * session log, and an entry for the session, named by when it started, put first under "##
+ * Sessions" (the same entry again replaces itself, so a rerun changes nothing; the log keeps the
+ * newest `MAX_STATUS_SESSIONS`). A missing doc starts from the template.
  */
 export function applyStatusUpdate(existing: string | null, update: StatusUpdate): string {
   const sections = splitSections(existing ?? renderStandardDoc("docs/status.md", { name: "" }));
@@ -323,7 +348,10 @@ export function applyStatusUpdate(existing: string | null, update: StatusUpdate)
   }
   for (const k of STATUS_SECTIONS) if (!seen.has(k)) kept.push({ heading: k, lines: content[k] });
   const mine = sessionEntry(update);
-  const others = splitEntries(sessions?.lines ?? []).filter((e) => e[0] !== mine[0]);
+  // The same entry again (a rerun of the same session's write) replaces itself; two sessions
+  // that started in the same minute keep an entry each, since nothing else names them apart.
+  const same = (e: string[]) => e.join("\n") === mine.join("\n");
+  const others = splitEntries(sessions?.lines ?? []).filter((e) => !same(e));
   const entries = [mine, ...others].slice(0, MAX_STATUS_SESSIONS);
   kept.push({
     heading: SESSIONS_HEADING,
