@@ -471,3 +471,28 @@ amendment of 'w15-run' (point 2) too narrow, and the card's words cut.
    for the two criteria. Each listed page gives its address and was opened."), "to meet" or "to
    satisfy" the criteria, and "No further work is required to meet the acceptance criteria.";
    "though" and "although" name work, as "but" does.
+
+## Amendment 2026-11-15 (run L3, 'l3-money-screens'): the budget line says what the budget counts, and the drawer's run line follows the spend
+
+Two lines of point 6 of the wave 15 amendment ('w15-run', W15-20 and W15-21), after live check 3:
+
+1. **The row's budget line names the figure the budget counts (L3-run-3).** Point 6 moved the
+   Tasks row's cost to `TaskView.spent` (reviews included) and kept `actual_cost_usd_micro` (the
+   work only) as what the task's budget counts, but the line under the cost still read "of CHF
+   0.20 budget". After a review the row read "CHF 0.13 of CHF 0.20 budget" while the run's own
+   line said "This run may spend CHF 0.11": the row suggested CHF 0.07 was left when CHF 0.11
+   was. While the cost reads the same as the work's figure the line stays "of CHF 0.20 budget";
+   once they part it reads "CHF 0.11 of CHF 0.20 budget left; reviews are not counted", from
+   `TaskView.cap` (the budget less the work, the run's "This run may spend" figure), or "CHF 0.20
+   budget used up; reviews are not counted" when nothing is left. Its tooltip: "Runs of this task
+   stop when the work's spend reaches this budget. The critic's reviews are not counted in it."
+   The row's cost stays `spent`, so it still matches Costs > By task. Making the task's budget
+   count the reviews too is an engine change the owner has not asked for; it is not made here.
+2. **The drawer follows the spend through its re-read key (L3-run-4).** A spend increment does
+   not bump the task's version (point 6), and the drawer read `GET /tasks/:id` again only when
+   the version or the status moved, so its run line kept the figure it read at open ("Running ·
+   CHF 0.01" under "spent CHF 0.06"). Its key now also holds the row's `spent` and the Tasks
+   tab's polled latest run of the task (its id and cost), since the task's spend and its run's
+   cost are two writes: the run line follows each call at the tab's pace (its 5 s poll and
+   `project.changed`), with no Loading line, and the version a Stop is sent with stays the one
+   the drawer read.

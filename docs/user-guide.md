@@ -244,7 +244,7 @@ them as you left them; an open file or task stays on its own tab.
   open it on the Files tab; in a project linked to a repository the files are in the task's pull
   request. A research run lists the web pages it read and those it could not read, and why.
   While the task runs, its last steps show there as they happen ("read index.html", "wrote
-  styles.css"). The critic's run is marked as the review; a review that was stopped says so and
+  styles.css"), and the run's amount follows what it spends, as the row's cost does. The critic's run is marked as the review; a review that was stopped says so and
   who stopped it), the critic's review in words
   with **See what was checked** (the project's checks with their output, each page tried with
   what it showed and its screenshots, each command run with its sample input and output, each
@@ -277,7 +277,8 @@ them as you left them; an open file or task stays on its own tab.
   each session's summary is folded under **Session checks**. The "review" link in a task's
   drawer opens its review highlighted.
 - **Costs** (under More): spend by model, specialist and task, in CHF, with the savings from
-  caching and context compression.
+  caching and context compression (a kind that saved nothing is not listed, and a project that
+  saved nothing shows no savings).
 - **Data** (under More): files and datasets the project knows about; agents see metadata and
   samples, never whole files.
 - **Chat**: ask about this project and change it in words. It knows the conversation so far,
@@ -1000,7 +1001,11 @@ words need your answer ("uses the owner's choice of hosting") says "Runs on your
 can ask you questions while it works here." before you press Create.
 
 A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
-never spend more. The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). A task
+never spend more. It counts the work only: the critic's reviews are not counted in it (they
+count against the session's budget). The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). The cost there
+includes the reviews, as Costs does, so once a review was paid the line says what is left for
+the work instead ("CHF 0.11 of CHF 0.20 budget left; reviews are not counted"), the same amount
+as the run's own line in the session's log ("This run may spend CHF 0.11"). A task
 without a budget stops each run at its specialist's limit, and the Tasks tab says so ("each
 run stops at CHF 2.40 (the coder's limit)"; a task you left to the agent's choice names no
 specialist there); a done or cancelled task shows no limit. The estimate a
