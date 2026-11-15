@@ -130,8 +130,9 @@ describe("w15-chat, wave 15", () => {
         ctx: w.ctx({ source: "ui" }),
       }),
     );
+    // l3-chat-claims (L3-run-9): the rule put back lists no site, so none is "listed".
     const QUESTION =
-      "Put web pages research may read for Game back to any public website? Research reads any public website except the ones listed, on the API key and on the subscription.";
+      "Put web pages research may read for Game back to any public website? Research reads any public website, on the API key and on the subscription.";
     const asked = await w.executor.undo(set.changeLogId, w.ctx({ source: "ui" }));
     if (asked.status !== "pending") throw new Error(`expected pending, got ${asked.status}`);
     expect(asked.card.ask).toBe(QUESTION);
@@ -585,5 +586,41 @@ describe("w15-chat, wave 15", () => {
       "the project Garden club was removed",
     );
     await w.store.close();
+  });
+});
+
+/**
+ * l3-chat-claims (live check 3, L3-run-9): "research may read any public website again" on a
+ * project limited to one site was read back as "Research reads any public website except the
+ * ones listed, …", and the change's sentence said the same, with no never list set (design §5
+ * rule 4: true now).
+ */
+describe("l3-chat-claims, run L3", () => {
+  it("the web access read-back and change sentence say 'except the ones listed' only when some are listed (L3-run-9)", async () => {
+    const w = await world();
+    const human = { kind: "human" as const, id: w.human.id };
+    const set = (value: unknown) =>
+      w.executor.execute({
+        name: "settings.set",
+        params: { key: "web_access", value, project: "Game" },
+        ctx: w.ctx({ actor: { kind: "agent", id: w.agent.id } }),
+      });
+    done(await set({ mode: "only", only: ["developer.mozilla.org"] }));
+    // Widening to any public website, no never list: the yes is asked in true words.
+    const asked = await set({ mode: "any" });
+    if (asked.status !== "pending") throw new Error(`expected pending, got ${asked.status}`);
+    expect(asked.readback).toBe(
+      "Set web pages research may read for Game to any public website? Research reads any public website, on the API key and on the subscription.",
+    );
+    const yes = done(await w.executor.confirmByText(asked.pendingId, "yes", human));
+    expect(yes.sentence).toBe(
+      "Set web pages research may read for Game from only developer.mozilla.org to any public website: research reads any public website, on the API key and on the subscription. Undo.",
+    );
+    // With a never list, its sites are the ones listed.
+    const never = done(await set({ mode: "any", never: ["facebook.com"] }));
+    expect(never.sentence).toBe(
+      "Set web pages research may read for Game from any public website to any public website, never facebook.com: research reads any public website except the ones listed, on the API key and on the subscription. Undo.",
+    );
+    expect(`${asked.readback} ${yes.sentence}`).not.toContain("except");
   });
 });

@@ -4293,7 +4293,59 @@ in one project cancelled a task in another. Now:
   history again at 1.25 times the input price and read only the tools and the system prompt;
   `conversation.test.ts` "chat turns read their history from the prompt cache",
   `anthropic-provider.test.ts`; testenv's `PromptCacheSim` keys a prefix by the blocks the
-  adapter sends).
+  adapter sends). An earlier reply that changed something ends with what the app did, one line
+  per change: "The app did: <the change log's sentence without its Undo.>" (`actionLines`,
+  `HISTORY_ACTION_LEAD` in `src/conversation/transcript.ts`; l3-chat-claims, live check 3's
+  L3-run-1). Before, the history held the model's prose alone ("Done. For the Reading rules
+  project, research may now only read …"), a change that read as claimed in words, and the live
+  model claimed "I've asked for confirmation" one turn later with no tool. Every reply that
+  changed something gets its lines, so "a reply without one changed nothing" (what the model is
+  told) holds; a reply that is only the changes' own sentences (a command's reply, no model:
+  'Paused "X" ... Undo.') is said once, as the app's lines (`replyInHistory`); a reply that
+  changed nothing gets none. The lines come from the stored row (`chat.reply` `actionDetails`), so the history
+  is the same bytes on every turn and after a restart and the cached prefix holds. The history's
+  assistant messages (the replies and these lines, whose sentences quote task titles agents may
+  write) are scanned like the facts' records: instruction-like text there sets
+  `CommandTurn.recordsRead` and is kept as `injection: [{ where: "history", ... }]` (injection
+  case record-007).
+- **No claim without a command** (l3-chat-claims, live check 3's L3-run-1; design §5 rules 4 and
+  9). `claimOf` (`src/conversation/claims.ts`) finds a reply that speaks of something it did this
+  turn, in English or German: asked for a yes or sent a request ("I've asked for confirmation",
+  "I've opened a card in your Inbox", "I'm waiting for your yes", "Ich habe um deine Bestätigung
+  gebeten") or changed something ("I've set …", "Ich habe … umgestellt"); a sentence that places
+  it in an earlier turn ("Earlier …", "you said yes", "vorhin") is the history, and a negated one
+  claims nothing ("I've changed nothing", "I have added no task", "Ich habe die Regel nicht
+  geändert", "habe keine Anfrage gesendet"; "no longer", "nicht mehr", "not only", "nicht nur"
+  still claim; `NEGATION`), nor does a verb about the reply itself ("I've limited my answer",
+  "I have limited knowledge", "I've stopped short of"), "the report card", "the task in your
+  inbox" or "the pull request". After the turn's run, `ConversationAgent.chat` holds a claim
+  against what the turn's commands did (`TurnDid`, `didNow`: the nudge step's commands count):
+  "asked" is backed by a result of this turn waiting for a yes, "changed" by a done or partial
+  result. A card an earlier turn read back backs no "asked" claim: the claim may be about
+  another change, and its Yes would answer the earlier card. An unbacked claim gets one more
+  model step with `claimNudge(claim, did)` appended after the reply (as a text block; asserted
+  word for word), inside the turn's four model calls (`CHAT_MAX_MODEL_CALLS`), its budget and
+  its deadline, not streamed; its reply, results and cost join the turn's (`mergedRuns`). The
+  nudge says what is true: nothing changed and nothing waits (`CLAIM_NUDGE`), or a change this
+  turn made shows under the reply, or this turn's change waits for the yes under the reply (do
+  not call that command again), or an earlier turn's card still waits. A claim made again, or
+  with no call left, is replaced with what is true (`trueLine`): the turn's change sentences (as
+  a command's own reply says them, so Talk shows them once, with their Undo); else nothing, and
+  the read-back of the turn's card is the reply; else `NOTHING_CHANGED_REPLY` ("Nothing changed,
+  and nothing waits for your yes. Say it again to try once more."), or
+  `NOTHING_CHANGED_CARD_WAITS_REPLY` ("Nothing changed; the change I asked about earlier still
+  waits for your yes.") while an earlier card waits; only these two are marked `notice`. So the
+  app never writes "nothing waits" above a Yes/No card, nor "Nothing changed" above a change (the
+  review of l3-chat-claims found both). The `chat.reply` row keeps `claimGuard: { kind, phrase,
+  nudged, replaced }` and the log says "chat reply claimed what no command did".
+  The first call's streamed text is not called back: the live bubble may show the claim until
+  the turn ends and the conversation is read again (voice is out of scope this round). A turn
+  with no text and no command says `NO_ANSWER_REPLY`, never "Done.". The rules the model reads
+  say the same (`CHAT_RETRIEVAL_RULES`' Settings part; `conversation-agent.md` 1.2.2: a widening
+  is asked by calling its command, no yes is claimed without "Needs confirmation" in the turn,
+  "The app did: …" is what a turn changed). Tests: `conversation-memory.test.ts` "l3-chat-claims,
+  run L3" and "l3-chat-claims, run L3: what the turn did", `real-daemon.test.ts` "l3-chat-claims,
+  run L3" (the reply agrees with its own card and with the change it made, through POST /chat).
 - **The context** (`src/conversation/project-facts.ts`, in the volatile part): `# Tasks of
   <project>` (every task in run order, at most `CONTEXT_TASKS_MAX` by name, each with its status
   in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,

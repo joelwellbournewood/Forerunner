@@ -13387,8 +13387,9 @@ describe("w15-chat, wave 15", () => {
         .find((t) => t.startsWith('"research may read any public website again'));
       expect(facts).toContain("- Research reads: only developer.mozilla.org");
       // A widening waits for the person's yes.
+      // l3-chat-claims (L3-run-9): no site is listed, so none is excepted.
       expect(widened.pendingConfirmation?.readback).toBe(
-        "Set web pages research may read for Reading rules to any public website? Research reads any public website except the ones listed, on the API key and on the subscription.",
+        "Set web pages research may read for Reading rules to any public website? Research reads any public website, on the API key and on the subscription.",
       );
       expect((await client.project(project.id)).researchReads).toBe(
         "Research reads: only developer.mozilla.org",
@@ -13437,8 +13438,9 @@ describe("w15-chat, wave 15", () => {
       const QUESTION =
         "Put web pages research may read for Reading rules back to any public website?";
       expect(asked.status).toBe("pending");
+      // l3-chat-claims (L3-run-9): the rule put back lists no site, so none is excepted.
       expect(asked.readback).toBe(
-        `${QUESTION} Research reads any public website except the ones listed, on the API key and on the subscription.`,
+        `${QUESTION} Research reads any public website, on the API key and on the subscription.`,
       );
       // The person leaves Changes. Home and the Inbox read the card the Inbox route serves.
       const me = await client.me();
@@ -13447,7 +13449,7 @@ describe("w15-chat, wave 15", () => {
       );
       expect(card?.title).toBe(QUESTION);
       expect(card?.body).toBe(
-        "Research reads any public website except the ones listed, on the API key and on the subscription.",
+        "Research reads any public website, on the API key and on the subscription.",
       );
       expect(card?.choices?.map((c) => [c.label, c.explain])).toEqual([
         ["Yes", "Makes the change now."],
@@ -16907,6 +16909,312 @@ describe("l3-money-screens, run L3", () => {
       await untilEnded(client, sessionId);
     } finally {
       hold.openAll();
+      await rt.close();
+    }
+  }, 60_000);
+});
+
+
+/**
+ * l3-chat-claims, run L3 (live check 3, L3-run-1 and L3-run-9), through POST /chat (the Chat
+ * tab's and Talk's route) on the real daemon with a scripted chat model. Live: on "Reading
+ * rules" (research limited to developer.mozilla.org), "research may read any public website
+ * again" got "Widening research access needs your yes, so I've asked for confirmation. Once you
+ * approve, …" with no tool call: no Yes/No card, nothing in the Inbox, the rule unchanged. The
+ * model's history held turn 1's prose only, without what the app did.
+ */
+describe("l3-chat-claims, run L3", () => {
+  const CLAIM =
+    "Widening research access needs your yes, so I've asked for confirmation. Once you approve, research can read any public website again.";
+  const READBACK =
+    "Set web pages research may read for Reading rules to any public website? Research reads any public website, on the API key and on the subscription.";
+  const DID =
+    "The app did: Set web pages research may read for Reading rules from any public website, never facebook.com to only developer.mozilla.org: research reads only these websites and their subdomains, on the API key and on the subscription.";
+  const chatTurn = (r: ModelRequest) => r.origin?.label === "conversation";
+  const scripted = (replies: ScriptedReply[]) =>
+    replies.map((r) => ({ ...r, when: chatTurn }) as ScriptedReply);
+
+  async function composeOn(
+    home: string,
+    provider: FakeProvider,
+  ): Promise<{ rt: RuntimeApp; client: DaemonClient }> {
+    const env = { FORERUNNER_HOME: home };
+    const rt = await composeRuntime({
+      env,
+      dirs: appDirs({ env }),
+      config: null,
+      clock: new SystemClock(),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client };
+  }
+
+  /** "Reading rules" with research reading any public website but facebook.com (Overview). */
+  async function readingRules(client: DaemonClient) {
+    const project = await client.createProject({ name: "Reading rules", goal: "Research" });
+    const set = await client.executeCommands({
+      commands: [
+        {
+          name: "settings.set",
+          params: {
+            key: "web_access",
+            value: { mode: "any", only: [], never: ["facebook.com"] },
+            project: project.id,
+          },
+        },
+      ],
+      wordsUsed: "Settings: Web pages research may read to any public website, never facebook.com",
+      source: "ui",
+      projectId: project.id,
+      confirm: "tap",
+    });
+    expect(set.status).toBe("done");
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const say = (text: string) =>
+      client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text,
+        source: "text",
+      });
+    return { project, me, say };
+  }
+
+  it("Talk: the second request's history says what the first turn changed; a claimed yes with no command is nudged once and the Yes/No read-back comes; nothing widens before Yes, also after a restart (L3-run-1, L3-run-9)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l3-chat-claims-"));
+    const first = new FakeProvider({
+      clock: new SystemClock(),
+      latency: "none",
+      onNoMatch: "echo",
+      replies: scripted([
+        toolReply("settings_set", {
+          key: "web_access",
+          value: { mode: "only", only: ["developer.mozilla.org"] },
+        }),
+        textReply("Done."),
+      ]),
+    });
+    const a = await composeOn(home, first);
+    let projectId = "";
+    try {
+      const { project, say } = await readingRules(a.client);
+      projectId = project.id;
+      const narrowed = await say("only read developer.mozilla.org for research");
+      expect(narrowed.actions.map((x) => x.kind)).toEqual(["settings.set"]);
+      expect((await a.client.project(project.id)).researchReads).toBe(
+        "Research reads: only developer.mozilla.org",
+      );
+    } finally {
+      await a.rt.close();
+    }
+    // The daemon starts again on the same home; the next turn's history is read from the rows.
+    const second = new FakeProvider({
+      clock: new SystemClock(),
+      latency: "none",
+      onNoMatch: "echo",
+      replies: scripted([
+        textReply(CLAIM),
+        toolReply("settings_set", { key: "web_access", value: { mode: "any" } }),
+        textReply("That widens research, so it needs your yes."),
+      ]),
+    });
+    const b = await composeOn(home, second);
+    try {
+      const me = await b.client.me();
+      const agentId = (await b.client.agents())[0]?.id ?? "";
+      const said = await b.client.chat({
+        humanId: me.id,
+        agentId,
+        projectId,
+        projectTab: true,
+        text: "research may read any public website again",
+        source: "text",
+      });
+      const calls = second.calls.map((c) => c.request).filter(chatTurn);
+      // 1. The history carries turn 1's change in the app's words, not only "Done.".
+      expect(calls[0]?.messages.slice(0, -1)).toEqual([
+        { role: "user", content: "only read developer.mozilla.org for research" },
+        { role: "assistant", content: `Done.\n\n${DID}` },
+      ]);
+      // The registry's prompt and the runtime's rules say it, word for word.
+      expect(calls[0]?.system).toContain(
+        'Never say you asked for a yes, sent a request, or that a change waits for\n   confirmation unless a tool answered "Needs confirmation" in this turn;',
+      );
+      expect(calls[0]?.system).toContain(
+        'An earlier reply\'s line "The app did: …" is what that turn\nchanged; a reply without one changed nothing.',
+      );
+      // 2. The claim was nudged once; the read-back is what the person gets.
+      expect(calls).toHaveLength(3);
+      expect(said.pendingConfirmation?.readback).toBe(READBACK);
+      expect(said.reply).not.toContain("I've asked");
+      const conversation = await b.client.conversation(projectId);
+      expect(conversation.waiting?.readback).toBe(READBACK);
+      expect(conversation.turns.at(-1)?.reply?.text).not.toContain("I've asked");
+      // 3. Nothing widened before the yes; Yes widens it.
+      expect((await b.client.project(projectId)).researchReads).toBe(
+        "Research reads: only developer.mozilla.org",
+      );
+      const yes = await b.client.chat({
+        humanId: me.id,
+        agentId,
+        projectId,
+        projectTab: true,
+        text: "yes",
+        source: "text",
+      });
+      expect(yes.actions.map((x) => x.kind)).toEqual(["settings.set"]);
+      expect((await b.client.project(projectId)).researchReads).toBe(
+        "Research reads: any public website",
+      );
+    } finally {
+      await b.rt.close();
+    }
+  }, 60_000);
+
+  it("Talk: a claim the model makes again after the nudge reaches the person as what is true; no card, nothing in the Inbox, the rule stays (L3-run-1)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l3-chat-claims-again-"));
+    const provider = new FakeProvider({
+      clock: new SystemClock(),
+      latency: "none",
+      onNoMatch: "echo",
+      replies: scripted([
+        toolReply("settings_set", {
+          key: "web_access",
+          value: { mode: "only", only: ["developer.mozilla.org"] },
+        }),
+        textReply("Done."),
+        textReply(CLAIM),
+        textReply(CLAIM),
+      ]),
+    });
+    const { rt, client } = await composeOn(home, provider);
+    try {
+      const { project, me, say } = await readingRules(client);
+      await say("only read developer.mozilla.org for research");
+      const said = await say("research may read any public website again");
+      expect(said.reply).toBe(
+        "Nothing changed, and nothing waits for your yes. Say it again to try once more.",
+      );
+      expect(said.pendingConfirmation).toBeNull();
+      const conversation = await client.conversation(project.id);
+      expect(conversation.waiting).toBeNull();
+      expect(conversation.turns.at(-1)?.reply?.text).toBe(said.reply);
+      expect(
+        (await client.inbox(me.id)).requests.filter(
+          (r) => r.projectId === project.id && r.status === "open",
+        ),
+      ).toEqual([]);
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: only developer.mozilla.org",
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // The review of the guard: it judged a claim one way only, so "Nothing changed, and nothing
+  // waits for your yes" stood above the turn's own Yes/No card and above a change the turn made,
+  // and "I've changed nothing" was nudged and replaced. The reply, its card and its changes as
+  // the person gets them from POST /chat and GET /projects/:id/conversation.
+  it("Talk: the reply agrees with its own Yes/No card and with the change it made, and 'I've changed nothing' reaches the person as said (L3-run-1, review)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l3-chat-claims-agree-"));
+    const UPDATED = "I've updated research to read any public website once you confirm.";
+    const ASKED = "Added the task. I've asked for your confirmation to widen research.";
+    const NOTHING = "I've changed nothing; research reads any public website.";
+    const provider = new FakeProvider({
+      clock: new SystemClock(),
+      latency: "none",
+      onNoMatch: "echo",
+      replies: scripted([
+        toolReply("settings_set", {
+          key: "web_access",
+          value: { mode: "only", only: ["developer.mozilla.org"] },
+        }),
+        textReply("Done."),
+        toolReply("settings_set", { key: "web_access", value: { mode: "any" } }),
+        textReply(UPDATED),
+        textReply(UPDATED),
+        toolReply("task_create", { title: "Check the links" }),
+        textReply(ASKED),
+        textReply(ASKED),
+        textReply(NOTHING),
+      ]),
+    });
+    const { rt, client } = await composeOn(home, provider);
+    try {
+      const { project, say } = await readingRules(client);
+      await say("only read developer.mozilla.org for research");
+      const chatCalls = () => provider.calls.map((c) => c.request).filter(chatTurn);
+      // A widening read back in the turn: a "changed" claim is nudged with what is true, and the
+      // person gets the read-back with Yes and No, never "nothing waits for your yes".
+      let before = chatCalls().length;
+      const widened = await say("research may read any public website again");
+      expect(chatCalls().length - before).toBe(3);
+      expect(JSON.stringify(chatCalls().at(-1)?.messages.at(-1)?.content)).toContain(
+        "nothing changed yet, and the change your command read back waits for the person's yes, with Yes and No under your reply. Do not call that command again.",
+      );
+      expect(widened.pendingConfirmation?.readback).toBe(READBACK);
+      expect(widened.reply).toBe(READBACK);
+      let conversation = await client.conversation(project.id);
+      const asked = conversation.turns.at(-1)?.reply;
+      expect(asked?.readback).toBe(READBACK);
+      expect(asked?.waiting).toBe(true);
+      expect(asked?.text ?? "").not.toMatch(/Nothing changed|nothing waits/i);
+      expect(conversation.waiting?.readback).toBe(READBACK);
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: only developer.mozilla.org",
+      );
+      const yes = await say("yes");
+      expect(yes.actions.map((x) => x.kind)).toEqual(["settings.set"]);
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: any public website",
+      );
+      // A change made in the turn: an "asked" claim beside it is replaced with the change's own
+      // sentence, the one its row with Undo shows; nothing waits.
+      before = chatCalls().length;
+      const added = await say("the links need a look, can you see to it?");
+      expect(chatCalls().length - before).toBe(3);
+      const sentence = 'Added "Check the links" to Reading rules.';
+      expect(added.actions.map((x) => [x.kind, x.summary])).toEqual([["task.create", sentence]]);
+      expect(added.reply).toBe(sentence);
+      expect(added.pendingConfirmation).toBeNull();
+      conversation = await client.conversation(project.id);
+      const made = conversation.turns.at(-1)?.reply;
+      expect(made?.text).toBe(sentence);
+      expect(made?.actions.map((x) => [x.kind, x.sentence, x.canUndo])).toEqual([
+        ["task.create", sentence, true],
+      ]);
+      expect(conversation.waiting).toBeNull();
+      expect((await client.tasks(project.id)).map((t) => t.title)).toContain("Check the links");
+      // A negated answer claims nothing: one model call, the words as the model said them.
+      before = chatCalls().length;
+      const asking = await say("did you change the research rule?");
+      expect(chatCalls().length - before).toBe(1);
+      expect(asking.reply).toBe(NOTHING);
+      expect((await client.conversation(project.id)).turns.at(-1)?.reply?.text).toBe(NOTHING);
+    } finally {
       await rt.close();
     }
   }, 60_000);

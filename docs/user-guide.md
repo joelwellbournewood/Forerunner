@@ -297,7 +297,16 @@ them as you left them; an open file or task stays on its own tab.
   session, "summary". Chat changes a project's settings too: "only read developer.mozilla.org
   for research" changes **Web pages research may read** at once (the Overview's line reads
   "Research reads: only developer.mozilla.org"), and "research may read any public website
-  again" asks your **Yes** first, as the setting's dialog does. A rule like that is a setting,
+  again" asks your **Yes** first, as the setting's dialog does ("Set web pages research may read
+  for Reading rules to any public website? Research reads any public website, on the API key
+  and on the subscription."; "except the ones listed" only when your rule lists websites it never
+  reads). Chat says it changed something or asked for your **Yes** only when it did: a Yes/No
+  question appears right under its reply, and a change it made shows under it with **Undo**. If
+  its answer claimed more than it did, Chat tries once more, and when it still claims it, Chat
+  says only what is true: the change it made, its Yes/No question, or "Nothing changed, and
+  nothing waits for your yes. Say it again to try once more." ("Nothing changed; the change I
+  asked about earlier still waits for your yes." while an earlier question still waits). A rule
+  like that is a setting,
   never a lesson: "remember that …" keeps a lesson for later sessions, and its line says it
   changes no setting. A change to a task is read back once in one line ('Make "Write the FAQ"
   wait for "Write the README"?') with **Yes** and **No**; the card stays while you type other

@@ -231,12 +231,18 @@ export const WebAccessSetting = z
     return { mode: v.mode, only: only?.sites ?? [], never: never.sites };
   });
 
-/** What a rule means for research, for the card and the change log. */
+/**
+ * What a rule means for research, for the card and the change log. "Except the ones listed" only
+ * when a never list is set (l3-chat-claims, live check 3's L3-run-9: "Research reads any public
+ * website except the ones listed" was read back for a rule that listed none, design §5 rule 4).
+ */
 export function webAccessEffect(value: unknown): string {
   const v = webAccessOf({ [WEB_ACCESS_SETTING]: value as JsonValue });
-  return v.mode === "only"
-    ? "research reads only these websites and their subdomains, on the API key and on the subscription"
-    : "research reads any public website except the ones listed, on the API key and on the subscription";
+  if (v.mode === "only")
+    return "research reads only these websites and their subdomains, on the API key and on the subscription";
+  return v.never.length
+    ? "research reads any public website except the ones listed, on the API key and on the subscription"
+    : "research reads any public website, on the API key and on the subscription";
 }
 
 /** What flipping small-project mode (spec B.6) changes; existing tasks keep their tier. */

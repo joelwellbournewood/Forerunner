@@ -72,7 +72,7 @@ describe("w15-chat, wave 15", () => {
         change_card: {
           command: "undo",
           what: "web pages research may read for Reading rules",
-          ask: "Put web pages research may read for Reading rules back to any public website? Research reads any public website except the ones listed, on the API key and on the subscription.",
+          ask: "Put web pages research may read for Reading rules back to any public website? Research reads any public website, on the API key and on the subscription.",
         },
       }) as never,
     );

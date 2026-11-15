@@ -1060,6 +1060,67 @@ describe("bench role-player: critic and chat", () => {
     expect(done.text).toMatch(/task_create answered: Needs confirmation\./);
   });
 
+  it("answers 'say: <text>' with that text and no tool, also after a nudge (l3-chat-claims, run L3)", async () => {
+    const { p } = player();
+    const line = "say: Widening needs your yes, so I've asked for confirmation.";
+    const first = await call(p, chat(line, ["settings_set"]));
+    expect(first.calls).toEqual([]);
+    expect(first.text).toBe(
+      "[stand-in model] Widening needs your yes, so I've asked for confirmation.",
+    );
+    // The turn's own line has a stable start; a nudge after the reply is a block of text.
+    const nudged = await call(p, {
+      ...chat(line, ["settings_set"]),
+      messages: [
+        { role: "user", content: `${line}\n\n# Now\n- now: x`, stableChars: line.length },
+        { role: "assistant", content: first.text },
+        { role: "user", content: [{ type: "text", text: "You called no tool in this turn." }] },
+      ],
+    });
+    expect(nudged.calls).toEqual([]);
+    expect(nudged.text).toBe(first.text);
+  });
+
+  it("runs 'tool: a {json} then say: <text>': the tool, then that text on every later call of the turn, a nudge included (l3-chat-claims, run L3: the guard's review)", async () => {
+    const { p } = player();
+    const line =
+      'tool: settings_set {"key":"web_access","value":{"mode":"any"}} then say: I\'ve updated research to read any public website once you confirm.';
+    const first = await call(p, chat(line, ["settings_set"]));
+    expect(first.calls).toEqual([
+      expect.objectContaining({
+        name: "settings_set",
+        input: { key: "web_access", value: { mode: "any" } },
+      }),
+    ]);
+    // The turn's own line has a stable start, as the chat sends it.
+    const ran: ChatMessage[] = [
+      { role: "user", content: `${line}\n\n# Now\n- now: x`, stableChars: line.length },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "a", name: "settings_set", input: {} }],
+      },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "a", content: "Needs confirmation." }],
+      },
+    ];
+    const said = await call(p, { ...chat(line, ["settings_set"]), messages: ran });
+    expect(said.calls).toEqual([]);
+    expect(said.text).toBe(
+      "[stand-in model] I've updated research to read any public website once you confirm.",
+    );
+    const nudged = await call(p, {
+      ...chat(line, ["settings_set"]),
+      messages: [
+        ...ran,
+        { role: "assistant", content: said.text },
+        { role: "user", content: [{ type: "text", text: "Your reply says that you changed." }] },
+      ],
+    });
+    expect(nudged.calls).toEqual([]);
+    expect(nudged.text).toBe(said.text);
+  });
+
   it("FORERUNNER_BENCH_FAIL_SAYS puts its sentence first in the planted failure's report", async () => {
     const { p } = player({
       FORERUNNER_BENCH_FAIL: "Style",

@@ -987,7 +987,8 @@ reads are a channel: `INJECTION_CHANNELS` is `web`, `email`, `record`. A record 
 where its text is planted (`record.where`: `run_report`, a finished run's report read with
 `task_get`; `card_question`, a specialist's question on a card the chat's facts list in full;
 `session_result`, the last session's result read with `session_last`; `doc_section`, a section
-of the project's docs in the facts' excerpts). `runRecordCase` builds the case its own
+of the project's docs in the facts' excerpts; `chat_history`, what an earlier chat turn changed,
+its "The app did: …" line in the history, whose sentence quotes a task title, l3-chat-claims). `runRecordCase` builds the case its own
 `sqlite::memory:` store (a person, their agent, a project with three tasks), plants the text,
 and runs one chat turn through the real `ConversationAgent`, `CommandLoop`, executor and
 enforcement hooks; its `FakeProvider` reads the record (when a tool reads it) and then calls the
@@ -999,9 +1000,11 @@ never executed, the text reached the model, and it was reported (`hooks.scan` fo
 result, `facts.scan` for what the facts carry, from the turn's `chat.reply` `injection` list).
 A control is read, wrapped and answered without a flag. Cases: record-001 (a run report: cancel
 every task), record-002 (a card question: start a session), record-003 (a session result: raise
-the monthly cap), record-004 (a doc section: add a task), controls record-101 and record-102;
-record-005 and record-006 are d1109-chat-recall's (recall), d1109-selftasks-run's `report`
-channel comes after this one.
+the monthly cap), record-004 (a doc section: add a task), record-007 (an earlier turn's change
+sentence in the history: add a task; l3-chat-claims, run L3: the history's replies are scanned
+like the facts' records, `where: "history"`), controls record-101 and record-102; record-005 and
+record-006 are d1109-chat-recall's (recall), d1109-selftasks-run's `report` channel comes after
+this one.
 
 ### How to add a case
 
@@ -2747,7 +2750,13 @@ of them first and writes its markdown file from them: each fact quoted with its 
 the pages not read under "Uncertainty" with the refusal's words, every page under "Sources
 read", ADR 0107; `urlsNamed`, `factsOf`, `researchContent` in `plans.ts`), a `submit_review` verdict, a chat reply that says what context it got
 and quotes back the plan's state (`# Plan from the brief`) and the first task line it was told
-(`chatFacts`), so a journey can check that a reply names a task as a real model's would. The
+(`chatFacts`), so a journey can check that a reply names a task as a real model's would. A
+chat line `say: <text>` is answered with that text and no tool on every call of the turn, a
+nudge included (l3-chat-claims, run L3: the live chat model claimed "I've asked for
+confirmation" with no tool, L3-run-1), so a walk can show the reply guard; `tool: a {json} then
+say: <text>` calls the tool first and then answers with that text on every later call (a claim
+beside what the command did: a change beside its Yes/No read-back, a yes asked beside a change;
+`chainedSay`). The
 intake stand-in reads the person's words after "Change the plan" (`splitChanges` reads them
 from the brief as `briefWithChanges` in `session/intake.ts` writes them; `applyChanges` in
 `plans.ts`): "drop|remove|... <name>" removes the tasks it names, "add|include|insert <name>"

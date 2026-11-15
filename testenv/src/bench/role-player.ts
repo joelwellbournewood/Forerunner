@@ -1503,8 +1503,11 @@ function chainedCall(
   req: ModelRequest,
   made: number,
 ): { name: string; input: Record<string, unknown> } | null {
-  const parts = turnLine(req).split(/\s+then\s+(?=tool:)/i);
-  if (parts.length < 2 || made >= parts.length) return null;
+  const said = chainedSay(req) !== null;
+  const parts = turnLine(req)
+    .replace(SAY_TAIL, "")
+    .split(/\s+then\s+(?=tool:)/i);
+  if ((parts.length < 2 && !said) || made >= parts.length) return null;
   const m = /^tool:\s*([\w.:-]+)\s*([\s\S]*)$/i.exec((parts[made] ?? "").trim());
   if (!m?.[1]) return null;
   try {
@@ -1518,11 +1521,29 @@ function chainedCall(
   }
 }
 
+/** A chain's closing "then say: <text>" (l3-chat-claims' review). */
+const SAY_TAIL = /\s+then\s+say:\s*[\s\S]*$/i;
+
+/**
+ * "tool: a {json} then say: <text>" (l3-chat-claims, run L3: the guard's review): after the
+ * chain's tools ran, that text with no tool, on every later call of the turn, a nudge included,
+ * as a model that claims more than its command did (a change beside a read-back, a yes asked
+ * beside a change). Null for a line without such a tail.
+ */
+function chainedSay(req: ModelRequest): string | null {
+  const line = turnLine(req);
+  const tail = SAY_TAIL.exec(line);
+  if (!tail || !/^tool:/i.test(line.trim())) return null;
+  return tail[0].replace(/^\s+then\s+say:\s*/i, "").trim() || null;
+}
+
 function chatAnswer(req: ModelRequest): Answer {
   const calls = pastToolCalls(req.messages);
   const lastCall = calls.at(-1);
   const next = chainedCall(req, calls.length);
   if (next) return { text: `Running ${next.name}.`, toolCalls: [next] };
+  const tail = chainedSay(req);
+  if (tail) return text(`${STAND_IN} ${tail}`);
   // After a command tool ran: say what it answered.
   const lastMsg = req.messages.at(-1);
   if (
@@ -1534,6 +1555,12 @@ function chatAnswer(req: ModelRequest): Answer {
     return text(
       `${STAND_IN} The command tool ${lastCall.name} answered${lastCall.isError ? " with an error" : ""}: ${(lastCall.result ?? "").slice(0, 400)}`,
     );
+  // l3-chat-claims (live check 3, L3-run-1): "say: <text>" answers with that text and calls no
+  // tool, every call of the turn, as the live chat model did when it claimed "I've asked for
+  // confirmation" with no card; read from the turn's own line, so a nudge after it is answered
+  // the same way.
+  const say = /^say:\s*([\s\S]+)$/i.exec(turnLine(req));
+  if (say?.[1]) return text(`${STAND_IN} ${say[1].trim()}`);
   const line = chatLine(req);
   const names = (req.tools ?? []).map((t) => t.name);
   if (/^tools\??$/i.test(line) || /^list tools$/i.test(line))

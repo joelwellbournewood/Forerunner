@@ -192,7 +192,10 @@ the change log sentence ("Set X from a to b: <effect>.") and the read-back's sec
 words of its own is never JSON (`show`: an object as "field: value" pairs); the calibration, the
 handover test and the model watch have their own (`calibrationWords`, `handoverWords`,
 `modelWatchWords`, later #30/#99). `web_access`'s display is `webAccessWords` ("only example.com",
-one colon in the sentence, P7-31).
+one colon in the sentence, P7-31). Its effect (`webAccessEffect`) says "research reads any public
+website, on the API key and on the subscription" and adds "except the ones listed" only when the
+rule has a never list (l3-chat-claims, live check 3's L3-run-9: the read-back said "except the
+ones listed" for a rule that listed none; design §5 rule 4); the fake daemon words it the same.
 
 `ChangeCard { command, what, oldValue, newValue, scope, scopeLabel ("this session" | "this
 project" | "everything"), duration ("until reverted" | "until <time>" | "permanent"), impact

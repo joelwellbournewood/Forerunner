@@ -182,9 +182,59 @@ const cap = (s: string) =>
   s.length > HISTORY_LINE_CHARS ? `${s.slice(0, HISTORY_LINE_CHARS - 1)}…` : s;
 
 /**
+ * How an earlier reply's changes start in the history (l3-chat-claims): "The app did: <the
+ * change's sentence>". The conversation agent's rules tell the model what the line means.
+ */
+export const HISTORY_ACTION_LEAD = "The app did: ";
+
+/** A change's sentence as the history says it: without its "Undo." (the change log's own words). */
+function changeSentence(a: TranscriptAction): string {
+  const said = a.summary
+    .trim()
+    .replace(/\s*\bUndo\.?$/, "")
+    .trim();
+  return said && said !== "done" ? said : `${a.kind.split("+").join(" and ")}.`;
+}
+
+/**
+ * What an earlier reply changed, one line per change, in the change log's own sentence without
+ * its "Undo." (l3-chat-claims, live check 3's L3-run-1). Before, the history carried the model's
+ * prose alone ("Done. For the Reading rules project, research may now only read …"): a change
+ * that read as claimed in words, which the model copied one turn later with no tool ("I've asked
+ * for confirmation"). Every reply that changed something gets its lines, so a reply without one
+ * changed nothing (what the model is told); a reply that changed nothing gets none. From the
+ * stored row only, so the history is the same bytes on every turn and after a restart (the
+ * prompt cache keeps its prefix).
+ */
+export function actionLines(reply: TranscriptReply): string[] {
+  const out: string[] = [];
+  for (const a of reply.actions) {
+    const line = `${HISTORY_ACTION_LEAD}${changeSentence(a)}`;
+    if (!out.includes(line)) out.push(line);
+  }
+  return out;
+}
+
+/**
+ * A reply in the history: its text, then what it changed (`actionLines`). A reply that is only
+ * the changes' own sentences (a command's reply, no model: "Paused "X". Undo.") is said once, as
+ * the app's lines.
+ */
+function replyInHistory(reply: TranscriptReply): string {
+  const text = reply.text.trim();
+  const did = actionLines(reply);
+  if (!did.length) return cap(text);
+  let rest = text;
+  for (const a of reply.actions) rest = rest.split(changeSentence(a)).join(" ");
+  const own = rest.replace(/\bUndo\.?/g, " ").replace(/[\s.]+/g, "");
+  return [own ? cap(text) : "", ...did.map(cap)].filter(Boolean).join("\n\n");
+}
+
+/**
  * The earlier turns as alternating user and assistant messages, newest last, within
  * `maxTokens` (counted with the provider's counter on the text sent): the oldest turns are
- * dropped first. A turn without a reply is the person's line alone, merged with the next.
+ * dropped first. A turn without a reply is the person's line alone, merged with the next. A
+ * reply that changed something ends with what the app did (`actionLines`).
  */
 export function historyMessages(
   turns: readonly TranscriptTurn[],
@@ -200,7 +250,7 @@ export function historyMessages(
       const last = out.at(-1);
       if (last?.role === "user") last.content = `${last.content}\n\n${said}`;
       else out.push({ role: "user", content: said });
-      const reply = cap((t.reply?.text ?? "").trim());
+      const reply = t.reply ? replyInHistory(t.reply) : "";
       if (reply) out.push({ role: "assistant", content: reply });
     }
     // The turn's own line follows as a user message: the history ends with the assistant.
