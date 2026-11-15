@@ -1255,7 +1255,9 @@ conversation that is about no one project). Your words show as they are
 recognised and the agent's reply shows as it is written, the sentence being spoken
 highlighted. Press Talk while the agent answers to interrupt it; the part it had not said yet
 stays visible and readable, after a small "not spoken" tag and with a dotted underline, so you
-can see where it stopped speaking. The **Reply: Voice | Text**
+can see where it stopped speaking. A spoken answer only ever says whole sentences: when an answer
+runs out of room or time, the agent stops at its last whole sentence and never says half of
+one. The **Reply: Voice | Text**
 switch next to Talk shows how the agent answers; the chosen side is highlighted. Click a side,
 or tab to the switch and use the arrow keys. With **Text** the agent answers in text only,
 without speech: you still talk, the reply appears as it is written, and Talk stops it. The

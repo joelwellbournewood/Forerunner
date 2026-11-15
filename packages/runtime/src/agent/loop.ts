@@ -254,6 +254,15 @@ export type RunOutcome =
   | "max_turns"
   | "error";
 
+/**
+ * The stop reason of a `model_call_end` for a call the kill switch or the run's timeout cut off
+ * (L3-run-5): the call is booked like any call (its cost is on the ledger, the session and the
+ * task), but it did not end. A reader that books cost counts it; a reader that takes the event as
+ * the call's end (a spoken turn's held sentence, the time to first token) skips it, since its
+ * text stopped mid-sentence and its `ttftMs` is the time to the cut when no token came.
+ */
+export const CUT_OFF_STOP_REASON = "aborted";
+
 export type RunEvent =
   | { type: "run_start"; runId: string; model: string }
   | { type: "model_call_start"; turn: number; estimateUsdMicro: number }
@@ -264,6 +273,7 @@ export type RunEvent =
       usage: Usage;
       costUsdMicro: number;
       ttftMs: number;
+      /** The provider's stop reason, or `CUT_OFF_STOP_REASON` for a call a stop cut off. */
       stopReason: string;
     }
   | { type: "tool_call"; id: string; name: string; input: unknown }
@@ -753,7 +763,10 @@ export class LoopAgentDriver {
             // the task's cost and the executor the Run row's. Before, only the run's total had
             // it: the task read CHF 0.01 while the session, Costs and the month read CHF 0.00.
             // A call that reported nothing costs nothing and says no end, as before; a failed
-            // booking is logged and never hides the stop.
+            // booking is logged and never hides the stop. The end carries `CUT_OFF_STOP_REASON`,
+            // so a reader of call ends (a spoken turn's sentence gate, the time to first token)
+            // never takes the cut for a finished call (review of L3-run-5: a timed-out spoken
+            // turn spoke its broken last sentence).
             const callCost = req.pricing.cost(response.usage);
             addUsage(usage, response.usage);
             cost += callCost;
@@ -775,7 +788,7 @@ export class LoopAgentDriver {
                 usage: response.usage,
                 costUsdMicro: callCost,
                 ttftMs: wholeMs(response.time_to_first_token_ms) ?? 0,
-                stopReason: "error",
+                stopReason: CUT_OFF_STOP_REASON,
               });
             }
             throw controller.signal.reason;

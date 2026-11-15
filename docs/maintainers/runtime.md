@@ -368,10 +368,17 @@ it, so a stream cut off with `error: aborted` returns the input side with `stop_
 the timeout (L3-run-5, live check 3): its reported usage and cost go into the run's total, one
 cost-ledger row and the session's budget (`hooks.afterModelCall` with `afterStop`, since Stop
 has already revoked the token; a failed booking is logged and never hides the stop), and one
-`model_call_end` with `stopReason: "error"`, from which the runner books the session's spend
-and the task's cost live and the executor the Run row's (the runner's end-of-run `rest` is then
-0, so nothing is counted twice). A call that reported no usage costs nothing and says no end, as
-before. Before, the abort branch kept the cost in the run's total only: after Stop now during
+`model_call_end` with `stopReason: CUT_OFF_STOP_REASON` (`"aborted"`, `agent/loop.ts`), from
+which the runner books the session's spend and the task's cost live and the executor the Run
+row's (the runner's end-of-run `rest` is then 0, so nothing is counted twice). A call that
+reported no usage costs nothing and says no end, as before. That stop reason says the call was
+cut off, not finished: a reader that books cost counts the event, a reader that takes it as the
+call's end skips it. The chat agent's `SentenceGate` keeps the held rest of a spoken turn unspoken
+(review of L3-run-5: a voice turn its 30 s timeout cut off spoke "The critic asked for one of the
+three options: adopt,"), and the chat turn and the intake take no first token from it (its
+`ttftMs` is the time to the cut when no token came: the Performance view showed a first token at
+30 s for chat and 5 min for planning where none came; `conversation.test.ts`,
+`voice-route.test.ts` and `performance-route.test.ts`, "l3-money-engine, run L3"). Before, the abort branch kept the cost in the run's total only: after Stop now during
 the reviewer's first call the Tasks row and the drawer read CHF 0.01 while the session, Costs
 and the month read CHF 0.00, and the ledger under-reported what the provider billed (`loop.test.ts`,
 "a call the kill switch cuts off keeps the input tokens" and "l3-money-engine, run L3";
@@ -4334,8 +4341,9 @@ of the 400 tokens were left for the visible text. Three changes:
   loop's own `SentenceSplitter` needs that boundary to emit the sentence at once rather than
   when the next one ends; the first version held every sentence back by one, review of
   eead616), the unfinished rest of a model call is held until the call ends and released only
-  when it did not stop at `max_tokens`, so the voice loop never receives (and never speaks) the
-  broken tail, and the bridge's `unstreamedPart` finds nothing left to add. The gate's first
+  when it did not stop at `max_tokens` (a call a stop or the turn's timeout cut off, whose
+  `model_call_end` carries `CUT_OFF_STOP_REASON`, never ended: its rest stays held, L3-run-5's
+  review), so the voice loop never receives (and never speaks) the broken tail, and the bridge's `unstreamedPart` finds nothing left to add. The gate's first
   call is an empty piece when the first delta completes no sentence, so the voice loop still
   stamps `modelFirstTokenMs` at the model's first token. A typed turn streams as before; the UI
   replaces the streamed text with `ChatReply.reply`, which is trimmed.

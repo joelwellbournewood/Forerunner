@@ -3,7 +3,13 @@ import { loadDocChunks, selectDocHits } from "@forerunner/memory";
 import { type Clock, errorMessage, log, newId } from "@forerunner/platform";
 import type { AgentRow, SessionRow, StateStore } from "@forerunner/state";
 import { z } from "zod";
-import { type LoopAgentDriver, type RunEvent, type RunPricing, wholeMs } from "../agent/loop.ts";
+import {
+  CUT_OFF_STOP_REASON,
+  type LoopAgentDriver,
+  type RunEvent,
+  type RunPricing,
+  wholeMs,
+} from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { layoutSystem, volatilePreamble } from "../context/cache-layout.ts";
 import { LOCAL_BUDGET_SOURCE, SessionBudget } from "../enforcement/budget.ts";
@@ -982,7 +988,11 @@ export class ConversationAgent {
           if (gate) gate.push(ev.text);
           else req.onToken?.(ev.text);
         }
-        if (ev.type === "model_call_end") {
+        // A call the turn's timeout (or a stop) cut off is booked by the loop (L3-run-5) but did
+        // not end: its held rest, a broken sentence, is never spoken, and it gave no first token
+        // (its ttftMs is the time to the cut). Before, the gate passed "... options: adopt," to
+        // the speaker and the turn's first token read 30 s.
+        if (ev.type === "model_call_end" && ev.stopReason !== CUT_OFF_STOP_REASON) {
           gate?.end(ev.stopReason === "max_tokens");
           if (ttft === null) ttft = ev.ttftMs;
         }

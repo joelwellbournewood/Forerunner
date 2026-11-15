@@ -34,7 +34,8 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
   turns a stream into a `ModelResponse` with time to first token and duration, and keeps the
   `message_start` usage, so the loop books a cut-off call's input cost before it rethrows the
   abort: in the run's cost, on the cost ledger and in the session's budget (`afterModelCall`
-  with `afterStop`), and in one `model_call_end` (`stopReason: "error"`) from which the runner
+  with `afterStop`), and in one `model_call_end` (`stopReason: CUT_OFF_STOP_REASON`, "aborted":
+  booked, not finished, so no reader takes it for the call's end) from which the runner
   books the task's cost and the executor the Run row's. The task, the session, Costs and the
   month then say one figure, which is what the provider billed (L3-run-5, live check 3: before,
   only the run's total had it). A stand-in that plays a provider sends the same input side on

@@ -15,6 +15,7 @@ import {
 } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import type { ModelProvider, ModelRequest, StreamEvent } from "../src/provider/types.ts";
 import {
   VOICE_APPROVAL_AUDIT_TOOL,
   VOICE_PRESS_WAIT_MS,
@@ -1856,5 +1857,96 @@ describe("voice providers chosen in the Extensions panel", () => {
     const view = VoiceSessionView.parse(await json(started));
     expect(view.providers.stt.name).toBe("fake-stt");
     expect((await post(`/voice/sessions/${view.id}/stop`, {})).status).toBe(200);
+  });
+});
+
+/**
+ * l3-money-engine, run L3 (review of 217902c): the loop books a call its timeout cuts off
+ * (L3-run-5) with a `model_call_end` whose stop reason is "aborted". The chat agent's sentence
+ * gate read it as the end of the call and passed the held, unfinished sentence on: the speaker
+ * said "The critic asked for one of the three options: adopt," (the real-audio run of
+ * 2026-10-26 is why a broken sentence is never spoken). What the TTS is asked to say is checked.
+ */
+describe("l3-money-engine, run L3: a spoken turn its timeout cuts off", () => {
+  it("speaks the whole sentences that came before the cut and never the broken one", async () => {
+    const clock = new SimulatedClock("2026-11-03T10:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-voice-cutoff-"));
+    const tts = new FakeTts({ clock, firstChunkLatencyMs: 200, chunkMs: 100, chunks: 2 });
+    /** Reports its input on message_start, streams a sentence and a half, then waits. */
+    const provider: ModelProvider = {
+      name: "fake",
+      listModels: async () => [{ provider: "fake", id: "fake-haiku", tier: "haiku" }],
+      countTokens: (t: string) => Math.ceil(t.length / 4),
+      async *stream(r: ModelRequest): AsyncIterable<StreamEvent> {
+        yield {
+          type: "message_start",
+          model: r.model,
+          usage: {
+            input_tokens: 400,
+            output_tokens: 0,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        };
+        yield {
+          type: "text_delta",
+          text: "You have a decision waiting. The critic asked for one of the three options: adopt,",
+        };
+        await new Promise<void>((resolve) => {
+          if (r.signal?.aborted) resolve();
+          else r.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield { type: "error", code: "aborted", message: "aborted", retryable: false };
+      },
+      complete: () => Promise.reject(new Error("unused")),
+    };
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+      voice: { stt: new FakeStt({ clock, scripts: () => ({ final: "" }) }), tts },
+    });
+    const { app, token } = createDaemonApp(rt);
+    const post = (path: string, body: unknown) =>
+      app.request(path, {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      });
+    try {
+      const started = await post("/voice/sessions", { language: "en" });
+      expect(started.status).toBe(201);
+      const id = VoiceSessionView.parse(await json(started)).id;
+      // The turn's model call times out at 30 s: step the clock a second at a time past it.
+      let done = false;
+      const turn = Promise.resolve(
+        post(`/voice/sessions/${id}/text`, { text: "What is waiting on me?" }),
+      ).finally(() => {
+        done = true;
+      });
+      for (let s = 0; s < 90 && !done; s++) {
+        await settle(24);
+        await realTurn();
+        if (!done) await clock.advance(1_000);
+      }
+      if (!done) throw new Error("the voice turn had not ended after 90 s of simulated time");
+      expect((await turn).status).toBe(200);
+      const spoken = tts.calls.map((c) => c.text);
+      expect(spoken).toEqual(["You have a decision waiting."]);
+      expect(spoken.join(" ")).not.toContain("adopt");
+      // L3-run-5 holds: the cut-off call's input is booked.
+      expect((await rt.store.costLedger.sum({})).usd_micro).toBeGreaterThan(0);
+      expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
+    } finally {
+      await rt.close();
+    }
   });
 });

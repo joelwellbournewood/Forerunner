@@ -1,7 +1,7 @@
 import { join } from "@forerunner/platform";
 import { FakeProvider, textReply } from "@forerunner/testenv";
 import { describe, expect, it } from "vitest";
-import { LoopAgentDriver, type RunEvent, wholeMs } from "../src/agent/loop.ts";
+import { CUT_OFF_STOP_REASON, LoopAgentDriver, type RunEvent, wholeMs } from "../src/agent/loop.ts";
 import type { ModelProvider, ModelRequest, StreamEvent, Usage } from "../src/provider/types.ts";
 import {
   budget,
@@ -251,7 +251,10 @@ describe("agent loop", () => {
     expect(b.snapshot().sessionSpentUsdMicro).toBe(5_000);
     const ends = events.filter((e) => e.type === "model_call_end");
     expect(ends).toHaveLength(1);
-    expect(ends[0]).toMatchObject({ costUsdMicro: 5_000, stopReason: "error" });
+    // Its stop reason says the call was cut off, so no reader takes it for a finished call
+    // (a spoken turn's held sentence, the time to first token: conversation.test.ts).
+    expect(CUT_OFF_STOP_REASON).toBe("aborted");
+    expect(ends[0]).toMatchObject({ costUsdMicro: 5_000, stopReason: CUT_OFF_STOP_REASON });
     // Counted once: the run's total is not doubled by the booking.
     expect(events.at(-1)).toMatchObject({
       type: "run_end",
