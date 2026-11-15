@@ -587,3 +587,74 @@ describe("w15-chat, wave 15", () => {
     await w.store.close();
   });
 });
+
+/**
+ * l3-small, run L3 (live check 3, L3-run-6): a word a same-title refusal offered stopped picking
+ * its task once the tasks changed, because `findTask` tested it only against the kind of tag the
+ * refusal would name now. Any word that tells the tasks apart picks one; the refusal's sentence
+ * is the one W15-37 built.
+ */
+describe("l3-small, run L3: same-title words keep picking after a change (L3-run-6)", () => {
+  const reopen = (w: Awaited<ReturnType<typeof world>>, words: string) =>
+    w.executor.execute({
+      name: "task.reopen",
+      params: { task: words, project: "Game" },
+      ctx: w.ctx({ source: "ui" }),
+    });
+
+  it("'(the done one)' still picks the done task after both got their own pull request", async () => {
+    const w = await world();
+    const t = (status: string) =>
+      w.store.task.insert({ project_id: w.game.id, title: "Write the notes", status } as never);
+    const doneOne = await t("done");
+    const cancelledOne = await t("cancelled");
+    const offered = refused(await reopen(w, "Write the notes"));
+    expect(offered.reason).toBe(
+      'Two tasks are called "Write the notes": the done one and the cancelled one. Say which, for example "Write the notes (the done one)".',
+    );
+    // Each gets its own pull request: the refusal now names them by number...
+    for (const [row, n] of [
+      [doneOne, 17],
+      [cancelledOne, 18],
+    ] as const)
+      await w.store.task.patch(row.id, { pr_url: `https://github.com/o/game/pull/${n}` });
+    expect(refused(await reopen(w, "Write the notes")).reason).toBe(
+      'Two tasks are called "Write the notes": #17 and #18. Say which, for example "Write the notes #17".',
+    );
+    // ...and the word it offered before still picks the done one.
+    done(await reopen(w, "Write the notes (the done one)"));
+    expect((await w.store.task.mustGet(doneOne.id)).status).toBe("ready");
+    expect((await w.store.task.mustGet(cancelledOne.id)).status).toBe("cancelled");
+    await w.store.close();
+  });
+
+  it("'#17' still picks its task after a third task of that title arrives without a pull request", async () => {
+    const w = await world();
+    const t = (pr?: number) =>
+      w.store.task.insert({
+        project_id: w.game.id,
+        title: "Write the guide",
+        status: "done",
+        ...(pr ? { pr_url: `https://github.com/o/game/pull/${pr}` } : {}),
+      } as never);
+    const a = await t(17);
+    w.clock.advance(60_000);
+    const b = await t(18);
+    w.clock.advance(60_000);
+    const c = await t();
+    expect(refused(await reopen(w, "Write the guide")).reason).toBe(
+      'Three tasks are called "Write the guide": the first one, the second one and the third one. Say which, for example "Write the guide (the first one)".',
+    );
+    done(await reopen(w, "Write the guide #17"));
+    expect((await w.store.task.mustGet(a.id)).status).toBe("ready");
+    expect((await w.store.task.mustGet(b.id)).status).toBe("done");
+    // Now "the done one" is not one task (two are done), the age words still are.
+    expect(refused(await reopen(w, "Write the guide (the done one)")).reason).toMatch(
+      /^Three tasks are called "Write the guide"/,
+    );
+    done(await reopen(w, "Write the guide (the newest one)"));
+    expect((await w.store.task.mustGet(c.id)).status).toBe("ready");
+    expect((await w.store.task.mustGet(b.id)).status).toBe("done");
+    await w.store.close();
+  });
+});

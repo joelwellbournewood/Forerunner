@@ -602,7 +602,18 @@ among them.
   one)", "… older"), in the UI's commands and in chat ("redo Write the guide #18"). The example
   puts a state or an age in brackets, never after a comma: chat splits a line at its commas
   into separate requests, so "Write the guide, the older one" never reached the command (review
-  of W15-37; chat case in `conversation-memory.test.ts`).
+  of W15-37; chat case in `conversation-memory.test.ts`). What a word picks is wider than what
+  the refusal names (run L3, live check 3, L3-run-6): `sameTitlePickers` gives each task every
+  kind of word that tells it apart, its pull request ("#17", when no other task of the group has
+  that number), its state ("paused", when no other is in that state) and its age ("older",
+  "first", always), and `pickSameTitled` returns the one task a word picks. Before, `findTask`
+  tested the word only against the kind `sameTitleTags` chose at that moment, so "Write the guide
+  (the older one)" was refused as soon as the older one was paused (the tags had become "the
+  paused one" and "the ready one"), "(the done one)" once both had pull requests, and "#17" once
+  a third task of that title came without one. The kinds' words never overlap. `sameTitleTags`,
+  `sameTitlePickers`, `pickSameTitled` and `pickWord` are exported for the chat's own task reads
+  (run C, d1109-chat-recall CR-2); cases in `w15-chat.test.ts` and `conversation-memory.test.ts`
+  ("l3-small, run L3").
 - **Money with two decimals (W15-44).** budget.set's sentences, read-backs, card values and its
   "already" refusal write amounts with `chfExact` (shared.ts), "from CHF 3.00 to CHF 12.00"
   (design §5 rule 7; before, `chf`'s whole francs, "from CHF 3 to CHF 12"). A session start's

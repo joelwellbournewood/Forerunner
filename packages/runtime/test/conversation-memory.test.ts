@@ -916,3 +916,52 @@ describe("w15-tail, wave 15 run B: a card's words change nothing by themselves (
     await w.store.close();
   });
 });
+
+/**
+ * l3-small, run L3 (live check 3, L3-run-6): 'redo Write the guide' offered "Write the guide (the
+ * older one)"; once that one was paused with exactly those words, the same words got 'Two tasks
+ * are called "Write the guide": the paused one and the ready one…'. `findTask` tested the word
+ * only against the kind of tag the refusal names now (the states, since they differ). A word
+ * the app offered keeps picking its task after a pause, a pull request or a state change.
+ */
+describe("l3-small, run L3: a same-title word from a refusal keeps picking its task (L3-run-6)", () => {
+  it("'(the older one)' still picks the older task after it was paused with those words", async () => {
+    const w = await setup();
+    const older = await task(w, "Write the guide", { status: "ready" } as never);
+    w.clock.advance(60_000);
+    const newer = await task(w, "Write the guide", { status: "ready" } as never);
+    const asked = await w.chat("pause Write the guide");
+    const example = /for example "([^"]+)"\.$/.exec(asked.reply)?.[1];
+    expect(example).toBe("Write the guide (the older one)");
+    const paused = await w.chat(`pause ${example}`);
+    if (paused.pendingConfirmation) await w.chat("yes");
+    expect((await w.store.task.mustGet(older.id)).status).toBe("needs_human");
+    expect((await w.store.task.mustGet(newer.id)).status).toBe("ready");
+
+    // The same words again, now that the two differ in state: they pick the older task.
+    const resumed = await w.chat(`resume ${example}`);
+    expect(resumed.reply).not.toContain('Two tasks are called "Write the guide"');
+    expect(w.provider.calls).toHaveLength(0);
+    if (resumed.pendingConfirmation) {
+      expect(resumed.pendingConfirmation.readback).toMatch(/Write the guide/);
+      await w.chat("yes");
+    }
+    expect((await w.store.task.mustGet(older.id)).status).toBe("ready");
+    expect((await w.store.task.mustGet(newer.id)).status).toBe("ready");
+
+    // Paused again, a redo of the older one reaches it: reopen's own words, not the refusal.
+    const again = await w.chat(`pause ${example}`);
+    if (again.pendingConfirmation) await w.chat("yes");
+    expect((await w.store.task.mustGet(older.id)).status).toBe("needs_human");
+    const redo = await w.chat("redo Write the guide (the older one)");
+    expect(redo.reply).toContain('"Write the guide" is paused, not cancelled or done.');
+    expect(redo.reply).not.toContain("Two tasks are called");
+    expect(w.provider.calls).toHaveLength(0);
+    // The words the refusal gives now ("the paused one") pick it too.
+    const byState = await w.chat("resume Write the guide (the paused one)");
+    if (byState.pendingConfirmation) await w.chat("yes");
+    expect((await w.store.task.mustGet(older.id)).status).toBe("ready");
+    expect((await w.store.task.mustGet(newer.id)).status).toBe("ready");
+    await w.store.close();
+  });
+});
