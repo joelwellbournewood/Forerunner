@@ -15,7 +15,6 @@ import {
 import {
   localDate,
   RECALL_BOUNDS,
-  RECALL_TOOL_NAMES,
   type RecallDeps,
   recallTools,
   taskDetailLines,
@@ -377,7 +376,9 @@ export function readTools(deps: ReadToolDeps): ToolSpec[] {
 /** The read tools' names, sorted as the model receives them (recall's two among them). */
 export const READ_TOOL_NAMES = [
   "files_list",
-  ...RECALL_TOOL_NAMES,
+  // RECALL_TOOL_NAMES, written out: recall.ts and this module import each other's functions.
+  "recall",
+  "recall_open",
   "session_last",
   "task_get",
   "tasks_list",

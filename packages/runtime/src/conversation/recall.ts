@@ -664,7 +664,9 @@ async function cardHits(
       projectId: r.project_id,
       projectName: project?.name ?? null,
       title,
-      earlier: [],
+      // The card's question and the questions it asked match as its title does (its title is
+      // the Inbox's: '"X" needs your answers'); never shown as earlier titles.
+      earlier: [...new Set([r.why, ...r.steps].map(oneLine))].filter((t) => t && t !== title),
       detail: `${said}${answered && answer && !said.includes(answer) ? ` Answer: ${answer}.` : ""}`,
       body: [
         said,
