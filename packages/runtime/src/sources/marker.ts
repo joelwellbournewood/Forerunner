@@ -23,10 +23,16 @@ export interface InstallMarker {
   name: string;
 }
 
-/** What `writeInstallMarker` did; `path` is the repo-relative POSIX path of the marker. */
+/**
+ * What `writeInstallMarker` did; `path` is the repo-relative POSIX path of the marker.
+ * `replaced` (d1109-onerepo-link, ADR 0058 amended): the marker named a project this one took
+ * the repository over from (`replace`), and now names this one; `was` is that project's id and
+ * the name the old marker gave it.
+ */
 export type InstallMarkerWrite =
   | { path: string; status: "created" | "kept" }
-  | { path: string; status: "other_project"; project: string | null };
+  | { path: string; status: "other_project"; project: string | null }
+  | { path: string; status: "replaced"; was: { project: string; name: string } };
 
 /** The marker's text: pretty JSON with a trailing newline, stable for a diff. */
 export function renderInstallMarker(m: { project: string; name: string }): string {
@@ -60,11 +66,14 @@ export function parseInstallMarker(text: string): InstallMarker | null {
 /**
  * Write the marker under `dir` unless one is there already: this project's is kept as it is
  * (`kept`); one of another project, or a file that is not a marker of this schema, is reported
- * (`other_project`, with the id it names or null) and never overwritten.
+ * (`other_project`, with the id it names or null) and never overwritten, except a marker that
+ * names one of `replace`: the projects this one took the repository over from
+ * (d1109-onerepo-link: `settings.took_over`), which is `replaced`.
  */
 export async function writeInstallMarker(
   dir: string,
   m: { project: string; name: string },
+  opts: { replace?: readonly string[] } = {},
 ): Promise<InstallMarkerWrite> {
   const abs = join(dir, fromPosix(INSTALL_MARKER_FILE));
   let existing: string | null = null;
@@ -76,6 +85,15 @@ export async function writeInstallMarker(
   if (existing !== null) {
     const parsed = parseInstallMarker(existing);
     if (parsed?.project === m.project) return { path: INSTALL_MARKER_FILE, status: "kept" };
+    const replace = (opts.replace ?? []).map((id) => id.toLowerCase());
+    if (parsed && replace.includes(parsed.project.toLowerCase())) {
+      await writeFile(abs, renderInstallMarker(m), "utf8");
+      return {
+        path: INSTALL_MARKER_FILE,
+        status: "replaced",
+        was: { project: parsed.project, name: parsed.name },
+      };
+    }
     return { path: INSTALL_MARKER_FILE, status: "other_project", project: parsed?.project ?? null };
   }
   await mkdir(join(dir, ".forerunner"), { recursive: true });

@@ -1637,9 +1637,8 @@ describe("w15-words, wave 15 run B", () => {
       });
       expect(refused.status).toBe(409);
       const said = await json(refused);
-      expect(said.message).toBe(
-        "A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief.",
-      );
+      // d1109-onerepo-link (OR-08): the project by its name, and what to do.
+      expect(said.message).toBe('A plan for "Sample" waits for your answer. Answer it first.');
       await answer(String(first.requestId), "approve");
       const pr = (await host.listPullRequests({ owner: "o", name: "sample" })).find((p) =>
         p.head.ref.startsWith("fr/intake-"),
@@ -1656,7 +1655,14 @@ describe("w15-words, wave 15 run B", () => {
       );
       expect(message).not.toMatch(uuid);
       expect(message).not.toContain("(s)");
-      // A second plan on the same project updates the open pull request with a comment.
+      // d1109-onerepo-link (OR-08): a second plan on the same project is the plan-only form (the
+      // project has work now): it writes no documents, so the open docs pull request gets no
+      // comment and no second one is opened (before: "Updated by Forerunner from the project's
+      // brief: ..." with a second doc set).
+      const before = await host.listPullRequestComments(
+        { owner: "o", name: "sample" },
+        pr?.number ?? 0,
+      );
       replies.push({ text: JSON.stringify(proposal()) });
       const second = await json(
         await req(`/projects/${projectId}/intake`, { method: "POST", body: "{}" }),
@@ -1666,10 +1672,12 @@ describe("w15-words, wave 15 run B", () => {
         { owner: "o", name: "sample" },
         pr?.number ?? 0,
       );
-      const comment = comments.at(-1)?.body ?? "";
-      expect(comment).toMatch(/^Updated by Forerunner from the project's brief: /);
-      expect(comment).not.toMatch(uuid);
-      expect(comment).not.toContain("(s)");
+      expect(comments).toHaveLength(before.length);
+      expect(
+        (await host.listPullRequests({ owner: "o", name: "sample" })).filter((p) =>
+          p.head.ref.startsWith("fr/intake-"),
+        ),
+      ).toHaveLength(1);
       // An empty repository: the plan is its first commit.
       replies.push({ text: JSON.stringify(proposal()) });
       const fresh = String(
@@ -1710,4 +1718,213 @@ describe("w15-words, wave 15 run B", () => {
     );
     expect(docSetWords({ written: [], scaffolded: [] })).toBe("no doc changed");
   });
+});
+
+describe("d1109-onerepo-link, run C: a new brief for a project with work plans only the new work (OR-08)", () => {
+  /**
+   * D1-8: a new brief for a project that exists ran the new-project intake without the project's
+   * tasks ("A new project has a brief."), so the plan could redo done work, and its approval drafted
+   * a second doc set: a second docs/decisions/0001-<slug>.md and another docs pull request.
+   */
+  const compose = async (smallProject: boolean) => {
+    const home = mkdtempSync(join(tmpdir(), "fr-intake-plan-only-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const replies: ScriptReply[] = [];
+    const provider = new ScriptedProvider(replies, clock);
+    const host = new MemoryGitHost("alice");
+    const bare = join(home, "site.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({
+      cwd: join(home, "seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(home, "seed", "README.md"), "# site\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "o", name: "site", private: true, cloneUrl: bare });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider,
+      gitHost: host,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const req = (path: string, init: RequestInit = {}) =>
+      app.request(path, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
+    const answer = async (requestId: string, value: string) => {
+      const row = await rt.store.humanRequest.mustGet(requestId);
+      const res = await req(`/requests/${requestId}/answer`, {
+        method: "POST",
+        body: JSON.stringify({ version: row.version, answer: value }),
+      });
+      expect(res.status).toBe(200);
+    };
+    const project = await rt.store.project.insert({
+      name: "Site",
+      goal: "A site",
+      repos: ["o/site"],
+      small_project_mode: smallProject,
+    });
+    return { rt, req, answer, replies, provider, host, bare, project };
+  };
+
+  it("the first plan of a project without tasks is the new-project form; the next brief gets the plan-only form with the project's tasks as data, and its approval writes no document", async () => {
+    const { rt, req, answer, replies, provider, host, bare, project } = await compose(false);
+    try {
+      replies.push({ text: JSON.stringify(proposal()) });
+      const first = await json(
+        await req(`/projects/${project.id}/intake`, { method: "POST", body: "{}" }),
+      );
+      expect(provider.calls[0]?.system).toContain("A new project has a brief.");
+      await answer(String(first.requestId), "approve");
+      const tasksBefore = (await rt.store.task.list({ project_id: project.id } as never)).length;
+      expect(tasksBefore).toBe(3);
+      await rt.store.task.patch(
+        (await rt.store.task.list({ project_id: project.id } as never))[0]?.id ?? "",
+        { status: "done" },
+      );
+      const branches = async () =>
+        (
+          await run(["git", "--git-dir", bare, "branch", "--list", "--format=%(refname:short)"])
+        ).stdout
+          .trim()
+          .split("\n")
+          .sort();
+      const branchesBefore = await branches();
+      const prsBefore = (
+        await host.listPullRequests({ owner: "o", name: "site" }, { state: "all" })
+      ).length;
+      // Add to it: a new brief for the project, answered in the plan-only form.
+      replies.push({
+        text: JSON.stringify(
+          proposal({
+            plan: {
+              reason: "the contact form the brief adds",
+              milestones: [
+                {
+                  name: "Contact",
+                  successCriteria: ["a visitor can write to us"],
+                  targetDate: null,
+                  tasks: [
+                    {
+                      key: "contact",
+                      title: "Add the contact form",
+                      outcome: "A contact form sends the message",
+                      acceptanceCriteria: ["the form posts"],
+                      priority: "medium",
+                    },
+                  ],
+                },
+              ],
+              tasks: [],
+            },
+            firstSession: {
+              summary: "The form.",
+              items: [{ key: "contact", estimateUsdMicro: 300_000 }],
+            },
+          }),
+        ),
+      });
+      const added = await req(`/projects/${project.id}/intake`, {
+        method: "POST",
+        body: JSON.stringify({ brief: "Add a contact form." }),
+      });
+      expect(added.status).toBe(202);
+      // Review of the fix: the plan-only answer names no place documents go (it writes none).
+      expect((await json(added.clone())).docsTarget).toBeNull();
+      const call = provider.calls.at(-1);
+      // The instructions the model received: the plan-only section, no new-project form, no docs.
+      expect(call?.system).toContain(
+        "A project that already has work gets a new brief. Turn it into the tasks it adds and the order to do them in; write no documents.",
+      );
+      expect(call?.system).not.toContain("A new project has a brief.");
+      expect(call?.system).not.toContain('"docs": {');
+      expect(call?.system).not.toContain("docs/decisions/0001-<slug>.md");
+      expect(call?.system).toContain('  "firstSession": { "summary": string,');
+      // The user message: the project's tasks as data, then the instruction line.
+      const user = String(call?.messages[0]?.content ?? "");
+      expect(user).toContain(
+        [
+          "Already in the project (data, between the markers):",
+          "<<<TASKS",
+          '- "Scaffold the repository" (done)',
+          '- "Set up continuous integration" (to do)',
+          '- "Sign-in flow" (to do)',
+          "TASKS>>>",
+        ].join("\n"),
+      );
+      expect(user).toContain("Plan only work that is not already in the project.");
+      const card = await rt.store.humanRequest.mustGet(String((await json(added)).requestId));
+      expect((card.change_card as JsonObject).plan_only).toBe(true);
+      // ...and the card neither: the Inbox read "the docs go to the project's repository as a
+      // pull request" from it (review of the fix, bench 06-a06-inbox-plan-card.png).
+      expect((card.change_card as JsonObject).docs_target).toBeUndefined();
+      expect(card.why).not.toMatch(/doc\(s\)|the docs/);
+      await answer(card.id, "approve");
+      // No doc set, no decision file, no docs pull request: branches and pull requests as before.
+      expect(await branches()).toEqual(branchesBefore);
+      expect(
+        (await host.listPullRequests({ owner: "o", name: "site" }, { state: "all" })).length,
+      ).toBe(prsBefore);
+      const tasks = await rt.store.task.list({ project_id: project.id } as never);
+      expect(tasks.map((t) => t.title)).toContain("Add the contact form");
+      expect(tasks).toHaveLength(tasksBefore + 1);
+      // Outside small-project mode the new work is a milestone after the existing ones.
+      const milestones = await rt.store.milestone.list({ project_id: project.id } as never);
+      expect(milestones.map((m) => m.name)).toEqual(["Foundations", "First feature", "Contact"]);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("in small-project mode the new tasks join the open milestone; more than 40 tasks are listed as 40 and 'and N more'", async () => {
+    const { rt, req, answer, replies, provider, project } = await compose(true);
+    try {
+      const milestone = await rt.store.milestone.insert({
+        project_id: project.id,
+        name: "Everything",
+        order_index: 0,
+        reason: "test",
+        author_agent: rt.agent.id,
+      });
+      for (let i = 1; i <= 42; i++)
+        await rt.store.task.insert({
+          project_id: project.id,
+          milestone_id: milestone.id,
+          title: `Task ${i}`,
+          outcome: "o",
+          status: i % 2 ? "done" : "cancelled",
+        });
+      replies.push({ text: JSON.stringify(proposal()) });
+      const added = await req(`/projects/${project.id}/intake`, {
+        method: "POST",
+        body: JSON.stringify({ brief: "Add sign-in." }),
+      });
+      expect(added.status).toBe(202);
+      const user = String(provider.calls.at(-1)?.messages[0]?.content ?? "");
+      expect(user).toContain('- "Task 40" (cancelled)\nand 2 more\nTASKS>>>');
+      expect(user).not.toContain('"Task 41"');
+      await answer(String((await json(added)).requestId), "approve");
+      const milestones = await rt.store.milestone.list({ project_id: project.id } as never);
+      expect(milestones.map((m) => m.name)).toEqual(["Everything"]);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });

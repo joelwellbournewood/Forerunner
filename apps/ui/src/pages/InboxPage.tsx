@@ -83,6 +83,12 @@ export interface IntakeCardView {
     items: { key: string; title: string; estimateUsdMicro: number }[];
   };
   docsTarget: "repository" | "workspace" | null;
+  /**
+   * d1109-onerepo-link (OR-08): the plan-only form (a new brief for a project with work, every
+   * plan of a project worked on together): its approval writes tasks and no document, so the
+   * card says nothing about where documents go (design section 5 rule 9).
+   */
+  planOnly: boolean;
   costUsdMicro: number | null;
 }
 
@@ -147,8 +153,23 @@ export function intakeCardOf(card: unknown): IntakeCardView | null {
       : [],
     firstSession: { summary: str(first.summary) ?? "", items },
     docsTarget: target === "repository" || target === "workspace" ? target : null,
+    planOnly: card.plan_only === true,
     costUsdMicro: num(card.cost_usd_micro),
   };
+}
+
+/**
+ * The plan card's total line (design §3.3): what the plan costs, and, for a first plan to a
+ * repository, that its docs go there as a pull request. A plan-only card (d1109-onerepo-link,
+ * OR-08) writes no document, so it says nothing about documents (design section 5 rule 9; the
+ * review of the fix saw "the docs go to the project's repository as a pull request" on Add to
+ * it's card and on every plan of a project worked on together). The real-daemon test reads the
+ * daemon's own card through this.
+ */
+export function intakeTotalLine(card: IntakeCardView, totalWords: string): string {
+  return card.docsTarget === "repository" && !card.planOnly
+    ? `${totalWords.replace(/\.$/, "")}; the docs go to the project's repository as a pull request.`
+    : totalWords;
 }
 
 /**
@@ -432,13 +453,7 @@ function IntakeCard({
           );
         })}
       </ol>
-      {totalWords ? (
-        <p data-testid="intake-total">
-          {card.docsTarget === "repository"
-            ? `${totalWords.replace(/\.$/, "")}; the docs go to the project's repository as a pull request.`
-            : totalWords}
-        </p>
-      ) : null}
+      {totalWords ? <p data-testid="intake-total">{intakeTotalLine(card, totalWords)}</p> : null}
       {decided ? <p data-testid="intake-decision-line">Decision: {decided}</p> : null}
       {decision ? (
         <details

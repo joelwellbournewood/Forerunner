@@ -138,6 +138,13 @@ different `sample` shape) still render: name from the locator without the id pre
 
 ### Imports (`DataImporter`)
 
+d1109-onerepo-link (ADR 0117): the GitHub import asks `deps.repositoryUse.checkHere([locator],
+projectId)` before it clones. A repository another project on this computer uses is refused
+with that project's name ('o/site is already the project "Site". Open it, or add this to it as
+new work.', 400 `validation` as the route's other refused imports, `details.cause:
+repository_in_use`) and nothing is cloned or linked; the project's own repository and a free one
+import as before.
+
 `importZip(zipPath, projectId, opts)` opens the archive with adm-zip and, before writing
 anything, checks every entry name with `checkZipEntryName()`: absolute names (`/x`, `C:\x`,
 `\\server\x`) and any `..` segment throw `validation` (the whole import is refused); empty

@@ -63,6 +63,7 @@ import type { StartRequest } from "../session/triggers.ts";
 import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
 import { createPlanAllowanceRoutes } from "../setup/plan-allowance-routes.ts";
 import { createSetupRoutes } from "../setup/routes.ts";
+import { isLinkRefusal, isLinkRefusalCause, type LinkCheck } from "../sources/repository-use.ts";
 import { createSourcesRoutes } from "../sources/routes.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
 import type { SchemaSyncStatus } from "../update/sync.ts";
@@ -687,6 +688,8 @@ export function createDaemonApp(
       docsInPullRequests: (project) => rt.docs.docsInPullRequests(project),
       // C-57: a repository project's status kept in the app is the Status the tab shows.
       statusDocRoot: (project) => rt.docs.statusDocRoot(project),
+      // OR-09: why a status pull request that is on kept the status in the app.
+      statusHeld: (project) => rt.docs.statusHeld(project),
       // merge-in-app: each waiting pull request says what Merge does, and the person's Merge
       // (POST /projects/:id/pull-requests/:number/merge) is answered at once.
       pullRequests: (project) => rt.pullRequests.view(project),
@@ -887,6 +890,8 @@ export function createDaemonApp(
       stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
       // W15-67: the ready line names a credential wait now, kept or not (as the Start check).
       credentialWaitNow: (projectId) => rt.billing.waits.now(projectId),
+      // OR-07 (d1109-onerepo-link): the repository is also a project not on this computer.
+      repositoryElsewhere: (project) => rt.repositoryUse.overviewOf(project),
     });
   app.get("/projects", async (c) => {
     const rows = await rt.store.project.active({ limit: 100 });
@@ -912,6 +917,17 @@ export function createDaemonApp(
       deviceId: null,
     };
     let made: Awaited<ReturnType<typeof createProjectRecord>> | null = null;
+    // d1109-onerepo-link: the link is checked once for the click (the command's plan asks, the
+    // creation goes on with that answer), with the offer's Take it over or Work together.
+    let checked: LinkCheck | null = null;
+    const check = async (): Promise<LinkCheck> => {
+      checked ??= await rt.repositoryUse.check(body.repos ?? [], {
+        takeOver: body.takeOver,
+        together: body.together,
+        withBrief: !!body.brief?.trim(),
+      });
+      return checked;
+    };
     const r = await rt.commands.execute(
       {
         name: "project.create",
@@ -920,14 +936,23 @@ export function createDaemonApp(
       turn,
       {
         ports: {
+          repositoryUse: {
+            check: async () => {
+              await check();
+            },
+          },
           createProject: async () => {
-            made = await createProjectRecord(rt, body);
+            made = await createProjectRecord({ ...rt, repositoryUse: { check } }, body);
             return made;
           },
         },
       },
     );
-    if (r.status !== "done" || !made)
+    if (r.status !== "done" || !made) {
+      // d1109-onerepo-link: a link another project uses keeps its offer (the details) whether
+      // the command's plan or its port refused it.
+      if (isLinkRefusalCause(r.details?.cause))
+        throw new ForerunnerError("validation", r.reason ?? "", { details: r.details });
       throw new ForerunnerError(
         (r.code as ErrorCode | undefined) ?? "validation",
         r.reason ?? "The project was not created.",
@@ -939,11 +964,27 @@ export function createDaemonApp(
           },
         },
       );
+    }
     return made;
   };
 
   app.post("/projects", async (c) => {
     const body = await parse(c, CreateProjectBody);
+    try {
+      return await createProjectRoute(c, body);
+    } catch (e) {
+      // d1109-onerepo-link (ADR 0117): the offer of a link another project uses, a URL on another
+      // host, or Work together refused: 409 with its cause and the offer's facts (no id is ever
+      // shown to the person; the buttons send them back).
+      if (isLinkRefusal(e)) {
+        const { untrusted: _data, ...details } = e.details;
+        return c.json({ code: "conflict", message: e.message, details }, 409);
+      }
+      throw e;
+    }
+  });
+
+  const createProjectRoute = async (c: Context, body: z.infer<typeof CreateProjectBody>) => {
     // The same path an accepted source proposal takes, and the chat's `project.create` through
     // its port (create-project.ts, spec A.4, G.5): the row, the brief, and the standard doc
     // set as a pull request on the linked repository or the project's workspace (deferred to
@@ -962,7 +1003,7 @@ export function createDaemonApp(
     );
     if (body.intake === true) void rt.intake.enqueue(p.id).catch(() => undefined);
     return c.json(card, 201);
-  });
+  };
 
   // PM intake (spec A.2, ADR 0055): one model call on the planning rung, one blocking approval
   // request with the whole proposal; nothing is written until the inbox answers it (the answer

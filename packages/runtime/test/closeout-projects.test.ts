@@ -64,7 +64,7 @@ describe("closeout: create a project from the dashboard (A.1) and read its summa
         name: "Gamma",
         goal: "Ship the thing",
         brief,
-        repos: ["https://example.test/org/gamma"],
+        repos: ["https://github.com/org/gamma"],
       }),
     });
     expect(res.status).toBe(201);
@@ -72,7 +72,7 @@ describe("closeout: create a project from the dashboard (A.1) and read its summa
     projectId = String(card.id);
     expect(card).toMatchObject({ name: "Gamma", goal: "Ship the thing", stage: "planning" });
     const row = await rt.store.project.mustGet(projectId);
-    expect(row.repos).toEqual(["https://example.test/org/gamma"]);
+    expect(row.repos).toEqual(["https://github.com/org/gamma"]);
     expect((row.summary_cache as { brief?: string }).brief).toBe(brief);
     const queued = await rt.store.queue.pending(projectId);
     expect(queued).toHaveLength(1);

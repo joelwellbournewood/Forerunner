@@ -6,7 +6,14 @@ import { STATUS_DOC } from "@forerunner/memory";
 import { fromPosix, join, run } from "@forerunner/platform";
 import type { ProjectRow, SessionRow } from "@forerunner/state";
 import { afterEach, describe, expect, it } from "vitest";
-import { ProjectDocs, STATUS_BRANCH, WORKSPACE_DIR } from "../src/loop/docs.ts";
+import {
+  isProjectDocsPr,
+  isProjectStatusPr,
+  ownsUnmarkedDocs,
+  ProjectDocs,
+  STATUS_BRANCH,
+  WORKSPACE_DIR,
+} from "../src/loop/docs.ts";
 import type { SessionStatusUpdate } from "../src/loop/ports.ts";
 import type { TaskExecutor } from "../src/session/runner.ts";
 import {
@@ -1348,5 +1355,98 @@ describe("l3-small, run L3: the session-end commit in the folder names the sessi
     expect(last).not.toContain(id);
     expect(last).not.toContain("2026-11-15T05:59");
     await w.close();
+  });
+});
+
+describe("d1109-onerepo-link, run C: W15-01's ownership through the one index; a together project owns none of its id's docs pull requests (OR-10, OR-15)", () => {
+  const A = "01a1a000-0000-7000-8000-0000000000a1";
+  const B = "01a1a000-0000-7000-8000-0000000000b2";
+  const marker = (id: string) => `<!-- forerunner:pr project=${id} -->`;
+  const project = (over: Partial<ProjectRow> = {}): ProjectRow =>
+    ({
+      id: A,
+      name: "Kite club",
+      settings: { status_pull_request: true },
+      summary_cache: {},
+      repos: ["o/kite"],
+      status: "active",
+      ...over,
+    }) as ProjectRow;
+
+  it("a together project takes no docs pull request that names its id: the intake branch, the hidden mark, the L-16 line, an unmarked one", () => {
+    const together = project({
+      settings: { status_pull_request: true, together: { name: "Kite club", at: "x" } },
+    });
+    const cases = [
+      { head: { ref: `fr/intake-${A}-docs` }, body: "" },
+      { head: { ref: "fr/docs-scaffold" }, body: `docs\n\n${marker(A)}` },
+      { head: { ref: "fr/docs-scaffold" }, body: `docs\n\nForerunner project ${A}.` },
+      { head: { ref: "fr/status" }, body: `status\n\n${marker(A)}` },
+      { head: { ref: "fr/status" }, body: "an unmarked status pull request" },
+    ];
+    for (const pr of cases) {
+      expect(isProjectDocsPr(together, pr, { soleLinked: true }), pr.head.ref).toBe(false);
+      expect(isProjectDocsPr(project(), pr, { soleLinked: true }), pr.head.ref).toBe(true);
+    }
+    expect(isProjectStatusPr(together, { body: marker(A) }, { soleLinked: true })).toBe(false);
+  });
+
+  it("a project joined into another (joined_from) counts as the kept one: its marks and intake branch are the kept project's", () => {
+    const kept = project({ settings: { status_pull_request: true, joined_from: [B] } });
+    expect(isProjectDocsPr(kept, { head: { ref: `fr/intake-${B}-docs` }, body: "" })).toBe(true);
+    expect(isProjectStatusPr(kept, { body: marker(B) })).toBe(true);
+    expect(isProjectStatusPr(project(), { body: marker(B) })).toBe(false);
+  });
+
+  it("an unmarked docs pull request is a project's only when it is the one project here using the repository and this computer's copy names no other project; a pair is neither's; a together project is never sole", async () => {
+    const w = await loopWorld();
+    try {
+      const humanId = w.human;
+      const one = await w.store.project.insert({
+        name: "One",
+        goal: "g",
+        repos: ["https://github.com/O/Kite.git"],
+        author_human: humanId,
+      });
+      const ref = { owner: "o", name: "kite" };
+      expect(await ownsUnmarkedDocs(w.store, one, ref)).toBe(true);
+      // This computer's copy's marker names a project that is not on this computer: neither's.
+      const other = JSON.stringify({ schema: 1, project: B, name: "Kite club" });
+      expect(await ownsUnmarkedDocs(w.store, one, ref, other)).toBe(false);
+      // Its own marker, or one it took the repository over from, keeps it its own.
+      expect(
+        await ownsUnmarkedDocs(
+          w.store,
+          one,
+          ref,
+          JSON.stringify({ schema: 1, project: one.id, name: "One" }),
+        ),
+      ).toBe(true);
+      const took = await w.store.project.update(one.id, one.version, {
+        settings: { took_over: { projects: [B], name: "Kite club", at: "x" } },
+        author_human: humanId,
+      });
+      expect(await ownsUnmarkedDocs(w.store, took, ref, other)).toBe(true);
+      // A pair made before the rule: neither's (fails closed as before).
+      const two = await w.store.project.insert({
+        name: "Two",
+        goal: "g",
+        repos: ["o/kite"],
+        author_human: humanId,
+      });
+      expect(await ownsUnmarkedDocs(w.store, took, ref)).toBe(false);
+      expect(await ownsUnmarkedDocs(w.store, two, ref)).toBe(false);
+      // A together project is never the one owner, alone or not.
+      const alone = await w.store.project.insert({
+        name: "Together",
+        goal: "g",
+        repos: ["o/alone"],
+        settings: { together: { name: "Alone", at: "x" } },
+        author_human: humanId,
+      });
+      expect(await ownsUnmarkedDocs(w.store, alone, { owner: "o", name: "alone" })).toBe(false);
+    } finally {
+      await w.close();
+    }
   });
 });

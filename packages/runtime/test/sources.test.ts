@@ -313,9 +313,10 @@ describe("source discovery", () => {
     const beta = before.find((c) => c.name === "beta");
     const alpha = before.find((c) => c.name === "alpha");
     if (!beta || !alpha) throw new Error("candidates");
+    // d1109-onerepo-link (OR-05): the project by its name, never an id or "duplicate".
     await expect(discovery.accept(alpha.id, {}, ada)).rejects.toMatchObject({
       code: "validation",
-      message: expect.stringMatching(/duplicate/),
+      message: 'acme/alpha is already the project "Alpha".',
       details: { conflict: true, projectId: alphaProjectId },
     });
     const accepted = await discovery.accept(beta.id, {}, ada);
@@ -330,7 +331,7 @@ describe("source discovery", () => {
     expect(accepted.candidate.projectId).toBe(project.id);
     await expect(discovery.accept(beta.id, {}, ada)).rejects.toMatchObject({
       code: "validation",
-      message: expect.stringMatching(/already accepted/),
+      message: 'acme/beta is already the project "beta".',
       details: { conflict: true, projectId: project.id },
     });
     // A name that is taken is refused before anything is created; another name works.
@@ -650,12 +651,13 @@ describe("source discovery", () => {
     expect(after.candidates.map((c) => [c.status, c.existingInstall, c.installMarker])).toEqual([
       ["duplicate", true, INSTALL_MARKER_FILE],
     ]);
-    // Another install (or this one once no project links the repository) proposes it as an
-    // existing install: the mark is information for the human, not a refusal (ADR 0056).
+    // d1109-onerepo-link (OR-05, ADR 0056 amended): the marker names a project of this install,
+    // so the repository is that project's even once it no longer links it (before: "proposed"
+    // as a new project beside it).
     await store.project.patch(project.id, { repos: [] });
     const unlinked = await discovery.scan(chosen.id, ada);
-    expect(unlinked.candidates.map((c) => [c.status, c.existingInstall])).toEqual([
-      ["proposed", true],
+    expect(unlinked.candidates.map((c) => [c.status, c.existingInstall, c.projectId])).toEqual([
+      ["duplicate", true, project.id],
     ]);
     await discovery.remove(chosen.id, ada);
   });

@@ -2,6 +2,7 @@ import { errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import { type Context, Hono } from "hono";
 import type { z } from "zod";
 import type { SourceActor, SourceDiscovery } from "./discovery.ts";
+import { isLinkRefusalCause } from "./repository-words.ts";
 import {
   AcceptCandidateBody,
   AcceptCandidateView,
@@ -26,7 +27,11 @@ export interface SourcesRoutesDeps {
 }
 
 function statusFor(err: ForerunnerError): 400 | 403 | 404 | 409 | 503 | 500 {
-  if (err.code === "validation" && err.details.conflict === true) return 409;
+  if (
+    err.code === "validation" &&
+    (err.details.conflict === true || isLinkRefusalCause(err.details.cause))
+  )
+    return 409;
   switch (err.code) {
     case "not_found":
       return 404;
@@ -97,8 +102,18 @@ export function createSourcesRoutes(deps: SourcesRoutesDeps): Hono {
           : status === 403 && err.details.forbidden
             ? "forbidden"
             : err.code;
+      // d1109-onerepo-link: a link's refusal keeps its cause (the offer the page shows) and
+      // leaves its untrusted mark, which is for chat, out of the answer.
+      const { untrusted: _data, ...details } = err.details ?? {};
       return c.json(
-        { code, message: err.message, details: { ...err.details, cause: err.code } },
+        {
+          code,
+          message: err.message,
+          details: {
+            ...details,
+            cause: isLinkRefusalCause(details.cause) ? details.cause : err.code,
+          },
+        },
         status,
       );
     }

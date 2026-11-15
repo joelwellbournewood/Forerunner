@@ -141,7 +141,8 @@ describe("Home", () => {
     await user.type(within(dialog).getByLabelText(/Brief/), "A longer brief");
     await user.type(
       within(dialog).getByLabelText(/Repository link/),
-      "https://example.test/org/gamma",
+      // d1109-onerepo-link (OR-11): only a GitHub repository or a folder is a link.
+      "https://github.com/org/gamma",
     );
     await user.click(within(dialog).getByTestId("create-project"));
     await waitFor(() => expect(postedCalls(harness, "/projects")).toHaveLength(1));
@@ -150,7 +151,7 @@ describe("Home", () => {
       name: "Gamma",
       goal: "Ship the thing",
       brief: "A longer brief",
-      repos: ["https://example.test/org/gamma"],
+      repos: ["https://github.com/org/gamma"],
       intake: true,
       // W15-36: the active project in the same change, one Changes row.
       switch: true,

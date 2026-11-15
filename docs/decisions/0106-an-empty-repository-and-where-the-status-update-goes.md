@@ -145,3 +145,25 @@ another project's status pull request was open reads it there, as with the setti
 restart too (a file beside the status says so). Its next status written to its own pull request
 removes that file, and the Docs tab reads the repository's copy again. The Docs tab's note on
 that row still reads as with the setting off; its words are not changed in wave 15.
+
+## Amendment: one repository, one project (d1109-onerepo-link, 2026-11-15, ADR 0117)
+
+D1 answers W15-112: one repository is one project, so no new pair is made (ADR 0117 refuses a
+second project on a link from every entry point, and two installs share a repository as one
+project worked on together). The W15-01 rules stay for pairs made before this version and for
+another Forerunner's pull requests:
+
+- "The one project on this install linked to the repository" is now the repository index's
+  answer (`ownsUnmarkedDocs`): every spelling of the repository and a folder with that origin
+  count as one link; a project joined into another counts as the kept one; a together project
+  is never the sole user; and this computer's copy's marker must name no other project. It still
+  fails closed (an index that cannot be read owns nothing).
+- A together project never writes `fr/status`: its status stays in the app, whatever the
+  setting, and the Docs row says 'Kept in the app: you work on "Kite club" together, so GitHub's
+  copy is left as it is.'
+- The Docs row of a status kept in the app because another status pull request held `fr/status`
+  now says why (the note above that read as with the setting off): 'Kept in the app while "A"'s
+  status pull request is open on GitHub.'; for a marked one of a project not here, '... another
+  project's status pull request ...; close it there to have this one's there.'; for an unmarked
+  one, '... another status pull request ...'. The holder is recorded beside the kept status (its
+  number and the project its mark names), so it reads the same after a restart.

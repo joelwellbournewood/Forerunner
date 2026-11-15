@@ -58,6 +58,7 @@ export const COMMAND_NAMES = [
   "model.settings.set",
   "specialist.propose",
   "repo.create",
+  "repo.take_over",
 ] as const;
 export type CommandName = (typeof COMMAND_NAMES)[number];
 
@@ -358,6 +359,52 @@ export interface CommandPorts {
    * question and never refuses such a start. Absent: no warning.
    */
   startWarning?(projectId: string, budgetUsdMicro: number): Promise<string | null>;
+  /**
+   * d1109-onerepo-link (ADR 0117): one repository, one project. `project.create` asks it in its
+   * plan (so chat is refused before a read-back) and its run, before anything is written. It
+   * resolves when the links are free, and throws the refusal otherwise: a `ForerunnerError`
+   * 'validation' whose message names the project that uses the link and whose details carry the
+   * offer and, when it quotes repository text (a marker's name), the untrusted mark. Absent:
+   * nothing is checked.
+   */
+  repositoryUse?: {
+    check(repos: readonly string[]): Promise<void>;
+  };
+  /**
+   * d1109-onerepo-link (ADR 0117, OR-07): `repo.take_over` for a project whose repository names
+   * a Forerunner project that is not on this computer. Absent: the command is refused.
+   */
+  repositoryTakeOver?: RepositoryTakeOverPort;
+}
+
+/** What `repo.take_over` takes, read from GitHub at the press (never from the model). */
+export interface RepoTakeOverFacts {
+  /** The repository as the person reads it: "o/kite". */
+  locator: string;
+  /** The ids the repository names that are not on this computer: the ones taken over. */
+  projects: string[];
+  /** The name its marker gives, cut, scanned and without quotes; null when none or flagged. */
+  name: string | null;
+}
+
+export interface RepositoryTakeOverPort {
+  /**
+   * The take-over's facts, read from GitHub now; throws the refusal in words: another GitHub
+   * account worked on it within 14 days, GitHub did not answer, or the repository names no
+   * project that is not on this computer.
+   */
+  check(projectId: string): Promise<RepoTakeOverFacts>;
+  /**
+   * After `settings.took_over` is written: this project's docs pull request replaces exactly
+   * that marker (the scaffold run again). Never throws: a failure leaves it to the next docs
+   * pull request; the pull request opened or updated, when there is one.
+   */
+  writeMarker(projectId: string): Promise<{ prUrl: string | null }>;
+  /**
+   * Why the take-over cannot be undone now: its docs pull request is open (close it there
+   * first) or merged (the repository names this project); null while neither is the case.
+   */
+  undoBlocked(projectId: string, since: string, prUrl: string | null): Promise<string | null>;
 }
 
 export interface EmailModePortRequest {

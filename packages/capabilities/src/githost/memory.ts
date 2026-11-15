@@ -68,8 +68,47 @@ export class MemoryGitHost implements GitHost {
   /** Every project call, in order (tests assert how many outward calls a sync made). */
   readonly projectCalls: { op: string; projectId?: string; detail?: string }[] = [];
 
+  /**
+   * The time a pull request is stamped with when it is opened or changed (`updatedAt`); tests
+   * set it to say when a project was last worked on (d1109-onerepo-link).
+   */
+  now: () => string = () => new Date().toISOString();
+  /** GitHub's numeric repository ids, given in creation order (`RepoInfo.id`). */
+  private nextRepoId = 1001;
+
   constructor(login = "alice") {
     this.login = login;
+  }
+
+  /**
+   * Opens a pull request as another GitHub account would (tests: a project of another
+   * Forerunner on the same repository). `updatedAt` defaults to `now()`.
+   */
+  async openPullRequestAs(
+    repo: RepoRef,
+    author: string,
+    opts: {
+      title: string;
+      body: string;
+      head: string;
+      base?: string;
+      state?: "open" | "closed";
+      merged?: boolean;
+      updatedAt?: string;
+    },
+  ): Promise<PullRequestInfo> {
+    const r = this.repo(repo);
+    const pr = await this.createPullRequest(repo, {
+      title: opts.title,
+      body: opts.body,
+      head: opts.head,
+      base: opts.base ?? r.defaultBranch,
+    });
+    pr.authorLogin = author;
+    if (opts.state === "closed" || opts.merged) pr.state = "closed";
+    if (opts.merged) pr.merged = true;
+    if (opts.updatedAt) pr.updatedAt = opts.updatedAt;
+    return pr;
   }
 
   private key(r: RepoRef): string {
@@ -98,6 +137,7 @@ export class MemoryGitHost implements GitHost {
       cloneUrl: r.cloneUrl,
       permissions: r.permissions,
       allowMergeCommit: r.allowMergeCommit,
+      ...(r.id !== undefined ? { id: r.id } : {}),
     };
   }
 
@@ -146,6 +186,7 @@ export class MemoryGitHost implements GitHost {
       nextNumber: 1,
       allowMergeCommit: true,
       rules: new Map(),
+      id: this.nextRepoId++,
     };
     this.repos.set(fullName, repo);
     return this.getRepo(repo);
@@ -189,6 +230,8 @@ export class MemoryGitHost implements GitHost {
       base: { ref: opts.base, sha: `sha-${opts.base}` },
       htmlUrl: `memory://${r.fullName}/pull/${r.nextNumber - 1}`,
       draft: opts.draft ?? false,
+      updatedAt: this.now(),
+      authorLogin: this.login,
     };
     r.prs.push(pr);
     return pr;
@@ -210,6 +253,7 @@ export class MemoryGitHost implements GitHost {
     if (patch.body !== undefined) pr.body = patch.body;
     if (patch.state === "closed" && pr.state === "open") pr.state = "closed";
     else if (patch.state === "open" && pr.state === "closed" && !pr.merged) pr.state = "open";
+    pr.updatedAt = this.now();
     return pr;
   }
 
@@ -219,11 +263,19 @@ export class MemoryGitHost implements GitHost {
 
   async listPullRequests(
     repo: RepoRef,
-    opts: { state?: "open" | "closed" | "all"; head?: string } = {},
+    opts: { state?: "open" | "closed" | "all"; head?: string; sort?: "updated" } = {},
   ): Promise<PullRequestInfo[]> {
-    return this.repo(repo)
+    const list = this.repo(repo)
       .prs.filter((p) => (opts.state ?? "open") === "all" || p.state === (opts.state ?? "open"))
       .filter((p) => !opts.head || p.head.ref === opts.head.replace(/^[^:]+:/, ""));
+    // As GitHub's `sort=updated&direction=desc`: the latest first, one page of 100.
+    return opts.sort === "updated"
+      ? [...list]
+          .sort(
+            (a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "") || b.number - a.number,
+          )
+          .slice(0, 100)
+      : list;
   }
 
   async mergePullRequest(

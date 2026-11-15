@@ -1,5 +1,5 @@
 import { formatAmount } from "@forerunner/billing";
-import type { CommandScope, Risk } from "./types.ts";
+import type { CommandOutcome, CommandScope, Risk } from "./types.ts";
 
 /**
  * The change card (spec Q): what changes, old value -> new value, scope, how long, cost or
@@ -46,6 +46,11 @@ export interface ChangeCard {
    * README"?'): what the chat shows with Yes and No, in place of the rendered card.
    */
   ask?: string;
+  /**
+   * d1109-onerepo-link: the card quotes text the person did not write (a repository marker's
+   * name): its read-back reaches the chat model inside the data envelope (ADR 0114).
+   */
+  untrusted?: CommandOutcome["untrusted"];
 }
 
 export const SCOPE_LABELS: Record<CommandScope, string> = {
@@ -82,6 +87,8 @@ export interface CardInput {
   costChfMicro?: number;
   /** The read-back as one question (`ChangeCard.ask`). */
   ask?: string;
+  /** The card quotes text the person did not write (`ChangeCard.untrusted`). */
+  untrusted?: CommandOutcome["untrusted"];
   /**
    * The scope in words when the scope's own label would say less than the truth: a project's
    * per-session cap holds for "every session of Quote page", not "this session".
@@ -115,6 +122,7 @@ export function buildCard(input: CardInput): ChangeCard {
     expiresAt: input.expiresAt ?? null,
     reversible: input.reversible,
     ...(input.ask ? { ask: input.ask } : {}),
+    ...(input.untrusted ? { untrusted: input.untrusted } : {}),
   };
 }
 

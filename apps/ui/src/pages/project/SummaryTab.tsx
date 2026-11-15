@@ -48,6 +48,7 @@ export function SummaryTab({ projectId, project }: { projectId: string; project?
       <ProjectCards projectId={projectId} />
       {project?.working ? <WorkingNow project={project} /> : null}
       <SummaryCard projectId={projectId} project={project} />
+      <RepositoryElsewhere projectId={projectId} project={project} />
       <ResearchReads projectId={projectId} project={project} />
       <DecisionsSection projectId={projectId} />
       <QueueSection projectId={projectId} />
@@ -258,6 +259,103 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
         </section>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * d1109-onerepo-link (ADR 0117, OR-07): the Overview's line about the repository, the daemon's
+ * words (`ProjectCard.repositoryElsewhere`). The repository is also a Forerunner project that is
+ * not on this computer: 'o/kite is also the Forerunner project "Kite club", which is not on this
+ * computer.' with Take it over and its consequence line, unless another GitHub account worked
+ * on it within 14 days (the line says when, and there is no button). Take it over runs
+ * `repo.take_over`; the press is the yes, and Changes has its Undo. A project worked on together
+ * with another Forerunner says so, with Details. No card in the Inbox: visible, not blocking.
+ */
+function RepositoryElsewhere({ projectId, project }: { projectId: string; project?: ProjectCard }) {
+  const client = useClient();
+  const store = useUiStore();
+  const [details, setDetails] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const line = project?.repositoryElsewhere ?? null;
+  if (!line && !done) return null;
+  const takeOver = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await client.executeCommands({
+        commands: [{ name: "repo.take_over", params: { project: projectId } }],
+        wordsUsed: "Take it over (Overview)",
+        source: "ui",
+        projectId,
+        confirm: "tap",
+      });
+      if (r.status === "done" || r.status === "partial") {
+        setDone(r.sentence ?? null);
+        await refreshProjects(client, store).catch(() => undefined);
+      } else setError(r.reason ?? "The repository was not taken over.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="space-y-1 text-sm" data-testid="repository-elsewhere">
+      {line ? (
+        <p className="flex flex-wrap items-center gap-2">
+          <span data-testid="repository-elsewhere-line">{line.text}</span>
+          {line.kind === "elsewhere" && line.canTakeOver ? (
+            <Button
+              variant="secondary"
+              onClick={() => void takeOver()}
+              disabled={busy}
+              data-testid="repository-take-over"
+            >
+              {busy ? "Taking over…" : "Take it over"}
+            </Button>
+          ) : null}
+          {line.details ? (
+            <button
+              type="button"
+              className="text-blue-700 hover:underline dark:text-blue-300"
+              onClick={() => setDetails((d) => !d)}
+              aria-expanded={details}
+              data-testid="repository-elsewhere-details-toggle"
+            >
+              Details
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+      {line?.takeOverLine && line.canTakeOver ? (
+        <p
+          className="text-xs text-neutral-600 dark:text-neutral-400"
+          data-testid="repository-take-over-line"
+        >
+          {line.takeOverLine}
+        </p>
+      ) : null}
+      {details && line?.details ? (
+        <p
+          className="text-xs text-neutral-600 dark:text-neutral-400"
+          data-testid="repository-elsewhere-details"
+        >
+          {line.details}
+        </p>
+      ) : null}
+      {done ? (
+        <p data-testid="repository-took-over">
+          {done}{" "}
+          <Link to="/changes" className="text-blue-700 hover:underline dark:text-blue-300">
+            Changes
+          </Link>{" "}
+          has its Undo.
+        </p>
+      ) : null}
+      {error ? <ErrorBanner message={error} /> : null}
+    </section>
   );
 }
 

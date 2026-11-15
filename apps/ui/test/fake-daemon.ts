@@ -87,6 +87,42 @@ import {
 } from "@forerunner/runtime/daemon/audit-export";
 import { cancelWorkLine } from "@forerunner/runtime/daemon/cancel-words";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
+import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
+import {
+  type Elsewhere,
+  elsewhereSentence,
+  inUseSentence,
+  nothingToTakeOverSentence,
+  otherHostSentence,
+  takeOverAsk,
+  takeOverDetails,
+  takeOverLine,
+  togetherLine,
+  tookOverSentence,
+} from "@forerunner/runtime/sources/repository-words";
+
+/**
+ * A link as the fake compares it (the daemon's `identityOf` reads folders from the disk, which
+ * a page's test cannot): a GitHub repository in any spelling as `o/n`, another host by its
+ * name, an absolute path as it is.
+ */
+function fakeLinkOf(
+  entry: string,
+): { kind: "repo"; locator: string } | { kind: "folder"; path: string } | { host: string } | null {
+  const t = entry.trim().replace(/\/+$/, "");
+  if (t.startsWith("/") || /^[A-Za-z]:[\\/]/.test(t)) return { kind: "folder", path: t };
+  const url =
+    /^(?:https?:\/\/|ssh:\/\/git@|git@)?(?:www\.)?([^/:]+\.[^/:]+)[/:]([^/]+)\/([^/]+)/i.exec(t);
+  if (url?.[1] && url[2] && url[3]) {
+    if (url[1].toLowerCase() !== "github.com") return { host: url[1].toLowerCase() };
+    return { kind: "repo", locator: `${url[2]}/${url[3].replace(/\.git$/, "")}`.toLowerCase() };
+  }
+  const plain = /^([\w.-]+)\/([\w.-]+)$/.exec(t);
+  if (plain?.[1] && plain[2])
+    return { kind: "repo", locator: `${plain[1]}/${plain[2].replace(/\.git$/, "")}`.toLowerCase() };
+  return null;
+}
+
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import {
@@ -512,6 +548,25 @@ export interface FakeDaemonState {
    * intake (`none`). `POST /projects/:id/intake/retry` moves a failed one to `drafting`.
    */
   intake: Record<string, IntakeStatusView>;
+  /**
+   * d1109-onerepo-link: what a repository itself says (its marker and marked pull requests),
+   * by `owner/name` in lower case, as the daemon's `readRepository` and `verdictOf` read it: a
+   * project that is not on this computer, with its offer. Absent: nothing (a free repository).
+   */
+  repositoryElsewhere: Record<string, Elsewhere>;
+  /**
+   * OR-07: per project id, the Overview's line about its repository, as the daemon's
+   * `RepositoryUse.overviewOf` gives it (`ProjectCard.repositoryElsewhere`). `repo.take_over`
+   * removes it (its Undo puts it back); a test sets it.
+   */
+  repositoryOverview: Record<string, NonNullable<ProjectCard["repositoryElsewhere"]>>;
+  /**
+   * OR-07: why a `repo.take_over` row's Undo would not work now, as the daemon's
+   * `RepositoryUse.takeOverUndoBlocked` says it (`TAKE_OVER_UNDO_OPEN`, `_MERGED`,
+   * `_UNREADABLE`): its docs pull request is open or merged, or GitHub did not answer. Null: the
+   * Undo works. A test sets it.
+   */
+  takeOverUndoBlocked: string | null;
   /**
    * R-startcred (leftovers7-web): per project, the wait every ready task's credential meets now
    * (as `RuntimeApp.billing.waits.now`): the Start check says it in one sentence
@@ -1116,6 +1171,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     events: clone(EVENTS),
     requests: clone(REQUESTS),
     intake: {},
+    repositoryElsewhere: {},
+    repositoryOverview: {},
+    takeOverUndoBlocked: null,
     credentialWaitNow: {},
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
@@ -1320,6 +1378,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.events = clone(EVENTS);
     state.requests = clone(REQUESTS);
     state.intake = {};
+    state.repositoryElsewhere = {};
+    state.repositoryOverview = {};
+    state.takeOverUndoBlocked = null;
     state.messages = clone(MESSAGES);
     state.killActive = false;
     state.calls = [];
@@ -1678,6 +1739,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       repository,
       // 'sites': as the daemon's card, from "Web pages research may read".
       researchReads: researchReadsLine(webAccessFake(p.id)),
+      // OR-07: the repository is also a project that is not on this computer (or together).
+      repositoryElsewhere: state.repositoryOverview[p.id] ?? null,
     };
   };
   app.get("/projects", (c) => {
@@ -1687,12 +1750,74 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/projects", async (c) => {
     const parsed = CreateProjectBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    // As the daemon (d1109-onerepo-link, `RepositoryUse.check`): the link first, before
+    // anything is written: a URL on another host, a project here that uses it, the repository's
+    // own project that is not on this computer (the offer, Take it over, Work together).
+    const refuse = (message: string, details: Record<string, unknown>) =>
+      c.json({ code: "conflict", message, details }, 409);
+    let togetherId: string | null = null;
+    let togetherName: string | null = null;
+    for (const entry of parsed.data.repos ?? []) {
+      const r = fakeLinkOf(entry);
+      if (!r) continue;
+      if ("host" in r) return refuse(otherHostSentence(r.host), { cause: "other_host" });
+      for (const p of state.projects) {
+        if (p.status === "archived") continue;
+        for (const theirs of p.repos ?? []) {
+          const t = fakeLinkOf(theirs);
+          if (!t || "host" in t) continue;
+          const same =
+            r.kind === "repo"
+              ? t.kind === "repo" && t.locator === r.locator
+              : t.kind === "folder" && (r.path === t.path || r.path.startsWith(`${t.path}/`));
+          if (!same) continue;
+          return refuse(
+            inUseSentence(
+              { kind: r.kind, locator: r.kind === "repo" ? r.locator : r.path },
+              p.name,
+            ),
+            { cause: "repository_in_use", projectId: p.id, projectName: p.name },
+          );
+        }
+      }
+      const repo = r.kind === "repo" ? r : null;
+      const e = repo ? state.repositoryElsewhere[repo.locator] : undefined;
+      if (repo && e) {
+        const together = parsed.data.together?.project;
+        const takeOver = parsed.data.takeOver?.projects;
+        if (together && e.canWorkTogether && together === e.ids[0]) {
+          togetherId = together;
+          togetherName = e.name;
+          continue;
+        }
+        if (
+          !together &&
+          takeOver &&
+          e.canTakeOver &&
+          [...takeOver].sort().join() === [...e.ids].sort().join()
+        )
+          continue;
+        return refuse(elsewhereSentence(repo.locator, e, "UTC"), {
+          cause: "repository_used_elsewhere",
+          projects: e.ids,
+          ...(e.name ? { projectName: e.name } : {}),
+          canWorkTogether: e.canWorkTogether,
+          canTakeOver: e.canTakeOver,
+          ...(e.canWorkTogether
+            ? { togetherLine: togetherLine(e, !!parsed.data.brief?.trim()) }
+            : {}),
+          ...(e.canTakeOver
+            ? { takeOverLine: takeOverLine(e), takeOverDetails: takeOverDetails(e) }
+            : {}),
+        });
+      }
+    }
     // As the daemon: a name another project has is refused in a sentence, nothing written.
     const clash = state.projects.find((p) => p.name === parsed.data.name);
     if (clash) return errorBody(c, 409, "validation", duplicateProjectSentence(clash.name));
     const project: ProjectCard = {
-      id: nextId("proj"),
-      name: parsed.data.name,
+      id: togetherId ?? nextId("proj"),
+      name: togetherName ?? parsed.data.name,
       goal: parsed.data.goal,
       stage: "idea",
       status: "active",
@@ -1779,6 +1904,112 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       docs: null,
       error: null,
     };
+  // As the daemon (`POST /projects/:id/intake`, d1109-onerepo-link's Add to it): a new brief
+  // for a project that exists files its plan card in the Inbox (202); while one waits, the
+  // answer names the project and what to do, never an id. A project with tasks, or one worked
+  // on together, gets the plan-only form (OR-08): its card says `plan_only` and names no place
+  // documents go, and the answer's `docsTarget` is null (the review of the fix: the card read
+  // "the docs go to the project's repository as a pull request" for a plan that writes none).
+  // The options are the daemon's `INTAKE_OPTIONS`; the plan is one task from the brief.
+  app.post("/projects/:id/intake", async (c) => {
+    const id = c.req.param("id");
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return errorBody(c, 404, "not_found", "no such project");
+    const body = (await c.req.json().catch(() => ({}))) as { brief?: string };
+    const key = `intake:${id}`;
+    const open = state.requests.find(
+      (r) =>
+        r.status === "open" &&
+        (r.changeCard as { key?: unknown } | null)?.key === key &&
+        r.projectId === id,
+    );
+    if (open && body.brief !== undefined)
+      return c.json(
+        {
+          code: "conflict",
+          message: openPlanSentence(project.name),
+          details: { requestId: open.id, reason: "proposal_open", cause: "claim_conflict" },
+        },
+        409,
+      );
+    const planOnly =
+      state.tasks.some((t) => t.projectId === id) ||
+      state.repositoryOverview[id]?.kind === "together";
+    const docsTarget = planOnly
+      ? null
+      : (project.repos ?? []).length > 0
+        ? ("repository" as const)
+        : ("workspace" as const);
+    const title = (body.brief ?? project.goal).trim().split("\n")[0]?.slice(0, 80) || project.name;
+    const requestId = open?.id ?? nextId("req");
+    if (!open)
+      state.requests.unshift({
+        id: requestId,
+        projectId: id,
+        projectName: project.name,
+        taskId: null,
+        taskTitle: null,
+        sessionId: null,
+        kind: "approval",
+        why: planOnly
+          ? `Intake for "${project.name}": 1 milestone(s), 1 new task(s) and a first-session plan of 1 task(s). Approve to add them to the project; nothing is written until then.`
+          : `Intake for "${project.name}": 1 milestone(s), 1 task(s), 0 doc(s) and a first-session plan of 1 task(s). Approve to write the plan and the docs; nothing is written until then.`,
+        steps: [],
+        options: ["Approve and start", "Change the plan", "Reject"],
+        blocking: true,
+        risk: "medium",
+        changeCard: {
+          key,
+          project_id: id,
+          proposal: {
+            plan: {
+              reason: "the brief",
+              milestones: [
+                {
+                  name: "From the brief",
+                  successCriteria: [],
+                  targetDate: null,
+                  tasks: [{ key: "brief", title, priority: 5, dependsOn: [] }],
+                },
+              ],
+              tasks: [],
+            },
+            docs: {},
+            firstSession: { summary: title, items: [{ key: "brief", estimateUsdMicro: 300_000 }] },
+          },
+          cost_usd_micro: 0,
+          ...(planOnly ? { plan_only: true } : { docs_target: docsTarget }),
+          applied_at: null,
+        },
+        status: "open",
+        answer: null,
+        createdAt: new Date().toISOString(),
+        version: 1,
+      } as HumanRequestView);
+    state.intake[id] = {
+      projectId: id,
+      state: "pending",
+      requestId,
+      outcome: null,
+      appliedAt: null,
+      docs: null,
+      error: null,
+    };
+    emit("project.changed", { id });
+    return c.json(
+      {
+        pending: true,
+        projectId: id,
+        requestId,
+        reused: !!open,
+        summary: { milestones: 1, tasks: 1, docs: 0, firstSessionTasks: 1 },
+        estimateUsdMicro: 300_000,
+        costUsdMicro: 0,
+        docsTarget,
+      },
+      202,
+    );
+  });
   app.get("/projects/:id/intake", (c) => {
     const id = c.req.param("id");
     if (!state.projects.some((p) => p.id === id))
@@ -5203,6 +5434,46 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         },
       };
     }
+    if (name === "repo.take_over") {
+      // OR-07, as the daemon's `repo.take_over`: the Overview's Take it over (medium: the press
+      // is the yes); the line goes, and the Undo puts it back.
+      const project = projectByRef(projectRef);
+      if (!project) return refuse("no such project", "not_found");
+      const line = state.repositoryOverview[project.id];
+      const locator = project.repos?.[0] ?? "the repository";
+      if (line?.kind !== "elsewhere") return refuse(nothingToTakeOverSentence(locator));
+      if (!line.canTakeOver)
+        return refuse(`${line.text.replace(/\.$/, "")}, so it cannot be taken over now.`);
+      const shown = /"([^"]+)"/.exec(line.text)?.[1] ?? null;
+      const e = { ids: ["elsewhere"], name: shown };
+      return {
+        name,
+        params,
+        risk: "medium",
+        card: {
+          ...card(
+            {
+              command: "repo.take_over",
+              what: `the repository ${locator}`,
+              oldValue: shown ? `"${shown}"` : "another Forerunner project",
+              newValue: `"${project.name}"`,
+              scope: "project",
+              sentence: tookOverSentence(locator, e),
+              projectId: project.id,
+              projectName: project.name,
+              usesActiveProject: projectRef === undefined,
+            },
+            "medium",
+          ),
+          ask: takeOverAsk(locator, e),
+        },
+        apply: () => {
+          delete state.repositoryOverview[project.id];
+          emit("project.changed", { id: project.id });
+          return { before: { line }, after: { took_over: { name: shown ?? "" } } };
+        },
+      };
+    }
     if (name === "repo.create") {
       // As the daemon's `repo.create` (U-037): a project without a repository, the name from
       // the project's, under the token's account (the fake host's alice) unless an owner is
@@ -6113,6 +6384,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const leftRemoved = typeof left === "string" ? state.removedProjects[left] : undefined;
     if (name === "project.switch" && leftRemoved)
       return `the project ${leftRemoved.was} was removed`;
+    // OR-07: as `RepositoryUse.takeOverUndoBlocked` (its docs pull request open or merged).
+    if (name === "repo.take_over") return state.takeOverUndoBlocked;
     const after = (ch.after ?? {}) as {
       task_id?: string;
       status?: string;
@@ -6309,6 +6582,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const back = typeof before?.active_project === "string" ? before.active_project : null;
       // Another project made active since stays active.
       if (project.active) for (const p of state.projects) p.active = p.id === back;
+      emit("project.changed", { id: project.id });
+    }
+    // OR-07: repo.take_over's Undo: the Overview's line comes back.
+    if (first?.name === "repo.take_over" && project && before?.line) {
+      state.repositoryOverview[project.id] = before.line as NonNullable<
+        ProjectCard["repositoryElsewhere"]
+      >;
       emit("project.changed", { id: project.id });
     }
     if (first?.name === "autonomy.set" && project && typeof before?.autonomyLevel === "number") {

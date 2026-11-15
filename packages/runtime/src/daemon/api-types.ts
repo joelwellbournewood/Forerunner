@@ -224,6 +224,24 @@ export const ProjectCard = z.object({
    * card the state service serves.
    */
   researchReads: z.string().optional(),
+  /**
+   * d1109-onerepo-link (ADR 0117, OR-07): the Overview's line about the repository. `elsewhere`:
+   * this computer's copy of the repository names a Forerunner project that is not on this
+   * computer ('o/kite is also the Forerunner project "Kite club", which is not on this
+   * computer.'), with Take it over (`repo.take_over`) unless another GitHub account worked on it
+   * within 14 days; `together`: worked on together with another Forerunner (D9). Null without a
+   * line; absent on a card the state service serves.
+   */
+  repositoryElsewhere: z
+    .object({
+      kind: z.enum(["elsewhere", "together"]),
+      text: z.string(),
+      canTakeOver: z.boolean(),
+      takeOverLine: z.string().nullable(),
+      details: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 export type ProjectCard = z.infer<typeof ProjectCard>;
 
@@ -1404,6 +1422,17 @@ export const CreateProjectBody = z.object({
    * it, and Changes showed that row ("Switched the active project to …") for the click.
    */
   switch: z.boolean().optional(),
+  /**
+   * d1109-onerepo-link (ADR 0117): the offer's Take it over: the project ids the refusal named
+   * (`details.projects`). Refused again unless they are what the repository names now and no
+   * other GitHub account worked on them within 14 days.
+   */
+  takeOver: z.object({ projects: z.array(z.string().min(1)).min(1).max(20) }).optional(),
+  /**
+   * d1109-onerepo-link (D9): the offer's Work together: the id the refusal named. The id is read
+   * again from the repository at the press; this only has to match it.
+   */
+  together: z.object({ project: z.string().min(1).max(64) }).optional(),
 });
 
 /** `POST /projects/:id/intake`: an optional brief in place of the one kept at creation. */
@@ -1428,8 +1457,12 @@ export const IntakeProposalView = z.object({
   estimateUsdMicro: z.number().int(),
   /** What the one planning call cost; 0 when reused. */
   costUsdMicro: z.number().int(),
-  /** Where the doc set goes on approval. */
-  docsTarget: z.enum(["repository", "workspace"]),
+  /**
+   * Where the doc set goes on approval; null for the plan-only form (d1109-onerepo-link,
+   * OR-08: a new brief for a project with work, or any plan of a project worked on together),
+   * whose approval writes no document.
+   */
+  docsTarget: z.enum(["repository", "workspace"]).nullable(),
 });
 export type IntakeProposalView = z.infer<typeof IntakeProposalView>;
 

@@ -10,7 +10,9 @@ import type { CommandContext, CommandDef, Risk } from "./types.ts";
  * their zod schema on every call, persisted into the `command` table (idempotent) and turned
  * into runtime ToolSpecs so the conversation agent calls the same commands as the buttons.
  */
-const NAME_RE = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/;
+// Dotted lower-case words; a word may join two with an underscore ("repo.take_over",
+// d1109-onerepo-link), as the tool name already does for the dots ("repo_take_over").
+const NAME_RE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*(\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*)+$/;
 
 export class CommandRegistry {
   private readonly defs = new Map<string, CommandDef<unknown>>();
@@ -201,11 +203,19 @@ export function toToolSpecs(registry: CommandRegistry, binding: ToolBinding): To
               content: `Needs confirmation. The person is asked: ${
                 out.readback ?? (out.card ? renderChangeCard(out.card, { voice: true }) : "")
               }`.trim(),
+              // d1109-onerepo-link: a read-back quoting a repository's text goes as data.
+              ...(out.card?.untrusted ? { untrusted: out.card.untrusted } : {}),
             };
           case "cancelled":
             return { content: "Cancelled; nothing was changed." };
           default:
-            return { content: `Refused: ${out.reason ?? "not allowed"}`, isError: true };
+            return {
+              content: `Refused: ${out.reason ?? "not allowed"}`,
+              isError: true,
+              // d1109-onerepo-link: a refusal that quotes a repository's text (a marker's name)
+              // reaches the model inside the data envelope, scanned (ADR 0114).
+              ...(out.untrusted ? { untrusted: out.untrusted } : {}),
+            };
         }
       },
     };

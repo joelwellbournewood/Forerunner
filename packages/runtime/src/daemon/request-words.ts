@@ -530,10 +530,12 @@ function intakeCard(
         confirm: null,
         input: null,
         // L-20: on a repository the docs go in as a pull request first (about 7 s); the card
-        // says what it is doing meanwhile instead of greying its buttons in silence.
-        working: ctx.projectRepository
-          ? "Writing the plan and its docs pull request…"
-          : "Writing the plan…",
+        // says what it is doing meanwhile instead of greying its buttons in silence. A plan-only
+        // card (d1109-onerepo-link, OR-08) writes no document, so no docs pull request is named.
+        working:
+          ctx.projectRepository && card.plan_only !== true
+            ? "Writing the plan and its docs pull request…"
+            : "Writing the plan…",
       });
     else if (/^(change the plan|change)$/.test(w))
       choices.push({
@@ -762,7 +764,7 @@ function shownItems(items: readonly string[]): string[] {
 function firstSentences(text: string): string {
   const t = withoutMarkdown(text);
   const parts = t
-    .split(/(?<=[.!?])\s+(?=["'(\[]?[A-Z0-9])/)
+    .split(/(?<=[.!?])\s+(?=["'([]?[A-Z0-9])/)
     .map((x) => x.trim())
     .filter(Boolean);
   let out = "";

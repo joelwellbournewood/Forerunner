@@ -127,3 +127,22 @@ beside the doc set, on the scaffold's branch and pull request for a repository a
 workspace without one, and never over another project's marker (ADR 0058, amendment of
 2026-10-25, point 3). The scan keeps reading it on the default branch, so a repository shows
 as an existing install once that pull request is merged.
+
+## Amendment (2026-11-15, d1109-onerepo-link: one repository, one project, ADR 0117)
+
+The duplicate check of point 4 compared each source's own key (a raw `owner/name`, a folder's
+path as given), so `https://github.com/O/site.git` and `o/site` were two sources, and a folder
+inside a linked folder was a new one. A candidate is now compared through ADR 0117's one
+identity of a link (`identityOf`, `RepositoryIndex`): every spelling of a GitHub repository is
+one key, a folder is its real path with its git root, worktree and origin (read as files), and
+a folder inside a linked one is covered.
+
+- A candidate another project here uses is `duplicate` with that project's name and no id:
+  'o/site is already the project "Site".' (for a folder, 'This folder is already the project
+  "Site".'); the Sources list says 'Already the project "Site"' with Open, and the counts line
+  'N already a project'.
+- A candidate whose marker (or open pull requests' marks) names a Forerunner project that is not
+  on this computer is accepted only as that project worked on together (`together`) or taken
+  over under the 14-day rule (`takeOver`), as New project does; accept without either answers
+  409 with the offer.
+- The accept route answers every link refusal as 409 `conflict` with its `details.cause`.

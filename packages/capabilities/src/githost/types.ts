@@ -20,6 +20,12 @@ export interface RepoInfo extends RepoRef {
    * Forerunner merges only with a merge commit). Absent when the host did not say.
    */
   allowMergeCommit?: boolean;
+  /**
+   * GitHub's numeric repository id (d1109-onerepo-link, ADR 0117): the same after a rename or a
+   * transfer, so two names of one repository are told apart from two repositories. Absent when
+   * the host did not say.
+   */
+  id?: number;
 }
 
 /** How a pull request is merged; Forerunner itself always uses "merge" (ADR 0111). */
@@ -38,6 +44,13 @@ export interface PullRequestInfo {
   draft: boolean;
   /** A merged pull request's merge commit on the base (GitHub's `merge_commit_sha`); else null. */
   mergeCommitSha?: string | null;
+  /**
+   * When the pull request was last updated (GitHub's `updated_at`) and the login of the account
+   * that opened it (`user.login`): whether a Forerunner project that is not on this computer is
+   * still worked on (d1109-onerepo-link, ADR 0117). Absent when the host did not say.
+   */
+  updatedAt?: string | null;
+  authorLogin?: string | null;
 }
 
 /**
@@ -286,9 +299,14 @@ export interface GitHost {
    * host watcher reads the default branch's head once per poll).
    */
   getBranchHead(repo: RepoRef, branch: string): Promise<string | null>;
+  /**
+   * One page of the repository's pull requests (up to 100). `sort: "updated"` lists the most
+   * recently updated first (GitHub's `sort=updated&direction=desc`), so a project's latest
+   * activity is on the first page (d1109-onerepo-link).
+   */
   listPullRequests(
     repo: RepoRef,
-    opts?: { state?: "open" | "closed" | "all"; head?: string },
+    opts?: { state?: "open" | "closed" | "all"; head?: string; sort?: "updated" },
   ): Promise<PullRequestInfo[]>;
   /**
    * Merge the pull request. `sha` pins the head the caller checked (the reviewed commit, the
