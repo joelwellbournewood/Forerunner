@@ -1,6 +1,11 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import {
+  TAKE_OVER_UNDO_MERGED,
+  TAKE_OVER_UNDO_OPEN,
+  TAKE_OVER_UNDO_UNREADABLE,
+} from "../../../packages/runtime/src/sources/repository-words.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 /**
@@ -297,5 +302,156 @@ describe("d1109-onerepo-link, run C: the Overview's line about the repository (O
       "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.",
     );
     delete harness.daemon.state.repositoryOverview.proj_atlas;
+  });
+});
+
+/**
+ * Review of fix/d1109-onerepo-link (bench, 2026-11-15): the plan card of Add to it, and every
+ * plan of a project worked on together, read "About CHF 0.31 for the 5 tasks; the docs go to the
+ * project's repository as a pull request." although its approval writes no document (design
+ * section 5 rule 9). The take-over's Undo refusal read "Cannot be undone now: Its pull request on
+ * GitHub already names this project: close it there first.." on Changes.
+ */
+describe("d1109-onerepo-link, run C: a plan-only plan promises no documents; the take-over's Undo refusal on Changes (review)", () => {
+  const planCard = (
+    id: string,
+    projectId: string,
+    projectName: string,
+    extra: Record<string, unknown>,
+  ) => ({
+    id,
+    projectId,
+    projectName,
+    taskId: null,
+    taskTitle: null,
+    sessionId: null,
+    kind: "approval",
+    why: `Plan for "${projectName}"`,
+    steps: [],
+    options: ["Approve and start", "Change the plan", "Reject"],
+    blocking: true,
+    risk: "medium",
+    changeCard: {
+      key: `intake:${projectId}`,
+      project_id: projectId,
+      applied_at: null,
+      ...extra,
+      proposal: {
+        plan: {
+          reason: "the brief",
+          milestones: [],
+          tasks: [
+            { key: "a", title: "Add the shop page", priority: 5 },
+            { key: "b", title: "Link the shop", priority: 4, dependsOn: ["a"] },
+          ],
+        },
+        docs: {},
+        firstSession: {
+          summary: "The shop.",
+          items: [
+            { key: "a", estimateUsdMicro: 400_000 },
+            { key: "b", estimateUsdMicro: 250_000 },
+          ],
+        },
+      },
+    },
+    status: "open",
+    answer: null,
+    createdAt: "2026-11-15T09:00:00.000Z",
+    version: 1,
+  });
+
+  it("a plan-only card says its total and nothing about documents, even beside a repository target (the daemon's card before the fix); a first plan to a repository keeps its docs clause", async () => {
+    const harness = createHarness();
+    harness.daemon.state.requests.unshift(
+      planCard("req_only", "proj_atlas", "Atlas", {
+        docs_target: "repository",
+        plan_only: true,
+      }) as never,
+      planCard("req_first", "proj_beacon", "Beacon", { docs_target: "repository" }) as never,
+    );
+    renderApp("/inbox", harness);
+    await screen.findAllByTestId("intake-card");
+    const totalOf = (requestId: string) => {
+      const request = screen
+        .getAllByTestId("request")
+        .find((r) => r.getAttribute("data-request-id") === requestId) as HTMLElement;
+      return within(request).getByTestId("intake-total");
+    };
+    expect(totalOf("req_only")).toHaveTextContent(/^About CHF 0\.52 for the 2 tasks\.$/);
+    expect(totalOf("req_first")).toHaveTextContent(
+      /^About CHF 0\.52 for the 2 tasks; the docs go to the project's repository as a pull request\.$/,
+    );
+  });
+
+  it("Add to it on a project with tasks: Atlas's plan card in the Inbox lists the new work and says nothing about documents", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.projects
+      .filter((p) => p.id === "proj_atlas")
+      .forEach((p) => {
+        p.repos = ["org/atlas"];
+      });
+    expect(harness.daemon.state.tasks.some((t) => t.projectId === "proj_atlas")).toBe(true);
+    const home = renderApp("/", harness);
+    await screen.findAllByTestId("project-card");
+    await user.click(screen.getByTestId("new-project"));
+    const dialog = await screen.findByTestId("new-project-dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "Shop");
+    await user.type(within(dialog).getByLabelText(/Brief/), "Add a shop page.");
+    await user.type(within(dialog).getByLabelText(/Repository link/), "org/atlas");
+    await user.click(within(dialog).getByTestId("create-project"));
+    await user.click(await within(dialog).findByTestId("offer-add"));
+    expect(await screen.findByTestId("project-header")).toHaveTextContent("Atlas");
+    home.unmount();
+    renderApp("/inbox", harness);
+    const card = (await screen.findAllByTestId("intake-card"))[0] as HTMLElement;
+    expect(
+      within(card)
+        .getAllByTestId("intake-task")
+        .map((t) => t.textContent),
+    ).toEqual([expect.stringMatching(/^Add a shop page\. · the agent chooses who · about CHF /)]);
+    expect(within(card).getByTestId("intake-total")).not.toHaveTextContent(/docs|pull request/);
+    const filed = harness.daemon.state.requests[0]?.changeCard as { plan_only?: unknown } | null;
+    expect(filed?.plan_only).toBe(true);
+  });
+
+  it("the take-over's Undo refusal reads as one sentence on Changes, for each of its three reasons", async () => {
+    for (const [reason, shown] of [
+      [
+        TAKE_OVER_UNDO_OPEN,
+        "Cannot be undone now: its pull request on GitHub already names this project. Close it there first.",
+      ],
+      [
+        TAKE_OVER_UNDO_MERGED,
+        "Cannot be undone now: the repository already names this project on GitHub.",
+      ],
+      [
+        TAKE_OVER_UNDO_UNREADABLE,
+        "Cannot be undone now: GitHub did not answer, so the repository cannot be checked. Try again.",
+      ],
+    ] as const) {
+      const harness = createHarness();
+      harness.daemon.state.takeOverUndoBlocked = reason;
+      harness.daemon.state.changes.unshift({
+        ...(harness.daemon.state.changes[0] as (typeof harness.daemon.state.changes)[number]),
+        id: "chg_took",
+        source: "ui",
+        wordsUsed: "Take it over",
+        commands: [{ name: "repo.take_over", params: { project: "proj_atlas" } }],
+        sentence: 'Took over org/atlas from "Kite club".',
+        undoState: "undoable",
+        expiresAt: null,
+        before: { line: null },
+        after: { took_over: { name: "Kite club" } },
+      });
+      const { unmount } = renderApp("/changes", harness);
+      const row = (await screen.findAllByTestId("change")).find(
+        (r) => r.getAttribute("data-change-id") === "chg_took",
+      ) as HTMLElement;
+      expect(within(row).queryByTestId("change-undo")).toBeNull();
+      expect(within(row).getByTestId("change-undo-blocked").textContent).toBe(shown);
+      unmount();
+    }
   });
 });

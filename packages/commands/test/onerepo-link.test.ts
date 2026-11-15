@@ -98,3 +98,63 @@ describe("d1109-onerepo-link, run C: project.create on a link another project us
     await w.store.close();
   });
 });
+
+/**
+ * Review of fix/d1109-onerepo-link (bench, 2026-11-15): after Work together the Changes row on
+ * the "Kite club" project read "Created the project Kites and made it the active project.":
+ * "Kites" was the name typed in the dialog, but the project was made as the repository's marker
+ * names it. The sentence (and its Undo's) names the project that was made; that name is the
+ * repository's text, so the outcome carries the untrusted mark.
+ */
+describe("d1109-onerepo-link, run C: project.create's sentence names the project that was made (review)", () => {
+  it("a creation port that makes the project under another name (Work together: the marker's name) says that name in the change row, marked as repository text; its Undo names no other project", async () => {
+    const w = await world();
+    w.ports.repositoryUse = { check: async () => undefined };
+    let made: string | null = null;
+    // As the dialog's Work together: the daemon's creation (`createProjectRecord`) is the port.
+    w.ports.createProject = async (input) => {
+      const row = await w.store.project.insert({
+        name: "Kite club",
+        goal: input.goal,
+        repos: input.repos,
+        settings: { together: { name: "Kite club", at: "2026-03-05T08:00:00.000Z" } },
+      });
+      made = row.id;
+      return row;
+    };
+    const r = await w.executor.execute({
+      name: "project.create",
+      params: { name: "Kites", goal: "Kites", repos: ["o/kite"], switch: true },
+      ctx: w.ctx({ source: "ui", wordsUsed: "New project: Kites" }),
+    });
+    expect(r.status).toBe("done");
+    const done = r as Extract<ExecuteResult, { status: "done" }>;
+    expect(done.sentence).toBe(
+      "Created the project Kite club and made it the active project. Undo.",
+    );
+    expect((await w.store.changeLog.mustGet(done.changeLogId)).sentence).toBe(
+      "Created the project Kite club and made it the active project. Undo.",
+    );
+    expect(done.untrusted).toEqual({ source: "repo_file", origin: "repository:o/kite" });
+    // The Undo names no other project: in this process it says what the card changed back; after
+    // a restart, the row's sentence (the executor's `Undone: <sentence>`), now the made name.
+    const undone = await w.executor.undo(done.changeLogId, w.ctx({ source: "ui" }));
+    expect(undone.status).toBe("done");
+    expect((undone as Extract<ExecuteResult, { status: "done" }>).sentence).not.toContain("Kites");
+    expect((await w.store.project.mustGet(String(made))).status).toBe("archived");
+    await w.store.close();
+  });
+
+  it("the name typed is the name made: the sentence as before, with no untrusted mark", async () => {
+    const w = await world();
+    const r = await w.executor.execute({
+      name: "project.create",
+      params: { name: "Garden", goal: "A garden", repos: [] },
+      ctx: w.ctx({ source: "ui" }),
+    });
+    const done = r as Extract<ExecuteResult, { status: "done" }>;
+    expect(done.sentence).toBe("Created the project Garden and made it the active project. Undo.");
+    expect(done.untrusted).toBeUndefined();
+    await w.store.close();
+  });
+});

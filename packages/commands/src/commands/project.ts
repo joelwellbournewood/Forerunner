@@ -2,7 +2,7 @@ import { errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import type { JsonValue, ProjectRow, StateStore } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
-import type { CommandContext, CommandDef } from "../types.ts";
+import type { CommandContext, CommandDef, CommandOutcome } from "../types.ts";
 import { asObject, authorOf, patchHumanPrefs, resolveProject } from "./shared.ts";
 
 /**
@@ -222,6 +222,27 @@ function createSentence(p: ProjectCreateParams): string {
 }
 
 /**
+ * The run's sentence names the project that was made (review of fix/d1109-onerepo-link: after
+ * Work together the Changes row on "Kite club" read "Created the project Kites": the name typed,
+ * not the one the daemon's creation gave it from the repository's marker, or a removed row's
+ * own name when Work together brought it back). A name other than the one asked for came from
+ * the repository, so the outcome carries the untrusted mark (d1109-chat-guard): the chat model
+ * gets the sentence as data.
+ */
+function createdOutcomeWords(
+  params: ProjectCreateParams,
+  project: ProjectRow,
+): Pick<CommandOutcome, "sentence" | "untrusted"> {
+  const sentence = createSentence({ ...params, name: project.name });
+  if (project.name === params.name) return { sentence };
+  const repo = project.repos[0] ?? params.repos[0];
+  return {
+    sentence,
+    untrusted: { source: "repo_file", ...(repo ? { origin: `repository:${repo}` } : {}) },
+  };
+}
+
+/**
  * project.create's definition, as the chat's model receives it (d1109-onerepo-link, ADR 0117):
  * one repository or folder is one project, so a link another project uses is refused with that
  * project's name, and the model offers it instead of a second project.
@@ -316,7 +337,7 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
         active_project: params.switch ? project.id : previousActive,
         project_history: nextHistory,
       },
-      sentence: createSentence(params),
+      ...createdOutcomeWords(params, project),
       projectId: project.id,
       activeProjectId: params.switch ? project.id : undefined,
     };

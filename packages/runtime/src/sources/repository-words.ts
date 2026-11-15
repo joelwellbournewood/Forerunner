@@ -316,15 +316,22 @@ function projectFromWords(e: Pick<Elsewhere, "ids" | "name">): string {
   return e.name ? `"${e.name}"` : "another Forerunner project";
 }
 
+/*
+ * OR-07: why repo.take_over's Undo cannot be done now, as every command's `undoBlocked` says it:
+ * a fragment the screens complete ("Cannot be undone now: …." on Changes, "Not undone: …." after
+ * a refused press; the chat's answer the same), so it starts in lower case (GitHub keeps its
+ * capital) and has no final period. The review of the fix saw the full sentences these were
+ * read on Changes as "Cannot be undone now: Its pull request on GitHub already names this
+ * project: close it there first..".
+ */
 /** OR-07: repo.take_over's Undo while its docs pull request is open. */
 export const TAKE_OVER_UNDO_OPEN =
-  "Its pull request on GitHub already names this project: close it there first.";
+  "its pull request on GitHub already names this project. Close it there first";
 /** OR-07: repo.take_over's Undo once that pull request merged. */
-export const TAKE_OVER_UNDO_MERGED =
-  "The repository already names this project on GitHub, so this cannot be undone here.";
+export const TAKE_OVER_UNDO_MERGED = "the repository already names this project on GitHub";
 /** OR-07: Undo cannot see GitHub, so it cannot tell whether the repository names this project. */
 export const TAKE_OVER_UNDO_UNREADABLE =
-  "GitHub did not answer, so whether the repository names this project cannot be checked. Try again.";
+  "GitHub did not answer, so the repository cannot be checked. Try again";
 
 /** OR-07: Take it over refused at the press because GitHub could not be read. */
 export const TAKE_OVER_UNREADABLE =

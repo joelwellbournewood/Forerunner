@@ -1457,8 +1457,12 @@ export const IntakeProposalView = z.object({
   estimateUsdMicro: z.number().int(),
   /** What the one planning call cost; 0 when reused. */
   costUsdMicro: z.number().int(),
-  /** Where the doc set goes on approval. */
-  docsTarget: z.enum(["repository", "workspace"]),
+  /**
+   * Where the doc set goes on approval; null for the plan-only form (d1109-onerepo-link,
+   * OR-08: a new brief for a project with work, or any plan of a project worked on together),
+   * whose approval writes no document.
+   */
+  docsTarget: z.enum(["repository", "workspace"]).nullable(),
 });
 export type IntakeProposalView = z.infer<typeof IntakeProposalView>;
 

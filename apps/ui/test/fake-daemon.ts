@@ -561,6 +561,13 @@ export interface FakeDaemonState {
    */
   repositoryOverview: Record<string, NonNullable<ProjectCard["repositoryElsewhere"]>>;
   /**
+   * OR-07: why a `repo.take_over` row's Undo would not work now, as the daemon's
+   * `RepositoryUse.takeOverUndoBlocked` says it (`TAKE_OVER_UNDO_OPEN`, `_MERGED`,
+   * `_UNREADABLE`): its docs pull request is open or merged, or GitHub did not answer. Null: the
+   * Undo works. A test sets it.
+   */
+  takeOverUndoBlocked: string | null;
+  /**
    * R-startcred (leftovers7-web): per project, the wait every ready task's credential meets now
    * (as `RuntimeApp.billing.waits.now`): the Start check says it in one sentence
    * (`nothingRunsYetSentence`), and the project's ready line names it (W15-67).
@@ -1166,6 +1173,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     intake: {},
     repositoryElsewhere: {},
     repositoryOverview: {},
+    takeOverUndoBlocked: null,
     credentialWaitNow: {},
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
@@ -1372,6 +1380,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.intake = {};
     state.repositoryElsewhere = {};
     state.repositoryOverview = {};
+    state.takeOverUndoBlocked = null;
     state.messages = clone(MESSAGES);
     state.killActive = false;
     state.calls = [];
@@ -1897,7 +1906,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     };
   // As the daemon (`POST /projects/:id/intake`, d1109-onerepo-link's Add to it): a new brief
   // for a project that exists files its plan card in the Inbox (202); while one waits, the
-  // answer names the project and what to do, never an id.
+  // answer names the project and what to do, never an id. A project with tasks, or one worked
+  // on together, gets the plan-only form (OR-08): its card says `plan_only` and names no place
+  // documents go, and the answer's `docsTarget` is null (the review of the fix: the card read
+  // "the docs go to the project's repository as a pull request" for a plan that writes none).
+  // The options are the daemon's `INTAKE_OPTIONS`; the plan is one task from the brief.
   app.post("/projects/:id/intake", async (c) => {
     const id = c.req.param("id");
     const project = state.projects.find((p) => p.id === id);
@@ -1915,10 +1928,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         {
           code: "conflict",
           message: openPlanSentence(project.name),
-          details: { cause: "claim_conflict", reason: "proposal_open" },
+          details: { requestId: open.id, reason: "proposal_open", cause: "claim_conflict" },
         },
         409,
       );
+    const planOnly =
+      state.tasks.some((t) => t.projectId === id) ||
+      state.repositoryOverview[id]?.kind === "together";
+    const docsTarget = planOnly
+      ? null
+      : (project.repos ?? []).length > 0
+        ? ("repository" as const)
+        : ("workspace" as const);
+    const title = (body.brief ?? project.goal).trim().split("\n")[0]?.slice(0, 80) || project.name;
     const requestId = open?.id ?? nextId("req");
     if (!open)
       state.requests.unshift({
@@ -1929,12 +1951,36 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         taskTitle: null,
         sessionId: null,
         kind: "approval",
-        why: `Plan for "${project.name}"`,
+        why: planOnly
+          ? `Intake for "${project.name}": 1 milestone(s), 1 new task(s) and a first-session plan of 1 task(s). Approve to add them to the project; nothing is written until then.`
+          : `Intake for "${project.name}": 1 milestone(s), 1 task(s), 0 doc(s) and a first-session plan of 1 task(s). Approve to write the plan and the docs; nothing is written until then.`,
         steps: [],
-        options: ["Approve", "Change the plan", "Reject"],
+        options: ["Approve and start", "Change the plan", "Reject"],
         blocking: true,
-        risk: "low",
-        changeCard: { key },
+        risk: "medium",
+        changeCard: {
+          key,
+          project_id: id,
+          proposal: {
+            plan: {
+              reason: "the brief",
+              milestones: [
+                {
+                  name: "From the brief",
+                  successCriteria: [],
+                  targetDate: null,
+                  tasks: [{ key: "brief", title, priority: 5, dependsOn: [] }],
+                },
+              ],
+              tasks: [],
+            },
+            docs: {},
+            firstSession: { summary: title, items: [{ key: "brief", estimateUsdMicro: 300_000 }] },
+          },
+          cost_usd_micro: 0,
+          ...(planOnly ? { plan_only: true } : { docs_target: docsTarget }),
+          applied_at: null,
+        },
         status: "open",
         answer: null,
         createdAt: new Date().toISOString(),
@@ -1957,9 +2003,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         requestId,
         reused: !!open,
         summary: { milestones: 1, tasks: 1, docs: 0, firstSessionTasks: 1 },
-        estimateUsdMicro: 0,
+        estimateUsdMicro: 300_000,
         costUsdMicro: 0,
-        docsTarget: "workspace",
+        docsTarget,
       },
       202,
     );
@@ -6338,6 +6384,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const leftRemoved = typeof left === "string" ? state.removedProjects[left] : undefined;
     if (name === "project.switch" && leftRemoved)
       return `the project ${leftRemoved.was} was removed`;
+    // OR-07: as `RepositoryUse.takeOverUndoBlocked` (its docs pull request open or merged).
+    if (name === "repo.take_over") return state.takeOverUndoBlocked;
     const after = (ch.after ?? {}) as {
       task_id?: string;
       status?: string;

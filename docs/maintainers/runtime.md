@@ -7197,8 +7197,10 @@ no store, git host or file system, so the UI's fake daemon imports it).
   the plan-only form (`PlanOnly`: the system prompt without documents, `alreadyInProjectBlock`
   with up to `PLAN_ONLY_LISTED` = 40 titles and their status as quoted data, "Plan only work that
   is not already in the project."); the proposal's docs are dropped, the card is `plan_only` and
-  its approval writes no document. An open plan is refused with `openPlanSentence`
-  (`session/intake-words.ts`).
+  its approval writes no document. Such a card has no `docs_target`, and `propose` answers
+  `docsTarget: null` (`IntakeProposalView.docsTarget` is nullable), so the Inbox's total line
+  (`intakeTotalLine`, apps/ui InboxPage) says no place documents go. An open plan is refused
+  with `openPlanSentence` (`session/intake-words.ts`).
 - **The Overview's line** (`RepositoryUse.overviewOf`, `ProjectCard.repositoryElsewhere` through
   `ProjectCardFacts.repositoryElsewhere`): `together` for a together project; `elsewhere` when
   this computer's copy's marker (`deps.copyMarker`) names an id that is not this project's, not

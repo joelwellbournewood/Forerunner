@@ -108,7 +108,8 @@ on a repository another project uses makes nothing and says so: 'o/site is alrea
 "Site". Open it, or add this to it as new work.' with **Open it**, **Add to it** (when you wrote
 a brief or a goal) and **Cancel**. **Add to it** sends your brief to Site's planner, which plans
 only the work that is not already in the project (no second set of documents) and files the plan
-in the Inbox as for any brief. The same holds when you ask in chat or by voice ("make a project
+in the Inbox as for any brief; its card says what the new tasks cost and nothing about documents,
+since approving it writes tasks only. The same holds when you ask in chat or by voice ("make a project
 for o/site": chat answers the sentence and offers Site), for Sources and for the Data tab's
 GitHub import. A link on another git host is refused: 'Forerunner works with repositories on
 github.com, not gitlab.com. Link a GitHub repository or a folder.'
@@ -135,9 +136,10 @@ Forerunner project on another computer shows one line on its Overview: 'o/kite i
 Forerunner project "Kite club", which is not on this computer.' with **Take it over** (or, when
 another GitHub account worked on it within 14 days, the day it did and no button). The press
 takes it over at once; Changes lists 'Took over o/kite from "Kite club".' with **Undo** until
-the docs pull request that names your project is on GitHub: while it is open Undo says 'Its pull
-request on GitHub already names this project: close it there first.', and once it is merged
-'The repository already names this project on GitHub, so this cannot be undone here.' In chat,
+the docs pull request that names your project is on GitHub: while it is open the row says
+'Cannot be undone now: its pull request on GitHub already names this project. Close it there
+first.', and once it is merged 'Cannot be undone now: the repository already names this project
+on GitHub.' In chat,
 "take over o/kite" is read back with Yes and No first; an agent never takes a repository over by
 itself.
 

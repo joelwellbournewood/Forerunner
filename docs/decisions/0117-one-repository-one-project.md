@@ -52,8 +52,10 @@ the app with a note that blamed the setting.
    the project's tasks as quoted data ("Already in the project (data, between the markers):",
    up to 40 titles with their status), the instruction "Plan only work that is not already in
    the project.", no documents (no second doc set in the repository); its card is marked
-   `plan_only` and its approval writes tasks only. An open plan answers 'A plan for "Site" waits
-   for your answer. Answer it first.'
+   `plan_only` and its approval writes tasks only. Such a card names no place documents go (no
+   `docs_target`; the intake's answer has `docsTarget` null), so the Inbox's total line is the
+   cost alone, never "the docs go to the project's repository as a pull request". An open plan
+   answers 'A plan for "Site" waits for your answer. Answer it first.'
 5. **The repository itself is read** when no project here uses it, with the person's token and
    the configured host only (never the page reader): `.forerunner/project.json` on the default
    branch (schema 1, a UUID) and the hidden marks of its pull requests in every state, newest
@@ -95,10 +97,12 @@ the app with a note that blamed the setting.
    you can take over a repository.'), checked against GitHub at the plan and again at the run,
    one change row 'Took over o/kite from "Kite club".', and the scaffold run again so the
    project's docs pull request carries its marker. Its Undo removes `took_over` (the line comes
-   back) while that pull request does not exist; it is refused with 'Its pull request on GitHub
-   already names this project: close it there first.' while it is open, 'The repository already
-   names this project on GitHub, so this cannot be undone here.' once it merged, and while
-   GitHub cannot be read.
+   back) while that pull request does not exist. It is refused while that pull request is open,
+   once it merged, and while GitHub cannot be read, each reason a fragment the screens complete
+   as every command's Undo refusal is: Changes reads 'Cannot be undone now: its pull request on
+   GitHub already names this project. Close it there first.', 'Cannot be undone now: the
+   repository already names this project on GitHub.' and 'Cannot be undone now: GitHub did not
+   answer, so the repository cannot be checked. Try again.'
 9. **GitHub that cannot be read** at creation skips the repository's own check without a word
    (the one fail-open place: creation never waits on GitHub's answer, and the Overview's line
    appears once the copy shows another marker); Work together and Take it over need GitHub's

@@ -79,7 +79,7 @@ import {
   reviewLevelValue,
   specialistName,
 } from "../src/lib/task-actions.ts";
-import { intakeCardOf } from "../src/pages/InboxPage.tsx";
+import { intakeCardOf, intakeTotalLine } from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 import { latestRunByTask, taskCapWords } from "../src/pages/project/TasksTab.tsx";
 
@@ -17987,11 +17987,18 @@ describe("d1109-onerepo-link, run C", () => {
       expect(second.message).toBe(
         'o/kite is already the project "Kite club". Open it, or add this to it as new work.',
       );
-      // Undo of the creation removes it with no GitHub call; Work together brings the same row back.
+      // The Changes row names the project that was made, never the name typed ("My kites"):
+      // the review of the fix saw "Created the project Kites" on the "Kite club" row.
       const undo = (await client.changes({ projectId: KITE_ID })).find((r) =>
         r.sentence.startsWith("Created the project"),
       );
-      await client.undoChange(undo?.id ?? "");
+      expect(undo?.sentence).toBe(
+        "Created the project Kite club and made it the active project. Undo.",
+      );
+      expect(undo?.projectName).toBe("Kite club");
+      const undone = await client.undoChange(undo?.id ?? "");
+      expect(undone.status).toBe("done");
+      expect(undone.sentence).not.toContain("My kites");
       expect((await rt.store.project.mustGet(KITE_ID)).status).toBe("archived");
       expect(JSON.stringify(await host.listPullRequests(repo, { state: "all" }))).toBe(prsBefore);
       await rt.close();
@@ -18002,6 +18009,15 @@ describe("d1109-onerepo-link, run C", () => {
       expect(revived.id).toBe(KITE_ID);
       expect((await rt.store.project.mustGet(KITE_ID)).status).toBe("active");
       expect((await rt.store.project.list()).filter((p) => p.id === KITE_ID)).toHaveLength(1);
+      // The row brought back keeps its name, and its new Changes row says that name.
+      expect(revived.name).toBe("Kite club");
+      const again = (await client.changes({ projectId: KITE_ID })).filter((r) =>
+        r.sentence.startsWith("Created the project"),
+      );
+      expect(again.map((r) => r.sentence)).toEqual([
+        "Created the project Kite club and made it the active project. Undo.",
+        "Created the project Kite club and made it the active project. Undo.",
+      ]);
       // GitHub cannot be read at the press: Work together is refused in words, nothing created.
       const offline = { owner: "o", name: "offline" };
       await host.createRepo({ ...offline, private: true });
@@ -18130,14 +18146,24 @@ describe("d1109-onerepo-link, run C", () => {
       const changeId = String(done.changeLogId);
       const open = await client.undoChange(changeId);
       expect(open.status).toBe("refused");
+      // A fragment the screens complete, as every command's Undo refusal (review of the fix: it
+      // read "Cannot be undone now: Its pull request ...: close it there first.." on Changes).
       expect(open.reason).toBe(
-        "Its pull request on GitHub already names this project: close it there first.",
+        "its pull request on GitHub already names this project. Close it there first",
+      );
+      const shownOnChanges = async () => {
+        const row = (await client.changes({ projectId: made.id })).find((r) => r.id === changeId);
+        return row?.undoBlockedReason ? `Cannot be undone now: ${row.undoBlockedReason}.` : null;
+      };
+      expect(await shownOnChanges()).toBe(
+        "Cannot be undone now: its pull request on GitHub already names this project. Close it there first.",
       );
       docsPr.state = "closed";
       docsPr.merged = true;
       const merged = await client.undoChange(changeId);
-      expect(merged.reason).toBe(
-        "The repository already names this project on GitHub, so this cannot be undone here.",
+      expect(merged.reason).toBe("the repository already names this project on GitHub");
+      expect(await shownOnChanges()).toBe(
+        "Cannot be undone now: the repository already names this project on GitHub.",
       );
       // Closed without merging: Undo puts it back, and the line comes back with Take it over.
       docsPr.merged = false;
@@ -18232,6 +18258,131 @@ describe("d1109-onerepo-link, run C", () => {
       expect((await rt.store.project.mustGet(made.id)).settings.took_over).toMatchObject({
         projects: [KITE_ID],
       });
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  // Review of the fix (validation rule 3): the dialog's Add to it calls POST /projects/:id/intake
+  // through `client.proposeIntake`, and no case here went through the client; the bench showed
+  // its plan card promising "the docs go to the project's repository as a pull request".
+  it("Add to it through the UI client on a project with tasks: 202 with no docs target; its plan card is plan-only and its total names no documents, also after the daemon starts again; a second brief while it waits is refused in words; Approve and start writes the tasks and no doc set, decision file or docs pull request (OR-08)", async () => {
+    const host = new MemoryGitHost("alice");
+    const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-addto-"));
+    const bare = join(dir, "site.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({
+      cwd: join(dir, "seed"),
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(dir, "seed", "README.md"), "# site\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "o", name: "site", private: true, cloneUrl: bare });
+    const repo = { owner: "o", name: "site" };
+    const { compose } = onHome(host);
+    let { rt, client, intakeCalls } = await compose();
+    try {
+      const site = await client.createProject({ name: "Site", goal: "A site", repos: ["o/site"] });
+      for (const title of ["Write the home page", "Add the menu"])
+        await client.createTask(site.id, { title, outcome: `${title} is done`, riskTier: 0 });
+      // What a doc set would leave behind: its branch, its pull request, its files on main.
+      const docsBranch = /^fr\/(intake-.+-docs|docs-scaffold|status)$/;
+      const docsState = async () => ({
+        branches: (
+          await run(["git", "--git-dir", bare, "branch", "--list", "--format=%(refname:short)"])
+        ).stdout
+          .trim()
+          .split("\n")
+          .filter((b) => docsBranch.test(b))
+          .sort(),
+        prs: (await host.listPullRequests(repo, { state: "all" }))
+          .filter((pr) => docsBranch.test(pr.head.ref))
+          .map((pr) => `${pr.head.ref} ${pr.state}`)
+          .sort(),
+        files: (
+          await run(["git", "--git-dir", bare, "ls-tree", "-r", "--name-only", "main"])
+        ).stdout
+          .trim()
+          .split("\n")
+          .sort(),
+      });
+      const before = await docsState();
+      const view = await client.proposeIntake(site.id, { brief: "Add a shop page." });
+      expect(view).toMatchObject({
+        pending: true,
+        projectId: site.id,
+        reused: false,
+        docsTarget: null,
+      });
+      // The planner got the plan-only form with the project's tasks as data.
+      expect(intakeCalls.at(-1)?.system).toContain(
+        "A project that already has work gets a new brief. Turn it into the tasks it adds and the order to do them in; write no documents.",
+      );
+      const me = await client.me();
+      const cardNow = async () => {
+        const card = (await client.inbox(me.id)).requests.find((r) => r.id === view.requestId);
+        if (!card) throw new Error("no plan card in the Inbox");
+        return card;
+      };
+      const readCard = async () => {
+        const card = await cardNow();
+        expect(card.projectId).toBe(site.id);
+        expect(card.choices?.map((c) => c.label)).toEqual([
+          "Approve and start",
+          "Change the plan",
+          "Reject",
+        ]);
+        // Its sibling: the line while Approve and start works names no docs pull request (L-20
+        // said "Writing the plan and its docs pull request…" on every card of a repository).
+        expect(card.choices?.[0]?.working).toBe("Writing the plan…");
+        const shown = intakeCardOf(card.changeCard);
+        expect(shown).toMatchObject({ planOnly: true, docsTarget: null, docs: [] });
+        // The total line the Inbox shows, from the daemon's own card: no documents.
+        expect(
+          intakeTotalLine(shown as NonNullable<typeof shown>, "About CHF 0.40 for the task."),
+        ).toBe("About CHF 0.40 for the task.");
+        return card;
+      };
+      await readCard();
+      // A second brief while the card waits: the project by its name and what to do, no id.
+      const again = await refusalOf(client.proposeIntake(site.id, { brief: "And a blog." }));
+      expect(again.status).toBe(409);
+      expect(again.message).toBe('A plan for "Site" waits for your answer. Answer it first.');
+      expect(again.details).toMatchObject({
+        reason: "proposal_open",
+        requestId: view.requestId,
+        cause: "claim_conflict",
+      });
+      // The card is the same after the daemon starts again.
+      await rt.close();
+      ({ rt, client, intakeCalls } = await compose());
+      const card = await readCard();
+      const tasksBefore = (await client.tasks(site.id)).length;
+      const approved = await client.answerRequest(card.id, {
+        version: card.version,
+        answer: "Approve and start",
+      });
+      expect(approved.outcome).toMatch(/^Plan approved: \d+ tasks? written/);
+      expect((await client.tasks(site.id)).length).toBeGreaterThan(tasksBefore);
+      // Nothing is left running for the next case: the session Approve and start began stops.
+      for (const s of await client.sessions({ projectId: site.id }))
+        if (["running", "paused", "planned"].includes(s.status)) await client.stopSession(s.id);
+      await eventually(
+        async () =>
+          (await client.sessions({ projectId: site.id })).every((s) =>
+            ["completed", "stopped", "failed", "killed"].includes(s.status),
+          ),
+        "every session of Site to end",
+        async () =>
+          JSON.stringify((await client.sessions({ projectId: site.id })).map((s) => s.status)),
+        30_000,
+      );
+      // No doc set, no decision file, no docs pull request: as before the plan.
+      const after = await docsState();
+      expect(after).toEqual(before);
+      expect(after.files.some((f) => f.startsWith("docs/decisions/"))).toBe(false);
     } finally {
       await rt.close();
     }

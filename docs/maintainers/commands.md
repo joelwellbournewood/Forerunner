@@ -653,7 +653,12 @@ among them.
   uses the link the call is refused with that project's name, and the model offers that project
   (project.switch, or the new work added to it), never a second project. The daemon's port
   (`chatLinkCheck`) ends the answer with 'Open New project to work on it together.' when the
-  repository's project is not on this computer (chat has no together flag yet).
+  repository's project is not on this computer (chat has no together flag yet). Its run's
+  sentence names the project that was made (`createdOutcomeWords`): the port may make it under
+  another name than the one typed (Work together: the repository's marker names it; a removed
+  together row brought back keeps its own), so the Changes row reads 'Created the project Kite
+  club and made it the active project.', and a name other than the one asked for came from the
+  repository, so the outcome carries the untrusted mark (`repo_file`, `repository:<link>`).
 - **A refusal keeps its details** (`executor.ts`, `refusal()`): the `ForerunnerError`'s
   `details` are on the refused result (`ExecuteResult.details`, the runtime's
   `CommandResultView.details`), and `details.untrusted` becomes the result's `untrusted`, so a
@@ -669,9 +674,11 @@ among them.
   `writeMarker` (the scaffold again: this project's docs pull request replaces that marker);
   its sentence is `tookOverSentence` ('Took over o/kite from "Kite club".'), marked untrusted
   when it quotes the marker's name. Undo (state based: the change row's `before.took_over`)
-  removes it; `undoBlocked` asks the port (open docs pull request: 'Its pull request on GitHub
-  already names this project: close it there first.'; merged: 'The repository already names
-  this project on GitHub, so this cannot be undone here.'; GitHub unreadable: refused);
+  removes it; `undoBlocked` asks the port, which answers a fragment the screens complete as
+  every command's (`TAKE_OVER_UNDO_OPEN` 'its pull request on GitHub already names this
+  project. Close it there first', `TAKE_OVER_UNDO_MERGED` 'the repository already names this
+  project on GitHub', `TAKE_OVER_UNDO_UNREADABLE` 'GitHub did not answer, so the repository
+  cannot be checked. Try again'; Changes shows 'Cannot be undone now: <it>.');
   `undoSentence` is 'o/kite is no longer taken over from "Kite club".'.
 - **Names**: a command name may join two words with an underscore inside a dotted part
   (`NAME_RE`, `repo.take_over`; tool name `repo_take_over`).

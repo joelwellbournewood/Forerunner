@@ -54,11 +54,11 @@ describe("d1109-onerepo-link, run C: repo.take_over (OR-07)", () => {
       name: "Kite club",
     });
     // Its docs pull request is open on GitHub: Undo would promise what it cannot take back.
-    calls.blocked = "Its pull request on GitHub already names this project: close it there first.";
+    calls.blocked = "its pull request on GitHub already names this project. Close it there first";
     const refused = await w.executor.undo(done.changeLogId, w.ctx({ source: "ui" }));
     expect(refused).toMatchObject({
       status: "refused",
-      reason: "Its pull request on GitHub already names this project: close it there first.",
+      reason: "its pull request on GitHub already names this project. Close it there first",
     });
     expect((await w.store.project.mustGet(w.pharma.id)).settings.took_over).toBeDefined();
     // Closed there: Undo removes the take-over.

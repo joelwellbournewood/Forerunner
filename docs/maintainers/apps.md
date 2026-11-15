@@ -176,7 +176,12 @@ it over for a project that is not on this computer (the same create with `togeth
 `takeOver`, each with its consequence line and Details), and Cancel. The Overview's line
 (`SummaryTab.tsx`, `RepositoryElsewhere`) shows `ProjectCard.repositoryElsewhere` with Take it
 over (`repo.take_over` with `confirm: "tap"`: the press is the yes) and Details; Sources show a
-covered candidate as 'Already the project "Site"' with Open.
+covered candidate as 'Already the project "Site"' with Open. The plan card of a plan-only plan
+(Add to it, every plan of a project worked on together: `plan_only` on the card,
+`IntakeCardView.planOnly`) says its cost alone: `intakeTotalLine` adds "the docs go to the
+project's repository as a pull request" only for a first plan to a repository (the review of
+the fix saw it on cards whose approval writes no document). Test: `test/onerepo-link.test.tsx`
+and the real-daemon 'd1109-onerepo-link, run C' Add to it case.
 
 
 The email page's mode picker is a client of the registry too (ADR 0066, amended 2026-10-25
@@ -792,10 +797,14 @@ in `state.repositoryElsewhere` (by `owner/name`) answers the offer of a project 
 this computer (`elsewhereSentence`, Work together and Take it over by its `Elsewhere`), and
 `together` or `takeOver` in the body creates it; another host answers `otherHostSentence`.
 `POST /projects/:id/intake` answers 202 with a proposal (Add to it), or 409 with
-`openPlanSentence` while a plan is open. `state.repositoryOverview` (by project id) is the
+`openPlanSentence` while a plan is open: its card is the daemon's shape (`INTAKE_OPTIONS`, a
+one-task plan from the brief, `plan_only` with no `docs_target` for a project with tasks or worked
+on together, `docsTarget` null in the answer). `state.repositoryOverview` (by project id) is the
 Overview's line, the card's `repositoryElsewhere`; `repo.take_over` removes it (refused with
 the daemon's words when there is nothing to take over or another account worked on it) and its
-Undo from Changes puts it back. Every sentence is imported from
+Undo from Changes puts it back; `state.takeOverUndoBlocked` is why that Undo would not work now
+(`TAKE_OVER_UNDO_OPEN`, `_MERGED`, `_UNREADABLE`, as `RepositoryUse.takeOverUndoBlocked`
+answers). Every sentence is imported from
 `@forerunner/runtime/sources/repository-words`, so both sides say the same.
 
 ### What the Tauri shells inject

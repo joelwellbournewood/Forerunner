@@ -337,7 +337,11 @@ export interface IntakeProposalOutcome {
   estimateUsdMicro: number;
   /** What the one model call cost; 0 when reused. */
   costUsdMicro: number;
-  docsTarget: "repository" | "workspace";
+  /**
+   * Where the doc set goes on approval; null for the plan-only form (d1109-onerepo-link,
+   * OR-08), whose approval writes no document.
+   */
+  docsTarget: "repository" | "workspace" | null;
 }
 
 /**
@@ -1401,7 +1405,8 @@ export class IntakeService {
           : { milestones: 0, tasks: 0, docs: 0, firstSessionTasks: 0 },
         estimateUsdMicro: p ? estimateOf(p) : 0,
         costUsdMicro: 0,
-        docsTarget: repoRefOf(project.repos[0]) ? "repository" : "workspace",
+        docsTarget:
+          card.plan_only === true ? null : repoRefOf(project.repos[0]) ? "repository" : "workspace",
       };
     }
     if (!this.deps.provider || !this.deps.pricing) {
@@ -1504,9 +1509,10 @@ export class IntakeService {
         brief_truncated: truncated,
         // The person's changes this plan was drafted with, in order ("Change the plan").
         ...(changes.length ? { changes } : {}),
-        docs_target: repo ? "repository" : "workspace",
-        // d1109-onerepo-link (OR-08): the plan-only form: its approval writes no document.
-        ...(planOnly ? { plan_only: true } : {}),
+        // d1109-onerepo-link (OR-08): the plan-only form: its approval writes no document, so the
+        // card names no place documents go (the review of the fix: the Inbox said "the docs go to
+        // the project's repository as a pull request" for a plan that writes none).
+        ...(planOnly ? { plan_only: true } : { docs_target: repo ? "repository" : "workspace" }),
         applied_at: null,
       },
       author_agent: this.deps.agent.id,
@@ -1543,7 +1549,7 @@ export class IntakeService {
       summary: n,
       estimateUsdMicro: estimate,
       costUsdMicro: called.costUsdMicro,
-      docsTarget: repo ? "repository" : "workspace",
+      docsTarget: planOnly ? null : repo ? "repository" : "workspace",
     };
   }
 

@@ -1846,6 +1846,8 @@ describe("d1109-onerepo-link, run C: a new brief for a project with work plans o
         body: JSON.stringify({ brief: "Add a contact form." }),
       });
       expect(added.status).toBe(202);
+      // Review of the fix: the plan-only answer names no place documents go (it writes none).
+      expect((await json(added.clone())).docsTarget).toBeNull();
       const call = provider.calls.at(-1);
       // The instructions the model received: the plan-only section, no new-project form, no docs.
       expect(call?.system).toContain(
@@ -1870,6 +1872,9 @@ describe("d1109-onerepo-link, run C: a new brief for a project with work plans o
       expect(user).toContain("Plan only work that is not already in the project.");
       const card = await rt.store.humanRequest.mustGet(String((await json(added)).requestId));
       expect((card.change_card as JsonObject).plan_only).toBe(true);
+      // ...and the card neither: the Inbox read "the docs go to the project's repository as a
+      // pull request" from it (review of the fix, bench 06-a06-inbox-plan-card.png).
+      expect((card.change_card as JsonObject).docs_target).toBeUndefined();
       expect(card.why).not.toMatch(/doc\(s\)|the docs/);
       await answer(card.id, "approve");
       // No doc set, no decision file, no docs pull request: branches and pull requests as before.
