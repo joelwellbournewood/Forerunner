@@ -15,6 +15,14 @@ with their milestone.
 
 - `GitHost` (`types.ts`) is the contract: repositories, branches, file contents, pull requests
   (create, list, merge, comment, review), issues, check runs, releases with assets, rate limit.
+- d1109-onerepo-link (ADR 0117): `listPullRequests(repo, { state: "all", sort: "updated" })`
+  asks GitHub for `sort=updated&direction=desc` (the latest first, one page of 100), and every
+  `PullRequestInfo` carries `updatedAt` (GitHub's `updated_at`) and `authorLogin`
+  (`user.login`) when the host says them: whether a Forerunner project that is not on this
+  computer is still worked on (the 14-day rule). `RepoInfo.id` is GitHub's repository id when
+  read (not used yet: ADR 0117's cut line). `MemoryGitHost` stamps `updatedAt` on create and
+  update from its `now`, sorts the same way, and `openPullRequestAs(repo, author, {...})` opens
+  one as another account, in any state, with a given `updatedAt` (tests only).
 - `GitHubHost` (`github.ts`) implements it for api.github.com, GitHub Enterprise and the fake
   git host in `testenv` (same REST shapes). The token is a bearer header taken from the vault by
   reference; it is never logged. With `tokenSource` (the daemon passes the vault read of

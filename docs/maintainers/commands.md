@@ -644,6 +644,38 @@ among them.
   session cap field (`SettingsFields.tsx`) and the fake daemon say it. 0 stays refused for a
   session and for the month (owner question W15-109 open).
 
+### One repository, one project (d1109-onerepo-link, [ADR 0117](../decisions/0117-one-repository-one-project.md))
+
+- **`project.create`** asks the `repositoryUse` port (`CommandPorts.repositoryUse.check(repos)`)
+  in its plan, so chat is refused before any read-back, and again in its run (unless the caller
+  brings its own `createProject` port, whose creation checks). Its definition is
+  `PROJECT_CREATE_DESCRIPTION`: one repository or folder is one project; when another project
+  uses the link the call is refused with that project's name, and the model offers that project
+  (project.switch, or the new work added to it), never a second project. The daemon's port
+  (`chatLinkCheck`) ends the answer with 'Open New project to work on it together.' when the
+  repository's project is not on this computer (chat has no together flag yet).
+- **A refusal keeps its details** (`executor.ts`, `refusal()`): the `ForerunnerError`'s
+  `details` are on the refused result (`ExecuteResult.details`, the runtime's
+  `CommandResultView.details`), and `details.untrusted` becomes the result's `untrusted`, so a
+  refusal quoting a marker's name reaches the chat model as data (`Refused: <reason>` with the
+  mark, registry.ts). A pending result's read-back carries `ChangeCard.untrusted` the same way.
+- **`repo.take_over`** (`commands/repo.ts`): takes the project's GitHub repository over from a
+  Forerunner project that is not on this computer. Medium risk for every actor
+  (`askFromChat`: chat reads it back with Yes and No; the Overview's press is the yes with
+  `confirm: "tap"`), refused for an agent outside the person's chat or voice
+  (`ONLY_YOU_TAKE_OVER`, 'Only you can take over a repository.', code `autonomy_insufficient`).
+  Plan and run both ask the `repositoryTakeOver` port's `check` (GitHub read at the press, never
+  the model's words); the run writes `settings.took_over {projects, name, at}` and calls
+  `writeMarker` (the scaffold again: this project's docs pull request replaces that marker);
+  its sentence is `tookOverSentence` ('Took over o/kite from "Kite club".'), marked untrusted
+  when it quotes the marker's name. Undo (state based: the change row's `before.took_over`)
+  removes it; `undoBlocked` asks the port (open docs pull request: 'Its pull request on GitHub
+  already names this project: close it there first.'; merged: 'The repository already names
+  this project on GitHub, so this cannot be undone here.'; GitHub unreadable: refused);
+  `undoSentence` is 'o/kite is no longer taken over from "Kite club".'.
+- **Names**: a command name may join two words with an underscore inside a dotted part
+  (`NAME_RE`, `repo.take_over`; tool name `repo_take_over`).
+
 ## How to change it
 
 **Add a command.** Write `src/commands/<area>.ts` exporting a `CommandDef`: a zod `params`

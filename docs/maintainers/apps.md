@@ -168,6 +168,17 @@ fixtures with both sides and compares key sets so drift fails before a screen do
 
 ### Commands from the UI
 
+d1109-onerepo-link: the New project dialog (`NewProjectDialog.tsx`) reads a 409 with a link
+cause (`linkOfferOf`) as an offer in place of the create button: the daemon's sentence, then
+Open it (`project.switch`, then the project's page), Add to it when a brief or goal was typed
+(`client.proposeIntake(projectId, { brief })`, then the project's page), Work together and Take
+it over for a project that is not on this computer (the same create with `together` or
+`takeOver`, each with its consequence line and Details), and Cancel. The Overview's line
+(`SummaryTab.tsx`, `RepositoryElsewhere`) shows `ProjectCard.repositoryElsewhere` with Take it
+over (`repo.take_over` with `confirm: "tap"`: the press is the yes) and Details; Sources show a
+covered candidate as 'Already the project "Site"' with Open.
+
+
 The email page's mode picker is a client of the registry too (ADR 0066, amended 2026-10-25
 on review): Apply runs `email.mode.set` with the agent's id through `POST /commands/execute`
 (`source: "ui"`), shows the daemon's high-risk card in its dialog through `CommandResult`,
@@ -773,6 +784,19 @@ option makes the status say why and the start answer 503. A press, audio chunks 
 whose transcript is `state.nextVoiceLine` (else "what is next") and whose reply is the chat
 reply for it; like the daemon's loop, audio counts for the turn only between the press and the
 release (`lastTurn.audioChunks`); sessions and their chunk counts are in `state.voiceSessions`.
+
+d1109-onerepo-link (ADR 0117): the fake's `POST /projects` checks a link as the daemon does,
+with `fakeLinkOf` (lower-case `owner/name` for every GitHub spelling, a folder's path):
+another project's link answers 409 with `inUseSentence` and its details; a repository listed
+in `state.repositoryElsewhere` (by `owner/name`) answers the offer of a project that is not on
+this computer (`elsewhereSentence`, Work together and Take it over by its `Elsewhere`), and
+`together` or `takeOver` in the body creates it; another host answers `otherHostSentence`.
+`POST /projects/:id/intake` answers 202 with a proposal (Add to it), or 409 with
+`openPlanSentence` while a plan is open. `state.repositoryOverview` (by project id) is the
+Overview's line, the card's `repositoryElsewhere`; `repo.take_over` removes it (refused with
+the daemon's words when there is nothing to take over or another account worked on it) and its
+Undo from Changes puts it back. Every sentence is imported from
+`@forerunner/runtime/sources/repository-words`, so both sides say the same.
 
 ### What the Tauri shells inject
 

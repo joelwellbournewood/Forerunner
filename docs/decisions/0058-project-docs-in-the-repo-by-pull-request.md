@@ -105,3 +105,21 @@ A parallel item (A.2 intake) drafts doc content and will call `scaffoldDocs`.
 6. **Wording.** Point 1 said files "the intake drafted" on `fr/docs-scaffold` are kept; the
    intake writes on `fr/intake-<id8>-docs` (ADR 0055). What is kept is whatever an existing
    `fr/docs-scaffold` branch already carries.
+
+## Amendment (2026-11-15, d1109-onerepo-link: one repository, one project, ADR 0117)
+
+1. **A take-over replaces exactly the marker it took over.** "Never over another project's
+   marker" (amendment of 2026-10-25, point 3) holds for every project but one a project here
+   took the repository over from (`settings.took_over.projects`): its marker is replaced by
+   this project's in the project's next docs pull request (the scaffold's or the intake's set;
+   `writeInstallMarker` reports `replaced` with the old id and name), and that pull request's
+   body says so in one line: 'This repository was the Forerunner project "Kite club"; it is now
+   "Kites"'s.' The old name is cut, scanned and quoted (else "another Forerunner project").
+2. **A together project writes no docs.** A project worked on together with another Forerunner
+   (`settings.together`, D9) writes no marker, no doc set and no scaffold or intake pull request;
+   its scaffold only brings this computer's copy along (recorded as `together: true`), and its
+   plans are plan-only (point 3).
+3. **A plan for a project that already has work adds tasks only.** The intake for a project with
+   tasks (Add to it, the second brief, a together project) writes no document: its proposal has
+   no `docs`, its card is `plan_only`, and its approval writes the tasks and milestone only. The
+   standard set is written once, at the project's first plan.

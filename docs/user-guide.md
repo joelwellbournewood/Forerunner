@@ -101,6 +101,46 @@ more, Forerunner asks it once more for a smaller plan). Its tasks are reviewed l
 the critic checks each one after the agent has done it. A longer brief or a list of features
 gets a full plan.
 
+**One repository is one project.** A GitHub repository or a folder belongs to one project: every
+spelling of a repository counts as the same one (`https://github.com/o/site.git`, `o/site`,
+`git@github.com:o/site`), and a folder inside a linked folder counts as that folder. New project
+on a repository another project uses makes nothing and says so: 'o/site is already the project
+"Site". Open it, or add this to it as new work.' with **Open it**, **Add to it** (when you wrote
+a brief or a goal) and **Cancel**. **Add to it** sends your brief to Site's planner, which plans
+only the work that is not already in the project (no second set of documents) and files the plan
+in the Inbox as for any brief. The same holds when you ask in chat or by voice ("make a project
+for o/site": chat answers the sentence and offers Site), for Sources and for the Data tab's
+GitHub import. A link on another git host is refused: 'Forerunner works with repositories on
+github.com, not gitlab.com. Link a GitHub repository or a folder.'
+
+**Working with someone on one repository.** When the repository already is a Forerunner project
+on another computer (a colleague's, or your own earlier install), New project says so, for
+example 'o/kite is already the Forerunner project "Kite club", which is not on this computer;
+last active on GitHub on 3 Nov. Work on it together, or take it over if nobody works on it any
+more.' **Work together** makes "Kite club" here as the same project: nothing on GitHub changes,
+each of you keeps your own tasks and merges your own pull requests, this computer never touches
+the other Forerunner's pull requests, and your project's status stays in the app (the Docs tab
+says 'Kept in the app: you work on "Kite club" together, so GitHub's copy is left as it is.').
+Its Overview says 'Shared on GitHub with another Forerunner: each keeps its own tasks.'
+**Take it over** is for a project nobody works on any more: the repository then names your
+project (its next docs pull request replaces the other project's marker and says so in one line;
+the other project's pull requests stay as they are). It is offered only when no other GitHub
+account updated one of that project's pull requests in the last 14 days; otherwise the offer says
+'another GitHub account worked on it on 8 Nov. One repository is one project, so work on it
+together here.' If GitHub cannot be read when you create the project, the project is made, and
+its Overview tells you later if the repository turns out to be another Forerunner's.
+
+A project made before this version (or while GitHub could not be read) whose repository names a
+Forerunner project on another computer shows one line on its Overview: 'o/kite is also the
+Forerunner project "Kite club", which is not on this computer.' with **Take it over** (or, when
+another GitHub account worked on it within 14 days, the day it did and no button). The press
+takes it over at once; Changes lists 'Took over o/kite from "Kite club".' with **Undo** until
+the docs pull request that names your project is on GitHub: while it is open Undo says 'Its pull
+request on GitHub already names this project: close it there first.', and once it is merged
+'The repository already names this project on GitHub, so this cannot be undone here.' In chat,
+"take over o/kite" is read back with Yes and No first; an agent never takes a repository over by
+itself.
+
 The header names the project you are looking at. The active project (the one chat, voice and
 the phone talk about outside a project page) is what you pick in the header's list, the
 palette's "Switch project" or by opening a project from Home; saying "switch to …" in chat or by

@@ -7135,6 +7135,84 @@ page's "Tasks in this session" and of a planning call's row is written in
   (`planned`/`running`/`paused`) or is a planning call (`plan.intake`); never the conversation's
   row (`summary` "conversation"), never one that ended without a run and without a ledger row.
 
+### One repository, one project (d1109-onerepo-link, [ADR 0117](../decisions/0117-one-repository-one-project.md))
+
+The owner's decisions D1 and D9 of 2026-11-09: a repository or a folder is one project, and two
+Forerunners on one repository work on it together. Every rule is in
+`src/sources/repository-use.ts`; every sentence is in `src/sources/repository-words.ts` (light:
+no store, git host or file system, so the UI's fake daemon imports it).
+
+- **The identity** (`identityOf`, `sameLink`). A GitHub repository is `github:<owner>/<name>`
+  in lower case for every spelling `parseRepoLocator` reads (https, ssh, scp, `.git`, `www.`, a
+  `/tree/...` tail, a schemeless `github.com/o/n`: `locators.ts` accepts three parts); a folder is
+  `folder:<real path>` (Windows: `path.win32`, lower case) plus its git root, its worktree's main
+  tree (the `.git` file's `gitdir`, then `commondir`) and its origin's repository key
+  (`originUrlOf` reads `.git/config` as a file). No git process runs in the person's folder. A
+  URL on a host not in `repoHostsFor` is `other_host`. Two links are one when a key matches, or
+  when one folder is inside the other with no git root of its own below the linked one.
+- **The index** (`RepositoryIndex.read`): every project row (at most `MAX_PROJECTS`, 10,000;
+  above it, words). `projectsUsing(link, except)` lists the non-archived projects that use a link
+  (a joined project as its keeper, `settings.joined_from`, which d1109-onerepo-join writes);
+  `usersOf(repo)` the ids of any status; `keeperOf(id)`; `knows(id)` (a row, a joined id, a
+  taken-over id).
+- **The check** (`RepositoryUse.check(repos, {takeOver, together, withBrief, except})`), run
+  before anything is written by `createProjectRecord` (`POST /projects`, Sources' accept, the
+  chat's port), by `project.create`'s plan and run (the commands' `repositoryUse` port,
+  `chatLinkCheck` adds 'Open New project to work on it together.' when Work together is open),
+  and `checkHere(repos, except)` (this computer only) by the Data tab's import before it clones.
+  This computer first: a project here that uses the link is `repository_in_use` with its name.
+  Then the repository (`readRepository`, the person's token on the configured host): the marker
+  on the default branch, the marks of up to 100 pull requests in every state newest first
+  (`projectIdsNamedBy`: the hidden mark, `fr/intake-<id>-docs`, the visible L-16 line), and the
+  token's login. `verdictOf` gives `free`, `here`, `removed` (the person's own removed project:
+  taken over with `removed: true`), `removed_together` (Work together brings that row back) or
+  `elsewhere` (`elsewhereOf`: `lastActive`, `otherAccount` within `ACTIVE_ELSEWHERE_DAYS` = 14
+  by `updatedAt` and `authorLogin`, the person's own login never counted, `canWorkTogether` for
+  one id, `canTakeOver` without another account's activity). A refusal is `linkRefusal`: a
+  `ForerunnerError` 'validation' whose `details` are `LinkRefusalDetails` (cause, the project's
+  name, the ids, the offer's flags and consequence lines, and `untrusted` when it quotes a
+  marker's name). `POST /projects` answers it as 409 `conflict` with the details (the
+  `untrusted` mark stripped); the sources routes the same. GitHub that cannot be read fails
+  open at creation only; Work together answers 'GitHub did not answer, so the project cannot be
+  checked. Try again.'
+- **The marker's name** (`markerNameOf`): cut at 60 characters, control characters removed,
+  `scanForInjection` flagged or `"<>\`` inside: null ("another Forerunner project").
+- **Creating** (`daemon/create-project.ts`): Take it over writes `settings.took_over`
+  `{projects, name, at, removed?}`; Work together uses the repository's id as the row's id, the
+  marker's name unless one here has it, `settings.together {name, at, activeOn, login}`, and
+  `reviveTogether` brings back a removed together row (its `removed_name` dropped); its scaffold
+  only refreshes this computer's copy.
+- **Docs and status** (`loop/docs.ts`): `mark()` passes `replace: tookOverOf(project).projects`
+  to `writeInstallMarker` (`replaced` then, and the scaffold's pull request body gets
+  `tookOverLine`); the intake's doc set the same (`session/intake.ts`). A together project:
+  `isProjectDocsPr` and `isProjectStatusPr` are false, `scaffoldProject` records
+  `{together: true}` and writes nothing, `writeSessionStatus` keeps the status in the app, and
+  `statusDocRoot` reads it there. `ownsUnmarkedDocs(store, project, repo, copyMarker)` is
+  W15-01's "the only project linked" through the index (fails closed; a together project is
+  never the sole user; the copy's marker must name no other project); `ProjectDocs.copyMarker`
+  reads the copy's marker as a file. `statusInApp` records the holder beside the kept status
+  (`{pr, project}` in its mark file) and `statusHeld` reads it for the Docs row
+  (`heldStatusNote`, `togetherStatusNote`; `daemon/docs-routes.ts`).
+- **Add to it** (`session/intake.ts`, `planOnlyFor`): a project with tasks, or together, gets
+  the plan-only form (`PlanOnly`: the system prompt without documents, `alreadyInProjectBlock`
+  with up to `PLAN_ONLY_LISTED` = 40 titles and their status as quoted data, "Plan only work that
+  is not already in the project."); the proposal's docs are dropped, the card is `plan_only` and
+  its approval writes no document. An open plan is refused with `openPlanSentence`
+  (`session/intake-words.ts`).
+- **The Overview's line** (`RepositoryUse.overviewOf`, `ProjectCard.repositoryElsewhere` through
+  `ProjectCardFacts.repositoryElsewhere`): `together` for a together project; `elsewhere` when
+  this computer's copy's marker (`deps.copyMarker`) names an id that is not this project's, not
+  taken over by it, not a row here and not known; the 14-day rule from a read reused for five
+  minutes (`OVERVIEW_READ_MS`) and never waited on longer than four seconds
+  (`OVERVIEW_WAIT_MS`); `alsoElsewhereSentence`.
+- **Take it over on an existing project** (`repo.take_over`, commands.md): the
+  `repositoryTakeOver` port in `compose.ts` is `takeOverFacts` (a fresh read; refused when
+  GitHub does not answer, another account worked on it in 14 days, or nothing is to take over),
+  `writeMarker` (`docs.scaffoldProject` again, never throws) and `takeOverUndoBlocked` (the
+  default branch's marker names this project, or a docs pull request of this project updated
+  since the take-over, or the one the run opened, is merged: refused; open: refused; GitHub
+  unreadable: refused).
+
 ## How to change it
 
 - New limit: add the check to the hook, a `ForerunnerError` code in platform, and a test in
