@@ -5,6 +5,7 @@ import type { TaskRow } from "@forerunner/state";
 import { redactValues } from "@forerunner/vault";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KEPT_OUTPUT_CHARS, keptWorkChecker } from "../src/loop/kept-work-check.ts";
+import { PROJECT_CHECK_TIMEOUT_MS } from "../src/loop/project-checks.ts";
 import { ProcessSandbox } from "../src/sandbox/process.ts";
 import type { RunSandboxPort } from "../src/session/executor.ts";
 
@@ -139,5 +140,27 @@ describe("d1109-oversize-pause, run C: the kept work is checked in the task's sa
     await expect(done).rejects.toBeTruthy();
     // At least 10 s of slack for a slow machine; the check itself sleeps a minute.
     expect(Date.now() - started).toBeLessThan(15_000);
+  }, 60_000);
+
+  it("the checks' shared deadline is read from the daemon's Clock: once it passed, no further check starts", async () => {
+    // The review of d1109-oversize-pause: the deadline read Date.now() (AGENTS.md: time goes
+    // through a Clock). Here the clock passes the deadline once the first check has started.
+    await writeFile(
+      join(worktree, "package.json"),
+      JSON.stringify({
+        name: "shop",
+        scripts: { build: `node -e "process.exit(0)"`, test: `node -e "process.exit(0)"` },
+      }),
+    );
+    let reads = 0;
+    const clock = { monotonic: () => (reads++ < 2 ? 0 : PROJECT_CHECK_TIMEOUT_MS + 1) };
+    const r = await keptWorkChecker({
+      store,
+      sandbox: port,
+      redact: (text) => text,
+      clock,
+    })({ task, worktree, changedFiles: ["index.js"], signal: new AbortController().signal });
+    expect(r.checks?.map((c) => [c.name, c.passed])).toEqual([["build", true]]);
+    expect(reads).toBeGreaterThanOrEqual(3);
   }, 60_000);
 });

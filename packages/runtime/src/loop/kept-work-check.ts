@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs";
 import {
+  type Clock,
   errorMessage,
   type RunOptions,
   type RunResult,
   run as runProcess,
+  SystemClock,
 } from "@forerunner/platform";
 import type { JsonObject, StateStore, TaskRow } from "@forerunner/state";
 import type { KeptCheck } from "../session/budget-pause.ts";
@@ -40,6 +42,8 @@ export interface KeptWorkCheckDeps {
   redact: (text: string) => string | Promise<string>;
   /** For reading the scripts as they were before the task (git, on the host; runs no script). */
   run?: (argv: readonly string[], opts: RunOptions) => Promise<RunResult>;
+  /** Times the checks' shared deadline (AGENTS.md: time goes through a Clock). */
+  clock?: Pick<Clock, "monotonic">;
 }
 
 /** The end of a check's output, cut to `KEPT_OUTPUT_CHARS`. */
@@ -50,6 +54,7 @@ function tailOf(output: string): string {
 
 /** The kept-work check (`SessionRunnerDeps.keptWorkCheck`). */
 export function keptWorkChecker(deps: KeptWorkCheckDeps): KeptWorkCheckPort {
+  const clock = deps.clock ?? new SystemClock();
   return async ({ task, worktree, changedFiles, signal }) => {
     const root = worktree && existsSync(worktree) ? worktree : undefined;
     if (!root) return { notRun: "its folder is not on this computer" };
@@ -66,7 +71,7 @@ export function keptWorkChecker(deps: KeptWorkCheckDeps): KeptWorkCheckPort {
     const markers = list.markers;
     if (!checks.length && !markers.length) return {};
     if (!deps.sandbox) return { notRun: "there is no sandbox to run them in" };
-    const deadline = Date.now() + PROJECT_CHECK_TIMEOUT_MS;
+    const deadline = clock.monotonic() + PROJECT_CHECK_TIMEOUT_MS;
     let lease: Awaited<ReturnType<RunSandboxPort["open"]>>;
     try {
       lease = await deps.sandbox.open({
@@ -90,7 +95,7 @@ export function keptWorkChecker(deps: KeptWorkCheckDeps): KeptWorkCheckPort {
       const runner = sandboxCheckRunner(lease.sandbox);
       for (const c of checks) {
         if (signal.aborted) throw new Error("stopped");
-        const left = deadline - Date.now();
+        const left = deadline - clock.monotonic();
         if (left <= 0) break;
         const r = await runner.run(
           { ...c, timeoutMs: Math.min(c.timeoutMs ?? 120_000, left) },
@@ -101,7 +106,7 @@ export function keptWorkChecker(deps: KeptWorkCheckDeps): KeptWorkCheckPort {
       const node = lease.sandbox.kind !== "process" ? "node" : process.execPath;
       for (const m of markers) {
         if (signal.aborted) throw new Error("stopped");
-        const left = deadline - Date.now();
+        const left = deadline - clock.monotonic();
         if (left <= 0) break;
         const r = await runMarkerCheck(
           m,

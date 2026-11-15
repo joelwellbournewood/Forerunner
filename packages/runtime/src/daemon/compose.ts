@@ -2668,6 +2668,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     keptWorkCheck: keptWorkChecker({
       store,
       sandbox: sandboxPort,
+      clock,
       redact: async (text) => {
         const values: string[] = [];
         for (const name of await vault.list().catch(() => [] as string[])) {

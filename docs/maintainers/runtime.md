@@ -1321,8 +1321,8 @@ a caveat under "Where I stopped:", the next step first); the trigger, the line, 
 `hash` = `workHash` over the changed files, `checks`, `notRun`, `noProgress`), runs the
 project's own checks when the change is code (`keptWorkCheck`, `loop/kept-work-check.ts`:
 `codeTaskChecks` shared with the critic, in the task's sandbox with no network, never on the
-host, within `PROJECT_CHECK_TIMEOUT_MS`, under the session's signal; each output's end, at most
-`KEPT_OUTPUT_CHARS` 1,500, redacted with the vault's values and the platform's patterns; no
+host, within `PROJECT_CHECK_TIMEOUT_MS` (timed by the daemon's `Clock`), under the session's
+signal; each output's end, at most `KEPT_OUTPUT_CHARS` 1,500, redacted with the vault's values and the platform's patterns; no
 model, nothing booked), and compares it with the task's last paused run (`madeProgress`: a
 different hash or a shorter list; a first pause counts). A paused run is a wrap-up's `paused` Run
 row or a hard stop's `budget_exceeded` one (`KEPT_WORK_OUTCOMES`): a pause at the project's
