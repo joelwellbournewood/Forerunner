@@ -308,6 +308,10 @@ async function applyRebuildMerge(
 ): Promise<string> {
   const { store } = deps;
   if (task.status !== "done") return markMerge(deps, row, "task_moved_on");
+  // L3-github-2: a pull request merged already (on GitHub, before the answer was applied) says
+  // so; before, the merge step skipped it and the card read "Merging #42." (live check 3, G7).
+  const already = await mergedAlready(store, task);
+  if (already) return markMerge(deps, row, "merging", { merge_result: already });
   // Marked first: a second sync while the merge runs does not merge it twice.
   await markMerge(deps, row, "merging");
   if (deps.merge) {
@@ -317,6 +321,8 @@ async function applyRebuildMerge(
     if (last?.status === "merged")
       return markMerge(deps, row, "merging", { merge_result: "merged" });
     if (last?.sentence) return markMerge(deps, row, "merging", { merge_result: last.sentence });
+    const merged = await mergedAlready(store, task);
+    if (merged) return markMerge(deps, row, "merging", { merge_result: merged });
     return "merging";
   }
   const record = await store.mergeRecord.forTask(task.id);
@@ -327,6 +333,21 @@ async function applyRebuildMerge(
       sentence: `#${record.pr_number} merges now: you pressed Merge.`,
     });
   return "merging";
+}
+
+/**
+ * L3-github-2: "#42 was merged on GitHub already." when the task's merge record says its pull
+ * request is merged (seen on GitHub, or merged by Forerunner); null otherwise.
+ */
+async function mergedAlready(
+  store: Pick<StateStore, "mergeRecord">,
+  task: TaskRow,
+): Promise<string | null> {
+  const record = await store.mergeRecord.forTask(task.id);
+  if (record?.state !== "merged" || (task.pr_url && record.pr_url !== task.pr_url)) return null;
+  return record.last_outcome === "merged_on_host"
+    ? `#${record.pr_number} was merged on GitHub already.`
+    : `#${record.pr_number} was merged already.`;
 }
 
 /**

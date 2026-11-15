@@ -129,3 +129,24 @@ owner's decision of 2026-11-02): a run that a budget stopped, or that heard the 
 listed work left, is never reviewed and counts no try; its report is kept. Point 8 above still
 applies to a pause at the session's own budget (its paused runs count among the stops) until the
 'budget-resume' area files the same budget card at the first stop of any kind.
+
+## Amendment (2026-11-15, run L3, area "l3-merge": L3-github-10)
+
+Point 4 stands: a cancel leaves an opened pull request open, and Forerunner never merges or
+closes it by itself. Live check 3 found that the app then named it nowhere: the Overview listed
+only done tasks' pull requests, the chat's file facts only done tasks', and the read-back said
+"its pull request stays open" with no number and no next step. Decided:
+
+1. **The cancel names it with what to do.** The Tasks row's Cancel dialog, the chat's read-back
+   and the line after Yes say "Its review stops now; #43 stays open on GitHub: close it there if
+   you do not want it." (`cancel-words.ts`, the pull request's number from the task).
+2. **The Overview keeps naming it** until GitHub says it is closed: under its own heading,
+   "Cancelled, still open on GitHub", with Open and no Merge (`GET /projects/:id/pull-requests`
+   lists it as `kind: "cancelled"`, `canMerge` false; a press is refused with "Its task was
+   cancelled; #43 stays open on GitHub: close it there, or reopen the task."). It is out of every
+   chain and out of "Waiting for you to merge".
+3. **The chat knows it.** The chat's "# Your files" lists it under "Left open on GitHub when their
+   task was cancelled" (from the app's own records, no GitHub call per turn), and files_list,
+   which asks GitHub when called, says whether it is still open there.
+4. **Not added:** a Close button in the app (closing stays the person's on GitHub); left as an
+   option for later.

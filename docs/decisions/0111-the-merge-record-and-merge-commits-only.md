@@ -511,3 +511,43 @@ Details no longer say "ask for a new review", which nothing offers. The card is 
 its task is done, whose row offers Redo, and a Redo withdraws it in the same transaction (point
 5, and point 2 of the review's fix-up of the merge side above), so the sentence never stands
 beside a task that offers no Redo.
+
+## Amendment (2026-11-15, run L3): every Merge outside a session checks the branch first; a merged pull request's cards close (l3-merge)
+
+Live check 3 (7d6b34a, the real model on forerunner-sandbox) found the leftover of point 2 of
+the leftovers7-merge2 amendment wider than it said: the person closed #46 on GitHub and pressed
+Merge on its dependent #48 a second later; the press answered "Merging #48." and merged #46's
+closed work into main, because only the watcher's next poll looked at what #48's branch held
+(the session's merge checks it, `DependentBranches.mergePort`; the person's never did). Decided:
+
+1. **The person's Merge, a card's Merge and the retry pass check the branch first.** Right before
+   a merge outside a session, the merge step runs the same check as the session's merge port
+   (`ReviewedPrMerge.checkBranchNow`, wired to `DependentBranches.checkBeforeMerge` by compose):
+   `PrTaskExecutor.rebuildTask` reads each dependency the branch holds on GitHub and takes out
+   work that went away (a pull request closed, a task redone or cancelled), and the record is
+   settled before the push. A review that read that work is void: the record waits for the
+   person with the rebuild's sentence and one card, and nothing merges it by itself. A rebuild
+   that only dropped what main has moves the record to the rebuilt head and the merge goes on
+   there. A check that could not run (the folder busy, GitHub silent) leaves the record owing
+   the rebuild (point 2: nothing claims it until the sweep ran it).
+2. **The press says it at once.** A Merge pressed on a pull request whose chain builds on one no
+   longer listed open and not merged on its record runs the check before it answers: "#48 was
+   rebuilt without #46, which was closed. It was reviewed with #46's changes, so it waits for
+   you: look at it, then merge it or redo the task." (refused; nothing merges). One whose check
+   could not run is refused with "#48 is not merged yet: Forerunner first checks what it holds
+   of the work it builds on. Press Merge again in a minute." A head that moved on GitHub since the
+   review and does not keep the reviewed change is refused with the head-moved sentence at once,
+   and the record, the task row and one card are settled as the merge step settles a press whose
+   head moved (`ReviewedPrMerge.headMovedNow`); a head that keeps it (GitHub's Update branch) is
+   followed as before. Before, both answered "Merging #N." and the refusal came seconds later.
+3. **A merged pull request's cards close.** Every open card of a task's merge (its head moved, a
+   rebuild, a rebuild that conflicted, a conflict notice) is withdrawn once that pull request is
+   merged, by Forerunner or seen merged on GitHub (`DependentBranches.dependencyMerged`), and the
+   sweep closes one an earlier version left open; its Answered line reads "Closed: #33 was
+   merged." A rebuild card's Merge answered after the merge says "#42 was merged on GitHub
+   already.", never "Merging #42.". The chat's open requests then no longer carry it.
+4. **What remains.** A merge made on GitHub's website of a dependent that still holds a closed
+   dependency (the person merged #48 there before any poll) is GitHub's: the closed work is on
+   main, and the closed task's record says "#46 was closed without merging." with no card saying
+   that its change reached main through #48 (left for later; Take this work out on #48 removes
+   both). The "What remains" sentence of point 2 above now covers only that case.

@@ -6,6 +6,7 @@ import {
   cancelledWorkWords,
   cancelWorkKind,
   cancelWorkLine,
+  prNumberOf as prNumberOfUrl,
 } from "@forerunner/runtime/daemon/cancel-words";
 import { redoWhileTakingOutSentence } from "@forerunner/runtime/daemon/take-out-words";
 // The module itself (import-free): a merge card's key and its Redo's mark (W15-04).
@@ -476,7 +477,8 @@ export function moveAsk(
           });
     const parts = [
       "Drops it.",
-      kind ? cancelWorkLine(kind) : null,
+      // L3-github-10: a pull request that stays open is named, with what to do about it.
+      kind ? cancelWorkLine(kind, prNumberOfUrl(task.pr_url)) : null,
       stuck ? `${stuck === 1 ? "1 task" : `${stuck} tasks`} waiting on it will be stuck.` : null,
     ];
     return `Cancel ${t}? ${parts.filter(Boolean).join(" ")}`;
@@ -499,7 +501,7 @@ export const UNDO_CONFLICT_WORDS =
 
 /** What a person's move did, in one line (design §5): the task by name, no raw state. */
 export function moveSentence(
-  task: Pick<TaskRow, "title">,
+  task: Pick<TaskRow, "title"> & Partial<Pick<TaskRow, "pr_url">>,
   from: TaskStatus,
   to: TaskStatus,
   extra: {
@@ -522,7 +524,7 @@ export function moveSentence(
   const t = quote(task.title);
   let s: string;
   if (to === "cancelled" && extra.work)
-    s = `Cancelled ${t}: ${cancelledWorkWords(extra.work, extra.kept)}`;
+    s = `Cancelled ${t}: ${cancelledWorkWords(extra.work, extra.kept, prNumberOfUrl(task.pr_url))}`;
   else if (to === "cancelled") s = `Cancelled ${t}.`;
   else if (to === "needs_human")
     s = RUNNING.includes(from)

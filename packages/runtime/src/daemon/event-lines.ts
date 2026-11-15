@@ -14,6 +14,7 @@ import { aboutWords, moneyWords, moneyWordsFirst } from "../session/money-words.
 import { sessionStatusText } from "../session/stop-words.ts";
 import { REVIEW_RESUMED_EVENT, TOOK_LARGER_EVENT } from "./event-audience.ts";
 import { takenLine } from "./oversize-words.ts";
+import { balancedCut } from "./quoted-title.ts";
 
 type Payload = Record<string, unknown>;
 
@@ -48,7 +49,9 @@ export function cutAtWord(text: string, max: number): string {
 
 /** '"Create the page skeleton in index.html"' with a long title cut at a word. */
 function quoted(title: string, max = 60): string {
-  return `"${cutAtWord(title.replace(/"/g, "'"), max)}"`;
+  // L3-github-9's sibling: cut where no quote of the title's own is left open, then its quotes
+  // as single ones (before: 'as 'Our…' with the single quote left open).
+  return `"${balancedCut(title, max, cutAtWord).replace(/"/g, "'")}"`;
 }
 
 /** The task an event names, in quotes, or "the task" for an event from before titles. */

@@ -460,6 +460,12 @@ export interface RepositoryFacts {
   closed: TaskPullRequest[];
   /** Done tasks with a pull request and no merge record (accepted before ADR 0111): no state. */
   unknown: TaskPullRequest[];
+  /**
+   * L3-github-10: cancelled tasks whose pull request Forerunner left open on GitHub (ADR 0105
+   * point 4), not seen closed or merged on their record; before, no fact named them. Absent:
+   * none (facts built before this field).
+   */
+  cancelled?: TaskPullRequest[];
 }
 
 /** "#4" for a pull request in a sentence. */
@@ -473,6 +479,20 @@ export async function donePullRequests(
   const tasks = await store.task.list({ project_id: projectId } as never, { limit: 2000 });
   return runOrder(tasks)
     .filter((t) => t.status === "done" && !!t.pr_url)
+    .map((t) => ({ taskId: t.id, title: t.title, url: t.pr_url ?? "" }));
+}
+
+/**
+ * L3-github-10: the cancelled tasks of a project that have a pull request, in run order (a
+ * cancel leaves its pull request open on GitHub, ADR 0105 point 4).
+ */
+export async function cancelledPullRequests(
+  store: Pick<StateStore, "task">,
+  projectId: string,
+): Promise<(TaskPullRequest & { taskId: string })[]> {
+  const tasks = await store.task.list({ project_id: projectId } as never, { limit: 2000 });
+  return runOrder(tasks)
+    .filter((t) => t.status === "cancelled" && !!t.pr_url)
     .map((t) => ({ taskId: t.id, title: t.title, url: t.pr_url ?? "" }));
 }
 
@@ -499,6 +519,7 @@ export async function repositoryFacts(
 ): Promise<RepositoryFacts | null> {
   const fullName = repositoryNameOf(project);
   if (!fullName) return null;
+  const cancelled: TaskPullRequest[] = [];
   const facts: RepositoryFacts = {
     fullName,
     waiting: [],
@@ -506,7 +527,16 @@ export async function repositoryFacts(
     merged: [],
     closed: [],
     unknown: [],
+    cancelled,
   };
+  // L3-github-10: a cancelled task's pull request, unless its record saw it merged or closed.
+  for (const pr of await cancelledPullRequests(store, project.id)) {
+    const record = await store.mergeRecord.forTask(pr.taskId);
+    const item = { title: pr.title, url: pr.url };
+    if (record?.pr_url === pr.url && record.state === "merged") facts.merged.push(item);
+    else if (record?.pr_url === pr.url && record.last_outcome === "closed") facts.closed.push(item);
+    else cancelled.push(item);
+  }
   const mode = mergeModeOf(project.settings);
   for (const pr of await donePullRequests(store, project.id)) {
     const record = await store.mergeRecord.forTask(pr.taskId);
@@ -578,5 +608,10 @@ export function filesBlock(folder: string | null, repository?: RepositoryFacts |
   if (repository.closed.length) lines.push(`Closed without merging: ${prList(repository.closed)}`);
   if (repository.unknown.length)
     lines.push(`Pull requests of finished tasks: ${prList(repository.unknown)}`);
+  // L3-github-10: what a cancel left open on GitHub, for the person to close there.
+  if (repository.cancelled?.length)
+    lines.push(
+      `Left open on GitHub when their task was cancelled (the person closes them there if not wanted): ${prList(repository.cancelled)}`,
+    );
   return lines.join("\n");
 }

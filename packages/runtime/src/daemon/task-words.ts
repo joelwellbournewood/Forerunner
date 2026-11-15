@@ -17,7 +17,7 @@ import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { CREDENTIAL_WAIT_REASON } from "../session/credential-wait.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
-import { cancelWorkKind, cancelWorkLine } from "./cancel-words.ts";
+import { cancelWorkKind, cancelWorkLine, prNumberOf } from "./cancel-words.ts";
 import { TAKE_OUT_NOTICE_PREFIX } from "./take-out-words.ts";
 
 /*
@@ -441,7 +441,7 @@ function cancelWorkOf(
     pullRequest: !!task.pr_url,
     ownFolder: !!ctx.ownFolder,
   });
-  return kind ? cancelWorkLine(kind) : undefined;
+  return kind ? cancelWorkLine(kind, prNumberOf(task.pr_url)) : undefined;
 }
 
 /**

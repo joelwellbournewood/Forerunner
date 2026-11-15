@@ -7267,13 +7267,14 @@ describe("the UI client against the real daemon: Cancel promises a removal only 
           text,
           source: "text",
         });
+      // L3-github-10 (run L3): the pull request is named, with what to do about it.
       expect((await say("skip the About page task")).pendingConfirmation?.readback).toBe(
-        'Cancel "About page in about.html"? Drops it. Its review stops now; its pull request stays open.',
+        'Cancel "About page in about.html"? Drops it. Its review stops now; #3 stays open on GitHub: close it there if you do not want it.',
       );
       const yes = await say("yes");
       expect(yes.actions.map((a) => a.kind)).toEqual(["task.transition"]);
       expect(yes.reply).toBe(
-        'Cancelled "About page in about.html": its review stopped; its pull request stays open.',
+        'Cancelled "About page in about.html": its review stopped; #3 stays open on GitHub: close it there if you do not want it.',
       );
       expect((await view())?.display?.label).toBe("Cancelled");
       await eventually(
@@ -15976,4 +15977,329 @@ describe("d1109-sessions, run C", () => {
       await rt.close();
     }
   }, 120_000);
+});
+
+describe("l3-merge, run L3", () => {
+  /**
+   * A repository project on the fake GitHub, composed as the daemon composes it (the watcher on,
+   * polled by the test), on a home the test can compose again (a restart).
+   */
+  async function repoWorld(name: string, env: Record<string, string> = {}) {
+    const work = mkdtempSync(join(tmpdir(), `fr-ui-real-l3-${name}-`));
+    const clock = new SystemClock();
+    const host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: "alice@example.test" });
+    const bare = await host.createRepo({
+      owner: "alice",
+      name,
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": `# ${name}\n` },
+    });
+    const REPO = { owner: "alice", name };
+    const token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock });
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const homeEnv = { FORERUNNER_HOME: home };
+    const compose = async () => {
+      const vault = new MemoryVault();
+      await vault.set(SECRET_NAMES.github, token);
+      return composeWithRolePlayer(env, {
+        env: homeEnv,
+        dirs: appDirs({ env: homeEnv }),
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        gitHost: new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+        vault,
+        tryIt: false,
+        githostWatch: { enabled: true, pollMs: 86_400_000 },
+        config: {
+          version: 1,
+          profile: "default",
+          timezone: "UTC",
+          githubApiBase: host.baseUrl,
+          anthropicApiBase: "http://an.test",
+          repos: [],
+          credentials: { github: true, anthropic: false, anthropicSubscription: false },
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        },
+      });
+    };
+    const mainFiles = async () =>
+      (await run(["git", "--git-dir", bare.dir, "ls-tree", "-r", "--name-only", "main"])).stdout;
+    return { host, github, REPO, token, compose, work, mainFiles };
+  }
+  const prOf = (url: string | null | undefined) => Number(/\/pull\/(\d+)/.exec(url ?? "")?.[1]);
+
+  it("L3-github-1, L3-github-2, L3-github-7: A closed on GitHub, Merge pressed on B before any poll: refused with the rebuilt-without sentence, nothing reaches main, one card with a rebuild's Details; B merged on GitHub closes the card ('Closed: #B was merged.'), also after the daemon starts again, and the chat is no longer told it was not merged", async () => {
+    const w = await repoWorld("l3lock");
+    let { rt, client, chatCalls } = await w.compose();
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({
+        name: "Kite club",
+        goal: "The club's pages",
+        repos: ["alice/l3lock"],
+      });
+      const a = await client.createTask(project.id, {
+        title: "Write kite/club.txt with one line",
+        outcome: "kite/club.txt holds one line",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const b = await client.createTask(project.id, {
+        title: "Write kite/club-day.txt after the club file",
+        outcome: "kite/club-day.txt names the club day",
+        riskTier: 1,
+        specialist: "coder",
+        dependsOn: [a.id],
+      });
+      const statuses = async () =>
+        (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+      const started = await client.startSession({ agentId, projectId: project.id });
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end (at least 60 s)",
+        statuses,
+        60_000,
+      );
+      const taskA = await rt.store.task.mustGet(a.id);
+      const taskB = await rt.store.task.mustGet(b.id);
+      expect(taskB.status, await statuses()).toBe("done");
+      const [prA, prB] = [prOf(taskA.pr_url), prOf(taskB.pr_url)];
+      const rowB = (await client.projectPullRequests(project.id)).waiting.find(
+        (r) => r.number === prB,
+      );
+      expect(rowB?.merge?.first).toEqual([prA]);
+      // The person closes A on GitHub and presses Merge on B before any poll.
+      await w.github.updatePullRequest(w.REPO, prA, { state: "closed" });
+      const sentence = `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it, then merge it or redo the task.`;
+      // Before (live check 3, G7): {"state":"queued","sentence":"Merging #48.","order":[48]}.
+      expect(await client.mergePullRequest(project.id, prB)).toEqual({
+        state: "refused",
+        sentence,
+        order: [],
+      });
+      await rt.pullRequests.idle();
+      await w.host.settle();
+      expect((await w.github.getPullRequest(w.REPO, prB)).merged).toBe(false);
+      expect(await w.mainFiles()).not.toContain("kite/club.txt");
+      const cardsOfB = async () =>
+        (await client.inbox(me.id)).requests.filter((r) => r.taskId === b.id);
+      const [card] = (await cardsOfB()).filter((r) => r.status === "open");
+      expect(card?.title).toBe(
+        `"Write kite/club-day.txt after the club file" was rebuilt without pull request #${prA}`,
+      );
+      expect(card?.body).toBe(sentence);
+      expect(card?.choices?.map((c) => c.label)).toEqual(["Merge", "Redo"]);
+      expect(card?.details).toEqual([
+        `Look at #${prB} on GitHub: it no longer holds the changes of #${prA}`,
+        "Then press Merge here, or Redo to do the task again from main",
+      ]);
+      // The person looks at B and merges it on GitHub; the watcher's next poll reads it.
+      expect((await w.github.mergePullRequest(w.REPO, prB)).merged).toBe(true);
+      await rt.githostWatcher?.pollOnce();
+      await w.host.settle();
+      const afterMerge = await cardsOfB();
+      expect(afterMerge.filter((r) => r.status === "open")).toEqual([]);
+      expect(afterMerge.find((r) => r.id === card?.id)?.outcome).toBe(
+        `Closed: #${prB} was merged.`,
+      );
+      // The daemon starts again on the same home: the card stays closed through polls.
+      await rt.close();
+      ({ rt, client, chatCalls } = await w.compose());
+      await rt.githostWatcher?.pollOnce();
+      expect((await cardsOfB()).filter((r) => r.status === "open")).toEqual([]);
+      // The chat's facts no longer carry a request that says #B was not merged.
+      await client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text: "what is left to merge?",
+        source: "text",
+      });
+      const told =
+        JSON.stringify(chatCalls.at(-1)?.messages ?? []) + (chatCalls.at(-1)?.system ?? "");
+      expect(told).not.toContain(`pull request #${prB} was not merged`);
+    } finally {
+      await rt.close();
+      await w.host.stop();
+    }
+  }, 240_000);
+
+  it("L3-github-3: Merge on a pull request whose branch got a commit on GitHub is refused at once with the head-moved sentence; nothing is merged, the row offers no Merge, one card says it changed after the review", async () => {
+    const w = await repoWorld("l3moved");
+    const { rt, client } = await w.compose();
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({
+        name: "Trips",
+        goal: "The trips page",
+        repos: ["alice/l3moved"],
+      });
+      const t = await client.createTask(project.id, {
+        title: 'Link trips page from kite/index.html as "Our trips"',
+        outcome: "kite/index.html links the trips page",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const started = await client.startSession({ agentId, projectId: project.id });
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end (at least 60 s)",
+        async () => `${(await client.tasks(project.id)).map((x) => x.status)}`,
+        60_000,
+      );
+      const task = await rt.store.task.mustGet(t.id);
+      const pr = prOf(task.pr_url);
+      // Someone pushes a commit to its branch on GitHub.
+      const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-l3-push-"));
+      try {
+        const auth = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${w.token}`).toString("base64")}`;
+        await run([
+          "git",
+          "-c",
+          `http.extraheader=${auth}`,
+          "clone",
+          "-q",
+          "--branch",
+          task.branch ?? "",
+          w.host.cloneUrl("alice/l3moved"),
+          dir,
+        ]);
+        writeFileSync(join(dir, "theirs.txt"), "pushed on GitHub after the review\n");
+        const g = (args: string[]) =>
+          run([
+            "git",
+            "-C",
+            dir,
+            "-c",
+            "user.name=Pat",
+            "-c",
+            "user.email=pat@example.test",
+            "-c",
+            `http.extraheader=${auth}`,
+            ...args,
+          ]);
+        await g(["add", "theirs.txt"]);
+        await g(["commit", "-q", "-m", "Their change"]);
+        await g(["push", "-q", "origin", `HEAD:${task.branch}`]);
+        await w.host.settle();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+      const sentence = headMovedSentence(pr);
+      // Before (live check 3, G4): {"state":"queued","sentence":"Merging #40.","order":[40]}.
+      expect(await client.mergePullRequest(project.id, pr)).toEqual({
+        state: "refused",
+        sentence,
+        order: [],
+      });
+      await rt.pullRequests.idle();
+      expect((await w.github.getPullRequest(w.REPO, pr)).merged).toBe(false);
+      const row = (await client.projectPullRequests(project.id)).waiting.find(
+        (r) => r.number === pr,
+      );
+      expect(row?.merge).toMatchObject({ canMerge: false, sentence });
+      const cards = (await client.inbox(me.id)).requests.filter(
+        (r) => r.taskId === t.id && r.status === "open",
+      );
+      expect(cards.map((c) => c.title)).toEqual([
+        '"Link trips page from kite/index.html as "Our trips"" changed after the review',
+      ]);
+    } finally {
+      await rt.close();
+      await w.host.stop();
+    }
+  }, 240_000);
+
+  it("L3-github-10: a cancelled task's pull request still open on GitHub stays listed (GET pull-requests: its own kind, no Merge), the cancel's read-back and Yes line name it, and the chat's file facts name it", async () => {
+    // The critic's replies wait a minute: the task stays in review with its pull request open.
+    const w = await repoWorld("l3cancel", { FORERUNNER_BENCH_CRITIC_DELAY_MS: "60000" });
+    const { rt, client, chatCalls } = await w.compose();
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({
+        name: "Club pages",
+        goal: "The club's pages",
+        repos: ["alice/l3cancel"],
+      });
+      const t = await client.createTask(project.id, {
+        title: "Write the About page in about.html",
+        outcome: "about.html tells the club's story",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const view = async () => (await client.tasks(project.id)).find((x) => x.id === t.id);
+      await eventually(
+        async () => (await view())?.display?.label === "Being reviewed" && !!(await view())?.prUrl,
+        "the task's review to begin with its pull request open (at least 60 s)",
+        async () => `${(await view())?.status} ${(await view())?.prUrl}`,
+        60_000,
+      );
+      const pr = prOf((await view())?.prUrl);
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      const line = `#${pr} stays open on GitHub: close it there if you do not want it.`;
+      expect((await say("skip the About page task")).pendingConfirmation?.readback).toBe(
+        `Cancel "Write the About page in about.html"? Drops it. Its review stops now; ${line}`,
+      );
+      expect((await say("yes")).reply).toBe(
+        `Cancelled "Write the About page in about.html": its review stopped; ${line}`,
+      );
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end",
+        async () => `${(await view())?.status}`,
+        30_000,
+      );
+      expect((await w.github.getPullRequest(w.REPO, pr)).state).toBe("open");
+      // Before (live check 3, G5): the Overview listed nothing for it.
+      // The project's own docs pull request is listed beside it (kind docs).
+      const rows = (await client.projectPullRequests(project.id)).waiting.filter(
+        (r) => r.kind !== "docs",
+      );
+      expect(rows).toEqual([
+        expect.objectContaining({
+          kind: "cancelled",
+          taskId: t.id,
+          number: pr,
+          merge: {
+            state: "blocked",
+            canMerge: false,
+            sentence: `Its task was cancelled; #${pr} stays open on GitHub: close it there, or reopen the task.`,
+            first: [],
+          },
+        }),
+      ]);
+      expect((await client.mergePullRequest(project.id, pr)).state).toBe("refused");
+      // The chat's '# Your files' names it.
+      await say("where are my files?");
+      const told =
+        JSON.stringify(chatCalls.at(-1)?.messages ?? []) + (chatCalls.at(-1)?.system ?? "");
+      expect(told).toContain(
+        `Left open on GitHub when their task was cancelled (the person closes them there if not wanted): \\"Write the About page in about.html\\" ${(await view())?.prUrl}`,
+      );
+      // Closed on GitHub: no longer listed.
+      await w.github.updatePullRequest(w.REPO, pr, { state: "closed" });
+      expect(
+        (await client.projectPullRequests(project.id)).waiting.filter((r) => r.kind !== "docs"),
+      ).toEqual([]);
+    } finally {
+      await rt.close();
+      await w.host.stop();
+    }
+  }, 240_000);
 });

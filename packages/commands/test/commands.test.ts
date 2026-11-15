@@ -798,11 +798,12 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
           ctx: w.ctx(),
         })) as { readback?: string }
       ).readback;
+    // L3-github-10 (run L3): the pull request is named, with what to do about it.
     expect(await ask(reviewed.id)).toBe(
-      'Cancel "About page"? Drops it. Its review stops now; its pull request stays open.',
+      'Cancel "About page"? Drops it. Its review stops now; #7 stays open on GitHub: close it there if you do not want it.',
     );
     expect(await ask(running.id)).toBe(
-      'Cancel "Credits page"? Drops it. Its run stops now; its pull request stays open.',
+      'Cancel "Credits page"? Drops it. Its run stops now; #8 stays open on GitHub: close it there if you do not want it.',
     );
     // Without a pull request, what it changed is removed (ADR 0105).
     expect(await ask(plain.id)).toBe(
@@ -821,7 +822,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
       }),
     );
     expect(yes.sentence).toBe(
-      'Cancelled "About page": its review stopped; its pull request stays open.',
+      'Cancelled "About page": its review stopped; #7 stays open on GitHub: close it there if you do not want it.',
     );
     // No review going on here: dropped only, pull request or not.
     w.ports.liveWork = () => false;

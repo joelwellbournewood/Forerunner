@@ -9,6 +9,7 @@ import {
   cancelledWorkWords,
   cancelWorkKind,
   cancelWorkLine,
+  prNumberOf,
 } from "@forerunner/runtime/daemon/cancel-words";
 import { redoWhileTakingOutSentence } from "@forerunner/runtime/daemon/take-out-words";
 import {
@@ -243,7 +244,8 @@ export function actionSentence(
           ownFolder: (extra.shown ?? task.display)?.cancelWork === cancelWorkLine("own_folder"),
         })
       : null;
-  if (to === "cancelled" && work) s = `Cancelled ${t}: ${cancelledWorkWords(work)}`;
+  if (to === "cancelled" && work)
+    s = `Cancelled ${t}: ${cancelledWorkWords(work, undefined, prNumberOf(task.prUrl))}`;
   else if (to === "cancelled") s = `Cancelled ${t}.`;
   else if (to === "needs_human")
     s = ["claimed", "in_progress"].includes(from)

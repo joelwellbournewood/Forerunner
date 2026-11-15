@@ -10,6 +10,7 @@ import {
   optionLabel,
   signoffAnswer,
 } from "../wiring/request-answers.ts";
+import { balancedCut } from "./quoted-title.ts";
 import { TAKE_OUT_NOTICE_PREFIX, takeOutConflictBody } from "./take-out-words.ts";
 
 /*
@@ -150,7 +151,8 @@ export function cutWords(text: string, max: number): string {
   return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
-const q = (title: string) => `"${cutWords(title, 50)}"`;
+/** A task title in quotes, cut at a word, never inside a quote of its own (L3-github-9). */
+const q = (title: string) => `"${balancedCut(title, 50, cutWords)}"`;
 
 /** '"A" waits on it.' / '3 tasks wait on it: "A", "B" and 1 more.' (design §5 rule 5). */
 export function waitingSentence(titles: readonly string[]): string | null {
@@ -756,7 +758,7 @@ function cancelPausedExplain(waiting: readonly string[], heldWork?: boolean): st
   if (heldWork === false) {
     if (waiting.length === 0) return "Drops it.";
     if (waiting.length === 1)
-      return `Drops it; "${cutWords(waiting[0] as string, 50)}" will be stuck.`;
+      return `Drops it; "${balancedCut(waiting[0] as string, 50, cutWords, 0)}" will be stuck.`;
     return `Drops it; the ${waiting.length} tasks after it will be stuck.`;
   }
   if (waiting.length === 0)
@@ -764,7 +766,7 @@ function cancelPausedExplain(waiting: readonly string[], heldWork?: boolean): st
   // Tasks that wait on it have not built on it: within 100 characters (design §5.1).
   const base = "Drops it; its work is set aside";
   if (waiting.length === 1)
-    return `${base}; "${cutWords(waiting[0] as string, 35)}" will be stuck.`;
+    return `${base}; "${balancedCut(waiting[0] as string, 35, cutWords, 0)}" will be stuck.`;
   return `${base}; the ${waiting.length} tasks after it will be stuck.`;
 }
 
@@ -1382,6 +1384,11 @@ export function requestWords(
   } else if (key === ANSWER_CARD_KEYS.mergeLeftOpen) {
     words = mergeLeftOpenCard(r, card, ctx);
     outcome = mergeLeftOpenOutcome(card);
+    // L3-github-2: closed because its pull request was merged (by Forerunner or on GitHub).
+    if (r.status === "withdrawn" && card.closed === "merged") {
+      words.outcome = `Closed: ${prOfCard(card).replace(/^pull request /, "")} was merged.`;
+      return words;
+    }
   } else if (key === "sandbox.not_ready") {
     words = dockerCard(r, card, ctx);
     if (card.outcome === "cancel")

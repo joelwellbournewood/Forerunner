@@ -7,6 +7,7 @@
 
 import { DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
 import type { HumanRequestRow, MessageRow, ReviewRow } from "@forerunner/state";
+import { balancedCut } from "../daemon/quoted-title.ts";
 import { requestWords } from "../daemon/request-words.ts";
 import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
 import type { KillReport, KillScope } from "../enforcement/killswitch.ts";
@@ -436,7 +437,8 @@ export function criticVerdict(
   names: RequestNames = {},
 ): Notification {
   const needsAttention = review.verdict === "escalate" || review.verdict === "human";
-  const task = names.taskTitle ? `"${cut(names.taskTitle, 40)}"` : "a task";
+  // L3-github-9's sibling: never cut inside a quote of the title's own (no slack: title ≤ 60).
+  const task = names.taskTitle ? `"${balancedCut(names.taskTitle, 40, cut, 0)}"` : "a task";
   const said = plain(review.summary).replace(/^(sent back for rework|accepted)\s*:\s*/i, "");
   return {
     kind: "critic_verdict",

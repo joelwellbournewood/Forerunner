@@ -400,7 +400,11 @@ function RepositoryFiles({
   } | null>(null);
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const waiting: ProjectPullRequestView[] = prs.data?.waiting ?? [];
+  const rowsListed: ProjectPullRequestView[] = prs.data?.waiting ?? [];
+  // L3-github-10: a cancelled task's pull request still open on GitHub has its own heading,
+  // with Open and no Merge; it waits for no merge.
+  const waiting = rowsListed.filter((pr) => pr.kind !== "cancelled");
+  const leftOpen = rowsListed.filter((pr) => pr.kind === "cancelled");
   const inFlight = (pr: ProjectPullRequestView) =>
     pr.merge?.state === "merging" || pr.merge?.state === "queued";
   // A row that changes without the person (it waits for checks, its own or those of one it merges
@@ -623,6 +627,32 @@ function RepositoryFiles({
           <p className="text-neutral-600 dark:text-neutral-400" data-testid="prs-none">
             No pull request waits for you.
           </p>
+        ) : null}
+        {leftOpen.length > 0 ? (
+          <div data-testid="prs-cancelled">
+            <h3 className="font-medium">Cancelled, still open on GitHub</h3>
+            <p className="text-xs text-neutral-500">
+              Their tasks were cancelled and Forerunner leaves them as they are: close them on
+              GitHub, or reopen the task in Tasks.
+            </p>
+            <ul className="space-y-0.5">
+              {leftOpen.map((pr) => (
+                <li
+                  key={pr.number}
+                  data-testid="pr-cancelled"
+                  data-number={pr.number}
+                  className="flex flex-wrap items-center gap-2"
+                >
+                  <span>
+                    "{pr.title}" · pull request #{pr.number}
+                  </span>
+                  <ExternalLink href={pr.url} variant="inline" testId="pr-cancelled-link">
+                    Open
+                  </ExternalLink>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : null}
         {changed.length > 0 ? (
           <p data-testid="changed-files">

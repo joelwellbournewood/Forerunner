@@ -977,3 +977,127 @@ describe("w15-merge, wave 15", () => {
     }
   });
 });
+
+describe("l3-merge, run L3", () => {
+  const row = (
+    n: number,
+    title: string,
+    kind: "task" | "cancelled" = "task",
+    merge: Record<string, unknown> = {},
+  ) => ({
+    kind,
+    taskId: `task_${n}`,
+    title,
+    number: n,
+    url: `https://example.test/org/atlas/pull/${n}`,
+    branch: `fr/${n}`,
+    review: kind === "task" ? ("critic" as const) : null,
+    merge: { state: "ready" as const, canMerge: true, sentence: null, first: [], ...merge },
+  });
+
+  it("L3-github-3: Merge on a pull request whose branch got a commit on GitHub shows the refusal at once, never 'Merging #40.'; the row then offers no Merge and says why", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const sentence =
+      "#40 changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.";
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [row(40, "Link trips page")],
+      error: null,
+    };
+    harness.daemon.state.pullRequestPressFinds["proj_atlas#40"] = { row: "blocked", sentence };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    await user.click(await within(files).findByTestId("pr-merge"));
+    expect(await within(files).findByRole("alert")).toHaveTextContent(sentence);
+    expect(within(files).queryByTestId("merge-answer")).toBeNull();
+    expect(within(files).queryByText(/Merging #40/)).toBeNull();
+    expect(postedCalls(harness, "/projects/proj_atlas/pull-requests/40/merge")).toHaveLength(1);
+    const shown = await within(files).findByTestId("pr-waiting");
+    await waitFor(() =>
+      expect(within(shown).getByTestId("pr-merge-sentence")).toHaveTextContent(sentence),
+    );
+    expect(within(shown).queryByTestId("pr-merge")).toBeNull();
+  });
+
+  it("L3-github-1: Merge on a pull request that still holds a closed one's work shows at once that it was rebuilt without it, merges nothing, and offers Merge again for after the person's look", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const sentence =
+      "#48 was rebuilt without #46, which was closed. It was reviewed with #46's changes, so it waits for you: look at it, then merge it or redo the task.";
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [row(48, "Write kite/club-day.txt", "task", { first: [46] })],
+      error: null,
+    };
+    harness.daemon.state.pullRequestPressFinds["proj_atlas#48"] = { row: "left_to_you", sentence };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    await user.click(await within(files).findByTestId("pr-merge"));
+    expect(await within(files).findByRole("alert")).toHaveTextContent(sentence);
+    expect(within(files).queryByText(/Merging #48/)).toBeNull();
+    const shown = await within(files).findByTestId("pr-waiting");
+    await waitFor(() =>
+      expect(within(shown).getByTestId("pr-merge-sentence")).toHaveTextContent(sentence),
+    );
+    expect(within(shown).getByTestId("pr-merge")).toBeEnabled();
+    expect(within(shown).queryByTestId("pr-merge-first")).toBeNull();
+  });
+
+  it("L3-github-10: a cancelled task's pull request still open on GitHub is named under its own heading with Open and no Merge; nothing else waits, so 'No pull request waits for you.' stays true", async () => {
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [
+        row(43, "Write the About page in about.html", "cancelled", {
+          state: "blocked",
+          canMerge: false,
+          sentence:
+            "Its task was cancelled; #43 stays open on GitHub: close it there, or reopen the task.",
+        }),
+      ],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const block = await within(files).findByTestId("prs-cancelled");
+    expect(block).toHaveTextContent("Cancelled, still open on GitHub");
+    expect(block).toHaveTextContent(
+      "Their tasks were cancelled and Forerunner leaves them as they are: close them on GitHub, or reopen the task in Tasks.",
+    );
+    const item = within(block).getByTestId("pr-cancelled");
+    expect(item).toHaveTextContent('"Write the About page in about.html" · pull request #43');
+    expect(within(item).getByTestId("pr-cancelled-link")).toHaveAttribute(
+      "href",
+      "https://example.test/org/atlas/pull/43",
+    );
+    expect(within(files).queryByTestId("pr-merge")).toBeNull();
+    expect(within(files).queryByTestId("pr-waiting")).toBeNull();
+    expect(within(files).getByTestId("prs-none")).toHaveTextContent(
+      "No pull request waits for you.",
+    );
+  });
+
+  it("L3-github-10: beside pull requests that wait for a Merge, the cancelled one is listed apart and only the others offer Merge", async () => {
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [
+        row(40, "Link trips page"),
+        row(43, "Write the About page in about.html", "cancelled", {
+          state: "blocked",
+          canMerge: false,
+          sentence:
+            "Its task was cancelled; #43 stays open on GitHub: close it there, or reopen the task.",
+        }),
+      ],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const waiting = await within(files).findByTestId("prs-waiting");
+    expect(
+      within(waiting)
+        .getAllByTestId("pr-waiting")
+        .map((r) => r.dataset.number),
+    ).toEqual(["40"]);
+    expect(within(waiting).getAllByTestId("pr-merge")).toHaveLength(1);
+    expect(within(files).getByTestId("prs-cancelled")).toHaveTextContent("pull request #43");
+  });
+});

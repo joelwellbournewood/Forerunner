@@ -6,7 +6,10 @@
  * - `run` / `review`: a run or review that goes on here stops, and what it changed is taken out
  *   of the folder it ran in (ADR 0105); Undo restores it unless the same files changed since
  *   (L-6). Before: 139 and 142 characters (W6-7).
- * - `pull_request`: a pull request already opened stays open; nothing is taken out.
+ * - `pull_request`: a pull request already opened stays open; nothing is taken out. L3-github-10
+ *   (live check 3, G5): the line names it and what to do ("#43 stays open on GitHub: close it
+ *   there if you do not want it."); before, "its pull request stays open", with no number and
+ *   no next step, and no list in the app named it once the task was cancelled.
  * - `own_folder`: a project linked to the person's own folder: nothing is set aside there, so
  *   what the run wrote stays (C-37: before, the dialog promised a removal that never came).
  * - `paused`: a task paused at a budget: its work in progress (a commit of its own) is set aside,
@@ -20,17 +23,31 @@ export type CancelWorkKind =
   | "own_folder"
   | "paused";
 
-/** The dialog's line after "Drops it." (and the chat read-back's). */
-export function cancelWorkLine(kind: CancelWorkKind): string {
+/** The number of a pull request from its URL ("…/pull/43"), or null. */
+export function prNumberOf(url: string | null | undefined): number | null {
+  const m = /\/pulls?\/(\d+)/.exec(url ?? "");
+  return m ? Number(m[1]) : null;
+}
+
+/** "#43 stays open on GitHub: close it there if you do not want it." (L3-github-10). */
+function staysOpen(pr: number | null | undefined): string {
+  return `${pr ? `#${pr}` : "its pull request"} stays open on GitHub: close it there if you do not want it.`;
+}
+
+/**
+ * The dialog's line after "Drops it." (and the chat read-back's). `pr`: the task's pull request
+ * number, named in the line of a task that has one (L3-github-10).
+ */
+export function cancelWorkLine(kind: CancelWorkKind, pr?: number | null): string {
   switch (kind) {
     case "run":
       return "Its run stops and its changes are removed; Undo restores them unless the files changed.";
     case "review":
       return "Its review stops and its changes are removed; Undo restores them unless the files changed.";
     case "pull_request":
-      return "Its run stops now; its pull request stays open.";
+      return `Its run stops now; ${staysOpen(pr)}`;
     case "review_pull_request":
-      return "Its review stops now; its pull request stays open.";
+      return `Its review stops now; ${staysOpen(pr)}`;
     case "own_folder":
       return "Its run stops now; what it wrote stays in your folder.";
     case "paused":
@@ -42,16 +59,20 @@ export function cancelWorkLine(kind: CancelWorkKind): string {
  * The line after the action, after 'Cancelled "X": ' (lower case first): what became of the
  * work. `kept` (a paused task's work another task built on): why its files stay.
  */
-export function cancelledWorkWords(kind: CancelWorkKind, kept?: string | null): string {
+export function cancelledWorkWords(
+  kind: CancelWorkKind,
+  kept?: string | null,
+  pr?: number | null,
+): string {
   switch (kind) {
     case "run":
       return "its run stopped and its changes are removed; Undo restores them unless the files changed.";
     case "review":
       return "its review stopped and its changes are removed; Undo restores them unless the files changed.";
     case "pull_request":
-      return "its run stopped; its pull request stays open.";
+      return `its run stopped; ${staysOpen(pr)}`;
     case "review_pull_request":
-      return "its review stopped; its pull request stays open.";
+      return `its review stopped; ${staysOpen(pr)}`;
     case "own_folder":
       return "its run stopped; what it wrote stays in your folder.";
     case "paused":
