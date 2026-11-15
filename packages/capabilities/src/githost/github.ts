@@ -426,9 +426,14 @@ export class GitHubHost implements GitHost {
 
   async listPullRequests(
     repo: RepoRef,
-    opts: { state?: "open" | "closed" | "all"; head?: string } = {},
+    opts: { state?: "open" | "closed" | "all"; head?: string; sort?: "updated" } = {},
   ): Promise<PullRequestInfo[]> {
     const params = new URLSearchParams({ state: opts.state ?? "open", per_page: "100" });
+    // d1109-onerepo-link: the most recently updated first, so the first page holds the latest.
+    if (opts.sort === "updated") {
+      params.set("sort", "updated");
+      params.set("direction", "desc");
+    }
     // GitHub reads `head` only as `owner:branch`: a bare branch was ignored and every open pull
     // request came back, so a task took the docs pull request for its own (U-083). A branch of
     // this repository is qualified with its owner.
@@ -1130,6 +1135,7 @@ function toRepo(r: Json): RepoInfo {
     ...(typeof r.allow_merge_commit === "boolean"
       ? { allowMergeCommit: r.allow_merge_commit }
       : {}),
+    ...(typeof r.id === "number" ? { id: r.id } : {}),
   };
 }
 
@@ -1148,6 +1154,11 @@ function toPr(r: Json): PullRequestInfo {
     draft: Boolean(r.draft),
     // On an open pull request GitHub's merge_commit_sha is its test merge: only a merged one's is real.
     mergeCommitSha: merged && r.merge_commit_sha ? String(r.merge_commit_sha) : null,
+    updatedAt: typeof r.updated_at === "string" ? r.updated_at : null,
+    authorLogin:
+      typeof (r.user as Json | undefined)?.login === "string"
+        ? String((r.user as Json).login)
+        : null,
   };
 }
 

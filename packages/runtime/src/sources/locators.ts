@@ -124,7 +124,9 @@ function parseAnyHost(input: string): RepoLocator | null {
     return ownerName(parts[0], parts[1], canonicalHost(url.hostname));
   }
   const parts = raw.split("/").filter(Boolean);
-  if (parts.length === 3 && parts[0]?.includes(".") && parts[1] && parts[2]) {
+  // `github.com/o/n`, also a page under it as a browser shows it (`www.github.com/o/n/tree/main`,
+  // d1109-onerepo-link): the host is the first part, the repository the next two.
+  if (parts.length >= 3 && parts[0]?.includes(".") && parts[1] && parts[2]) {
     return ownerName(parts[1], parts[2], canonicalHost(parts[0]));
   }
   if (parts.length === 2 && parts[0] && parts[1]) return ownerName(parts[0], parts[1], null);

@@ -1,0 +1,763 @@
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import nodePath from "node:path";
+import {
+  type GitHost,
+  type PullRequestInfo,
+  type RepoRef,
+  readForerunnerMarker,
+} from "@forerunner/capabilities";
+import {
+  type Clock,
+  currentPlatform,
+  ForerunnerError,
+  type Platform,
+  safeSegment,
+} from "@forerunner/platform";
+import type { JsonObject, ProjectRow, StateStore } from "@forerunner/state";
+import { scanForInjection } from "../injection/scan.ts";
+import { DEFAULT_REPO_HOSTS, parseRepoLocator, type RepoLocator, repoKey } from "./locators.ts";
+import { INSTALL_MARKER_FILE, parseInstallMarker } from "./marker.ts";
+
+/**
+ * One repository, one project (D1, ADR 0117; the owner's words of 2026-11-09: "There should not
+ * be 2 projects in one repo. ... Make it such that multiple projects are not done on one repo, in
+ * an intelligent way."). Every way of linking a repository or folder (New project, chat, Sources,
+ * the Data tab's import) asks this module which project already uses it, by one identity of the
+ * link (`identityOf`: every spelling of a GitHub repository, a folder by its real path with its
+ * git root, worktree and origin read from files, never by a git process), and, for a repository,
+ * which Forerunner project the repository itself names (`readRepository`: its install marker on
+ * the default branch and the marks of its pull requests, with their activity). A project that is
+ * not on this computer (another person's Forerunner, D9, or the person's own earlier install) is
+ * offered to work on together (the same project id, nothing written to GitHub then) and, second,
+ * to take over only while no other GitHub account worked on it within `ACTIVE_ELSEWHERE_DAYS`.
+ */
+
+/** Bound on the projects the index reads (as discovery's duplicate check); above it, words. */
+export const MAX_PROJECTS = 10_000;
+
+/** A project nobody else touched for this many days may be taken over (the 14-day rule). */
+export const ACTIVE_ELSEWHERE_DAYS = 14;
+
+/** The settings key of a project that took a repository over (`took_over`). */
+export const TOOK_OVER_KEY = "took_over";
+/** The settings key of a project worked on together with another Forerunner (D9). */
+export const TOGETHER_KEY = "together";
+/** The settings key d1109-onerepo-join writes on the kept project (read here, never written). */
+export const JOINED_FROM_KEY = "joined_from";
+/** The settings key project.create's Undo writes on a removed project (W15-36). */
+const REMOVED_NAME_KEY = "removed_name";
+
+/** A project id as a marker names it (schema 1): a UUID. */
+const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ---------------------------------------------------------------------------------------------
+// The identity of a link
+// ---------------------------------------------------------------------------------------------
+
+/** What a link (one `repos` entry) is, as every entry point compares it. */
+export interface LinkIdentity {
+  entry: string;
+  kind: "repo" | "folder";
+  /** A repository's owner and name (a folder: its origin's, when it has one). */
+  repo: RepoLocator | null;
+  /** A folder's path as the platform compares it (real path; lower case on Windows). */
+  folder: string | null;
+  /** A folder's nearest enclosing git root (the folder holding `.git`), compared form. */
+  gitRoot: string | null;
+  /** A git worktree's main working tree (from its `.git` file and `commondir`), compared form. */
+  mainRoot: string | null;
+  /** Every key the link covers: `github:o/n` and `folder:<path>`. */
+  keys: string[];
+}
+
+/** What reading a link gave: its identity, a host this install does not use, or nothing. */
+export type IdentityResult =
+  | { kind: "identity"; identity: LinkIdentity }
+  | { kind: "other_host"; host: string; entry: string }
+  | { kind: "none"; entry: string };
+
+/** The files a folder's identity reads (tests may inject one; the default is node:fs). */
+export interface IdentityFs {
+  isDirectory(path: string): boolean;
+  isFile(path: string): boolean;
+  readText(path: string): string | null;
+  realPath(path: string): string | null;
+}
+
+const nodeFs: IdentityFs = {
+  isDirectory(p) {
+    try {
+      return statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  },
+  isFile(p) {
+    try {
+      return statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  },
+  readText(p) {
+    try {
+      return existsSync(p) ? readFileSync(p, "utf8") : null;
+    } catch {
+      return null;
+    }
+  },
+  realPath(p) {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return null;
+    }
+  },
+};
+
+export interface IdentityOptions {
+  /** The git hosts a URL may name (`repoHostsFor`); default github.com. */
+  hosts?: readonly string[];
+  /** The platform whose path rules apply; default this computer's. */
+  platform?: Platform;
+  fs?: IdentityFs;
+}
+
+function pathApi(platform: Platform): typeof nodePath.posix {
+  return platform === "windows" ? nodePath.win32 : nodePath.posix;
+}
+
+/** The compared form of an absolute path: resolved, no trailing separator, Windows lower case. */
+function comparedPath(p: string, platform: Platform): string {
+  const api = pathApi(platform);
+  const resolved = api.resolve(p);
+  return platform === "windows" ? resolved.toLowerCase() : resolved;
+}
+
+/** Whether `inner` is strictly inside `outer` (both compared forms). */
+function strictlyInside(inner: string, outer: string, platform: Platform): boolean {
+  const rel = pathApi(platform).relative(outer, inner);
+  return rel !== "" && !rel.startsWith("..") && !pathApi(platform).isAbsolute(rel);
+}
+
+/** The origin remote's URL in a git config file's text, or null. */
+export function originUrlOf(config: string): string | null {
+  let inOrigin = false;
+  for (const raw of config.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#") || line.startsWith(";")) continue;
+    const section = /^\[\s*([^\]\s"]+)(?:\s+"([^"]*)")?\s*\]$/.exec(line);
+    if (section) {
+      inOrigin = section[1]?.toLowerCase() === "remote" && section[2] === "origin";
+      continue;
+    }
+    if (!inOrigin) continue;
+    const kv = /^url\s*=\s*(.+)$/i.exec(line);
+    if (kv?.[1]) return kv[1].trim().replace(/^"|"$/g, "");
+  }
+  return null;
+}
+
+interface GitFacts {
+  gitRoot: string | null;
+  mainRoot: string | null;
+  originUrl: string | null;
+}
+
+/**
+ * A folder's git facts read as files (no git process in the person's folder): the nearest
+ * folder at or above it with a `.git` (folder, or a worktree's `.git` file whose `gitdir:` and
+ * `commondir` lead to the main repository), and the origin remote in the common `config`.
+ */
+function gitFactsOf(folder: string, platform: Platform, fs: IdentityFs): GitFacts {
+  const api = pathApi(platform);
+  let dir = api.resolve(folder);
+  for (;;) {
+    const dotGit = api.join(dir, ".git");
+    if (fs.isDirectory(dotGit)) {
+      const config = fs.readText(api.join(dotGit, "config"));
+      return { gitRoot: dir, mainRoot: null, originUrl: config ? originUrlOf(config) : null };
+    }
+    if (fs.isFile(dotGit)) {
+      const text = fs.readText(dotGit) ?? "";
+      const gitdir = /^gitdir:\s*(.+)$/m.exec(text)?.[1]?.trim();
+      if (gitdir) {
+        const gitDir = api.resolve(dir, gitdir);
+        const common = fs.readText(api.join(gitDir, "commondir"))?.trim();
+        const commonDir = common ? api.resolve(gitDir, common) : gitDir;
+        const config = fs.readText(api.join(commonDir, "config"));
+        const mainRoot = api.basename(commonDir) === ".git" ? api.dirname(commonDir) : null;
+        return { gitRoot: dir, mainRoot, originUrl: config ? originUrlOf(config) : null };
+      }
+      return { gitRoot: dir, mainRoot: null, originUrl: null };
+    }
+    const up = api.dirname(dir);
+    if (up === dir) return { gitRoot: null, mainRoot: null, originUrl: null };
+    dir = up;
+  }
+}
+
+/**
+ * The identity of one link: a GitHub repository in any spelling (`o/n`, `o/n.git`,
+ * `github.com/o/n`, an HTTPS or SSH URL) on one of the install's hosts, or an absolute folder
+ * by its real path, its git root, a worktree's main tree and its origin. A URL on another git
+ * host is `other_host` (refused at link: OR-11); anything else is `none` (not compared).
+ */
+export function identityOf(entry: string, opts: IdentityOptions = {}): IdentityResult {
+  const platform = opts.platform ?? currentPlatform();
+  const fs = opts.fs ?? nodeFs;
+  const hosts = opts.hosts ?? DEFAULT_REPO_HOSTS;
+  const text = entry.trim();
+  if (!text) return { kind: "none", entry };
+  const api = pathApi(platform);
+  if (api.isAbsolute(text)) {
+    // The folder's files are read on this computer's own platform (or through a given reader).
+    const readable = opts.fs !== undefined || platform === currentPlatform();
+    const real = readable ? (fs.realPath(api.resolve(text)) ?? api.resolve(text)) : text;
+    const folder = comparedPath(real, platform);
+    const facts = readable
+      ? gitFactsOf(real, platform, fs)
+      : { gitRoot: null, mainRoot: null, originUrl: null };
+    const origin = facts.originUrl ? parseRepoLocator(facts.originUrl, hosts) : null;
+    const gitRoot = facts.gitRoot ? comparedPath(facts.gitRoot, platform) : null;
+    const mainRoot = facts.mainRoot ? comparedPath(facts.mainRoot, platform) : null;
+    const keys = [`folder:${folder}`];
+    if (mainRoot) keys.push(`folder:${mainRoot}`);
+    if (origin) keys.push(origin.key);
+    return {
+      kind: "identity",
+      identity: { entry, kind: "folder", repo: origin, folder, gitRoot, mainRoot, keys },
+    };
+  }
+  const any = parseRepoLocator(text, "any");
+  if (!any) return { kind: "none", entry };
+  const repo = parseRepoLocator(text, hosts);
+  if (!repo) return { kind: "other_host", host: any.host ?? "another host", entry };
+  return {
+    kind: "identity",
+    identity: {
+      entry,
+      kind: "repo",
+      repo,
+      folder: null,
+      gitRoot: null,
+      mainRoot: null,
+      keys: [repo.key],
+    },
+  };
+}
+
+/**
+ * Whether two links name the same thing: one repository key (a folder's origin counts as its
+ * repository), the same folder, a worktree and its main tree, or a folder inside a linked one
+ * that has no git root of its own below the linked one (validation rule 5: with `C:\Code`
+ * linked, `C:\Code\notes` is that project's but `C:\Code\shop` with its own `.git` is its own).
+ */
+export function sameLink(a: LinkIdentity, b: LinkIdentity, platform?: Platform): boolean {
+  const p = platform ?? currentPlatform();
+  if (a.keys.some((k) => b.keys.includes(k))) return true;
+  const inside = (inner: LinkIdentity, outer: LinkIdentity) =>
+    !!inner.folder &&
+    !!outer.folder &&
+    outer.kind === "folder" &&
+    strictlyInside(inner.folder, outer.folder, p) &&
+    !(inner.gitRoot && strictlyInside(inner.gitRoot, outer.folder, p));
+  return inside(a, b) || inside(b, a);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Projects on this computer
+// ---------------------------------------------------------------------------------------------
+
+function settingsOf(project: Pick<ProjectRow, "settings">): JsonObject {
+  const s = project.settings;
+  return s && typeof s === "object" && !Array.isArray(s) ? s : {};
+}
+
+/** The ids a project answers to: its own and the ones joined into it (d1109-onerepo-join). */
+export function projectIdsOf(project: Pick<ProjectRow, "id" | "settings">): string[] {
+  const joined = settingsOf(project)[JOINED_FROM_KEY];
+  const ids = Array.isArray(joined) ? joined.filter((x): x is string => typeof x === "string") : [];
+  return [project.id, ...ids.filter((id) => id !== project.id)];
+}
+
+/** What a together project keeps of the repository's project (D9), or null for any other. */
+export interface TogetherFacts {
+  name: string;
+  at: string;
+  activeOn: string | null;
+  login: string | null;
+}
+
+export function togetherOf(project: Pick<ProjectRow, "settings">): TogetherFacts | null {
+  const t = settingsOf(project)[TOGETHER_KEY];
+  if (!t || typeof t !== "object" || Array.isArray(t)) return null;
+  const o = t as JsonObject;
+  return {
+    name: typeof o.name === "string" ? o.name : "",
+    at: typeof o.at === "string" ? o.at : "",
+    activeOn: typeof o.activeOn === "string" ? o.activeOn : null,
+    login: typeof o.login === "string" ? o.login : null,
+  };
+}
+
+/** Whether the project works on its repository together with another Forerunner (D9). */
+export function isTogether(project: Pick<ProjectRow, "settings">): boolean {
+  return togetherOf(project) !== null;
+}
+
+/** A take-over a project recorded: the project ids it replaced in the repository. */
+export interface TookOverFacts {
+  projects: string[];
+  name: string;
+  at: string;
+  removed: boolean;
+}
+
+export function tookOverOf(project: Pick<ProjectRow, "settings">): TookOverFacts | null {
+  const t = settingsOf(project)[TOOK_OVER_KEY];
+  if (!t || typeof t !== "object" || Array.isArray(t)) return null;
+  const o = t as JsonObject;
+  const projects = Array.isArray(o.projects)
+    ? o.projects.filter((x): x is string => typeof x === "string")
+    : [];
+  return {
+    projects,
+    name: typeof o.name === "string" ? o.name : "",
+    at: typeof o.at === "string" ? o.at : "",
+    removed: o.removed === true,
+  };
+}
+
+/** A project whose creation was undone (W15-36): archived, with its old name kept. */
+export function isRemovedProject(project: Pick<ProjectRow, "status" | "settings">): boolean {
+  return project.status === "archived" && typeof settingsOf(project)[REMOVED_NAME_KEY] === "string";
+}
+
+export function shownNameOf(project: Pick<ProjectRow, "name" | "status" | "settings">): string {
+  const kept = settingsOf(project)[REMOVED_NAME_KEY];
+  return project.status === "archived" && typeof kept === "string" && kept ? kept : project.name;
+}
+
+/** A project on this computer that uses a link, with the link it uses (for the words). */
+export interface ProjectUse {
+  project: ProjectRow;
+  /** The entry of the project that matched. */
+  entry: string;
+  identity: LinkIdentity;
+}
+
+/**
+ * The index of what this computer's projects use (one per call: every check reads the store
+ * again, so a project made or removed a moment ago counts). Every project row that is not
+ * archived counts; archived rows tell a joined project (its keeper counts as it) and a removed
+ * one (it uses nothing) apart. Bounded like discovery: above `MAX_PROJECTS` it refuses in words.
+ */
+export class RepositoryIndex {
+  private constructor(
+    readonly rows: readonly ProjectRow[],
+    private readonly opts: IdentityOptions,
+  ) {}
+
+  static async read(
+    store: Pick<StateStore, "project">,
+    opts: IdentityOptions = {},
+  ): Promise<RepositoryIndex> {
+    const rows = await store.project.list(undefined, {
+      orderBy: [{ column: "created_at" }, { column: "id" }],
+      limit: MAX_PROJECTS + 1,
+    });
+    if (rows.length > MAX_PROJECTS)
+      throw new ForerunnerError(
+        "validation",
+        `This computer has more than ${MAX_PROJECTS.toLocaleString("en-US")} projects, so the link cannot be checked. Archive some first.`,
+        { details: { cause: "too_many_projects", max: MAX_PROJECTS } },
+      );
+    return new RepositoryIndex(rows, opts);
+  }
+
+  private readonly identities = new Map<string, LinkIdentity | null>();
+
+  private identity(entry: string): LinkIdentity | null {
+    if (!this.identities.has(entry)) {
+      const r = identityOf(entry, this.opts);
+      this.identities.set(entry, r.kind === "identity" ? r.identity : null);
+    }
+    return this.identities.get(entry) ?? null;
+  }
+
+  /** The project a joined one counts as (d1109-onerepo-join's `joined_from` on the keeper). */
+  keeperOf(projectId: string): ProjectRow | null {
+    for (const p of this.rows) {
+      if (p.status === "archived") continue;
+      if (p.id !== projectId && projectIdsOf(p).includes(projectId)) return p;
+    }
+    return null;
+  }
+
+  /** The row of an id on this install, any status. */
+  row(id: string): ProjectRow | null {
+    return this.rows.find((p) => p.id === id) ?? null;
+  }
+
+  /** Whether `id` names a project of this install: a row, joined into one, or taken over here. */
+  knows(id: string): boolean {
+    if (this.row(id)) return true;
+    for (const p of this.rows) {
+      if (projectIdsOf(p).includes(id)) return true;
+      if (tookOverOf(p)?.projects.includes(id)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The projects here using the link (a joined project counted as its keeper; a removed one
+   * uses nothing), each once, oldest first; `except` leaves one project out (the asking one).
+   */
+  projectsUsing(link: LinkIdentity, except?: string): ProjectUse[] {
+    const platform = this.opts.platform ?? currentPlatform();
+    const out: ProjectUse[] = [];
+    for (const p of this.rows) {
+      if (p.status === "archived") continue;
+      if (except && p.id === except) continue;
+      for (const entry of p.repos ?? []) {
+        if (typeof entry !== "string") continue;
+        const theirs = this.identity(entry);
+        if (!theirs || !sameLink(link, theirs, platform)) continue;
+        const keeper = this.keeperOf(p.id) ?? p;
+        if (except && keeper.id === except) break;
+        if (!out.some((u) => u.project.id === keeper.id))
+          out.push({ project: keeper, entry, identity: theirs });
+        break;
+      }
+    }
+    return out;
+  }
+
+  /** The one project here using the repository, or null for none or more than one. */
+  soleUser(ref: RepoRef): ProjectRow | null {
+    const link: LinkIdentity = {
+      entry: `${ref.owner}/${ref.name}`,
+      kind: "repo",
+      repo: null,
+      folder: null,
+      gitRoot: null,
+      mainRoot: null,
+      keys: [repoKey(ref.owner, ref.name)],
+    };
+    const users = this.projectsUsing(link);
+    return users.length === 1 ? (users[0]?.project ?? null) : null;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// What the repository itself says
+// ---------------------------------------------------------------------------------------------
+
+/** A marker's project name as data: cut at 60 characters, control characters removed, scanned. */
+export function markerNameOf(name: string | null | undefined): string | null {
+  if (!name) return null;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are removed.
+  const clean = name.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").trim();
+  const cut = clean.length > 60 ? clean.slice(0, 60).trim() : clean;
+  if (!cut) return null;
+  if (scanForInjection(cut, "repo_file").suspicious) return null;
+  if (/["<>`]/.test(cut)) return null;
+  return cut;
+}
+
+/** The project ids a pull request names (the hidden mark, the intake branch, the L-16 line). */
+export function projectIdsNamedBy(pr: Pick<PullRequestInfo, "body" | "head">): string[] {
+  const ids: string[] = [];
+  const add = (id: string | undefined | null) => {
+    if (id && PROJECT_ID.test(id) && !ids.includes(id.toLowerCase())) ids.push(id.toLowerCase());
+  };
+  add(readForerunnerMarker(pr.body)?.project);
+  add(/^fr\/intake-(.+)-docs$/.exec(pr.head.ref)?.[1]);
+  add(/Forerunner project ([0-9a-f-]{36})\./i.exec(pr.body ?? "")?.[1]);
+  return ids;
+}
+
+/** A pull request that carries a project's mark, with when and by whom it was last touched. */
+export interface MarkedPullRequest {
+  number: number;
+  ids: string[];
+  state: "open" | "closed";
+  merged: boolean;
+  updatedAt: string | null;
+  authorLogin: string | null;
+}
+
+/** What one read of a repository gave: its marker and its marked pull requests. */
+export interface RepositoryRead {
+  /** The marker on the default branch (schema 1, its project a UUID), or null. */
+  marker: { project: string; name: string | null } | null;
+  /** A file is there but is no marker this schema wrote. */
+  markerUnreadable: boolean;
+  /** Pull requests carrying a project mark (state 'all', most recently updated first, 100). */
+  marked: MarkedPullRequest[];
+  /** This install's GitHub login, or null when the host did not say. */
+  login: string | null;
+}
+
+/**
+ * Reads what the repository says about Forerunner: its install marker on the default branch
+ * and the marks of its pull requests in any state, most recently updated first (one page of
+ * 100). Repository text is parsed strictly and is data: a marker's name is cut, cleaned and
+ * scanned before it is ever shown (`markerNameOf`). Throws what the host throws.
+ */
+export async function readRepository(host: GitHost, ref: RepoRef): Promise<RepositoryRead> {
+  let marker: RepositoryRead["marker"] = null;
+  let markerUnreadable = false;
+  const file = await host.getFile(ref, INSTALL_MARKER_FILE).catch((e: unknown) => {
+    if (e instanceof ForerunnerError && e.code === "not_found") return null;
+    throw e;
+  });
+  if (file) {
+    const parsed = parseInstallMarker(file.content);
+    if (parsed && PROJECT_ID.test(parsed.project))
+      marker = { project: parsed.project.toLowerCase(), name: markerNameOf(parsed.name) };
+    else markerUnreadable = true;
+  }
+  const prs = await host.listPullRequests(ref, { state: "all", sort: "updated" });
+  const marked: MarkedPullRequest[] = [];
+  for (const pr of prs.slice(0, 100)) {
+    const ids = projectIdsNamedBy(pr);
+    if (!ids.length) continue;
+    marked.push({
+      number: pr.number,
+      ids,
+      state: pr.state,
+      merged: pr.merged,
+      updatedAt: pr.updatedAt ?? null,
+      authorLogin: pr.authorLogin ?? null,
+    });
+  }
+  let login: string | null = null;
+  try {
+    login = (await host.whoAmI()).login || null;
+  } catch {
+    login = null;
+  }
+  return { marker, markerUnreadable, marked, login };
+}
+
+/** When the repository's project was last worked on, and whether by this install's account. */
+export interface Activity {
+  at: string;
+  own: boolean;
+}
+
+/** The project (or projects) a repository names that is not on this computer. */
+export interface Elsewhere {
+  /** The ids the repository names that this install does not know (marker first). */
+  ids: string[];
+  /** The marker's name for one id, cleaned; null when unknown or flagged. */
+  name: string | null;
+  /** The latest update of a pull request carrying one of the marks, any account. */
+  lastActive: Activity | null;
+  /** The latest update by another GitHub account within `ACTIVE_ELSEWHERE_DAYS`, else null. */
+  otherAccount: string | null;
+  canWorkTogether: boolean;
+  canTakeOver: boolean;
+}
+
+/** What the repository means for a new link on this computer. */
+export type RepositoryVerdict =
+  | { kind: "free" }
+  | { kind: "here"; project: ProjectRow }
+  | { kind: "removed"; projectId: string }
+  | { kind: "removed_together"; project: ProjectRow; elsewhere: Elsewhere }
+  | { kind: "elsewhere"; elsewhere: Elsewhere };
+
+/**
+ * The repository's project as this install sees it. The marker decides when there is one; with
+ * none, the ids the open pull requests' marks carry. An id that is a row here (not archived) is
+ * that project's (`here`); a project removed here that was never together frees the repository
+ * (`removed`, the creation records it as taken over); a removed together project is the other
+ * Forerunner's too (`removed_together`, Work together brings that row back); an id joined into a
+ * project here counts as its keeper; any other id is a project that is not on this computer.
+ */
+export function verdictOf(
+  read: RepositoryRead,
+  index: RepositoryIndex,
+  nowMs: number,
+): RepositoryVerdict {
+  const markerId = read.marker?.project ?? null;
+  const openIds = [...new Set(read.marked.filter((p) => p.state === "open").flatMap((p) => p.ids))];
+  const named = markerId ? [markerId] : openIds;
+  if (!named.length) return { kind: "free" };
+  const unknown: string[] = [];
+  for (const id of named) {
+    const row = index.row(id);
+    if (row && row.status !== "archived") return { kind: "here", project: row };
+    const keeper = index.keeperOf(id);
+    if (keeper) return { kind: "here", project: keeper };
+    if (row && isRemovedProject(row)) {
+      if (isTogether(row))
+        return {
+          kind: "removed_together",
+          project: row,
+          elsewhere: elsewhereOf(read, [id], nowMs),
+        };
+      if (named.length === 1) return { kind: "removed", projectId: id };
+      continue;
+    }
+    if (row) continue;
+    if (index.knows(id)) continue;
+    unknown.push(id);
+  }
+  if (!unknown.length) return { kind: "free" };
+  return { kind: "elsewhere", elsewhere: elsewhereOf(read, unknown, nowMs) };
+}
+
+function elsewhereOf(read: RepositoryRead, ids: string[], nowMs: number): Elsewhere {
+  const mine = (login: string | null) =>
+    !!login && !!read.login && login.toLowerCase() === read.login.toLowerCase();
+  const ofThem = read.marked.filter((p) => p.ids.some((id) => ids.includes(id)));
+  const dated = ofThem
+    .filter((p): p is MarkedPullRequest & { updatedAt: string } => !!p.updatedAt)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const latest = dated[0];
+  const since = nowMs - ACTIVE_ELSEWHERE_DAYS * 24 * 3600_000;
+  const other = dated.find(
+    (p) => !mine(p.authorLogin) && Date.parse(p.updatedAt) >= since && p.authorLogin !== null,
+  );
+  const one = ids.length === 1;
+  return {
+    ids,
+    name: one && read.marker?.project === ids[0] ? (read.marker?.name ?? null) : null,
+    lastActive: latest ? { at: latest.updatedAt, own: mine(latest.authorLogin) } : null,
+    otherAccount: other ? other.updatedAt : null,
+    canWorkTogether: one,
+    canTakeOver: !other,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// The words (design section 5)
+// ---------------------------------------------------------------------------------------------
+
+/** "3 Nov" in the person's time zone (UTC when it is not known). */
+export function dayWords(iso: string, timezone?: string | null): string {
+  let zone = timezone || "UTC";
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone });
+  } catch {
+    zone = "UTC";
+  }
+  return new Intl.DateTimeFormat("en-GB", { timeZone: zone, day: "numeric", month: "short" })
+    .format(new Date(iso))
+    .replace(",", "");
+}
+
+/**
+ * How a link reads in a sentence: a repository as `o/site`, spelled as the project that uses
+ * it has it when it is given (`theirs`); a folder as its path.
+ */
+export function linkWords(identity: LinkIdentity, theirs?: LinkIdentity | null): string {
+  if (identity.kind === "repo" && identity.repo)
+    return theirs?.kind === "repo" && theirs.repo ? theirs.repo.locator : identity.repo.locator;
+  return identity.entry.trim();
+}
+
+/** OR-02: a link another project here uses. */
+export function inUseSentence(
+  use: { kind: "repo" | "folder"; locator: string },
+  name: string,
+): string {
+  return use.kind === "repo"
+    ? `${use.locator} is already the project "${name}". Open it, or add this to it as new work.`
+    : `This folder is already used by the project "${name}". Open it, or add this to it as new work.`;
+}
+
+/** The together creation's refusal for an id that is a row here (OR-15). */
+export function alreadyHereSentence(locator: string, name: string): string {
+  return `${locator} is already the project "${name}". Open it.`;
+}
+
+function projectWords(e: Elsewhere): string {
+  if (e.ids.length > 1) return "other Forerunner projects";
+  return e.name ? `the Forerunner project "${e.name}"` : "another Forerunner project";
+}
+
+/** OR-06: a repository whose project is not on this computer, as the offer says it. */
+export function elsewhereSentence(locator: string, e: Elsewhere, timezone?: string | null): string {
+  const many = e.ids.length > 1;
+  const subject = many
+    ? `${locator} is already used by other Forerunner projects`
+    : `${locator} is already ${projectWords(e)}`;
+  if (e.otherAccount) {
+    const day = dayWords(e.otherAccount, timezone);
+    return many
+      ? `${subject}; another GitHub account worked on them on ${day}. One repository is one project, so link another repository.`
+      : `${subject}; another GitHub account worked on it on ${day}. One repository is one project, so work on it together here.`;
+  }
+  const active = e.lastActive
+    ? `; last active on GitHub on ${dayWords(e.lastActive.at, timezone)}${e.lastActive.own ? ", from your account" : ""}`
+    : "";
+  return many
+    ? `${subject}, which are not on this computer${active}. Take it over if nobody works on them any more.`
+    : `${subject}, which is not on this computer${active}. Work on it together, or take it over if nobody works on it any more.`;
+}
+
+/** The name an offer's consequence lines use for the repository's project. */
+export function quotedNameOf(e: Pick<Elsewhere, "name" | "ids">): string {
+  if (e.ids.length > 1) return "those projects";
+  return e.name ? `"${e.name}"` : "that project";
+}
+
+/** Work together's consequence line (at most 100 characters). */
+export function togetherLine(e: Pick<Elsewhere, "name" | "ids">, withBrief: boolean): string {
+  const name = quotedNameOf(e);
+  return withBrief
+    ? `Works on ${name} too and plans your brief as its new work.`
+    : `This Forerunner works on ${name} too; nothing on GitHub changes now.`;
+}
+
+/** Take it over's consequence line (at most 100 characters). */
+export function takeOverLine(e: Pick<Elsewhere, "name" | "ids">): string {
+  return `The repository then names this project: choose it only if no Forerunner uses ${quotedNameOf(e)} now.`;
+}
+
+/** Take it over's Details line. */
+export function takeOverDetails(e: Pick<Elsewhere, "name" | "ids">): string {
+  return `The pull requests of ${quotedNameOf(e)} stay as they are.`;
+}
+
+/** OR-11: a URL on a git host this install does not use. */
+export function otherHostSentence(host: string): string {
+  return `Forerunner works with repositories on github.com, not ${host}. Link a GitHub repository or a folder.`;
+}
+
+/** OR-15: Work together needs GitHub's answer (it does not fail open as creation does). */
+export const TOGETHER_UNREADABLE =
+  "GitHub did not answer, so the project cannot be checked. Try again.";
+
+/** OR-15: Work together on a folder. */
+export function togetherFolderSentence(locator: string | null): string {
+  return locator
+    ? `Work together needs the GitHub repository: link ${locator}, not a folder.`
+    : "Work together needs the GitHub repository: link it, not a folder.";
+}
+
+/** The Overview line of a together project (D9). */
+export const TOGETHER_OVERVIEW_LINE =
+  "Shared on GitHub with another Forerunner: each keeps its own tasks.";
+export const TOGETHER_OVERVIEW_DETAILS =
+  "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.";
+
+/** The Docs row of a together project's status (D9). */
+export function togetherStatusNote(name: string): string {
+  return `Kept in the app: you work on "${name}" together, so GitHub's copy is left as it is.`;
+}
+
+/** The safe segment of an id as an intake branch carries it (for the take-over's checks). */
+export function intakeBranchOf(id: string): string {
+  return `fr/intake-${safeSegment(id, "project")}-docs`;
+}
+
+/** Whether `clock`-relative instants are within the activity window. */
+export function withinActiveWindow(iso: string, clock: Pick<Clock, "now">): boolean {
+  return Date.parse(iso) >= clock.now() - ACTIVE_ELSEWHERE_DAYS * 24 * 3600_000;
+}
