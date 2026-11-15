@@ -4243,8 +4243,15 @@ each comes from: `conversation` (the person's agents' conversation sessions, `ch
 one outside any project, another project's only when named or `all`), `sessions` (the project's
 listed sessions of the person's agents, the newest 500, worded by d1109-sessions'
 `sessionRowView`: gist, how it ended, CHF), `tasks` (every task with its status in design §2's
-words, earlier titles from task.update's change log rows, its merge from the merge record: "merged
-on 4 Nov", "waits for your Merge"; recall_open gives task_get's lines, `taskDetailLines`), `cards`
+words, earlier titles from task.update's change log rows, its merge from the merge record of the
+pull request the task has, classified by `mergeStandOf` in `project-facts.ts`, the function the
+`# Your files` facts use (`repositoryFacts`): "Its pull request was merged on 4 Nov.", "... was
+closed without merging.", "... waits for your Merge: <the record's sentence>", "... merges by
+itself: <the record's sentence>", no date once a take-out pull request was asked for (that patch
+moves the record's time), nothing for a record of an older pull request; before the review of
+d1109-chat-recall any record but a merged or checks-waiting one read "waits for your Merge", a
+closed pull request included, while the same turn's facts said it was closed; recall_open gives
+task_get's lines, `taskDetailLines`, and the same merge sentence), `cards`
 (the person's cards and those to no one, the newest 2,000, without the chat's own read-backs,
 with the Inbox's title and Answered words, `requestViews`, and the answer, `cardAnswerWords`),
 `decisions` (`decisionViews` with its optional limit: the Overview's words), `lessons` (the
@@ -4448,7 +4455,8 @@ in one project cancelled a task in another. Now:
   computer's copy, then where each done task's merge stands from the app's merge records,
   `repositoryFacts`, d1109-chat-guard: 'Waiting for your Merge: "X": <the record's sentence>',
   "Merging by itself", "Merged", "Closed without merging", and the pull requests no record
-  speaks for listed without a state; past ten, the waiting and the going-on merges each end in
+  speaks for listed without a state; each done task's place is `mergeStandOf`, which recall's
+  tasks kind words too, so the two never disagree; past ten, the waiting and the going-on merges each end in
   "And N more ..." (before the review of d1109-chat-guard the going-on ones were cut at ten
   without a word); no GitHub call: before, every turn waited for GitHub's
   open pull requests (L-17) and the block said "the person merges it on GitHub"), the person's

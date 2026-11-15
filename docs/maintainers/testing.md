@@ -1017,10 +1017,15 @@ conversation lines in English and German, and another person's records), in time
 store's clock, typed by the store methods it uses so testenv needs no state dependency; the
 bench and live check 4 seed the same home. `RECALL_GOLDEN` holds 24 questions, each a recall
 input and a part of the hit line it must find. `packages/runtime/test/recall-rank.test.ts` runs
-them through `recallTools` and holds recall@3 at least 0.9 and MRR at least 0.75 (1.0 and 0.95 at
-the area's merge), every hit of a dated question inside its window, and no hit from another
-person or a project not named; it runs in `pnpm check`. A change to the ranking that lowers the
-figures fails it: change the ranking, not the thresholds.
+them through `recallTools` and holds recall@3 at least 0.9 and MRR at least 0.75 (0.96 and 0.93
+measured at the area's fix-up: "which font did I pick?" and "what did I answer about the opening
+hours?" find their record second, "what about stlye the page?" fourth), every hit of a dated
+question inside its window, and no hit from another person or a project not named; it runs in
+`pnpm check`. A change to the ranking that lowers the figures fails it: change the ranking, not
+the thresholds. The done tasks whose merge is recorded ("Write the guide", "Write the FAQ") carry
+the pull request their record is for (`PULL_REQUESTS`): recall, the Tasks row and the chat's
+facts read a merge record only for the pull request the task has, so a seed without it would
+leave "when was the README merged?" unfound while the thresholds still held.
 
 ### How to add a case
 

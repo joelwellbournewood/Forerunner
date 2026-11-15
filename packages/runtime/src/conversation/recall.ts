@@ -35,10 +35,12 @@ import {
 import { withoutIds, withoutNoActionGiven } from "../daemon/task-words.ts";
 import { requestViews, taskView } from "../daemon/views.ts";
 import { wrapUntrusted } from "../injection/scan.ts";
+import { mergeModeOf } from "../loop/merge-mode.ts";
 import type { MemoryPort } from "../loop/ports.ts";
 import { moneyWords } from "../session/money-words.ts";
 import { isChatOnlyCard } from "../wiring/request-answers.ts";
 import { decisionPairs } from "../wiring/state-ports.ts";
+import { mergeStandOf } from "./project-facts.ts";
 import {
   dateOfDay,
   dayNumber,
@@ -478,16 +480,35 @@ function earlierTitles(rows: readonly ChangeLogRow[]): Map<string, string[]> {
   return out;
 }
 
-/** "merged on 4 Nov", "waits for your Merge", "merges when its checks pass"; null for none. */
-async function mergeWords(c: KindContext, task: TaskRow): Promise<string | null> {
+/**
+ * A done task's merge in one sentence, from the classification the chat's `# Your files` uses
+ * (`mergeStandOf`, one place per fact, design §5 rule 10): "Its pull request was merged on 4
+ * Nov.", "... was closed without merging.", "... waits for your Merge: <the record's
+ * sentence>", "... merges by itself: <the record's sentence>"; null when no record speaks for
+ * the pull request the task has now. Before (the review of b9433c8) it said "waits for your
+ * Merge" for any record but a merged or checks-waiting one, a closed pull request included, and
+ * nothing for one the person's Merge left to them or one merging, whatever the facts said.
+ */
+async function mergeWords(c: KindContext, p: ProjectRow, task: TaskRow): Promise<string | null> {
+  if (!task.pr_url) return null;
   c.deps.scope.reads++;
   const m = await c.deps.store.mergeRecord.forTask(task.id).catch(() => undefined);
-  if (!m) return null;
-  if (m.state === "merged")
-    return `merged on ${dayWords(localDate(Date.parse(m.updated_at), c.deps.timeZone), c.today)}`;
-  if (m.state === "waiting_checks") return "merges when its checks pass";
-  if (task.status === "done" && m.approval === "none") return "waits for your Merge";
-  return null;
+  const stand = mergeStandOf(m, task.pr_url, mergeModeOf(p.settings));
+  if (!m || !stand) return null;
+  switch (stand.kind) {
+    case "merged":
+      // The record's last change is the merge until a take-out pull request is asked for
+      // (take-out.ts patches the record then): that date is no merge date, so none is given.
+      return m.take_out_pr_number
+        ? "Its pull request was merged."
+        : `Its pull request was merged on ${dayWords(localDate(Date.parse(m.updated_at), c.deps.timeZone), c.today)}.`;
+    case "closed":
+      return "Its pull request was closed without merging.";
+    case "waiting":
+      return `Its pull request waits for your Merge: ${stand.sentence}`;
+    case "merging":
+      return `Its pull request merges by itself: ${stand.sentence}`;
+  }
 }
 
 /** Status words of every task of a project (design §2's map, the Tasks screen's words). */
@@ -512,7 +533,7 @@ async function taskHits(
     const labels = await taskLabels(c, rows);
     for (const t of rows) {
       const earlier = renames.get(t.id) ?? [];
-      const merge = t.status === "done" ? await mergeWords(c, t) : null;
+      const merge = t.status === "done" ? await mergeWords(c, p, t) : null;
       const label = labels.get(t.id) ?? t.status;
       const same = rows.filter((o) => o.title === t.title);
       const nth =
@@ -522,7 +543,7 @@ async function taskHits(
       const detail = [
         `${label}.`,
         earlier.length ? `Earlier called ${listWords(earlier.map(q))}.` : "",
-        merge ? `Its pull request ${merge}.` : "",
+        merge ?? "",
       ]
         .filter(Boolean)
         .join(" ");
@@ -608,7 +629,7 @@ async function taskText(
   return [
     ...lines,
     extra.earlier.length ? `Earlier called ${listWords(extra.earlier.map(q))}.` : "",
-    extra.merge ? `Its pull request ${extra.merge}.` : "",
+    extra.merge ?? "",
   ]
     .filter(Boolean)
     .join("\n");

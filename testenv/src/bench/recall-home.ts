@@ -98,6 +98,13 @@ const RENAMES: [string, string][] = [
 ];
 const CANCELLED = ["Add keyboard shortcuts", "Collect customer reviews"];
 
+/** The pull requests of the tasks whose merge is recorded (by the title the task has then). */
+const PULL_REQUESTS: Readonly<Record<string, number>> = {
+  "Write the guide": 7,
+  "Write the FAQ": 8,
+};
+const pullUrl = (n: number) => `https://github.test/o/quote/pull/${n}`;
+
 /** English and German lines of the conversation about Quote Page (60 turns). */
 const LINES: [string, string][] = [
   ["Das Logo bleibt dunkelblau", "Noted: the logo stays dark blue."],
@@ -219,7 +226,13 @@ export async function seedRecallHome(o: RecallHomeOptions): Promise<RecallHome> 
   for (const [startedAt, projectId, done, failed, usd] of sessions)
     later(startedAt, async () => {
       const named = (titles: string[]) => titles.map((t) => ({ id: tasks[t], title: t }));
-      for (const t of done) await store.task.patch(tasks[t] as string, { status: "done" });
+      for (const t of done)
+        await store.task.patch(tasks[t] as string, {
+          status: "done",
+          // A task's pull request is the one its merge record is for (the Tasks row, the chat's
+          // facts and recall read a record only for the pull request the task has).
+          ...(PULL_REQUESTS[t] ? { pr_url: pullUrl(PULL_REQUESTS[t]) } : {}),
+        });
       for (const t of failed)
         await store.task.patch(tasks[t] as string, {
           status: "failed",
@@ -273,16 +286,16 @@ export async function seedRecallHome(o: RecallHomeOptions): Promise<RecallHome> 
     });
   // The guide's pull request merged on 4 Nov; the FAQ's waits for the person's Merge.
   later("2026-11-04T16:00:00.000Z", async () => {
-    for (const [title, state, pr] of [
-      ["Write the guide", "merged", 7],
-      ["Write the FAQ", "queued", 8],
+    for (const [title, state] of [
+      ["Write the guide", "merged"],
+      ["Write the FAQ", "queued"],
     ] as const)
       await store.mergeRecord.insert({
         task_id: tasks[title],
         project_id: quote,
         agent_id: o.agentId,
-        pr_number: pr,
-        pr_url: `https://github.test/o/quote/pull/${pr}`,
+        pr_number: PULL_REQUESTS[title],
+        pr_url: pullUrl(PULL_REQUESTS[title] as number),
         reviewed_head_sha: "a".repeat(40),
         state,
         approval: state === "merged" ? "person" : "none",

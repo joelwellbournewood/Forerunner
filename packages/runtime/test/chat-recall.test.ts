@@ -307,7 +307,12 @@ async function answeredCard(
 
 async function seed(w: World) {
   const { store } = w;
-  const faq = await task(w, "Write the FAQ", { status: "done" });
+  // A done task's pull request is its merge record's (a record is read only for the pull
+  // request the task has: the Tasks row, the facts and recall alike).
+  const faq = await task(w, "Write the FAQ", {
+    status: "done",
+    pr_url: "https://github.test/o/r/pull/3",
+  });
   const readme = await task(w, "Write the README");
   const style = await task(w, "Style the page", {
     status: "failed",
@@ -346,7 +351,10 @@ async function seed(w: World) {
     { confirmation: { kind: "tap", by: { kind: "human", id: w.human } } },
   );
   expect(renamed.status).toBe("done");
-  const guide = await store.task.patch(readme.id, { status: "done" });
+  const guide = await store.task.patch(readme.id, {
+    status: "done",
+    pr_url: "https://github.test/o/r/pull/7",
+  });
   w.tasks["Write the guide"] = guide;
   await session(
     w,
@@ -690,11 +698,13 @@ describe("d1109-chat-recall, run C: CR-2 sessions and tasks", () => {
       { tool: "recall", input: { words: "README task", kinds: ["tasks"] } },
       { tool: "recall", input: { words: "FAQ", kinds: ["tasks"] } },
     ]);
+    // The status is the Tasks row's ("Merged", "Accepted · waiting for you to merge"); the merge
+    // sentence is the facts' (`mergeStandOf`), with the merge's date.
     expect(inner(readme).split("\n")[0]).toBe(
-      'r1 [task, Mon 2 Nov, Quote Page, strong] Write the guide: Done. Earlier called "Write the README". Its pull request merged on 4 Nov.',
+      'r1 [task, Mon 2 Nov, Quote Page, strong] Write the guide: Merged. Earlier called "Write the README". Its pull request was merged on 4 Nov.',
     );
-    expect(inner(faq).split("\n")[0]).toMatch(
-      /^r1 \[task, Mon 26 Oct, Quote Page, strong\] Write the FAQ: .*Its pull request waits for your Merge\.$/,
+    expect(inner(faq).split("\n")[0]).toBe(
+      "r1 [task, Mon 26 Oct, Quote Page, strong] Write the FAQ: Accepted · waiting for you to merge. Its pull request waits for your Merge: #3 waits for you to merge it: press Merge on the Overview.",
     );
     await task(w, "Write the tests");
     await w.clock.advance(60_000);
@@ -705,12 +715,101 @@ describe("d1109-chat-recall, run C: CR-2 sessions and tasks", () => {
       { tool: "task_get", input: { task: "Write the tests" } },
     ]);
     expect(inner(byEarlier).split("\n")).toContain('Earlier called "Write the README".');
-    expect(inner(byEarlier).split("\n")[0]).toBe('Task "Write the guide" of Quote Page: Done');
+    expect(inner(byEarlier).split("\n")[0]).toBe('Task "Write the guide" of Quote Page: Merged');
     expect(inner(byTypo).split("\n")[0]).toBe(
       'Task "Style the page" of Quote Page: Failed: styles.css was never linked from index.html',
     );
     expect(inner(twins)).toMatch(
       /^Two tasks are called "Write the tests": the (older|first) one and the (newer|second|latest) one\. Say which, for example "Write the tests \(the (older|first) one\)"\.$/,
+    );
+    await w.store.close();
+  });
+
+  it("a done task's merge is said as the chat's '# Your files' and the Tasks row say it: merged with its date, closed without merging, waiting for your Merge or merging by itself with the record's sentence; a record of an older pull request says nothing (fixup, design §5 rules 9 and 10)", async () => {
+    // The review of b9433c8: recall said "Its pull request waits for your Merge." for a pull
+    // request closed without merging (loop/merge.ts records it left_to_you, last outcome closed),
+    // and nothing for one the person's Merge left to them or one merging, while the same turn's
+    // facts said "Closed without merging" (project-facts.ts' repositoryFacts).
+    const w = await setup();
+    await w.store.project.patch(w.quote, { repos: ["o/r"] } as never);
+    const url = (n: number) => `https://github.test/o/r/pull/${n}`;
+    const doneWith = async (title: string, n: number, record: Record<string, unknown>) => {
+      const t = await task(w, title, { status: "done", pr_url: url(n) } as never);
+      await w.store.mergeRecord.insert({
+        task_id: t.id,
+        project_id: w.quote,
+        agent_id: w.alice,
+        pr_number: n,
+        pr_url: url(n),
+        reviewed_head_sha: "a".repeat(40),
+        ...record,
+      } as never);
+    };
+    await doneWith("Add the footer", 11, {
+      state: "left_to_you",
+      approval: "none",
+      last_outcome: "closed",
+      sentence: "#11 was closed without merging.",
+    });
+    // The person pressed Merge; a check failed, and the merge is left to them.
+    await doneWith("Add the logo", 12, {
+      state: "left_to_you",
+      approval: "person",
+      approved_by: w.human,
+      last_outcome: "checks_failed",
+      sentence: "A check failed on #12 (build): fix it, or merge it on GitHub.",
+    });
+    await doneWith("Add the menu", 13, { state: "merging", approval: "person", sentence: "" });
+    // A redo opened #15; the record is the older #14's: it says nothing of #15.
+    await doneWith("Add the map", 15, {
+      state: "merged",
+      approval: "person",
+      pr_number: 14,
+      pr_url: url(14),
+    });
+    const [footer, open] = await lookups(w, [
+      { tool: "recall", input: { words: "footer", kinds: ["tasks"] } },
+      { tool: "recall_open", input: { ref: "r1" } },
+    ]);
+    // The facts of this turn's first call (the chat's '# Your files').
+    const facts = String(w.provider.calls[0]?.request.messages.at(-1)?.content ?? "");
+    const [logo, menu, map] = await lookups(w, [
+      { tool: "recall", input: { words: "logo", kinds: ["tasks"] } },
+      { tool: "recall", input: { words: "menu", kinds: ["tasks"] } },
+      { tool: "recall", input: { words: "map", kinds: ["tasks"] } },
+    ]);
+    const hit = (result: string | undefined, title: string) =>
+      inner(result)
+        .split("\n")
+        .find((l) => l.includes(`] ${title}: `)) ?? "";
+    expect(hit(footer, "Add the footer")).toMatch(
+      /\] Add the footer: Accepted · pull request closed\. Its pull request was closed without merging\.$/,
+    );
+    expect(hit(logo, "Add the logo")).toMatch(
+      /\] Add the logo: Accepted · a check failed\. Its pull request waits for your Merge: A check failed on #12 \(build\): fix it, or merge it on GitHub\.$/,
+    );
+    expect(hit(menu, "Add the menu")).toMatch(
+      /\] Add the menu: Accepted · merging\. Its pull request merges by itself: #13 is being merged\.$/,
+    );
+    expect(hit(map, "Add the map")).toMatch(/\] Add the map: Done\.$/);
+    // recall_open says the same as the hit (the sibling: taskText).
+    expect(inner(open).split("\n")).toContain("Its pull request was closed without merging.");
+    expect(inner(open)).not.toContain("waits for your Merge");
+    // The facts say the same of each.
+    expect(facts).toContain(`Closed without merging: "Add the footer" ${url(11)}`);
+    expect(facts).toContain(
+      'Waiting for your Merge: "Add the logo": A check failed on #12 (build): fix it, or merge it on GitHub.',
+    );
+    expect(facts).toContain('Merging by itself: "Add the menu": #13 is being merged.');
+    expect(facts).toContain(`Pull requests of finished tasks: "Add the map" ${url(15)}`);
+    // An accept "Merge automatically after review" merges by itself: no "waits for your Merge".
+    await w.store.project.patch(w.quote, {
+      repos: ["o/r"],
+      settings: { members: [w.alice], merge_mode: "after_review" },
+    } as never);
+    const [faq] = await lookups(w, [{ tool: "recall", input: { words: "FAQ", kinds: ["tasks"] } }]);
+    expect(hit(faq, "Write the FAQ")).toMatch(
+      /\] Write the FAQ: Accepted · merging\. Its pull request merges by itself: #3 is being merged\.$/,
     );
     await w.store.close();
   });
