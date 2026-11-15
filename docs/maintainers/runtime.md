@@ -1324,7 +1324,10 @@ project's own checks when the change is code (`keptWorkCheck`, `loop/kept-work-c
 host, within `PROJECT_CHECK_TIMEOUT_MS`, under the session's signal; each output's end, at most
 `KEPT_OUTPUT_CHARS` 1,500, redacted with the vault's values and the platform's patterns; no
 model, nothing booked), and compares it with the task's last paused run (`madeProgress`: a
-different hash or a shorter list; a first pause counts). At its specialist's limit per run with
+different hash or a shorter list; a first pause counts). A paused run is a wrap-up's `paused` Run
+row or a hard stop's `budget_exceeded` one (`KEPT_WORK_OUTCOMES`): a pause at the project's
+budget or this month's cap is mostly a hard stop, and before the review of d1109-oversize-pause
+it was never compared, so it went on by itself at each raise. At its specialist's limit per run with
 progress, room for a fifth, no Stop after this task and runs left, the task goes on at once in
 the session (`TASK_CONTINUES_EVENT` = `session.task_continues`: 'The coder goes on with "X"
 from where it stopped.'), with no card between (OP-5). Else the card stores `no_progress`,

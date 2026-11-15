@@ -54,6 +54,8 @@ interface Step {
   content?: string;
   left?: string[];
   cost?: number;
+  /** A hard stop at the limit (no wrap-up heard): its Run row reads `budget_exceeded`. */
+  hard?: boolean;
 }
 
 describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2 to OP-8)", () => {
@@ -92,7 +94,8 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
         effort: "medium",
         cost_usd_micro: cost,
         duration_ms: 1000,
-        outcome: step.outcome === "paused" ? "paused" : "completed",
+        outcome:
+          step.outcome === "paused" ? (step.hard ? "budget_exceeded" : "paused") : "completed",
       });
       budget.record(run.id, cost);
       await store.task.patch(task.id, {
@@ -113,7 +116,7 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
       const handoff = {
         stopped: "The cart works; checkout is half done in index.js.",
         leftToDo: step.left ?? ["Finish checkout in index.js"],
-        stoppedBy: "wrap_up" as const,
+        stoppedBy: step.hard ? ("budget" as const) : ("wrap_up" as const),
       };
       await store.run.patch(run.id, { artifacts: [{ handoff }] as never });
       const result: TaskExecutionResult = {
@@ -130,7 +133,7 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
           spentUsdMicro: (task.actual_cost_usd_micro ?? 0) + cost,
           source: step.source ?? "specialist_limit",
           specialist: "coder",
-          stoppedBy: "wrap_up",
+          stoppedBy: step.hard ? "budget" : "wrap_up",
         },
       };
       return result;
@@ -357,6 +360,40 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
     );
     const notes = (await store.queue.list({ project_id: w.project } as never)).map((q) => q.text);
     expect(notes).toContain('About "Build the shop": use the existing parser');
+  }, 60_000);
+
+  it("OP-4: a hard stop at the project's budget (its Run row budget_exceeded) that got no further than the one before is a pause that got no further", async () => {
+    // The review of d1109-oversize-pause: only `paused` Run rows counted as the task's earlier
+    // pause, so a second hard stop with the same files and list read as progress.
+    const shop = await add();
+    steps.push({ outcome: "paused", source: "project", hard: true, content: "same" });
+    await start();
+    expect((await cardOf(shop.id))?.change_card).toMatchObject({ no_progress: false });
+    // Woken, it pauses again at the same limit with nothing changed.
+    const waiting = await store.task.mustGet(shop.id);
+    const firstCard = await cardOf(shop.id);
+    await store.humanRequest.withdraw(firstCard?.id as string, firstCard?.version as number);
+    await store.task.transition(shop.id, waiting.version, "ready", "its limit has room again");
+    steps.push({ outcome: "paused", source: "project", hard: true, content: "same" });
+    await start();
+    const runs = await workRuns(shop.id);
+    expect(runs.map((x) => x.outcome)).toEqual(["budget_exceeded", "budget_exceeded"]);
+    const card = await cardOf(shop.id);
+    expect(card?.change_card).toMatchObject({ source: "project", no_progress: true });
+    expect(requestWords(card as never, { taskTitle: "Build the shop" }).title).toBe(
+      '"Build the shop" paused again without getting further',
+    );
+    // A third hard stop that changed a file is progress again.
+    await store.humanRequest.withdraw(card?.id as string, card?.version as number);
+    await store.task.transition(
+      shop.id,
+      (await store.task.mustGet(shop.id)).version,
+      "ready",
+      "the person continued it",
+    );
+    steps.push({ outcome: "paused", source: "project", hard: true, content: "changed" });
+    await start();
+    expect((await cardOf(shop.id))?.change_card).toMatchObject({ no_progress: false });
   }, 60_000);
 
   it("OP-5: never run again after a pause at its own budget, or when the person pressed Stop after this task", async () => {

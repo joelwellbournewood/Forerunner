@@ -31,6 +31,7 @@ import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
 import {
   type EstimatePort,
   estimateLeftUsdMicro,
+  KEPT_WORK_OUTCOMES,
   type KeptWork,
   keptWorkFor,
   withinTaskBudget,
@@ -3722,13 +3723,18 @@ export class SessionRunner {
     let notRun: string | undefined;
     try {
       hash = workHash(result.worktree, files);
+      // The task's earlier pauses: a wrap-up (`paused`) or a hard stop at a limit
+      // (`budget_exceeded`, a pause at the project's budget or this month's cap is mostly one).
+      // Before (the review of d1109-oversize-pause), only `paused` counted, so a hard stop at the
+      // project's budget that got no further was never one, and its card went on by itself at
+      // each raise.
       const earlier = (await store.run.forTask(task.id))
         .filter(
           (r) =>
             r.specialist !== "critic" &&
             !r.parent_run_id &&
             r.id !== result.runId &&
-            r.outcome === "paused",
+            KEPT_WORK_OUTCOMES.includes(r.outcome),
         )
         .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
       const last = earlier.find((r) => keptOf(r.artifacts));

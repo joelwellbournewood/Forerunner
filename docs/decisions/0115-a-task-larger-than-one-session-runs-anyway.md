@@ -139,9 +139,10 @@ I thought we talked about this." No special ordering.
    output, redacted, is kept on the Run row and quoted as data in the next brief (OP-3), and the
    card says whether they pass. A failing check never reverts or hides the work.
 6. **No loop (OP-4).** A pause that got no further (the same fingerprint of its kept work and no
-   shorter list) asks the person (a note on Continue goes into the next brief) and is never made
-   ready again by itself: not by the next Start, not by a raised or reset outer limit (the card
-   becomes one question once the limit has room).
+   shorter list than the task's last pause, a wrap-up or a hard stop at a limit alike) asks the
+   person (a note on Continue goes into the next brief) and is never made ready again by itself:
+   not by the next Start, not by a raised or reset outer limit (the card becomes one question once
+   the limit has room).
 7. **Continue's floor (OP-6):** at the session's budget, at least what lets the estimate left fit
    the next session's work budget (the estimate left over one less the reserve share). The card
    prices the estimate left as the next Start does (the planner's learned estimate less the kept
