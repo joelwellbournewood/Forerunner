@@ -201,6 +201,13 @@ export interface PlanItem {
   specialist: string;
   estimateUsdMicro: number;
   rationale?: string;
+  /**
+   * L3-run-2: the session took this task again after planning it once (the critic sent it
+   * back, its run failed and is tried again, the larger task came back ready). The item records
+   * the attempt; its figure is not added to the plan's (`SessionPlan.estimateUsdMicro` stays
+   * what the person was shown), and the session review counts the task once.
+   */
+  again?: boolean;
 }
 
 /**
@@ -1474,11 +1481,14 @@ export class SessionRunner {
             return null;
           }
           takenId = item.taskId;
-          const taken: PlanItem = { ...item, estimateUsdMicro: room };
+          // L3-run-2: the larger task taken again (sent back, tried again) is one planned task:
+          // its new item records the attempt and adds nothing to the plan's figure.
+          const again = current.items.some((c) => c.taskId === item.taskId);
+          const taken: PlanItem = { ...item, estimateUsdMicro: room, ...(again ? { again } : {}) };
           plan = {
             ...current,
             items: [...current.items, taken],
-            estimateUsdMicro: current.estimateUsdMicro + room,
+            estimateUsdMicro: current.estimateUsdMicro + (again ? 0 : room),
             oversized: { ...item, roomUsdMicro: room },
             workBudgetUsdMicro,
           };
@@ -1583,10 +1593,22 @@ export class SessionRunner {
           );
           for (const i of cutLeftOut) notAgain.add(i.taskId);
           if (cut.items.length === 0 && leftOut.length === 0) return [];
+          // L3-run-2 (live check 3): a task this session already planned and takes again (the
+          // critic sent it back, its run failed and is tried again) is one planned task. Its
+          // item is kept, marked `again`, so the row records what ran, and the plan's figure
+          // stays the one the person was shown on the plan line and the Start dialog. Before,
+          // each retry's estimate was added to it, and the session review set the work against
+          // "an estimate of CHF 0.21" where every screen had said about CHF 0.11.
+          const taken = cut.items.map((i) =>
+            current.items.some((c) => c.taskId === i.taskId) ? { ...i, again: true } : i,
+          );
+          const newEstimate = taken
+            .filter((i) => !i.again)
+            .reduce((s, i) => s + i.estimateUsdMicro, 0);
           plan = {
             ...current,
-            items: [...current.items, ...cut.items],
-            estimateUsdMicro: current.estimateUsdMicro + cut.estimateUsdMicro,
+            items: [...current.items, ...taken],
+            estimateUsdMicro: current.estimateUsdMicro + newEstimate,
             ...(leftOut.length || current.leftOutForBudget
               ? {
                   leftOutForBudget: [...(current.leftOutForBudget ?? []), ...leftOut],
@@ -3265,6 +3287,27 @@ export class SessionRunner {
           agentId: agent.id,
           projectId: project?.id ?? null,
         });
+        // L3-run-8 (live check 3): a review that sends nothing back of a session whose work
+        // waits only for the person (nothing done or sent back; each task it left waiting or
+        // failed holds its card) says what they can do: answer the questions, or decide in the
+        // Inbox (a failed task's card: Try again, Mark done anyway, Cancel task). Before, it
+        // read "Session review: sent back for changes" (its verdict's words for a task review)
+        // though nothing was sent back.
+        const waitingOnYou = [...needsYouNow.filter((id) => !pausedCards.has(id)), ...failedNow];
+        const sentBackHere = retried.filter(
+          (id) => !completed.includes(id) && !failed.includes(id) && !needsHuman.includes(id),
+        );
+        const cardOf = (id: string) => openCards.find((r) => r.task_id === id && holdsTask(r));
+        const waitsFor =
+          sessionReview.verdict === "revise" &&
+          waitingOnYou.length > 0 &&
+          doneNow.length === 0 &&
+          sentBackHere.length === 0 &&
+          waitingOnYou.every((id) => cardOf(id))
+            ? waitingOnYou.every((id) => cardKindOf(cardOf(id)) === "questions")
+              ? ("answers" as const)
+              : ("decision" as const)
+            : null;
         await emit(
           "critic.session_review",
           {
@@ -3275,6 +3318,7 @@ export class SessionRunner {
             verdict: sessionReview.verdict,
             findings: sessionReview.findings.length,
             summary: sessionReview.summary,
+            ...(waitsFor ? { waitsFor } : {}),
             ...(sessionReview.verdict === "human"
               ? { escalation: true, warning: "the session review needs the human" }
               : {}),
@@ -3488,15 +3532,35 @@ export class SessionRunner {
     const { emit, ranBy, ...request } = req;
     const critic = this.deps.critic;
     if (!critic) return null;
-    await emit("critic.review_started", {
-      taskId: request.task.id,
-      tier: request.task.risk_tier,
-      attempt: request.task.attempt,
-    });
+    // L3-run-10 (live check 3): "The critic started ..." is said once the review runs (its
+    // first model call under way, `onStarted`), or just before a verdict reached without one;
+    // a review a limit refused before it ran says only that it paused. Before, the line came
+    // first whatever happened: "The critic started a light review (attempt 1)." and then
+    // '"X" paused before its review: the project's budget ... has no room for it.'
+    let started: Promise<void> | null = null;
+    const sayStarted = () => {
+      started ??= emit("critic.review_started", {
+        taskId: request.task.id,
+        tier: request.task.risk_tier,
+        attempt: request.task.attempt,
+      }).catch((e: unknown) =>
+        this.logger.warn("the review's start line was not written", {
+          taskId: request.task.id,
+          error: errorMessage(e),
+        }),
+      );
+      return started;
+    };
     let outcome: TaskReviewOutcome;
     try {
-      outcome = await critic.reviewTask(request);
+      outcome = await critic.reviewTask({
+        ...request,
+        onStarted: () => {
+          void sayStarted();
+        },
+      });
     } catch (e) {
+      await started;
       // A limit or a credential refused the review before its verdict: the caller pauses the
       // task or lets it wait (no verdict, no failed try).
       const refused = reviewRefusalOf(e);
@@ -3504,6 +3568,7 @@ export class SessionRunner {
       // The caller files the card and reports it (U-045).
       return { failed: true, error: errorMessage(e) };
     }
+    await sayStarted();
     // A run that said it could not do the work: the verdict's line quotes it, so the session log
     // tells the attempt in one line (design §5, "Log line").
     const couldNot =

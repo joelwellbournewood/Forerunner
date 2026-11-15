@@ -701,7 +701,9 @@ after each one. The task runs in the next session once the card says Ready. A ta
 earlier version marked failed for want of a sandbox goes back to ready by itself then.
 
 A session where nothing was done because its tasks failed, were sent back or wait for you gets a
-lower grade from the critic's session review.
+lower grade from the critic's session review. When its work only waits for you, the review's
+line under Details says so ("Session review: the work waits for your answers (grade 70, 2
+findings)."): answer the card in the Inbox and the work goes on.
 
 **Every session of a project** is listed under **More ▾ → Sessions** (also **All 3 sessions** on
 the Overview's Last result, and **All sessions** on every session page). The heading is the
@@ -737,7 +739,9 @@ failed".
 **Stopping and crashes.** A session's page has two stops. **Stop after this task** (the usual
 one) lets the task in flight finish, starts no other, and ends the session ("Stopped after the
 task, as asked"). **Stop now** asks once, then stops the task at once: it goes back to Ready with
-"Stopped by you", and what it wrote so far stays in the project's folder. A task the critic was
+"Stopped by you", and what it wrote so far stays in the project's folder. A step Stop now cuts
+off is still billed for what Claude had read by then; that amount is counted once and the same
+everywhere: on the task, the session, Costs and what is left this month. A task the critic was
 reviewing goes back to Ready too, and the next session runs and reviews it again. The session reads
 "Stopped by you", not an error, and the Inbox gets no line about your own click unless the
 session finished something first. **Stop all** in the header (or the tray, `fr kill`, a kill from
@@ -1010,8 +1014,11 @@ a footer line a few centimes). It learns from every task that finishes, per unit
 so a large task does not make the small ones look dear: after three tasks of a kind it is
 within about twice what they really cost. The session review sets the work's cost against the
 estimate and names the critic's reviews apart ("cost CHF 0.25 (work CHF 0.15 against an
-estimate of CHF 0.14, reviews CHF 0.10)"), since the estimate is the work's. Questions the plan asks
-you cost nothing and the plan counts them at CHF 0.00. A task that stopped at its budget does
+estimate of CHF 0.14, reviews CHF 0.10)"), since the estimate is the work's. That estimate is
+the one the plan line and the Start dialog showed you: a task the critic sent back and the
+session did again counts once, and when the second try makes the work cost much more than
+planned, the review says so ("with one task tried twice", "with 2 tasks tried again").
+Questions the plan asks you cost nothing and the plan counts them at CHF 0.00. A task that stopped at its budget does
 not count toward what the estimates learn, even after you raise its budget and it finishes,
 since its first run did not finish its work; restarting the app changes none of these figures.
 Each step of a task reuses what the step before sent (Claude keeps the conversation for five
@@ -1057,7 +1064,8 @@ removed it) in Settings, or the new month began; until then it stays paused with
 The same holds when the limit is reached by the critic's review rather than by the run: the
 task pauses at that limit with the same card ('"Contact page" paused before its review: the
 project's budget of CHF 0.01 has no room for it.' in the log; the card says "The work is done;
-its review waits for room in the budget."), it does not count as a failed
+its review waits for room in the budget."; the log does not say the critic started a review
+that never ran), it does not count as a failed
 try, and once it goes on its next session reviews the work without running the specialist
 again (its log says only that the critic reviewed it), unless the files it wrote changed
 meanwhile: then the specialist does it again first.
@@ -1263,7 +1271,9 @@ conversation that is about no one project). Your words show as they are
 recognised and the agent's reply shows as it is written, the sentence being spoken
 highlighted. Press Talk while the agent answers to interrupt it; the part it had not said yet
 stays visible and readable, after a small "not spoken" tag and with a dotted underline, so you
-can see where it stopped speaking. The **Reply: Voice | Text**
+can see where it stopped speaking. A spoken answer only ever says whole sentences: when an answer
+runs out of room or time, the agent stops at its last whole sentence and never says half of
+one. The **Reply: Voice | Text**
 switch next to Talk shows how the agent answers; the chosen side is highlighted. Click a side,
 or tab to the switch and use the arrow keys. With **Text** the agent answers in text only,
 without speech: you still talk, the reply appears as it is written, and Talk stops it. The

@@ -418,7 +418,20 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
           ...(a.injected ? { injected: a.injected } : {}),
           durationMs: Math.round(clock.monotonic() - started),
         });
-      yield { type: "message_start", model: req.model };
+      // The input side of the bill on message_start, as the Messages API sends it (L3-run-5):
+      // a call Stop now cuts off during the wait below is billed for it, and the app books
+      // that on the ledger, the session and the task alike. Before, the stand-in sent no usage
+      // here, so a stopped call cost nothing anywhere and only the real model showed the gap.
+      yield {
+        type: "message_start",
+        model: req.model,
+        usage: {
+          input_tokens: usage.input_tokens,
+          output_tokens: 0,
+          cache_read_input_tokens: usage.cache_read_input_tokens,
+          cache_creation_input_tokens: usage.cache_creation_input_tokens,
+        },
+      };
       try {
         const wait = guess.role === "critic" ? (opts.criticDelayMs ?? 0) : opts.delayMs;
         if (wait > 0) await clock.sleep(wait, req.signal);

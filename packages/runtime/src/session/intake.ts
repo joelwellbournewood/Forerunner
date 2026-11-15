@@ -30,7 +30,13 @@ import type {
   StateStore,
 } from "@forerunner/state";
 import { z } from "zod";
-import { type LoopAgentDriver, type RunPricing, type RunResult, wholeMs } from "../agent/loop.ts";
+import {
+  CUT_OFF_STOP_REASON,
+  type LoopAgentDriver,
+  type RunPricing,
+  type RunResult,
+  wholeMs,
+} from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { withoutIds } from "../daemon/task-words.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
@@ -1858,8 +1864,15 @@ export class IntakeService {
         maxTurns: 1,
         label: `intake ${c.project.id}`,
         compression: "off",
+        // A call its timeout or a stop cut off is booked (L3-run-5) but gave no first token:
+        // the Run row keeps none, as before, rather than the time to the cut.
         onEvent: (ev) => {
-          if (ev.type === "model_call_end" && ttft === null) ttft = ev.ttftMs;
+          if (
+            ev.type === "model_call_end" &&
+            ev.stopReason !== CUT_OFF_STOP_REASON &&
+            ttft === null
+          )
+            ttft = ev.ttftMs;
         },
       });
       if (

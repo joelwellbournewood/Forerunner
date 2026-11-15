@@ -696,3 +696,194 @@ describe("w15-run, wave 15: the session review sets the work's cost against the 
     }
   });
 });
+
+describe("l3-money-engine, run L3", () => {
+  /** The work's two attempts and the critic's two reviews, each on the ledger at 0.8 CHF/USD. */
+  async function runsOf(
+    w: Awaited<ReturnType<typeof world>>,
+    taskId: string,
+    runs: readonly (readonly [string, number])[],
+  ) {
+    for (const [specialist, usd] of runs) {
+      await w.store.run.insert({
+        task_id: taskId,
+        session_id: w.ids.session,
+        specialist,
+        model: "fake-sonnet",
+        provider: "fake",
+        effort: "medium",
+        cost_usd_micro: usd,
+        duration_ms: 60_000,
+        outcome: "completed",
+      });
+      await w.store.costLedger.record({
+        human_id: w.ids.human,
+        session_id: w.ids.session,
+        task_id: taskId,
+        kind: "api",
+        usd_micro: usd,
+        chf_micro: Math.round(usd * 0.8),
+        rate_chf_per_usd: 0.8,
+        model: "fake-sonnet",
+      });
+    }
+  }
+
+  it("L3-run-2: a task the critic sent back and the session took again is one planned task, at the plan's figure (a row stored before the fix)", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "done", title: "Write the Swiss pairing tool" });
+      // Live check 3's row: the plan grew by the retry's item and its estimate (0.11 + 0.10).
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: {
+          items: [
+            { taskId: a.id, title: a.title, estimateUsdMicro: 142_000 },
+            { taskId: a.id, title: a.title, estimateUsdMicro: 126_565 },
+          ],
+          estimateUsdMicro: 268_565,
+          summary: "",
+        },
+        summary: 'Did 1 task: "Write the Swiss pairing tool".',
+        handoff: { done: [a.id], sent_back: [a.id], blocked: [] },
+        status: "completed",
+      });
+      await runsOf(w, a.id, [
+        ["coder", 80_000],
+        ["critic", 40_000],
+        ["coder", 75_428],
+        ["critic", 35_233],
+      ]);
+      const checks = sessionChecks(await loadSessionReviewData(w.store, w.ids.session));
+      expect(checks.metrics).toMatchObject({ plannedTasks: 1, estimateUsdMicro: 142_000 });
+      expect(checks.findings.map((f) => f.description)).not.toContainEqual(
+        expect.stringContaining("Plan lists the same task twice"),
+      );
+      expect(checks.grade).toBe(100);
+      const out = await reviewSession({
+        store: w.store,
+        sessionId: w.ids.session,
+        criticAgentId: w.ids.critic,
+      });
+      expect(out.summary).toContain("against an estimate of CHF 0.11");
+      expect(out.summary).not.toContain("CHF 0.21");
+      expect(out.grade).toBe(100);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("L3-run-2: an item the runner marks as taken again counts once, and a second attempt that doubles the cost is still an overrun, named as such", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "done", title: "Write the Swiss pairing tool" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: {
+          items: [
+            { taskId: a.id, title: a.title, estimateUsdMicro: 100_000 },
+            { taskId: a.id, title: a.title, estimateUsdMicro: 90_000, again: true },
+          ],
+          // The fixed runner leaves the plan's figure alone when it takes a task again.
+          estimateUsdMicro: 100_000,
+          summary: "",
+        },
+        summary: 'Did 1 task: "Write the Swiss pairing tool".',
+        handoff: { done: [a.id], sent_back: [a.id], blocked: [] },
+        status: "completed",
+      });
+      await runsOf(w, a.id, [
+        ["coder", 120_000],
+        ["critic", 30_000],
+        ["coder", 110_000],
+        ["critic", 30_000],
+      ]);
+      const checks = sessionChecks(await loadSessionReviewData(w.store, w.ids.session));
+      expect(checks.metrics).toMatchObject({
+        plannedTasks: 1,
+        estimateUsdMicro: 100_000,
+        workUsdMicro: 230_000,
+      });
+      expect(checks.findings.map((f) => f.description)).toEqual([
+        "Session work cost CHF 0.18 exceeded its estimate CHF 0.08 by 130%, with one task tried twice (the reviews, CHF 0.05 more, are not in the estimate)",
+      ]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("L3-run-2 (review): more tries are named in plain words: one task tried 3 times, or 2 tasks tried again", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "done", title: "A" });
+      const b = await w.newTask({ status: "done", title: "B" });
+      const overrun = async (
+        items: { taskId: string; title: string; estimateUsdMicro: number; again?: true }[],
+      ) => {
+        await w.store.session.patch(w.ids.session, {
+          reason: "planned for the test",
+          author_agent: w.ids.owner,
+          plan: { items, estimateUsdMicro: 20_000, summary: "" },
+          summary: 'Did 2 tasks: "A", "B".',
+          handoff: { done: [a.id, b.id], sent_back: [a.id, b.id], blocked: [] },
+          status: "completed",
+        });
+        const checks = sessionChecks(await loadSessionReviewData(w.store, w.ids.session));
+        return checks.findings.map((f) => f.description).find((d) => d.includes("exceeded"));
+      };
+      await runsOf(w, a.id, [
+        ["coder", 100_000],
+        ["coder", 100_000],
+        ["coder", 100_000],
+      ]);
+      const item = (t: { id: string; title: string }, again = false) => ({
+        taskId: t.id,
+        title: t.title,
+        estimateUsdMicro: 10_000,
+        ...(again ? { again: true as const } : {}),
+      });
+      // Before: ", with 2 more attempts of tasks tried again" for either plan.
+      expect(await overrun([item(a), item(b), item(a, true), item(a, true)])).toContain(
+        "by 1400%, with one task tried 3 times",
+      );
+      expect(await overrun([item(a), item(b), item(a, true), item(b, true)])).toContain(
+        "by 1400%, with 2 tasks tried again",
+      );
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("L3-run-2: a task a plan lists twice that never ran twice is still a finding", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "ready", title: "A" });
+      const b = await w.newTask({ status: "done", title: "B" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: {
+          items: [
+            { taskId: b.id, title: b.title, estimateUsdMicro: 10_000 },
+            { taskId: a.id, title: a.title, estimateUsdMicro: 10_000 },
+            { taskId: a.id, title: a.title, estimateUsdMicro: 10_000 },
+          ],
+          estimateUsdMicro: 30_000,
+          summary: "",
+        },
+        summary: 'Did 1 task: "B".',
+        status: "completed",
+      });
+      const checks = sessionChecks(await loadSessionReviewData(w.store, w.ids.session));
+      expect(checks.findings.map((f) => f.description)).toContain(
+        "Plan lists the same task twice: A",
+      );
+      // Counted once in the estimate all the same.
+      expect(checks.metrics.estimateUsdMicro).toBe(20_000);
+    } finally {
+      await w.close();
+    }
+  });
+});

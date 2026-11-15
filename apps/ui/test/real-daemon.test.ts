@@ -16399,3 +16399,252 @@ describe("l3-merge, run L3", () => {
     }
   }, 240_000);
 });
+
+describe("l3-money-engine, run L3", () => {
+  /**
+   * Live check 3's money and session-review findings (L3-run-5, L3-run-2, L3-run-8, L3-run-10),
+   * on the bench's stand-in (the role-player) on a home on disk, so the same home can be
+   * composed again. `holdNextCall()`: the next specialist call sends its message_start (the
+   * input side of the bill, as the Messages API does) and then waits until its run is stopped,
+   * as the reviewer's first call did when the person pressed Stop now.
+   */
+  async function world(env: Record<string, string> = {}) {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l3-money-"));
+    const bench = benchOptionsFromEnv(
+      { FORERUNNER_BENCH_DELAY_MS: "0", ...env },
+      new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+    );
+    const provider = createRolePlayer(bench);
+    const stream = provider.stream.bind(provider);
+    let held: (() => void) | null = null;
+    const holdNextCall = () =>
+      new Promise<void>((started) => {
+        held = started;
+      });
+    provider.stream = (req) => {
+      const label = req.origin?.label ?? "";
+      const started = held;
+      if (!started || label.startsWith("critic") || !label.includes(" on ")) return stream(req);
+      held = null;
+      return (async function* () {
+        for await (const ev of stream(req)) {
+          yield ev;
+          if (ev.type !== "message_start") continue;
+          started();
+          await new Promise<void>((resolve) => {
+            if (req.signal?.aborted) resolve();
+            else req.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          yield { type: "error" as const, code: "aborted", message: "aborted", retryable: false };
+          return;
+        }
+      })();
+    };
+    const open = async () => {
+      const rt = await composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock: new SystemClock(),
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault(),
+        provider,
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+      });
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+    return { open, bench, home, holdNextCall };
+  }
+
+  const ENDED = ["completed", "stopped", "failed", "killed"];
+  const endOf = async (client: DaemonClient, sessionId: string) => {
+    await eventually(
+      async () => ENDED.includes((await client.session(sessionId)).status),
+      `session ${sessionId} to end`,
+      async () => (await client.session(sessionId)).status,
+      30_000,
+    );
+    return client.session(sessionId);
+  };
+  /** The CHF figure a sentence names ("… CHF 0.04."), or null. */
+  const chfIn = (text: string) => /CHF (\d+\.\d{2})/.exec(text)?.[1] ?? null;
+
+  it("L3-run-5: a call Stop now cuts off is booked once: the task, the session, Costs and the month say one figure, also after a restart", async () => {
+    // The plan's first task bills 60,000 input tokens more per call, so the cut-off call is
+    // worth a few centimes (the live reviewer's was CHF 0.01).
+    const w = await world({ FORERUNNER_BENCH_USAGE: "page:60000" });
+    let { rt, client } = await w.open();
+    try {
+      const me = await client.me();
+      const project = await client.createProject({
+        name: "Quote page",
+        goal: "A quote page",
+        brief: "A page that shows a quote.",
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      const monthBefore = (await client.startCheck(project.id)).monthLeft?.usdMicro ?? 0;
+      expect(monthBefore).toBeGreaterThan(0);
+      const costsBefore = (await client.costs({ projectId: project.id })).totals.usdMicro;
+      // Approve and start: the session's first specialist call is held after its message_start.
+      const started = w.holdNextCall();
+      await client.answerRequest(card?.id ?? "", {
+        version: card?.version ?? 0,
+        answer: "Approve and start",
+      });
+      await started;
+      const sessionId =
+        (await client.sessions({ projectId: project.id })).find((s) => !s.planning)?.id ?? "";
+      expect(sessionId).not.toBe("");
+      // Stop now, as the session page sends it.
+      await client.stopSession(sessionId);
+      const session = await endOf(client, sessionId);
+      const run = (await rt.store.run.forSession(sessionId)).find((r) => r.specialist !== "critic");
+      const taskId = run?.task_id ?? "";
+      const runCost = run?.cost_usd_micro ?? 0;
+      expect(runCost).toBeGreaterThan(0);
+      // The ledger's rows for the session are the run's cost: the cut-off call is on it once.
+      expect((await rt.store.costLedger.sum({ sessionId })).usd_micro).toBe(runCost);
+
+      const read = async (c: DaemonClient) => {
+        const task = (await c.task(taskId)).task;
+        const s = await c.session(sessionId);
+        const costs = await c.costs({ projectId: project.id });
+        const row = (await c.sessionTasks(sessionId)).tasks.find((t) => t.id === taskId);
+        return {
+          task: task.spent?.usdMicro ?? task.actual.usdMicro,
+          session: s.spent.usdMicro,
+          sessionRow: row?.spent.usdMicro ?? null,
+          byTask: costs.byTask.find((b) => b.key === taskId)?.cost.usdMicro ?? null,
+          costs: costs.totals.usdMicro - costsBefore,
+          monthFell: monthBefore - ((await c.startCheck(project.id)).monthLeft?.usdMicro ?? 0),
+          sessionWords: chfIn(s.summary),
+          rowWords: chfIn(row?.spentWords ?? ""),
+        };
+      };
+      const seen = await read(client);
+      const chf = seen.rowWords;
+      expect(chf).not.toBeNull();
+      expect(chf).not.toBe("0.00");
+      expect(seen).toEqual({
+        task: runCost,
+        session: runCost,
+        sessionRow: runCost,
+        byTask: runCost,
+        costs: runCost,
+        monthFell: runCost,
+        sessionWords: chf,
+        rowWords: chf,
+      });
+      // The session's result names that figure ("Stopped by you. … CHF 0.04.").
+      expect(session.summary).toMatch(/^Stopped by you\b/);
+      expect(session.summary).toContain(`CHF ${chf}`);
+      // Restart: the same figures, read from the same home.
+      await rt.close();
+      ({ rt, client } = await w.open());
+      expect(await read(client)).toEqual(seen);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("L3-run-2: the session page's Details set the work against the plan's figure the person saw, after the critic sent the task back once", async () => {
+    const w = await world({ FORERUNNER_BENCH_CRITIC_REJECT: "Send back" });
+    const { rt, client } = await w.open();
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Pairing tool", goal: "A tool" });
+      const task = await client.createTask(project.id, {
+        title: "Send back once: write page.md",
+        outcome: "page.md exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const sessionId =
+        (await client.startSession({ agentId, projectId: project.id })).session?.id ?? "";
+      const ended = await endOf(client, sessionId);
+      expect(ended.status).toBe("completed");
+      // The task was taken twice in the session: sent back once, then accepted.
+      const runs = (await rt.store.run.forSession(sessionId)).filter(
+        (r) => r.specialist !== "critic",
+      );
+      expect(runs.map((r) => r.task_id)).toEqual([task.id, task.id]);
+      const lines = (await client.sessionEvents(sessionId)).map((e) => [e.type, e.text]);
+      const said = (type: string) => lines.filter(([t]) => t === type).map(([, text]) => text);
+      const planned = chfIn(said("session.planned")[0] ?? "");
+      expect(planned).not.toBeNull();
+      expect(said("critic.session_review_metrics")).toEqual([
+        expect.stringMatching(
+          new RegExp(
+            `^Session review measured: 1 of 1 planned task done; the work cost (CHF \\d+\\.\\d{2}|less than CHF 0\\.01) against an estimate of CHF ${(planned ?? "").replace(".", "\\.")}, and the reviews `,
+          ),
+        ),
+      ]);
+      expect(said("critic.session_review")).toEqual([
+        "Session review: accepted (grade 100, 0 findings).",
+      ]);
+      const reviews = await rt.store.review.list({ session_id: sessionId });
+      const findings = await rt.store.finding.list({
+        review_id: reviews.find((r) => r.task_id === null)?.id ?? "",
+      });
+      expect(findings.map((f) => f.description)).not.toContainEqual(
+        expect.stringContaining("Plan lists the same task twice"),
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("L3-run-8: a session whose only task asked the person questions says the work waits for their answers", async () => {
+    const w = await world({ FORERUNNER_BENCH_ASK: "Contact page" });
+    const { rt, client } = await w.open();
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Chess club", goal: "A club site" });
+      const task = await client.createTask(project.id, {
+        title: "Contact page in contact.html",
+        outcome: "contact.html exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const sessionId =
+        (await client.startSession({ agentId, projectId: project.id })).session?.id ?? "";
+      await endOf(client, sessionId);
+      // The task waits on its questions card in the Inbox.
+      expect((await client.task(task.id)).task.status).toBe("needs_human");
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.taskId === task.id && r.status === "open",
+      );
+      expect(card).toBeDefined();
+      const lines = (await client.sessionEvents(sessionId)).map((e) => [e.type, e.text]);
+      const review = lines.filter(([t]) => t === "critic.session_review").map(([, x]) => x);
+      expect(review).toEqual([
+        expect.stringMatching(
+          /^Session review: the work waits for your answers \(grade \d+, \d+ findings?\)\.$/,
+        ),
+      ]);
+      expect(lines.map(([, x]) => x).join("\n")).not.toContain("sent back for changes");
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});

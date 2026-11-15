@@ -24,7 +24,7 @@ import type { CapsPort } from "../src/enforcement/ports.ts";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../src/injection/scan.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
 import { MemoryLoop, memoryCommandPort } from "../src/loop/memory.ts";
-import type { ModelRequest } from "../src/provider/types.ts";
+import type { ModelProvider, ModelRequest, StreamEvent } from "../src/provider/types.ts";
 import { StateApprovals } from "../src/wiring/state-ports.ts";
 import { flatPricing, harness } from "./helpers.ts";
 
@@ -1328,6 +1328,89 @@ describe("chat turns read their history from the prompt cache (the leftovers of 
     // The person's line is still what the turn says, with the facts of now beside it.
     expect(w.firstUser(second)).toContain("and after that?");
     expect(w.firstUser(second)).toContain("active_project");
+    await w.store.close();
+  });
+});
+
+/**
+ * l3-money-engine, run L3 (review of 217902c): the loop books a call that a stop or the turn's
+ * timeout cuts off (L3-run-5) and says so with a `model_call_end` whose stop reason is
+ * "aborted". The chat agent read every `model_call_end` as a call that ended: a spoken turn cut
+ * off by its timeout passed its held, unfinished sentence to the speaker ("... options: adopt,"),
+ * and a turn cut off before any token took the time to the cut as its first token. A cut-off
+ * call still books its cost; the gate and the turn's timing do not read it as an end.
+ */
+describe("l3-money-engine, run L3: a chat call its timeout cuts off", () => {
+  const SPOKEN = "You have a decision waiting. ";
+  const BROKEN = "The critic asked for one of the three options: adopt,";
+  /** Reports 500 input tokens on message_start, streams `text`, then waits for the abort. */
+  const cutOff = (text: string): ModelProvider => ({
+    name: "cut-off",
+    listModels: async () => [],
+    countTokens: (t: string) => Math.ceil(t.length / 4),
+    async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {
+      yield {
+        type: "message_start",
+        model: req.model,
+        usage: {
+          input_tokens: 500,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      };
+      if (text) yield { type: "text_delta", text };
+      await new Promise<void>((resolve) => {
+        if (req.signal?.aborted) resolve();
+        else req.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      yield { type: "error", code: "aborted", message: "aborted", retryable: false };
+    },
+    complete: () => Promise.reject(new Error("unused")),
+  });
+  /** Steps the simulated clock past the turn's 30 s timeout until the turn has answered. */
+  const pastTimeout = async <T>(w: Awaited<ReturnType<typeof setup>>, p: Promise<T>) => {
+    let done = false;
+    const tracked = p.finally(() => {
+      done = true;
+    });
+    tracked.catch(() => undefined);
+    for (let i = 0; i < 60 && !done; i++) {
+      for (let j = 0; j < 8; j++) await new Promise<void>((r) => setImmediate(r));
+      if (!done) await w.h.clock.advance(1_000);
+    }
+    if (!done) throw new Error("the chat turn had not answered after 60 s of simulated time");
+    return tracked;
+  };
+
+  it("a spoken turn its timeout cuts off speaks no broken sentence, and the call is still booked", async () => {
+    const w = await setup([], { agentDeps: { provider: cutOff(SPOKEN + BROKEN) } });
+    const tokens: string[] = [];
+    const res = await pastTimeout(
+      w,
+      w.chat("what is waiting on me?", { source: "voice", onToken: (t) => tokens.push(t) }),
+    );
+    // What reached the voice loop (and so the speaker) ends at the last whole sentence.
+    expect(tokens.join("")).toBe(SPOKEN);
+    expect(res.reply).not.toContain("adopt");
+    // L3-run-5 still holds: the call's input is booked once (flatPricing: 1 micro-USD a token).
+    expect(w.h.ledger.entries.map((e) => e.usdMicro)).toEqual([500]);
+    expect(res.costUsdMicro).toBe(500);
+    await w.store.close();
+  });
+
+  it("a typed turn its timeout cuts off before any token records no time to first token", async () => {
+    const w = await setup([], { agentDeps: { provider: cutOff("") } });
+    const warned: string[] = [];
+    const off = Logger.addSink((rec) => {
+      if (rec.level === "warn") warned.push(rec.msg);
+    });
+    const res = await pastTimeout(w, w.chat("what is waiting on me?")).finally(off);
+    expect(res.ttftMs).toBeNull();
+    const reply = (await w.log()).find((e) => e.type === "chat.reply");
+    expect(reply?.payload).toMatchObject({ outcome: "timeout", ttftMs: null, costUsdMicro: 500 });
+    expect(warned).not.toContain("chat first token over target");
+    expect(w.h.ledger.entries.map((e) => e.usdMicro)).toEqual([500]);
     await w.store.close();
   });
 });

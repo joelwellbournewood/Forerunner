@@ -32,8 +32,14 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
   as a complete `message_end`), unless the vendor's end-of-message event had already arrived:
   that message is complete and ends with `message_end` and its full usage. `collectStream`
   turns a stream into a `ModelResponse` with time to first token and duration, and keeps the
-  `message_start` usage, so the loop adds a cut-off call's input cost to the run before it
-  rethrows the abort.
+  `message_start` usage, so the loop books a cut-off call's input cost before it rethrows the
+  abort: in the run's cost, on the cost ledger and in the session's budget (`afterModelCall`
+  with `afterStop`), and in one `model_call_end` (`stopReason: CUT_OFF_STOP_REASON`, "aborted":
+  booked, not finished, so no reader takes it for the call's end) from which the runner
+  books the task's cost and the executor the Run row's. The task, the session, Costs and the
+  month then say one figure, which is what the provider billed (L3-run-5, live check 3: before,
+  only the run's total had it). A stand-in that plays a provider sends the same input side on
+  `message_start` (the bench's role-player does), or a stopped call costs nothing in its tests.
 - Effort is a first-class request field. What a provider accepts beyond the common request is
   its **capability flags** (spec D.4, ADR 0072), read through `providerCapabilities(provider)`
   (it fills the defaults; read flags through it, never directly), which returns

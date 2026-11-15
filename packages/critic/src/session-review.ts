@@ -34,6 +34,12 @@ export interface SessionPlanItemLike {
   title?: string;
   specialist?: string;
   estimateUsdMicro?: number;
+  /**
+   * L3-run-2: the session took a task it had already planned once more (the critic sent it
+   * back, its run failed and was tried again): the row keeps what ran, but the task is one
+   * planned task, at its first item's figure. Absent from items written before the mark.
+   */
+  again?: boolean;
 }
 
 export interface SessionReviewData {
@@ -124,15 +130,55 @@ export function planItemsOf(plan: JsonValue): SessionPlanItemLike[] {
       title: typeof o.title === "string" ? o.title : undefined,
       specialist: typeof o.specialist === "string" ? o.specialist : undefined,
       estimateUsdMicro: num(o.estimateUsdMicro),
+      ...(o.again === true ? { again: true } : {}),
     });
   }
   return items;
 }
 
+/**
+ * The plan's estimate: the figure the person was shown on the plan line and the Start dialog
+ * (L3-run-2, live check 3). Each task counts once, at its first item's figure: an item the
+ * runner marked `again` (a task taken again after a send-back or a failed try) and any later
+ * item of the same task add nothing. A plan whose tasks each appear once keeps its stored total.
+ * Rows stored before the mark summed every attempt's estimate into the total ("against an
+ * estimate of CHF 0.21" where the plan said about CHF 0.11): when items repeat a task, the
+ * figure is computed from the first item per task instead of trusted.
+ */
 export function planEstimateOf(plan: JsonValue, items: SessionPlanItemLike[]): number {
   const total = num((plan as { estimateUsdMicro?: unknown } | null)?.estimateUsdMicro);
-  if (total !== undefined) return total;
-  return items.reduce((s, i) => s + (i.estimateUsdMicro ?? 0), 0);
+  const repeats = new Set(items.map((i) => i.taskId)).size < items.length;
+  if (total !== undefined && !repeats && !items.some((i) => i.again)) return total;
+  const seen = new Set<string>();
+  let sum = 0;
+  for (const i of items) {
+    if (i.again || seen.has(i.taskId)) continue;
+    seen.add(i.taskId);
+    sum += i.estimateUsdMicro ?? 0;
+  }
+  return sum;
+}
+
+/** How many times the plan took a task it had already planned (`again`, or a repeated item). */
+export function attemptsAgainOf(items: SessionPlanItemLike[]): number {
+  const seen = new Set<string>();
+  let again = 0;
+  for (const i of items) {
+    if (i.again || seen.has(i.taskId)) again++;
+    seen.add(i.taskId);
+  }
+  return again;
+}
+
+/** How many of the plan's tasks it took again at least once (`attemptsAgainOf` counts tries). */
+export function tasksTriedAgainOf(items: SessionPlanItemLike[]): number {
+  const seen = new Set<string>();
+  const again = new Set<string>();
+  for (const i of items) {
+    if (i.again || seen.has(i.taskId)) again.add(i.taskId);
+    seen.add(i.taskId);
+  }
+  return again.size;
 }
 
 export async function loadSessionReviewData(
@@ -240,9 +286,21 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
     );
   }
   const planned = new Set<string>();
+  // L3-run-2: a task the session took again (marked `again` by the runner; on rows written
+  // before the mark, a task the critic sent back or one this session already ran) is the same
+  // planned task tried once more, not the plan listing it twice: before, the runner's own retry
+  // cost the grade 5 points.
+  const sentBackHere = new Set(sentBackOf(session.handoff));
+  const ranHereBefore = new Set(
+    data.runs
+      .filter((r) => r.specialist !== CRITIC_RUN_SPECIALIST && r.task_id)
+      .map((r) => r.task_id as string),
+  );
   for (const item of planItems) {
     const label = item.title ?? item.taskId;
-    if (planned.has(item.taskId))
+    const takenAgain =
+      item.again === true || sentBackHere.has(item.taskId) || ranHereBefore.has(item.taskId);
+    if (planned.has(item.taskId) && !takenAgain)
       add("low", `Plan lists the same task twice: ${label}`, "Plan each task once");
     planned.add(item.taskId);
     const task = data.tasks.get(item.taskId);
@@ -295,11 +353,25 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
     work - estimate > COST_NOISE_USD_MICRO
   ) {
     const pct = Math.round(((work - estimate) / estimate) * 100);
+    // L3-run-2: the estimate counts each task once; work that tried a task again is named as
+    // such, so a send-back that doubled the cost is flagged and its cause read at a glance.
+    // Plain words for the tries (design §5): one task tried twice or N times, or N tasks tried
+    // again (review: ", with 2 more attempts of tasks tried again" read at no glance).
+    const again = attemptsAgainOf(planItems);
+    const triedTasks = tasksTriedAgainOf(planItems);
+    const tried =
+      again === 0
+        ? ""
+        : triedTasks > 1
+          ? `, with ${triedTasks} tasks tried again`
+          : again === 1
+            ? ", with one task tried twice"
+            : `, with one task tried ${again + 1} times`;
     add(
       "medium",
       reviews > 0
-        ? `Session work cost ${money(work)} exceeded its estimate ${money(estimate)} by ${pct}% (the reviews, ${money(reviews)} more, are not in the estimate)`
-        : `Session cost ${money(actual)} exceeded its estimate ${money(estimate)} by ${pct}%`,
+        ? `Session work cost ${money(work)} exceeded its estimate ${money(estimate)} by ${pct}%${tried} (the reviews, ${money(reviews)} more, are not in the estimate)`
+        : `Session cost ${money(actual)} exceeded its estimate ${money(estimate)} by ${pct}%${tried}`,
       "Record the overrun against the estimate so the next plan is calibrated; split the work that overran",
     );
   }

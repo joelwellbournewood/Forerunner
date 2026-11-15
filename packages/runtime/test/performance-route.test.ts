@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DAEMON_ROUTES, PerformanceView } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import type { ModelProvider, ModelRequest, StreamEvent } from "../src/provider/types.ts";
 import { ScriptedProvider } from "./helpers.ts";
 
 /**
@@ -225,5 +226,141 @@ describe("GET /performance on the daemon", () => {
     const missing = await req("/performance?projectId=proj_missing");
     expect(missing.status).toBe(404);
     expect(await missing.json()).toMatchObject({ code: "not_found" });
+  });
+});
+
+/**
+ * l3-money-engine, run L3 (review of 217902c): the loop books a call its timeout or a stop cuts
+ * off (L3-run-5) with a `model_call_end` whose stop reason is "aborted". The chat turn and the
+ * intake took the first `model_call_end` as the call's first token, so a call that timed out
+ * before any token reached the Performance view as a first token at the timeout (30 s for chat,
+ * 5 min for planning), where before it carried none. The calls' cost is still booked.
+ */
+describe("l3-money-engine, run L3: calls their timeout cuts off on the Performance view", () => {
+  let rt: RuntimeApp;
+  let app: ReturnType<typeof createDaemonApp>["app"];
+  let token: string;
+  let projectId = "";
+  const clock = new SimulatedClock(START);
+  /** Every call reports 400 input tokens on message_start, then waits for its abort. */
+  const provider: ModelProvider = {
+    name: "fake",
+    listModels: async () => [{ provider: "fake", id: "fake-haiku", tier: "haiku" }],
+    countTokens: (t: string) => Math.ceil(t.length / 4),
+    async *stream(r: ModelRequest): AsyncIterable<StreamEvent> {
+      yield {
+        type: "message_start",
+        model: r.model,
+        usage: {
+          input_tokens: 400,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      };
+      await new Promise<void>((resolve) => {
+        if (r.signal?.aborted) resolve();
+        else r.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      yield { type: "error", code: "aborted", message: "aborted", retryable: false };
+    },
+    complete: () => Promise.reject(new Error("unused")),
+  };
+  const req = (path: string, init: RequestInit = {}) =>
+    app.request(path, {
+      ...init,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        ...(init.headers ?? {}),
+      },
+    });
+  /** Steps the simulated clock by `stepMs` until `p` settles, at most `limitMs` of it. */
+  const pastTimeout = async <T>(p: Promise<T> | T, stepMs: number, limitMs: number): Promise<T> => {
+    let done = false;
+    const tracked = Promise.resolve(p).finally(() => {
+      done = true;
+    });
+    // Handled where the caller awaits it; this keeps a rejection during the steps from being
+    // reported as unhandled before then.
+    tracked.catch(() => undefined);
+    for (let spent = 0; spent <= limitMs && !done; spent += stepMs) {
+      for (let j = 0; j < 8; j++) await new Promise<void>((r) => setImmediate(r));
+      await new Promise<void>((r) => setTimeout(r, 0));
+      if (!done) await clock.advance(stepMs);
+    }
+    if (!done) throw new Error(`not settled after ${limitMs} ms of simulated time`);
+    return tracked;
+  };
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-performance-cutoff-"));
+    const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs,
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+    });
+    ({ app, token } = createDaemonApp(rt));
+    const p = await rt.store.project.insert({
+      name: "Slow",
+      goal: "A small site for ten users.",
+      repos: [],
+      stage: "build",
+      status: "active",
+      budget_usd_micro: 10_000_000,
+      autonomy_level: 2,
+      summary_cache: { brief: "A small site for ten users." },
+      data_assets: [],
+      settings: { members: [rt.agent.id] },
+      small_project_mode: false,
+      active: true,
+    });
+    projectId = p.id;
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("a chat turn and a planning call that timed out before any token show no first token, and their cost is booked", async () => {
+    const chat = await pastTimeout(
+      req("/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          humanId: rt.human.id,
+          agentId: rt.agent.id,
+          projectId,
+          text: "what is waiting on me?",
+        }),
+      }),
+      1_000,
+      60_000,
+    );
+    expect(chat.status).toBe(200);
+    await expect(pastTimeout(rt.intake.propose(projectId), 10_000, 900_000)).rejects.toMatchObject({
+      code: "timeout",
+    });
+    const v = PerformanceView.parse(
+      await (await req(`/performance?projectId=${projectId}`)).json(),
+    );
+    const text = v.modes.find((m) => m.mode === "text_chat");
+    const planning = v.modes.find((m) => m.mode === "planning");
+    // Each timed-out call is a sample (its total time), with no first token: before the fix the
+    // chat's read 30 s and the planning call's 5 min.
+    expect(text).toMatchObject({ samples: 1, ttftP50Ms: null, ttftP90Ms: null });
+    expect(text?.totalP50Ms).not.toBeNull();
+    expect(planning).toMatchObject({ samples: 1, ttftP50Ms: null, ttftP90Ms: null });
+    expect(v.recent.map((s) => s.ttftMs)).toEqual([null, null]);
+    // L3-run-5 holds: each cut-off call's input (400 tokens) is on the cost ledger.
+    const rows = await rt.store.costLedger.sum({ projectId });
+    expect(rows.usd_micro).toBeGreaterThan(0);
   });
 });

@@ -751,8 +751,17 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
         return `Session review measured: ${done}; the work cost ${money("workUsdMicro")} against an estimate of ${money("estimateUsdMicro")}${k("reviewsUsdMicro") > 0 ? `, and the reviews ${money("reviewsUsdMicro")}` : ""}.`;
       return `Session review measured: ${done}, ${money("actualUsdMicro")} spent of a ${money("estimateUsdMicro")} estimate.`;
     }
-    case "critic.session_review":
-      return `Session review: ${verdictWords(s("verdict"))} (grade ${n("grade")}, ${count("findings", "finding")}).`;
+    case "critic.session_review": {
+      // L3-run-8 (live check 3): a session whose work waits only for the person says what they
+      // can do; nothing was sent back (before: "sent back for changes (grade 70, 2 findings)").
+      const waits =
+        s("waitsFor") === "answers"
+          ? "the work waits for your answers"
+          : s("waitsFor") === "decision"
+            ? "the work waits for your decision"
+            : null;
+      return `Session review: ${waits ?? verdictWords(s("verdict"))} (grade ${n("grade")}, ${count("findings", "finding")}).`;
+    }
     case "task.blocked_by_findings":
       return `Cannot close the task: ${s("warning")}`;
     case "memory.loaded":

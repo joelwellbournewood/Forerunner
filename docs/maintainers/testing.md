@@ -2766,7 +2766,13 @@ done task and its PR into the store by hand; C-62).
 `FORERUNNER_BENCH_DELAY_MS` waits before each reply but the critic's; `criticDelayMs`
 (`FORERUNNER_BENCH_CRITIC_DELAY_MS`, default 0) waits before each of the critic's, abortable
 like the other, so Stop now or Cancel during "Being reviewed" can be walked and tested
-(`real-daemon.test.ts` sets it on its role player for the phase C review case).
+(`real-daemon.test.ts` sets it on its role player for the phase C review case). Every reply's
+`message_start` carries the input side of the bill (input, cache read and cache write tokens,
+output 0), as the Messages API's does (L3-run-5): a call Stop now cuts off during that wait is
+billed for its input and booked on the ledger, the session and the task alike. Before, the
+stand-in sent no usage there, so a stopped stand-in call cost nothing anywhere and only the real
+model showed that the app booked it on the task alone (`real-daemon.test.ts`, "l3-money-engine,
+run L3", holds a call after its `message_start` and stops it).
 Every request is a line of `<home>/bench/model-calls.jsonl` (`call-log.ts`), which is how a
 tester sees what the app sends a model. `--provider bench-live` wraps the Messages API in the
 same log (`withModelCallLog`, the key replaced whole and in part, every string redacted); it

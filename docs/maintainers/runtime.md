@@ -364,10 +364,27 @@ reports it when the message opens, so a call aborted before `message_end` still 
 billed input tokens on record; the live harness's spend ledger reads it (testing.md, "Live
 runs"). `collectStream` keeps that figure as the response's usage until `message_end` replaces
 it, so a stream cut off with `error: aborted` returns the input side with `stop_reason:
-"error"`, and the loop driver adds a cut-off call's reported usage and cost to the run before
-it rethrows the kill or the timeout: the Run row and the session budget still count the billed
-input of a killed call (`loop.test.ts`, "a call the kill switch cuts off keeps the input
-tokens").
+"error"`, and the loop driver books a cut-off call like any call before it rethrows the kill or
+the timeout (L3-run-5, live check 3): its reported usage and cost go into the run's total, one
+cost-ledger row and the session's budget (`hooks.afterModelCall` with `afterStop`, since Stop
+has already revoked the token; a failed booking is logged and never hides the stop), and one
+`model_call_end` with `stopReason: CUT_OFF_STOP_REASON` (`"aborted"`, `agent/loop.ts`), from
+which the runner books the session's spend and the task's cost live and the executor the Run
+row's (the runner's end-of-run `rest` is then 0, so nothing is counted twice). A call that
+reported no usage costs nothing and says no end, as before. That stop reason says the call was
+cut off, not finished: a reader that books cost counts the event, a reader that takes it as the
+call's end skips it. The chat agent's `SentenceGate` keeps the held rest of a spoken turn unspoken
+(review of L3-run-5: a voice turn its 30 s timeout cut off spoke "The critic asked for one of the
+three options: adopt,"), and the chat turn and the intake take no first token from it (its
+`ttftMs` is the time to the cut when no token came: the Performance view showed a first token at
+30 s for chat and 5 min for planning where none came; `conversation.test.ts`,
+`voice-route.test.ts` and `performance-route.test.ts`, "l3-money-engine, run L3"). Before, the abort branch kept the cost in the run's total only: after Stop now during
+the reviewer's first call the Tasks row and the drawer read CHF 0.01 while the session, Costs
+and the month read CHF 0.00, and the ledger under-reported what the provider billed (`loop.test.ts`,
+"a call the kill switch cuts off keeps the input tokens" and "l3-money-engine, run L3";
+`real-daemon.test.ts`, "l3-money-engine, run L3", L3-run-5). The bench's stand-in sends the
+input side on `message_start` too (`role-player.ts`), so a stopped stand-in call is booked as a
+real one is.
 
 **What the subprocess inherits and what it gets back (security review, `test/security-sdk.test.ts`).**
 `scrubEnv` builds the subprocess environment (and the process sandbox's base environment): a
@@ -991,7 +1008,15 @@ same session, up to the ladder; `MAX_RUNS_PER_TASK_IN_SESSION` = 6 is only a gua
 the person made ready, through the same `Planner` (so the first-session order and the handover's
 seed-only plan still apply), cut to what is left of the work budget. The session row's plan grows
 with a versioned `setPlan` ("took N more tasks as they became ready") and a `session.replanned`
-event. A task skipped for a peer, a claim, the usage limit or the sandbox is not taken again in
+event. A task the session already planned and takes again (the critic sent it back, its run
+failed and is tried again, the larger task of D4 came back ready: `takeHeld` too) is one planned
+task (L3-run-2, live check 3): its new item records the attempt, marked `again: true`
+(`PlanItem.again`), and adds nothing to the plan's `estimateUsdMicro`, which stays the figure the
+person was shown on the plan line and in the Start dialog. Before, each retry's estimate was added
+to it, and the session review said "the work cost CHF 0.12 against an estimate of CHF 0.21" where
+every screen had said about CHF 0.11, with a "Plan lists the same task twice" finding for the
+runner's own retry (`session-keeps-going.test.ts`, "l3-money-engine, run L3"; the session review
+counts each task once, `critic.md`). A task skipped for a peer, a claim, the usage limit or the sandbox is not taken again in
 the same session (`notAgain`). At autonomy 0 and 1 only the approved plan's tasks (and their
 retries) run. The loop stops when nothing runnable is left, the budget is used (the reserve
 kept), the person stops it, or the wall clock runs out. A sent-back task is counted once in
@@ -3029,9 +3054,20 @@ page by page to the last page, so an answer that sat behind hundreds of later an
 during a long downtime is still applied. At session end `reviewSession` runs the critic's honesty, plan and cost checks on the
 stored summary (tier 0 by default, `SessionRunnerDeps.sessionReviewTier`), persisted as a
 review with `session_id` set; `critic.session_review` carries the grade and a `human` verdict
-as an escalation. Lesson proposals (repeat findings) are recorded in critic memory through the
+as an escalation. A review that sends nothing back of a session whose work waits only for the
+person (nothing done or sent back; every task it left waiting or failed holds its card, a failed
+task's being Try again / Mark done anyway / Cancel task) carries `waitsFor: "answers"` (every card
+asks questions) or `"decision"`, and its log line says what the
+person can do: "Session review: the work waits for your answers (grade 70, 2 findings)." (L3-run-8,
+live check 3: it read "sent back for changes" though nothing was; `event-lines.test.ts` and
+`real-daemon.test.ts`, "l3-money-engine, run L3"). Lesson proposals (repeat findings) are recorded in critic memory through the
 memory port. Events: `critic.review_resumed` (the review-only pass, W15B-14),
-`critic.review_started`, `critic.verdict`, `critic.review_failed`
+`critic.review_started` (said once the review runs: at its first model call the limits allowed,
+through `TaskReviewRequest.onStarted`, which the critic port fires on the critic run's first
+`model_call_start`, or just before a verdict reached without a call; a review a limit or a
+credential refused before it ran says only that it paused or waits. L3-run-10, live check 3:
+"The critic started a light review (attempt 1)." came before '"X" paused before its review';
+`budget-pause.test.ts`, "l3-money-engine, run L3"), `critic.verdict`, `critic.review_failed`
 (the task stays in review with a card for the person, U-045), `critic.session_review`,
 `task.blocked_by_findings`.
 
@@ -4425,8 +4461,9 @@ of the 400 tokens were left for the visible text. Three changes:
   loop's own `SentenceSplitter` needs that boundary to emit the sentence at once rather than
   when the next one ends; the first version held every sentence back by one, review of
   eead616), the unfinished rest of a model call is held until the call ends and released only
-  when it did not stop at `max_tokens`, so the voice loop never receives (and never speaks) the
-  broken tail, and the bridge's `unstreamedPart` finds nothing left to add. The gate's first
+  when it did not stop at `max_tokens` (a call a stop or the turn's timeout cut off, whose
+  `model_call_end` carries `CUT_OFF_STOP_REASON`, never ended: its rest stays held, L3-run-5's
+  review), so the voice loop never receives (and never speaks) the broken tail, and the bridge's `unstreamedPart` finds nothing left to add. The gate's first
   call is an empty piece when the first delta completes no sentence, so the voice loop still
   stamps `modelFirstTokenMs` at the model's first token. A typed turn streams as before; the UI
   replaces the streamed text with `ChatReply.reply`, which is trimmed.

@@ -254,6 +254,15 @@ export type RunOutcome =
   | "max_turns"
   | "error";
 
+/**
+ * The stop reason of a `model_call_end` for a call the kill switch or the run's timeout cut off
+ * (L3-run-5): the call is booked like any call (its cost is on the ledger, the session and the
+ * task), but it did not end. A reader that books cost counts it; a reader that takes the event as
+ * the call's end (a spoken turn's held sentence, the time to first token) skips it, since its
+ * text stopped mid-sentence and its `ttftMs` is the time to the cut when no token came.
+ */
+export const CUT_OFF_STOP_REASON = "aborted";
+
 export type RunEvent =
   | { type: "run_start"; runId: string; model: string }
   | { type: "model_call_start"; turn: number; estimateUsdMicro: number }
@@ -264,6 +273,7 @@ export type RunEvent =
       usage: Usage;
       costUsdMicro: number;
       ttftMs: number;
+      /** The provider's stop reason, or `CUT_OFF_STOP_REASON` for a call a stop cut off. */
       stopReason: string;
     }
   | { type: "tool_call"; id: string; name: string; input: unknown }
@@ -747,9 +757,40 @@ export class LoopAgentDriver {
           if (controller.signal.aborted) {
             // A call cut off by the kill switch or the timeout was billed for what the provider
             // reported before the stop (the input side on message_start): it stays in the run's
-            // usage and cost, as it did when the adapter ended a killed stream as complete.
+            // usage and cost, and it is booked once like any call (L3-run-5, live check 3): one
+            // ledger row and the session's budget (`afterModelCall`, after the stop: Stop has
+            // already revoked the token), then a `model_call_end`, from which the runner books
+            // the task's cost and the executor the Run row's. Before, only the run's total had
+            // it: the task read CHF 0.01 while the session, Costs and the month read CHF 0.00.
+            // A call that reported nothing costs nothing and says no end, as before; a failed
+            // booking is logged and never hides the stop. The end carries `CUT_OFF_STOP_REASON`,
+            // so a reader of call ends (a spoken turn's sentence gate, the time to first token)
+            // never takes the cut for a finished call (review of L3-run-5: a timed-out spoken
+            // turn spoke its broken last sentence).
+            const callCost = req.pricing.cost(response.usage);
             addUsage(usage, response.usage);
-            cost += req.pricing.cost(response.usage);
+            cost += callCost;
+            if (callCost > 0) {
+              try {
+                await this.deps.hooks.afterModelCall(ctx, response.usage, callCost, {
+                  afterStop: true,
+                });
+              } catch (e) {
+                this.logger.warn("the cost of a call cut off by a stop was not booked", {
+                  runId: claims.runId,
+                  usdMicro: callCost,
+                  error: errorMessage(e),
+                });
+              }
+              emit({
+                type: "model_call_end",
+                turn,
+                usage: response.usage,
+                costUsdMicro: callCost,
+                ttftMs: wholeMs(response.time_to_first_token_ms) ?? 0,
+                stopReason: CUT_OFF_STOP_REASON,
+              });
+            }
             throw controller.signal.reason;
           }
           // A credential at its limit, a credential Anthropic refused (U-078: a 401 or 403 key,

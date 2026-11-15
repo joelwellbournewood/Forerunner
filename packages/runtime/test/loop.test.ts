@@ -1,8 +1,8 @@
 import { join } from "@forerunner/platform";
 import { FakeProvider, textReply } from "@forerunner/testenv";
 import { describe, expect, it } from "vitest";
-import { LoopAgentDriver, type RunEvent, wholeMs } from "../src/agent/loop.ts";
-import type { ModelProvider, ModelRequest, StreamEvent } from "../src/provider/types.ts";
+import { CUT_OFF_STOP_REASON, LoopAgentDriver, type RunEvent, wholeMs } from "../src/agent/loop.ts";
+import type { ModelProvider, ModelRequest, StreamEvent, Usage } from "../src/provider/types.ts";
 import {
   budget,
   flatPricing,
@@ -210,9 +210,11 @@ describe("agent loop", () => {
       },
       complete: () => Promise.reject(new Error("unused")),
     };
+    const b = budget("sess-1", 5_000_000, h.clock);
+    const events: RunEvent[] = [];
     const p = driver(h).run({
-      token: issue(h),
-      budget: budget("sess-1", 5_000_000, h.clock),
+      token: issue(h, { taskId: "task-1" }),
+      budget: b,
       provider,
       model: "fake-haiku",
       billingSourceId: "bs",
@@ -221,6 +223,7 @@ describe("agent loop", () => {
       tools: registry(),
       pricing: flatPricing,
       timeoutMs: 60_000,
+      onEvent: (e) => events.push(e),
     });
     await open;
     await h.kill.stop("all");
@@ -230,6 +233,154 @@ describe("agent loop", () => {
     expect(res.usage).toEqual(startUsage);
     // flatPricing: one micro-USD per input or output token
     expect(res.costUsdMicro).toBe(5_000);
+    // L3-run-5 (live check 3): the cut-off call is booked once, as any call is: one ledger row
+    // with the run's ids (Costs, the session and the month read the ledger), the session's
+    // budget (its spend), and one model_call_end (the runner books the task's cost from it, the
+    // executor the Run row's). Before, only the run's own total had it: the task read CHF 0.01
+    // while the session, Costs and the month read CHF 0.00.
+    expect(h.ledger.entries).toHaveLength(1);
+    expect(h.ledger.entries[0]).toMatchObject({
+      usdMicro: 5_000,
+      runId: "run-1",
+      sessionId: "sess-1",
+      taskId: "task-1",
+      tokensIn: 5_000,
+      tokensOut: 0,
+      cacheReadTokens: 700,
+    });
+    expect(b.snapshot().sessionSpentUsdMicro).toBe(5_000);
+    const ends = events.filter((e) => e.type === "model_call_end");
+    expect(ends).toHaveLength(1);
+    // Its stop reason says the call was cut off, so no reader takes it for a finished call
+    // (a spoken turn's held sentence, the time to first token: conversation.test.ts).
+    expect(CUT_OFF_STOP_REASON).toBe("aborted");
+    expect(ends[0]).toMatchObject({ costUsdMicro: 5_000, stopReason: CUT_OFF_STOP_REASON });
+    // Counted once: the run's total is not doubled by the booking.
+    expect(events.at(-1)).toMatchObject({
+      type: "run_end",
+      outcome: "killed",
+      costUsdMicro: 5_000,
+    });
+  });
+
+  describe("l3-money-engine, run L3: a cut-off call is booked once (L3-run-5)", () => {
+    /** A provider whose call reports `startUsage` on message_start, then waits for the abort. */
+    const cutOff = (startUsage: Usage | undefined, opened: () => void): ModelProvider => ({
+      name: "cut-off",
+      listModels: async () => [],
+      countTokens: (t: string) => Math.ceil(t.length / 4),
+      async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {
+        yield {
+          type: "message_start",
+          model: req.model,
+          ...(startUsage ? { usage: startUsage } : {}),
+        };
+        opened();
+        await new Promise<void>((resolve) => {
+          if (req.signal?.aborted) resolve();
+          else req.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield { type: "error", code: "aborted", message: "aborted", retryable: false };
+      },
+      complete: () => Promise.reject(new Error("unused")),
+    });
+    const usageOf = (input: number): Usage => ({
+      input_tokens: input,
+      output_tokens: 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    });
+
+    it("a call the run's timeout cuts off is booked on the ledger and the session's budget too", async () => {
+      const h = harness();
+      const b = budget("sess-1", 5_000_000, h.clock);
+      const events: RunEvent[] = [];
+      let opened: () => void = () => undefined;
+      const open = new Promise<void>((resolve) => {
+        opened = resolve;
+      });
+      const p = driver(h).run({
+        token: issue(h),
+        budget: b,
+        provider: cutOff(usageOf(3_000), opened),
+        model: "fake-haiku",
+        billingSourceId: "bs",
+        system: "s",
+        messages: [{ role: "user", content: "a long answer" }],
+        tools: registry(),
+        pricing: flatPricing,
+        timeoutMs: 1_000,
+        onEvent: (e) => events.push(e),
+      });
+      await open;
+      await h.clock.advance(1_000);
+      const res = await p;
+      expect(res.outcome).toBe("timeout");
+      expect(res.costUsdMicro).toBe(3_000);
+      expect(h.ledger.entries.map((e) => e.usdMicro)).toEqual([3_000]);
+      expect(b.snapshot().sessionSpentUsdMicro).toBe(3_000);
+      expect(events.filter((e) => e.type === "model_call_end")).toHaveLength(1);
+    });
+
+    it("a cut-off call that reported no usage books nothing and says no call ended (as before)", async () => {
+      const h = harness();
+      const b = budget("sess-1", 5_000_000, h.clock);
+      const events: RunEvent[] = [];
+      let opened: () => void = () => undefined;
+      const open = new Promise<void>((resolve) => {
+        opened = resolve;
+      });
+      const p = driver(h).run({
+        token: issue(h),
+        budget: b,
+        provider: cutOff(undefined, opened),
+        model: "fake-haiku",
+        billingSourceId: "bs",
+        system: "s",
+        messages: [{ role: "user", content: "a long answer" }],
+        tools: registry(),
+        pricing: flatPricing,
+        timeoutMs: 60_000,
+        onEvent: (e) => events.push(e),
+      });
+      await open;
+      await h.kill.stop("all");
+      const res = await p;
+      expect(res.outcome).toBe("killed");
+      expect(res.costUsdMicro).toBe(0);
+      expect(h.ledger.entries).toEqual([]);
+      expect(b.snapshot().sessionSpentUsdMicro).toBe(0);
+      expect(events.some((e) => e.type === "model_call_end")).toBe(false);
+    });
+
+    it("a ledger that fails to book the cut-off call never hides the stop: the run still ends killed", async () => {
+      const h = harness({
+        ledger: {
+          record: () => Promise.reject(new Error("disk full")),
+        } as never,
+      });
+      let opened: () => void = () => undefined;
+      const open = new Promise<void>((resolve) => {
+        opened = resolve;
+      });
+      const p = driver(h).run({
+        token: issue(h),
+        budget: budget("sess-1", 5_000_000, h.clock),
+        provider: cutOff(usageOf(2_000), opened),
+        model: "fake-haiku",
+        billingSourceId: "bs",
+        system: "s",
+        messages: [{ role: "user", content: "a long answer" }],
+        tools: registry(),
+        pricing: flatPricing,
+        timeoutMs: 60_000,
+      });
+      await open;
+      await h.kill.stop("all");
+      const res = await p;
+      expect(res.outcome).toBe("killed");
+      expect(res.costUsdMicro).toBe(2_000);
+    });
   });
 
   it("times out cleanly and keeps partial output", async () => {
