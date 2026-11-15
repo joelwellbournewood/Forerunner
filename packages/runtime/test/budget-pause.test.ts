@@ -1770,11 +1770,11 @@ describe("l3-handoff-checks, run L3", () => {
       );
       // Before: '"Search MDN for pages that mention popover hint" paused at its budget of CHF 0.15'.
       expect(card?.title).toBe(`"${title}" paused before its budget ran out`);
-      // d1109-oversize-pause (OP-7): its spend past its estimate is said in the same sentence.
-      expect(card?.body).toMatch(
-        new RegExp(
-          `^It spent ${spent?.replace(".", "\\.")} of its budget of ${cap?.replace(".", "\\.")}(, more than its estimate of CHF \\d+\\.\\d\\d)?\\.$`,
-        ),
+      // d1109-oversize-pause (OP-7): its spend passed its estimate (the learned estimate of a
+      // small coder task, as the Start dialog prices it), so the same sentence says so (before:
+      // 'It spent CHF 0.12 of its budget of CHF 0.15.').
+      expect(card?.body).toBe(
+        `It spent ${spent} of its budget of ${cap}, more than its estimate of CHF 0.03.`,
       );
       // Before: 'Done: I opened six MDN pages and listed the five that mention hint. The sixth,
       // the showPopover page, doesn't mention it. Two pages define hint:…; left: Open the
@@ -1833,7 +1833,9 @@ describe("l3-handoff-checks, run L3", () => {
       expect(n?.title).toBe('Popover hint: "Search MDN…" paused before its budget ran out');
       expect(String(n?.title).length).toBeLessThanOrEqual(60);
       expect(String(n?.body)).toMatch(
-        /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d(, more than its estimate of CHF \d+\.\d\d)?\. Answer it in the Inbox\.$/,
+        // d1109-oversize-pause (OP-7): the card's body, with its spend past its estimate (before:
+        // 'It spent CHF 0.12 of its budget of CHF 0.15. Answer it in the Inbox.').
+        /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d, more than its estimate of CHF 0\.03\. Answer it in the Inbox\.$/,
       );
     });
 
