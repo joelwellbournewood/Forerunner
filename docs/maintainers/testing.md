@@ -2753,7 +2753,10 @@ and quotes back the plan's state (`# Plan from the brief`) and the first task li
 (`chatFacts`), so a journey can check that a reply names a task as a real model's would. A
 chat line `say: <text>` is answered with that text and no tool on every call of the turn, a
 nudge included (l3-chat-claims, run L3: the live chat model claimed "I've asked for
-confirmation" with no tool, L3-run-1), so a walk can show the reply guard. The
+confirmation" with no tool, L3-run-1), so a walk can show the reply guard; `tool: a {json} then
+say: <text>` calls the tool first and then answers with that text on every later call (a claim
+beside what the command did: a change beside its Yes/No read-back, a yes asked beside a change;
+`chainedSay`). The
 intake stand-in reads the person's words after "Change the plan" (`splitChanges` reads them
 from the brief as `briefWithChanges` in `session/intake.ts` writes them; `applyChanges` in
 `plans.ts`): "drop|remove|... <name>" removes the tasks it names, "add|include|insert <name>"
