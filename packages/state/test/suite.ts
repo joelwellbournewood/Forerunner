@@ -838,6 +838,33 @@ export function defineStateSuite(target: SuiteTarget): void {
         expect(await store.event.count(s.session.id)).toBe(2);
       });
 
+      it("ofTypes reads only the asked types, newest first, before a seq, at most a limit (d1109-chat-recall)", async () => {
+        const other = await store.session.insert({ agent_id: s.bob.id });
+        for (let i = 1; i <= 6; i++) {
+          await store.event.append(s.session.id, i % 2 ? "chat.human" : "chat.reply", { i });
+          await store.event.append(s.session.id, "tool_call", { i });
+        }
+        await store.event.append(other.id, "chat.human", { i: 99 });
+        const all = await store.event.ofTypes(s.session.id, ["chat.human", "chat.reply"], {
+          limit: 100,
+        });
+        expect(all.map((e) => (e.payload as { i: number }).i)).toEqual([6, 5, 4, 3, 2, 1]);
+        expect(all.every((e) => e.session_id === s.session.id)).toBe(true);
+        const page = await store.event.ofTypes(s.session.id, ["chat.human", "chat.reply"], {
+          limit: 2,
+        });
+        expect(page.map((e) => e.seq)).toEqual([11, 9]);
+        const before = await store.event.ofTypes(s.session.id, ["chat.human", "chat.reply"], {
+          beforeSeq: 9,
+          limit: 2,
+        });
+        expect(before.map((e) => (e.payload as { i: number }).i)).toEqual([4, 3]);
+        expect(await store.event.ofTypes(s.session.id, ["chat.reply"], { limit: 10 })).toHaveLength(
+          3,
+        );
+        expect(await store.event.ofTypes(s.session.id, [], { limit: 10 })).toEqual([]);
+      });
+
       it("concurrent appends never collide: seqs are unique and contiguous", async () => {
         await Promise.all(
           Array.from({ length: 12 }, (_, i) => store.event.append(s.session.id, "n", { i })),
