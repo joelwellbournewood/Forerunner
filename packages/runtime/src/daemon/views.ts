@@ -828,6 +828,7 @@ export function requestView(
     links: words.links,
     reply: words.reply,
     details: words.details,
+    ...(words.lists?.length ? { lists: words.lists } : {}),
     outcome: words.outcome,
     answeredAt: r.answered_at ?? null,
     followUp: words.followUp ?? null,

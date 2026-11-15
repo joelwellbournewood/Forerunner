@@ -603,6 +603,25 @@ describe("bench role-player: specialists", () => {
     );
   });
 
+  it("FORERUNNER_BENCH_LEFT_NOTE ends a wrap-up's 'Left to do:' as live check 3's researcher did: a 'nothing' for the criteria with its reason, then an observation (l3-handoff-checks, run L3)", async () => {
+    const spec = {
+      specialist: "researcher",
+      title: "Search for pages in notes.md",
+      outcome: "notes.md lists the pages",
+      criteria: ["notes.md exists"],
+      tools: ["list_dir", "write_file"],
+      extra: "Wrap up now: this run has used 80% of what it may spend.",
+    };
+    const noted = player({ FORERUNNER_BENCH_LEFT_NOTE: "Search for pages" });
+    const r = await runSpecialist(noted.p, spec);
+    expect(r.last.text).toContain(
+      "Left to do:\n- Nothing is needed for the criteria: notes.md is written and each part of it was checked.\n- The list isn't exhaustive. Pages I didn't open may also have something to add.",
+    );
+    // Without the knob the same run lists what it did not write.
+    const plain = await runSpecialist(player().p, spec);
+    expect(plain.last.text).toContain("Left to do:\n- write the rest of notes.md");
+  });
+
   it("FORERUNNER_BENCH_ASK calls ask_person, and works once the answers are in the brief", async () => {
     const { p } = player({ FORERUNNER_BENCH_ASK: "styles" });
     const spec = {

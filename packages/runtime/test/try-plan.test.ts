@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, run } from "@forerunner/platform";
+import { join, run, withoutForcedColour } from "@forerunner/platform";
 import { afterAll, describe, expect, it } from "vitest";
 import { runMarkerCheck } from "../src/loop/critic.ts";
 import {
@@ -376,13 +376,25 @@ describe("the project's tests whatever the language (C-3)", () => {
   });
 
   it("test files no check runs are told", () => {
+    // l3-handoff-checks (L3-research-4): a package.json with no test script and no dependencies
+    // has its JavaScript tests run by `node --test`; one with dependencies names its own runner,
+    // so its tests are told (before: the first was told too).
     expect(
       untestedFiles(
-        folder({ "package.json": '{"scripts":{}}', "test/clamp.test.js": "", "src/clamp.js": "" }),
+        folder({
+          "package.json": '{"scripts":{},"devDependencies":{"jest":"^29.0.0"}}',
+          "test/clamp.test.js": "",
+          "src/clamp.js": "",
+        }),
       ),
     ).toBe(
       "the project has test files (test/clamp.test.js) that no check ran: its package.json names no test script",
     );
+    expect(
+      untestedFiles(
+        folder({ "package.json": '{"scripts":{}}', "test/clamp.test.js": "", "src/clamp.js": "" }),
+      ),
+    ).toBeNull();
     expect(
       untestedFiles(
         folder({ "package.json": '{"scripts":{"test":"node --test"}}', "a.test.js": "" }),
@@ -638,13 +650,18 @@ if (require.main === module) process.exitCode = main(process.argv);
 });
 
 describe("w15-review, wave 15: the checks line is true now", () => {
-  it("W15-50: test files with no package.json say there is none to run them; a package.json without a test script says that", () => {
-    expect(untestedFiles(folder({ "wc.js": WC, "wc.test.js": "require('node:test')\n" }))).toBe(
-      "the project has test files (wc.test.js) that no check ran: there is no package.json to run them",
-    );
+  it("W15-50: test files with no package.json are run by node --test (L3-research-4); a package.json with dependencies and no test script says that", () => {
+    // l3-handoff-checks (L3-research-4): before, "the project has test files (wc.test.js) that no
+    // check ran: there is no package.json to run them", and nothing ran them.
+    const bare = folder({ "wc.js": WC, "wc.test.js": "require('node:test')\n" });
+    expect(untestedFiles(bare)).toBeNull();
+    expect(markerChecks(bare).map((m) => m.name)).toEqual(["node --test"]);
     expect(
       untestedFiles(
-        folder({ "wc.test.js": "require('node:test')\n", "package.json": '{"name":"wc"}' }),
+        folder({
+          "wc.test.js": "require('node:test')\n",
+          "package.json": '{"name":"wc","dependencies":{"chalk":"^5.0.0"}}',
+        }),
       ),
     ).toBe(
       "the project has test files (wc.test.js) that no check ran: its package.json names no test script",
@@ -658,4 +675,180 @@ describe("w15-review, wave 15: the checks line is true now", () => {
       ),
     ).toBeNull();
   });
+});
+
+/**
+ * l3-handoff-checks, run L3 (live check 3, L3-research-4): a tester wrote wc.test.js with
+ * node:test, the README said to run `node --test`, and the folder had no package.json. No check
+ * ran the tests ("the project has test files (wc.test.js) that no check ran: there is no
+ * package.json to run them") while Python, Rust and Go tests run with no config at all (C-3, ADR
+ * 0104, ADR 0110: a code task's tests always run, whatever the language).
+ */
+describe("l3-handoff-checks, run L3", () => {
+  /** wc.test.js as the live tester wrote it: node:test and child_process, nothing installed. */
+  const WC_TEST = [
+    'const test = require("node:test");',
+    'const assert = require("node:assert");',
+    'const { execFileSync } = require("node:child_process");',
+    'const { writeFileSync, mkdtempSync } = require("node:fs");',
+    'const { join } = require("node:path");', // path-ok: a line of the JavaScript test file the review runs, not a path built here
+    'const { tmpdir } = require("node:os");',
+    'test("counts the words of a file", () => {',
+    '  const dir = mkdtempSync(join(tmpdir(), "wc-"));',
+    '  writeFileSync(join(dir, "a.txt"), "hello world foo\\n");',
+    '  const out = execFileSync(process.execPath, [join(__dirname, "wc.js"), join(dir, "a.txt")], { encoding: "utf8" });',
+    '  assert.strictEqual(out.trim(), "3");',
+    "});",
+    "",
+  ].join("\n");
+
+  it("L3-research-4: JavaScript tests with no package.json are a 'node --test' check of their files, and no line says no check ran them", () => {
+    const root = folder({
+      "wc.js": WC,
+      "wc.test.js": WC_TEST,
+      "README.md": "## Tests\n\n```\nnode --test\n```\n",
+    });
+    const js = markerChecks(root).find((m) => m.language === "JavaScript");
+    expect(js).toMatchObject({
+      name: "node --test",
+      language: "JavaScript",
+      // An older Node fails the probe too: the line names the version it needs (fixup review:
+      // "Node.js is not installed" was wrong for a Node 16).
+      missing: "Node.js 18 or later is not installed where the checks run",
+    });
+    expect(js?.candidates).toEqual([
+      {
+        name: "node --test",
+        argv: ["node", "--test", "wc.test.js"],
+        probe: ["node", "-e", 'process.exit(+process.versions.node.split(".")[0] >= 18 ? 0 : 1)'],
+        tool: "Node.js 18 or later",
+      },
+    ]);
+    // Before: "the project has test files (wc.test.js) that no check ran: there is no
+    // package.json to run them".
+    expect(untestedFiles(root)).toBeNull();
+  });
+
+  it("L3-research-4: the files are named one by one: test/ and __tests__/ scripts too, never a try's samples, node_modules or TypeScript", () => {
+    const root = folder({
+      "src/clamp.js": "module.exports = (x) => x;\n",
+      "test/clamp.test.mjs": "import test from 'node:test';\n",
+      "test/helpers.cjs": "module.exports = {};\n",
+      "__tests__/b.spec.js": "require('node:test');\n",
+      "lib/a.test.ts": "import test from 'node:test';\n",
+      [`${TRY_FOLDER}/sample.test.js`]: "throw new Error('a sample');\n",
+      "node_modules/x/x.test.js": "throw new Error('a dependency');\n",
+    });
+    const js = markerChecks(root).find((m) => m.language === "JavaScript");
+    expect(js?.candidates[0]?.argv).toEqual([
+      "node",
+      "--test",
+      "__tests__/b.spec.js",
+      "test/clamp.test.mjs",
+      "test/helpers.cjs",
+    ]);
+    // The TypeScript test is told, with what runs and what does not.
+    expect(untestedFiles(root)).toBe(
+      "the project has test files (lib/a.test.ts) that no check ran: node --test runs only JavaScript files, and there is no package.json with a test script for these",
+    );
+  });
+
+  it("L3-research-4: a package.json decides: its test script runs them (no marker); with no test script and no dependencies the marker runs; with dependencies its line stays", () => {
+    const scripted = folder({
+      "wc.test.js": WC_TEST,
+      "package.json": '{"scripts":{"test":"node --test"}}',
+    });
+    expect(markerChecks(scripted).some((m) => m.language === "JavaScript")).toBe(false);
+    expect(untestedFiles(scripted)).toBeNull();
+    const bare = folder({ "wc.test.js": WC_TEST, "package.json": '{"name":"wc","type":"module"}' });
+    expect(
+      markerChecks(bare).find((m) => m.language === "JavaScript")?.candidates[0]?.argv,
+    ).toEqual(["node", "--test", "wc.test.js"]);
+    expect(untestedFiles(bare)).toBeNull();
+    const npmInit = folder({
+      "wc.test.js": WC_TEST,
+      "package.json": '{"scripts":{"test":"echo \\"Error: no test specified\\" && exit 1"}}',
+    });
+    expect(markerChecks(npmInit).some((m) => m.language === "JavaScript")).toBe(true);
+    const withDeps = folder({
+      "test/clamp.test.js": "const { expect } = require('chai');\n",
+      "package.json": '{"scripts":{},"devDependencies":{"chai":"^5.0.0"}}',
+    });
+    expect(markerChecks(withDeps).some((m) => m.language === "JavaScript")).toBe(false);
+    expect(untestedFiles(withDeps)).toBe(
+      "the project has test files (test/clamp.test.js) that no check ran: its package.json names no test script",
+    );
+    const unreadable = folder({ "a.test.js": "", "package.json": "{ not json" });
+    expect(markerChecks(unreadable).some((m) => m.language === "JavaScript")).toBe(false);
+    expect(untestedFiles(unreadable)).toBe(
+      "the project has test files (a.test.js) that no check ran: its package.json cannot be read",
+    );
+  });
+
+  it("L3-research-4: a test that needs a package not installed, or a run that finds no tests, is 'not run', never a failure; the project's own missing file is a failure", () => {
+    const js = markerChecks(folder({ "wc.test.js": WC_TEST })).find(
+      (m) => m.language === "JavaScript",
+    );
+    const why = (out: string) => js?.notRunBecause?.(out, "");
+    expect(why("# Error: Cannot find module 'lodash'\n# Require stack:\n# - /w/wc.test.js")).toBe(
+      "they need the package lodash, which is not installed where the checks run",
+    );
+    expect(
+      why(
+        "# Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'chalk' imported from /w/wc.test.mjs",
+      ),
+    ).toBe("they need the package chalk, which is not installed where the checks run");
+    expect(why("# Error: Cannot find module '@scope/pkg/sub'")).toBe(
+      "they need the package @scope/pkg, which is not installed where the checks run",
+    );
+    expect(why("ReferenceError: describe is not defined\n    at wc.test.js:1:1")).toBe(
+      "they are written for a test runner that is not installed (they use its describe, it or expect without importing them)",
+    );
+    expect(why("# tests 0\n# pass 0\n# fail 0")).toBe("node --test found no tests in them");
+    expect(why("ℹ tests 0\nℹ pass 0")).toBe("node --test found no tests in them");
+    // The project's own file missing, a failed assertion and a built-in module are the work's.
+    expect(why("# Error: Cannot find module './wc.js'")).toBeNull();
+    expect(why("# Error: Cannot find module 'node:fs/nope'")).toBeNull();
+    expect(why("not ok 1 - counts the words\n# tests 1\n# fail 1")).toBeNull();
+  });
+
+  it("L3-research-4: run through the check runner, the real node passes a passing file and fails a failing one with its output", async () => {
+    // As the critic runs a check on this computer: no forced colour, NO_COLOR=1 (a coloured
+    // console.log of the count would fail the file's own assertion).
+    const ran: string[] = [];
+    const plain =
+      (root: string) =>
+      (argv: readonly string[], o: { timeoutMs: number; env?: Record<string, string> }) => {
+        ran.push(argv.join(" "));
+        return run(argv, {
+          cwd: root,
+          allowFailure: true,
+          timeoutMs: o.timeoutMs,
+          env: withoutForcedColour({ ...process.env, NO_COLOR: "1", ...(o.env ?? {}) }),
+        });
+      };
+    const pass = folder({ "wc.js": WC, "wc.test.js": WC_TEST });
+    const js = markerChecks(pass).find((m) => m.language === "JavaScript");
+    expect(js).toBeDefined();
+    const ok = await runMarkerCheck(js as NonNullable<typeof js>, plain(pass), pass, {
+      node: process.execPath,
+    });
+    expect(ok, JSON.stringify(ok)).toMatchObject({
+      result: { name: "node --test", passed: true, required: true },
+    });
+    const okOut = "result" in ok ? ok.result.output : "";
+    // It ran with the Node it was given; its output names the command as a person types it,
+    // never that Node's path on this computer (fixup review of l3-handoff-checks).
+    expect(ran).toContain(`${process.execPath} --test wc.test.js`);
+    expect(okOut.startsWith("node --test wc.test.js -> exit 0 in ")).toBe(true);
+    expect(okOut).not.toContain(process.execPath);
+    expect(okOut).toMatch(/# pass 1/);
+    const failing = folder({ "wc.js": WC, "wc.test.js": WC_TEST.replace('"3"', '"4"') });
+    const fjs = markerChecks(failing).find((m) => m.language === "JavaScript");
+    const bad = await runMarkerCheck(fjs as NonNullable<typeof fjs>, plain(failing), failing, {
+      node: process.execPath,
+    });
+    expect(bad).toMatchObject({ result: { name: "node --test", passed: false, required: true } });
+    expect("result" in bad ? bad.result.output : "").toMatch(/# fail 1/);
+  }, 60_000);
 });

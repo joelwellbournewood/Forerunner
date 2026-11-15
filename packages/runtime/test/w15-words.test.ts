@@ -118,10 +118,15 @@ describe("w15-words, wave 15 run B", () => {
       expect(cancel(wrote)).toBe(
         "Drops it; its work is set aside unless a later task built on it.",
       );
-      // Its own note is data and stays, whatever it wrote.
-      expect(
-        requestWords(budgetCard({ done: "members.md has an outline" }), { heldWork: false }).body,
-      ).toBe("Done: members.md has an outline.");
+      // Its own note is data and stays, whatever it wrote: listed whole under the body
+      // (l3-handoff-checks, L3-research-2; before, the body's "Done: members.md has an outline.").
+      const noted = requestWords(budgetCard({ done: "members.md has an outline" }), {
+        heldWork: false,
+      });
+      expect(noted.lists).toEqual([
+        { label: "Where it stopped", items: ["members.md has an outline"] },
+      ]);
+      expect(noted.body).toBeNull();
     });
   });
 
@@ -574,6 +579,8 @@ describe("w15-words, wave 15 run B", () => {
   });
 
   describe("W15-57: the budget card quotes the run's note in plain words, each item ending at a word", () => {
+    // l3-handoff-checks (L3-research-2): the note and the items are lists of whole items now,
+    // never one sentence run together ("Done: ...; left: a, b and 2 more.").
     const card = (done: string, left: string[]) =>
       requestWords(
         {
@@ -594,21 +601,33 @@ describe("w15-words, wave 15 run B", () => {
           },
         } as unknown as HumanRequestRow,
         { heldWork: true },
-      ).body ?? "";
+      ).lists ?? [];
 
     it("the live handoff of live check 2 (budget2.json): no backtick, no list mark, no cut word", () => {
       // As the card kept it: each item cut at 80 characters by `cardHandoff`, mid-word.
-      const body = card("I finished reading the repo and had not started writing", [
+      const lists = card("I finished reading the repo and had not started writing", [
         "Write `src/elo.js` with `expectedScore`, `newRating` and `updateRatings` using upd…",
         "Write `src/swiss.js`:",
         "- Pair players by score descending, then rating descending",
         "Write the tests",
         "Run them",
       ]);
-      expect(body).toBe(
-        "Done: I finished reading the repo and had not started writing; left: Write src/elo.js with expectedScore, newRating and updateRatings using…, Write src/swiss.js, Pair players by score descending, then rating descending and 2 more.",
-      );
-      expect(body).not.toMatch(/`|\bupd…|(^|\s)- |:,/);
+      expect(lists).toEqual([
+        {
+          label: "Where it stopped",
+          items: ["I finished reading the repo and had not started writing"],
+        },
+        {
+          label: "Left to do",
+          items: [
+            "Write src/elo.js with expectedScore, newRating and updateRatings using…",
+            "Write src/swiss.js",
+            "Pair players by score descending, then rating descending",
+            "and 2 more",
+          ],
+        },
+      ]);
+      expect(JSON.stringify(lists)).not.toMatch(/`|\bupd…|(^|\s)- |:,/);
     });
 
     it("an item of 200 characters cut mid-word ends at a word; 'and N more' reads as before", () => {
@@ -617,15 +636,15 @@ describe("w15-words, wave 15 run B", () => {
           0,
           199,
         );
-      const body = card("**the outline** is written", [`${long}…`, "b", "c", "d", "e"]);
-      expect(body).toMatch(/^Done: the outline is written; left: Check the pairing/);
-      expect(body).not.toContain("**");
-      const first =
-        body.replace(/^Done: the outline is written; left: /, "").split(", b, c")[0] ?? "";
-      expect(first.length).toBeLessThanOrEqual(72);
+      const lists = card("**the outline** is written", [`${long}…`, "b", "c", "d", "e"]);
+      expect(lists[0]).toEqual({ label: "Where it stopped", items: ["the outline is written"] });
+      const items = lists[1]?.items ?? [];
+      expect(items.slice(1)).toEqual(["b", "c", "and 2 more"]);
+      const first = items[0] ?? "";
+      expect(first).toMatch(/^Check the pairing/);
+      expect(first.length).toBeLessThanOrEqual(200);
       expect(first).toMatch(/ \S+…$/);
       expect(first).not.toMatch(/rounds\(players…$/);
-      expect(body).toMatch(/, b, c and 2 more\.$/);
     });
   });
 

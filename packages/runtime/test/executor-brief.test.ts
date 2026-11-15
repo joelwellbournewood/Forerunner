@@ -286,7 +286,7 @@ describe("what a specialist is told (design §4.6)", () => {
     // ADR 0110: the brief names what is tried (a command line tool, a server, a page) and that
     // the project's scripts judge the work as they were before the task (L-5).
     expect(constraints).toContain(
-      "- How your work is checked: after your run Forerunner runs the project's own build, lint and tests (its package.json scripts as they were before your task, or pytest, cargo test or go test), runs a command line tool you made with the sample input its brief or README names, starts a server you made and calls its routes, opens a page you made or changed in a browser, and the critic reads your work and the project's files against each acceptance criterion. Nothing is done on your word alone. Write the exact command a person runs in backticks in the README, so it can be tried.",
+      "- How your work is checked: after your run Forerunner runs the project's own build, lint and tests (its package.json scripts as they were before your task, or node --test, pytest, cargo test or go test), runs a command line tool you made with the sample input its brief or README names, starts a server you made and calls its routes, opens a page you made or changed in a browser, and the critic reads your work and the project's files against each acceptance criterion. Nothing is done on your word alone. Write the exact command a person runs in backticks in the README, so it can be tried.",
     );
     expect(constraints).toContain("add a test that runs it");
     expect(brief).toContain(

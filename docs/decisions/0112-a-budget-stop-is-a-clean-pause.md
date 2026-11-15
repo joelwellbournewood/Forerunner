@@ -421,3 +421,53 @@ its estimate after the work its paused runs kept (`estimateLeftUsdMicro`, ADR 01
 the same condition under which its brief starts with "## Where the last run stopped" (point 4
 above). The learner still takes no sample from a paused task (the cost amendment). W6-23's
 question of a card for a task that never ran is closed: it runs.
+
+## Amendment 2026-11-15 (run L3, 'l3-handoff-checks'): done work is reviewed, and the pause card lists its items whole
+
+Live check 3 (2026-11-15, the real model on wave 15's code) found the W15-14 rules of the
+amendment of 'w15-run' (point 2) too narrow, and the card's words cut.
+
+1. **A "nothing" for the criteria with a reason after it is nothing, and what follows it is a
+   note (L3-research-1; amends point 2 of 'w15-run').** A researcher that heard the wrap-up ended
+   with "Left to do: - Nothing is needed for the two criteria: each listed page gives its address
+   and was opened. - The list isn't exhaustive. Pages I didn't open ... may also mention hint."
+   and was paused at its budget with a card that asked for CHF 0.15 more ("listed 2 things left
+   to do"); no critic read the finished work, and Continue spent CHF 0.15 on what the criteria did
+   not need. `parseHandoff` read a line as nothing with what it is about OR with a reason, never
+   both, and judged each item alone. Now:
+   - a "nothing" with what it is about may go on with a reason after punctuation ("Nothing for
+     the criteria; both are met."), and a criterion may be named by its number ("Nothing for
+     criterion 1."); a reason that names work still keeps the line an item ("but", "except",
+     "not", "still", "missing", "fails" ...: unchanged), and after what it is about only
+     punctuation or the end of the line may follow ("Nothing in the task works yet" stays work);
+   - a "nothing" about the whole set ("the criteria", "the two criteria", "the brief", "the
+     task", "all criteria are met", "every criterion"; not "criterion 2" or "the first
+     criterion") makes the list's other items that name no criterion notes (`optional`): a
+     caveat, an observation or what the run did not cover is for the critic or the run that
+     continues, never work left. An item that names a criterion stays work, and a bare
+     "nothing" moves nothing.
+   The run then goes to its review, as point 2 already says for "nothing", and the critic judges
+   the criteria with the report (the notes included) as data.
+2. **The pause card lists its items whole and agrees with the session on what was spent
+   (L3-research-2; amends budget-resume's card words).** The card read "Done: I opened six MDN
+   pages ... Two pages define hint:…; left: Nothing is needed for the two criteria: each listed
+   page gives its…, The list isn't exhaustive. Pages I didn't open, such as popovertarget…." (its
+   note cut at 160 characters, each item at 80, run together into one sentence), and its title
+   and notification said '"Search MDN …" paused at its budget of CHF 0.15' beside the session's
+   "paused before its budget of CHF 0.15 ran out: it spent CHF 0.09". Now the card keeps the note
+   and the items whole as the handoff bounds them; a run that heard the wrap-up is titled '"X"
+   paused before its budget ran out' (the specialist's limit per run and the session's budget
+   likewise), the body's first sentence says what it spent ("It spent CHF 0.09 of its budget of
+   CHF 0.15."), and the note's first sentence and each item left are listed under "Where it
+   stopped" and "Left to do" (three, then "and N more"). A hard stop keeps '"X" paused at its
+   budget of CHF 0.15'. The session's result and the Sessions list say "paused before ... ran
+   out" for such a run too.
+
+   Review of 'l3-handoff-checks' (2026-11-15): the session page's "Tasks in this session" row
+   reads "Paused before its budget of CHF 0.15 ran out" for such a run, as the result right under
+   it does, and the chat's facts of the last session say 'Paused: "X" before its budget of CHF
+   0.15 ran out' (both said "at" beside "before"); a hard stop keeps "Paused at ...". The near
+   siblings of point 1's line read as nothing too: a reason after a full stop ("Nothing is needed
+   for the two criteria. Each listed page gives its address and was opened."), "to meet" or "to
+   satisfy" the criteria, and "No further work is required to meet the acceptance criteria.";
+   "though" and "although" name work, as "but" does.

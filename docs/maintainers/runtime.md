@@ -2144,7 +2144,18 @@ budget-stop; the owner's decision of 2026-11-02).**
   done are whole words, and a "nothing" that goes on to name work ("but", "except", "not",
   "still", "missing", "incomplete", "fails" ...: `NOT_NOTHING`) stays an item, as does a hedge
   alone ("Maybe fix the failing build"; review of W15-14); the wrap-up and `WRAP_UP_BRIEF_LINE` ask for only what the criteria
-  still need, or nothing) and decides: a run is paused when it stopped
+  still need, or nothing; L3-research-1, ADR 0112's amendment of 2026-11-15: a "nothing" with
+  what it is about may also go on with a reason after punctuation, "Nothing is needed for the two
+  criteria: each listed page gives its address and was opened.", and a criterion may be named by
+  its number, "Nothing for criterion 1."; a "nothing" about the whole set of criteria, the brief
+  or the task (`aboutWholeSet`; not one criterion, `ONE_CRITERION`) makes the list's other items
+  that name no criterion `optional` notes, so a caveat beside it, "The list isn't exhaustive.
+  ...", no longer pauses finished work; an item that names a criterion stays work, a bare
+  "nothing" moves nothing; the near siblings of that line read the same way, review of
+  l3-handoff-checks: a reason after a full stop, "Nothing is needed for the two criteria. Each
+  listed page gives its address and was opened." (`AFTER`), what it is about said "to meet" or
+  "to satisfy" the criteria, "No further work is required to meet the acceptance criteria.", and
+  "though" or "although" names work, as "but" does) and decides: a run is paused when it stopped
   at a budget of any level (`stoppedBy: "budget"`), or when it heard the wrap-up in this run and
   listed at least one item (`stoppedBy: "wrap_up"`); a run that ends normally without a wrap-up,
   or after one with nothing left, is reviewed as usual. The result is `TaskExecutionResult`
@@ -2246,7 +2257,11 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   `budgetStop` to `needs_human` and files `fileBudgetStopCard` at the first stop of any kind (a
   session-budget stop included: C-36's `sessionBudgetStops`, `SESSION_BUDGET_STOP_OPTIONS` and
   the second-stop card are gone): title `budgetStopTitle` ('"X" paused at its budget of CHF
-  0.40'), the run's note and to-do list on the card (`done`, `left`, cut, data), options
+  0.40'; a run that heard the wrap-up, `stoppedBy: "wrap_up"`, '"X" paused before its budget ran
+  out', "the writer's limit per run", "this session's budget": the amounts are the card's first
+  sentence, so the title, the task's reason and the notification's title stay whole within 60
+  characters; L3-research-2), the run's note and to-do list on the card (`done`, `left`, whole as
+  the handoff kept them, data; before L3-research-2 cut at 160 and 80 characters, mid-phrase), options
   `[continueLabel(n), "Cancel task"]` where `offersContinue(source)` (the task's budget, the
   specialist's limit, the session's budget) and `["Cancel task"]` at `month`, `project` and
   `plan` (with `resets_at`: the next month's first day). `continueUsdMicro` is the same amount
@@ -2282,14 +2297,30 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   Inbox.", "It goes on by itself once that limit is raised or resets; cancel it in the Inbox.", or at
   the project's budget, which never resets, "It goes on by itself once you raise the project's budget;
   cancel it in the Inbox.", W14-6); the
-  card: `budgetCard` in `daemon/request-words.ts` (body "Done: ...; left: ...", each item plain
-  (`withoutMarkdown`: no backticks, emphasis or list marks) and ending at a word, a cut the card kept
-  (`cardHandoff`, 80 characters) losing the word it fell in, W15-57; or "It stopped
-  before it could say where it stood; its work so far is kept.", then how it goes on or what waits
+  card: `budgetCard` in `daemon/request-words.ts` (L3-research-2, live check 3: the body's "Done:
+  ...; left: a, b" cut the note and the items mid-phrase and ran them together, "Two pages define
+  hint:…; left: ... gives its…, The list isn't exhaustive. ...…."; now, after a wrap-up, the body's
+  first sentence says what it spent as the session's line does, `pausedSpendSentence`: "It spent
+  CHF 0.09 of its budget of CHF 0.15.", "It has no budget of its own: it may spend CHF 3.00 per
+  run.", "This session's budget was CHF 5.00."; the note and the to-do list are the view's `lists`
+  (`RequestListWords`, `HumanRequestView.lists`, `pausedWorkLists`): "Where it stopped" with the
+  note's first sentence whole (`firstSentences`: a sentence ends at ".", "!" or "?" before a
+  capital, so "HTMLElement.popover" stays inside one) and "Left to do" with each item whole, up to
+  three, then "and N more"; each item plain (`withoutMarkdown`: no backticks, emphasis or list
+  marks), a cut a card of before kept (`cardHandoff`, 80 characters) losing the word it fell in,
+  W15-57; a run that wrote no note: "It stopped
+  before it could say where it stood; its work so far is kept."), then how it goes on or what waits
   on it; Continue's explanation names the amount; Cancel's "Drops it; its work is set aside until
   you reopen it; ..."; a Settings link at the outer limits); the session result: the builder
   `paused` appended to `RESULT_LINE_BUILDERS` (`pausedSentences`: '"X" paused at its budget of CHF
-  0.40: continue or cancel it in the Inbox.'; at a limit no Continue lifts, `waits` on the entry,
+  0.40: continue or cancel it in the Inbox.'; a run that heard the wrap-up, `before` on the entry
+  (the runner sets it from the card's `stopped_by`, L3-research-2): '"X" paused before its budget
+  of CHF 0.15 ran out: continue or cancel it in the Inbox.', and the Sessions list's gist '"X"
+  paused before its budget of CHF 0.15 ran out.' (`sessionGist`), the session page's "Tasks in
+  this session" row "Paused before its budget of CHF 0.15 ran out" (`hereOf`; a hard stop keeps
+  "Paused at its budget of CHF 0.15") and the chat's fact 'Paused: "X" before its budget of CHF
+  0.15 ran out' (`lastSessionBlock`; review of l3-handoff-checks: the row and the fact said
+  "at" right beside the result's "before"); at a limit no Continue lifts, `waits` on the entry,
   '"X" paused at the project's budget of CHF 0.01: it goes on by itself once that limit is raised
   or resets.', since its card offers only Cancel; a mix points to the cards), fed by
   `LastSessionOutcome.paused` (tasks with an open budget card, out of `needsYou`; the runner sets
@@ -2725,9 +2756,27 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   a sandbox port); none is "the project's <language> tests were not run: <tool> is not installed
   where the checks run", a run that could not get its dependencies (`notRunBecause`) or found no
   tests (exit 5) is not run either, and a run is otherwise a required check (`pytest`,
-  `unittest`, `cargo test`, `go test`) in `evidence.checkResults`. `untestedFiles` tells of
-  JavaScript test files no script runs, true now (W15-50): "there is no package.json to run
-  them" in a folder without one, "its package.json names no test script" otherwise.
+  `unittest`, `cargo test`, `go test`, `node --test`) in `evidence.checkResults`. JavaScript
+  (L3-research-4, live check 3: a tester's node:test file and the README's `node --test` were
+  never run in a folder with no package.json): when the folder has `*.test.js` / `*.spec.js`
+  files (`.mjs`, `.cjs`) or scripts in `test/`, `tests/` or `__tests__/` (`JS_TEST`, from
+  `projectFileList`, so never `node_modules`, a dot folder such as `.forerunner-try` or the Local
+  only folder) and no package.json, or one whose scripts name no real test and that has no
+  dependencies (`nodeTestApplies`), the check is `node --test <the files>` (at most 100, by
+  name), probed with `node -e` for Node 18 or later (none, or an older one: "Node.js 18 or later
+  is not installed where the checks run"); `runMarkerCheck(m, exec, root, { node })`
+  runs a "node" command with the daemon's own Node (`process.execPath`) in the process sandbox
+  and without a lease, the image's `node` in a container (as a try does); the check's output
+  names the command as a person types it, "node --test wc.test.js -> exit 0 in 95 ms", never that
+  Node's path on this computer (review of l3-handoff-checks: "/opt/node22/bin/node --test ...",
+  on a person's PC a path in their user folder, in the drawer and the critic's request). A missing package
+  ("Cannot find module 'x'" / "Cannot find package 'x'", not the project's own file or a
+  built-in), tests written for another runner's globals (`describe`, `it`, `expect` not defined)
+  and "tests 0" are "not run, because ...". `untestedFiles` tells of the test files no check
+  runs, true now (W15-50): the JavaScript ones `node --test` runs are not among them; what is left
+  is TypeScript or JSX ("node --test runs only JavaScript files, and there is no package.json with
+  a test script for these") or the tests of a package.json with dependencies and no test script
+  ("its package.json names no test script").
 - **Read access.** `readTools` (default: the runtime's `read_file` and `list_dir`) and the
   folder's file list (`projectFileList`, at most 200) go to the review; the critic's token
   confines them to the task's folder.

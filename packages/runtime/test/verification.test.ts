@@ -4,6 +4,7 @@ import { NO_ACTION_GIVEN, SUBMIT_REVIEW_TOOL, type VerificationRecord } from "@f
 import { join, run } from "@forerunner/platform";
 import { toolReply } from "@forerunner/testenv";
 import { afterAll, describe, expect, it } from "vitest";
+import { verificationIn } from "../src/daemon/task-display.ts";
 import type { TryPagesRequest } from "../src/loop/try-it.ts";
 import { HOW_WORK_IS_CHECKED, outcomeCriterion, reviewTierOf } from "../src/loop/verification.ts";
 import type { ModelRequest } from "../src/provider/types.ts";
@@ -1505,4 +1506,146 @@ describe("w15-review, wave 15", () => {
     );
     await w.close();
   });
+});
+
+/**
+ * l3-handoff-checks, run L3 (live check 3, L3-research-4): "Add automated tests for wc.js" was
+ * Done · Reviewed with "the project has test files (wc.test.js) that no check ran: there is no
+ * package.json to run them" in "See what was checked", while the README said to run `node --test`
+ * and the tests passed by hand (6 of 6). The critic said "The runtime did not run node --test; the
+ * pass claim rests on the worker's report". Here the review runs them in the task's sandbox (the
+ * real process sandbox, the real Node), and a failing one keeps the task from Done.
+ */
+describe("l3-handoff-checks, run L3", () => {
+  const WC = [
+    "#!/usr/bin/env node",
+    'const fs = require("fs");',
+    'const text = fs.readFileSync(process.argv[2], "utf8");',
+    "console.log(text.split(/\\s+/).filter(Boolean).length);",
+    "",
+  ].join("\n");
+  /** wc.test.js as the live tester wrote it: node:test and child_process, nothing installed. */
+  const wcTest = (expected: string) =>
+    [
+      'const test = require("node:test");',
+      'const assert = require("node:assert");',
+      'const { execFileSync } = require("node:child_process");',
+      'const { writeFileSync, mkdtempSync } = require("node:fs");',
+      'const { join } = require("node:path");', // path-ok: a line of the JavaScript test file the review runs, not a path built here
+      'const { tmpdir } = require("node:os");',
+      'test("counts the words of a file", () => {',
+      '  const dir = mkdtempSync(join(tmpdir(), "wc-"));',
+      '  writeFileSync(join(dir, "a.txt"), "hello world foo\\n");',
+      '  const out = execFileSync(process.execPath, [join(__dirname, "wc.js"), join(dir, "a.txt")], { encoding: "utf8" });',
+      `  assert.strictEqual(out.trim(), "${expected}");`,
+      "});",
+      'test("an empty file has no words", () => {',
+      '  const dir = mkdtempSync(join(tmpdir(), "wc-"));',
+      '  writeFileSync(join(dir, "e.txt"), "");',
+      '  const out = execFileSync(process.execPath, [join(__dirname, "wc.js"), join(dir, "e.txt")], { encoding: "utf8" });',
+      '  assert.strictEqual(out.trim(), "0");',
+      "});",
+      "",
+    ].join("\n");
+  const README = "# wc\n\nCounts the words in a file.\n\n## Tests\n\n```\nnode --test\n```\n";
+
+  /** The real process sandbox on the task's folder, one per review; every command it ran. */
+  function recordingSandbox(leases: { kind: string; ran: string[]; destroyed: () => boolean }[]) {
+    return {
+      open: async (req: { worktree: string }) => {
+        const sandbox = await ProcessSandbox.create({
+          worktree: req.worktree,
+          limits: { timeoutMs: 120_000 },
+          network: { mode: "none" },
+        });
+        const lease = { kind: sandbox.kind, ran: [] as string[], destroyed: () => gone };
+        let gone = false;
+        const runIn = sandbox.run.bind(sandbox);
+        sandbox.run = async (argv, opts) => {
+          lease.ran.push(argv.join(" "));
+          return runIn(argv, opts);
+        };
+        const destroy = sandbox.destroy.bind(sandbox);
+        sandbox.destroy = async () => {
+          gone = true;
+          await destroy();
+        };
+        leases.push(lease);
+        return { sandbox, engine: "process", warnings: [] };
+      },
+    };
+  }
+
+  it("L3-research-4: a folder with wc.js and a node:test wc.test.js and no package.json: node --test runs in the task's sandbox, passes, and the drawer shows it; no line says no check ran them", async () => {
+    const root = taskFolder({ "wc.js": WC, "wc.test.js": wcTest("3"), "README.md": README });
+    const leases: { kind: string; ran: string[]; destroyed: () => boolean }[] = [];
+    const w = await loopWorld({
+      diff: null,
+      replies: [submitReply({ grade: 90 }), closingReply()],
+      critic: { sandbox: recordingSandbox(leases), hasCommand: async () => true },
+    });
+    const task = await w.addTask("Add automated tests for wc.js", {
+      outcome: "wc.test.js tests wc.js with Node's built-in test runner",
+      acceptance_criteria: ["`node --test` passes"],
+      specialist: "tester",
+    });
+    await w.start(w.runner(doneExecutor(w, { worktree: root, changedFiles: ["wc.test.js"] })));
+    expect((await w.store.task.mustGet(task.id)).status).toBe("done");
+    // In the lease, with the daemon's own Node (the process sandbox), never as a host process.
+    expect(leases).toHaveLength(1);
+    expect(leases[0]?.kind).toBe("process");
+    expect(leases[0]?.destroyed()).toBe(true);
+    expect(leases[0]?.ran).toContain(`${process.execPath} --test wc.test.js`);
+    // What the task drawer's "See what was checked" reads (`verificationIn`, `GET /tasks/:id`).
+    const review = await w.store.review.latestForTask(task.id);
+    const seen = verificationIn(review?.evidence);
+    expect(seen?.checks.map((c) => [c.name, c.passed])).toEqual([["node --test", true]]);
+    expect(seen?.checks[0]?.output).toMatch(/--test wc\.test\.js -> exit 0 in \d+ ms/);
+    expect(seen?.checks[0]?.output).toMatch(/# pass 2/);
+    // The command as a person types it, never the path of the app's own Node on this computer
+    // (fixup review: "/opt/node22/bin/node --test ..."; on a person's PC a path in their user
+    // folder), in the drawer and in what the critic reads.
+    expect(seen?.checks[0]?.output).toMatch(/^node --test wc\.test\.js -> exit 0 in \d+ ms\n/);
+    expect(JSON.stringify(seen)).not.toContain(process.execPath);
+    expect(JSON.stringify(reviewCalls(w)[0]?.request.messages)).not.toContain(process.execPath);
+    // Before: "the project has test files (wc.test.js) that no check ran: there is no
+    // package.json to run them".
+    expect(JSON.stringify(seen?.notChecked)).not.toMatch(/no check ran|no package\.json/);
+    // The critic read the run's output as verified evidence.
+    expect(JSON.stringify(reviewCalls(w)[0]?.request.messages)).toContain("node --test");
+    await w.close();
+  }, 60_000);
+
+  it("L3-research-4: a wc.test.js with a failing assertion: the check fails, the accept is blocked (never Done), and the drawer shows the failed node --test with its output", async () => {
+    const root = taskFolder({ "wc.js": WC, "wc.test.js": wcTest("4"), "README.md": README });
+    const leases: { kind: string; ran: string[]; destroyed: () => boolean }[] = [];
+    const w = await loopWorld({
+      diff: null,
+      // The critic model would accept; the failed required check decides.
+      replies: [submitReply({ grade: 92 }, { times: Number.POSITIVE_INFINITY }), closingReply()],
+      critic: { sandbox: recordingSandbox(leases), hasCommand: async () => true },
+    });
+    const task = await w.addTask("Add automated tests for wc.js", {
+      outcome: "wc.test.js tests wc.js with Node's built-in test runner",
+      acceptance_criteria: ["`node --test` passes"],
+      specialist: "tester",
+    });
+    const r = await w.start(
+      w.runner(doneExecutor(w, { worktree: root, changedFiles: ["wc.test.js"] })),
+      { budgetCapUsdMicro: 1_000_000 },
+    );
+    expect(r.reviews[0]).toMatchObject({ taskId: task.id, verdict: "revise" });
+    expect((await w.store.task.mustGet(task.id)).status).not.toBe("done");
+    expect(
+      (await w.store.finding.list({ task_id: task.id } as never)).map((f) => f.description),
+    ).toContain("Check failed: node --test");
+    const reviews = await w.store.review.forTask(task.id);
+    const seen = verificationIn(reviews[0]?.evidence);
+    expect(seen?.checks.map((c) => [c.name, c.passed])).toEqual([["node --test", false]]);
+    expect(seen?.checks[0]?.output).toMatch(/# fail 1/);
+    expect(seen?.checks[0]?.output).toContain("counts the words of a file");
+    expect(seen?.checks[0]?.output).toMatch(/^node --test wc\.test\.js -> exit 1 in \d+ ms\n/);
+    expect(leases.every((l) => l.kind === "process" && l.destroyed())).toBe(true);
+    await w.close();
+  }, 120_000);
 });

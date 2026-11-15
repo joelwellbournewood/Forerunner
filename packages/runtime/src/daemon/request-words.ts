@@ -65,6 +65,12 @@ export interface RequestWords {
   reply: "none" | "text" | "form";
   /** Longer detail, shown under Details (the critic's findings, the steps). */
   details: string[];
+  /**
+   * Items the card lists whole under its body, each list with its label (a paused run's "Where it
+   * stopped" and "Left to do", L3-research-2: run together into one sentence they were cut in
+   * mid-phrase). Absent on cards that list nothing.
+   */
+  lists?: RequestListWords[];
   /** Once answered or withdrawn: what happened and what is next, in one line; null while open. */
   outcome: string | null;
   /**
@@ -73,6 +79,12 @@ export interface RequestWords {
    * Try again; its next brief carries the answers). Null otherwise.
    */
   followUp?: { label: string; explain: string; action: "redo" | "reopen" | "try_again" } | null;
+}
+
+/** A list a card shows under its body: its label ("Left to do") and its items, each whole. */
+export interface RequestListWords {
+  label: string;
+  items: string[];
 }
 
 /** What the card needs beyond its row, read when it is shown (true now, design §5 rule 4). */
@@ -626,8 +638,12 @@ function budgetCard(
   const more = chfAt(card.continue_usd_micro ?? card.raise_to_usd_micro, card.chf_per_usd);
   const session = card.source === "session" || card.source === "session_budget";
   const goesOn = goesOnWords(card);
+  const lists = pausedWorkLists(card);
   const body =
-    [pausedWorkSentence(card, ctx.heldWork), goesOn ?? waitingSentence(waiting)]
+    [
+      pausedSpendSentence(card) ?? (lists.length ? null : pausedWorkSentence(card, ctx.heldWork)),
+      goesOn ?? waitingSentence(waiting),
+    ]
       .filter(Boolean)
       .join(" ") || null;
   const choices: RequestChoiceWords[] = [];
@@ -671,40 +687,100 @@ function budgetCard(
       : [],
     reply: "none",
     details: [],
+    ...(lists.length ? { lists } : {}),
     outcome: null,
   };
 }
 
 /**
- * What the paused run did and left, in one sentence from its own note (data): "Done: guide.md
- * has 3 parts; left: write the rest, check it." A run that wrote no note (a tiny budget, a hard
- * stop): its work so far is kept, or, when it wrote nothing (`heldWork` false, W15-56), that it
- * stopped before it wrote anything.
+ * What a run that heard the wrap-up spent, as the session's line says it ("paused before its
+ * budget of CHF 0.15 ran out: it spent CHF 0.09"; L3-research-2): the card's first sentence, so
+ * its title can say "paused before its budget ran out" whole. Null for a hard stop (its title
+ * names the limit it stopped at) and for a review that waits.
+ */
+function pausedSpendSentence(card: JsonObject): string | null {
+  if (card.stopped_by !== "wrap_up" || card.review_waits === true) return null;
+  const cap = chfAt(card.cap_usd_micro, card.chf_per_usd);
+  if (!cap) return null;
+  const spent = chfAt(card.spent_usd_micro, card.chf_per_usd);
+  const spentOk =
+    spent &&
+    typeof card.spent_usd_micro === "number" &&
+    typeof card.cap_usd_micro === "number" &&
+    card.spent_usd_micro <= card.cap_usd_micro;
+  switch (card.source) {
+    case "task_budget":
+      return spentOk ? `It spent ${spent} of its budget of ${cap}.` : null;
+    case "specialist_limit":
+      // The title names whose limit it is ("the writer's limit per run").
+      return `It has no budget of its own: it may spend ${cap} per run.`;
+    case "session":
+    case "session_budget":
+      return `This session's budget was ${cap}.`;
+    default:
+      return null;
+  }
+}
+
+/** A list's items as the card shows them: up to three, then "and N more" (design §5 rule 5). */
+function shownItems(items: readonly string[]): string[] {
+  return [...items.slice(0, 3), ...(items.length > 3 ? [`and ${items.length - 3} more`] : [])];
+}
+
+/**
+ * The first sentence of a run's note, whole (L3-research-2: the note was cut at 140 characters,
+ * mid-phrase, "Two pages define hint:…"): a sentence ends at ".", "!" or "?" before a space and a
+ * capital or a digit (so "HTMLElement.popover" and "e.g. this" stay inside one); a first sentence
+ * under 60 characters takes the next one too, up to 220; one longer than 220 is cut at a word.
+ */
+function firstSentences(text: string): string {
+  const t = withoutMarkdown(text);
+  const parts = t
+    .split(/(?<=[.!?])\s+(?=["'(\[]?[A-Z0-9])/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  let out = "";
+  for (const part of parts) {
+    if (out && (out.length >= 60 || `${out} ${part}`.length > 220)) break;
+    out = out ? `${out} ${part}` : part;
+  }
+  return cardItem(out || t, 220);
+}
+
+/**
+ * What the paused run did and left, from its own note (data), as lists whose items are whole
+ * (L3-research-2): "Where it stopped" (the note's first sentence) and "Left to do" (each item,
+ * up to three, then "and N more"). A stored item a card of before cut ("… using upd…") ends at
+ * a word (`cardItem`, W15-57). Empty for a review that waits and for a run that wrote no note.
+ */
+function pausedWorkLists(card: JsonObject): RequestListWords[] {
+  if (card.review_waits === true) return [];
+  const doneSaid = str(card.done);
+  const left = Array.isArray(card.left)
+    ? card.left.filter((t): t is string => typeof t === "string" && t.trim() !== "")
+    : [];
+  const out: RequestListWords[] = [];
+  if (doneSaid) out.push({ label: "Where it stopped", items: [firstSentences(doneSaid)] });
+  const items = left.map((t) => cardItem(t, 220)).filter(Boolean);
+  if (items.length) out.push({ label: "Left to do", items: shownItems(items) });
+  return out;
+}
+
+/**
+ * What a paused run left when it wrote no note (a tiny budget, a hard stop): its work so far is
+ * kept, or, when it wrote nothing (`heldWork` false, W15-56), that it stopped before it wrote
+ * anything. A review that waits says the work is done (TR-14).
  */
 function pausedWorkSentence(card: JsonObject, heldWork?: boolean): string | null {
   // TR-14: the specialist finished and only its review waits (a review a limit refused): the
   // run-pause words ("It stopped before it could say where it stood") were not true of it.
   if (card.review_waits === true)
     return "The work is done; its review waits for room in the budget.";
-  const doneSaid = str(card.done);
-  const done = doneSaid ? cardItem(doneSaid, 140) : null;
-  const left = Array.isArray(card.left)
-    ? card.left.filter((t): t is string => typeof t === "string" && t.trim() !== "")
-    : [];
-  const items = left.slice(0, 3).map((t) => noFinalDot(cardItem(t, 70)));
-  const leftWords = items.length
-    ? `${items.join(", ")}${left.length > 3 ? ` and ${left.length - 3} more` : ""}`
-    : null;
-  if (done && leftWords) return `Done: ${noFinalDot(done)}; left: ${leftWords}.`;
-  if (done) return `Done: ${noFinalDot(done)}.`;
-  if (leftWords) return `Left: ${leftWords}.`;
   // A card of before budget-resume has neither: its title says it all.
   if (!("done" in card)) return null;
   if (heldWork === false) return "It stopped before it wrote anything.";
   return "It stopped before it could say where it stood; its work so far is kept.";
 }
-
-const noFinalDot = (s: string) => s.trim().replace(/[.\s]+$/, "");
 
 const MONTHS = [
   "January",

@@ -658,8 +658,11 @@ export class CriticLoop implements CriticPort {
                 env: withoutForcedColour({ ...process.env, ...(o.env ?? {}) }),
                 ...(req.signal ? { signal: req.signal } : {}),
               });
+        // L3-research-4: `node --test` runs with the daemon's own Node in the process sandbox and
+        // on this computer (a person's PATH may have none), with the image's `node` in a container.
+        const node = held && held.sandbox.kind !== "process" ? "node" : process.execPath;
         for (const m of markers) {
-          const r = await runMarkerCheck(m, exec, root);
+          const r = await runMarkerCheck(m, exec, root, { node });
           if ("notRun" in r) evidence.notChecked?.push(r.notRun);
           else evidence.checkResults = [...(evidence.checkResults ?? []), r.result];
         }
@@ -1206,18 +1209,27 @@ type MarkerOutcome =
  * none starting is "not run, because <tool> is not installed where the checks run"; a run that
  * could not get its dependencies, or found no tests, is not run either. Never a failed review.
  * The folder stays as the work left it (`holdFolder`): what the run wrote is removed again, a
- * go.mod or Cargo.lock it rewrote is put back, and the check's output says so.
+ * go.mod or Cargo.lock it rewrote is put back, and the check's output says so. `node`: the Node
+ * a "node" command runs with (L3-research-4: the process sandbox starts the daemon's own Node,
+ * as a try does, since a person's computer may have none on its PATH; the runner image has
+ * `node`). The check's output names the command as a person types it ("node --test wc.test.js"),
+ * never that Node's path on this computer (fixup review of l3-handoff-checks).
  */
 export async function runMarkerCheck(
   m: MarkerCheck,
   exec: ExecFn,
   root: string,
+  opts: { node?: string } = {},
 ): Promise<MarkerOutcome> {
   const restore = holdFolder(root);
   let out: MarkerOutcome;
   let note: string | null = null;
+  const node = opts.node;
+  const run: ExecFn = node
+    ? (argv, o) => exec(argv[0] === "node" ? [node, ...argv.slice(1)] : argv, o)
+    : exec;
   try {
-    out = await markerCheckIn(m, exec, root);
+    out = await markerCheckIn(m, run, root);
   } finally {
     note = restore();
   }

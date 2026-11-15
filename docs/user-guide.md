@@ -193,7 +193,8 @@ them as you left them; an open file or task stays on its own tab.
   after the critic reviewed it; the row then says how it was checked: **Reviewed** (the critic
   read the work and the project's files against each point, and the project's own build and
   tests ran when it has them, whatever the language: its package.json scripts, pytest, cargo
-  test or go test) or **Reviewed and tried** (the work was also used as you would use it: a page
+  test or go test, and `node --test` for JavaScript test files that no package.json test script
+  runs, such as a `wc.test.js` written with Node's own test module) or **Reviewed and tried** (the work was also used as you would use it: a page
   it made was opened in a browser, a command line tool it made was run with sample input, for
   example `node wc.js <file>` with a small text file, or a server it made was started and the
   routes its brief names were called; a route the brief says answers 401 or 404, or refuses,
@@ -723,7 +724,8 @@ booked after the session ended moves all three together; a message already sent 
 it said then.
 
 A session's page lists **Tasks in this session**: each task it worked on, what happened to it
-there ("Done", "Failed", "Paused at its budget of CHF 0.40"), what it is now when that changed
+there ("Done", "Failed", "Paused at its budget of CHF 0.40", or "Paused before its budget of CHF
+0.40 ran out" when it stopped to wrap up first), what it is now when that changed
 ("now: Done") and what this session spent on it; while a task runs, its amount follows the
 session's spend within a second. A title opens the task with its runs. A session
 that ended to wait for a Claude credential reads "Stopped to wait for a Claude credential", and
@@ -1016,9 +1018,12 @@ Each step of a task reuses what the step before sent (Claude keeps the conversat
 minutes and charges a tenth of the price for what it already has), so a long task pays the full
 price only for what is new; a step that writes a whole file can do so in one go when the task's
 budget leaves room. When a task reaches its budget it pauses and the session goes on with the
-other tasks. The Inbox gets one card, '"Contact page" paused at its budget of CHF 0.40', with
-what its run did and what is left in its own words ("Done: contact.html has the form; left:
-check the links.") and two buttons: **Continue (CHF 0.40 more)** (adds that much to its budget,
+other tasks. The Inbox gets one card, '"Contact page" paused at its budget of CHF 0.40', or, when
+the agent stopped to wrap up before the budget ran out, '"Contact page" paused before its budget
+ran out' with what it spent ("It spent CHF 0.31 of its budget of CHF 0.40."), then where it
+stopped and what is left in its own words, each point whole on its own line (**Where it
+stopped**: "contact.html has the form."; **Left to do**: "check the links"; three at most, then
+"and 2 more"), and two buttons: **Continue (CHF 0.40 more)** (adds that much to its budget,
 the same amount again or at least its estimate, and starts a session at once that goes on from
 where it stopped) and **Cancel task**. The Tasks tab reads "Paused at its budget" with "Continue
 or cancel in the Inbox.", with Answer (the card), Edit (set another budget yourself) and

@@ -439,8 +439,11 @@ function goesOnByItself(limit: string): string {
     : "it goes on by itself once that limit is raised or resets.";
 }
 
-/** A task paused at a budget, as the result names it (`LastSessionOutcome.paused`). */
-export type PausedTask = NamedTask & { limit: string; waits?: boolean };
+/**
+ * A task paused at a budget, as the result names it (`LastSessionOutcome.paused`); `before`: its
+ * run heard the wrap-up and paused before the limit ran out (L3-research-2), as its log line says.
+ */
+export type PausedTask = NamedTask & { limit: string; waits?: boolean; before?: boolean };
 
 /**
  * '"Write the guide" paused at its budget of CHF 0.40: continue or cancel it in the Inbox.'; two
@@ -455,11 +458,15 @@ export function pausedSentences(paused: readonly PausedTask[], told?: ToldByCard
   const one = shown[0];
   if (!one) return [];
   const waiting = shown.filter((t) => t.waits).length;
+  // L3-research-2: a run that heard the wrap-up paused before its limit ran out, as the log's
+  // line for it says ("paused before its budget of CHF 0.15 ran out: it spent CHF 0.09"); "paused
+  // at its budget of CHF 0.15" beside it read as all of it spent.
+  const how = one.before ? `paused before ${one.limit} ran out` : `paused at ${one.limit}`;
   if (shown.length === 1)
     return [
       one.waits
-        ? `"${one.title}" paused at ${one.limit}: ${goesOnByItself(one.limit)}`
-        : `"${one.title}" paused at ${one.limit}: continue or cancel it in the Inbox.`,
+        ? `"${one.title}" ${how}: ${goesOnByItself(one.limit)}`
+        : `"${one.title}" ${how}: continue or cancel it in the Inbox.`,
     ];
   const names = namesOf(titlesOf(shown));
   if (waiting === shown.length)

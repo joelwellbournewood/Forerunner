@@ -863,6 +863,12 @@ export const HumanRequestView = z.object({
     .optional(),
   reply: z.enum(["none", "text", "form"]).optional(),
   details: z.array(z.string()).optional(),
+  /**
+   * Items the card lists whole under its body, each list with its label: a paused run's "Where it
+   * stopped" and "Left to do" (L3-research-2; run together into one sentence they were cut in
+   * mid-phrase). Absent on other cards and from an older daemon.
+   */
+  lists: z.array(z.object({ label: z.string(), items: z.array(z.string()) })).optional(),
   outcome: z.string().nullable().optional(),
   answeredAt: z.string().nullable().optional(),
   /** Answers that came after their task moved on: "Redo with these answers" (design §3.8). */

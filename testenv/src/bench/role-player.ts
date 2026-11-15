@@ -101,6 +101,13 @@ export interface BenchOptions {
    */
   long?: string[];
   /**
+   * Task-title substrings whose specialist, told to wrap up, ends its "Left to do:" as the live
+   * researcher of live check 3 did (FORERUNNER_BENCH_LEFT_NOTE, L3-research-1): a "nothing" for
+   * the criteria with its reason after a colon, then an observation that is no work. With
+   * FORERUNNER_BENCH_LONG on the same task it hears the wrap-up.
+   */
+  leftNote?: string[];
+  /**
    * Inflated usage (FORERUNNER_BENCH_USAGE=<title substring>:<input tokens>, comma-separated,
    * budget-resume, W6-21): every call of a matching task's specialist bills that many more input
    * tokens, so a session's budget can be used up on the bench (the stand-in's calls are tiny).
@@ -208,6 +215,7 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     askStyle: askStyleOf(env.FORERUNNER_BENCH_ASK_STYLE),
     missing: list(env.FORERUNNER_BENCH_MISSING),
     long: list(env.FORERUNNER_BENCH_LONG),
+    leftNote: list(env.FORERUNNER_BENCH_LEFT_NOTE),
     usage: usageKnobs(env.FORERUNNER_BENCH_USAGE),
     intake: intake === "malformed" || intake === "error" ? intake : "ok",
     intakeBad: (INTAKE_BAD_KINDS as readonly string[]).includes(bad) ? (bad as IntakeBad) : "none",
@@ -664,7 +672,17 @@ function specialistAnswer(
   // 0. Told that about a fifth of the budget is left (ADR 0112): start nothing new and report
   // with the two headings the brief names.
   if (req.messages.some((m) => m.role === "user" && messageText(m).includes(WRAP_UP_MARK)))
-    return text(wrapUpReport(brief, who, calls, targets, !!longHit), "wrap-up heard");
+    return text(
+      wrapUpReport(
+        brief,
+        who,
+        calls,
+        targets,
+        !!longHit,
+        !!matchesAny(brief.title, opts.leftNote ?? []),
+      ),
+      "wrap-up heard",
+    );
 
   // 1. Look around first, as a careful worker does.
   if (!did("list_dir") && offered(req.tools, "list_dir"))
@@ -1120,6 +1138,7 @@ function wrapUpReport(
   calls: readonly PastToolCall[],
   targets: readonly string[],
   long: boolean,
+  leftNote = false,
 ): string {
   const writes = calls.filter((c) => c.name === "write_file" && !c.isError);
   const files = [...new Set(writes.map((c) => String(c.input.path)))];
@@ -1134,7 +1153,15 @@ function wrapUpReport(
     "",
     `Where I stopped: ${files.length ? `${files.join(", ")} ${long ? `has ${writes.length} part${writes.length === 1 ? "" : "s"}` : "is written"}` : "nothing is written yet"}.`,
     "",
-    ...(left.length ? ["Left to do:", ...left.map((l) => `- ${l}`)] : ["Left to do: nothing"]),
+    ...(leftNote
+      ? [
+          "Left to do:",
+          `- Nothing is needed for the criteria: ${files[0] ?? targets[0] ?? "the file"} is written and each part of it was checked.`,
+          "- The list isn't exhaustive. Pages I didn't open may also have something to add.",
+        ]
+      : left.length
+        ? ["Left to do:", ...left.map((l) => `- ${l}`)]
+        : ["Left to do: nothing"]),
     "",
     lessonLine(who),
   ].join("\n");

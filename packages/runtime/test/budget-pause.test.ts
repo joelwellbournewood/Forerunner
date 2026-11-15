@@ -11,7 +11,7 @@ import {
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
-import { workingNowBlock } from "../src/conversation/project-facts.ts";
+import { lastSessionBlock, workingNowBlock } from "../src/conversation/project-facts.ts";
 import { composeRuntime, type DynamicCaps, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
@@ -169,13 +169,18 @@ async function runOne(
     sessionBudgetUsdMicro?: number;
     /** The project's own budget (0: none), set before its task is added. */
     projectBudgetUsdMicro?: number;
+    /** The project's name (default: the task's title and " project"). */
+    projectName?: string;
   } = {},
 ) {
   const projectId = (
     (await (
       await req("/projects", {
         method: "POST",
-        body: JSON.stringify({ name: `${title} project`, goal: "Pages for the club" }),
+        body: JSON.stringify({
+          name: opts.projectName ?? `${title} project`,
+          goal: "Pages for the club",
+        }),
       })
     ).json()) as Json
   ).id as string;
@@ -898,7 +903,10 @@ describe("w15-run, wave 15: a coder's multi-file write is paid from below its li
   const heard = (r: ModelRequest) => JSON.stringify(r.messages).includes(WRAP_UP_MARK);
   const writes = FILES.map((path) => ({
     name: "write_file",
-    input: { path, content: `// ${path}\n${"export const x = 1;\n".repeat(20)}` },
+    // Valid JavaScript (each line a comment): the review runs the two test files with node
+    // --test (l3-handoff-checks, L3-research-4); the same length as the "export const x = 1;"
+    // lines before, which declared x twenty times, so the budget math is unchanged.
+    input: { path, content: `// ${path}\n${"// one line of code\n".repeat(20)}` },
   }));
   const model = new FakeProvider({
     clock,
@@ -1535,4 +1543,336 @@ describe("w15-words, wave 15 run B", () => {
       async () => "the waiting review's session to end",
     );
   }, 120_000);
+});
+
+/**
+ * l3-handoff-checks, run L3 (live check 3, L3-research-1): the researcher heard the wrap-up and
+ * ended its report with a "Left to do:" whose first item said nothing is needed for the two
+ * criteria, with the reason after a colon, and whose second was an observation (the list is not
+ * exhaustive). Both were read as work left: the task was paused at its budget with a card that
+ * asked for CHF 0.15 more ("listed 2 things left to do"), and no critic read the finished work.
+ * The reply below is the model's final message (model-calls seq 11) word for word.
+ */
+const LIVE_L3_REPORT = [
+  "I wrote `popover-hint.md`. It lists five MDN pages that mention the `hint` value, each with its address and one line on what it says. I opened every page listed, and the list is partial.",
+  "",
+  '**Where I stopped:** I opened six MDN pages and listed the five that mention `hint`. The sixth, the `showPopover` page, doesn\'t mention it. Two pages define `hint`: the `popover` global attribute page and the `HTMLElement.popover` property page. The other three only mention it. The "Using the Popover API" page and the interest invokers page were cut off in the fetch. For "Using the Popover API" I saw only the headings of its `hint` section, and the file says so. No page was blocked by the domain rule. I wrote no tests and ran no commands. The brief asked only for the list, so nothing runs.',
+  "",
+  "**Left to do:**",
+  "- Nothing is needed for the two criteria: each listed page gives its address and was opened.",
+  "- The list isn't exhaustive. Pages I didn't open, such as `popovertarget`, `togglePopover`, `beforetoggle` and the Popover API examples, may also mention `hint`.",
+  "",
+  "Lesson: A fetched page can be cut off, so check which sections were actually read before making claims about them.",
+  "Lesson: In a task that offers no search tool, say in the result that the list is partial.",
+].join("\n");
+
+describe("l3-handoff-checks, run L3", () => {
+  describe("live check 3: L3-research-1", () => {
+    const left = (lines: string[]) =>
+      parseHandoff(["Where I stopped: here.", "", "Left to do:", ...lines].join("\n"));
+
+    it("the live report: nothing is left for the criteria; the observation after it is a note, not work", () => {
+      const h = parseHandoff(LIVE_L3_REPORT);
+      expect(h.leftToDo).toEqual([]);
+      expect(h.optional).toEqual([
+        "The list isn't exhaustive. Pages I didn't open, such as `popovertarget`, `togglePopover`, `beforetoggle` and the Popover API examples, may also mention `hint`.",
+      ]);
+      expect(h.stopped.startsWith("I opened six MDN pages and listed the five")).toBe(true);
+    });
+
+    it("a 'nothing' with what it is about and a reason after it is nothing", () => {
+      for (const line of [
+        "Nothing for the criteria; both are met.",
+        "Nothing is needed for the criteria: both are met.",
+        "Nothing is needed for the two criteria: each listed page gives its address and was opened.",
+        "None required by the brief (the file lists every page it names).",
+      ])
+        expect(left([`- ${line}`]).leftToDo, line).toEqual([]);
+    });
+
+    it("work stays work: a 'nothing' that goes on to name work, one about a part only, and what follows it", () => {
+      for (const line of [
+        "Nothing for the criteria: but the tests still fail",
+        "Nothing in the task works yet",
+        "Nothing for the criteria, except the tests still fail",
+        "Nothing: the criteria are not met yet",
+      ])
+        expect(left([`- ${line}`]).leftToDo, line).toEqual([line]);
+      // A "nothing" about one criterion says nothing of the rest: the next item is work.
+      expect(left(["- Nothing for criterion 1.", "- write the tests"])).toEqual({
+        stopped: "here.",
+        leftToDo: ["write the tests"],
+      });
+      expect(left(["- Nothing for the first criterion.", "- write the tests"]).leftToDo).toEqual([
+        "write the tests",
+      ]);
+      // An item that names a criterion is work even beside a "nothing" for the criteria.
+      expect(
+        left(["- Nothing for the criteria.", "- criterion 2 still needs its test"]).leftToDo,
+      ).toEqual(["criterion 2 still needs its test"]);
+      // A bare "nothing" says nothing about the criteria: what follows it stays work (as before).
+      expect(left(["- nothing", "- write the tests"]).leftToDo).toEqual(["write the tests"]);
+    });
+
+    it("near siblings of the live line (fixup review): a reason after a full stop, 'No further work is required to meet the criteria', and a 'though' that names work", () => {
+      for (const line of [
+        "Nothing is needed for the two criteria. Each listed page gives its address and was opened.",
+        "No further work is required to meet the acceptance criteria.",
+        "No more work is needed to satisfy the criteria.",
+        "Nothing. Both criteria are met.",
+      ])
+        expect(left([`- ${line}`]).leftToDo, line).toEqual([]);
+      // The live shape with a full stop: the observation after it is a note, as with a colon.
+      expect(
+        left([
+          "- Nothing is needed for the two criteria. Each listed page gives its address and was opened.",
+          "- The list isn't exhaustive.",
+        ]),
+      ).toEqual({ stopped: "here.", leftToDo: [], optional: ["The list isn't exhaustive."] });
+      for (const line of [
+        "Nothing for the criteria, though the tests need a rewrite",
+        "Nothing for the criteria, although the README is out of date",
+        "Nothing for the criteria. The tests still fail.",
+        "Nothing. Write the tests.",
+      ])
+        expect(left([`- ${line}`]).leftToDo, line).toEqual([line]);
+      // About one criterion only: what follows it stays work.
+      expect(
+        left(["- No further work is required to meet criterion 1.", "- write the tests"]).leftToDo,
+      ).toEqual(["write the tests"]);
+    });
+
+    it("the earlier W15-14 cases still read as they did", () => {
+      expect(parseHandoff(LIVE_F4_REPORT)).toMatchObject({ leftToDo: [] });
+      expect(left(["- write the last section", "- (optional) add a print style"])).toMatchObject({
+        leftToDo: ["write the last section"],
+        optional: ["(optional) add a print style"],
+      });
+    });
+
+    describe("through the composed runtime", () => {
+      const clock = new SimulatedClock("2026-11-15T06:18:00Z");
+      const home = mkdtempSync(join(tmpdir(), "fr-l3-research-1-"));
+      const calls: ModelRequest[] = [];
+      const title = "Search MDN for pages that mention popover hint";
+      const fake = new FakeProvider({
+        clock,
+        latency: "none",
+        onNoMatch: "echo",
+        replies: [
+          submitReply({}, { times: Number.POSITIVE_INFINITY }),
+          closingReply(),
+          ...works(title, 30_000, LIVE_L3_REPORT),
+        ],
+      });
+      const stream = fake.stream.bind(fake);
+      fake.stream = (r) => {
+        calls.push({ ...r, messages: structuredClone(r.messages) });
+        return stream(r);
+      };
+      let rt: RuntimeApp;
+      let req: Req;
+      beforeAll(async () => {
+        ({ rt, req } = await compose(home, clock, fake));
+      }, 120_000);
+      afterAll(async () => {
+        await rt?.close();
+      });
+
+      it("a run that heard the wrap-up and says nothing is needed for the criteria, then adds an observation, is reviewed and done: no budget card, no 'things left to do'", async () => {
+        const r = await runOne(req, rt, title, { budgetUsdMicro: 190_000 });
+        // The model heard the wrap-up (so this is the path that paused it live).
+        expect(calls.filter(coderOn(title)).find(heardWrapUp)).toBeDefined();
+        const task = await rt.store.task.mustGet(r.taskId);
+        expect(task.status).toBe("done");
+        expect(await rt.store.review.latestForTask(r.taskId)).toBeDefined();
+        expect(r.runs.map((x) => x.outcome)).toEqual(["completed"]);
+        const said = lines(r.events).join(" | ");
+        expect(said).not.toMatch(/paused before its budget/);
+        expect(said).not.toContain("things left to do");
+        expect(said).not.toContain("thing left to do");
+        const cards = (
+          (await (await req("/inbox")).json()) as { requests: Json[] }
+        ).requests.filter((q) => q.taskId === r.taskId);
+        expect(cards).toEqual([]);
+        // The critic read the report with its observation, as data.
+        const review = calls.find((c) => (c.tools ?? []).some((t) => t.name === "submit_review"));
+        expect(JSON.stringify(review?.messages)).toContain("The list isn't exhaustive.");
+      }, 60_000);
+    });
+  });
+
+  /**
+   * Live check 3, L3-research-2: the pause card cut its note and its items in mid-phrase and ran
+   * them together ("Two pages define hint:…; left: Nothing is needed ... gives its…, The list
+   * isn't exhaustive. Pages I didn't open, such as popovertarget…."), and its title and the
+   * notification said "paused at its budget of CHF 0.15" beside the session's "paused before its
+   * budget of CHF 0.15 ran out: it spent CHF 0.09".
+   */
+  describe("live check 3: L3-research-2", () => {
+    const PAUSE_REPORT = [
+      "I wrote `popover-hint.md` with the pages I opened so far.",
+      "",
+      "**Where I stopped:** I opened six MDN pages and listed the five that mention `hint`. The sixth, the `showPopover` page, doesn't mention it. Two pages define `hint`: the `popover` global attribute page and the `HTMLElement.popover` property page.",
+      "",
+      "**Left to do:**",
+      "- Open the `popovertarget`, `togglePopover` and `beforetoggle` pages, and add to popover-hint.md each one that mentions `hint`, with its address and one line on what it says.",
+      "- Check that each address in popover-hint.md opens.",
+    ].join("\n");
+    const clock = new SimulatedClock("2026-11-15T06:30:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-l3-research-2-"));
+    // The live names: the notification's title has 60 characters for them.
+    const title = "Search MDN for pages that mention popover hint";
+    const fake = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        ...works(title, 30_000, PAUSE_REPORT),
+        // A budget too small to wrap up in: the hooks stop it (no wrap-up heard).
+        ...works("Tiny guide", 5_000, PAUSE_REPORT),
+      ],
+    });
+    let rt: RuntimeApp;
+    let req: Req;
+    beforeAll(async () => {
+      ({ rt, req } = await compose(home, clock, fake));
+    }, 120_000);
+    afterAll(async () => {
+      await rt?.close();
+    });
+
+    it("the card says it paused before its budget ran out and what it spent, as the session's line does, and lists its note and each item whole", async () => {
+      const r = await runOne(req, rt, title, {
+        budgetUsdMicro: 190_000,
+        projectName: "Popover hint",
+      });
+      expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+      // The session's line, as the person reads it on the session page.
+      const said = lines(r.events).find((l) => l.includes("paused before its budget")) ?? "";
+      const m =
+        /paused before its budget of (CHF \d+\.\d\d) ran out: it spent (CHF \d+\.\d\d) and listed 2 things left to do\./.exec(
+          said,
+        );
+      expect(m, said).not.toBeNull();
+      const [, cap, spent] = m as RegExpExecArray;
+      const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
+        (q) => q.taskId === r.taskId && q.status === "open",
+      );
+      // Before: '"Search MDN for pages that mention popover hint" paused at its budget of CHF 0.15'.
+      expect(card?.title).toBe(`"${title}" paused before its budget ran out`);
+      expect(card?.body).toBe(`It spent ${spent} of its budget of ${cap}.`);
+      // Before: 'Done: I opened six MDN pages and listed the five that mention hint. The sixth,
+      // the showPopover page, doesn't mention it. Two pages define hint:…; left: Open the
+      // popovertarget, togglePopover and…, Check that each address in popover-hint.md opens.'
+      expect(card?.lists).toEqual([
+        {
+          label: "Where it stopped",
+          items: ["I opened six MDN pages and listed the five that mention hint."],
+        },
+        {
+          label: "Left to do",
+          items: [
+            "Open the popovertarget, togglePopover and beforetoggle pages, and add to popover-hint.md each one that mentions hint, with its address and one line on what it says.",
+            "Check that each address in popover-hint.md opens.",
+          ],
+        },
+      ]);
+      const shown = JSON.stringify([card?.title, card?.body, card?.lists]);
+      expect(shown).not.toMatch(/…|`|\*\*|\$|USD/);
+      // The task's reason and the session's result say it the same way.
+      expect((await rt.store.task.mustGet(r.taskId)).reason).toBe(
+        `"${title}" paused before its budget ran out.`,
+      );
+      expect(String(r.session.summary)).toContain(
+        `"${title}" paused before its budget of ${cap} ran out: continue or cancel it in the Inbox.`,
+      );
+      expect(String(r.session.summary)).not.toContain("paused at its budget");
+      // The project's Sessions list (d1109-sessions) says it the same way.
+      const list = (await (await req(`/projects/${r.projectId}/sessions`)).json()) as {
+        rows: Json[];
+      };
+      const row = list.rows.find((s) => s.id === r.sessionId);
+      expect(row?.gist).toBe(`"${title}" paused before its budget of ${cap} ran out.`);
+      // The session page's "Tasks in this session" row, right above that result (fixup review:
+      // before, 'Paused at its budget of CHF 0.15' beside 'paused before ... ran out').
+      const here = (await (await req(`/sessions/${r.sessionId}/tasks`)).json()) as {
+        tasks: Json[];
+      };
+      expect(here.tasks.map((t) => [t.title, t.here])).toEqual([
+        [title, `Paused before its budget of ${cap} ran out`],
+      ]);
+      // What the chat is told of the last session says it the same way (before: 'Paused:
+      // "..." at its budget of CHF 0.15' under its 'Result: ... paused before ... ran out').
+      const told = lastSessionBlock(await rt.store.project.mustGet(r.projectId));
+      expect(told).toContain(`\nPaused: "${title}" before its budget of ${cap} ran out\n`);
+      expect(told).not.toContain("at its budget");
+    }, 60_000);
+
+    it("the notification of the card names the task and that it paused before its budget ran out, whole, within its length", async () => {
+      const r = (await (await req("/notifications/recent")).json()) as Json | Json[];
+      const rows = (Array.isArray(r) ? r : ((r.notifications as Json[]) ?? [])).filter(
+        (n) => n.kind === "request_blocking",
+      );
+      const n = rows.find((x) => String(x.title).includes("paused"));
+      // Before: 'Popover hint: "Search MDN…" paused at its budget of CHF 0.15'.
+      expect(n?.title).toBe('Popover hint: "Search MDN…" paused before its budget ran out');
+      expect(String(n?.title).length).toBeLessThanOrEqual(60);
+      expect(String(n?.body)).toMatch(
+        /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d\. Answer it in the Inbox\.$/,
+      );
+    });
+
+    it("the same after a restart: the card's title, body and lists, the session's result and the Sessions list read as before (validation rule 4)", async () => {
+      const read = async () => {
+        const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
+          (q) => q.taskTitle === title && q.status === "open",
+        );
+        const sessionId = String(card?.sessionId ?? "");
+        const session = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
+        const projectId = String(card?.projectId ?? "");
+        const list = (await (await req(`/projects/${projectId}/sessions`)).json()) as {
+          rows: Json[];
+        };
+        const here = (await (await req(`/sessions/${sessionId}/tasks`)).json()) as {
+          tasks: Json[];
+        };
+        return {
+          title: card?.title,
+          body: card?.body,
+          lists: card?.lists,
+          summary: session.summary,
+          gist: list.rows.find((s) => s.id === sessionId)?.gist,
+          here: here.tasks.map((t) => t.here),
+        };
+      };
+      const before = await read();
+      expect(before.title).toBe(`"${title}" paused before its budget ran out`);
+      expect(before.here).toEqual([expect.stringMatching(/^Paused before its budget of CHF /)]);
+      await rt.close();
+      ({ rt, req } = await compose(home, clock, fake));
+      expect(await read()).toEqual(before);
+    }, 60_000);
+
+    it("a run its budget stopped (it heard no wrap-up) still reads 'Paused at its budget of CHF N' on the session page, as its result says", async () => {
+      const r = await runOne(req, rt, "Tiny guide", { budgetUsdMicro: 12_500 });
+      expect(r.runs[0]?.outcome).toBe("budget_exceeded");
+      const at =
+        /"Tiny guide" paused at (its budget of CHF \d+\.\d\d): continue or cancel it in the Inbox\./.exec(
+          String(r.session.summary),
+        );
+      expect(at, String(r.session.summary)).not.toBeNull();
+      const here = (await (await req(`/sessions/${r.sessionId}/tasks`)).json()) as {
+        tasks: Json[];
+      };
+      expect(here.tasks.map((t) => [t.title, t.here])).toEqual([
+        ["Tiny guide", `Paused at ${at?.[1]}`],
+      ]);
+      expect(lastSessionBlock(await rt.store.project.mustGet(r.projectId))).toContain(
+        `\nPaused: "Tiny guide" at ${at?.[1]}\n`,
+      );
+    }, 60_000);
+  });
 });

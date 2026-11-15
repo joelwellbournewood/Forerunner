@@ -183,9 +183,13 @@ describe("d1109-oversize-start", () => {
     expect(open).toHaveLength(1);
     const inbox = (await w.json("/inbox")).requests as Json[];
     const card = inbox.find((r) => r.taskId === shop && r.status === "open");
+    // l3-handoff-checks (L3-research-2): a run that heard the wrap-up paused before the limit
+    // ran out, and the card's first sentence names the amount (before: "paused at this
+    // session's budget of CHF 1.60").
     expect(card?.title).toBe(
-      '"Build the shop in shop.md" paused at this session\'s budget of CHF 1.60',
+      '"Build the shop in shop.md" paused before this session\'s budget ran out',
     );
+    expect(card?.body).toBe("This session's budget was CHF 1.60.");
     expect(String(ended.stopReason)).toMatch(/^budget_/);
 
     // The plan row lists it with the room it was given and the reason that names it.

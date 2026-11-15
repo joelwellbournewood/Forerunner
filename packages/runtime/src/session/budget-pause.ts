@@ -57,19 +57,56 @@ const MAX_ITEM_CHARS = 200;
  * for the acceptance criteria.", "None required by the criteria", "Nothing left: all criteria
  * are met"), as the live researcher wrote it (W15-14). "Nothing works yet" and "None of the
  * tests pass" are items: a qualifier counts only when it is about the criteria or says done.
- * What it is about ends the line ("Nothing in the task works yet" is an item), and the words
- * that say done are whole words ("incomplete" says nothing is done; review of W15-14).
+ * What it is about ends the line ("Nothing in the task works yet" is an item), or a reason
+ * follows it after punctuation ("Nothing is needed for the two criteria: each listed page gives
+ * its address and was opened.", live check 3, L3-research-1: before, a line could have what it
+ * is about or a reason, not both); a criterion may be named by its number ("Nothing for
+ * criterion 1."). The words that say done are whole words ("incomplete" says nothing is done;
+ * review of W15-14). `NOT_NOTHING` still reads the whole line, so a reason that names work
+ * ("Nothing for the criteria: but the tests still fail") keeps the line an item. Near siblings
+ * of the live line (fixup review of l3-handoff-checks): the reason may follow a full stop
+ * ("Nothing is needed for the two criteria. Each listed page ... was opened."), what it is about
+ * may be "to meet" or "to satisfy" the criteria, and "No further work is required to meet the
+ * acceptance criteria." names what there is no more of.
  */
-const NOTHING =
-  /^(?:nothing|none|no(?:thing)? (?:more|left|else|further)|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:\s+(?:for|in|by|under|within)\s[^.;:]*?\b(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)|\s*[:;,(\u2013\u2014-]\s*[\s\S]*?\b(?:criteri(?:a|on)|complete[ds]?|done|finished|met)\b[\s\S]*)?[\s.!)]*$/i;
+const ABOUT = String.raw`\s+(?:for|in|by|under|within|to\s+(?:meet|satisfy|fulfil+|cover|pass))\s[^.;:]*?\b(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)(?:\s*(?:#?\d+|\([a-z0-9]\))(?:\s*(?:,|and|&)\s*(?:#?\d+|\([a-z0-9]\)))*)?`;
+/** What starts a reason: punctuation, or a full stop and the next sentence. */
+const AFTER = String.raw`\s*(?:[:;,(\u2013\u2014-]|\.\s)`;
+const REASON = String.raw`${AFTER}\s*[\s\S]*`;
+const NOTHING = new RegExp(
+  String.raw`^(?:nothing|none|no(?:thing)? (?:more|left|else|further)(?:\s+(?:work|changes?|steps?|items?|actions?|tasks?))?|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:${ABOUT}(?:${REASON})?|${AFTER}\s*[\s\S]*?\b(?:criteri(?:a|on)|complete[ds]?|done|finished|met)\b[\s\S]*)?[\s.!)]*$`,
+  "i",
+);
 /**
  * A "nothing" that goes on to name work ("Nothing - but the README is incomplete", "Nothing:
- * the criteria are not met yet", "... except the tests still fail") is work left (review of
- * W15-14): read as nothing, unfinished work went to review instead of a pause.
+ * the criteria are not met yet", "... except the tests still fail", "..., though the tests need
+ * a rewrite") is work left (review of W15-14): read as nothing, unfinished work went to review
+ * instead of a pause.
  */
 const NOT_NOTHING =
-  /\b(?:but|except|however|yet|not|never|still|missing|incomplete|unfinished|fail(?:s|ed|ing)?|broken)\b|n't\b/i;
+  /\b(?:but|except|however|(?:al)?though|yet|not|never|still|missing|incomplete|unfinished|fail(?:s|ed|ing)?|broken)\b|n't\b/i;
 const isNothing = (text: string) => NOTHING.test(text) && !NOT_NOTHING.test(text);
+/**
+ * A criterion named on its own ("criterion 2", "criteria 1 and 3", "the first criterion"): a
+ * "nothing" about it says nothing of the rest, and an item that names it is work.
+ */
+const ONE_CRITERION =
+  /\bcriteri(?:on|a)\s*(?:#?\d+|\([a-z0-9]\))|\b(?:first|second|third|fourth|fifth|last|other)\s+criterion\b/i;
+/**
+ * A "nothing" about the task's whole set of criteria ("Nothing is needed for the two criteria:
+ * ...", "None required by the brief", "Nothing left: all criteria are met", "None; every
+ * criterion is met"; L3-research-1). The model said the criteria need nothing more, so the other
+ * items of that list that name no criterion are notes for the critic or the run that continues
+ * (`optional`), never work left: live check 3's "The list isn't exhaustive. Pages I didn't open
+ * ... may also mention hint." beside it paused finished research at its budget. A bare
+ * "nothing", or one about a single criterion ("Nothing for criterion 1."), moves nothing.
+ */
+const WHOLE_SET =
+  /\b(?:criteria|brief|task|scope|requirements|deliverables)\b|\b(?:every|each|all|both)\s+(?:of\s+the\s+)?criteri(?:on|a)\b/i;
+const aboutWholeSet = (text: string) =>
+  isNothing(text) && WHOLE_SET.test(text) && !ONE_CRITERION.test(text);
+/** An item that names a criterion ("criterion 2 still needs its test"): work, whatever else says. */
+const NAMES_CRITERION = /\bcriteri(?:on|a)\b/i;
 /**
  * An optional extra ("Optionally, ...", "(optional) ...", "Nice to have: ..."): never work left.
  * A hedge alone ("Maybe fix the failing build", "Perhaps the most important: finish the
@@ -128,18 +165,24 @@ export function parseHandoff(
       stopped = parts.join(" ").replace(/\s+/g, " ").trim();
       continue;
     }
-    const items: string[] = [];
-    const extras: string[] = [];
+    // Each item in its order, with whether it is an optional extra; a "nothing" about the whole
+    // set of criteria makes the others that name no criterion notes too (L3-research-1).
+    const listed: { text: string; extra: boolean }[] = [];
+    let wholeSetDone = false;
     const add = (text: string) => {
-      if (!text || isNothing(text)) return;
-      (OPTIONAL.test(text) ? extras : items).push(text);
+      if (!text) return;
+      if (isNothing(text)) {
+        if (aboutWholeSet(text)) wholeSetDone = true;
+        return;
+      }
+      listed.push({ text, extra: OPTIONAL.test(text) });
     };
     if (h.rest && !isNothing(h.rest)) add(h.rest);
     if (!h.rest || !isNothing(h.rest)) {
       for (let j = i + 1; j < lines.length; j++) {
         const l = lines[j] ?? "";
         if (!l.trim()) {
-          if (items.length || extras.length) break;
+          if (listed.length || wholeSetDone) break;
           continue;
         }
         const item = ITEM.exec(l);
@@ -150,8 +193,10 @@ export function parseHandoff(
         break;
       }
     }
-    leftToDo = items;
-    optional = extras;
+    const work = (i: { text: string; extra: boolean }) =>
+      !i.extra && (!wholeSetDone || NAMES_CRITERION.test(i.text));
+    leftToDo = listed.filter(work).map((i) => i.text);
+    optional = listed.filter((i) => !work(i)).map((i) => i.text);
   }
   return {
     stopped: cut(stopped, MAX_STOPPED_CHARS),

@@ -216,3 +216,35 @@ check 2, research F1: CHF 0.24 for a CHF 0.03 task). The rule stays; what is tri
    README says a run with no argument fails ("Running with no argument … exits with code 1"). A
    command with arguments is never excused by such a sentence.
 
+
+## Amendment 2026-11-15 (run L3, 'l3-handoff-checks'): JavaScript tests with no test script run with node --test
+
+Live check 3 (L3-research-4): a tester wrote `wc.test.js` with Node's own `node:test` module, the
+README's Tests section said `node --test`, and the folder had no package.json. The task was Done ·
+Reviewed with only "the project has test files (wc.test.js) that no check ran: there is no
+package.json to run them" under See what was checked, and the critic wrote that the pass rested
+on the worker's report (the six tests passed when run by hand). Rule 5 ran Python, Rust and Go
+tests with no configuration at all, but JavaScript only through a package.json test script, which
+breaks the owner's decision (C-3, ADR 0104) that a code task's tests always run, whatever the
+language.
+
+Rule 5 now has a JavaScript marker: when the folder has JavaScript test files (`*.test.js` /
+`*.spec.js`, `.mjs` and `.cjs` too, or the scripts of `test/`, `tests/` or `__tests__/`; never
+`node_modules`, a dot folder such as the try's samples, or TypeScript) and no package.json, or
+one whose scripts name no real test and that has no dependencies, the review runs
+`node --test <the files>` in the same lease as the other marker checks, as a required check, so
+a failing test file keeps the task from Done. Node 18 or later is probed first; in the process
+sandbox the daemon's own Node runs it, in a container the image's `node`. A package the tests
+need that is not installed, tests written for another runner's globals, or a run that finds no
+tests is "the project's JavaScript tests were not run: ...", never a failure. The told line stays
+for what no check runs: TypeScript or JSX test files ("node --test runs only JavaScript files,
+and there is no package.json with a test script for these") and the tests of a package.json with
+dependencies and no test script ("its package.json names no test script"). The specialist's
+brief names the check ("its package.json scripts as they were before your task, or node --test,
+pytest, cargo test or go test"). Nothing is tried that was not before: "Reviewed and tried" still
+comes from the tries, and the check shows under See what was checked.
+
+Review of 'l3-handoff-checks' (2026-11-15): the check's output names the command as a person
+types it ("node --test wc.test.js -> exit 0 in 95 ms"), never the path of the app's own Node on
+this computer, in See what was checked and in what the critic reads; a Node older than 18 is
+told as "Node.js 18 or later is not installed where the checks run", not as no Node at all.
