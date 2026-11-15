@@ -379,7 +379,8 @@ never repeats work that is already in the default branch:
 - **#4 merged with Squash or Rebase on GitHub**: #8 is rebuilt on the default branch with only
   its own commits (GitHub shows a force-push on it) and the "Builds on" line goes. Its own change
   is the one the critic accepted, so nothing else changes: it still waits for you, or merges by
-  itself where Forerunner merges.
+  itself where Forerunner merges. A **Merge** you press on #8 a moment after merging #4 there,
+  before Forerunner's next look, does the rebuild first and answers "Merging #8." as usual.
 - **#4 closed without merging, or its task redone or cancelled**: #8 is rebuilt without #4. It was
   reviewed with #4's changes, so it no longer merges by itself: one Inbox card says so ("#8 was
   rebuilt without #4, which was closed. It was reviewed with #4's changes, so it waits for you:

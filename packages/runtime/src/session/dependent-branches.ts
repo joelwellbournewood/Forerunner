@@ -9,6 +9,7 @@ import {
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type { JsonObject, MergeRecordRow, StateStore, TaskRow } from "@forerunner/state";
 import {
+  type BranchCheckOptions,
   type BranchVerdict,
   fileLeftOpenRequest,
   headMovedSentence,
@@ -327,31 +328,33 @@ export class DependentBranches {
    * check that could not run (the folder busy, GitHub silent) leaves the record owing the
    * rebuild, so no merge goes ahead until the sweep ran it. Before (live check 3, G7) only the
    * watcher's next poll looked, and a Merge pressed seconds after a dependency's close merged
-   * the closed work into main.
+   * the closed work into main. `o.pressed` (the person's press asks it before its answer): a
+   * branch that holds commits the review did not read files its "changed after the review" card
+   * also over a record that waited for the click, as the press's own head check does.
    */
-  async checkBeforeMerge(task: TaskRow): Promise<BranchVerdict> {
+  async checkBeforeMerge(task: TaskRow, o: BranchCheckOptions = {}): Promise<BranchVerdict> {
     const { store } = this.deps;
     const none: BranchVerdict = { left: null, owed: false };
     if (!task.pr_url || !task.branch || !(task.depends_on ?? []).length) return none;
     const before = await store.mergeRecord.forTask(task.id);
     if (!before || before.state === "merged" || before.pr_url !== task.pr_url) return none;
-    const o = await this.deps.executor.rebuildTask(task, {
-      beforePush: (r, pr) => this.settleRecord(r, pr),
+    const rebuilt = await this.deps.executor.rebuildTask(task, {
+      beforePush: (r, pr) => this.settleRecord(r, pr, o.pressed === true),
     });
-    if (OWES.has(o.result)) {
+    if (OWES.has(rebuilt.result)) {
       const record = await store.mergeRecord.forTask(task.id);
       if (record && record.state !== "merged" && !record.rebuild_owed_for) {
         await store.mergeRecord.oweRebuild(task.id, await this.owedFor(task));
-        await this.sayFolderWait(o);
+        await this.sayFolderWait(rebuilt);
       }
       this.logger.warn("branch not checked before its merge: the rebuild is owed", {
         taskId: task.id,
-        result: o.result,
+        result: rebuilt.result,
       });
       return { left: null, owed: true };
     }
     // R-conflict: what this poll read of its pull request is from before the rebuild.
-    if (o.result !== "unchanged") this.seen.delete(task.id);
+    if (rebuilt.result !== "unchanged") this.seen.delete(task.id);
     const now = await store.mergeRecord.forTask(task.id);
     const left =
       !!now &&
@@ -839,10 +842,12 @@ export class DependentBranches {
    * person needs to know, before any merge could follow the new head. Returns true: the push
    * goes on (a merge already under way then finds its head moved, and the record's new word
    * stands: `ReviewedPrMerge` does not follow a head when the record was moved meanwhile).
+   * `pressed`: the person's press asked the check (`checkBeforeMerge`).
    */
   private async settleRecord(
     r: DependentRebuild,
     pr: { number: number; url: string },
+    pressed = false,
   ): Promise<boolean> {
     const { store } = this.deps;
     const record = await store.mergeRecord.forTask(r.taskId);
@@ -878,7 +883,7 @@ export class DependentBranches {
       // the record moved its reviewed head onto it, the Overview offered Merge under "Reviewed
       // by the critic", and a Merge the person pressed during the folder's wait merged it.
       if (!reviewedChangeBefore(record, r)) {
-        await this.changedAfterReview(task, record, pr);
+        await this.changedAfterReview(task, record, pr, pressed);
         return true;
       }
       // Only what main already has was dropped: the same reviewed change on the new head.
@@ -911,17 +916,21 @@ export class DependentBranches {
    * moved (`head_moved`: no Merge on the Overview, "merge it yourself or redo the task"). A
    * Merge the person pressed before (kept while the folder waited) or the automatic mode's is
    * dropped, and one card says why; a record that already waited for the person's Merge says
-   * it on its row only, as the merge step does. Said once: a later rebuild finds it said.
+   * it on its row only, as the merge step does, unless the person's press asked the check
+   * (`pressed`): the press is the attempt, so its card is filed, as `ReviewedPrMerge.
+   * headMovedNow` files it for a head the press saw moved (review of fix/l3-merge, sibling).
+   * Said once: a later rebuild finds it said.
    */
   private async changedAfterReview(
     task: TaskRow | undefined,
     record: MergeRecordRow,
     pr: { number: number; url: string },
+    pressed = false,
   ): Promise<void> {
     const { store } = this.deps;
     const sentence = headMovedSentence(pr.number);
     if (record.last_outcome === "head_moved" && record.sentence === sentence) return;
-    const wasLeft = record.state === "left_to_you";
+    const wasLeft = record.state === "left_to_you" && !pressed;
     const moved = await store.mergeRecord.move(record.id, "left_to_you", {
       sentence,
       last_outcome: "head_moved",

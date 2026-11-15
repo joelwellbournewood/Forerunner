@@ -3696,6 +3696,21 @@ open in Needs you after it was merged on GitHub, through restarts, and the chat 
   step settles a press whose head moved (`settle(..., pressed = true)`: the record `head_moved`,
   the task's reason, one card even over a record that waited for the click) and the press is
   refused with `headMovedSentence`. Nothing of the chain is approved or merged then.
+  The head check skips a task whose branch check just moved its record's reviewed head
+  (`rebuiltNow`: a dependency squash- or rebase-merged on GitHub before any poll, so the check
+  rebuilt the branch onto main and pushed it): the listing is from before that push, and the
+  check's own `settleRecord` already judged the branch as GitHub had it. Before (review of
+  fix/l3-merge), the head check took that push for a commit pushed after the review and refused the
+  press with "changed after the review", the row lost its Merge, and B was never merged.
+  The press asks the check with `{ pressed: true }` (`BranchCheckOptions`, threaded through
+  `checkBeforeMerge` and `settleRecord` to `changedAfterReview`): a branch that holds a commit the
+  review did not read files its "changed after the review" card also over a record that waited
+  for the click, as `headMovedNow` does. The merge step's own check (`run()`) passes nothing.
+  `headMovedNow` itself reads the pull request again (`host.getPullRequest`) before it judges:
+  a listing from before a push Forerunner made itself (the watcher's poll rebuilt the branch and
+  moved the record between the press's read and its check) whose fresh head is the reviewed
+  commit, or a pull request no longer open, is no head move; the record, the reason and the card
+  name the fresh head.
 - `settle` files no second card beside an open merge card of the task: that card takes the new
   words (`openMergeCardOf`, options `MERGE_LEFT_OPEN_OPTIONS`, `leftOpenSteps`).
 - `DependentBranches.dependencyMerged` (every merge, Forerunner's and seen on GitHub) first closes
@@ -3718,8 +3733,11 @@ Tests: `dependent-branches-merge.test.ts` "l3-merge, run L3" (the press before a
 that comes before the watcher read the close, the control with a poll between, a dependency
 redone and cancelled, the cards closed by a merge on GitHub and by the Overview's Merge, a card
 left open by an earlier version, a rebuild card's Merge after the merge, the moved head and its
-Update-branch counter-case), `l3-merge.test.ts` (words, the cancelled rows, the chat facts),
-`real-daemon.test.ts` "l3-merge, run L3" (through the client, with a restart).
+Update-branch counter-case; the fix-up's dependency squash- and rebase-merged before the press, a
+chain of three, a pushed commit with the squash, and a listing from before the watcher's rebuild),
+`l3-merge.test.ts` (words, the cancelled
+rows, the chat facts), `real-daemon.test.ts` "l3-merge, run L3" (through the client, with a
+restart; the squash before the press).
 
 **Memory (`MemoryLoop`, spec G, E.5, N.4).** Private memory stays on this PC (spec "never
 leave that PC", ADR 0002, ADR 0083): with a shared state (a `FORERUNNER_STATE_URL` that is not

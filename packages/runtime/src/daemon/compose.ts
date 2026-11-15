@@ -2568,7 +2568,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   merge.onMerged((e) => dependentBranches.dependencyMerged(e));
   // L3-github-1 (R-lock): the person's Merge, a card's Merge and the retry check the branch
   // against what it builds on right before they merge, as the session's merge port does.
-  merge.checkBranchesWith((task) => dependentBranches.checkBeforeMerge(task));
+  merge.checkBranchesWith((task, o) => dependentBranches.checkBeforeMerge(task, o));
   // The Overview's pull requests and the person's Merge in the app (merge-in-app): what each
   // waiting pull request's Merge does (from its merge record and the repository's rules), and
   // the click, answered at once, the merges in dependency order through the merge step above.

@@ -708,14 +708,26 @@ export class ProjectPullRequests {
     // branch: work that went away is taken out first, and a review that read it is void, so the
     // press answers with the record's sentence (one card says it too) and merges nothing. Before
     // (live check 3, G7) the press answered "Merging #48." and merged #46's closed work into main.
+    // A check that rebuilt the branch (a dependency squash- or rebase-merged on GitHub a moment
+    // ago: only what main has was dropped) pushed a new head and moved the record onto it; the
+    // listing the head check below reads is from before that push, so that task is skipped there
+    // (the check's own `settleRecord` judged the branch as GitHub had it: a commit the review did
+    // not read leaves the record head_moved, refused here). Before (review of fix/l3-merge), the
+    // head check took the check's own push for a commit pushed after the review and refused the
+    // press with "changed after the review", the row lost its Merge, and B was never merged.
+    const rebuiltNow = new Set<string>();
     if (!waits && merge.checkBranchNow) {
       const open = new Set(
         view.waiting.flatMap((r) => (r.kind === "task" && r.taskId ? [r.taskId] : [])),
       );
       for (const task of chain) {
         if (!(await this.buildsOnGone(task, open))) continue;
-        const checked = await merge.checkBranchNow(task);
+        const before = (await store.mergeRecord.forTask(task.id))?.reviewed_head_sha ?? null;
+        // The person's press is the attempt: a head moved since the review files its card.
+        const checked = await merge.checkBranchNow(task, { pressed: true });
         if (checked.left) return refused(checked.left.sentence);
+        const after = (await store.mergeRecord.forTask(task.id))?.reviewed_head_sha ?? null;
+        if (after && after !== before) rebuiltNow.add(task.id);
         if (checked.owed) {
           const wait = await merge.folderWaitNow?.(task);
           if (wait) {
@@ -732,6 +744,7 @@ export class ProjectPullRequests {
     // check 3, G4) the press answered "Merging #40." and the refusal came about 4 s later.
     if (!waits && merge.headMovedNow)
       for (const task of chain) {
+        if (rebuiltNow.has(task.id)) continue;
         const record = await store.mergeRecord.forTask(task.id);
         const number = record?.pr_number;
         const head = listed.find((p) => p.number === number)?.head.sha;

@@ -16302,4 +16302,77 @@ describe("l3-merge, run L3", () => {
       await w.host.stop();
     }
   }, 240_000);
+
+  it("L3-github-3 fix-up: A squash-merged on GitHub, Merge pressed on B before any poll: the press answers 'Merging #B.' and B is merged (rebuilt onto main first), never refused as changed after the review; no card", async () => {
+    const w = await repoWorld("l3squash");
+    const { rt, client } = await w.compose();
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({
+        name: "Kite squash",
+        goal: "The club's pages",
+        repos: ["alice/l3squash"],
+      });
+      const a = await client.createTask(project.id, {
+        title: "Write kite/squash.txt with one line",
+        outcome: "kite/squash.txt holds one line",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const b = await client.createTask(project.id, {
+        title: "Write kite/squash-day.txt after the squash file",
+        outcome: "kite/squash-day.txt names the club day",
+        riskTier: 1,
+        specialist: "coder",
+        dependsOn: [a.id],
+      });
+      const statuses = async () =>
+        (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+      const started = await client.startSession({ agentId, projectId: project.id });
+      await eventually(
+        async () => (await client.session(started.session?.id ?? "")).status !== "running",
+        "the session to end (at least 60 s)",
+        statuses,
+        60_000,
+      );
+      const taskA = await rt.store.task.mustGet(a.id);
+      const taskB = await rt.store.task.mustGet(b.id);
+      expect(taskB.status, await statuses()).toBe("done");
+      const [prA, prB] = [prOf(taskA.pr_url), prOf(taskB.pr_url)];
+      expect(
+        (await client.projectPullRequests(project.id)).waiting.find((r) => r.number === prB)?.merge
+          ?.first,
+      ).toEqual([prA]);
+      // The person squash-merges A on GitHub's website and presses Merge on B before any poll.
+      expect((await w.github.mergePullRequest(w.REPO, prA, { method: "squash" })).merged).toBe(
+        true,
+      );
+      // Before (review of fix/l3-merge): {"state":"refused","sentence":"#B changed after the
+      // review: look at the new commits, ..."}, and B's row lost its Merge for good.
+      expect(await client.mergePullRequest(project.id, prB)).toEqual({
+        state: "queued",
+        sentence: `Merging #${prB}.`,
+        order: [prB],
+      });
+      await rt.pullRequests.idle();
+      await w.host.settle();
+      expect((await w.github.getPullRequest(w.REPO, prB)).merged).toBe(true);
+      const files = await w.mainFiles();
+      expect(files).toContain("kite/squash.txt");
+      expect(files).toContain("kite/squash-day.txt");
+      const cards = (await client.inbox(me.id)).requests.filter(
+        (r) => r.taskId === b.id && r.status === "open",
+      );
+      expect(cards).toEqual([]);
+      expect(
+        (await client.projectPullRequests(project.id)).waiting.filter((r) => r.kind === "task"),
+      ).toEqual([]);
+      const label = (await client.tasks(project.id)).find((t) => t.id === b.id)?.display?.label;
+      expect(label).not.toContain("changed after the review");
+    } finally {
+      await rt.close();
+      await w.host.stop();
+    }
+  }, 240_000);
 });

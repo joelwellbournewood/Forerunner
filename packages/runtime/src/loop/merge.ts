@@ -837,8 +837,18 @@ export interface BranchVerdict {
   owed: boolean;
 }
 
+/**
+ * How a branch check runs: `pressed` when the person's Merge on the Overview asks it before its
+ * answer (the press is the attempt: a branch that holds commits the review did not read files
+ * the "changed after the review" card also over a record that waited for the click, as
+ * `headMovedNow` does; review of fix/l3-merge, sibling).
+ */
+export interface BranchCheckOptions {
+  pressed?: boolean;
+}
+
 /** The branch check `DependentBranches.checkBeforeMerge` gives the merge step (compose). */
-export type BranchCheck = (task: TaskRow) => Promise<BranchVerdict>;
+export type BranchCheck = (task: TaskRow, o?: BranchCheckOptions) => Promise<BranchVerdict>;
 
 /** One merge this area made (or the watcher saw): what later areas subscribe to. */
 export interface MergedEvent {
@@ -909,14 +919,15 @@ export class ReviewedPrMerge implements MergePort {
    * (a dependency closed, redone or cancelled) and left the record to the person with its
    * sentence and one card; `owed`: the check could not run (the folder was busy or GitHub did not
    * answer), the record owes the rebuild and no merge goes ahead until it ran (R-lock). Nothing
-   * for a task that builds on nothing, or without the check wired.
+   * for a task that builds on nothing, or without the check wired. `o.pressed`: the person's
+   * press asks it before its answer (`BranchCheckOptions`).
    */
-  async checkBranchNow(task: TaskRow): Promise<BranchVerdict> {
+  async checkBranchNow(task: TaskRow, o: BranchCheckOptions = {}): Promise<BranchVerdict> {
     const none: BranchVerdict = { left: null, owed: false };
     const check = this.branchCheck;
     if (!check || !task.pr_url || !(task.depends_on ?? []).length) return none;
     try {
-      return await check(task);
+      return await check(task, o);
     } catch (e) {
       this.logger.warn("branch not checked before its merge", {
         taskId: task.id,
@@ -2068,6 +2079,10 @@ export class ReviewedPrMerge implements MergePort {
    * review"), so the press says it at once, and the record is settled as the step settles a
    * press whose head moved: its sentence, the task row's reason and one card. Before (live check
    * 3, G4) the press answered "Merging #40." and the refusal came about 4 s later.
+   * The pull request is read again first (review of fix/l3-merge): the listing may be from before
+   * a push Forerunner made itself a moment ago (the watcher's poll rebuilt the branch onto main
+   * and moved the record to that head between the press's read and now), and a head that is now
+   * the reviewed commit, or a pull request no longer open, is no head move the press must say.
    */
   async headMovedNow(task: TaskRow, head: string): Promise<string | null> {
     const { store } = this.deps;
@@ -2076,9 +2091,16 @@ export class ReviewedPrMerge implements MergePort {
     if (record.pr_url !== task.pr_url) return null;
     if (record.state === "merged" || record.state === "merging" || this.inFlight.has(task.id))
       return null;
+    const ref = parsePullUrl(record.pr_url);
+    const now = ref
+      ? await this.deps.host.getPullRequest(ref.repo, ref.number).catch(() => null)
+      : null;
+    if (now && (now.state !== "open" || now.merged)) return null;
+    const moved = now?.head.sha || head;
+    if (moved === record.reviewed_head_sha) return null;
     const worktree = this.worktreeOf(task);
-    if (worktree && (await this.keepsOwnChange(record, worktree, head))) return null;
-    const a = headMoved(prName(record.pr_number), head, record.reviewed_head_sha);
+    if (worktree && (await this.keepsOwnChange(record, worktree, moved))) return null;
+    const a = headMoved(prName(record.pr_number), moved, record.reviewed_head_sha);
     const owner = await this.ownerOf(record.agent_id);
     const out = await this.settle(
       record,
@@ -2089,7 +2111,7 @@ export class ReviewedPrMerge implements MergePort {
         taskId: task.id,
         prUrl: record.pr_url,
         status: "head_moved",
-        headSha: head,
+        headSha: moved,
         reason: `PR left open for you: ${a.message}`,
         ...(a.sentence ? { sentence: a.sentence } : {}),
       },

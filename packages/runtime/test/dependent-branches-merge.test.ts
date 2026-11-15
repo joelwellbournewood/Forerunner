@@ -182,7 +182,7 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
   });
   merge.onMerged((e) => dependents.dependencyMerged(e));
   // L3-github-1: the merge step checks the branch before a merge outside a session.
-  merge.checkBranchesWith((task) => dependents.checkBeforeMerge(task));
+  merge.checkBranchesWith((task, o) => dependents.checkBeforeMerge(task, o));
   const watcher = new GitHostWatcher({
     store: w.store,
     clock: w.clock,
@@ -2455,7 +2455,7 @@ describe("w15-tail, wave 15 run B: the words a conflict notice keeps, across a r
     });
     const dependents = new DependentBranches({ store: w.store, clock: w.clock, merge, executor });
     merge.onMerged((e) => dependents.dependencyMerged(e));
-    merge.checkBranchesWith((task) => dependents.checkBeforeMerge(task));
+    merge.checkBranchesWith((task, o) => dependents.checkBeforeMerge(task, o));
     const watcher = new GitHostWatcher({
       store: w.store,
       clock: w.clock,
@@ -2855,5 +2855,118 @@ describe("l3-merge, run L3", { timeout: 240_000 }, () => {
     expect(answer).toEqual({ state: "queued", sentence: `Merging #${pr}.`, order: [pr] });
     expect((await m.pr(t.id)).merged).toBe(true);
     expect(await mainFiles(m)).toContain(m.fileOf("Add page"));
+  });
+
+  // Review of fix/l3-merge (blocking): the press's branch check rebuilt B onto main and moved
+  // its record to the rebuilt head, then the head check compared that head with the listing read
+  // before the rebuild, took the rebuild's own push for a commit pushed after the review, and
+  // refused the press with "changed after the review" (record head_moved, no Merge for good, a
+  // card about commits nobody pushed). At the base the same press merged B.
+  for (const method of ["squash", "rebase"] as const)
+    it(`L3-github-3 fix-up: A ${method}-merged on GitHub, then Merge pressed on B before any poll: the press's check rebuilds B onto main and B is merged, never refused as changed after the review`, async () => {
+      const m = await chainWorld({ level: 2 });
+      const a = await m.runTask("Add page");
+      const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+      const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+      const reviewed = await m.record(b.id);
+      await m.github.mergePullRequest(REPO, prA, { method });
+      const answer = await press(m, prB);
+      // Before the fix-up: {"state":"refused","sentence":"#2 changed after the review: ..."}.
+      expect(answer).toEqual({ state: "queued", sentence: `Merging #${prB}.`, order: [prB] });
+      expect((await m.pr(b.id)).merged).toBe(true);
+      const files = await mainFiles(m);
+      expect(files).toContain(m.fileOf("Add page"));
+      expect(files).toContain(m.fileOf("Add footer"));
+      // B was merged as rebuilt onto main: A's change is on main once (its own merge).
+      expect(
+        (await m.hostGit("log", "--format=%H", "main", "--", m.fileOf("Add page"))).split("\n"),
+      ).toHaveLength(1);
+      const record = await m.record(b.id);
+      expect(record).toMatchObject({ state: "merged", own_change_id: reviewed.own_change_id });
+      expect(record.last_outcome).not.toBe("head_moved");
+      expect(record.reviewed_head_sha).not.toBe(reviewed.reviewed_head_sha);
+      expect(await m.cards(b.id)).toEqual([]);
+      expect((await m.w.store.task.mustGet(b.id)).reason).not.toContain("not the reviewed commit");
+    });
+
+  it("L3-github-3 fix-up, chain of three: A squash-merged, Merge pressed on C (waits for B, which waits for A) before any poll: B and C are rebuilt onto main by the press's check and merge in order", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const c = await m.runTask("Add notes", { dependsOn: [b.id] });
+    const [prA, prB, prC] = [
+      await m.prNumber(a.id),
+      await m.prNumber(b.id),
+      await m.prNumber(c.id),
+    ];
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    const answer = await press(m, prC);
+    expect(answer).toEqual({
+      state: "queued",
+      sentence: `Merging #${prB} and #${prC} in order.`,
+      order: [prB, prC],
+    });
+    expect((await m.pr(b.id)).merged).toBe(true);
+    expect((await m.pr(c.id)).merged).toBe(true);
+    for (const t of [a, b, c])
+      expect(
+        (await m.hostGit("log", "--format=%H", "main", "--", m.fileOf(t.title))).split("\n"),
+      ).toHaveLength(1);
+    for (const t of [b, c]) {
+      expect((await m.record(t.id)).last_outcome).not.toBe("head_moved");
+      expect(await m.cards(t.id)).toEqual([]);
+    }
+  });
+
+  it("L3-github-3 fix-up, sibling: a commit pushed to B's branch on GitHub and A squash-merged, Merge pressed on B before any poll: refused at once as changed after the review, nothing merged, one card", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    const reviewed = await m.record(b.id);
+    await pushTo(m, (await m.w.store.task.mustGet(b.id)).branch ?? "", { file: "theirs.txt" });
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    const answer = await press(m, prB);
+    expect(answer).toEqual({ state: "refused", sentence: changedAfterReview(prB), order: [] });
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await mainFiles(m)).not.toContain("theirs.txt");
+    expect(await m.record(b.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "head_moved",
+      sentence: changedAfterReview(prB),
+      reviewed_head_sha: reviewed.reviewed_head_sha,
+    });
+    expect(await m.cards(b.id)).toEqual([
+      { title: '"Add footer" changed after the review', body: changedAfterReview(prB) },
+    ]);
+  });
+
+  it("L3-github-3 fix-up, sibling: the press's head check reads the pull request again, so a listing from before a rebuild Forerunner pushed itself (the watcher's poll between the press's read and its check) is no head move", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    // The head the press's read listed, a moment before the watcher's poll rebuilt B.
+    const listed = (await m.pr(b.id)).head.sha;
+    await m.github.mergePullRequest(REPO, prA, { method: "squash" });
+    await m.poll();
+    const rebuilt = await m.record(b.id);
+    expect(rebuilt.reviewed_head_sha).not.toBe(listed);
+    expect(rebuilt.reviewed_head_sha).toBe((await m.pr(b.id)).head.sha);
+    const task = await m.w.store.task.mustGet(b.id);
+    // Before: "#2 changed after the review: ...", the record head_moved and one card.
+    expect(await m.merge.headMovedNow(task, listed)).toBeNull();
+    expect(await m.record(b.id)).toMatchObject({
+      state: rebuilt.state,
+      last_outcome: rebuilt.last_outcome,
+      reviewed_head_sha: rebuilt.reviewed_head_sha,
+    });
+    expect(await m.cards(b.id)).toEqual([]);
+    expect(await press(m, prB)).toEqual({
+      state: "queued",
+      sentence: `Merging #${prB}.`,
+      order: [prB],
+    });
+    expect((await m.pr(b.id)).merged).toBe(true);
   });
 });

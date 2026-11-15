@@ -551,3 +551,16 @@ closed work into main, because only the watcher's next poll looked at what #48's
    main, and the closed task's record says "#46 was closed without merging." with no card saying
    that its change reached main through #48 (left for later; Take this work out on #48 removes
    both). The "What remains" sentence of point 2 above now covers only that case.
+
+**Fix-up of the 2026-11-15 amendment (review of fix/l3-merge).** Point 2's head check misread
+point 1's own rebuild: a dependency squash- or rebase-merged on GitHub a moment before the press
+made the check rebuild the dependent onto main and push it, and the head check then compared that
+push with the listing read before it, took it for a commit pushed after the review, and refused
+the press with the head-moved sentence (the row lost its Merge and the dependent was never
+merged, where it merged before the amendment). Decided: the press's head check skips a task
+whose record the check just moved to the rebuilt head; the check itself judged the branch as
+GitHub had it, so a commit nobody reviewed is still refused at once, and the press, being the
+attempt, files its "changed after the review" card then too, as for a head the press saw moved.
+For any other head that differs from the listing, the head check reads the pull request again
+before it refuses: a rebuild the watcher's poll pushed between the press's read and its check is
+Forerunner's own push, not a commit the review did not read.
