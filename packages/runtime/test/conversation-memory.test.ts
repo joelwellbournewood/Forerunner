@@ -935,7 +935,7 @@ describe("l3-chat-claims, run L3", () => {
   const CLAIM =
     "Widening research access needs your yes, so I've asked for confirmation. Once you approve, research can read any public website again.";
   const NUDGE =
-    "Your reply says that you changed something or asked for the person's yes, but no command in this turn did either: nothing changed and nothing waits for a yes. If the person asked for a change, call its command now; the runtime reads a change that needs a yes back with Yes and No. Otherwise answer again and say that nothing changed.";
+    'Your reply says that you changed something or asked for the person\'s yes, but no command in this turn did either: nothing changed in this turn and nothing waits for a yes. If the person asked for a change, call its command now; the runtime reads a change that needs a yes back with Yes and No. If you meant a change an earlier turn made, say so ("Earlier, ..."). Otherwise answer again and say that nothing changed.';
   const TRUE_LINE =
     "Nothing changed, and nothing waits for your yes. Say it again to try once more.";
   const READBACK =
@@ -1249,5 +1249,34 @@ describe("l3-chat-claims, run L3: siblings", () => {
       }
       await w.store.close();
     }
+  });
+});
+
+describe("l3-chat-claims, run L3: a change of an earlier turn", () => {
+  it("said as if made now, it is nudged; said as earlier, the answer stands (L3-run-1)", async () => {
+    const w = await setup([
+      toolReply("settings_set", {
+        key: "web_access",
+        value: { mode: "only", only: ["developer.mozilla.org"] },
+      }),
+      textReply("Done.", { ttftMs: 0 }),
+      textReply("I've set research to read only developer.mozilla.org.", { ttftMs: 0 }),
+      textReply("Earlier, I set research to read only developer.mozilla.org.", { ttftMs: 0 }),
+    ]);
+    await w.chat("only read developer.mozilla.org for research");
+    const res = await w.chat("what did you change?");
+    expect(res.reply).toBe("Earlier, I set research to read only developer.mozilla.org.");
+    expect(w.provider.calls).toHaveLength(4);
+    const sessionId = await w.agent.conversationSessionId(w.alice, w.quote);
+    const row = (await w.store.event.list(sessionId, 0, 500))
+      .filter((e) => e.type === "chat.reply")
+      .at(-1)?.payload as Record<string, unknown>;
+    expect(row.claimGuard).toEqual({
+      kind: "changed",
+      phrase: "I've set",
+      nudged: true,
+      replaced: false,
+    });
+    await w.store.close();
   });
 });

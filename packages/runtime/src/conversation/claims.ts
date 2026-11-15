@@ -78,7 +78,7 @@ export function claimOf(text: string): ReplyClaim | null {
  * exact text is asserted in conversation-memory.test.ts, "l3-chat-claims, run L3").
  */
 export const CLAIM_NUDGE =
-  "Your reply says that you changed something or asked for the person's yes, but no command in this turn did either: nothing changed and nothing waits for a yes. If the person asked for a change, call its command now; the runtime reads a change that needs a yes back with Yes and No. Otherwise answer again and say that nothing changed.";
+  'Your reply says that you changed something or asked for the person\'s yes, but no command in this turn did either: nothing changed in this turn and nothing waits for a yes. If the person asked for a change, call its command now; the runtime reads a change that needs a yes back with Yes and No. If you meant a change an earlier turn made, say so ("Earlier, ..."). Otherwise answer again and say that nothing changed.';
 
 /** What the person reads when the reply still claims it after the nudge (design §5 rule 8). */
 export const NOTHING_CHANGED_REPLY =
