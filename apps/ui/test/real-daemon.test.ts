@@ -7674,9 +7674,14 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
       exists: true,
       note: "kept in the app: no status pull request (Settings turns it on)",
     });
-    expect((await client.doc(project.id, "docs/status.md")).content).toContain(
-      `session ${sessionId}`,
+    // The session's entry is named by when it started, never by its id (l3-small, run L3,
+    // L3-github-6).
+    const statusText = (await client.doc(project.id, "docs/status.md")).content;
+    const startedAt = (await client.session(sessionId)).startedAt ?? "";
+    expect(statusText).toContain(
+      `### Session started ${startedAt.slice(0, 10)} ${startedAt.slice(11, 16)} UTC`,
     );
+    expect(statusText).not.toContain(sessionId);
     const row = (await client.settings()).find(
       (s) => s.key === "project.status_pull_request" && s.scopeId === project.id,
     );
