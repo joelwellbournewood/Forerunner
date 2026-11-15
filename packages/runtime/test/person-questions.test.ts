@@ -3,7 +3,7 @@ import { SIGNOFF_KEY } from "@forerunner/critic";
 import { join } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
-import { requestWords } from "../src/daemon/request-words.ts";
+import { requestWords, specialistReason } from "../src/daemon/request-words.ts";
 import { markAnswer } from "../src/session/answer-mark.ts";
 import {
   filePersonQuestions,
@@ -524,5 +524,27 @@ describe("leftovers7-tailrun, wave 13: a recorded answer is no question; another
     expect(
       needsPersonsAnswers(words("Deploy the site", "Follow the owner's decision in docs/x")),
     ).toBe(false);
+  });
+});
+
+/**
+ * l3-small fix-up, run L3 (L3-research-3, review): the quoted reason made any first word of
+ * letters a capital, so a command the specialist named read as a word ('`npm test` fails' read
+ * "Npm test fails", "git push was refused" read "Git push …"). Only a reason a findings tag was
+ * taken from starts with a capital, and never a word that was in code marks.
+ */
+describe("l3-small, run L3: the quoted reason keeps a command's own case (L3-research-3)", () => {
+  it("a capital only where a findings tag was taken off, never on a command or a file name", () => {
+    expect(specialistReason("- **blocker**: `notes/plan.md` is missing.")).toBe(
+      "notes/plan.md is missing.",
+    );
+    expect(specialistReason("blocker: missing the launch plan")).toBe("Missing the launch plan");
+    expect(specialistReason("- **blocker**: `npm test` fails: 2 tests fail.")).toBe(
+      "npm test fails: 2 tests fail.",
+    );
+    expect(specialistReason("git push was refused")).toBe("git push was refused");
+    expect(specialistReason("I could not find notes/plan.md.")).toBe(
+      "I could not find notes/plan.md.",
+    );
   });
 });

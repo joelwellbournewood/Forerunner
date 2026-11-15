@@ -375,3 +375,36 @@ describe("settingsView (U-060)", () => {
     await store.close();
   });
 });
+
+/**
+ * l3-small, run L3 (live check 3, L3-github-8): Settings read "waits for your Merge on Kite
+ * trips's Overview" and "The highest model Kite notes's runs may use", and the Who merges dialog
+ * repeated it: the rows put "'s" after the project's name. A name is never made a possessive.
+ */
+describe("l3-small, run L3: a project's name is never made a possessive (L3-github-8)", () => {
+  it("'on the Overview of Kite trips' and 'the runs of Kite notes', never 'trips's' or 'notes's'", async () => {
+    const clock = new SimulatedClock("2026-11-15T06:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    const human = await store.human.insert({ name: "J", email: "j@example.test" });
+    const trips = await store.project.insert({ name: "Kite trips", repos: ["o/kite-trips"] });
+    const notes = await store.project.insert({ name: "Kite notes" });
+    const rows = settingsView({
+      human,
+      projects: [trips, notes],
+      chfPerUsd: 0.8,
+      providerName: "fake",
+      registryDir: "registry",
+      pricing: BUILTIN_PRICING,
+    });
+    const said = (key: string, scopeId: string) =>
+      rows.find((r) => r.key === key && r.scopeId === scopeId)?.description ?? "";
+    expect(said("project.merge_mode", trips.id)).toBe(
+      "You press Merge (each accepted task's pull request waits for your Merge on the Overview of Kite trips), or merge automatically after review (Forerunner merges it once the critic accepted it)",
+    );
+    expect(said("project.critic_ceiling", notes.id)).toBe(
+      "The highest model the runs of Kite notes may use: specialists, retries, planning and the critic (opus unless set; fable only when set here)",
+    );
+    for (const r of rows) expect(r.description, r.key).not.toMatch(/Kite (trips|notes)'s/);
+    await store.close();
+  });
+});

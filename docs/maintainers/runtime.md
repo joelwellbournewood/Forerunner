@@ -1111,7 +1111,15 @@ process runs is ended at once (`endDeadSession`, stop reason `stopped_after_task
 records each, in order, before the task ends: a model call adds its cost and one step to the
 session row (`SessionRepo.recordSpend`), a tool result adds one step and a `task.step` event
 with a short line (`stepLine`: "read index.html", "wrote styles.css", "ran node --check
-script.js: failed", "asked you a question (Inbox)"). The stream of `GET /sessions/:id/events`
+script.js: failed", "asked you a question (Inbox)"). A refused step carries the hook's code
+(`TaskStep.deniedCode`, from `tool_denied`) and its line says what was refused and why
+(`refusedLine`, run L3, live check 3, L3-run-7: before, every refusal read "was not allowed to
+use write file", beside the coder's other writes): "was not allowed to write
+/tmp/players-readme.json (outside the project's folder)", "was not allowed to read the web page
+example.com/x (not a site this task may read)", "was not allowed to use delete repo (not one of
+its tools)", "was not allowed to run npm publish without you" (autonomy), "…: you said no" (an
+approval refused), "could not write src/a.js: the call was not valid" (its input did not
+parse); a code it does not know reads "was not allowed to <what>". The stream of `GET /sessions/:id/events`
 sends the row as a `session.changed` frame whenever its steps, spend or status change, so the
 session page's steps and spend move during a run (before: "Steps 0 / 200" and "CHF 0.00" until
 the end). The end of the session still writes the ledger's total.
@@ -1867,7 +1875,13 @@ a sign-off without the questions. One card, three ways in:
   placeholder): the report's sentence that shares most words with the first question (the next
   question's when the first shares none), a sentence under "Not done / risks" or one that says
   something is missing, a placeholder or assumed weighing more; else the report's first
-  sentences (`quotedWords`), else the critic's summary. `ask_person` stores its `why`.
+  sentences (`quotedWords`), else the critic's summary. `ask_person` stores its `why`. The card
+  quotes it through `specialistReason` (`daemon/request-words.ts`, also the failed-task card's
+  "The <specialist> said: …"): no markdown and no findings tag before it (run L3, live check 3,
+  L3-research-3: a reviewer's "- **blocker**: `notes/plan.md` is missing." read 'The specialist
+  said: "blocker: notes/plan.md is missing."'); where a tag was taken off, a first word of
+  letters as a capital, never a file name or a word in code marks ("`npm test` fails" reads "npm
+  test fails"), and a reason with no tag keeps its own case (review of run L3).
 
 The card: kind `decision`, blocking, risk low, `steps` the questions, the one option
 `CANCEL_TASK_OPTION` ("Cancel the task"), `change_card` `{ key: "person_questions:<task>",
@@ -2767,8 +2781,9 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   refuses means the checks are not run (`evidence.notChecked` says why); without a sandbox port
   (an engine test world) they run as processes in the folder.
 - **The scripts as they were before the task** (L-5, ADR 0110). When the task changed
-  `package.json`, `scriptsBefore` reads its scripts from git (the folder's first `Workspace before
-  … (task <id>)` commit, else the merge base with `origin/HEAD`) and `projectChecks(root, before)`
+  `package.json`, `scriptsBefore` reads its scripts from git (the folder's first snapshot for the
+  task: an earlier version's `Workspace before … (task <id>)` commit, else `firstSnapshotRef`,
+  since run L3 the snapshot's message names no id; else the merge base with `origin/HEAD`) and `projectChecks(root, before)`
   runs a changed or removed `build` / `lint` / `typecheck` / `test` as it was (`npm exec -c
   "<script>"`, required, under its own name) and the changed one beside it as "<name> (as this
   task changed it)" (`CHANGED_SCRIPT_SUFFIX`, not required); the notes ("this task changed the
@@ -3016,7 +3031,8 @@ the next task started or the session ended (fixup-w15-words). Tests: `budget-pau
 verdict and read the session view, the project's line, the chat block and `currentFromLog` (no
 task in flight). The critic's diff of
 a project's folder whose session end committed the work is the task's files since its last
-"Workspace before ..." snapshot (`GitDiffPort.diffFor(..., { taskFiles })`), and its artifacts say
+"Workspace before ..." snapshot (`GitDiffPort.diffFor(..., { taskFiles })`; the snapshot is
+found by `snapshotRef`, else an earlier version's "(task <id>)" message, L3-run-11), and its artifacts say
 the review is of a run from an earlier session. Anything else (another attempt, a changed file, no
 worktree, a folder linked from the person's own computer, whose executor has no hook) runs the
 specialist again, as before. Test: `budget-pause.test.ts` 'w15-review, wave 15' (one coder run in
@@ -4116,7 +4132,13 @@ the note "kept in the app: no status pull request (Settings turns it on)"). `set
 status_pull_request` (`SETTING_SPECS`, low risk, a `project.status_pull_request` row in
 `GET /settings` only for a project on a host repository, `parseRepoRef` of `repos[0]` and not an absolute path, since a linked local folder opens no pull request) turns the following on. With a
 repository and the setting on it is committed as `docs: status after the session started <time>` (W15-08: the
-session by its start time, `sessionWords`, never its id) on Forerunner's own status
+session by its start time, `sessionWords`, never its id; since run L3 the file's own entry too:
+`writeSessionStatus` passes the session's `started_at` as the update's `startedAt`, so the entry
+reads `### Session started 2026-11-15 05:46 UTC`, and the runner's `note` says how it ended in
+the Sessions list's words, `endedStatusText` and the spend, "Done. Spent CHF 0.24." or "Ended: 1
+task needs you. Spent CHF 0.09."; before, GitHub's Files changed and the Docs tab showed `###
+2026-11-15 session <id>` and "Note: stop reason completed; spent CHF 0.09", live check 3,
+L3-github-6) on Forerunner's own status
 branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status",
 its body ending in the project's hidden mark `docsPrMarker`, `<!-- forerunner:pr project=<id> -->`):
 a later session adds its commit to the open PR and comments the entry on it; once the PR is
@@ -4139,8 +4161,10 @@ and the status commit pushed onto it after the review put a file the critic neve
 reviewed PR (GitHub walk, 2026-11-02). A repository without `docs/status.md` gets it scaffolded
 in the same commit. Without a repository the file in the project's folder is updated and the
 session's work is committed with it (`statusInFolder`: "Did "<task>", …", after a `.gitignore`
-for caches when the folder has none; `commit` on the outcome), since the executor commits only a
-baseline before each run and the last task's files stayed uncommitted (live, 2026-11-02). Every
+for caches when the folder has none; `commit` on the outcome; its body is "Committed by Forerunner
+at the end of the session started <YYYY-MM-DD HH:MM> UTC." by `sessionWords`, never the session's
+id or a raw instant, since plain `git log` shows it to the person: L3-run-11, review of run L3),
+since the executor commits only a baseline before each run and the last task's files stayed uncommitted (live, 2026-11-02). Every
 docs write on a repository first makes sure the default branch exists (`ensureBaseBranch`, ADR
 0106): an empty repository gets the doc set as its first commit there (`scaffoldProject`
 answers `firstCommit: true`, `branch` the default branch, no PR; `summary_cache.docs.first_commit`).
@@ -4350,7 +4374,8 @@ in one project cancelled a task in another. Now:
   <project>` (every task in run order, at most `CONTEXT_TASKS_MAX` by name, each with its status
   in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,
   who does it, the critic's last word and the first thing it still asks for (an open finding's
-  required action); `sandboxReady` from the daemon for "Waiting for Docker"), `# Last session` (the engine's `summary_cache.last_session`: the result, then done,
+  required action, or what it found when the critic named no fix: `findingAsk`, review of run L3,
+  L3-research-3); `sandboxReady` from the daemon for "Waiting for Docker"), `# Last session` (the engine's `summary_cache.last_session`: the result, then done,
   failed with the reason, needs you, not reached, waiting for Docker, how it ended in words
   (`stopWords`: "How it ended: Stopped by you.", nothing when it ran out of work; phase E:
   before, the raw reason, "Ended because: plan awaiting approval"), the spend,
@@ -5813,7 +5838,9 @@ words (`ACTION_WORDS`: "Pause", "Go ahead without"), so Changes never shows an a
 `GET /tasks/:id` is the task drawer (`TaskDetailView`, `taskDetail` in
 `daemon/task-display.ts`): what it waits for and what waits on it, its runs, the critic's last
 review in a sentence (`reviewSentence`), the open findings (each once, however many reviews
-raised it), its open cards (`plainReason`: the retry card's text reads ""X" failed 4 times",
+raised it; a finding the critic named no fix for by what it found, never "Resolve it and show the
+evidence": `findingAsk`, review of run L3, L3-research-3), its open cards (`plainReason`: the
+retry card's text reads ""X" failed 4 times",
 "2 question(s)" reads "2 questions"). Each run has `kind`: `work` (a specialist's run) or
 `review` (the critic's run, `specialist: "critic"`, whose words are under `review`; it carries
 no report or files). A work run's report and files come from its session's log: the runner
@@ -5855,7 +5882,11 @@ budget (0 means no budget, the row says so, later #43), the budget per session (
 highest model (`critic_ceiling`), small-project mode, the handover test, fast mode and the
 speed-versus-quality slider. Two stored settings no run reads yet are listed as information
 and say so (validation rule 7): the language (`locale`) and the review reserve
-(`session_reserve_share`; sessions keep 20%).
+(`session_reserve_share`; sessions keep 20%). A row's description never makes the project's
+name a possessive: "the runs of Kite notes may use", "waits for your Merge on the Overview of
+Kite trips" (run L3, live check 3, L3-github-8: "Kite trips's Overview", "Kite notes's runs",
+and the change dialog repeats the row's description; `settings-undo-routes.test.ts` and the
+UI's `settings-all.test.tsx`, "l3-small, run L3").
 
 **This PC as the paired device (ADR 0030; the P1 of the 2026-10-23 triage).** A high-risk
 card (`needs_device`) from the desktop app is confirmed on the desktop's own device row: the
@@ -6598,11 +6629,21 @@ of a dependency, from `personAnswersOn` in `person-questions.ts`, said to be the
 answers with the decision record they are also in, "do not ask the person these questions
 again"; before, the next task's coder asked the same seven questions again because its brief
 held only the plan's promise for the person's task), `## The previous attempt`
-(the last worker run's report, or "It failed: <the error in words>"), `## The person's note on
-this task` (the words of the person's newest change-log row naming the task) and `## Note for
+(the last worker run's report, or "It failed: <the error in words>") and `## Note for
 this session (from the person)` (`SessionStartOptions.note`, from the Start dialog through
 `POST /sessions` `note` and `StartRequest.note`; also on the session's handoff). Everything quoted
-is data. The run row's `artifacts` keep `{ report }` (the redacted final text, cut to 1,500
+is data. The person's notes on the task are not a section of the block: a note typed with an
+action ("Note for the agent (optional)") is queued by the command as a note that names the task
+(`taskNoteText`) and reaches the brief once, under "Left for this session by the human"
+(`renderQueueNotes`), used up by the work that finished (design §4.7). Until run L3 a section
+`## The person's note on this task` quoted the newest change-log row's `words_used` naming the
+task, and for a change made in the app that is the button's label when nothing was typed: the
+coder read '"Redo"' and '"Edit Write the kite guide in kite/guide/"' as the person's words, and a
+typed note came twice and never ran out (live check 3, L3-github-4; `brief-person-note.test.ts`
+drives Redo, Edit, Stop and Resume through the routes). With the section gone, an agent's own
+command turn, which records the person's `human_id` beside its words, cannot reach a brief as
+the person's note either. The run row's
+`artifacts` keep `{ report }` (the redacted final text, cut to 1,500
 characters) or `{ error }` (the error in words) for that. `retryConstraints` writes "the brief
 was improved with the critic's findings below" only when findings follow; a first retry
 without findings points to the previous attempt instead. A run that ended on an error is

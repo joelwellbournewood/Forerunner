@@ -245,7 +245,8 @@ export function settingsView(input: SettingsViewInput): Row[] {
           key: "project.critic_ceiling",
           label: "Highest model",
           value: typeof p.settings.critic_ceiling === "string" ? p.settings.critic_ceiling : null,
-          description: `The highest model ${p.name}'s runs may use: specialists, retries, planning and the critic (${DEFAULT_CEILING} unless set; fable only when set here)`,
+          // A project's name is never made a possessive ("Kite notes's runs", L3-github-8).
+          description: `The highest model the runs of ${p.name} may use: specialists, retries, planning and the critic (${DEFAULT_CEILING} unless set; fable only when set here)`,
           risk: "medium",
         }),
         project({
@@ -292,7 +293,7 @@ export function settingsView(input: SettingsViewInput): Row[] {
                 key: `project.${MERGE_MODE_SETTING}`,
                 label: "Who merges accepted work",
                 value: mergeModeOf(p.settings),
-                description: `${MERGE_MODE_WORDS.you} (each accepted task's pull request waits for your Merge on ${p.name}'s Overview), or ${MERGE_MODE_WORDS.after_review.toLowerCase()} (Forerunner merges it once the critic accepted it)`,
+                description: `${MERGE_MODE_WORDS.you} (each accepted task's pull request waits for your Merge on the Overview of ${p.name}), or ${MERGE_MODE_WORDS.after_review.toLowerCase()} (Forerunner merges it once the critic accepted it)`,
                 risk: "medium",
               }),
             ]

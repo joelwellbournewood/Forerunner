@@ -713,6 +713,24 @@ export function wipRef(taskId: string): string {
   return `refs/forerunner/wip/${safeSegment(taskId)}`;
 }
 /**
+ * A task's last snapshot in a project's folder ("Workspace before ..."), and its first one (the
+ * folder as it was before the task): refs of Forerunner's own, which the critic's diff and the
+ * project's checks read (l3-small, run L3; live check 3, L3-run-11). The commit names the task by
+ * its title only; before, its message carried "(task <id>)" for those lookups, and git log in
+ * the person's folder showed the id once per attempt. A folder an earlier version wrote keeps
+ * its "(task <id>)" commits, which the lookups still read.
+ */
+export function snapshotRef(taskId: string): string {
+  return `refs/forerunner/before/${safeSegment(taskId)}`;
+}
+export function firstSnapshotRef(taskId: string): string {
+  return `refs/forerunner/first/${safeSegment(taskId)}`;
+}
+/** The subject of a task's snapshot commit: its title, never its id (L3-run-11). */
+export function snapshotSubject(task: Pick<TaskRow, "title">): string {
+  return `Workspace before "${task.title.replace(/\s+/g, " ").trim()}"`;
+}
+/**
  * TM-3 (leftovers7-tailmerge): set beside `wipRef` when the work in progress was made by a run
  * that started from the base after the person dropped the branch ("Drop the branch and retry
  * from scratch", a card's Redo): the next run continues it, never the dropped branch, and its
@@ -827,7 +845,8 @@ export function workInProgressMessage(
 /** The task whose run built on a work-in-progress commit, from the subjects after it. */
 function builtOnBy(subjects: readonly string[]): string | null {
   for (const s of [...subjects].reverse()) {
-    const before = /^Workspace before "(.*)" \(task [^)]*\)$/.exec(s);
+    // An earlier version's subject ended in "(task <id>)" (L3-run-11).
+    const before = /^Workspace before "(.*)"(?: \(task [^)]*\))?$/.exec(s);
     if (before) return before[1] ?? "another task";
     if (s.startsWith(WIP_SUBJECT))
       return s.slice(WIP_SUBJECT.length).replace(/ \([^)]*\)$/, "") || "another task";
@@ -1618,7 +1637,7 @@ export class PrTaskExecutor implements TaskExecutor {
     try {
       const files = await git.setAside(
         failedRef(task.id),
-        `Left by a failed run of "${task.title.replace(/\s+/g, " ").trim()}" (task ${task.id})`,
+        `Left by a failed run of "${task.title.replace(/\s+/g, " ").trim()}"`,
       );
       if (files.length)
         this.logger.info("a failed run's leftovers were set aside", {
@@ -2476,7 +2495,7 @@ export class PrTaskExecutor implements TaskExecutor {
       ? await this.gitFor(target, dir)
       : new GitOps({ cwd: dir, identity: this.deps.identity ?? WORKSPACE_IDENTITY });
     if (!(await git.hasCommits())) return { files: [], kept: null };
-    const message = `Set aside: "${task.title}" was cancelled (task ${task.id})`;
+    const message = `Set aside: "${task.title}" was cancelled`;
     const files = new Set(await git.setAside(setAsideRef(task.id), message));
     const marker = await git.resolveRef(wipRef(task.id));
     if (marker && target) {
@@ -2515,10 +2534,7 @@ export class PrTaskExecutor implements TaskExecutor {
     const title = task.title.replace(/\s+/g, " ").trim();
     const files = new Set(
       running
-        ? await git.setAside(
-            setAsideRef(task.id),
-            `Set aside: "${task.title}" was cancelled (task ${task.id})`,
-          )
+        ? await git.setAside(setAsideRef(task.id), `Set aside: "${task.title}" was cancelled`)
         : [],
     );
     const marker = await git.resolveRef(wipRef(task.id));
@@ -2526,11 +2542,9 @@ export class PrTaskExecutor implements TaskExecutor {
     const later = (await git.isAncestor(marker)) ? await git.subjectsBetween(marker) : null;
     const builtOn = later === null ? "another task" : builtOnBy(later);
     if (builtOn) return { files: [...files].sort(), kept: `"${builtOn}" built on it` };
-    const taken = await git.applyCommitted(
-      marker,
-      `Set aside: "${title}" was cancelled (task ${task.id})`,
-      { reverse: true },
-    );
+    const taken = await git.applyCommitted(marker, `Set aside: "${title}" was cancelled`, {
+      reverse: true,
+    });
     if (!taken.ok) return { files: [...files].sort(), kept: "its files changed since" };
     await git.setRef(setAsideWipRef(task.id), marker);
     await git.setRef(wipRef(task.id), null);
@@ -2616,7 +2630,7 @@ export class PrTaskExecutor implements TaskExecutor {
         error: errorMessage(e),
       }),
     );
-    const before = `Workspace before "${task.title}" (task ${task.id})`;
+    const before = snapshotSubject(task);
     // budget-resume: the task's own work in progress (its pause's commit), while no later task
     // built on it, stays out of this snapshot: its files go back into this run's change set, so
     // the critic reviews the whole work. Otherwise the snapshot takes everything, as before.
@@ -2627,12 +2641,18 @@ export class PrTaskExecutor implements TaskExecutor {
     const othersPaused = (await git.hasCommits())
       ? (await git.refsUnder("refs/forerunner/wip/")).length > 0
       : false;
-    if (keepOut)
-      await git.commitAllExcept(
-        `${before}\n\nIts work in progress (${keepOut.files.slice(0, 5).join(", ")}${keepOut.files.length > 5 ? ", ..." : ""}) is kept out of this snapshot: its review reads the whole work.`,
-        keepOut,
-      );
-    else await git.commitAll(before, { allowEmpty: othersPaused || !(await git.hasCommits()) });
+    const snapshot = keepOut
+      ? await git.commitAllExcept(
+          `${before}\n\nIts work in progress (${keepOut.files.slice(0, 5).join(", ")}${keepOut.files.length > 5 ? ", ..." : ""}) is kept out of this snapshot: its review reads the whole work.`,
+          keepOut,
+        )
+      : await git.commitAll(before, { allowEmpty: othersPaused || !(await git.hasCommits()) });
+    // L3-run-11: the snapshot is found by its ref, as its "(task <id>)" message found it before.
+    if (snapshot.committed) {
+      await git.setRef(snapshotRef(task.id), snapshot.sha);
+      if (!(await git.hasRef(firstSnapshotRef(task.id))))
+        await git.setRef(firstSnapshotRef(task.id), snapshot.sha);
+    }
     const inner = this.deps.inner.withWorktree
       ? this.deps.inner.withWorktree(dir)
       : this.deps.inner;

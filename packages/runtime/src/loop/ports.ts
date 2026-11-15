@@ -406,7 +406,7 @@ export interface SessionStatusUpdate {
   inFlight: string[];
   blocked: string[];
   next: string[];
-  /** One line: the stop reason, the spend. */
+  /** One line in words: how the session ended and what it spent ("Done. Spent CHF 0.24."). */
   note?: string;
 }
 

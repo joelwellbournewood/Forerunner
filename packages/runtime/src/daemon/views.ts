@@ -1211,10 +1211,12 @@ export function findingView(f: FindingRow): FindingView {
     // phase E #80: the session check's findings read "1 of the 2 task(s)"). The row keeps the
     // critic's own text, which the fingerprints are computed from.
     description: plainPlurals(withoutIds(f.description)),
-    // L-13e: a note the critic gave no fix for (an info finding, filled with NO_ACTION_GIVEN)
-    // shows no "To fix" line under it.
+    // L-13e: a finding the critic gave no fix for (filled with NO_ACTION_GIVEN for the retry
+    // brief) shows no "To fix" line under it, whatever its severity (l3-small, run L3; live
+    // check 3, L3-research-3: a critical finding read "To fix: Resolve it and show the
+    // evidence", which tells the person nothing to do).
     requiredAction:
-      f.severity === "info" && f.required_action.trim() === NO_ACTION_GIVEN
+      f.required_action.trim() === NO_ACTION_GIVEN
         ? ""
         : plainPlurals(withoutIds(f.required_action)),
     status: f.status,

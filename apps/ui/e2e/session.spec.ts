@@ -54,10 +54,14 @@ test("start a session from the project page and watch the live view fill over SS
   await expect(page.getByTestId("steps")).toHaveText("6");
   await expect(page.getByTestId("session-spend")).toContainText("CHF 3.60");
 
-  // Details: the detail events, the event types, the level filters and the raw payloads.
+  // Details: the detail events in words and the level filters; the event types and the raw
+  // payloads only behind "Show the raw events" (l3-small, run L3, L3-run-12).
   await page.getByTestId("details-toggle").check();
   await expect(page.getByTestId("event-row")).toHaveCount(6);
   await expect(page.getByTestId("event-log")).toContainText("read docs/versioning.md");
+  await expect(page.getByTestId("event-type")).toHaveCount(0);
+  await expect(page.getByTestId("event-raw")).toHaveCount(0);
+  await page.getByTestId("raw-toggle").check();
   await expect(page.getByTestId("event-type").first()).toHaveText("session.started");
   await page.getByTestId("filter-info").click();
   await expect(page.getByTestId("event-row")).toHaveCount(2);

@@ -3937,7 +3937,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         scope: "project",
         scopeId: p.id,
         value: mergeModeOfFake(p.id),
-        description: `You press Merge (each accepted task's pull request waits for your Merge on ${p.name}'s Overview), or merge automatically after review (Forerunner merges it once the critic accepted it)`,
+        description: `You press Merge (each accepted task's pull request waits for your Merge on the Overview of ${p.name}), or merge automatically after review (Forerunner merges it once the critic accepted it)`,
         risk: "medium",
       });
       rows.push({
@@ -5779,7 +5779,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
             oldValue: "",
             newValue: text,
             scope: "project",
-            sentence: `Added a note to ${project.name}'s next session. Undo.`,
+            // As note.add words it (commands/note.ts): no possessive of the project's name
+            // (L3-github-8's sibling; review of run L3).
+            sentence: `Noted for the next session on ${project.name}: "${text.replace(/\s+/g, " ").trim().slice(0, 80)}". Undo.`,
             projectId: project.id,
             projectName: project.name,
           },

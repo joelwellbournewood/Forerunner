@@ -1406,6 +1406,8 @@ export class LoopTaskExecutor implements TaskExecutor {
           input: call?.input,
           isError: ev.type === "tool_denied" || ev.isError,
           denied: ev.type === "tool_denied",
+          // L3-run-7: the step line says what was refused and why, from the hook's code.
+          ...(ev.type === "tool_denied" ? { deniedCode: ev.code } : {}),
         });
       }
     };

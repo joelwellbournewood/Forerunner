@@ -120,15 +120,41 @@ const prNumberOf = (t: TaskRow): number | null => {
   return m ? Number(m[1]) : null;
 };
 
+/** Tasks of one title from the oldest: the order their age words follow. */
+const oldestFirst = (tasks: readonly TaskRow[]): TaskRow[] =>
+  [...tasks].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+
+/** A task's state as a same-title tag says it: "done", "paused", "draft". */
+const stateTag = (t: TaskRow): string => statusWords(t.status).replace(/^a /, "");
+
+const ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"];
+
+/** The age word of the `i`th oldest of `n` same-titled tasks, and the words that pick it. */
+function ageTag(i: number, n: number): { word: string; says: RegExp } {
+  const word = n === 2 ? (i === 0 ? "older" : "newer") : (ORDINALS[i] ?? `number ${i + 1}`);
+  const also =
+    n === 2
+      ? i === 0
+        ? "|oldest|first|1st"
+        : "|newest|latest|last|second|2nd"
+      : i === 0
+        ? "|oldest|1st"
+        : i === n - 1
+          ? "|newest|latest|last"
+          : "";
+  return { word, says: new RegExp(`^(?:${word}${also})$`) };
+}
+
 /**
- * What tells tasks with one title apart (W15-37), as the person reads it and says it back:
- * their pull requests ("#17"), else their states ("the done one"), else their age ("the older
- * one", "the first one"); each with the words that pick it.
+ * What tells tasks with one title apart (W15-37), as the person reads it in a refusal and says
+ * it back: their pull requests ("#17"), else their states ("the done one"), else their age ("the
+ * older one", "the first one"); each with the words that pick it. The refusal names one kind;
+ * `sameTitlePickers` decides what a word picks.
  */
-function sameTitleTags(tasks: readonly TaskRow[]): { task: TaskRow; tag: string; says: RegExp }[] {
-  const byAge = [...tasks].sort(
-    (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id),
-  );
+export function sameTitleTags(
+  tasks: readonly TaskRow[],
+): { task: TaskRow; tag: string; says: RegExp }[] {
+  const byAge = oldestFirst(tasks);
   const prs = byAge.map(prNumberOf);
   if (prs.every((n) => n !== null) && new Set(prs).size === prs.length)
     return byAge.map((task, i) => ({
@@ -136,33 +162,56 @@ function sameTitleTags(tasks: readonly TaskRow[]): { task: TaskRow; tag: string;
       tag: `#${prs[i]}`,
       says: new RegExp(`^#?${prs[i]}$`),
     }));
-  const states = byAge.map((t) => statusWords(t.status).replace(/^a /, ""));
+  const states = byAge.map(stateTag);
   if (new Set(states).size === states.length)
     return byAge.map((task, i) => ({
       task,
       tag: `the ${states[i]} one`,
       says: new RegExp(`^${states[i]}$`),
     }));
-  const ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"];
   return byAge.map((task, i) => {
-    const word =
-      byAge.length === 2 ? (i === 0 ? "older" : "newer") : (ORDINALS[i] ?? `number ${i + 1}`);
-    const also =
-      byAge.length === 2
-        ? i === 0
-          ? "|oldest|first|1st"
-          : "|newest|latest|last|second|2nd"
-        : i === 0
-          ? "|oldest|1st"
-          : i === byAge.length - 1
-            ? "|newest|latest|last"
-            : "";
-    return { task, tag: `the ${word} one`, says: new RegExp(`^(?:${word}${also})$`) };
+    const age = ageTag(i, byAge.length);
+    return { task, tag: `the ${age.word} one`, says: age.says };
   });
 }
 
+/**
+ * The words that pick each of several same-titled tasks (l3-small, run L3; live check 3,
+ * L3-run-6): every kind of tag that tells it apart from the others, not only the kind a refusal
+ * names now. Its pull request ("#17") when no other task of the group has that number, its
+ * state ("paused") when no other is in that state, and its age ("older", "first") always. So a
+ * word the app offered keeps picking its task after a pause, a pull request or a state change:
+ * before, "Write the guide (the older one)" was refused as soon as the older one was paused,
+ * since the tags had become "the paused one" and "the ready one". The kinds' words never
+ * overlap (a number, a state, an age), so one word picks at most one task of each kind.
+ */
+export function sameTitlePickers(tasks: readonly TaskRow[]): { task: TaskRow; says: RegExp[] }[] {
+  const byAge = oldestFirst(tasks);
+  const prs = byAge.map(prNumberOf);
+  const states = byAge.map(stateTag);
+  const once = <T>(all: readonly T[], v: T) => all.filter((x) => x === v).length === 1;
+  return byAge.map((task, i) => {
+    const pr = prs[i] ?? null;
+    const state = states[i] as string;
+    return {
+      task,
+      says: [
+        ...(pr !== null && once(prs, pr) ? [new RegExp(`^#?${pr}$`)] : []),
+        ...(once(states, state) ? [new RegExp(`^${state}$`)] : []),
+        ageTag(i, byAge.length).says,
+      ],
+    };
+  });
+}
+
+/** The one task of a same-titled group that `word` picks, else undefined (none, or several). */
+export function pickSameTitled(tasks: readonly TaskRow[], word: string): TaskRow | undefined {
+  const hit = sameTitlePickers(tasks).filter((p) => p.says.some((r) => r.test(word)));
+  return hit.length === 1 ? hit[0]?.task : undefined;
+}
+
 /** The words that pick one of several same-titled tasks: "#17", "the done one", "older". */
-function pickWord(rest: string): string {
+export function pickWord(rest: string): string {
   return rest
     .toLowerCase()
     .replace(/^[\s,;:.()\-–—]+|[\s,;:.()\-–—]+$/g, "")
@@ -201,7 +250,8 @@ async function findTask(
   const tasks = await ctx.store.task.forProject(project.id);
   const needle = params.task.trim().toLowerCase();
   // W15-37: tasks of one title are told apart by a word after it ("Write the guide #17",
-  // "Write the guide, the done one"), the words the refusal below gives.
+  // "Write the guide, the done one"), the words the refusal below gives; any kind of word that
+  // tells them apart picks one, so a refusal's word still works once they change (L3-run-6).
   const said = sameTitle(params.task);
   const titled = tasks.filter(
     (t) => said.startsWith(sameTitle(t.title)) && said.length > sameTitle(t.title).length,
@@ -209,10 +259,8 @@ async function findTask(
   const longest = Math.max(0, ...titled.map((t) => sameTitle(t.title).length));
   const group = titled.filter((t) => sameTitle(t.title).length === longest);
   if (group.length > 1) {
-    const word = pickWord(said.slice(longest));
-    const tags = sameTitleTags(group);
-    const hit = tags.filter((t) => t.says.test(word));
-    if (hit.length === 1) return (hit[0] as { task: TaskRow }).task;
+    const picked = pickSameTitled(group, pickWord(said.slice(longest)));
+    if (picked) return picked;
   }
   const matches = tasks.filter((t) => t.title.toLowerCase().includes(needle));
   if (matches.length === 1) return matches[0] as TaskRow;

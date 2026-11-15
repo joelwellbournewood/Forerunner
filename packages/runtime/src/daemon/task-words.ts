@@ -229,6 +229,38 @@ export function plainReason(reason: string, max = 100): string {
 }
 
 /**
+ * What an open finding still asks for, as the person (and the chat) reads it: the fix the critic
+ * named, or what it found when it named none. The critic's code fills an unnamed fix with
+ * `NO_ACTION_GIVEN` ("Resolve it and show the evidence") for the retry brief; shown to a person it
+ * says nothing to do (l3-small, run L3; live check 3, L3-research-3; the task drawer's Review list
+ * and the chat's `# Tasks` line, siblings of `findingView`).
+ */
+export function findingAsk(f: { required_action: string; description: string }): string {
+  const action = f.required_action.trim();
+  return action && action !== NO_FIX_NAMED ? action : f.description;
+}
+
+/**
+ * The critic's `NO_ACTION_GIVEN`, as its words: not imported, since the UI's tests read this
+ * module and the critic package brings the state store with it (node:sqlite); a runtime test
+ * pins the two equal (conversation-memory.test.ts, 'l3-small, run L3').
+ */
+export const NO_FIX_NAMED = "Resolve it and show the evidence";
+
+/**
+ * A card's step that lists a finding without the placeholder fix: "[high] x -> Resolve it and
+ * show the evidence" and the critic's retry card's "[high] x: Resolve it and show the evidence"
+ * read "[high] x" (l3-small, run L3, L3-research-3). Steps are stored when the card is filed, so
+ * a card filed before this reads the same after an update.
+ */
+export function withoutNoActionGiven(step: string): string {
+  const tail = ` ${NO_FIX_NAMED}`;
+  for (const sep of [" ->", ":"])
+    if (step.endsWith(`${sep}${tail}`)) return step.slice(0, -`${sep}${tail}`.length).trimEnd();
+  return step;
+}
+
+/**
  * Which kind of card holds a task (design §2, §3.8): `retry`, the decision after its tries
  * (Try again, Mark done anyway, Cancel task: the critic's retry card, a failed run, a blocked or
  * failed review); `signoff`, the person's sign-off on accepted work (a deploy, a migration:

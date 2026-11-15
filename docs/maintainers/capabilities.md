@@ -247,9 +247,16 @@ with their milestone.
   report as plain text, `plainReport`, L-19); a second run on the same task updates the PR.
   No commit body that is pushed names the task by its id (W15B-13: the task's commit, the
   work-in-progress commit `workInProgressMessage` and the brought-back one; before: "Task
-  <uuid>."): the title is the subject. Subjects and markers code reads stay as they are
-  (`WIP_SUBJECT`, "Workspace before \"...\" (task <id>)" and the set-aside subjects, on refs
-  kept on this computer; `builtOnBy`, `loop/critic.ts` and `loop/project-checks.ts` read them).
+  <uuid>."): the title is the subject. Since run L3 no commit in the person's folder does
+  either (live check 3, L3-run-11: git log read 'Workspace before "..." (task 01a1ddb7-…)' once
+  per attempt): the snapshot is `snapshotSubject`, 'Workspace before "<title>"', and the
+  set-aside and failed-run leftovers are 'Set aside: "<title>" was cancelled' and 'Left by a
+  failed run of "<title>"'. What code found by the id in the message it finds by refs of its own:
+  `snapshotRef` (`refs/forerunner/before/<task>`, the task's last snapshot, which
+  `loop/critic.ts`'s diff of kept work reads) and `firstSnapshotRef` (`refs/forerunner/first/
+  <task>`, the folder before the task, which `loop/project-checks.ts`'s `scriptsBefore` reads),
+  set when the snapshot commit is made. A folder an earlier version wrote keeps its "(task <id>)"
+  commits, which both lookups still read (`builtOnBy` reads both subjects; `WIP_SUBJECT` as before).
   A run that changed no file fails with "The run changed no file. It reported: …" in plain words
   (`emptyChangeSummary`, L-18, polish-words; before, the raw report and "(no changes were made in
   the worktree)"), with only the report's first sentence, cut at a word past 160 characters: two

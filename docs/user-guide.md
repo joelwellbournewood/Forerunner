@@ -143,7 +143,10 @@ them as you left them; an open file or task stays on its own tab.
   project.
 - **Files**: the project's folder on this computer (its own folder, the folder you linked, or
   this computer's copy of its repository as merged: work still in a pull request is on the
-  Overview) as a list with sizes and when each file changed.
+  Overview) as a list with sizes and when each file changed. A project without a repository
+  keeps its folder's history in git: `git log` there shows 'Workspace before "<task>"' before
+  each run and, at the end of each session, 'Did "<task>"' with "Committed by Forerunner at the
+  end of the session started 2026-11-15 12:09 UTC.", never an id.
   Click a file to read it here (text files; nothing can be changed from this tab). **Open
   folder** (desktop app) opens it in your file manager; **Copy path** copies where it is. Until
   the work writes something it says "Nothing written yet". For a repository project the line on
@@ -236,7 +239,11 @@ them as you left them; an open file or task stays on its own tab.
   If you quit Forerunner while a task is **Being reviewed**, it reads **Ready** when you open it
   again, the Inbox's Update names it ("… is ready again"), and the next **Start** runs and
   reviews it. Every action asks for an optional **note for the agent**, which goes into the task's
-  next brief (for a cancelled task, once you reopen it), and has one **Undo** right after it
+  next brief once (for a cancelled task, once you reopen it); with the field left empty the
+  agent is told nothing (the button you pressed is not passed on as your words). Two tasks with
+  the same title are named apart in Chat by what tells them apart: "Write the guide #17", "Write
+  the guide (the paused one)" or "(the older one)"; a word Chat gave you keeps working after the
+  task is paused or gets its pull request. Every action has one **Undo** right after it
   that puts the task back as it was, its card in the Inbox included; each is listed in
   Changes. Click a task's title to open it: what done looks like and the criteria, what it
   waits for and what waits on it, its runs (who ran each one, with **Open the session**, that
@@ -273,8 +280,9 @@ them as you left them; an open file or task stays on its own tab.
   records in docs/decisions.
 - **Reviews** (under More): the critic's verdict on each task in words ("accepted", "sent
   back"), its grade in the verdict's colour, and what is still to fix, counted once per task (a
-  task that is done has nothing open). The critic's evidence is under **Details**; its check of
-  each session's summary is folded under **Session checks**. The "review" link in a task's
+  task that is done has nothing open). A finding the critic named no fix for shows what it found
+  and no "To fix" line, here, in the task's drawer and on the cards. The critic's evidence is
+  under **Details**; its check of each session's summary is folded under **Session checks**. The "review" link in a task's
   drawer opens its review highlighted.
 - **Costs** (under More): spend by model, specialist and task, in CHF, with the savings from
   caching and context compression (a kind that saved nothing is not listed, and a project that
@@ -357,8 +365,9 @@ repository just created on GitHub, with nothing in it, gets a first commit from 
 default branch (the project's docs, or a README), so its tasks have something to start from; if
 that cannot be done, the task says so ("… is empty and Forerunner could not make its first commit
 …") and what to do. The project's status file (`docs/status.md`) stays in the app: each
-session's update is under **Docs**, Status ("kept in the app"), and no pull request is opened
-for it. After every merge (in the app or on GitHub) and at the end of each session Forerunner
+session's update is under **Docs**, Status ("kept in the app"), named by when the session
+started ("Session started 2026-11-15 05:46 UTC") with how it ended and what it spent ("Done.
+Spent CHF 0.09."), and no pull request is opened for it. After every merge (in the app or on GitHub) and at the end of each session Forerunner
 brings this computer's copy of the repository up to date, so **Docs** and **Files** show what
 is merged on GitHub, including what you merged a minute ago. To have it on GitHub instead, turn on **Status pull request** for the project (Settings,
 Advanced, Other settings): each session then adds its update to one pull request of its own,
@@ -618,9 +627,11 @@ needs something I do not have here". Trying again." and how it ended ("Session o
 needs you. CHF 0.06."). A task the critic sends back is tried again in the same session; each
 try is one line, and "The writer takes over …" says when another specialist tries it; the lines
 after it name that specialist, including "The writer could not do …" when its own try fails too. **Details**
-adds the internal steps (the brief, memory, each tool call, each start and finish of a retry, the
-notifications sent), each line's event type, the level filters and the raw output; escalations
-are highlighted. The page's title says when the session began ("Quote page · session at
+adds the internal steps in words (the brief, memory, each tool call, each start and finish of a
+retry, the notifications sent) and the level filters; escalations are highlighted. Under it,
+**Show the raw events** adds each line's event type and the raw data the app records, for a bug
+report. A step that was refused says what and why: "was not allowed to write
+/tmp/players-readme.json (outside the project's folder)". The page's title says when the session began ("Quote page · session at
 14:05"); every time on it is written in 24 hours, the log's too. While it runs, a badge says
 how the page follows it: **Live**, or **Updates every 5 s** when live updates do not work in
 this window. A session that has ended shows its status only: its log is complete and the page

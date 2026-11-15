@@ -17,8 +17,9 @@ import { isPersonTask, personAnswersOn } from "./person-questions.ts";
  * and the decision record are), what the task waited on (each dependency's title, its result in
  * one line and the files it changed, and the person's answers to the questions asked on it),
  * the previous attempt (its report, or the error that
- * stopped it), the person's latest note on the task and the note for this session. Everything
- * quoted from the person or an earlier run is data, never instructions.
+ * stopped it) and the note for this session. The person's notes on the task come with the
+ * queued notes that name it (`renderQueueNotes`, after this block). Everything quoted from the
+ * person or an earlier run is data, never instructions.
  */
 
 /** Longest quote of the person's brief, an earlier report or a note. */
@@ -121,27 +122,6 @@ async function filesOf(store: StateStore, taskId: string, sessionId: string): Pr
 async function workerRuns(store: StateStore, taskId: string) {
   const runs = (await store.run.forTask(taskId)).filter((r) => r.specialist !== "critic");
   return runs.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
-}
-
-/** The person's newest note on a task: the words of the newest change they made to it. */
-async function personNoteOn(
-  store: StateStore,
-  task: Pick<TaskRow, "id" | "project_id">,
-): Promise<string | null> {
-  if (!task.project_id) return null;
-  const rows = await store.changeLog.forProject(task.project_id, { limit: 200 });
-  for (const row of rows) {
-    if (!row.human_id || row.undo_state === "undone") continue;
-    const commands = Array.isArray(row.commands) ? row.commands : [];
-    const names = commands.some((c) => {
-      const params = (c as { params?: Record<string, unknown> } | null)?.params ?? {};
-      return params.task === task.id || params.taskId === task.id || params.id === task.id;
-    });
-    if (!names) continue;
-    const words = (row.words_used ?? "").trim();
-    if (words) return words;
-  }
-  return null;
 }
 
 /** The heading of the section a paused task's next run starts from (budget-resume). */
@@ -263,9 +243,11 @@ export async function taskContextBlock(
         : "";
     if (said) out.push("## The previous attempt", said);
   }
-  const personNote = await personNoteOn(store, task);
-  if (personNote)
-    out.push("## The person's note on this task", JSON.stringify(quote(personNote, 500)));
+  // The person's notes on the task are not a section of their own (l3-small, L3-github-4): a
+  // note typed with an action reaches the brief once, as the queued note that names the task
+  // (`renderQueueNotes`), used up by work that finished (design §4.7). Before, the newest change
+  // log row's `words_used` was quoted here as "The person's note on this task", and for a change
+  // made in the app that is the button's label when nothing was typed ("Redo", "Edit <title>").
   if (opts.sessionNote?.trim())
     out.push(
       "## Note for this session (from the person)",

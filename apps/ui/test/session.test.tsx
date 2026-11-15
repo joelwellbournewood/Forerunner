@@ -69,6 +69,9 @@ describe("Live session view", () => {
     await user.click(screen.getByTestId("details-toggle"));
     await waitFor(() => expect(screen.getAllByTestId("event-row")).toHaveLength(rows.length + 1));
     expect(log).toHaveTextContent("Memory: 3 lessons, 429 of 1500 tokens.");
+    // L3-run-12: Details is in words; the type names are behind "Show the raw events".
+    expect(screen.queryByTestId("event-type")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("raw-toggle"));
     expect(screen.getAllByTestId("event-type").map((t) => t.textContent)).toContain(
       "memory.loaded",
     );
@@ -135,7 +138,7 @@ describe("Live session view", () => {
     expect(screen.getByTestId("session-read-aloud")).toHaveTextContent("Stop reading");
   });
 
-  it("Details shows the event types, the level filters and the raw payloads (design §3.7)", async () => {
+  it("Details shows the level filters; its 'Show the raw events' the event types and the raw payloads (design §3.7, L3-run-12)", async () => {
     const user = userEvent.setup();
     renderApp("/sessions/sess_1");
     const first = (await screen.findAllByTestId("event-row"))[0] as HTMLElement;
@@ -143,6 +146,9 @@ describe("Live session view", () => {
     expect(first).not.toHaveTextContent("session.started");
     expect(screen.queryByTestId("filter-info")).toBeNull();
     await user.click(screen.getByTestId("details-toggle"));
+    // In words: no payloads until the raw events are asked for (l3-small, run L3).
+    expect(screen.queryByTestId("event-raw")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("raw-toggle"));
     await waitFor(() => expect(screen.getAllByTestId("event-raw")).toHaveLength(5));
     await user.click(screen.getByTestId("details-toggle"));
     await user.click(screen.getByTestId("details-toggle"));
@@ -352,5 +358,61 @@ describe("an ended session with nothing a person follows (later #86)", () => {
     await waitFor(() => expect(log).toHaveTextContent("Nothing to show here."));
     expect(log).not.toHaveTextContent("Waiting for the first event");
     expect(log).not.toHaveTextContent("Details has");
+  });
+});
+
+/**
+ * l3-small, run L3 (live check 3, L3-run-12): Details showed '#47 critic.session_review' and a
+ * JSON block with "reviewId": "01a1ddb9-…", "verdict", usdMicro and chfMicro, and 'session.ended'
+ * with {"status": "completed", "stopReason": …}. Details is in words (design §3.7, §5.3, §5.6):
+ * the internal events' own lines; the types and payloads only behind "Show the raw events".
+ */
+describe("l3-small, run L3: Details in words, the raw events behind their own switch (L3-run-12)", () => {
+  it("Details lists the internal events in words, with no event type, id or JSON; 'Show the raw events' shows them", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.events.push({
+      id: "ev_review",
+      sessionId: "sess_1",
+      seq: 47,
+      type: "critic.session_review",
+      text: "Session review: accepted (grade 95, 1 finding).",
+      payload: {
+        reviewId: "01a1ddb9-296d-7791-a989-91e45fa65122",
+        tier: 0,
+        grade: 95,
+        verdict: "accept",
+        findings: 1,
+        usdMicro: 75_233,
+        chfMicro: 60_186,
+      },
+      cost: { usdMicro: 0, chfMicro: 0 },
+      at: "2026-10-19T21:10:00.000Z",
+      level: "info",
+      audience: "detail",
+    });
+    renderApp("/sessions/sess_1", harness);
+    await screen.findAllByTestId("event-row");
+    const log = screen.getByTestId("event-log");
+    await user.click(screen.getByTestId("details-toggle"));
+    await waitFor(() =>
+      expect(log).toHaveTextContent("Session review: accepted (grade 95, 1 finding)."),
+    );
+    expect(screen.queryByTestId("event-type")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("event-raw")).not.toBeInTheDocument();
+    for (const raw of ["critic.session_review", "session.started", "reviewId", "usdMicro", "#47"])
+      expect(log).not.toHaveTextContent(raw);
+    expect(log.textContent ?? "").not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
+    // For whoever needs them (a bug report): the raw events behind their own switch.
+    await user.click(screen.getByTestId("raw-toggle"));
+    await waitFor(() => expect(screen.getAllByTestId("event-type").length).toBeGreaterThan(0));
+    expect(screen.getAllByTestId("event-type").map((t) => t.textContent)).toContain(
+      "critic.session_review",
+    );
+    expect(log).toHaveTextContent('"reviewId": "01a1ddb9-296d-7791-a989-91e45fa65122"');
+    // Details off: the switch goes with it, and so do the raw events.
+    await user.click(screen.getByTestId("details-toggle"));
+    await waitFor(() => expect(screen.queryByTestId("event-raw")).not.toBeInTheDocument());
+    expect(screen.queryByTestId("raw-toggle")).not.toBeInTheDocument();
   });
 });

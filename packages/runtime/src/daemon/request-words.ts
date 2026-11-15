@@ -12,6 +12,7 @@ import {
 } from "../wiring/request-answers.ts";
 import { balancedCut } from "./quoted-title.ts";
 import { TAKE_OUT_NOTICE_PREFIX, takeOutConflictBody } from "./take-out-words.ts";
+import { withoutNoActionGiven } from "./task-words.ts";
 
 /*
  * What an Inbox card says and offers (design §3.8, core-experience.md), with no store and
@@ -136,6 +137,30 @@ export function withoutMarkdown(text: string): string {
 }
 
 /**
+ * A findings list's severity tag at the start of a quoted sentence ("blocker:", "**major**:",
+ * "Critical -"), which the reviewers' reports put before each item.
+ */
+const FINDING_TAG =
+  /^(?:blocker|blocking|critical|major|minor|high|medium|low|nit(?:pick)?|info|warning|error|issue|gap|risk)s?\s*(?::|-|–|—)\s+/i;
+
+/**
+ * Why a specialist asks or failed, as a card quotes it (l3-small, run L3; live check 3,
+ * L3-research-3: 'The specialist said: "blocker: notes/plan.md is missing."'): its words
+ * without markdown and without a findings tag before them. Where a tag was taken off, the
+ * sentence it left starts with a capital ("blocker: missing ..." reads "Missing ..."), never a
+ * file name ("notes/plan.md is missing.") or a word that was in code marks ("`npm test` fails"
+ * reads "npm test fails"); a reason with no tag keeps its own case ("git push was refused").
+ */
+export function specialistReason(text: string): string {
+  const plain = withoutMarkdown(text);
+  const t = plain.replace(FINDING_TAG, "").trim();
+  if (t === plain.trim()) return t;
+  const word = /^[a-z]+\b(?![./\\])/.exec(t)?.[0];
+  if (!word || text.includes(`\`${word}`)) return t;
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+/**
  * W15-57: an item of a paused run's note as the budget card quotes it: plain words, a list's
  * heading colon dropped, and cut at a word well under what the card kept (`cardHandoff` cut it at
  * 80 or 160 characters, mid-word: "rounds(players…"), so a stored cut never shows.
@@ -238,7 +263,8 @@ function afterFirstSentence(text: string): string | null {
 
 /** A finding line as a person reads it: no "[high]" tag, no "Required:" machine words. */
 function plainFinding(step: string): string {
-  return step
+  // A finding the critic named no fix for reads as what it found (L3-research-3).
+  return withoutNoActionGiven(step)
     .replace(/^\[(?:critical|high|medium|low|info)\]\s*/i, "")
     .replace(/\[stand-in model\]\s*/gi, "")
     .replace(/\s*(?:->|:)\s*/, ": ")
@@ -325,7 +351,7 @@ function retryCard(
   const saidBy = str(card.said_by);
   const first = said
     ? saidBy
-      ? `The ${saidBy} said: "${said.replace(/"/g, "'")}"`
+      ? `The ${saidBy} said: "${specialistReason(said).replace(/"/g, "'")}"`
       : card.reason === "failed"
         ? `What failed: ${said}`
         : said
@@ -413,7 +439,7 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
   // W15-61 (design §5 rule 6): the specialist's words without their markdown (live: "a bare
   // `node wc.js`", "**Summary**"), backticks, emphasis and list marks dropped.
   const raw = str(card.context);
-  const context = raw ? withoutMarkdown(raw) : undefined;
+  const context = raw ? specialistReason(raw) : undefined;
   const body =
     [
       planned

@@ -1,5 +1,5 @@
 import { existsSync, rmSync } from "node:fs";
-import { DEPS_BASE_REF } from "@forerunner/capabilities";
+import { DEPS_BASE_REF, snapshotRef } from "@forerunner/capabilities";
 import {
   applyVerdict,
   type CheckCommand,
@@ -302,17 +302,24 @@ export class GitDiffPort implements DiffPort {
       // W15-27: a review of work an earlier session kept, in a project's folder whose end
       // committed it: the task's files since its last snapshot, so the critic reads its change.
       if (!range && !parts.length && opts.taskFiles?.length) {
-        const base = (
-          await git([
-            "log",
-            "-n",
-            "1",
-            "--format=%H",
-            "--all-match",
-            "--grep=^Workspace before ",
-            `--grep=(task ${task.id})`,
-          ])
+        // The task's last snapshot: its ref (L3-run-11), else an earlier version's commit that
+        // named the task's id in its message.
+        const ref = (
+          await git(["rev-parse", "--verify", "--quiet", `${snapshotRef(task.id)}^{commit}`])
         ).stdout.trim();
+        const base =
+          ref ||
+          (
+            await git([
+              "log",
+              "-n",
+              "1",
+              "--format=%H",
+              "--all-match",
+              "--grep=^Workspace before ",
+              `--grep=(task ${task.id})`,
+            ])
+          ).stdout.trim();
         if (/^[0-9a-f]{7,64}$/.test(base)) {
           const since = await git([
             "diff",

@@ -99,11 +99,12 @@ describe("status.md updates", () => {
   const update: StatusUpdate = {
     sessionId: "0192a1b2-0000-7000-8000-000000000001",
     endedAt: "2026-10-20T09:30:00.000Z",
+    startedAt: "2026-10-20T09:00:12.000Z",
     done: ["Add clamp"],
     inFlight: ["Write the runbook"],
     blocked: ["Deploy to staging"],
     next: ["Add retries"],
-    note: "stop reason completed, spent $0.30",
+    note: "Done. Spent CHF 0.24.",
   };
 
   it("starts from the template when the doc is missing and writes the four sections plus a dated session entry", () => {
@@ -115,12 +116,14 @@ describe("status.md updates", () => {
     expect(text).toMatch(/## Blocked\n\n- Deploy to staging\n/);
     expect(text).toMatch(/## Next\n\n- Add retries\n/);
     expect(text).toContain("## Sessions\n");
-    expect(text).toContain(`### 2026-10-20 session ${update.sessionId}\n`);
+    // Named by when it started, never by its id (W15-08; l3-small, run L3, L3-github-6).
+    expect(text).toContain("### Session started 2026-10-20 09:00 UTC\n");
+    expect(text).not.toContain(update.sessionId);
     expect(text).toContain("- Done: Add clamp\n");
     expect(text).toContain("- In flight: Write the runbook\n");
     expect(text).toContain("- Blocked: Deploy to staging\n");
     expect(text).toContain("- Next: Add retries\n");
-    expect(text).toContain("- Note: stop reason completed, spent $0.30\n");
+    expect(text).toContain("- Note: Done. Spent CHF 0.24.\n");
     expect(text.includes("\r")).toBe(false);
     expect(text.endsWith("\n")).toBe(true);
     // The placeholders of the template are gone.
@@ -173,7 +176,7 @@ describe("status.md updates", () => {
     ].map((h) => text.indexOf(`${h}\n`));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    const mine = text.indexOf(`### 2026-10-20 session ${update.sessionId}`);
+    const mine = text.indexOf("### Session started 2026-10-20 09:00 UTC");
     const earlier = text.indexOf("### 2026-10-19 session earlier");
     expect(mine).toBeGreaterThan(0);
     expect(earlier).toBeGreaterThan(mine);
@@ -214,11 +217,14 @@ describe("status.md updates", () => {
         ...update,
         sessionId: `s-${i}`,
         endedAt: `2026-10-${String(1 + (i % 28)).padStart(2, "0")}T00:00:00.000Z`,
+        startedAt: null,
       });
     }
     expect((text ?? "").match(/^### /gm)).toHaveLength(MAX_STATUS_SESSIONS);
-    expect(text).toContain(`session s-${MAX_STATUS_SESSIONS + 4}`);
-    expect(text).not.toContain("session s-0\n");
+    // Without a start the entry is named by its end: the newest is kept, the oldest dropped.
+    expect(text).toContain(`### Session ended 2026-10-${MAX_STATUS_SESSIONS + 5} 00:00 UTC\n`);
+    expect(text).not.toContain("### Session ended 2026-10-01 00:00 UTC\n");
+    expect(text).not.toMatch(/s-\d/);
     // Titles are one line each and bounded.
     const long = applyStatusUpdate(null, { ...update, done: [`multi\nline ${"x".repeat(300)}`] });
     expect(long).not.toMatch(/- multi\n/);
@@ -229,14 +235,17 @@ describe("status.md updates", () => {
     const first = await writeStatusUpdate(repo, update);
     expect(first).toMatchObject({ path: STATUS_DOC, created: true });
     expect(await read(STATUS_DOC)).toBe(first.content);
-    expect(first.content).toContain(`session ${update.sessionId}`);
+    expect(first.content).toContain("### Session started 2026-10-20 09:00 UTC\n");
     const drift = await checkDocDrift(repo, { changedFiles: [] });
     expect(drift.map((d) => d.doc)).not.toContain("docs/status.md");
     expect(drift.map((d) => d.doc)).toContain("README.md");
     const second = await writeStatusUpdate(repo, { ...update, sessionId: "later", done: ["Ship"] });
     expect(second.created).toBe(false);
-    expect(second.content).toContain("### 2026-10-20 session later");
-    expect(second.content).toContain(`session ${update.sessionId}`);
+    // Another session that started in the same minute keeps an entry of its own.
+    expect(second.content.match(/^### Session started 2026-10-20 09:00 UTC$/gm)).toHaveLength(2);
+    expect(second.content).toContain("- Done: Ship\n");
+    expect(second.content).toContain("- Done: Add clamp\n");
+    expect(second.content).not.toContain("later");
     expect(await read(STATUS_DOC)).toBe(second.content);
   });
 });

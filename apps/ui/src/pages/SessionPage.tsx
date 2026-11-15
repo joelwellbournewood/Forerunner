@@ -132,10 +132,14 @@ export function SessionPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [filters, setFilters] = useState<Set<Level>>(new Set(LEVELS));
   /**
-   * Design §3.7: the log shows person-level lines; Details adds the internal events, their
-   * type names and numbers, the level filters and the raw payloads.
+   * Design §3.7: the log shows person-level lines; Details adds the internal events in their own
+   * words and the level filters. Their type names, numbers and payloads are behind a switch of
+   * their own, "Show the raw events" (l3-small, run L3; live check 3, L3-run-12: Details showed
+   * "#47 critic.session_review" and a JSON block with ids and USD micro-units).
    */
   const [details, setDetails] = useState(false);
+  const [raw, setRaw] = useState(false);
+  const showRaw = details && raw;
   const projectName = useUiState(
     (s) => s.projects.find((p) => p.id === session?.projectId)?.name ?? null,
   );
@@ -604,6 +608,20 @@ export function SessionPage() {
           />
           Details
         </label>
+        {details ? (
+          <label
+            className="flex items-center gap-1 text-xs"
+            title="The events as the app records them, for a bug report."
+          >
+            <input
+              type="checkbox"
+              checked={raw}
+              onChange={(e) => setRaw(e.target.checked)}
+              data-testid="raw-toggle"
+            />
+            Show the raw events
+          </label>
+        ) : null}
         <label className="flex items-center gap-1 text-xs">
           <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
           Follow
@@ -642,7 +660,7 @@ export function SessionPage() {
             >
               <div className="flex flex-wrap items-baseline gap-2">
                 <span className="text-neutral-400">{formatTime(e.at)}</span>
-                {details ? (
+                {showRaw ? (
                   <>
                     <span className="text-neutral-500">#{e.seq}</span>
                     <span className="text-neutral-500" data-testid="event-type">
@@ -668,7 +686,7 @@ export function SessionPage() {
                   <Money value={e.cost} className="ml-auto text-neutral-500" />
                 ) : null}
               </div>
-              {details ? (
+              {showRaw ? (
                 <pre
                   className="overflow-auto rounded bg-neutral-100 p-1 text-[11px] dark:bg-neutral-900"
                   data-testid="event-raw"
