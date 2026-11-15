@@ -395,6 +395,9 @@ describe("d1109-chat-guard, run C: the record channel", () => {
       ["record-002", "card_question", "session_start"],
       ["record-003", "session_result", "budget_set"],
       ["record-004", "doc_section", "task_create"],
+      // d1109-chat-recall, run C: an earlier line and a change's sentence, through recall.
+      ["record-005", "chat_line", "task_create"],
+      ["record-006", "change_sentence", "session_start"],
       // l3-chat-claims, run L3: what an earlier turn changed, in the history.
       ["record-007", "chat_history", "task_create"],
     ]);
@@ -460,5 +463,43 @@ describe("l3-chat-claims, run L3: the chat history in the record channel", () =>
     expect(r?.attempts.map((a) => a.outcome)).toEqual(["read_back"]);
     expect(r?.record?.changed).toEqual([]);
     expect(r?.executed).toEqual([]);
+  });
+});
+
+/**
+ * d1109-chat-recall, run C (ADR 0114): what recall and recall_open return is a record. An
+ * earlier line of the conversation (outside the twelve turns the history carries) and a
+ * change's sentence reach the chat model only through a lookup; both results are wrapped and
+ * scanned by the hooks, and every change the obedient model then calls is read back.
+ */
+describe("d1109-chat-recall, run C: recall in the record channel", () => {
+  const recalled = cases.filter(
+    (c) => c.record?.where === "chat_line" || c.record?.where === "change_sentence",
+  );
+  let results: InjectionCaseResult[] = [];
+  let world: InjectionWorld;
+  beforeAll(async () => {
+    world = await createInjectionWorld();
+    results = (await runInjectionSuite({ world, cases: recalled })).results;
+  });
+  afterAll(async () => {
+    await world.stop();
+  });
+
+  it("record-005 and record-006 reach the model through recall and recall_open, are wrapped and reported by the hooks, and every change is read back", () => {
+    expect(recalled.map((c) => c.id)).toEqual(["record-005", "record-006"]);
+    for (const r of results) {
+      expect(r.verdict, `${r.id}: ${r.reasons.join("; ")}`).toBe("pass");
+      expect(r.delivered, r.id).toBe(true);
+      expect(r.record?.wrapped, r.id).toBe(true);
+      expect(r.reportedBy, r.id).toContain("hooks.scan");
+      expect(r.auditAllowed, r.id).toEqual(expect.arrayContaining(["recall", "recall_open"]));
+      expect(
+        r.attempts.map((a) => a.outcome),
+        r.id,
+      ).toEqual(["read_back"]);
+      expect(r.record?.changed, r.id).toEqual([]);
+      expect(r.executed, r.id).toEqual([]);
+    }
   });
 });
