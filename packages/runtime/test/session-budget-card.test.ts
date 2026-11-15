@@ -184,7 +184,10 @@ describe("a task the session's budget stops pauses at the first stop with one ca
     expect(card.choices).toEqual([
       expect.objectContaining({
         label: "Continue (CHF 2.00 more)",
-        explain: "Starts a session of CHF 2.00 now; it goes on from where it stopped.",
+        // d1109-oversize-pause (OP-0): the next Start takes it without Continue (before:
+        // "Starts a session of CHF 2.00 now; it goes on from where it stopped.").
+        explain:
+          "Starts a session now with CHF 2.00; without it, your next Start takes it in its turn.",
         tone: "primary",
       }),
       expect.objectContaining({
@@ -219,7 +222,8 @@ describe("a task the session's budget stops pauses at the first stop with one ca
     expect(view.display).toMatchObject({
       key: "answer",
       label: "Paused at the session's budget",
-      detail: "Continue or cancel in the Inbox.",
+      // OP-0 (before: "Continue or cancel in the Inbox.").
+      detail: "Your next Start goes on with it, or Continue in the Inbox.",
       blocker: { kind: "card", requestId: card.id, cardKind: "budget" },
     });
     for (const text of [card.title, card.body, JSON.stringify(card.choices), view.reason])

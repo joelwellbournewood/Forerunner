@@ -59,6 +59,8 @@ import {
   BUDGET_STOP_KEY,
   budgetCardSource,
   budgetStopTitle,
+  closeByStart,
+  continuableTasks,
   fileBudgetStopCard,
   offersContinue,
 } from "./budget-card.ts";
@@ -76,6 +78,7 @@ import {
   CREDENTIAL_WAIT_REASON,
   CREDENTIAL_WAIT_STOP,
   type CredentialWait,
+  clockTime,
   stoppedRunSentence,
   waitSentence,
 } from "./credential-wait.ts";
@@ -1066,6 +1069,8 @@ export class SessionRunner {
     let waiting: WaitingTask[] = [];
     /** Ready tasks at tier 2+ that wait for the container sandbox (U-079). */
     const waitingForSandbox: SandboxWaitingTask[] = [];
+    /** OP-0: paused tasks this start took in its turn; each card closes as it is claimed. */
+    const continuingIds = new Set<string>();
     let sandboxAnswer: SandboxGateAnswer | null = null;
     /** The Claude credential the session's work waits for, when it ended on one (U-078). */
     let credentialWait: CredentialWait | null = null;
@@ -1288,6 +1293,22 @@ export class SessionRunner {
       // D4: a task that resumes from the work its paused runs kept is planned at what is left.
       const keptWork = (t: TaskRow) => keptWorkFor(store, t);
       let readyTasks = project ? await store.task.readyTasks(project.id, { limit: 100 }) : [];
+      // d1109-oversize-pause (OP-0, the owner's answer 5: "continue next time"): a task paused at
+      // a session's budget (or at its specialist's limit, as its session's last pause) with
+      // progress is ready for this start's plan, in its turn, from its kept work; its card closes
+      // when the session claims it (`closeByStart`). Only the start's plan takes it: the session
+      // that paused it does not take it again.
+      if (project) {
+        const continuing = await continuableTasks(store, project.id);
+        for (const t of continuing) continuingIds.add(t.id);
+        if (continuing.length)
+          readyTasks = [...readyTasks, ...continuing].sort(
+            (a, b) =>
+              b.priority - a.priority ||
+              a.created_at.localeCompare(b.created_at) ||
+              a.id.localeCompare(b.id),
+          );
+      }
       // U-079: a full-review task runs only in the container sandbox; while it is not ready
       // the task waits (left out of the plan, its attempt count unchanged) and the session
       // goes on with the others. The gate re-checks Docker before every plan.
@@ -1813,6 +1834,29 @@ export class SessionRunner {
             notAgain.add(item.taskId);
             await emit("task.skipped", { taskId: item.taskId, reason: "peer_in_flight" });
             continue;
+          }
+          // OP-0: a paused task this start took goes back to ready with its card closed, in one
+          // transaction, as the session claims it; nothing is added to any budget.
+          if (continuingIds.has(item.taskId)) {
+            continuingIds.delete(item.taskId);
+            await closeByStart({
+              store,
+              task: { id: item.taskId },
+              session,
+              agentId: agent.id,
+              startTime: clockTime(
+                session.started_at ?? clock.nowIso(),
+                (await store.human.get(agent.owner_human_id).catch(() => undefined))?.timezone ??
+                  undefined,
+                clock.now(),
+              ),
+              now: clock.nowIso(),
+            }).catch((e: unknown) =>
+              this.logger.warn("the card of a task this start took was not closed", {
+                taskId: item.taskId,
+                error: errorMessage(e),
+              }),
+            );
           }
           const claim = await store.task.claim(item.taskId, agent.id, claimTtlMs, clock.now(), {
             reason: `session ${session.id}`,

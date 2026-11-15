@@ -7,6 +7,7 @@ import {
   planEstimateUsdMicro,
   withinTaskBudget,
 } from "../estimates/model.ts";
+import { continuableTasks } from "./budget-card.ts";
 import {
   cutPlanToBudget,
   DEFAULT_RESERVE_SHARE,
@@ -124,8 +125,22 @@ export async function startCheck(
 ): Promise<StartCheck> {
   const { store, estimates } = deps;
   const fallback = deps.defaultEstimateUsdMicro ?? 500_000;
-  const ready = await store.task.forProject(projectId, { status: "ready" }, { limit: 10_000 });
+  // d1109-oversize-pause (OP-0, "continue next time"): a task paused at a session's budget (or
+  // at its specialist's limit) with progress is one the start takes in its turn, as the runner's
+  // plan takes it (`continuableTasks`), at what is left of its estimate.
+  const continuing = await continuableTasks(store, projectId);
+  const ready = [
+    ...(await store.task.forProject(projectId, { status: "ready" }, { limit: 10_000 })),
+    ...continuing,
+  ];
   let runnableRows = await store.task.readyTasks(projectId, { limit: 100 });
+  if (continuing.length)
+    runnableRows = [...runnableRows, ...continuing].sort(
+      (a, b) =>
+        b.priority - a.priority ||
+        a.created_at.localeCompare(b.created_at) ||
+        a.id.localeCompare(b.id),
+    );
   let sandboxWait: StartCheck["waitingForSandbox"] = null;
   // D4 (d1109-oversize-start): a task that resumes from its kept work is priced at what is left
   // of its estimate, as the runner's planner prices it (`keptWorkFor`); read once per task.

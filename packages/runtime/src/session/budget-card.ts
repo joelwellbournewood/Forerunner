@@ -490,3 +490,98 @@ export function budgetCardSource(card: { change_card?: unknown }): BudgetStopSou
       return null;
   }
 }
+
+/**
+ * d1109-oversize-pause (OP-0, "Continue next time"; the owner's answer 5 of 2026-11-09, "be able
+ * to wrap up and continue next time", and D4, "continues from there in the next run"): a pause the
+ * next session's start takes in its turn like any ready task. A pause at a session's work budget
+ * (the card's source `session`, or the legacy `session_budget`) or at its specialist's limit per
+ * run (`specialist_limit`, filed only for its session's last pause), whose pause got further
+ * (`no_progress` not true, OP-4; a card filed before it has no such field and counts as progress).
+ * Not taken: a pause at the task's own budget (that budget is used up: its Continue raises it), a
+ * pause without progress (its question card first) and a pause at an outer limit (the project's
+ * budget, this month's cap, the subscription's share: `wakeBudgetWaits`, then the next Start).
+ */
+export function continuesAtStart(card: Pick<HumanRequestRow, "change_card" | "status">): boolean {
+  if (card.status !== "open" || keyOf(card) !== BUDGET_STOP_KEY) return false;
+  const c = (card.change_card ?? {}) as JsonObject;
+  if (c.no_progress === true) return false;
+  return (
+    c.source === "session" ||
+    c.source === LEGACY_SESSION_BUDGET_SOURCE ||
+    c.source === "specialist_limit"
+  );
+}
+
+/**
+ * The project's tasks a session's start takes in its turn from their kept work (OP-0): waiting on
+ * an open budget card that `continuesAtStart`, still `needs_human`. In the order the ready tasks
+ * are read (priority, then age), for the start's plan and the Start check alike.
+ */
+export async function continuableTasks(store: StateStore, projectId: string): Promise<TaskRow[]> {
+  const cards = (
+    await store.humanRequest.list({ project_id: projectId, status: "open" } as never, {
+      limit: 500,
+    })
+  ).filter((r) => r.task_id && continuesAtStart(r));
+  const out: TaskRow[] = [];
+  for (const id of new Set(cards.map((r) => r.task_id as string))) {
+    const task = await store.task.get(id);
+    if (task?.status === "needs_human" && task.project_id === projectId) out.push(task);
+  }
+  return out.sort(
+    (a, b) =>
+      b.priority - a.priority ||
+      a.created_at.localeCompare(b.created_at) ||
+      a.id.localeCompare(b.id),
+  );
+}
+
+/** `change_card.outcome` of a budget card a session's start went on from (OP-0). */
+export const CLOSED_BY_START_OUTCOME = "went_on_at_start";
+
+/**
+ * The start that takes a paused task in its turn (OP-0) closes its card in the same transaction as
+ * the task's move back to ready, adding money to no budget: the card is withdrawn with the outcome
+ * `went_on_at_start`, the session and its start time (`started_session_time`, "14:05" in the
+ * person's time zone, for the Done line 'Your session of 14:05 went on with it.'). False, and
+ * nothing written, when the task or its card moved meanwhile (an answer, a cancel): the claim
+ * that follows then sees the task as it is.
+ */
+export async function closeByStart(input: {
+  store: StateStore;
+  task: Pick<TaskRow, "id">;
+  session: Pick<SessionRow, "id">;
+  agentId: string;
+  /** The session's start as the person reads it ("14:05"). */
+  startTime: string;
+  now: string;
+}): Promise<boolean> {
+  const { store } = input;
+  return store.transaction(async (tx) => {
+    const task = await tx.task.get(input.task.id);
+    if (task?.status !== "needs_human") return false;
+    const card = (
+      await tx.humanRequest.list({ task_id: task.id, status: "open" } as never, { limit: 50 })
+    ).find((r) => continuesAtStart(r));
+    if (!card) return false;
+    await tx.task.transition(
+      task.id,
+      task.version,
+      "ready",
+      "this session goes on with it from where it stopped",
+      { agentId: input.agentId },
+    );
+    const withdrawn = await tx.humanRequest.withdraw(card.id, card.version);
+    await tx.humanRequest.patch(withdrawn.id, {
+      change_card: {
+        ...((card.change_card ?? {}) as JsonObject),
+        applied_at: input.now,
+        outcome: CLOSED_BY_START_OUTCOME,
+        started_session_id: input.session.id,
+        started_session_time: input.startTime,
+      },
+    });
+    return true;
+  });
+}

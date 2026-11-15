@@ -395,3 +395,72 @@ describe("d1109-oversize-pause", () => {
     );
   }, 240_000);
 });
+
+/**
+ * d1109-oversize-pause (OP-0, "continue next time"; the owner's answer 5: "be able to wrap up and
+ * continue next time"): after the larger task paused at the session's budget with its work kept,
+ * the next plain Start (no Continue) takes it in its turn from its kept work and closes its card,
+ * also after the runtime is composed again between the pause and the Start.
+ */
+describe("d1109-oversize-pause: the next Start continues it", () => {
+  const clock = new SimulatedClock("2026-11-10T13:05:00Z");
+  const opened: RuntimeApp[] = [];
+  afterAll(async () => {
+    for (const rt of opened) await rt.close().catch(() => undefined);
+  });
+
+  it("a plain POST /sessions after a restart lists it at its estimate left, runs it from its kept work and closes its card with the Done line; no budget grows", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-oversize-pause-next-"));
+    let w = await compose(home, clock);
+    opened.push(w.rt);
+    const projectId = await newProject(w, "Shop next");
+    const shop = await addTask(w, projectId, "Build the shop in shop.md", "shop.md", 8);
+    const first = await runSession(w, projectId);
+    expect(String(first.stopReason)).toMatch(/^budget_/);
+    const card = (await w.json("/inbox")).requests as Json[];
+    const open = card.find((r) => r.taskId === shop && r.status === "open");
+    expect(open, JSON.stringify(card.map((r) => r.title))).toBeDefined();
+    const continueChoice = ((open?.choices ?? []) as Json[])[0];
+    expect(continueChoice?.explain).toMatch(
+      /^Starts a session now with CHF [\d.]+; without it, your next Start takes it in its turn\.$/,
+    );
+    const budgetBefore = (await w.rt.store.task.mustGet(shop)).budget_usd_micro;
+    const spentBefore = (await w.rt.store.task.mustGet(shop)).actual_cost_usd_micro;
+    const rows = (await w.json(`/projects/${projectId}/tasks`)) as unknown as Json[];
+    const row = rows.find((t) => t.id === shop);
+    expect((row?.display as Json | undefined)?.detail).toBe(
+      "Your next Start goes on with it, or Continue in the Inbox.",
+    );
+
+    // Composed again between the pause and the next Start.
+    await w.rt.close();
+    w = await compose(home, clock);
+    opened.push(w.rt);
+    const check = (await w.json(
+      `/projects/${projectId}/start-check?budgetUsdMicro=2000000`,
+    )) as Json;
+    const over = check.oversized as Json;
+    // It is planned at what is left of its estimate (OS-1), and it spent before.
+    expect(over.taskId).toBe(shop);
+    expect(Number((over.estimate as Json).usdMicro)).toBe(8_000_000 - spentBefore);
+    expect(String(over.sentence)).toContain("spent so far");
+
+    const second = await runSession(w, projectId);
+    const work = (await w.rt.store.run.forTask(shop)).filter((r) => r.specialist !== "critic");
+    expect(work.length).toBe(2);
+    expect(work.map((r) => r.session_id)).toContain(second.id);
+    expect(work.map((r) => r.session_id)).toContain(first.id);
+    const after = (await w.rt.store.humanRequest.list({ task_id: shop } as never)).find(
+      (r) => r.id === open?.id,
+    );
+    expect(after?.status).toBe("withdrawn");
+    const inbox = (await w.json("/inbox")).requests as Json[];
+    const closed = inbox.find((r) => r.id === open?.id);
+    expect(closed?.outcome).toMatch(/^Your session of \d\d:\d\d went on with it\.$/);
+    // Nothing grew: the task's budget and the session's cap are what they were.
+    expect((await w.rt.store.task.mustGet(shop)).budget_usd_micro).toBe(budgetBefore);
+    expect((await w.rt.store.session.mustGet(String(second.id))).budget_cap_usd_micro).toBe(
+      2_000_000,
+    );
+  }, 300_000);
+});

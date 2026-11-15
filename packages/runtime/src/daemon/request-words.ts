@@ -681,7 +681,8 @@ function budgetCard(
         explain: !more
           ? "Gives it more and starts a session that goes on from where it stopped."
           : session
-            ? `Starts a session of ${more} now; it goes on from where it stopped.`
+            ? // d1109-oversize-pause (OP-0): the next Start takes it in its turn without Continue.
+              `Starts a session now with ${more}; without it, your next Start takes it in its turn.`
             : `Adds ${more} to its budget and starts a session that goes on from where it stopped.`,
         tone: "primary",
         confirm: null,
@@ -762,7 +763,7 @@ function shownItems(items: readonly string[]): string[] {
 function firstSentences(text: string): string {
   const t = withoutMarkdown(text);
   const parts = t
-    .split(/(?<=[.!?])\s+(?=["'(\[]?[A-Z0-9])/)
+    .split(/(?<=[.!?])\s+(?=["'([]?[A-Z0-9])/)
     .map((x) => x.trim())
     .filter(Boolean);
   let out = "";
@@ -882,6 +883,11 @@ function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | nul
     }
     case "went_on":
       return `${task} goes on: its limit has room again.`;
+    // d1109-oversize-pause (OP-0): the next session's start took it in its turn.
+    case "went_on_at_start": {
+      const at = str(card.started_session_time);
+      return at ? `Your session of ${at} went on with it.` : "Your next session went on with it.";
+    }
     // Cards answered before budget-resume.
     case "raise_session": {
       const to = chfAt(card.session_cap_usd_micro_set ?? card.raise_to_usd_micro, card.chf_per_usd);
@@ -1470,7 +1476,11 @@ export function requestWords(
     outcome = budgetOutcome(card, ctx);
     // budget-resume: a card the app closed because its limit has room again says so, not
     // "Closed: it no longer needs you."
-    if (r.status !== "open" && card.outcome === "went_on" && outcome) {
+    if (
+      r.status !== "open" &&
+      (card.outcome === "went_on" || card.outcome === "went_on_at_start") &&
+      outcome
+    ) {
       words.outcome = outcome;
       return words;
     }

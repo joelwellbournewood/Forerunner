@@ -361,6 +361,10 @@ export function budgetPauseDetail(source: unknown): string {
   // W14-6 (polish-words): a project's budget never resets; only raising it lets the task on.
   if (source === "project")
     return "It goes on by itself once you raise the project's budget; cancel it in the Inbox.";
+  // d1109-oversize-pause (OP-0, "continue next time"): a pause at a session's budget or at its
+  // specialist's limit per run is taken by the next Start in its turn (`continuesAtStart`).
+  if (source === "session" || source === "session_budget" || source === "specialist_limit")
+    return "Your next Start goes on with it, or Continue in the Inbox.";
   return source === "month" || source === "plan"
     ? "It goes on by itself once that limit is raised or resets; cancel it in the Inbox."
     : "Continue or cancel in the Inbox.";

@@ -850,6 +850,23 @@ function fakePrice(t: TaskView): number {
   return Math.min(estimate, Math.max(0, t.budget.usdMicro - t.actual.usdMicro));
 }
 
+/**
+ * As the daemon's `continuableTasks` (d1109-oversize-pause, OP-0): the tasks a start takes in
+ * their turn from their kept work, waiting on an open budget card at a session's budget or at
+ * their specialist's limit that got further (`no_progress` not true).
+ */
+function fakeContinuing(requests: readonly HumanRequestView[]): Set<string> {
+  const ids = new Set<string>();
+  for (const r of requests) {
+    const card = (r.changeCard ?? {}) as Record<string, unknown>;
+    if (r.status !== "open" || card.key !== "task:budget_stop" || !r.taskId) continue;
+    if (card.no_progress === true) continue;
+    if (["session", "session_budget", "specialist_limit"].includes(String(card.source)))
+      ids.add(r.taskId);
+  }
+  return ids;
+}
+
 function fakeStartCheck(
   tasks: readonly TaskView[],
   projectId: string,
@@ -865,13 +882,19 @@ function fakeStartCheck(
      * project's session makes none of this project's tasks ready.
      */
     busyHere?: boolean;
+    /** OP-0: paused tasks the start takes in their turn (`fakeContinuing`). */
+    continuing?: ReadonlySet<string>;
   } = {},
 ): StartCheckView {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   // High first, as the daemon's stored numbers order them (U-041).
   const rank = { high: 3, medium: 2, low: 1 } as const;
   const ready = tasks
-    .filter((t) => t.projectId === projectId && t.status === "ready")
+    .filter(
+      (t) =>
+        t.projectId === projectId &&
+        (t.status === "ready" || (t.status === "needs_human" && !!opts.continuing?.has(t.id))),
+    )
     .sort((a, b) => rank[b.priority] - rank[a.priority]);
   const cap = budgetUsdMicro ?? FAKE_SESSION_CAP_USD_MICRO;
   const work = Math.floor(cap * 0.8);
@@ -2587,6 +2610,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         killActive: state.killActive,
         busy: (options.startOutcome ?? "started") === "queued",
         busyHere: options.busyProjectId === id,
+        continuing: fakeContinuing(state.requests),
       },
     );
     // leftovers7-tailrun TR-12: a planning call holds the agent, as the daemon says it.
@@ -2781,6 +2805,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           killActive: false,
           busy: (options.startOutcome ?? "started") === "queued",
           busyHere: options.busyProjectId === parsed.data.projectId,
+          continuing: fakeContinuing(state.requests),
         },
       );
       if (check.blocked?.kind === "nothing_runnable")

@@ -38,6 +38,7 @@ import { fileLeftOpenRequest, headMovedSentence } from "@forerunner/runtime/loop
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
+import { fileBudgetStopCard } from "@forerunner/runtime/session/budget-card";
 import { conflictNoticeSentence } from "@forerunner/runtime/session/dependent-branches";
 import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
@@ -17511,6 +17512,81 @@ describe("d1109-oversize-pause, run C", () => {
       expect(ended.summary ?? "").toContain(
         '"Write the notes" waits for your next session: "Build the shop" used the rest of this one.',
       );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+  it("OP-0 continue next time: GET /inbox and the task row say the next Start takes it; GET start-check counts it; a plain POST /sessions runs it and closes its card; a pause at its own budget is not taken", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Shop next", goal: "A shop page" });
+      const me = await client.me();
+      const pausedTask = async (title: string, source: "session" | "task_budget") => {
+        const t = await task(rt, client, project.id, title, 0.05);
+        const row = await rt.store.task.mustGet(t.id);
+        const waiting = await rt.store.task.transition(
+          row.id,
+          row.version,
+          "needs_human",
+          "paused",
+          {
+            agentId: rt.agent.id,
+          },
+        );
+        const { request } = await fileBudgetStopCard({
+          store: rt.store,
+          task: waiting,
+          session: null,
+          humanId: me.id,
+          agentId: rt.agent.id,
+          runId: null,
+          stop: {
+            capUsdMicro: 1_000_000,
+            spentUsdMicro: 300_000,
+            source,
+            specialist: "coder",
+            stoppedBy: "wrap_up",
+          },
+          handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "wrap_up" },
+          now: new Date().toISOString(),
+          chfPerUsd: 0.8,
+        });
+        return { task: t, card: request };
+      };
+      const next = await pausedTask("Build the shop", "session");
+      const own = await pausedTask("Own budget task", "task_budget");
+      const card = (await client.inbox(me.id)).requests.find((r) => r.id === next.card.id);
+      expect(card?.choices?.[0]?.explain).toBe(
+        "Starts a session now with CHF 0.80; without it, your next Start takes it in its turn.",
+      );
+      const rows = await client.tasks(project.id);
+      expect(rows.find((t) => t.id === next.task.id)?.display?.detail).toBe(
+        "Your next Start goes on with it, or Continue in the Inbox.",
+      );
+      const check = await client.startCheck(project.id, { budgetUsdMicro: 2_000_000 });
+      expect(check.runnable.map((t) => t.title)).toEqual(["Build the shop"]);
+      expect(check.blocked).toBeNull();
+      const started = await client.startSession({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        budgetUsdMicro: 2_000_000,
+      });
+      const sessionId = started.session?.id ?? "";
+      expect(sessionId, JSON.stringify(started)).toBeTruthy();
+      await eventually(
+        async () =>
+          !["planned", "running", "paused"].includes((await client.session(sessionId)).status),
+        "the session to end (at least 10 s of real time)",
+        async () => `${(await client.session(sessionId)).status}`,
+        60_000,
+      );
+      const after = (await client.inbox(me.id)).requests;
+      const closed = after.find((r) => r.id === next.card.id);
+      expect(closed?.status).toBe("withdrawn");
+      expect(closed?.outcome).toMatch(/^Your session of \d\d:\d\d went on with it\.$/);
+      expect(after.find((r) => r.id === own.card.id)?.status).toBe("open");
+      expect((await rt.store.task.mustGet(own.task.id)).status).toBe("needs_human");
     } finally {
       await rt.close();
     }

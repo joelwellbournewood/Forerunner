@@ -6,9 +6,12 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { StartCheckView } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
+import { requestWords } from "../src/daemon/request-words.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { budgetPauseDetail } from "../src/daemon/task-words.ts";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
+import { closeByStart, fileBudgetStopCard } from "../src/session/budget-card.ts";
 import {
   cutPlanToBudget,
   SessionRunner,
@@ -792,6 +795,155 @@ describe("d1109-oversize-pause, run C: the larger task in its turn (OP-0)", () =
       "Build the shop (coder, about CHF 6.40)",
       "B (coder, about CHF 0.24)",
     ]);
+    await store.close();
+  });
+});
+
+/**
+ * d1109-oversize-pause (OP-0, "continue next time"; the owner's answer 5: "be able to wrap up and
+ * continue next time", and D4: "continues from there in the next run"). Before, a task paused at
+ * the session's budget waited on its card until the person pressed Continue; a plain Start left it
+ * out. Now the next start takes it in its turn from its kept work and closes its card; a pause at
+ * the task's own budget, one that got no further and one at an outer limit are not taken.
+ */
+describe("d1109-oversize-pause, run C: the next Start continues a session-budget pause (OP-0)", () => {
+  const usd = (n: number) => Math.round(n * 1_000_000);
+  let store: StateStore;
+  let clock: SimulatedClock;
+  let w: Awaited<ReturnType<typeof seedWorld>>;
+  const ran: string[] = [];
+  const executor: TaskExecutor = {
+    async execute({ task, budget }) {
+      ran.push(task.title);
+      budget.record(`run-${task.id}-${ran.length}`, usd(0.1));
+      return { outcome: "done", summary: "done", costUsdMicro: usd(0.1), checksPassed: true };
+    },
+  };
+  /** A task paused at a limit, with the card its run filed. */
+  const paused = async (
+    title: string,
+    source: "session" | "task_budget" | "project" | "specialist_limit",
+    over: { noProgress?: boolean; priority?: number } = {},
+  ) => {
+    const task = await store.task.insert({
+      project_id: w.project,
+      title,
+      outcome: `${title} done`,
+      acceptance_criteria: ["works"],
+      risk_tier: 0,
+      status: "needs_human",
+      priority: over.priority ?? 5,
+      est_cost_usd_micro: usd(0.4),
+      reason: "paused",
+    });
+    const { request } = await fileBudgetStopCard({
+      store,
+      task,
+      session: null,
+      humanId: w.human,
+      agentId: w.agent,
+      runId: null,
+      stop: {
+        capUsdMicro: usd(1),
+        spentUsdMicro: usd(0.3),
+        source,
+        specialist: "coder",
+        stoppedBy: "wrap_up",
+      },
+      handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "wrap_up" },
+      now: clock.nowIso(),
+      chfPerUsd: 0.8,
+    });
+    if (over.noProgress)
+      await store.humanRequest.patch(request.id, {
+        change_card: { ...(request.change_card as object), no_progress: true },
+      });
+    return { task, card: request };
+  };
+  const start = () =>
+    new SessionRunner({
+      store,
+      clock,
+      tokens: new TokenIssuer({ now: () => clock.now() }),
+      kill: new KillSwitch(),
+      planner: new StaticPlanner(),
+      executor,
+    }).start({
+      agentId: w.agent,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: usd(2),
+      grant,
+    });
+
+  beforeEach(async () => {
+    clock = new SimulatedClock("2026-11-10T13:05:00Z");
+    store = await openStore({ url: "sqlite::memory:", clock });
+    w = await seedWorld(store, {}, { session: false });
+    ran.length = 0;
+  });
+
+  it("a plain Start takes the session-budget pause in its turn, closes its card in one step and grows no budget; the others wait on their cards", async () => {
+    const shop = await paused("Build the shop", "session", { priority: 9 });
+    const own = await paused("Own budget", "task_budget");
+    const stuck = await paused("No progress", "session", { noProgress: true });
+    const outer = await paused("Project limit", "project");
+    const limit = await paused("Coder limit", "specialist_limit", { priority: 1 });
+    // Before the start: the card's Continue and the task row say the next Start takes it.
+    const before = requestWords(shop.card, { taskTitle: "Build the shop" });
+    expect(before.choices[0]?.explain).toBe(
+      "Starts a session now with CHF 0.80; without it, your next Start takes it in its turn.",
+    );
+    expect(budgetPauseDetail("session")).toBe(
+      "Your next Start goes on with it, or Continue in the Inbox.",
+    );
+    expect(budgetPauseDetail("specialist_limit")).toBe(
+      "Your next Start goes on with it, or Continue in the Inbox.",
+    );
+    // The Start check counts the two it takes, at what is left of their estimates.
+    const check = await startCheck({ store }, w.project, usd(2));
+    expect(check.runnable.map((t) => t.title)).toEqual(["Build the shop", "Coder limit"]);
+    const r = await start();
+    expect(ran).toEqual(["Build the shop", "Coder limit"]);
+    for (const t of [shop, limit]) {
+      const card = await store.humanRequest.mustGet(t.card.id);
+      expect(card.status).toBe("withdrawn");
+      expect(card.change_card).toMatchObject({
+        outcome: "went_on_at_start",
+        started_session_id: r.sessionId,
+      });
+      // No budget grew: the task's own stays as it was.
+      expect((await store.task.mustGet(t.task.id)).budget_usd_micro).toBe(t.task.budget_usd_micro);
+    }
+    const done = requestWords(await store.humanRequest.mustGet(shop.card.id), {
+      taskTitle: "Build the shop",
+    });
+    expect(done.outcome).toMatch(/^Your session of \d\d:\d\d went on with it\.$/);
+    for (const t of [own, stuck, outer]) {
+      expect((await store.humanRequest.mustGet(t.card.id)).status).toBe("open");
+      expect((await store.task.mustGet(t.task.id)).status).toBe("needs_human");
+    }
+    await store.close();
+  });
+
+  it("a card answered before the claim is left as it is: the task moved on", async () => {
+    const shop = await paused("Build the shop", "session");
+    // The person cancels it before the session claims it.
+    const t = await store.task.mustGet(shop.task.id);
+    await store.task.transition(t.id, t.version, "cancelled", "you cancelled it", {
+      humanId: w.human,
+    });
+    expect(
+      await closeByStart({
+        store,
+        task: shop.task,
+        session: { id: "s1" },
+        agentId: w.agent,
+        startTime: "14:05",
+        now: clock.nowIso(),
+      }),
+    ).toBe(false);
+    expect((await store.humanRequest.mustGet(shop.card.id)).status).toBe("open");
     await store.close();
   });
 });
