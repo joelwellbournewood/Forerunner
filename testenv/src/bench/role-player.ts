@@ -107,6 +107,13 @@ export interface BenchOptions {
    */
   usage?: { title: string; inputTokens: number }[];
   /**
+   * Inflated reviews (FORERUNNER_BENCH_CRITIC_USAGE=<title substring>:<input tokens>, comma-
+   * separated, l3-money-screens): every critic call that reviews a matching task bills that many
+   * more input tokens, so its reviews show in cents on the Tasks row and in Costs (the stand-in
+   * critic's own calls cost a few hundred micro-dollars).
+   */
+  criticUsage?: { title: string; inputTokens: number }[];
+  /**
    * Web search on the API key ('web-search', `--provider bench-api` only: the Messages API
    * stand-in plays Anthropic's server): what a search finds (FORERUNNER_BENCH_SEARCH_RESULTS,
    * `url|title` entries separated by commas; default: three pages under example.com named after
@@ -209,6 +216,7 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     missing: list(env.FORERUNNER_BENCH_MISSING),
     long: list(env.FORERUNNER_BENCH_LONG),
     usage: usageKnobs(env.FORERUNNER_BENCH_USAGE),
+    criticUsage: usageKnobs(env.FORERUNNER_BENCH_CRITIC_USAGE),
     intake: intake === "malformed" || intake === "error" ? intake : "ok",
     intakeBad: (INTAKE_BAD_KINDS as readonly string[]).includes(bad) ? (bad as IntakeBad) : "none",
     delayMs: Number.isFinite(delay) && delay >= 0 ? delay : 250,
@@ -373,6 +381,12 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
       if (guess.role === "specialist" && opts.usage?.length) {
         const title = parseBrief(req, guess).title;
         const hit = opts.usage.find((u) => title.toLowerCase().includes(u.title.toLowerCase()));
+        if (hit) usage.input_tokens += hit.inputTokens;
+      }
+      // FORERUNNER_BENCH_CRITIC_USAGE (l3-money-screens): a matching task's reviews bill more.
+      if (guess.role === "critic" && opts.criticUsage?.length) {
+        const about = `${req.origin?.label ?? ""}\n${JSON.stringify(req.messages)}`.toLowerCase();
+        const hit = opts.criticUsage.find((u) => about.includes(u.title.toLowerCase()));
         if (hit) usage.input_tokens += hit.inputTokens;
       }
       const stop: StopReason = a.error
