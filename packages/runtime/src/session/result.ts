@@ -454,7 +454,25 @@ function goesOnByItself(limit: string): string {
  * A task paused at a budget, as the result names it (`LastSessionOutcome.paused`); `before`: its
  * run heard the wrap-up and paused before the limit ran out (L3-research-2), as its log line says.
  */
-export type PausedTask = NamedTask & { limit: string; waits?: boolean; before?: boolean };
+export type PausedTask = NamedTask & {
+  limit: string;
+  waits?: boolean;
+  before?: boolean;
+  /**
+   * d1109-oversize-pause (OP-7, from its card's `kept_checks`): the names of the project's checks
+   * that fail on its kept work; absent when none ran or all passed.
+   */
+  checksFail?: string[];
+  /** OP-7 (its card's `no_progress`): it paused again without getting further. */
+  noProgress?: boolean;
+};
+
+/** "test", "test and lint", "test, lint and 1 more": at most two check names. */
+function checkNames(names: readonly string[]): string {
+  return names.length > 2
+    ? `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`
+    : names.join(" and ");
+}
 
 /**
  * '"Write the guide" paused at its budget of CHF 0.40: continue or cancel it in the Inbox.'; two
@@ -473,12 +491,20 @@ export function pausedSentences(paused: readonly PausedTask[], told?: ToldByCard
   // line for it says ("paused before its budget of CHF 0.15 ran out: it spent CHF 0.09"); "paused
   // at its budget of CHF 0.15" beside it read as all of it spent.
   const how = one.before ? `paused before ${one.limit} ran out` : `paused at ${one.limit}`;
-  if (shown.length === 1)
+  if (shown.length === 1) {
+    // d1109-oversize-pause (OP-7): a pause that got no further asks; never "goes on by itself".
+    if (one.noProgress)
+      return [`"${one.title}" paused again without getting further: answer its card in the Inbox.`];
+    // OP-7: the project's check that fails on its kept work is said with the pause.
+    const fails = one.checksFail?.length
+      ? `, and the project's ${checkNames(one.checksFail)} ${one.checksFail.length === 1 ? "fails" : "fail"} on its work`
+      : "";
     return [
       one.waits
-        ? `"${one.title}" ${how}: ${goesOnByItself(one.limit)}`
-        : `"${one.title}" ${how}: continue or cancel it in the Inbox.`,
+        ? `"${one.title}" ${how}${fails}: ${goesOnByItself(one.limit)}`
+        : `"${one.title}" ${how}${fails}: continue or cancel it in the Inbox.`,
     ];
+  }
   const names = namesOf(titlesOf(shown));
   if (waiting === shown.length)
     return [`${names} paused at a limit: they go on by themselves once it is raised or resets.`];

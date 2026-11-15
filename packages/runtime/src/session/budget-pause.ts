@@ -292,19 +292,30 @@ export function reviewPausedWords(
   return `${name} paused before its review: ${what} has no room for it.`;
 }
 
-/** The run's sentence for a pause (the session log's line and the task's reason). */
+/**
+ * The run's sentence for a pause (the session log's line and the task's reason). L3-left-1
+ * (d1109-oversize-pause, OP-7): each figure says what it counts: a run that continued earlier
+ * kept work says this run's spend and the task's in all ('...: this run spent CHF 0.12, CHF 0.24
+ * in all, and listed 2 things left to do.'), as its card names the task's total; before, the line
+ * said "it spent CHF 0.12" beside the card's "It spent CHF 0.24 of its budget of CHF 0.30".
+ */
 export function pauseSentence(
   handoff: RunHandoff,
   what: string,
   spentUsdMicro: number,
   capUsdMicro: number,
   chfOf: (usdMicro: number) => string,
+  totalUsdMicro: number = spentUsdMicro,
 ): string {
   // W14-6: a spend under a centime reads "less than CHF 0.01".
   const chf = (usd: number) => moneyWords(chfOf(usd), usd);
   if (handoff.stoppedBy === "wrap_up") {
     const n = handoff.leftToDo.length;
-    return `The run paused before ${what} ran out: it spent ${chf(spentUsdMicro)} and listed ${
+    const spent =
+      chf(totalUsdMicro) !== chf(spentUsdMicro) && totalUsdMicro > spentUsdMicro
+        ? `this run spent ${chf(spentUsdMicro)}, ${chf(totalUsdMicro)} in all,`
+        : `it spent ${chf(spentUsdMicro)}`;
+    return `The run paused before ${what} ran out: ${spent} and listed ${
       n === 1 ? "one thing" : `${n} things`
     } left to do.`;
   }
@@ -397,4 +408,89 @@ export function handoffOf(artifacts: unknown): RunHandoff | null {
     };
   }
   return null;
+}
+
+/**
+ * d1109-oversize-pause (OP-2, OP-4): what a paused run's kept work looked like when it stopped,
+ * as its Run row keeps it (`{ kept }` artifact beside `{ handoff }`): the fingerprint of the files
+ * it changed (`workHash`), and the project's own checks on it when they ran (data: each check's
+ * output is its end, redacted before it is stored). `notRun` says why no check ran on a code
+ * change (no sandbox here, it could not open). Named `RunKept` (not the estimates' `KeptWork`,
+ * what a task's paused runs cost).
+ */
+export interface KeptCheck {
+  name: string;
+  passed: boolean;
+  /** The end of its output, at most 1,500 characters, redacted; data, never instructions. */
+  output: string;
+}
+
+export interface RunKept {
+  hash: string;
+  checks?: KeptCheck[];
+  notRun?: string;
+  /** OP-4: this pause got no further than the one before it (the next brief says so). */
+  noProgress?: boolean;
+}
+
+/** A run's kept work as its artifact stores it. */
+export function keptArtifact(kept: RunKept): {
+  kept: { hash: string; checks?: KeptCheck[]; notRun?: string; noProgress?: boolean };
+} {
+  return {
+    kept: {
+      hash: kept.hash,
+      ...(kept.checks ? { checks: kept.checks.map((c) => ({ ...c })) } : {}),
+      ...(kept.notRun ? { notRun: kept.notRun } : {}),
+      ...(kept.noProgress ? { noProgress: true } : {}),
+    },
+  };
+}
+
+/** The `{ kept }` artifact of a run's artifacts, or null (a run of before OP-2 has none). */
+export function keptOf(artifacts: unknown): RunKept | null {
+  if (!Array.isArray(artifacts)) return null;
+  for (const a of artifacts) {
+    if (!a || typeof a !== "object" || Array.isArray(a)) continue;
+    const k = (a as { kept?: unknown }).kept;
+    if (!k || typeof k !== "object" || Array.isArray(k)) continue;
+    const o = k as Record<string, unknown>;
+    if (typeof o.hash !== "string") continue;
+    const checks = Array.isArray(o.checks)
+      ? o.checks
+          .filter(
+            (c): c is { name: string; passed: boolean; output?: unknown } =>
+              !!c &&
+              typeof c === "object" &&
+              typeof (c as { name?: unknown }).name === "string" &&
+              typeof (c as { passed?: unknown }).passed === "boolean",
+          )
+          .map((c) => ({
+            name: c.name,
+            passed: c.passed,
+            output: typeof c.output === "string" ? c.output : "",
+          }))
+      : undefined;
+    return {
+      hash: o.hash,
+      ...(checks ? { checks } : {}),
+      ...(typeof o.notRun === "string" ? { notRun: o.notRun } : {}),
+      ...(o.noProgress === true ? { noProgress: true } : {}),
+    };
+  }
+  return null;
+}
+
+/**
+ * OP-4 (the owner's "such that the work can be continued in the next run": continued, not
+ * repeated): whether a pause got further than the last paused run of its task. It did when the
+ * fingerprint of its kept work differs from that run's, or its "Left to do" list is shorter; a
+ * first pause (no earlier paused run with a fingerprint) counts as progress.
+ */
+export function madeProgress(
+  now: { hash: string; leftToDo: number },
+  before: { hash: string; leftToDo: number } | null,
+): boolean {
+  if (!before) return true;
+  return now.hash !== before.hash || now.leftToDo < before.leftToDo;
 }

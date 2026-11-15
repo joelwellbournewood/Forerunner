@@ -180,7 +180,10 @@ describe("a task the session's budget stops pauses at the first stop with one ca
     expect(card.title).toBe('"Long report" paused at this session\'s budget of CHF 2.00');
     // A hard stop wrote no note, and its run only listed the folder: the card says it wrote
     // nothing (W15-56; before: "... its work so far is kept.").
-    expect(card.body).toBe("It stopped before it wrote anything.");
+    // d1109-oversize-pause (OP-7): its spend past its estimate is the second sentence.
+    expect(card.body).toMatch(
+      /^It stopped before it wrote anything\. It has spent CHF \d+\.\d\d, more than its estimate of CHF \d+\.\d\d\.$/,
+    );
     expect(card.choices).toEqual([
       expect.objectContaining({
         label: "Continue (CHF 2.00 more)",

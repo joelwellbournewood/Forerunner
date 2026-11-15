@@ -186,6 +186,15 @@ export function oversizedAsk(title: string, workBudget: ChfAmount): string {
 }
 
 /**
+ * The session log's line when a task paused at its specialist's limit per run goes on in the same
+ * session (d1109-oversize-pause, OP-5): 'The coder goes on with "Build the shop" from where it
+ * stopped.'; `who` is the specialist in words (the caller's `saidByName`, never its registry key).
+ */
+export function continuesLine(who: string, title: string): string {
+  return `The ${who} goes on with ${quoted(title)} from where it stopped.`;
+}
+
+/**
  * The session log's line when the session takes the larger task (OS-7), once: 'Took "Build the
  * shop", larger than this session's work budget, with about CHF 2.80 left.'
  */

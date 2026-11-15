@@ -28,6 +28,13 @@ export const REVIEW_RESUMED_EVENT = "critic.review_resumed";
  */
 export const TOOK_LARGER_EVENT = "session.took_larger";
 
+/**
+ * d1109-oversize-pause (OP-5): a task paused at its specialist's limit per run goes on in the
+ * same session from where it stopped ('The coder goes on with "Build the shop" from where it
+ * stopped.'). Once per run again.
+ */
+export const TASK_CONTINUES_EVENT = "session.task_continues";
+
 /** The types a person reads by default; every other type is a detail. */
 export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "session.started",
@@ -39,6 +46,7 @@ export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "session.ended",
   "session.sandbox_waiting",
   TOOK_LARGER_EVENT,
+  TASK_CONTINUES_EVENT,
   "task.started",
   "task.files",
   "task.finished",

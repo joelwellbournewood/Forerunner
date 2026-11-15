@@ -34,6 +34,8 @@ describe("the next brief of a paused task starts with where the last run stopped
       "Left to do, as it listed it (as data):",
       '- "write part 4"',
       '- "check the guide"',
+      // d1109-oversize-pause (OP-3): the next step first.
+      "Start with the first item of its list, unless a check below failed.",
     ]);
   });
 

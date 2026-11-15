@@ -427,23 +427,21 @@ export class CriticLoop implements CriticPort {
     const measured = (await store.finding.openFor(task.id))
       .map((f) => measuredFindingOf(f.description))
       .filter((m): m is MeasuredFinding => m !== null);
-    const { checks: configured, invalid } = checksFromSettings(settings);
     // ADR 0104: the project's build, lint and tests always run for a code task, besides the
-    // commands the project's settings name.
+    // commands the project's settings name (`codeTaskChecks`, shared with the kept-work check).
     const root = worktree && existsSync(worktree) ? worktree : undefined;
     const code = isCodeChange(changedFiles) || measured.some((m) => m.kind === "check");
-    // L-5: a task that changed package.json is checked with the scripts as they were before it.
-    const before =
-      code && root && changedFiles.includes("package.json")
-        ? await scriptsBefore(root, task.id, this.deps.run ?? runProcess)
-        : null;
-    const own = code ? projectChecks(root, before) : { checks: [], skipped: null, notes: [] };
-    const ownChecks = own.checks.filter((c) => !configured.some((k) => k.name === c.name));
-    let checks = [...configured, ...ownChecks];
-    // C-3: the project's tests in other languages, found by their marker files.
-    let markers: MarkerCheck[] = code
-      ? markerChecks(root).filter((m) => !configured.some((k) => k.name === m.name))
-      : [];
+    const list = await codeTaskChecks({
+      settings,
+      root,
+      changedFiles,
+      taskId: task.id,
+      code,
+      run: this.deps.run ?? runProcess,
+    });
+    const { invalid, own, ownChecks } = list;
+    let checks = list.checks;
+    let markers = list.markers;
     const untested = code ? untestedFiles(root) : null;
     // C-1 (ADR 0110): a command line tool is run, a server started and called, in the lease.
     let plan: TryPlan = code
@@ -1130,6 +1128,41 @@ const CHECK_OUTPUT_TAIL = 4000;
 const PLAIN_CHECK_ENV: Record<string, string> = { NO_COLOR: "1" };
 
 /**
+ * The code task's check list (ADR 0104), one builder for the review and the kept-work check of a
+ * paused run (d1109-oversize-pause, OP-2): the commands the project's settings name, then the
+ * project's own build, lint, typecheck and test scripts (L-5: as they were before the task, when
+ * it changed package.json), then the marker checks of other languages (C-3). Nothing for a task
+ * that changed no code (`code` false).
+ */
+export async function codeTaskChecks(input: {
+  settings: JsonObject | null | undefined;
+  root: string | undefined;
+  changedFiles: readonly string[];
+  taskId: string;
+  code: boolean;
+  run: (argv: readonly string[], opts: RunOptions) => Promise<RunResult>;
+}): Promise<{
+  checks: CheckCommand[];
+  invalid: ReturnType<typeof checksFromSettings>["invalid"];
+  own: ReturnType<typeof projectChecks>;
+  ownChecks: CheckCommand[];
+  markers: MarkerCheck[];
+}> {
+  const { checks: configured, invalid } = checksFromSettings(input.settings);
+  const { root, code } = input;
+  const before =
+    code && root && input.changedFiles.includes("package.json")
+      ? await scriptsBefore(root, input.taskId, input.run)
+      : null;
+  const own = code ? projectChecks(root, before) : { checks: [], skipped: null, notes: [] };
+  const ownChecks = own.checks.filter((c) => !configured.some((k) => k.name === c.name));
+  const markers: MarkerCheck[] = code
+    ? markerChecks(root).filter((m) => !configured.some((k) => k.name === m.name))
+    : [];
+  return { checks: [...configured, ...ownChecks], invalid, own, ownChecks, markers };
+}
+
+/**
  * A check runner over a sandbox lease: the command runs in the task's sandbox, with the same
  * evidence as a process check ("<argv> -> exit <code> in <ms> ms", then the end of the output,
  * as plain text). A relative `cwd` runs under the worktree; an absolute one is refused by the
@@ -1294,7 +1327,7 @@ async function markerCheckIn(m: MarkerCheck, exec: ExecFn, root: string): Promis
 }
 
 /** Whether a command starts and exits 0 in a sandbox (a probe such as `npm --version`). */
-async function startsIn(sandbox: Sandbox, argv: readonly string[]): Promise<boolean> {
+export async function startsIn(sandbox: Sandbox, argv: readonly string[]): Promise<boolean> {
   try {
     const r = await sandbox.run(argv, { timeoutMs: 30_000, maxOutputBytes: 4096 });
     return r.code === 0 && !r.timedOut;

@@ -285,9 +285,11 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     expect(task.attempt).toBe(0);
     expect(await reviewOf(r.taskId)).toBeUndefined();
     expect(calls.some((c) => (c.origin?.label ?? "").includes(r.taskId))).toBe(false);
+    // L3-left-3 (d1109-oversize-pause): a run that heard the wrap-up paused before its budget ran
+    // out, as its card says (before: "Paused at its budget").
     expect(r.view.display).toMatchObject({
       key: "answer",
-      label: "Paused at its budget",
+      label: "Paused before its budget ran out",
       blocker: { kind: "card", cardKind: "budget" },
     });
     // The Run row says paused, keeps the report and the handoff (data only).
@@ -443,7 +445,8 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     const view = (
       (await (await req(`/projects/${guide?.project_id}/tasks`)).json()) as Json[]
     ).find((t) => t.id === guide?.id) as Json;
-    expect(view.display).toMatchObject({ label: "Paused at its budget" });
+    // L3-left-3: as its card says it (before: "Paused at its budget").
+    expect(view.display).toMatchObject({ label: "Paused before its budget ran out" });
     const runs = (await rt.store.run.forTask(guide?.id ?? "")).filter(
       (x) => x.specialist !== "critic",
     );
@@ -1767,7 +1770,12 @@ describe("l3-handoff-checks, run L3", () => {
       );
       // Before: '"Search MDN for pages that mention popover hint" paused at its budget of CHF 0.15'.
       expect(card?.title).toBe(`"${title}" paused before its budget ran out`);
-      expect(card?.body).toBe(`It spent ${spent} of its budget of ${cap}.`);
+      // d1109-oversize-pause (OP-7): its spend past its estimate is said in the same sentence.
+      expect(card?.body).toMatch(
+        new RegExp(
+          `^It spent ${spent?.replace(".", "\\.")} of its budget of ${cap?.replace(".", "\\.")}(, more than its estimate of CHF \\d+\\.\\d\\d)?\\.$`,
+        ),
+      );
       // Before: 'Done: I opened six MDN pages and listed the five that mention hint. The sixth,
       // the showPopover page, doesn't mention it. Two pages define hint:…; left: Open the
       // popovertarget, togglePopover and…, Check that each address in popover-hint.md opens.'
@@ -1825,7 +1833,7 @@ describe("l3-handoff-checks, run L3", () => {
       expect(n?.title).toBe('Popover hint: "Search MDN…" paused before its budget ran out');
       expect(String(n?.title).length).toBeLessThanOrEqual(60);
       expect(String(n?.body)).toMatch(
-        /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d\. Answer it in the Inbox\.$/,
+        /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d(, more than its estimate of CHF \d+\.\d\d)?\. Answer it in the Inbox\.$/,
       );
     });
 

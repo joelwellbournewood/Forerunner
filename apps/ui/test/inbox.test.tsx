@@ -1364,14 +1364,16 @@ describe("Inbox", () => {
       expect(task?.budget.usdMicro).toBe(1_000_000);
     });
 
-    it("on the Tasks tab the task reads Paused at its budget, with Answer, Edit and Cancel (ADR 0112)", async () => {
+    it("on the Tasks tab the task reads Paused before its budget ran out, with Answer, Edit and Cancel (ADR 0112, L3-left-3)", async () => {
       const harness = setUp();
       const tasks = await harness.client.tasks("proj_atlas");
       const view = tasks.find((t) => t.id === "task_3");
       expect(view?.display).toMatchObject({
         key: "answer",
         // ADR 0112: a stop at a budget is a pause (before: "Needs your decision: its budget is used").
-        label: "Paused at its budget",
+        // L3-left-3 (d1109-oversize-pause): its run heard the wrap-up, so it paused before its
+        // budget ran out, as its card says (before: "Paused at its budget").
+        label: "Paused before its budget ran out",
         // budget-resume: what to do, in the words of its card (before: "raise its budget").
         detail: "Continue or cancel in the Inbox.",
         blocker: { kind: "card", requestId: "req_budget", cardKind: "budget" },
@@ -1383,7 +1385,9 @@ describe("Inbox", () => {
       const row = (await screen.findAllByTestId("task-row")).find(
         (r) => r.getAttribute("data-task-id") === "task_3",
       ) as HTMLElement;
-      expect(within(row).getByTestId("task-status")).toHaveTextContent("Paused at its budget");
+      expect(within(row).getByTestId("task-status")).toHaveTextContent(
+        "Paused before its budget ran out",
+      );
       expect(
         within(row)
           .getAllByRole("button")
@@ -1395,7 +1399,7 @@ describe("Inbox", () => {
       expect(within(drawer).queryByTestId("drawer-action-resume")).toBeNull();
       // ADR 0112: it says it is paused at its budget (before, the word "Paused" was banned here,
       // because it read "Paused" with Resume) and what to do; never "Paused by you", never Resume.
-      expect(drawer).toHaveTextContent("Paused at its budget");
+      expect(drawer).toHaveTextContent("Paused before its budget ran out");
       expect(drawer).toHaveTextContent("Continue or cancel in the Inbox.");
       expect(drawer).not.toHaveTextContent(/\$|USD|Paused by you|Press Resume/);
     });
@@ -1407,7 +1411,9 @@ describe("Inbox", () => {
       const row = (await screen.findAllByTestId("task-row")).find(
         (r) => r.getAttribute("data-task-id") === "task_3",
       ) as HTMLElement;
-      expect(within(row).getByTestId("task-status")).toHaveTextContent("Paused at its budget");
+      expect(within(row).getByTestId("task-status")).toHaveTextContent(
+        "Paused before its budget ran out",
+      );
       expect(row).not.toHaveTextContent(/\$|USD|Paused by you|Press Resume/);
       await user.click(within(row).getByTestId("action-cancel"));
       const dialog = await screen.findByTestId("action-dialog");
@@ -1972,6 +1978,108 @@ describe("l3-handoff-checks, run L3", () => {
       expect(postedCalls(harness, "/requests/req_l3/answer")[0]?.body).toEqual({
         version: 1,
         answer: "Continue (CHF 0.40 more)",
+      }),
+    );
+  });
+});
+
+/**
+ * d1109-oversize-pause (OP-2, OP-4, OP-7; the owner's D4: "wrap up in an organized and error free
+ * way such that the work can be continued in the next run"): the pause card says whether the
+ * project's checks pass on the kept work, and after a pause that got no further it asks plainly,
+ * with a note box on Continue that is sent with the choice.
+ */
+describe("d1109-oversize-pause, run C", () => {
+  const card = (over: Record<string, unknown>) => ({
+    id: "req_pause",
+    projectId: "proj_atlas",
+    projectName: "Atlas",
+    taskId: "task_3",
+    taskTitle: "Build the shop",
+    sessionId: "sess_1",
+    kind: "approval",
+    why: '"Build the shop" paused before this session\'s budget ran out.',
+    steps: [],
+    options: ["Continue (CHF 2.00 more)", "Cancel task"],
+    blocking: true,
+    risk: "medium" as const,
+    changeCard: {
+      key: "task:budget_stop",
+      task_id: "task_3",
+      task_title: "Build the shop",
+      title: '"Build the shop" paused before this session\'s budget ran out',
+      run_id: "run_1",
+      source: "session",
+      specialist: "coder",
+      cap_usd_micro: 2_500_000,
+      spent_usd_micro: 2_000_000,
+      continue_usd_micro: 2_500_000,
+      stopped_by: "wrap_up",
+      done: "The cart works.",
+      left: ["Finish checkout"],
+      kept_checks: { passed: [], failed: ["test"] },
+      estimate_usd_micro: 7_500_000,
+      chf_per_usd: 0.8,
+      applied_at: null,
+      ...over,
+    },
+    status: "open",
+    answer: null,
+    createdAt: "2026-11-10T09:00:00.000Z",
+    version: 1,
+  });
+  const setUp = (over: Record<string, unknown> = {}) => {
+    const harness = createHarness();
+    harness.daemon.state.requests.unshift(card(over));
+    const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+    if (t3) {
+      t3.title = "Build the shop";
+      t3.status = "needs_human";
+    }
+    harness.daemon.state.taskMeta.heldWork?.add("task_3");
+    return harness;
+  };
+  const cardOf = async () =>
+    (await screen.findAllByTestId("request")).find(
+      (r) => r.getAttribute("data-request-id") === "req_pause",
+    ) as HTMLElement;
+
+  it("OP-2: the card's first sentence says the project's test fails on its work; never the check's output", async () => {
+    renderApp("/inbox", setUp());
+    const c = await cardOf();
+    expect(within(c).getByTestId("request-body")).toHaveTextContent(
+      /^This session's budget was CHF 2\.00; the project's test fails on its work\.$/,
+    );
+    expect(
+      within(c)
+        .getAllByTestId("option-explain")
+        .map((e) => e.textContent),
+    ).toEqual([
+      "Starts a session now with CHF 2.00; without it, your next Start takes it in its turn.",
+      "Drops it; its work is set aside unless a later task built on it.",
+    ]);
+  });
+
+  it("OP-4: after a pause that got no further it asks; Continue sends the note with the choice", async () => {
+    const user = userEvent.setup();
+    const harness = setUp({ no_progress: true, kept_checks: { passed: ["test"], failed: [] } });
+    renderApp("/inbox", harness);
+    const c = await cardOf();
+    expect(within(c).getByTestId("request-title")).toHaveTextContent(
+      '"Build the shop" paused again without getting further',
+    );
+    expect(within(c).getByTestId("request-body")).toHaveTextContent(
+      "This session's budget was CHF 2.00; the project's checks pass on its work. Its last run changed no file and left the same list: continue with a note on what to do differently, or cancel it.",
+    );
+    expect(within(c).getAllByTestId("option-explain")[0]).toHaveTextContent(
+      "Starts a session of CHF 2.00; your note goes into its next brief.",
+    );
+    await user.type(within(c).getByTestId("choice-note"), "use the existing parser");
+    await user.click(within(c).getByRole("button", { name: "Continue (CHF 2.00 more)" }));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/requests/req_pause/answer")[0]?.body).toEqual({
+        version: 1,
+        answer: { choice: "Continue (CHF 2.00 more)", note: "use the existing parser" },
       }),
     );
   });

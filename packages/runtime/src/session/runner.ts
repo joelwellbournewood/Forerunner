@@ -17,7 +17,11 @@ import {
   type WaitingTask,
 } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
-import { REVIEW_RESUMED_EVENT, TOOK_LARGER_EVENT } from "../daemon/event-audience.ts";
+import {
+  REVIEW_RESUMED_EVENT,
+  TASK_CONTINUES_EVENT,
+  TOOK_LARGER_EVENT,
+} from "../daemon/event-audience.ts";
 import { couldNotWords } from "../daemon/event-lines.ts";
 import { cardKindOf, holdsTask, isDockerCard, isPausedByPerson } from "../daemon/task-words.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
@@ -50,6 +54,7 @@ import {
   type SessionStatusOutcome,
   type TaskReviewOutcome,
 } from "../loop/ports.ts";
+import { isCodeChange } from "../loop/project-checks.ts";
 import { isSandboxNotReady } from "../sandbox/readiness.ts";
 import type { SchemaSyncPort } from "../update/sync.ts";
 import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
@@ -66,7 +71,12 @@ import {
 } from "./budget-card.ts";
 import {
   type BudgetStopSource,
+  handoffOf,
+  type KeptCheck,
+  keptArtifact,
+  keptOf,
   limitWords,
+  madeProgress,
   REVIEW_PAUSED_EVENT,
   type RunHandoff,
   reviewPausedWords,
@@ -367,6 +377,29 @@ export interface SearchSeen {
   title: string;
   /** The injection scan's rules, when the result's plain fields read like instructions. */
   flagged?: string[];
+}
+
+/**
+ * d1109-oversize-pause (OP-2): the project's own checks on a paused run's kept work, in the task's
+ * sandbox (`loop/kept-work-check.ts`): no network, no model, nothing booked, the output redacted.
+ * `notRun` says why none ran (no sandbox here, it could not open).
+ */
+export type KeptWorkCheckPort = (input: {
+  task: TaskRow;
+  worktree: string | null;
+  changedFiles: readonly string[];
+  signal: AbortSignal;
+}) => Promise<{ checks?: KeptCheck[]; notRun?: string }>;
+
+/** What the runner learnt of a paused run's kept work (OP-2, OP-4, OP-8), for its card. */
+export interface PausedWork {
+  /** It got further than the task's last paused run (`madeProgress`). */
+  progress: boolean;
+  /** The names of the checks that passed and failed on its kept work, when they ran. */
+  checks?: { passed: string[]; failed: string[] };
+  /** The task's whole estimate at the pause, and what is left of it after its kept work. */
+  estimateUsdMicro: number;
+  estimateLeftUsdMicro: number;
 }
 
 /** Where a run paused at a budget, in micro-USD (`TaskExecutionResult.budgetStop`). */
@@ -694,6 +727,12 @@ export interface SessionRunnerDeps {
    * summary, and their attempt count does not change. Absent: every ready task is planned.
    */
   sandboxGate?: SandboxGate;
+  /**
+   * d1109-oversize-pause (OP-2): the project's own checks on a paused run's kept work, in the
+   * task's sandbox (`loop/kept-work-check.ts`). Absent: no check runs (the card says nothing of
+   * checks), as before.
+   */
+  keptWorkCheck?: KeptWorkCheckPort;
   /**
    * How often the runner re-reads a running task's row (U-039), default
    * `DEFAULT_TASK_WATCH_MS`: a person's move made where no route of this process sees it (the
@@ -2657,6 +2696,38 @@ export class SessionRunner {
             // session after it: nothing else of it can run there. Before, a stop at the
             // session's budget filed nothing the first time (C-36: a card at the second).
             const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
+            // d1109-oversize-pause (OP-2, OP-4): what the pause kept, checked and compared with
+            // the task's last pause, kept on its Run row; and whether it got further.
+            const pause =
+              result.outcome === "paused" && result.budgetStop
+                ? await this.keepPausedWork(task, item, result, controller.signal)
+                : null;
+            // OP-5 (the owner's "the agent will do as much as it can"): a pause at its
+            // specialist's limit per run is one run's bound, not the session's: while it got
+            // further, the session still takes new work, a fifth of the work budget is left, the
+            // person did not press Stop after this task and the runs allow, the task goes on at
+            // once from where it stopped, with no card in between. Never at its own budget or an
+            // outer limit, and never after a pause that got no further.
+            if (
+              pause &&
+              result.budgetStop?.source === "specialist_limit" &&
+              pause.progress &&
+              !budget.noNewWork &&
+              budget.workRemainingUsdMicro() >= oversizedMinRoomUsdMicro(workBudgetUsdMicro) &&
+              (runsOf.get(task.id) ?? 0) < MAX_RUNS_PER_TASK_IN_SESSION &&
+              (await store.session.get(session.id))?.status !== "paused"
+            ) {
+              await releaseIfHeld(task.id, "it goes on in this session from where it stopped");
+              await emit(TASK_CONTINUES_EVENT, {
+                taskId: task.id,
+                title: task.title,
+                specialist: result.budgetStop.specialist,
+              });
+              // A run again of the same planned task: no second take of a larger one, nothing
+              // added to the plan's figure (L3-run-2).
+              queue.unshift({ ...item, wholeEstimateUsdMicro: undefined, again: true });
+              continue;
+            }
             const waiting = await store.task.transition(
               task.id,
               task.version,
@@ -2688,6 +2759,16 @@ export class SessionRunner {
                   handoff: result.handoff ?? null,
                   now: clock.nowIso(),
                   chfPerUsd: rate,
+                  // OP-8: one place per fact: the card stores what every screen reads of it.
+                  ...(pause
+                    ? {
+                        noProgress: !pause.progress,
+                        keptChecks: pause.checks,
+                        estimateUsdMicro: pause.estimateUsdMicro,
+                        estimateLeftUsdMicro: pause.estimateLeftUsdMicro,
+                        runSpentUsdMicro: Math.max(0, result.costUsdMicro),
+                      }
+                    : {}),
                 });
               else
                 await fileCannotRunCard({
@@ -3000,6 +3081,9 @@ export class SessionRunner {
                 ...(card.stopped_by === "wrap_up" && card.review_waits !== true
                   ? { before: true }
                   : {}),
+                // d1109-oversize-pause (OP-7, OP-8): from the card, the one place of the fact.
+                ...failedChecksOf(card),
+                ...(card.no_progress === true ? { noProgress: true } : {}),
               };
             }),
           }
@@ -3606,6 +3690,101 @@ export class SessionRunner {
     return () => {
       watching = false;
       cancel();
+    };
+  }
+
+  /**
+   * d1109-oversize-pause (OP-2, OP-4, OP-8): what a paused run kept, kept on its Run row as
+   * `{ kept }` (`keptArtifact`): the fingerprint of the files the task changed (`workHash`), and
+   * the project's own checks on that work when the run changed a code file and the daemon wired
+   * the check (`keptWorkCheck`: in the task's sandbox, no network, no model, nothing booked; its
+   * output redacted). Whether it got further than the task's last paused run (`madeProgress`),
+   * and the task's estimate and what is left of it, for its card. A failure to check or keep it
+   * is logged and counts as progress: the pause is filed as before.
+   */
+  private async keepPausedWork(
+    task: TaskRow,
+    item: PlanItem,
+    result: TaskExecutionResult,
+    signal: AbortSignal,
+  ): Promise<PausedWork> {
+    const { store } = this.deps;
+    const files = result.changedFiles ?? [];
+    let hash = "";
+    let progress = true;
+    let checks: KeptCheck[] | undefined;
+    let notRun: string | undefined;
+    try {
+      hash = workHash(result.worktree, files);
+      const earlier = (await store.run.forTask(task.id))
+        .filter(
+          (r) =>
+            r.specialist !== "critic" &&
+            !r.parent_run_id &&
+            r.id !== result.runId &&
+            r.outcome === "paused",
+        )
+        .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+      const last = earlier.find((r) => keptOf(r.artifacts));
+      const lastKept = last ? keptOf(last.artifacts) : null;
+      progress = madeProgress(
+        { hash, leftToDo: result.handoff?.leftToDo.length ?? 0 },
+        last && lastKept
+          ? { hash: lastKept.hash, leftToDo: handoffOf(last.artifacts)?.leftToDo.length ?? 0 }
+          : null,
+      );
+      if (this.deps.keptWorkCheck && isCodeChange(files)) {
+        const checked = await this.deps.keptWorkCheck({
+          task,
+          worktree: result.worktree ?? null,
+          changedFiles: files,
+          signal,
+        });
+        checks = checked.checks;
+        notRun = checked.notRun;
+      }
+      if (result.runId) {
+        const run = await store.run.get(result.runId);
+        if (run)
+          await store.run.patch(run.id, {
+            artifacts: [
+              ...(run.artifacts ?? []).filter(
+                (a) => !(a && typeof a === "object" && !Array.isArray(a) && "kept" in a),
+              ),
+              keptArtifact({
+                hash,
+                ...(checks ? { checks } : {}),
+                ...(notRun ? { notRun } : {}),
+                ...(progress ? {} : { noProgress: true }),
+              }) as never,
+            ],
+          });
+      }
+    } catch (e) {
+      if (signal.aborted) throw e;
+      this.logger.warn("the paused run's kept work was not checked", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+    }
+    const fresh = (await store.task.get(task.id)) ?? task;
+    const estimateUsdMicro =
+      fresh.est_cost_usd_micro > 0
+        ? fresh.est_cost_usd_micro
+        : (item.wholeEstimateUsdMicro ?? item.estimateUsdMicro);
+    const left = estimateLeftUsdMicro(estimateUsdMicro, await keptWorkFor(store, fresh));
+    return {
+      progress,
+      ...(checks
+        ? {
+            checks: {
+              passed: checks.filter((c) => c.passed).map((c) => c.name),
+              failed: checks.filter((c) => !c.passed).map((c) => c.name),
+            },
+          }
+        : {}),
+      estimateUsdMicro,
+      estimateLeftUsdMicro: left.usdMicro,
     };
   }
 
@@ -4321,4 +4500,13 @@ export class StaticPlanner implements Planner {
         : `${items.length} ready ${items.length === 1 ? "task" : "tasks"} in priority order`,
     };
   }
+}
+
+/** OP-7: `{ checksFail }` of a budget card's `kept_checks` when a check failed, else {}. */
+function failedChecksOf(card: Record<string, unknown>): { checksFail?: string[] } {
+  const k = card.kept_checks as { failed?: unknown } | null | undefined;
+  const failed = Array.isArray(k?.failed)
+    ? k.failed.filter((x): x is string => typeof x === "string" && x.trim() !== "")
+    : [];
+  return failed.length ? { checksFail: failed } : {};
 }
