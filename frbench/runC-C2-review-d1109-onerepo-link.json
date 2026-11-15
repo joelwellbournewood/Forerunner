@@ -1,0 +1,106 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I ran the bench \"review-d1109-onerepo-link\" from this worktree at 40aabeb (daemon 48630, UI 2230, fake GitHub 48631, --provider bench). I drove it with Playwright scripts in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/review-onerepo/walk-{a,b,c,d,e}.cjs; results are in walk-*.json there. Screenshots are in /tmp/frbench/review-d1109-onerepo-link/steps/. Afterwards I stopped the bench and deleted its home.\n\nWhat I did, step by step:\n\n1. **OR-02 (New project on a used repository).**\n   - Set up \"Site\" on bench/seeded with an approved plan (5 tasks).\n   - Home > New project with Name \"Shop\", a brief, and https://github.com/bench/seeded.git (01-a01-new-project-offer.png). The box shows 'bench/seeded is already the project \"Site\". Open it, or add this to it as new work.' with Open it, Add to it and Cancel. Home still lists one project.\n   - Cancel removes the offer and keeps the form (02).\n   - Open it lands on Site (03).\n   - Add to it lands on Site (04 and 05). The intake call got the plan-only system prompt, the \"Already in the project (data, between the markers):\" block and \"Plan only work that is not already in the project.\".\n   - A second Add to while that plan waits shows 'A plan for \"Site\" waits for your answer. Answer it first.' (07).\n   - Approving added the tasks and opened no fr/intake-*-docs pull request.\n   - **But the plan card says \"...; the docs go to the project's repository as a pull request.\"** (06-a06-inbox-plan-card.png).\n   - The stand-in re-planned the same 5 titles (it does not read the block), so Site ended with duplicate titles. Only the real model can show whether this works.\n\n2. **OR-03 (chat).** `tool: project_create` on github.com/bench/seeded was refused. The tool answer was 'Refused: bench/seeded is already the project \"Site\". ...' and no project was made (13-b01).\n\n3. **Folder and other host.** A folder inside \"Notes\" (a path with a space and \"Ö\") got 'This folder is already used by the project \"Notes\". ...' (10). The gitlab URL got the other-host sentence (11).\n\n4. **OR-06/OR-15 (Work together).**\n   - I put a marker naming the unknown \"Kite club\" on bench/empty's main.\n   - New project offered Work together first, with its line 'Works on \"Kite club\" too and plans your brief as its new work.', then Take it over with its line and Details, then Cancel (14-b02-elsewhere-offer.png).\n   - After pressing Work together, githost-requests.jsonl shows only GET, info/refs and upload-pack: no write.\n   - The project has the marker's id and the name \"Kite club\". Its Overview says 'Shared on GitHub with another Forerunner: each keeps its own tasks.' with Details (15-b03).\n   - Its first plan used the plan-only form. **But its plan card again says the docs go to the repository as a pull request** (16-b04-together-plan-card.png).\n   - Approving opened only task pull requests: no docs, scaffold or status pull request.\n   - The Docs status row read 'Kept in the app: you work on \"Kite club\" together, so GitHub's copy is left as it is.'.\n   - A second New project on bench/empty gets 'bench/empty is already the project \"Kite club\". ...' (18).\n   - **Changes then lists \"Created the project Kites and made it the active project.\" on the Kite club row** (23-c03-changes.png).\n\n5. **Take it over from the offer.** On bench/kite2, with \"Old club\" marked and a pull request of my own account, the offer read '...last active on GitHub on 15 Nov, from your account. ...' (19). Take it over:\n   - opened fr/docs-scaffold whose marker names the new project;\n   - put 'This repository was the Forerunner project \"Old club\"; it is now \"New kites\"'s.' in the pull request body;\n   - made no request on the old project's pull request (20).\n\n6. **OR-07 (Overview line on an existing project).**\n   - \"Later\" on bench/kite3; main later gained a \"Far club\" marker, and the copy followed by itself.\n   - The Overview shows 'bench/kite3 is also the Forerunner project \"Far club\", which is not on this computer.' with Take it over and its line (21).\n   - The press shows 'Took over bench/kite3 from \"Far club\". Changes has its Undo.' (22).\n   - **Changes shows \"Cannot be undone now: Its pull request on GitHub already names this project: close it there first..\"** (23).\n   - After restart-daemon.mjs, Undo is still refused and the line stays gone.\n   - After I closed the pull request on GitHub, Undo is allowed.\n\n7. **OR-05 and OR-04.**\n   - Settings > Advanced > Sources shows 'Already the project \"Site\"', 'Used by \"Wind club\", not on this computer' and \"1 already a project\" (d01).\n   - Create project on the marked candidate shows the elsewhere offer with Work together (d02).\n   - The Data import of bench/seeded into Later was refused with the sentence and Later's repos were unchanged.\n\n8. **GitHub stops answering (e01–e03).** I stopped the fake host after the offer showed. Work together then gives 'GitHub did not answer, so the project cannot be checked. Try again.' and nothing is created. A plain New project on the same repository is made (fail open), and its Overview says the pull requests cannot be listed.\n\nThe two-account case (\"another GitHub account worked on it...\") cannot be walked on the bench, which has a single fake GitHub user. The real-daemon and onerepo-together tests cover it, and LC-C1 should check it.",
+ "blocking": [
+  {
+   "issue": "A plan-only plan card (Add to it, and every plan of a together project) promises a docs pull request that is never opened. The card says \"About CHF 0.31 for the 5 tasks; the docs go to the project's repository as a pull request.\", but approving writes no documents. A together project writes nothing to GitHub at all. This breaks design section 5 rule 9 and section 1 \"What the app says is true now\".",
+   "evidence": "Bench screenshots /tmp/frbench/review-d1109-onerepo-link/steps/06-a06-inbox-plan-card.png (Add to it on Site) and 16-b04-together-plan-card.png (Work together on \"Kite club\"). After approving, bench/empty and bench/seeded got no fr/intake-*-docs, fr/docs-scaffold or fr/status pull request. Root cause: intake.ts still files docs_target \"repository\" next to plan_only: true, and InboxPage.tsx:437-439 adds the docs clause whenever card.docsTarget === \"repository\". The new plan_only flag is ignored.",
+   "expected": "A plan_only card has no docs clause; for example, the daemon gives no docsTarget for a plan-only proposal, or the UI reads plan_only. Add a UI test of the card's total line for a plan-only card. Also assert it in the real-daemon Add to case of blocking item 4.",
+   "where": "apps/ui/src/pages/InboxPage.tsx:437; packages/runtime/src/session/intake.ts:1507"
+  },
+  {
+   "issue": "After Work together, the Changes row names a project that does not exist. On the \"Kite club\" row it reads \"Created the project Kites and made it the active project.\" \"Kites\" is the name the person typed; the project was created as \"Kite club\" from the marker. This breaks design section 5 rules 3 and 4 (names, true now).",
+   "evidence": "Bench GET /changes: sentence 'Created the project Kites and made it the active project. Undo.' with wordsUsed 'New project: Kites', on the project named \"Kite club\" (screenshot 23-c03-changes.png). project.create's run returns createSentence(params), which builds the sentence from params.name, not from the row createProjectRecord made. The real-daemon OR-15 case finds this row with r.sentence.startsWith(\"Created the project\"), so it never checks the name.",
+   "expected": "The change sentence (and its read-back and undo words) names the project that was made. Here that is \"Created the project Kite club ...\" or the revived row's name. The OR-15 real-daemon case should assert the full sentence.",
+   "where": "packages/commands/src/commands/project.ts:221 and :318"
+  },
+  {
+   "issue": "The take-over's Undo refusal reads badly on Changes: \"Cannot be undone now: Its pull request on GitHub already names this project: close it there first..\" It has a double period, a capital after the colon and two colons. The new refusal texts (TAKE_OVER_UNDO_OPEN/MERGED/UNREADABLE) are full capitalised sentences ending in \".\". ChangesPage wraps every reason as `Cannot be undone now: {reason}.`, and every other command gives a lower-case fragment with no period.",
+   "evidence": "Bench screenshot /tmp/frbench/review-d1109-onerepo-link/steps/23-c03-changes.png. GET /changes undoBlockedReason was \"Its pull request on GitHub already names this project: close it there first.\". Compare project.ts:195 (\"the project X was removed\") and task.ts:951. No UI test renders this reason on Changes.",
+   "expected": "The person reads one clean sentence for each of the three reasons on the Changes screen. Either word them as fragments the wrapper completes, or make the wrapper take a full sentence. Add a Changes UI test with the real reason text.",
+   "where": "packages/runtime/src/sources/repository-words.ts (TAKE_OVER_UNDO_*); apps/ui/src/pages/ChangesPage.tsx:298"
+  },
+  {
+   "issue": "Validation rule 3 is broken for POST /projects/:id/intake. This branch changes the route: it now runs the plan-only form and answers the open-plan case with openPlanSentence. The UI now calls it (client.proposeIntake, from Add to it), and the fake daemon gained the route in this branch. But apps/ui/test/real-daemon.test.ts has no case for it through the UI client. OR-08's acceptance names a real-daemon case: Add to answers 202, Site's Inbox has its plan card, approving writes no doc set or docs pull request, and the open-card sentence.",
+   "evidence": "`grep proposeIntake apps/ui/test/real-daemon.test.ts` finds nothing. The real-daemon describe 'd1109-onerepo-link, run C' has 8 cases, none of them on intake. The route is covered only in packages/runtime/test/intake.test.ts through app.request. The fake has already drifted from the real daemon: its 409 body is code \"conflict\" and its card options are [\"Approve\", ...], while the real card offers \"Approve and start\".",
+   "expected": "Add a case to the 'd1109-onerepo-link, run C' describe that, through client.proposeIntake on a project with tasks, checks:\n- the 202 answer;\n- the plan card in GET /inbox, including blocking item 1's words;\n- approval with the card's own option string writes no docs pull request, branch or decision file;\n- the open-plan refusal's status and message.\nAlign the fake with it.",
+   "where": "apps/ui/test/real-daemon.test.ts ('d1109-onerepo-link, run C'); apps/ui/test/fake-daemon.ts:1901"
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "OR-02/OR-11: New project on a used link answers 409 with the sentence and nothing is written, also after a restart; a folder inside a linked folder gets the folder sentence; another host is refused",
+   "holds": true,
+   "note": "Walked on the bench (offer, Cancel, Open it, Add to it; one project on Home). The real-daemon case passes on the fix and fails on claude/nifty-knuth-f9udt0 with 'the call was not refused': I reverted the src directories locally, ran it, then restored them."
+  },
+  {
+   "claim": "OR-03: chat project.create is refused before any read-back, with the exact definition and the tool answer as data",
+   "holds": true,
+   "note": "Bench: the stand-in's turn got 'Refused: bench/seeded is already the project \"Site\"...' and no project was made. The real-daemon case asserts the definition text and the UNTRUSTED_CONTENT envelope."
+  },
+  {
+   "claim": "OR-04 import refused with the sentence; OR-05 Sources badges in words with Open, and the marked candidate offers Work together",
+   "holds": true,
+   "note": "Bench: import got 400 with the sentence and repos unchanged; the Sources UI showed 'Already the project \"Site\"' and 'Used by \"Wind club\", not on this computer'; the candidate offer showed Work together. The 400 vs 409 difference is acknowledged in the fixer's new_problems."
+  },
+  {
+   "claim": "OR-06/OR-15: Work together adopts the repository's id, writes nothing to GitHub, uses the plan-only first plan, keeps the status in the app; Take it over replaces exactly that marker and the pull request body says so",
+   "holds": true,
+   "note": "Bench: no GitHub write at the press; id and name come from the marker; the Overview and Docs rows are right; the take-over pull request's marker and body line are right; the old project's pull request was untouched. Gaps: the plan card's docs promise (blocking 1) and the Changes name (blocking 2)."
+  },
+  {
+   "claim": "OR-07: the Overview line, Take it over, Undo refused while the docs pull request is open (also after a restart) and allowed once it is closed",
+   "holds": true,
+   "note": "Walked with restart-daemon.mjs. The refusal is rendered with a double period (blocking 3)."
+  },
+  {
+   "claim": "OR-08: plan-only system prompt, the 'Already in the project' block and the instruction line; approval writes no documents; the open-plan sentence names the project",
+   "holds": true,
+   "note": "intake.test.ts d1109 cases pass on the fix and fail on the base. The plan card still promises docs (blocking 1), and there is no real-daemon case (blocking 4)."
+  },
+  {
+   "claim": "OR-09: the Docs row says whose status pull request holds it (L3-github-5)",
+   "holds": true,
+   "note": "The W15-01 real-daemon case fails on the base with 'kept in the app: no status pull request (Settings turns it on)' and passes on the fix."
+  },
+  {
+   "claim": "OR-10: ownsUnmarkedDocs through the index replaces soleLinkedProject; a together project owns none",
+   "holds": true,
+   "note": "loop-docs.test.ts d1109 cases pass; code read."
+  },
+  {
+   "claim": "OR-01: one identity for every spelling; folders, worktrees and origin read as files; Windows rules; no git process",
+   "holds": true,
+   "note": "repository-use.test.ts passes, including the spawn spy, the long path, another drive and spaces with non-ASCII letters."
+  },
+  {
+   "claim": "Tests changed for design keep their intent (pairBeforeTheRule, the example.test URLs, the Sources words, the open-plan and W15B-13 second plan)",
+   "holds": true,
+   "note": "Diffs read. The W15B-13 comment-words assertion was removed, but that path is now nearly unreachable (see non-blocking)."
+  },
+  {
+   "claim": "Validation: typecheck, lint, lint:paths, docs-check, docs:links, UI vitest 1169, e2e 25+1 skipped, integration 30 (77 skipped, no Postgres), Playwright 35",
+   "holds": true,
+   "note": "I re-ran all of them on 40aabeb: all green. The area's unit files: 112 passed, 1 pre-existing skip."
+  },
+  {
+   "claim": "not_done items OR-12, OR-15 chat path, L3-left-8, Add to drafting state and Postgres have reasons",
+   "holds": true,
+   "note": "OR-12, the OR-15 chat path and the Add to button are on the spec's cut line; L3-left-8 has a reason. The Add to wait is a real-model concern (see non-blocking)."
+  }
+ ],
+ "non_blocking": [
+  "Add to it is synchronous: the dialog shows 'Adding…' for the whole intake model call. It took 321 ms on the stand-in; with the real model it takes the full planning call, with no 'Drafting the plan…' state (design 3.3). This is on the cut line. Live check 4: Add to on a project with tasks; time the wait; confirm the card lists only new work and does not repeat existing tasks (on the bench the stand-in re-planned all 5 existing titles, so Site had 10 tasks).",
+  "IntakeProposalBody.docs is now IntakeDocs.default({}) for the first-plan form too. A first-plan reply missing 'docs' is accepted silently (no decision record on the card) instead of being asked again. Consider requiring docs unless the plan is plan-only.",
+  "AGENTS.md says time goes through a Clock, but create-project.ts:113 and :153 use new Date().toISOString() for settings.together.at.",
+  "discovery.ts reads a folder candidate's marker with node:fs readFileSync directly instead of the discovery's injected fs.",
+  "otherHostSentence hardcodes 'github.com', which is untrue for an install configured with a GitHub Enterprise API base. takeOverLine can pass 100 characters with a 60-character marker name.",
+  "SummaryTab's Take it over error path shows a raw e.message (design 5 rule 8).",
+  "No case in evals/injection/cases for the repository-marker channel. markerNameOf scans and drops flagged names, and the real-daemon cases check the UNTRUSTED_CONTENT envelope and the flagged name.",
+  "A together project's Docs rows say 'not written yet' for missing docs, although a together project never writes docs.",
+  "The 'Updated by Forerunner from the project's brief' comment path (W15B-13) lost its words test. It is nearly unreachable now; consider removing it or testing it.",
+  "The fixer's new_problems are confirmed or plausible:\n- the take-over sentence does not say when its docs pull request could not be opened;\n- the import refusal is 400 while the other entry points answer 409;\n- MemoryGitHost is case-sensitive.\nAlso seen in walk C: when the project's own fr/docs-scaffold pull request was opened before main gained the other project's marker, a later take-over leaves that pull request without the take-over line, and its marker will conflict with main's on merge.",
+  "readRepository runs on every creation with a repository link, and the GitHub host has no request timeout. A GitHub that hangs, rather than refusing, would hang POST /projects; the fail-open only covers errors. Pull requests whose authorLogin is null never count as another account's activity.",
+  "Suggested live check 4 (LC-C1) steps:\n- On home B (another login), link the sandbox repository: expect 'another GitHub account worked on it on <day>... work on it together here' with only Work together and Cancel.\n- Press Work together: no new branch, pull request or comment on GitHub.\n- Look at the plan card's total line after blocking 1 is fixed.\n- The Changes row must name \"Kite club\".\n- Undo, then Work together again, brings the same project back."
+ ]
+}

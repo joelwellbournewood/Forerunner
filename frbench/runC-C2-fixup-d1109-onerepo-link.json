@@ -1,0 +1,170 @@
+{
+ "area": "d1109-onerepo-link",
+ "branch": "fix/d1109-onerepo-link",
+ "head_sha": "9b7b350974d56ab9349a40d0fed4e4b3d7745dd8",
+ "commits": [
+  {
+   "sha": "9b7b350974d56ab9349a40d0fed4e4b3d7745dd8",
+   "subject": "d1109-onerepo-link: a plan-only plan card promises no documents, the Changes row names the project made, the take-over's Undo refusal reads as one sentence; Add to it through the UI client against the real daemon (U-091, U-087)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1: a plan-only plan card promised a docs pull request that is never opened. This was Add to it's card and every plan of a project worked on together. The card read \"About CHF 0.31 for the 5 tasks; the docs go to the project's repository as a pull request.\" but its approval writes no document (design section 5 rule 9). Sibling found while fixing it: Approve and start's working line said \"Writing the plan and its docs pull request…\" on every card of a repository, plan-only ones included.",
+   "u_ids": [
+    "U-091",
+    "U-087"
+   ],
+   "failing_test_before": "apps/ui/test/onerepo-link.test.tsx 'd1109-onerepo-link, run C: a plan-only plan promises no documents; the take-over's Undo refusal on Changes (review)': 'a plan-only card says its total and nothing about documents ...' and 'Add to it on a project with tasks: Atlas's plan card in the Inbox lists the new work and says nothing about documents'. packages/runtime/test/intake.test.ts OR-08 case 'the first plan of a project without tasks is the new-project form; ...' failed with \"expected 'repository' to be null\" on the base. apps/ui/test/real-daemon.test.ts 'd1109-onerepo-link, run C' > 'Add to it through the UI client ...' failed on the 202's docsTarget and on the working line ('Writing the plan and its docs pull request…').",
+   "how": "Root cause: intake.ts filed docs_target \"repository\" beside plan_only, and InboxPage added the docs clause from docs_target alone.\n- packages/runtime/src/session/intake.ts: a plan-only card files plan_only and no docs_target. propose (new and reused) answers docsTarget null.\n- api-types.ts: IntakeProposalView.docsTarget is now nullable.\n- apps/ui/src/pages/InboxPage.tsx: IntakeCardView.planOnly reads card.plan_only. The total line goes through the new exported intakeTotalLine(card, totalWords), which adds the docs clause only to a first plan to a repository.\n- packages/runtime/src/daemon/request-words.ts: the working line is 'Writing the plan…' when card.plan_only is true.",
+   "check_in_the_app": "Bench (done, steps f01-f08): New project 'Site' on bench/seeded with a brief. Its first plan card's total still ends '; the docs go to the project's repository as a pull request.'. Approve it. Then New project 'Shop' on https://github.com/bench/seeded.git with a brief > Add to it > Inbox: Site's card reads 'About CHF 0.43 for the 5 tasks.' with nothing about docs. Approve and start opens no fr/intake-*-docs, fr/docs-scaffold or fr/status pull request.\nWork together on a repository whose marker names 'Kite club': its first plan card's total names no documents either.\nLive check 4 (real model): Add to it on a project with tasks. Read the plan card's total line, and the line shown while Approve and start works ('Writing the plan…'). Confirm the card lists only new work. The stand-in re-plans the existing titles, so only the real model shows whether the 'Already in the project' block is followed."
+  },
+  {
+   "problem": "Review blocking 2: after Work together, the Changes row named a project that does not exist: 'Created the project Kites and made it the active project.' on the 'Kite club' row. 'Kites' was the typed name; the project was made under the marker's name.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "packages/commands/test/onerepo-link.test.ts 'd1109-onerepo-link, run C: project.create's sentence names the project that was made (review)' failed with \"expected 'Created the project Kites and made it…' to be 'Created the project Kite club and mad…'\". apps/ui/test/real-daemon.test.ts OR-15 case 'Work together adopts the repository's project id ...' failed with \"expected 'Created the project My kites and made…'\". It now asserts the full sentence, also for the row Work together brings back after Undo and a restart.",
+   "how": "Root cause: project.create's run built its sentence from params.name, not from the row the creation port made (the marker's name, or a removed together row's own name).\n- packages/commands/src/commands/project.ts: the new createdOutcomeWords names project.name.\n- A name other than the one asked for came from the repository. In that case the outcome carries the untrusted mark (repo_file, repository:<link>), so the chat model gets the sentence as data.\n- The Undo then names no other project. In-process it uses the card's words; after a restart it uses 'Undone: <the row's sentence>'.",
+   "check_in_the_app": "Bench (done, step f09): put a marker naming 'Kite club' on bench/empty's main. New project 'Kites' on bench/empty > Work together > Changes: the Kite club row reads 'Created the project Kite club and made it the active project.' with Undo, and no row says 'Kites'.\nLive check 4 (LC-C1, two homes on the sandbox repository): after Work together on home B, Changes names the repository's project name. Undo, then Work together again: the new row names the same project."
+  },
+  {
+   "problem": "Review blocking 3: the take-over's Undo refusal read badly on Changes: 'Cannot be undone now: Its pull request on GitHub already names this project: close it there first..' (double period, capital after the colon, two colons).",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "apps/ui/test/onerepo-link.test.tsx 'the take-over's Undo refusal reads as one sentence on Changes, for each of its three reasons' (the UI test with the real reason constants). apps/ui/test/real-daemon.test.ts OR-07 case failed with \"expected 'Its pull request on GitHub already na…' to be 'its pull request on GitHub already na…'\". That case now also asserts the Changes sentence built from GET /changes' undoBlockedReason, for the open and the merged pull request.",
+   "how": "Root cause: TAKE_OVER_UNDO_OPEN, _MERGED and _UNREADABLE were full capitalised sentences. Every other command's undoBlocked reason is a fragment that the screens complete ('Cannot be undone now: ….' on Changes, 'Not undone: ….' after a refused press, 'Refused: …' for chat).\n- packages/runtime/src/sources/repository-words.ts now words them as fragments, following the precedent 'a session of X is running. Stop it first'.\n- Changes now reads 'Cannot be undone now: its pull request on GitHub already names this project. Close it there first.', 'Cannot be undone now: the repository already names this project on GitHub.' and 'Cannot be undone now: GitHub did not answer, so the repository cannot be checked. Try again.'\n- The fake daemon has state.takeOverUndoBlocked to drive repo.take_over's Undo.\n- Assertions updated: packages/commands/test/repo-take-over.test.ts, real-daemon OR-07. The intent is unchanged.",
+   "check_in_the_app": "Bench (done, steps f10-f14): project 'Later' on a repository whose main later gets another Forerunner's marker. Overview > Take it over > Changes reads 'Cannot be undone now: its pull request on GitHub already names this project. Close it there first.'. The same after restart-daemon.mjs. Undo is offered once that pull request is closed on GitHub.\nLive check 4: the same on the sandbox. After merging the docs pull request, Changes reads 'Cannot be undone now: the repository already names this project on GitHub.'"
+  },
+  {
+   "problem": "Review blocking 4 (validation rule 3): POST /projects/:id/intake was changed by this area and called by the dialog's Add to it through client.proposeIntake, but had no real-daemon case. The fake had drifted from the daemon: its card options were ['Approve', ...], the card had no proposal, its docsTarget was 'workspace', and its 409 details lacked requestId.",
+   "u_ids": [
+    "U-091",
+    "U-087"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-onerepo-link, run C' > 'Add to it through the UI client on a project with tasks: 202 with no docs target; ... (OR-08)'. It is new and failed on the base sources: \"expected { pending: true, …(7) } to match object { …docsTarget: null }\", then on the working line. apps/ui/test/onerepo-link.test.tsx 'Add to it on a project with tasks ...' failed against the old fake: no intake-card.",
+   "how": "New real-daemon case, on a memory git host backed by a real bare repository. Through client.proposeIntake on a project with two tasks it checks:\n- the 202 answer, with docsTarget null;\n- the plan-only system prompt;\n- the card in GET /inbox: its options, its working line, plan_only, and intakeCardOf plus intakeTotalLine with no docs words;\n- the open-plan refusal: 409, 'A plan for \"Site\" waits for your answer. Answer it first.', reason proposal_open, requestId, cause claim_conflict;\n- the same card after the daemon starts again;\n- Approve and start, the card's own option: it writes the tasks and leaves the docs branches, the docs pull requests and main's files (no docs/decisions) as they were;\n- the session it starts is stopped and waited for, with a 30 s limit and a message saying what it saw.\nThe fake daemon's route now files the daemon's card shape (INTAKE_OPTIONS, a one-task plan from the brief, plan_only without docs_target for a project with tasks or worked on together), answers docsTarget null for those, and gives requestId in its 409 details.",
+   "check_in_the_app": "Not visible on its own: it is the boundary test of the Add to it path. In the app it is the f02-f05 bench steps above. Live check 4: Add to it on a project with tasks, and time the wait while 'Adding…' shows (it stays synchronous; see not_done)."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "The reviewer's non-blocking items (create-project.ts uses new Date() instead of a Clock; discovery.ts reads a marker with node:fs directly; otherHostSentence hardcodes github.com for an Enterprise base; SummaryTab's Take it over error shows e.message; no evals/injection case for the repository-marker channel; a together project's Docs rows say 'not written yet'; the W15B-13 'Updated by Forerunner' words test; GitHub with no request timeout in readRepository; IntakeDocs.default({}) for the first-plan form)",
+   "why": "Outside the four blocking findings this fix-up was asked to fix. Each is listed with its evidence in the review; none changes what the person reads in the flows walked here. pnpm test:injection passes (66/66) with the existing marker scan."
+  },
+  {
+   "problem": "Add to it shows no 'Drafting the plan…' state (POST /projects/:id/intake stays synchronous)",
+   "why": "On the area spec's cut line, as the fixer reported. The new real-daemon case covers the synchronous answer; only the real model shows how long the wait is (live check 4)."
+  },
+  {
+   "problem": "project.create's in-process Undo words ('Undone: the list of projects is back to without it.')",
+   "why": "These are existing words that name no project, so they are not false. They are unchanged here, as are the read-back words: chat has no together flag, so its read-back always names the name asked for. After a restart the Undo reads 'Undone: Created the project Kite club and made it the active project.' from the corrected row."
+  },
+  {
+   "problem": "Integration suite on Postgres",
+   "why": "FORERUNNER_TEST_PG is not set here: 30 passed, 77 skipped (the Postgres cases). No schema changed."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm lint",
+   "result": "0 errors (39 warnings, 1 info, none in files changed here)"
+  },
+  {
+   "command": "pnpm lint:paths",
+   "result": "check-paths: ok (1508 files)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "ok (node packages, apps/ui, apps/approvals-web)"
+  },
+  {
+   "command": "pnpm test",
+   "result": "500 files; 5344 passed, 7 skipped"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (60 files). pnpm docs:check diffs origin/main, which this worktree cannot do, so the round branch is the base."
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "link-check: ok (210 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "clean (2127 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "5 files passed, 6 skipped; 30 passed, 77 skipped (no Postgres)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "92 files, 1173 passed (the real-daemon 'd1109-onerepo-link, run C' describe has 9 cases)"
+  },
+  {
+   "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && npx playwright test --config playwright.local.config.ts)",
+   "result": "35 passed; local config removed afterwards"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "PASS: 66 cases, 66 passed"
+  },
+  {
+   "command": "failing-first check: git checkout of the five source files, then the real-daemon describe -t 'd1109-onerepo-link, run C'",
+   "result": "3 failed on the base (the OR-15 sentence, the OR-07 reason, the Add to it docsTarget), 6 passed; all 9 pass with the fix. The intake.test OR-08 case failed on the base intake.ts with \"expected 'repository' to be null\"."
+  },
+  {
+   "command": "bench walk: node /tmp/frbench/fixup-d1109-onerepo-link/walk.cjs on bench fixup-d1109-onerepo-link (daemon 48640, UI 2240, fake GitHub 48641, --provider bench)",
+   "result": "17/17 checks passed:\n- a first plan keeps its docs clause;\n- the offer sentence, with one project;\n- Add to it's card is plan-only with no docs_target, the working line 'Writing the plan…', the total 'About CHF 0.43 for the 5 tasks.';\n- approving opened no docs pull request;\n- Work together: the offer, no GitHub write at the press, its plan card names no documents, the Changes row 'Created the project Kite club and made it the active project.';\n- Take it over: the Overview line and the took-over sentence;\n- Changes' 'Cannot be undone now: its pull request on GitHub already names this project. Close it there first.', the same after restart-daemon.mjs, and Undo offered once the pull request is closed.\nResult in /tmp/frbench/fixup-d1109-onerepo-link/walk.json. The bench was stopped and its home, profile and githost deleted."
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: no Rust file changed"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-d1109-onerepo-link/steps/06-a06-inbox-plan-card.png",
+   "/tmp/frbench/review-d1109-onerepo-link/steps/16-b04-together-plan-card.png",
+   "/tmp/frbench/review-d1109-onerepo-link/steps/23-c03-changes.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-d1109-onerepo-link/steps/01-f01-first-plan-card.png",
+   "/tmp/frbench/fixup-d1109-onerepo-link/steps/04-f04-inbox-plan-only-card.png",
+   "/tmp/frbench/fixup-d1109-onerepo-link/steps/08-f08-together-plan-card.png",
+   "/tmp/frbench/fixup-d1109-onerepo-link/steps/09-f09-changes-together.png",
+   "/tmp/frbench/fixup-d1109-onerepo-link/steps/12-f12-changes-undo-refused.png",
+   "/tmp/frbench/fixup-d1109-onerepo-link/steps/13-f13-changes-after-restart.png",
+   "/tmp/frbench/fixup-d1109-onerepo-link/steps/14-f14-changes-after-close.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/commands/test/repo-take-over.test.ts (the port's blocked reason) and apps/ui/test/real-daemon.test.ts OR-07 case ('Undo is refused while its docs pull request is open and once it merged')",
+   "why": "The take-over's Undo reasons are now fragments the screens complete, as every command's are: 'its pull request on GitHub already names this project. Close it there first' and 'the repository already names this project on GitHub'. The intent is kept, and the OR-07 case now also asserts the full Changes sentence."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts OR-15 case",
+   "why": "It found the creation row by startsWith('Created the project'). It now asserts the whole sentence, 'Created the project Kite club and made it the active project. Undo.', and the same for the row Work together brings back. This is a stronger assertion, not a design change."
+  }
+ ],
+ "new_problems": [
+  "The stand-in re-plans the same titles for Add to it because it does not read the 'Already in the project' block. On the bench, Site had its 5 first-plan tasks and the same 5 titles again after the approval. Only the real model shows whether the plan-only instruction is followed (live check 4).",
+  "Confirmed from the review, not fixed here:\n- the take-over sentence does not say when its docs pull request could not be opened (writeMarker swallows a scaffold failure);\n- the Data import's link refusal is 400 while POST /projects and Sources answer 409;\n- MemoryGitHost is case-sensitive for owner/name;\n- readRepository has no request timeout for a GitHub that hangs rather than refuses."
+ ],
+ "notes_for_other_areas": [
+  "IntakeProposalView.docsTarget is now nullable: null for the plan-only form. A plan-only card (change_card.plan_only true) has no docs_target. The UI reads IntakeCardView.planOnly and words the plan card's total through the exported intakeTotalLine(card, totalWords) in apps/ui/src/pages/InboxPage.tsx.",
+  "request-words.ts: Approve and start's working line is 'Writing the plan…' for a plan_only card, even on a repository. 'Writing the plan and its docs pull request…' is kept for a first plan to a repository.",
+  "project.create's run sentence names the project the creation port made (createdOutcomeWords in packages/commands/src/commands/project.ts). When that name differs from the one asked for, the outcome carries untrusted {source 'repo_file', origin 'repository:<link>'}.",
+  "Sentence changes (repository-words.ts):\n- TAKE_OVER_UNDO_OPEN, old 'Its pull request on GitHub already names this project: close it there first.', new 'its pull request on GitHub already names this project. Close it there first';\n- TAKE_OVER_UNDO_MERGED, old 'The repository already names this project on GitHub, so this cannot be undone here.', new 'the repository already names this project on GitHub';\n- TAKE_OVER_UNDO_UNREADABLE, old 'GitHub did not answer, so whether the repository names this project cannot be checked. Try again.', new 'GitHub did not answer, so the repository cannot be checked. Try again'.\nChanges shows them as 'Cannot be undone now: <it>.'",
+  "Fake daemon:\n- POST /projects/:id/intake files the daemon's card shape: INTAKE_OPTIONS, one task from the brief at 300_000 USD micro, plan_only without docs_target for a project with tasks or worked on together (state.repositoryOverview kind 'together');\n- its 409 details carry requestId;\n- the new state.takeOverUndoBlocked (string | null, reset to null) is repo.take_over's undoBlocked reason.",
+  "For the session lead's U-091 entry and the user guide: an Add to it plan card's total reads 'About CHF 0.43 for the 5 tasks.' (no docs clause); after Work together, Changes reads 'Created the project Kite club and made it the active project.'; the take-over's Undo on Changes reads 'Cannot be undone now: its pull request on GitHub already names this project. Close it there first.' or, once merged, 'Cannot be undone now: the repository already names this project on GitHub.'",
+  "C2 merge step: this fix-up does not touch the chat's tool list or the project_create and repo_take_over definitions. server.ts is unchanged; intake.ts changes only the plan-only card's docs_target and propose's docsTarget, in d1109-onerepo-link's own hunks."
+ ]
+}

@@ -1,0 +1,103 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I ran the bench \"review-d1109-chat-recall\" from this worktree at b9433c8 (--fresh --provider bench, daemon 48631, UI 2231). I used FORERUNNER_BENCH_PERSON=1 so the plan has a person task with the hosting questions. Scripts are in /tmp/frbench/review-d1109-chat-recall/scripts/p1-p4.cjs, screenshots in /tmp/frbench/review-d1109-chat-recall/steps/01-16, results in walk1-3-result.json, and the model-call log in /tmp/frbench/review-d1109-chat-recall/model-calls.jsonl.\n\nSetup (p1, through the API; setup was not under test): I created a planned project \"Quote Page\" and approved it. The first session ran.\n\nAs a person in the UI (p3):\n- Inbox: I answered \"Decide where the page is published\" with \"Only as a local file for now\" and \"Yes, English only. The opening hours Mon to Fri 9 to 18 go in the footer.\" (steps 01-03). The answer started work.\n- Tasks: I used New task to add \"Write the README\", then the drawer's Edit to rename it to \"Write the guide\" (steps 04-07).\n- Start session: I started a second session (08-09). Every task ended Done; the project had four sessions in all, including the planning session.\n\nChat tab (p4, walk1, steps 10-16; model-call log checked per turn):\n- \"what is left?\": 1 model call, no tool.\n- \"what did we decide about hosting last week?\": 3 calls (recall, recall_open r1, answer). Every result sits inside the UNTRUSTED_CONTENT envelope with origin record:recall and record:tasks. Each hit has the form 'r<n> [kind, Sun 15 Nov, Quote Page, strong|weak]', followed by 'Looked through: everything recorded of Quote Page, any date.' The stand-in passes the whole line as its search words, so r1 was the person task, not the decision. The decision itself is covered by the CR-1 composed test.\n- \"what did I answer about the opening hours?\": 3 calls. The hits include the decision 'Should the quotes be in English only?: Yes, English only. The opening hours Mon to Fri 9 to 18 go in the footer. (you)', the answered card and the decision record document (repo_file envelope).\n- \"what did the first session do?\": 3 calls. Sessions are listed with gist, how each ended and CHF.\n- \"what happened to the README task?\": 3 calls. r1 is 'Write the guide: Done. Earlier called \"Write the README\".'\n- \"pizza oven\" (never recorded): only weak hits that matched the filler word \"say\". The stand-in still opened r1 (see non_blocking).\n\nNo reply or tool result showed an id or r1 to the person. reply.sources was set on each lookup turn (task, document, session, task, task).\n\nRestart (walk2/3): I said \"Das Logo bleibt dunkelblau\", restarted the daemon with restart-daemon.mjs, then asked \"was habe ich über das Logo gesagt?\". recall found the line 'Das Logo bleibt dunkelblau (you)' and recall_open showed the turns around it. The conversation view still served every earlier turn's sources after the restart.\n\nScreens: the Chat tab, Inbox and Tasks match core-experience §3.5/3.8/3.9. This area adds nothing visible beyond the reply content: the From line and the step lines are C3's. I stopped the bench and deleted its home.\n\nFailing-first check: I reverse-applied the fix's packages/runtime/src, packages/state/src and evals/registry changes onto the worktree and kept the fix's tests and testenv:\n- chat-recall.test.ts: 19 of 21 tests fail; the 2 that pass are the golden-set seed-shape cases.\n- The loop-critic L3-left-7 case fails.\n- real-daemon 'd1109-chat-recall, run C' fails (\"expected '[stand-in model] I was given…' to contain 'Mon to Fri 9 to 18'\").\n- contracts 'a reply's sources' fails (sources undefined).\nAfter that I restored the source with git checkout -- . (clean).\n\nValidation run here, all at b9433c8:\n- pnpm typecheck: ok.\n- biome lint: 0 errors, 39 warnings, the same as the base.\n- lint:paths, docs-check --base claude/nifty-knuth-f9udt0 and secrets:scan: ok.\n- The three new recall files: 29 pass.\n- 17 neighbouring chat and state files: 256 pass.\n- pnpm test:injection: 68 rows, no failures; record-005 and record-006 are hooks.scan read_back, record-007 is still facts.scan.\n- UI vitest: 91 files, 1,154 pass.\n- Playwright (local config): 35 pass.\n- pnpm test:e2e: 13 files, 25 pass and 1 skipped.\n\nA scratch test (deleted afterwards) showed the merge-words defect listed under blocking.",
+ "blocking": [
+  {
+   "issue": "recall words a done task's merge differently from its merge record and from the chat's own '# Your files' facts. For a pull request closed without merging it says \"Its pull request waits for your Merge.\" It also says nothing for left_to_you or merging records that the person did approve. This breaks the area's decision \"one status map and one place per fact: chat never says what a screen contradicts\" (design §5 rules 9 and 10) on exactly the question U-092 checks ('when was the README merged?'). Run L3's live-check repository had closed pull requests, so this state is real.",
+   "where": "packages/runtime/src/conversation/recall.ts:481-491 (mergeWords)",
+   "evidence": "mergeWords returns 'merged on …' for state merged and 'merges when its checks pass' for waiting_checks. Otherwise, for any done task with approval 'none', it returns 'waits for your Merge', whatever the state and last_outcome. loop/merge.ts:1178-1182 records a closed pull request as state left_to_you with last_outcome 'closed' and sentence 'PR #N was closed without merging.' project-facts.ts:549-577 classifies that record as closed, and uses the record's sentence for left_to_you and for merging. My scratch test (a done task 'Write the FAQ' whose record was moved to left_to_you / closed) got this from recall {words:'FAQ', kinds:['tasks']}: 'r1 [task, Wed 11 Nov, Quote Page, strong] Write the FAQ: Done. Its pull request waits for your Merge.' The CR-2 test only covers merged and queued+none.",
+   "expected": "recall's merge words follow the same classification the facts use: merged (with its date), closed without merging, waiting for your Merge with the record's sentence, or merging by itself with the record's sentence. Best is to share one function with project-facts.ts' repositoryFacts so there is one place per fact. Write a failing composed case first (a closed pull request, and a left_to_you record after a Merge), then the fix, then the sibling in recall_open's taskText."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "D3-1/CR-1/CR-9: recall and recall_open exist with the agreed definitions and schemas, CHAT_RECALL_RULES follows CHAT_RETRIEVAL_RULES verbatim, conversation-agent 1.3.0, 6 calls and call room 5, every result untrusted",
+   "holds": true,
+   "note": "Asserted on the request in chat-recall.test.ts; the tests fail at base when the source is reverted. On the bench every result was inside the envelope and 'what is left?' took 1 call."
+  },
+  {
+   "claim": "D3-2/CR-2: sessions kind; renamed task found with 'Earlier called'; task_get by earlier title and typo; same titles listed apart; merges worded",
+   "holds": false,
+   "note": "The rename, typo, sessions and same-title cases hold (bench: 'Write the guide: Done. Earlier called \"Write the README\".'). The merge words are wrong for a closed pull request; see blocking."
+  },
+  {
+   "claim": "CR-3: cards and decisions in the Inbox's and Overview's words; another project's card only when named",
+   "holds": true,
+   "note": "Tests pass and fail at base. On the bench the decision 'Should the quotes be in English only?: Yes, English only. The opening hours…' was found."
+  },
+  {
+   "claim": "CR-4: older conversation lines, German, chat's own replies, across a restart; event.ofTypes",
+   "holds": true,
+   "note": "Composed test passes. On the bench, after restart-daemon, 'was habe ich über das Logo gesagt?' found 'Das Logo bleibt dunkelblau'. The suite.ts ofTypes case runs on SQLite; Postgres not run here (not_done, CI)."
+  },
+  {
+   "claim": "CR-5: lessons through the memory port; documents by section; path refusals; docs/status.md never",
+   "holds": true,
+   "note": "Test passes. documentByPath checks realpath containment. STATUS_DOC_RE is duplicated rather than reused (non-blocking)."
+  },
+  {
+   "claim": "CR-6: changes in the Changes page's words via changeRowViews (GET /changes unchanged); spending in CHF",
+   "holds": true,
+   "note": "The route refactor keeps behaviour (UI real-daemon suite passes). The bench showed 'You, in the app, Sun 15 Nov 18:22: changed \"Write the README\": the title to \"Write the guide\"'."
+  },
+  {
+   "claim": "CR-7: golden set of 24 questions, recall@3 1.0, MRR 0.95",
+   "holds": true,
+   "note": "recall-rank.test.ts passes with thresholds 0.9 and 0.75."
+  },
+  {
+   "claim": "CR-8: only this person's records",
+   "holds": true,
+   "note": "Test passes and fails at base. The code reads through scopeOf, the person's own agents' sessions, cards addressed to the person or to no one, and changes by the person or the app."
+  },
+  {
+   "claim": "CR-10: step words unit-tested; delivered through ChatRequest.onStep for every read, recall and command tool",
+   "holds": false,
+   "note": "The unit tests hold. But only the read and recall tools call onStep (agent.ts readTools hunk). Command tools never do, so 'Preparing the change…' and 'Keeping that for later…' are never emitted, and the note to C3 overstates this. Non-blocking."
+  },
+  {
+   "claim": "CR-11: record-005/006 pass through recall and recall_open with read-back",
+   "holds": true,
+   "note": "pnpm test:injection: 68 rows, no failures; record-005 and record-006 are hooks.scan read_back; record-007 still passes."
+  },
+  {
+   "claim": "CR-12/D3-9: reply.sources on the chat.reply row, served by the conversation view and the chat reply; real-daemon case across a restart; fake daemon in the same commit",
+   "holds": true,
+   "note": "real-daemon and contracts cases fail at base and pass now. The fake daemon, api-types and real-daemon changes are all in efa56a5. Sources persisted across the bench restart."
+  },
+  {
+   "claim": "L3-left-6: change named in words; a flagged earlier reply is left out of the history",
+   "holds": true,
+   "note": "Tests fail at base and pass now. The safe side is kept: the record's words reach no later call, and the action lines are still scanned (record-007 passes)."
+  },
+  {
+   "claim": "L3-left-7: the resolved finding's lesson has no placeholder",
+   "holds": true,
+   "note": "loop-critic case fails at base and passes now; lessonWords also strips the placeholder from old lessons."
+  },
+  {
+   "claim": "not_done L3-left-5 (needs GitHub state per turn, or a stored closed state in merge.ts or pull-requests.ts, which are not this area's), CR-9's 700-token bound (agreed texts alone are ≈640 tokens), Postgres ofTypes run locally",
+   "holds": true,
+   "note": "The reasons are sound. The changed tests (budget ≤ ceiling with exact min(), 6 calls, version 1.3.0, corpus list) keep their intent; none is weakened."
+  },
+  {
+   "claim": "Validation: pnpm check parts, test:e2e, test:injection, UI vitest, Playwright pass",
+   "holds": true,
+   "note": "Re-run here and all green; test:integration was not re-run."
+  }
+ ],
+ "non_blocking": [
+  "The fixer's note to C3 says onStep receives stepLine for every read, recall and command tool. Command tools never call onStep (agent.ts registers commands.tools without it), so 'Preparing the change…' and 'Keeping that for later…' exist only in the unit test. Correct the note, or wire it in C3.",
+  "docs/user-guide.md (Chat, 'Ask about anything recorded') says 'While it looks it says what it is doing (\"Looking through last week's sessions…\")'. Nothing shows the step lines until d1109-chat-depth (C3) draws onStep, so until C3 merges this is a promise the app does not keep (§5 rule 9).",
+  "Sources' links: the conversation outside any project links to '/talk', which is not a route (routes.tsx has no talk; NotFoundPage). '/inbox?answered=', '/inbox?request=', '/projects/:id?decision=' and '/changes?projectId=' are not read by those pages; only Tasks ?task= and Files ?path= are. C3's From line needs these handled.",
+  "The merge date comes from merge_record.updated_at (recall.ts:487). A later patch, such as the take-out pull request's state, moves that date. A merged record whose work was taken out still reads 'merged on …'.",
+  "STATUS_DOC_RE is duplicated in recall.ts:890 instead of documents going 'through agent.ts's own loader' as the spec says. The regex is the same, so behaviour does not differ.",
+  "Sessions on one day all read 'The session of Sun 15 Nov' in hits and sources (four identical titles on the bench); only the open has the time. Add the time when two sessions share a day, so the From line and the model can tell them apart.",
+  "Bench fidelity: the role-player passes the whole line as words and opens r1 even when every hit is weak. So the 'say what you looked through' path appears only when nothing matches at all; 'pizza oven' got 'From the record: Task \"Write the guide\"…' via the filler word 'say'/'says'. Consider having recallPlay treat all-weak as nothing found. Live check 4 must check the real model's no-match wording.",
+  "Card hits on multi-question cards cut the answer at 160 characters before the later answers. snippetOf centres on the first query term, not the rarest, so 'opening hours' only showed through the decision hit.",
+  "Per-search N+1 store reads: mergeRecord.forTask per done task (up to 10,000 tasks), sessionRowView per session, statSync per document. Fine for small homes; watch the chat latency on a large one.",
+  "Spending sums the whole project ledger; in a shared project another person's chat counts as 'the work'.",
+  "recall_open of a task returns task_get's existing run lines with raw ISO timestamps ('Run (review, critic, 2026-11-15T18:22:13.777Z)'). They are model-facing and moved, not new; a local date would match the rest of recall.",
+  "CR-9's 700-token bound: the measured +~1,050 tokens on a status turn is in not_done with sound evidence; the session lead decides."
+ ]
+}

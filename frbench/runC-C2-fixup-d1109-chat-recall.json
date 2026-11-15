@@ -1,0 +1,212 @@
+{
+ "area": "d1109-chat-recall",
+ "branch": "fix/d1109-chat-recall",
+ "head_sha": "ddd0e4d610e0ab5d97ddf5086f7460e2adf0cc74",
+ "commits": [
+  {
+   "sha": "793e3fe",
+   "subject": "chat: recall says a done task's merge as the chat's facts say it, from one classification (U-092, D3-2)"
+  },
+  {
+   "sha": "86aff88",
+   "subject": "chat: recall tells same-day sessions apart, links only to pages that exist, and the stand-in opens only a strong hit (U-092)"
+  },
+  {
+   "sha": "4997eaf",
+   "subject": "chat: a task's runs are dated in the person's zone in task_get and recall_open (U-092)"
+  },
+  {
+   "sha": "ddd0e4d",
+   "subject": "testenv: the stand-in gives recall the thing asked about, not the question's frame (U-092, the bench walk)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "BLOCKING (review of b9433c8): recall described a done task's merge differently from the chat's own '# Your files' facts in the same turn (design §5 rules 9 and 10). There were four errors. (1) A pull request closed without merging read \"Its pull request waits for your Merge.\" (2) A merge the person's Merge left to them, such as after a failed check, said nothing. (3) A merge under way said nothing. (4) A record for an older pull request than the one the task has now read \"merged\".",
+   "u_ids": [
+    "U-092",
+    "D3-2"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'd1109-chat-recall, run C: CR-2 sessions and tasks' > 'a done task's merge is said as the chat's '# Your files' and the Tasks row say it: merged with its date, closed without merging, waiting for your Merge or merging by itself with the record's sentence; a record of an older pull request says nothing'. At b9433c8 it read 'Add the footer: Accepted · pull request closed. Its pull request waits for your Merge.', and the map task read 'Done. Its pull request merged on 11 Nov.' from a record for its older pull request.",
+   "how": "Root cause: recall.ts mergeWords classified the record on its own terms. It returned merged, then waiting_checks, then 'waits for your Merge' for any done task with approval 'none'. It ignored the state, the last outcome, the merge mode and the task's own pull request. Fix: the facts' classification now lives in one exported function, mergeStandOf(record, prUrl, mode), in conversation/project-facts.ts. repositoryFacts uses it and behaves as before (chat-guard.test.ts is unchanged and passes). recall's mergeWords words its result: 'Its pull request was merged on 15 Nov.', '... was closed without merging.', '... waits for your Merge: <the record's sentence>' and '... merges by itself: <the record's sentence>'. A record for another pull request gives nothing. The merged date is left out once a take-out pull request was asked for, because take-out.ts patches the record then, so its updated_at is no longer the merge date (this was a non-blocking review item). The sibling, recall_open's taskText, says the same sentence. The seeds now give the merged and waiting tasks the pull request their record is for: chat-recall.test.ts' seed and recall-home.ts' PULL_REQUESTS. Without that, 'when was the README merged?' dropped out of the golden set while its 0.9 threshold still held (measured recall@3 0.917 without the seed fix, 0.958 with it).",
+   "check_in_the_app": "Live check 4 on a repository project. (1) Let a session finish three tasks with pull requests. (2) Press Merge on the Overview for one. (3) Close another's pull request on GitHub and wait a minute for the watcher. (4) Leave the third waiting. The Tasks tab then reads 'Merged', 'Accepted · pull request closed' and 'Accepted · waiting for you to merge'. In the project's Chat ask 'when was the README merged?', 'what happened to the FAQ task?' and 'what happened to the notes task?'. In the model-call log, each recall or recall_open result must say the same as the first call's '# Your files': 'Its pull request was merged on <date>.' with 'Merged: \"…\"'; 'Its pull request was closed without merging.' with 'Closed without merging: \"…\"', and never 'waits for your Merge' for that task; 'Its pull request waits for your Merge: <sentence>' with 'Waiting for your Merge: \"…\"'. The reply must not say the closed one waits for a Merge. Restart Forerunner and ask about the closed one again: same words. Bench walk with the stand-in: /tmp/frbench/fixup-d1109-chat-recall/walk.cjs."
+  },
+  {
+   "problem": "Non-blocking (review): sessions that started on the same day all read 'The session of Sun 15 Nov' in hits and in the reply's sources. The bench showed four identical titles, so neither the model nor the From line could tell them apart.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'd1109-chat-recall, run C: the review's fix-up' > 'two sessions of one day are told apart by their start time in the hit and the reply's source; one alone on its day keeps the date only'",
+   "how": "sessionHits counts the project's own sessions per local day. When a day has two or more, each title adds its start time ('The session of Thu 12 Nov at 15:30'). A session alone on its day keeps the date only. The step words still use the date.",
+   "check_in_the_app": "Live check 4: start two sessions on one day. Ask 'what did today's sessions do?'. The hits and the From line name each session with its time."
+  },
+  {
+   "problem": "Non-blocking (review): a line of the conversation outside any project linked to '/talk', and no route serves that path (Not found).",
+   "u_ids": [
+    "U-092",
+    "D3-9"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'the review's fix-up' > 'a line of the conversation outside any project is a source with no link …' (the link was '/talk')",
+   "how": "That conversation is the shell's Talk panel, not a page, so its source now has link null. RecordSourceView.link was already nullable. A line from a project's conversation still links to /projects/:id/chat.",
+   "check_in_the_app": "After d1109-chat-depth draws the From line: in Talk, outside any project, ask about an earlier line. The From line names it and offers no broken link."
+  },
+  {
+   "problem": "Non-blocking (review): recall_open of a task and task_get dated each run with its UTC ISO time ('Run (review, critic, 2026-11-15T18:22:13.777Z)'). Every other recall line uses a local date.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'the review's fix-up' > 'a task's runs are dated in the person's time zone in recall_open and task_get …' (it read 'Run (work, writer, 2026-11-12T09:40:00.000Z)')",
+   "how": "taskDetailLines takes the person's zone and the turn's now as optional inputs. recall_open passes recall's. task_get passes recall's when the turn has recall, which every chat turn does. Without a zone the line is unchanged.",
+   "check_in_the_app": "Bench walk: in the model-call log, recall_open of a task shows 'Run (work, coder, Sun 15 Nov 19:49)'. Live check 4: the times match the person's clock."
+  },
+  {
+   "problem": "Non-blocking (review), bench fidelity: the stand-in passed the whole line as recall's words and opened r1 even when every hit was weak. So the 'say what you looked through' answer never appeared on the bench ('pizza oven' got a task through the word 'say'). After the first part of this fix, the walk also found that the question's frame words ('what happened to', 'task') made the clearly named notes task weak. They also ranked the person's earlier 'what happened to the notes task?' line above the FAQ task.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "testenv/test/bench-role-player.test.ts 'plays recall for a question about the past: opens the first strong hit, and says nothing matches when every hit is weak …' (it opened a weak r1, passed the whole line, and recallWords did not exist)",
+   "how": "recallPlay opens the first strong hit. When every hit is weak or none comes back, it answers 'Nothing recorded matches.' with the 'Looked through:' line. recallWords(line) removes the question's frame and a closing 'task' before calling recall, as a real model names the thing asked about: 'what happened to the FAQ task?' becomes 'the FAQ' and 'was habe ich über das Logo gesagt?' becomes 'das Logo gesagt'.",
+   "check_in_the_app": "Bench: node scripts/bench/start.mjs --name <n> --fresh --provider bench, then ask 'what did I say about the pizza oven?' in Chat. The reply is 'Nothing recorded matches. Looked through: …'. Live check 4 must still check the real model's wording when nothing matches."
+  },
+  {
+   "problem": "Non-blocking (review): STATUS_DOC_RE was written twice, in agent.ts and in recall.ts.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "none (no behaviour change; the regex was identical)",
+   "how": "recall.ts exports it and agent.ts imports it, in commit 86aff88. chat-recall CR-5 ('docs/status.md never comes back') and conversation.test still pass.",
+   "check_in_the_app": "No visible change."
+  },
+  {
+   "problem": "Non-blocking (review): the user guide promised step lines ('While it looks it says what it is doing') that nothing shows until d1109-chat-depth draws onStep (design §5 rule 9).",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "none (documentation)",
+   "how": "Removed that sentence from docs/user-guide.md (Chat, 'Ask about anything recorded'). d1109-chat-depth adds it back when it shows the lines. runtime.md now says the command tools do not call onStep yet, and which source links the pages do not focus yet.",
+   "check_in_the_app": "Read docs/user-guide.md, Chat: it promises no status line."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Non-blocking (review): card hits on cards with several questions cut the answer at 160 characters, so later answers are lost. snippetOf centres on the first query term, not the rarest.",
+   "why": "This is ranking polish that changes snippets the golden set and many exact-line assertions depend on. It needs its own measured change. Suggested for d1109-chat-depth's thorough pass, which raises the sizes."
+  },
+  {
+   "problem": "Non-blocking (review): each search reads the store once per record (mergeRecord.forTask per done task, sessionRowView per session, statSync per document).",
+   "why": "Fine for the homes measured (the golden home of four weeks, the bench). Batching needs new repository methods (for example merge records by project) that this fix-up does not need. Watch chat latency on a large home in live check 4."
+  },
+  {
+   "problem": "Non-blocking (review): the spending kind sums the whole project ledger, so in a shared project another person's chat counts as 'the work'.",
+   "why": "Shared projects are wave 8's collaboration work (collab-privacy replaces scopeOf's rule). Splitting by human_id in the ledger belongs with that rule."
+  },
+  {
+   "problem": "Non-blocking (review): the Inbox, Overview and Changes links in sources (?answered=, ?request=, ?decision=, ?projectId=) open the right page but do not focus the record.",
+   "why": "Those pages belong to the UI, and the From line that uses the links is d1109-chat-depth's (C3). runtime.md and notes_for_other_areas name the parameters to read."
+  },
+  {
+   "problem": "Non-blocking (review): the command tools never call onStep, so 'Preparing the change…' and 'Keeping that for later…' are never sent.",
+   "why": "Wiring command tools into onStep is d1109-chat-depth's, in the chat model path it owns. The fixer's note to C3 is corrected below, and runtime.md states it."
+  },
+  {
+   "problem": "Carried from the fixer: L3-left-5 (a cancelled task's closed pull request), CR-9's 700-token bound, and the Postgres run of event.ofTypes.",
+   "why": "Not changed here. The fixer's reasons stand and the reviewer agreed with them."
+  }
+ ],
+ "validation": [
+  {
+   "command": "npx vitest run --project unit packages/runtime/test/chat-recall.test.ts (and -t on each new case before its fix)",
+   "result": "Each new case failed before its fix: the merge case ('Accepted · pull request closed. Its pull request waits for your Merge.'), same-day sessions (identical titles), the outside conversation's link ('/talk') and run dates (ISO UTC). After the fixes: 25 of 25 pass."
+  },
+  {
+   "command": "golden set measured with a temporary assertion in recall-rank.test.ts (reverted)",
+   "result": "At b9433c8: recall@3 0.958 and MRR 0.927, not the 1.0 and 0.95 the fixer reported ('which font did I pick?' and 'what did I answer about the opening hours?' second, 'what about stlye the page?' fourth). After 793e3fe without the seed fix: 0.917 ('when was the README merged?' not found). With the seed fix: 0.958 and 0.927. testing.md now gives these figures. recall-rank.test.ts passes with thresholds 0.9 and 0.75."
+  },
+  {
+   "command": "pnpm check (final head ddd0e4d)",
+   "result": "Exit 0. Lint: 0 errors and 39 warnings, the same as the base. lint:paths ok. typecheck ok. Unit: 498 files, 5,354 passed and 7 skipped. docs:links ok. secrets:scan clean (2,126 files). Inside the run, docs:check prints 'cannot diff against origin/main'. Run directly as node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0 it is ok (40 files)."
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "5 files passed and 6 skipped; 30 tests passed and 78 skipped (no Postgres here)."
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "13 files passed; 25 tests passed and 1 skipped."
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "68 rows, Failures: None. record-005 and record-006 are hooks.scan with read_back. record-007 is facts.scan."
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "91 files, 1,154 passed, including real-daemon 'd1109-chat-recall, run C' with the changed stand-in words."
+  },
+  {
+   "command": "Playwright",
+   "result": "Not run. No UI code changed (apps/ui/src is untouched); the reviewer ran 35 passing at b9433c8."
+  },
+  {
+   "command": "cargo checks",
+   "result": "Not run: the desktop shell did not change."
+  },
+  {
+   "command": "bench walk BEFORE at b9433c8 (node scripts/bench/start.mjs --name fixup-d1109-chat-recall --daemon-port 48641 --ui-port 2241 --fresh --provider bench --githost 48643 --env FORERUNNER_GITHOST_POLL_MS=5000; node /tmp/frbench/fixup-d1109-chat-recall/walk.cjs before)",
+   "result": "7 of 11 checks pass. Setup through the API: a repository project on bench/seeded with three coder tasks. As a person: renamed 'Write the README' to 'Write the guide' in the drawer, ran the session, pressed Merge on the Overview for the guide, and closed the FAQ's pull request on the GitHub stand-in. The Tasks tab showed 'Merged', 'Accepted · pull request closed' and 'Accepted · waiting for you to merge'. In Chat, recall gave 'r2 [task, …] Write the FAQ: Accepted · pull request closed. Its pull request waits for your Merge.' while the same turn's facts said 'Closed without merging: \"Write the FAQ\"'. The notes task read 'waits for your Merge.' with no sentence, and the guide read 'Its pull request merged on 15 Nov.'. The stand-in opened the person's own earlier question ('what happened to the notes task?') as r1."
+  },
+  {
+   "command": "bench walk AFTER at ddd0e4d (same bench, fresh home; walk.cjs after; then scripts/bench/restart-daemon.mjs and walk.cjs restart --after-restart with FAQ_QUESTION='what happened with the FAQ pull request?')",
+   "result": "11 of 11, then 3 of 3 after the daemon restart. 'what is left?' was one model call with no lookup. 'when was the README merged?' ran recall {words: 'the README merged'} then recall_open, and gave 'Write the guide: Merged. Earlier called \"Write the README\". Its pull request was merged on 15 Nov.', matching the facts' 'Merged: \"Write the guide\"'. The notes task read 'Its pull request waits for your Merge: #4 waits for you to merge it: press Merge on the Overview.', matching the facts. The FAQ read 'Its pull request was closed without merging.', matching 'Closed without merging', and the reply named 'Write the FAQ' with no id. 'pizza oven' got 'Nothing recorded matches. Looked through: everything recorded of Quote Page, any date.'. After the restart the FAQ words and the reply's source (task, 'Write the FAQ', 15 Nov, a Tasks link) were unchanged. An earlier after-walk is in after1-result.json: it ran before ddd0e4d and found the stand-in-words problem. The bench was stopped and its home, browser profile and git stand-in deleted."
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '; git status",
+   "result": "Nothing found; the tree is clean. playwright.local.config.ts was not committed and was removed."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fixup-d1109-chat-recall/before-steps/04-before-tasks-labels.png",
+   "/tmp/frbench/fixup-d1109-chat-recall/before-steps/08-before-q-faq.png",
+   "/tmp/frbench/fixup-d1109-chat-recall/before-result.json",
+   "/tmp/frbench/fixup-d1109-chat-recall/before-model-calls.jsonl"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-d1109-chat-recall/after-steps/04-after-tasks-labels.png",
+   "/tmp/frbench/fixup-d1109-chat-recall/after-steps/06-after-q-merged.png",
+   "/tmp/frbench/fixup-d1109-chat-recall/after-steps/08-after-q-faq.png",
+   "/tmp/frbench/fixup-d1109-chat-recall/after-steps/09-after-q-none.png",
+   "/tmp/frbench/fixup-d1109-chat-recall/after-steps/10-restart-q-faq-after-restart.png",
+   "/tmp/frbench/fixup-d1109-chat-recall/after-result.json",
+   "/tmp/frbench/fixup-d1109-chat-recall/restart-result.json",
+   "/tmp/frbench/fixup-d1109-chat-recall/after-model-calls.jsonl"
+  ]
+ },
+ "new_problems": [
+  "Ranking: the person's own earlier question lines can outrank the record they asked about. After the restart, recall {words: 'the FAQ'} ranked the earlier line 'what happened to the FAQ task? (you)' as r1 (strong), ahead of the task 'Write the FAQ' (r2, strong) (/tmp/frbench/fixup-d1109-chat-recall/restart-result.json). A real model can see that r1 is its own question, but a person's earlier question rarely holds an answer. Suggested fix: down-weight the person's conversation lines that are questions (end in '?') in rankRecords, measured against the golden set. Live check 4 should watch which hit the real model opens on a repeated question.",
+  "packages/runtime/test/conversation.test.ts 'l3-money-engine, run L3: a chat call its timeout cuts off > a typed turn its timeout cuts off before any token records no time to first token' failed once here, in a parallel run of 7 test files while other agents were busy ('the chat turn had not answered after 60 s of simulated time'). It passed alone 3 times, in two more parallel runs, and in both full pnpm check runs. The fixer saw the same. Its pastTimeout helper gives each simulated second only 8 setImmediate ticks, so any real-time wait before the first model call can let the 60 simulated seconds run out first. That makes it a Windows-CI risk. The test is run L3's.",
+  "The fixer's report said the golden set measured recall@3 1.0 and MRR 0.95. At b9433c8 it measures 0.958 and 0.927 (three questions miss r1, one of them lands at r4). The thresholds still hold, and testing.md now gives the measured figures.",
+  "fix/d1109-chat-recall is checked out in the fixer's worktree (/home/user/Forerunner/.claude/worktrees/wf_6589accd-16a-2), so 'git branch -f' was refused. The branch was moved with 'git update-ref refs/heads/fix/d1109-chat-recall ddd0e4d b9433c8'. That worktree's files still show b9433c8, so its git status will show this fix-up's changes reversed until it is removed or reset. Nothing in it was uncommitted."
+ ],
+ "notes_for_other_areas": [
+  "project-facts.ts now exports mergeStandOf(record, prUrl, mode) and the type MergeStand ('merged' | 'closed' | 'waiting' with sentence | 'merging' with sentence): the one classification of a done task's merge in the chat. repositoryFacts uses it and behaves as before. Any later words about a done task's merge in chat (d1109-chat-depth, d1109-selftasks-chat's fix_tasks, L3-left-5's follow-up) should read it, not merge_record directly.",
+  "Correction to the fixer's note to d1109-chat-depth (C3): only the read and recall tools call ChatRequest.onStep. The command tools do not, so 'Preparing the change…' and 'Keeping that for later…' exist only in recall-steps.ts and its unit test. Wiring them is C3's, in its model path.",
+  "d1109-chat-depth (C3), the From line: a RecordSource link can be null; the conversation outside any project has no page, so draw no link. These links open the right page but the pages do not read the parameter yet: /inbox?answered=<id>, /inbox?request=<id>, /projects/:id?decision=<id>, /changes?projectId=<id>. Only Tasks ?task= and Files ?path= are read today.",
+  "Session titles in recall (hits and sources) add the start time when two of a project's sessions share a day: 'The session of Thu 12 Nov at 15:30'.",
+  "recall.ts exports STATUS_DOC_RE, and agent.ts imports it (the one constant for the per-turn doc excerpts and the documents kind).",
+  "taskDetailLines(deps, project, task) accepts optional deps.timeZone and deps.nowMs. task_get passes recall's, so a run line reads 'Run (work, coder, Sun 15 Nov 19:49)'.",
+  "testenv: recallWords(line) is exported from testenv/src/bench (the stand-in's recall words without the question's frame). recallPlay opens the first strong hit and says 'Nothing recorded matches.' with the Looked through line when every hit is weak.",
+  "Session lead, user guide: the sentence 'While it looks it says what it is doing (\"Looking through last week's sessions…\")' was removed from docs/user-guide.md Chat. d1109-chat-depth puts it back when it draws the step lines.",
+  "Session lead, suggested U-092 check line: 'when was the README merged?' gives the merge date, and asking about a task whose pull request was closed on GitHub says it was closed without merging, matching the Tasks row ('Accepted · pull request closed'), never 'waits for your Merge'.",
+  "Live check 4 steps for this fix-up: see fixed[0].check_in_the_app (merged, closed and waiting merges against '# Your files', across a restart). Also watch whether the real model, on a repeated question, opens the task rather than its own earlier question line (new_problems[0])."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/chat-recall.test.ts 'CR-2 sessions and tasks' > 'a renamed task is found by its earlier name, with 'Earlier called', and its merge …'",
+   "why": "The seed's done tasks now carry the pull request their merge record is for: a real record is always for the task's pull request, and recall, the Tasks row and the facts read a record only for that one. So the status is now the Tasks row's ('Merged', 'Accepted · waiting for you to merge') where it was 'Done', and the merge sentence is the facts' ('Its pull request was merged on 4 Nov.'; 'Its pull request waits for your Merge: #3 waits for you to merge it: press Merge on the Overview.'). task_get's first line reads ': Merged'. The intent is kept: the earlier title, the merge date, and 'waits for your Merge' for the waiting one."
+  },
+  {
+   "test": "testenv/src/bench/recall-home.ts (the golden home's seed)",
+   "why": "'Write the guide' and 'Write the FAQ' get pull_request URLs (PULL_REQUESTS) when the 3 Nov session finishes them, matching their merge records. Without this the golden question 'when was the README merged?' would not be found, while the 0.9 threshold still held. The thresholds and the questions are unchanged."
+  }
+ ]
+}

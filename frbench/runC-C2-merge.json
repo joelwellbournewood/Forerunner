@@ -1,0 +1,103 @@
+{
+ "merged": [
+  "fix/d1109-onerepo-link at 9b7b350 -> merge commit d706e76",
+  "fix/d1109-chat-recall at ddd0e4d -> merge commit 09b946c",
+  "fix/d1109-oversize-pause at 9df4a90 -> merge commit 6ce4559"
+ ],
+ "head_sha": "b5fb66f5d2977deea413cd158ce72308f2ba6f6a",
+ "pushed": true,
+ "conflicts_resolved": [
+  "apps/ui/test/real-daemon.test.ts (merging d1109-chat-recall): both areas had appended a describe block at the end of the file. I kept both in merge order: 'd1109-onerepo-link, run C', then 'd1109-chat-recall, run C'. I added the closing '});' between them.",
+  "apps/ui/test/real-daemon.test.ts (merging d1109-oversize-pause): two hunks, again from appended describe blocks. I kept all three in merge order: onerepo-link, chat-recall, oversize-pause (with its OP-0 header comment). No test text was changed. git grep '^<<<<<<< ' finds nothing.",
+  "No conflict in source files. server.ts, api-types.ts, fake-daemon.ts, runtime.md, apps.md and user-guide.md merged automatically, each area in its own hunks as shared_files says."
+ ],
+ "integration_fixes": [
+  "b5fb66f merge-w18 (d1109-chat-recall, d1109-onerepo-link): this is C2's whole-request re-baseline, which shared_files assigns to the merge step for the chat's tool list. The chat-recall test 'CR-9 ... what is left? is answered at once without a lookup ...' failed after the merge with 'expected 1162 to be less than or equal to 981'. It bounds how much a status turn grows over BASE_STATUS_TOKENS = 8148, which was measured on 7aa7add. d1109-onerepo-link, merged first, adds the repo_take_over tool and project_create's longer definition to every chat turn's tools. I re-measured the base with the test's own world (same seed, prompt 1.2.2, four read tools) in a temporary worktree. d706e76 (7aa7add plus onerepo-link) gives 8355; onerepo-link adds 199 tokens. As a check of the method, 7aa7add gives 8156 with the seed as the chat-recall fix-up left it. BASE_STATUS_TOKENS is now 8355 and its comment says where the number comes from. The bounds themselves (fixed + 160, and at most 1000) are unchanged, and the merged request is now 955 over the base. The test failed before this commit and passes after it (25/25 in chat-recall.test.ts). No other whole-list test broke: READ_TOOL_NAMES and the 'read-only without a command port' case pass."
+ ],
+ "validation": [
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "empty"
+  },
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok"
+  },
+  {
+   "command": "pnpm lint",
+   "result": "exit 0; 0 errors, 39 warnings and 1 info (pre-existing)"
+  },
+  {
+   "command": "pnpm lint:paths",
+   "result": "check-paths: ok (1518 files)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "exit 0 (node packages, apps/ui, apps/approvals-web)"
+  },
+  {
+   "command": "pnpm test (first run after the merges)",
+   "result": "1 failed, 5423 passed, 7 skipped: chat-recall CR-9's base request, fixed in b5fb66f"
+  },
+  {
+   "command": "HOME=<empty folder> FORCE_COLOR=1 pnpm test (CI-style, after the fix)",
+   "result": "exit 0; 505 files, 5424 passed, 7 skipped"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (128 files)"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "link-check: ok (210 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "secret-scan: clean (2139 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0; 5 files passed, 6 skipped; 30 passed, 78 skipped (no Postgres here: FORERUNNER_TEST_PG unset)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0; 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "pnpm --filter @forerunner/live test",
+   "result": "exit 0; 11 files passed, 4 skipped; 63 passed, 17 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "PASS: 68 cases (49 hostile, 19 controls), 68 passed, failures: none"
+  },
+  {
+   "command": "cd apps/ui && HOME=<empty folder> FORCE_COLOR=1 pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0; 92 files, 1182 passed"
+  },
+  {
+   "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && npx playwright test --config playwright.local.config.ts)",
+   "result": "35 passed; local config removed afterwards"
+  },
+  {
+   "command": "cargo fmt --check / clippy / test (apps/desktop/src-tauri)",
+   "result": "not run: none of the three areas touched apps/desktop"
+  },
+  {
+   "command": "signature check: git rev-list origin/claude/nifty-knuth-f9udt0..HEAD | git cat-file commit ... | grep '^gpgsig'",
+   "result": "all 40 commits signed (nothing printed)"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "7aa7add..b5fb66f, fast-forward, first try"
+  }
+ ],
+ "smoke": "node scripts/bench/start.mjs --name merge-w18 --daemon-port 48650 --ui-port 2250 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w18: 25/25 checks passed, 0 findings and 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. Approve and start ran one session, which finished both planned tasks and wrote index.html, styles.css and script.js. The smoke journey script needed no change. I stopped the bench with scripts/bench/stop.mjs and deleted its home, its browser profile and the measurement worktree.",
+ "problems_left": [
+  "Nothing is broken on the merged head: every suite listed passes on this machine. CI on Windows and Linux has not run yet; check it after this push.",
+  "Postgres was not tested here (FORERUNNER_TEST_PG is not set): the integration cases that need it (78 skipped) and chat-recall's event.ofTypes conformance case run only on CI.",
+  "The areas' own open items are not fixed by this merge and are in their reports for the session lead. CR-9's spec bound of 700 tokens is not met (the agreed texts add about 955 over the new base; the test's bound is fixed + 160 and at most 1000). L3-left-5. OR-12 (GitHub repository id). L3-left-8 (intake branch name). Add to it has no drafting state. The take-over does not say when its docs pull request failed to open. The Data import answers 400 where the other entry points answer 409. MemoryGitHost compares owner and name case-sensitively. readRepository has no request timeout. The OP-4 row label wording. The Start dialog's 'Nothing can run' when only a no-progress pause waits (C3).",
+  "Timing risk, did not fail in this run: conversation.test.ts 'a typed turn its timeout cuts off before any token records no time to first token' failed once under load for both the recall fixer and the reviewer; it could fail on Windows CI.",
+  "Next steps for the session lead: sync conversation-agent 1.3.0 to forerunner-registry. Live check 4's LC-C1 (Work together and the take-over on the sandbox, no model) can now run on b5fb66f."
+ ]
+}

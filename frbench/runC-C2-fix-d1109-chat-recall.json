@@ -1,0 +1,282 @@
+{
+ "area": "d1109-chat-recall",
+ "branch": "fix/d1109-chat-recall",
+ "head_sha": "b9433c83e449345143761bc938bbcb2e208c9362",
+ "commits": [
+  {
+   "sha": "e9c50a3",
+   "subject": "state: event.ofTypes reads one session's events of given types, newest first, with a limit (d1109-chat-recall, CR-4)"
+  },
+  {
+   "sha": "733da1f",
+   "subject": "chat: recall and recall_open look up anything recorded, quoted as data (U-092, D3-1, D3-2, D3-7)"
+  },
+  {
+   "sha": "a37ccb0",
+   "subject": "chat: the step words of every read, recall and command tool, unit-tested (U-092, CR-10)"
+  },
+  {
+   "sha": "c31f1da",
+   "subject": "chat: the recall golden set over a seeded home of four weeks (U-092, CR-7)"
+  },
+  {
+   "sha": "d091ebf",
+   "subject": "evals: the record channel's recall cases (U-092, CR-11)"
+  },
+  {
+   "sha": "efa56a5",
+   "subject": "chat: a reply keeps the records it rests on, served by the conversation view; the stand-in plays recall (U-092, D3-9, CR-12)"
+  },
+  {
+   "sha": "1330847",
+   "subject": "chat: the history names a change in words and leaves out a quoted record's words; a resolved finding's lesson has no placeholder (L3-left-6, L3-left-7)"
+  },
+  {
+   "sha": "6b90a67",
+   "subject": "docs: chat's recall in the runtime, memory, testing, migrations and apps docs, ADR 0114, 0061 and 0091 amended, the user guide's Chat (U-092)"
+  },
+  {
+   "sha": "441e204",
+   "subject": "chat: recall's letter patterns compare the words that carry meaning, not question words (U-092, the bench walk)"
+  },
+  {
+   "sha": "5b08ec1",
+   "subject": "testenv: recall-home builds its paths with the platform's join (path lint)"
+  },
+  {
+   "sha": "b9433c8",
+   "subject": "test: mark the credential-shaped lesson fixture of chat-recall as not a secret (secret scan)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "D3-1 (CR-1, CR-9): chat could only read the task list, one task, the last session and the files, and its prompt said \"I don't have that here\". So 'what did we decide about hosting last week?' and similar questions about recorded things could not be answered.",
+   "u_ids": [
+    "U-092",
+    "U-084",
+    "D3-1",
+    "D3-7"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'd1109-chat-recall, run C: CR-1 the tools' skeleton' (all four cases) and 'CR-9 the prompt and the turn's room' (two cases). At 7aa7add the model's recall call got 'tool \"recall\" does not exist', the prompt was 1.2.2 and the definitions were missing.",
+   "how": "New packages/runtime/src/conversation/recall.ts with two tools, recall {words, also, kinds, from, to, project} and recall_open {ref}. Their definitions are RECALL_DESCRIPTION and RECALL_OPEN_DESCRIPTION, word for word as agreed. They are registered with the four read tools on every turn; the list is sorted by name, so the order is fixed. A turn's RecallScope holds the candidates (read once per turn), the references r1 to r8 (valid in that turn only) and the records opened. A search returns at most 8 hits within 1,500 tokens and an open at most 2,000, measured with the provider's counter on the wrapped text. Each hit reads 'r<n> [kind, local date, project, strong|weak] title: snippet (who)', followed by a 'Looked through: … , 2 to 8 Nov.' line and a line naming any limit that was reached. No result carries an id or text shaped like a credential. Every result is marked untrusted (agent_output with origin record:recall or record:<kind>; documents are repo_file), so the hooks wrap and scan it and noteRecordsRead makes every later change in the turn be read back. agent.ts adds CHAT_RECALL_RULES (exact agreed text) after CHAT_RETRIEVAL_RULES, CHAT_MAX_MODEL_CALLS 6 (was 4) and CHAT_TURN_CALL_ROOM 5 (was 3); the USD 0.25 ceiling stays and a Haiku turn keeps USD 0.05 (tested). conversation-agent.md is now 1.3.0 with a 'What you look up' section, 'Say where an answer comes from in a few words (\"in the session of 3 Nov\")' and 'If nothing you were given or looked up holds the answer, say what you looked through.'",
+   "check_in_the_app": "Live check 4: in a project that has a decision from last week (answer a card such as 'Where is the page published?'), ask in the project's Chat 'what did we decide about hosting last week?'. Expected: the model-call log shows a recall call with from/to set to last Monday to Sunday in your time zone, then recall_open, then the answer, three calls in all. The reply names the decision and its date with no id and no r1, and the tool results in the log sit inside the data envelope. Then ask 'what is left?': one model call and no recall. Then ask about something never recorded: the reply says what it looked through. In Settings → Costs the turn stays a few centimes on Haiku."
+  },
+  {
+   "problem": "D3-2 (CR-2): a task named by an old name or with a typo was not found. findTask matched only the current title or a unique part of it, and the earlier title, kept in task.update's change log, was never read. The sessions kind was also needed.",
+   "u_ids": [
+    "U-092",
+    "U-084",
+    "D3-2"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'CR-2 sessions and tasks': last week's sessions are listed newest first with gist, how each ended and CHF; a renamed task is found by its earlier name with 'Earlier called' and its merge; task_get finds a task by an earlier title and by a typo; two tasks with one title are listed apart; every store read carries its limit. All fail at the base: no recall, and task_get 'Write the README' / 'stlye the page' gave 'No task … matches'.",
+   "how": "The sessions kind uses d1109-sessions' sessionRowView (gist, endedWords, spentWords) and covers only the person's agents' sessions, newest 500. The tasks kind gives each task's status in the design §2 words, earlier titles from the change log, and the merge from merge_record ('merged on 4 Nov', 'waits for your Merge', 'merges when its checks pass'). recall_open on a task shares task_get's lines (taskDetailLines). In read-tools.ts, findTask now matches the id, then the current title, then an earlier title, then a part of either. As a last step it compares letter patterns of the meaningful words (titleSimilarity: at least 0.5, and at least 0.08 ahead of the next title). Tasks sharing a title are listed apart in W15-37's words. task_get adds 'Earlier called \"…\"'. decisionViews gains an optional limit; the Overview reads as before.",
+   "check_in_the_app": "Live check 4: rename a ready task from 'Write the README' to 'Write the guide' (drawer, Edit), let a session finish it, and merge its pull request. Ask 'what happened to the README task?': the reply names \"Write the guide\" and says it was called \"Write the README\". Ask 'when was the README merged?': the reply gives the merge date. Ask 'what did last week's sessions do?': one line per session with its date, what it did and its CHF."
+  },
+  {
+   "problem": "CR-3: answered cards and decisions could not be looked up, and another project's card had to stay out unless that project was named.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'CR-3 cards and decisions' (two cases; no recall at the base).",
+   "how": "The cards kind reads the person's cards and cards addressed to no one (newest 2,000), leaving out the chat's own read-backs. It uses the Inbox's title and Answered words (requestViews) plus the answer in the person's words (cardAnswerWords). A card's question and asked questions match as its title does. Another project's card appears only when that project or 'all' is named, and is then marked with its project. The decisions kind uses the Overview's decisionViews words, with 'you' for the person.",
+   "check_in_the_app": "Live check 4: in Bakery, answer a questions card 'What are the opening hours?' with 'Mon to Fri 9 to 18'. In Quote Page's Chat ask 'what did I answer about the opening hours?': chat says it has nothing in Quote Page or names Bakery's card only if it looks there. In Bakery's Chat the same question names 'Mon to Fri 9 to 18' and the answer's date."
+  },
+  {
+   "problem": "CR-4: older conversation lines (outside the 12-turn history) and chat's own earlier replies could not be found, including after a daemon restart.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'CR-4 the conversation, across a restart' (the runtime is composed twice on one home; a German line and a reply from 30 turns earlier are found and opened with the turns around them, before and after the restart). Also 'another project's conversation is searched only when that project is named', and packages/state/test/suite.ts 'ofTypes …' (the method did not exist).",
+   "how": "EventRepo.ofTypes(sessionId, types, {beforeSeq, limit}) is a new store method, newest first, on both dialects, with no migration. The conversation kind reads chat.human and chat.reply rows (the newest 20,000) from the conversation sessions of the person's own agents. It covers this conversation's project and the conversation outside any project; another project's lines only when named or 'all'. Notices and the current turn's own line are left out. recall_open shows the stretch of turns around the hit.",
+   "check_in_the_app": "Live check 4: in a long conversation, say 'Das Logo bleibt dunkelblau' early, chat on for more than 12 turns, quit and restart Forerunner, then ask 'what did I say about the logo?'. The reply quotes the line with its date."
+  },
+  {
+   "problem": "CR-5: lessons and the project's documents could not be looked up on demand, and a document had to be opened safely by its path.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'CR-5 lessons and documents' (two cases: the principal's lesson through the memory port and never another agent's private lesson; documents by section, refusals for '..', an absolute path and a link leaving the doc root, docs/status.md never returned, a path with spaces and non-ASCII letters opens).",
+   "how": "The lessons kind goes through memory.recall with the principal's grant only, and the critic's no-fix placeholder is left out of the text (lessonWords). The documents kind uses loadDocChunks over docsDirs without docs/status.md. recall_open also opens a document by its path (documentByPath, with realpath containment). Anything outside the doc set gets 'That file is not one of the project's documents.'",
+   "check_in_the_app": "Live check 4: ask 'how do we deploy?' in a project with docs/deploy.md: the reply cites the section and its path. Ask chat to open '../secret.md': it says that file is not one of the project's documents."
+  },
+  {
+   "problem": "CR-6 (cut line, built): the changes and spending kinds.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'CR-6 changes and spending' (changes read as the Changes page words its rows, with no command name and no JSON; spending is the ledger's CHF for the window, all of it for the work, and by day when opened).",
+   "how": "GET /changes' row naming moved into one exported function, changeRowViews (daemon/change-rows.ts); the route behaves as before and recall uses the same function. changeRowWords reads like 'You, in the app, Mon 2 Nov 09:30: changed \"…\"' and adds '; undone' when the change was undone. Spending sums the ledger for the window, splits the work from the chat (the person's conversation sessions), names no zero amounts, and lists amounts by day when opened.",
+   "check_in_the_app": "Live check 4: ask 'what did I change since Monday?' and 'what did this project cost last week?'. The changes read like rows on the Changes page. The amount equals the Costs tab for that week, in CHF."
+  },
+  {
+   "problem": "CR-7: recall ranks results in code; that ranking needs a held measure.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "packages/runtime/test/recall-rank.test.ts (new). At the base neither recall nor the seeded home existed. During the work it caught a weak-ranked answered card (fixed in c31f1da). The bench walk found 'what did we decide about the plan?' matched to a newer 'what is left?' line; that case failed before 441e204.",
+   "how": "rankRecords scores with BM25 (memory's rankChunks; titles and earlier titles weigh as the heading). That score is fused by reciprocal rank with letter-pattern similarity of the meaningful words (HashedNgramEmbedder over docTerms). Boosts: an exact or quoted title ×3, this project ×1.5; ties go to the newest. A hit is strong when its score is at least 0.6 of the best and it covers at least half the query terms (or nearly matches a title by letters). testenv/src/bench/recall-home.ts seeds four weeks: 2 projects, 24 tasks (3 renamed, 2 cancelled), 6 sessions, 14 cards, 5 decisions, 5 lessons, docs, 120 English and German conversation lines, and another person's records. RECALL_GOLDEN holds 24 questions. Measured: recall@3 1.0 and MRR 0.95 (thresholds 0.9 and 0.75).",
+   "check_in_the_app": "Shared with the bench and live check 4: seed recall-home and ask the RECALL_GOLDEN questions by voice or in Chat."
+  },
+  {
+   "problem": "CR-8: recall had to return only this person's records.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'CR-8 only this person's records'. Two people use one store and a project shared with the second. The second person's conversation line, card, session, private lesson and own project never appear, and 'No project is called \"Kims Garden\".' is returned for their project.",
+   "how": "Every kind reads through d1109-chat-guard's scopeOf(store, humanId). Sessions and conversations are limited to the person's own agents. Cards are those addressed to the person or to no one. Changes are the person's or the app's. Lessons come only through the principal's grant.",
+   "check_in_the_app": "Covered by tests; wave 8 collaboration re-checks it."
+  },
+  {
+   "problem": "CR-10: chat gave no indication of what it was doing while the person waited.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "packages/runtime/test/recall-steps.test.ts (new; the module did not exist at the base).",
+   "how": "recall-steps.ts stepLine(tool, input, ctx) gives one line per tool call. Every agreed sentence and period is covered ('Looking through last week's sessions…', 'Reading the decision of 4 Nov…', 'from 2 to 8 Nov', 'since 2 Nov'). Lines are at most 80 characters and carry no id. Record names come from the store, cut at 40 characters with '…'. Search words are quoted only when the person said every one of them. The lines are delivered through ChatRequest.onStep; d1109-chat-depth shows them.",
+   "check_in_the_app": "After d1109-chat-depth (C3) draws them: ask a question about the past and watch the status line (for example 'Looking through the decisions for \"hosting\"…')."
+  },
+  {
+   "problem": "CR-11: the record channel needed cases that reach the model only through recall.",
+   "u_ids": [
+    "U-092"
+   ],
+   "failing_test_before": "evals/test/injection.test.ts 'd1109-chat-recall, run C: recall in the record channel' and the corpus list (record-005 and record-006 did not exist).",
+   "how": "record-005 plants an instruction in a conversation line 16 turns back (chat_line); record-006 plants one in a change's sentence (change_sentence). Both reach the model only through recall and recall_open. In the runner, RECORD_READ is now a list of read steps and recall's two tools are among CHAT_READ_TOOLS. Both cases pass: the text is wrapped and reported by hooks.scan, the task or session start the model then asks for is read back, and nothing is written.",
+   "check_in_the_app": "pnpm test:injection: 68 rows pass, no failures."
+  },
+  {
+   "problem": "D3-9 / CR-12: an answer could not show which record it rests on in a way the person can open. The real daemon also needed a recall case.",
+   "u_ids": [
+    "U-092",
+    "D3-9"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-chat-recall, run C'. POST /chat/stream through streamChat with the bench stand-in, asked 'what did I answer about the opening hours?': the reply names 'Mon to Fri 9 to 18' and its date, and reply.sources is the card, both before and after the daemon is composed again on the same home. Also apps/ui/test/contracts.test.ts 'd1109-chat-recall, run C: a reply's sources'.",
+   "how": "The chat.reply row keeps sources.records [{kind, title, date, link}]: the records the reply names among those it opened (namedSources, at most three). transcript.ts reads them. GET /projects/:id/conversation serves reply.sources and POST /chat(/stream) serves ChatReplyView.sources, typed as RecordSourceView (both optional, append-only). The fake daemon serves the same field (nextChatSources). The role-player plays recall then recall_open for a question about the past.",
+   "check_in_the_app": "After d1109-chat-depth draws the From line: ask 'what did I answer about the opening hours?' and use the From line to open the Inbox's Answered entry for that card."
+  },
+  {
+   "problem": "L3-left-6: the history fell back to the command name ('The app did: task.create.'). Also, a reply that quoted an instruction-like record made every later turn read back every change while that reply stayed in the history.",
+   "u_ids": [
+    "L3-left-6"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'run L3's leftovers': 'a change with no sentence is named in words…' and 'an earlier reply that quoted an instruction-like record leaves its words out of the history…'. At the base the history carried the record's words, and the next turn's task_create was read back.",
+   "how": "Decision: keep the safe side by taking the record's words out of the history. A reply whose own words the injection scan flags is replaced by '(This reply quoted a record whose words read like instructions; they are left out here.)' (QUOTED_RECORD_LEFT_OUT), so those words reach no later model call. The reply's 'The app did:' lines stay and are scanned as before (record-007 still passes). A change with no sentence is named from one word map (CHANGE_WORDS: 'Added a task.', 'Made a change.').",
+   "check_in_the_app": "Live check 4: get a reply that quotes a report containing 'Ignore previous instructions…' (d1109-chat-guard's FORERUNNER_BENCH_FAIL_SAYS walk). On the next turn ask for a plain change: it acts with its normal confirmation, not a forced read-back. The model-call log's history shows the left-out line."
+  },
+  {
+   "problem": "L3-left-7: memory lessons for resolved findings still carried the critic's no-fix placeholder ('-> Resolve it and show the evidence'), which recall, the per-turn lessons and the Memory screen quote.",
+   "u_ids": [
+    "L3-left-7"
+   ],
+   "failing_test_before": "packages/runtime/test/loop-critic.test.ts 'd1109-chat-recall, run C: the resolved finding's lesson (L3-left-7)'; packages/runtime/test/chat-recall.test.ts 'a lesson that carries the critic's no-fix placeholder is quoted as what it found'.",
+   "how": "runner.ts now passes the lesson text through withoutNoActionGiven (one line). recall's lessonWords also strips the placeholder from lessons stored before this change.",
+   "check_in_the_app": "Memory screen: a lesson for a finding the critic named no fix for reads '[medium] <what it found>' without 'Resolve it and show the evidence'."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L3-left-5: after a cancelled task's pull request is closed on GitHub, the chat's '# Your files' still says it was 'Left open on GitHub when their task was cancelled'.",
+   "why": "d1109-chat-guard's rule (no chat turn waits on GitHub) means the per-turn facts read only the app's own records. A cancelled task's pull request usually has no merge record, and nothing stores its state once it is closed on GitHub: the Overview asks GitHub on every read and caches nothing. Following that state needs either a per-turn GitHub call (refused by D3-5) or a stored state written by the merge watcher or the Overview's pull-request read. Those live in loop/merge.ts and pull-requests.ts, which are not this area's (pull-requests.ts is d1109-onerepo-link's in C2). files_list already checks GitHub on demand and says which pull requests are no longer open. Suggested fix for a later area: when the watcher polls, record a cancelled task's closed pull request (for example a field on the task or merge record), and have project-facts read it."
+  },
+  {
+   "problem": "CR-9's bound 'a status question sends at most 700 more input tokens than at the base'.",
+   "why": "The texts this area must ship word for word (CHAT_RECALL_RULES and the two definitions) cost about 640 tokens on the stand-in's counter (characters / 4), and their JSON schemas about 150 more. 700 is therefore impossible with the agreed texts. The schemas were cut where possible (date patterns are checked in code instead) and the prompt's lookup section kept to five lines. Measured: the base request was 8,148 tokens and this branch's is about 9,200, roughly +1,050. The test asserts the status turn adds only those texts, their schemas and the prompt's lookup lines (fixed + 160, and at most 1,000 in all), runs no lookup, and needs one model call. The session lead decides whether to accept it or to shorten the agreed texts."
+  },
+  {
+   "problem": "Postgres case of event.ofTypes run locally.",
+   "why": "No Postgres runs here (FORERUNNER_TEST_PG unset). The case is in the shared conformance suite (packages/state/test/suite.ts), which postgres.integration.test.ts runs in CI."
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/conversation.test.ts 'a chat turn on an expensive model with a realistic context is not refused by the turn budget'",
+   "why": "CHAT_TURN_CALL_ROOM went from 3 to 5 so a turn can look something up (ADR 0091 amended). The budget is now min(USD 0.25, 5 × the first call's estimate); on Opus with 6,000 tokens of context that reaches the ceiling, so the assertion changed from < 0.25 to ≤ 0.25. It still asserts more than USD 0.05."
+  },
+  {
+   "test": "packages/runtime/test/conversation-memory.test.ts 'the nudge stays inside the turn's six model calls…' (was 'four')",
+   "why": "CHAT_MAX_MODEL_CALLS went from 4 to 6 (search, open, answer, command, nudge). The case now scripts five tool calls and expects a claim on the sixth call to be replaced; its intent is unchanged."
+  },
+  {
+   "test": "packages/runtime/test/conversation-memory.test.ts 'the model is told, word for word…' (version line)",
+   "why": "conversation-agent.md moved from 1.2.2 to 1.3.0 ('What you look up'). The version assertion now reads 1.3.0; every L3 line it checks stays word for word."
+  },
+  {
+   "test": "evals/test/injection.test.ts 'the runner's channels are web, email and record…' (corpus list)",
+   "why": "The list of hostile record cases now includes record-005 (chat_line) and record-006 (change_sentence), as d1109-chat-guard's spec reserved for this area."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+   "result": "Lint: 0 errors (39 warnings and 2 infos, the same as the base). lint:paths ok. typecheck ok. Unit tests: 498 files, 5,349 passed, 7 skipped. docs:links ok. The first two runs failed on node:path in recall-home.ts and on the planted secret-shaped fixture; both were fixed (5b08ec1, b9433c8), then secrets:scan was clean (2,126 files). Inside pnpm check, docs:check prints 'cannot diff against origin/main' (that ref is missing here); run directly with --base claude/nifty-knuth-f9udt0 it is ok (38 files)."
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "5 files passed and 6 skipped; 30 tests passed and 78 skipped (Postgres not set up here, as expected)."
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "13 files passed; 25 tests passed and 1 skipped."
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "68 cases pass, 'Failures: None'. record-005 and record-006 pass via hooks.scan with read_back; record-007 still passes."
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "91 files, 1,154 tests passed, including real-daemon 'd1109-chat-recall, run C' and contracts 'a reply's sources'."
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed."
+  },
+  {
+   "command": "npx vitest run --project unit packages/runtime/test/chat-recall.test.ts packages/runtime/test/recall-rank.test.ts packages/runtime/test/recall-steps.test.ts",
+   "result": "All pass. Golden set: recall@3 1.0, MRR 0.95."
+  },
+  {
+   "command": "bench walk (node scripts/bench/start.mjs --name fix-d1109-chat-recall --daemon-port 48621 --ui-port 2221 --fresh --provider bench; /tmp/frbench/fix-d1109-chat-recall/walk.cjs)",
+   "result": "BEFORE (7aa7add): 'what is left?', 'what did we decide about the plan?' and 'what did the first session do?' were each one model call with no lookup offered, answered from the facts. AFTER: 'what is left?' was 1 call with no lookup. The decision question took 3 calls (recall, recall_open, answer) and found 'The plan for Quote Page after … Approved. Decided by you on Sun 15 Nov 16:44', with reply.sources set to the decision. The session question took 3 calls and found 'The session of Sun 15 Nov' with what it did, how it ended and CHF 0.04, with reply.sources set to the session. The first AFTER walk found a ranking flaw, fixed in 441e204 and walked again. The bench was stopped and its home deleted."
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "Nothing found; nothing uncommitted."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-d1109-chat-recall/before-steps/06-before-status.png",
+   "/tmp/frbench/fix-d1109-chat-recall/before-steps/07-before-decision.png",
+   "/tmp/frbench/fix-d1109-chat-recall/before-steps/08-before-session.png",
+   "/tmp/frbench/fix-d1109-chat-recall/before-model-calls.jsonl",
+   "/tmp/frbench/fix-d1109-chat-recall/before-result.json"
+  ],
+  "after": [
+   "/tmp/frbench/fix-d1109-chat-recall/after-steps/02-after-status.png",
+   "/tmp/frbench/fix-d1109-chat-recall/after-steps/03-after-decision.png",
+   "/tmp/frbench/fix-d1109-chat-recall/after-steps/04-after-session.png",
+   "/tmp/frbench/fix-d1109-chat-recall/after-model-calls.jsonl",
+   "/tmp/frbench/fix-d1109-chat-recall/after-result.json"
+  ]
+ },
+ "new_problems": [
+  "packages/runtime/test/conversation.test.ts 'a typed turn its timeout cuts off before any token records no time to first token' failed once while several chat test files ran in parallel with other agents' load. It passed alone twice and in the full pnpm check run, so it looks timing-sensitive under load (watch it on Windows CI).",
+  "request-words titles a person-questions card that has no task as '\"the task\" needs your answers' (seen in recall's card hits). This is the existing Inbox title (request-words.ts, run C3 / d1109-starts-engine's file), not recall's; real cards carry a task.",
+  "The bench's setup assistant is not dismissed by recorder's skipSetup on a project page in a fresh home; the walk had to POST /setup/finish through the API first (scripts/bench/recorder.cjs; possibly 'Set up later' does not mark setup done there)."
+ ],
+ "notes_for_other_areas": [
+  "Session lead, design §3.9 proposed text: 'What it knows on every turn: the recent conversation; the project's tasks with their status (§2), what each waits for and why it failed; the last session's result by name; this project's open cards in full, other projects' as a count; where the files are and which merges wait for you. It can look up anything else recorded: earlier sessions, answered cards and the answers given, decisions, older conversation, lessons, the project's documents, changes and spending. A change it proposes after looking something up is read back first.'",
+  "Session lead, U-092 'Chat looks up anything recorded'. Check in the app: in a project with two finished sessions, an answered card and a renamed task, ask 'what did I answer about the opening hours?', 'what did the first session do?' and 'what happened to the README task?'. Each answer names the record with its date and no id, and the From line (once d1109-chat-depth draws it) opens it. Ask 'what is left?': an answer at once with no lookup. Ask about something never recorded: the answer says what it looked through. Ask 'when was the README merged?': the merge date. U-084 gains 'what happened to the README task?' after a rename; owner complaints 3 and 8 gain 'what did we decide about hosting last week?'. Suggested CHANGELOG line: 'Chat looks up what Forerunner recorded (earlier sessions, tasks with their earlier names and merges, the cards you answered, decisions, lessons, the project's documents, changes, spending and earlier conversation), names what it found by title and date, and says what it looked through when nothing matches; a change it proposes after a lookup waits for your Yes (U-092, ADR 0114).'",
+  "Session lead: sync evals/registry/principals/conversation-agent.md 1.3.0 to forerunner-registry.",
+  "d1109-chat-depth (C3): ChatRequest.onStep (new, optional) receives recall-steps.ts' stepLine for every read, recall and command tool. ConversationDeps.recallSizes {searchTokens, openTokens} is where the thorough pass passes 3000 and 4000. ChatSources.records (RecordSource {kind (one word: session, task, card, decision, lesson, document, change, spending, conversation), title, date, link}) is on ChatReply.sources and on the chat.reply row's sources.records; served as ChatReplyView.sources and ConversationTurnView.reply.sources (api-types RecordSourceView) for the From line. CHAT_MAX_MODEL_CALLS (now exported) is 6 and CHAT_TURN_CALL_ROOM is 5; CHAT_RECALL_RULES follows CHAT_RETRIEVAL_RULES in the instructions join, so put CHAT_THOROUGH_RULES after it. The history now replaces an earlier reply whose own words the scan flags with QUOTED_RECORD_LEFT_OUT (transcript.ts); historyMessages keeps its signature, so include this in the 8,000-token thorough history. RecallScope is created per turn in agent.ts beside the readTools call.",
+  "d1109-onerepo-link (C2 merge step): READ_TOOL_NAMES is now ['files_list','recall','recall_open','session_last','task_get','tasks_list'], sorted as the model receives them. conversation.test 'is read-only without a command port' compares it to the sorted tool list. The whole-list tests the merge re-baselines name both areas. GET /changes now builds its rows through changeRowViews (packages/runtime/src/daemon/change-rows.ts) with unchanged behaviour; repo.take_over's 'Took over' row is its own change sentence and shows in recall's changes kind with no edit.",
+  "d1109-onerepo-join (C4): recall reads every project through scopeOf, so adding joined projects there extends recall automatically. The conversation kind keeps a line only when its conversationProjectId is among the asked projects (or null for the conversation outside any project).",
+  "d1109-selftasks-chat (C6): in agent.ts, the readTools hunk now passes recall: {scope, agent, timeZone, nowMs, line, transcriptId, countTokens, chfPerUsd, memory, docsDirs, sizes, onStep}. fix_tasks registers beside it. A turn that called recall has recordsRead set (results are untrusted), so fix_tasks' changes after a lookup are read back.",
+  "d1109-selftasks-run (C4): the injection runner's RECORD_READ is now a list of read steps; RECORD_WHERE gained chat_line and change_sentence; CHAT_READ_TOOLS includes recall and recall_open. The 'report' channel goes after 'record' as planned.",
+  "compose.ts: no change was needed. The ConversationAgent already receives memory, docsDirs and chfPerUsd, and recall reads the ledger, change log, decisions and sessions from the store. C3's lines go directly after d1109-chat-guard's.",
+  "decision-views.ts: decisionViews(store, project, docsDirs, opts?: {limit}). With a limit it reads the newest current decisions, bounded; without one it behaves as before.",
+  "Bench / live check 4: testenv/src/bench/recall-home.ts exports seedRecallHome and RECALL_GOLDEN (24 questions with expected hits), and is exported from testenv/src/bench/index.ts. The role-player (chatAnswer → recallPlay) runs recall with the person's line, then recall_open r1, then answers 'From the record: …' for lines that ask about the past ('what did|was|happened…', 'was habe…'). Walk script: /tmp/frbench/fix-d1109-chat-recall/walk.cjs. On a fresh bench home, call POST /setup/finish before opening a project page.",
+  "Live check 4 steps for this area (no extra spend beyond chat turns on Haiku): (1) 'what is left?' takes one call with no recall. (2) 'what did we decide about hosting last week?' after answering a hosting card last week: recall with from/to set to last Monday to Sunday in the person's zone, then recall_open, then the answer, at most three calls, naming the decision and its date with no r1 and no id. (3) In German, 'was habe ich über das Logo gesagt?' after an English line about the logo: recall with also-words, finding the line. (4) Something never recorded: the reply says what it looked through, after at most one retry with other words. (5) Turn cost on Haiku well under CHF 0.05.",
+  "Owner questions: none of runC-plan's owner_questions belong to this area; no default was built."
+ ]
+}

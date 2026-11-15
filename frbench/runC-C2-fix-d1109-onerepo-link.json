@@ -1,0 +1,259 @@
+{
+ "area": "d1109-onerepo-link",
+ "branch": "fix/d1109-onerepo-link",
+ "head_sha": "40aabebee01c4d68d4a85ff01aae29812e180be0",
+ "commits": [
+  {
+   "sha": "9f4b2b8f6c998c5d5e4c40438602a2e97f427c0d",
+   "subject": "d1109-onerepo-link: one identity for a link, and pull request activity from the host (U-091)"
+  },
+  {
+   "sha": "d071b2dbbf18684b17145ba99113972cf470f598",
+   "subject": "d1109-onerepo-link: one repository, one project at every entry point; Work together and Take it over (U-091, U-006, U-037)"
+  },
+  {
+   "sha": "05f88373734f7f7262471f0e99536bbe51344e1f",
+   "subject": "d1109-onerepo-link: a plan for a project with work adds tasks only, a take-over replaces exactly its marker, a together project writes nothing to GitHub, the Docs row says whose status pull request holds it (U-091, U-087)"
+  },
+  {
+   "sha": "ae85a0f414c738f18a5df3bd91927ef2219747b2",
+   "subject": "d1109-onerepo-link: the Overview says when the repository is also a project on another computer, with Take it over; two Forerunners on one repository write nothing of each other's (U-091)"
+  },
+  {
+   "sha": "5593fbe835a42d07c9dc7e118870dfa388be12f5",
+   "subject": "d1109-onerepo-link: ADR 0117 one repository, one project; amendments to 0056, 0058 and 0106; maintainer docs and the user guide (U-091)"
+  },
+  {
+   "sha": "8093efd24610d1e64a0548adfb55a0fae459482d",
+   "subject": "d1109-onerepo-link: data.md says the import's refusal status as the route answers it (U-091)"
+  },
+  {
+   "sha": "40aabebee01c4d68d4a85ff01aae29812e180be0",
+   "subject": "d1109-onerepo-link: formatting, and the win32 path module's reason on its import (U-091)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "OR-01: no single identity of a link. Sources and creation compared raw strings, so https://github.com/O/site.git, git@github.com:o/site and o/site were three links, and a folder inside a linked folder (or a worktree of a linked repository) was a new one.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "packages/runtime/test/repository-use.test.ts (new: every GitHub spelling one key, real temp folders with spaces and non-ASCII names, a .git folder and a .git file worktree, origin read from .git/config, another host, Windows case rules through the platform option); packages/capabilities/test/github-activity.test.ts (updatedAt, authorLogin, sort=updated)",
+   "how": "packages/runtime/src/sources/repository-use.ts: identityOf (github:<owner>/<name> lower case; folder real path, git root, worktree main tree, origin from .git/config read as files, no git process), sameLink, RepositoryIndex over every project row (joined_from counts as keeper, removed projects use nothing). locators.ts accepts a schemeless host/owner/name. GitHost: PullRequestInfo.updatedAt/authorLogin, listPullRequests sort 'updated', RepoInfo.id; MemoryGitHost stamps and sorts.",
+   "check_in_the_app": "New project with repository https://github.com/<you>/<repo>.git while a project already uses <you>/<repo>: the dialog refuses it with that project's name (the spelling does not matter). Live check: two installs on the real sandbox repository (LC-C1)."
+  },
+  {
+   "problem": "OR-02/OR-11: New project made a second project on a repository another project used, without a word (bench walk before: 'Shop' on bench/seeded beside 'Site', /tmp/frbench/fix-d1109-onerepo-link/before/02-before-new-project-after-create.png). A URL on another git host was accepted.",
+   "u_ids": [
+    "U-091",
+    "U-006"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-onerepo-link, run C' > 'New project on a repository another project uses is refused with the offer, nothing written; the same after the daemon starts again; a folder inside a linked folder gets the folder sentence; a URL on another host is refused (OR-02, OR-11)'; apps/ui/test/onerepo-link.test.tsx 'the New project offer (OR-02, OR-15)' (offer, Open it, Add to it, Cancel)",
+   "how": "RepositoryUse.check runs first in createProjectRecord and in createAndSwitch's port; POST /projects answers 409 conflict with details {cause, projectName, ...} and nothing is written. NewProjectDialog shows the daemon's sentence with Open it (project.switch, lands on the project), Add to it (POST /projects/:id/intake with the brief) and Cancel. Another host: 'Forerunner works with repositories on github.com, not gitlab.com. Link a GitHub repository or a folder.'",
+   "check_in_the_app": "Home > New project: Name 'Shop', a brief, Repository link = the repository of an existing project 'Site' > Create: the box says 'o/site is already the project \"Site\". Open it, or add this to it as new work.' with Open it, Add to it, Cancel; Home still lists one project. Open it lands on Site; Add to it lands on Site and its plan card arrives in the Inbox."
+  },
+  {
+   "problem": "OR-03: chat/voice/palette project.create made a second project on a used repository ('Created the project Shop two' on bench/seeded) and the model was told nothing.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "packages/commands/test/onerepo-link.test.ts (3 cases: refused in plan before any read-back, checked again at run, exact definition and tool answer marked as data); apps/ui/test/real-daemon.test.ts 'chat's project.create on a used repository is refused before any read-back ... (OR-03)'",
+   "how": "project.create asks the commands' repositoryUse port in plan and run; new description PROJECT_CREATE_DESCRIPTION; executor refusals keep details and details.untrusted, registry passes untrusted on 'Refused: ...' so the hooks wrap it (UNTRUSTED_CONTENT). For a project not on this computer the answer ends 'Open New project to work on it together.'",
+   "check_in_the_app": "Chat on Site: 'make a project Shop two for <Site's repository>': the reply says the repository is already the project \"Site\" and offers it; Home still lists one project."
+  },
+  {
+   "problem": "OR-04/OR-05: the Data tab's GitHub import cloned a repository another project used into a second project; Sources showed a raw 'duplicate' and ids, and compared raw strings.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'the Data tab's import of a repository another project uses answers the sentence and clones nothing; Sources' accept of a covered candidate names the project without an id, and of a marked one offers Work together, made through together on accept (OR-04, OR-05)'; apps/ui/test/onerepo-link.test.tsx Sources case; apps/ui/test/sources.test.tsx",
+   "how": "DataImporter asks repositoryUse.checkHere before cloning; discovery compares through the index ('o/site is already the project \"Site\".', counts 'N already a project'), accepts with takeOver/together; sources routes answer link causes as 409 with details.cause.",
+   "check_in_the_app": "Project Notes > More > Data > Import from GitHub with Site's repository: refused with 'o/site is already the project \"Site\". Open it, or add this to it as new work.', nothing imported. Settings > Sources: add Site's repository, Scan: the candidate reads 'Already the project \"Site\"' with Open."
+  },
+  {
+   "problem": "OR-06/OR-15: a repository whose marker or pull request marks name a Forerunner project on another computer (a colleague's, or the person's own earlier install) became a second project with its own marker and status PR; two people could not work in one git as one project (D9).",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'a repository whose marker names a project that is not on this computer: Work together first, Take it over only without another account's activity in 14 days ... (OR-06)', 'no marker and open pull requests marked with two unknown projects ... (OR-06 d, e)', 'Work together adopts the repository's project id read at the press and writes nothing to GitHub ... (OR-15)'; packages/runtime/test/docs-scaffold.test.ts 'a take-over's docs pull request replaces exactly the marker it took over and says so; a together project writes nothing (OR-06, OR-15)'; packages/runtime/test/onerepo-together.test.ts (two homes, one host, restart); packages/runtime/test/loop-docs.test.ts OR-10/OR-15 describe",
+   "how": "readRepository (marker + marks of 100 PRs in any state + login), verdictOf, elsewhereOf (14-day rule by updatedAt/authorLogin, own account never blocks). Work together adopts the repository's id (settings.together), writes no marker, docs, scaffold, intake or status PR, plan-only intake, isProjectDocsPr/isProjectStatusPr false, status kept in app with the together note. Take it over records settings.took_over; writeInstallMarker(replace) replaces exactly that marker and the PR body says 'This repository was the Forerunner project \"Kite club\"; it is now \"Kites\"'s.'. GitHub unreadable: creation fails open, Work together/Take it over refused.",
+   "check_in_the_app": "Two installs (or two homes) on one GitHub repository: on the second, New project with that repository says 'o/kite is already the Forerunner project \"Kite club\", which is not on this computer; last active on GitHub on <day>. ...' with Work together (and Take it over only if no other account touched its PRs in 14 days). Work together: the project opens as \"Kite club\", nothing new appears on GitHub (no branch, PR or comment), its Overview says 'Shared on GitHub with another Forerunner: each keeps its own tasks.', Docs' status row says 'Kept in the app: you work on \"Kite club\" together, ...'. Live check LC-C1 on the sandbox."
+  },
+  {
+   "problem": "OR-07: an existing project whose repository is another Forerunner's project (made before the rule or while GitHub was unreadable) said nothing; no way to take it over.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "packages/commands/test/repo-take-over.test.ts (5 cases); apps/ui/test/real-daemon.test.ts 'a project whose copy of its repository names a project that is not on this computer: the Overview's line ... after the daemon starts again Undo is refused while its docs pull request is open and once it merged, and takes it back once it is closed; a together project's line (OR-07)' and 'repo.take_over from chat ... (OR-07)'; apps/ui/test/onerepo-link.test.tsx 'the Overview's line about the repository (OR-07)' (3 cases)",
+   "how": "ProjectCard.repositoryElsewhere from RepositoryUse.overviewOf (the copy's marker read as a file; 14-day rule from a 5-minute cached read, never waited on >4 s). SummaryTab RepositoryElsewhere line with Take it over (repo.take_over, confirm tap) and Details. New command repo.take_over: medium for every actor, askFromChat, refused for an agent outside chat/voice ('Only you can take over a repository.'), GitHub read at plan and run, one change row 'Took over o/kite from \"Kite club\".', scaffold rerun writes the marker PR; undo removes took_over; undoBlocked: 'Its pull request on GitHub already names this project: close it there first.' / 'The repository already names this project on GitHub, so this cannot be undone here.' / GitHub unreadable. Read-back and refusal carry the untrusted mark (ChangeCard.untrusted).",
+   "check_in_the_app": "A project made before this version on a repository whose default branch now has another Forerunner's .forerunner/project.json: Overview shows '<repo> is also the Forerunner project \"<name>\", which is not on this computer.' with Take it over and its line; press it: 'Took over <repo> from \"<name>\". Changes has its Undo.', the line goes, a docs pull request with this project's marker appears on GitHub; Changes > Undo says 'Its pull request on GitHub already names this project: close it there first.'. Walked on the bench: steps 09-11."
+  },
+  {
+   "problem": "OR-08: 'Add this to it as new work' (a second brief) drafted a second standard document set into a repository that already had one; the open-plan refusal read 'A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief.'",
+   "u_ids": [
+    "U-091",
+    "U-087"
+   ],
+   "failing_test_before": "packages/runtime/test/intake.test.ts 'd1109-onerepo-link, run C: a plan for a project that already has work adds tasks only (OR-08)' (2 cases)",
+   "how": "intake.ts planOnlyFor (tasks exist, or together): the plan-only system prompt, the project's tasks as quoted data (alreadyInProjectBlock, up to 40), 'Plan only work that is not already in the project.', docs dropped, card plan_only, approval writes tasks only. openPlanSentence: 'A plan for \"Site\" waits for your answer. Answer it first.'",
+   "check_in_the_app": "A project with tasks > New project offer > Add to it (or a second brief): the plan card lists only new tasks and no documents; approving writes no doc files."
+  },
+  {
+   "problem": "OR-09 (L3-github-5): the Docs row of a status kept in the app because another project's status PR held fr/status read 'kept in the app: no status pull request (Settings turns it on)', untrue with the setting on.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts W15-01 case 'two projects on one repository with Status pull request on: the second never writes into ...' now asserts 'Kept in the app while \"A\"'s status pull request is open on GitHub.' (also after a restart)",
+   "how": "statusInApp records the holder ({pr, project}) beside the kept status; ProjectDocs.statusHeld reads it; docs-routes keptNote uses heldStatusNote / togetherStatusNote.",
+   "check_in_the_app": "Two projects on one repository made before this version, Status pull request on for both: the second project's Docs > status row says 'Kept in the app while \"<first>\"'s status pull request is open on GitHub.'"
+  },
+  {
+   "problem": "OR-10: W15-01's 'the only project linked' compared raw repo strings and ignored the copy's marker.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "packages/runtime/test/loop-docs.test.ts 'd1109-onerepo-link, run C: W15-01's ownership through the one index; a together project owns none of its id's docs pull requests (OR-10, OR-15)' (3 cases)",
+   "how": "ownsUnmarkedDocs(store, project, repo, copyMarker) through RepositoryIndex (fails closed; together never sole; copy marker must name no other project); replaces soleLinkedProject in loop/docs.ts and daemon/pull-requests.ts.",
+   "check_in_the_app": "Not visible on its own: the W15-01 pair keeps its outcome (no write into or listing of the other project's PRs); covered by the OR-09 step above."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "OR-12: GitHub's repository id (a renamed or transferred repository stays the same link)",
+   "why": "Cut line. RepoInfo.id is read by GitHubHost/MemoryGitHost but not stored on projects or used by the index; a renamed repository is a new key until the project's link is updated (ADR 0117 Consequences)."
+  },
+  {
+   "problem": "OR-15's chat path: project.create has no together flag",
+   "why": "Cut line. The tool answer for a repository whose project is not on this computer ends 'Open New project to work on it together.' (CHAT_TOGETHER_HINT); asserted in the OR-03 real-daemon case."
+  },
+  {
+   "problem": "L3-left-8: the intake's docs branch name still carries the project id (fr/intake-<id>-docs)",
+   "why": "Renaming it needs the branch-to-project detection (projectIdsNamedBy, isProjectDocsPr) to keep reading every open PR an earlier version opened, and the take-over/undo checks read that branch; not built in this area. A together project writes no intake branch. Evidence: packages/runtime/src/session/intake.ts:158."
+  },
+  {
+   "problem": "Add to it shows the plan being drafted",
+   "why": "POST /projects/:id/intake stays synchronous: the dialog's Add to it waits ('Adding…') until the proposal is filed, then lands on the project with the plan card in the Inbox; there is no drafting state shown in between."
+  },
+  {
+   "problem": "Integration suite on Postgres",
+   "why": "FORERUNNER_TEST_PG is not set in this environment: pnpm test:integration ran 30 tests, 77 skipped (the Postgres cases). No schema or migration was changed by this area."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm lint",
+   "result": "0 errors (39 warnings, 2 infos, all pre-existing in files this area did not touch)"
+  },
+  {
+   "command": "pnpm lint:paths",
+   "result": "ok (1508 files); repository-use.ts imports node:path for path.win32 with a path-ok reason"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "ok (node packages and apps/ui)"
+  },
+  {
+   "command": "pnpm test",
+   "result": "500 files, 5342 passed, 7 skipped"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "ok (60 files); pnpm docs:check itself cannot diff origin/main in this worktree"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "ok (210 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "clean (2127 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "5 files passed, 6 skipped; 30 passed, 77 skipped (no Postgres)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "92 files, 1169 passed (incl. real-daemon 268 cases)"
+  },
+  {
+   "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && npx playwright test --config playwright.local.config.ts)",
+   "result": "35 passed; local config removed afterwards"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "empty"
+  },
+  {
+   "command": "bench AFTER walk (node walk-after*.cjs on bench fix-d1109-onerepo-link, --provider bench, --githost 48621)",
+   "result": "offer sentence, no second project, chat refused as data, Sources duplicate, import refused, Overview line, Take it over, fr/docs-scaffold carries this project's marker with main untouched, Undo refused while the PR is open; result /tmp/frbench/fix-d1109-onerepo-link/after-walk.json; bench stopped and its home deleted"
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: no Rust file changed"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-d1109-onerepo-link/before/01-before-new-project-filled.png",
+   "/tmp/frbench/fix-d1109-onerepo-link/before/02-before-new-project-after-create.png",
+   "/tmp/frbench/fix-d1109-onerepo-link/before/03-before-home-projects.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-d1109-onerepo-link/steps/01-after-01-new-project-offer.png",
+   "/tmp/frbench/fix-d1109-onerepo-link/steps/02-after-02-add-to-it-landed-on-site.png",
+   "/tmp/frbench/fix-d1109-onerepo-link/steps/03-after-03-home-projects.png",
+   "/tmp/frbench/fix-d1109-onerepo-link/steps/04-after-04-chat.png",
+   "/tmp/frbench/fix-d1109-onerepo-link/steps/09-after-09-overview-line-copy-followed.png",
+   "/tmp/frbench/fix-d1109-onerepo-link/steps/10-after-10-took-over.png",
+   "/tmp/frbench/fix-d1109-onerepo-link/steps/11-after-11-changes-undo-refused.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/real-daemon.test.ts: 16 cases that made a second project on one repository through the API (e.g. 'a second project on the same repository lists only its own docs pull requests (L-16)', 'two projects on one repository with Status pull request on ... (W15-01)', the merge/take-out/conflict cases around lines 8638-11051)",
+   "why": "POST /projects now refuses a second project on a link; the pair is made through the store (pairBeforeTheRule), which is what installs made before this version still have."
+  },
+  {
+   "test": "packages/runtime/test/docs-scaffold.test.ts Delta 2 pair",
+   "why": "Same reason: the second project on one repository is made through the store."
+  },
+  {
+   "test": "apps/ui/test/home.test.tsx and packages/runtime/test/closeout-projects.test.ts",
+   "why": "Their example.test repository URLs are now refused as another host (OR-11); switched to github.com URLs."
+  },
+  {
+   "test": "packages/runtime/test/sources.test.ts and apps/ui/test/sources.test.tsx",
+   "why": "A covered candidate now reads 'o/site is already the project \"Site\".' / 'Already the project \"Site\"' (no id, through the one identity) instead of 'is already project <id> (<name>)'."
+  },
+  {
+   "test": "packages/runtime/test/intake.test.ts open-card refusal and W15B-13 second plan",
+   "why": "The open-plan sentence is now 'A plan for \"<name>\" waits for your answer. Answer it first.'; a second plan for a project with tasks is plan-only (no 'Updated by' doc comment)."
+  }
+ ],
+ "new_problems": [
+  "repo.take_over's sentence does not say when its docs pull request could not be opened: writeMarker swallows a scaffold failure (only a daemon log WARN 'doc scaffold failed'); the bench showed it when this computer's copy had a local change to .forerunner/project.json ('git checkout -B fr/docs-scaffold failed: Your local changes ... would be overwritten'). Undo stays available then (honest), but the person is not told the marker PR waits for the next docs PR.",
+  "The Data tab's import answers a link refusal as 400 validation while POST /projects and Sources answer 409 conflict (bench after-walk.json importStatus 400); left as the route's convention, documented in data.md.",
+  "MemoryGitHost is case-sensitive for owner/name while GitHub is not: a project linked as https://github.com/O/kite.git logs 'doc scaffold failed: repo O/kite not found' in the memory host (onerepo-together run); RepositoryUse now reads with the lower-case key, parseRepoRef elsewhere keeps the case (fine on real GitHub).",
+  "Add to it on a project whose first plan was never drafted (created without intake) drafts a full plan with documents, by design (no doc set yet); the before/after walk's Site shows it."
+ ],
+ "notes_for_other_areas": [
+  "RuntimeApp.repositoryUse (RepositoryUse): check(repos, {takeOver, together, withBrief, except}), checkHere(repos, except), overviewOf(project), takeOverFacts(projectId), takeOverUndoBlocked(projectId, since, prUrl), index(); deps.copyMarker reads ProjectDocs.copyMarker.",
+  "packages/runtime/src/sources/repository-words.ts (no node imports; the fake daemon imports it): ACTIVE_ELSEWHERE_DAYS, TOOK_OVER_KEY/TOGETHER_KEY/JOINED_FROM_KEY, projectIdsOf, togetherOf/isTogether, tookOverOf, isRemovedProject, shownNameOf, dayWords, inUseSentence, alreadyHereSentence, elsewhereSentence, alsoElsewhereSentence, takeOverLine/takeOverDetails/togetherLine, tookOverSentence, takeOverAsk, takeOverUndoneSentence, TAKE_OVER_UNDO_OPEN/MERGED/UNREADABLE, ONLY_YOU_TAKE_OVER, TOGETHER_OVERVIEW_LINE/DETAILS, heldStatusNote, togetherStatusNote, CHAT_TOGETHER_HINT, LinkRefusalCause/Details, isLinkRefusalCause.",
+  "d1109-onerepo-join (C4): settings.joined_from is read by projectIdsOf/RepositoryIndex.keeperOf and isProjectDocsPr/isProjectStatusPr but written by nobody here; OJ-11 adds Work together to the Overview line: ProjectCard.repositoryElsewhere {kind 'elsewhere'|'together', text, canTakeOver, takeOverLine, details} (SummaryTab RepositoryElsewhere).",
+  "ownsUnmarkedDocs(store, project, repo, copyMarker) replaces soleLinkedProject (loop/docs.ts, daemon/pull-requests.ts deps.copyMarker); isProjectDocsPr/isProjectStatusPr return false for a together project; statusInApp writes the holder as JSON {pr, project} in its mark file, ProjectDocs.statusHeld reads it; docs-routes deps.statusHeld.",
+  "writeInstallMarker(dir, marker, {replace}) and InstallMarkerWrite status 'replaced' with was {project, name}; DocsScaffoldOutcome.marker adds 'replaced' and together?: true.",
+  "Commands: ExecuteResult refused gains details and untrusted (refusal() copies ForerunnerError details and details.untrusted); runtime CommandResultView.details; ChangeCard.untrusted (and CardInput.untrusted), the registry's pending tool answer carries it; CommandPorts.repositoryUse {check} and repositoryTakeOver {check, writeMarker, undoBlocked}; COMMAND_NAMES adds 'repo.take_over'; NAME_RE allows an underscore inside a dotted part.",
+  "Chat tool list change for the C2 merge step: new tool repo_take_over (description: 'Take over the project's GitHub repository from a Forerunner project that is not on this computer, when nobody worked on it for 14 days: the repository then names this project through its docs pull request. Only for the repository the Overview says is also another Forerunner project, and only when the person asks.'); project_create's definition old 'Create a project with a name, a goal and optional repositories.' -> new PROJECT_CREATE_DESCRIPTION 'Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead (open it with project.switch, or add the new work to it), never a second project.'",
+  "Intake: PlanOnly / plan_only card flag, planOnlyFor (tasks exist or together), alreadyInProjectBlock (PLAN_ONLY_LISTED 40); openPlanSentence in session/intake-words.ts: old 'A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief.' -> new 'A plan for \"<name>\" waits for your answer. Answer it first.'",
+  "Sentence changes: Sources old '<locator> is already project <id> (<name>)' -> new '<locator> is already the project \"<name>\".' ('This folder is already the project ...'); Docs row old 'kept in the app: no status pull request (Settings turns it on)' (still used when nothing held it) -> 'Kept in the app while \"<name>\"'s status pull request is open on GitHub.' / '... another project's status pull request ...; close it there to have this one's there.' / together note.",
+  "API: POST /projects answers link refusals 409 {code:'conflict', message, details {cause, projectId?, projectName?, projects?, canWorkTogether?, canTakeOver?, togetherLine?, takeOverLine?, takeOverDetails?}}; CreateProjectBody takeOver {projects[1..20]} and together {project}; AcceptCandidateBody the same; ProjectCard.repositoryElsewhere (append-only); UI client.proposeIntake(projectId, {brief}).",
+  "GitHost: listPullRequests(repo, {state, head, sort:'updated'}), PullRequestInfo.updatedAt/authorLogin, RepoInfo.id; MemoryGitHost.now, openPullRequestAs(repo, author, {title, body, head, base?, state?, merged?, updatedAt?}).",
+  "Fake daemon: state.repositoryElsewhere (by owner/name, the offer), state.repositoryOverview (by project id, the Overview line), fakeLinkOf, POST /projects/:id/intake, repo.take_over with Undo.",
+  "ADR 0117 is new; 0056, 0058 and 0106 have dated amendments; the session lead writes U-091's entry (Check in the app steps are in fixed[].check_in_the_app) and docs/requirements.md A.1/A.3/A.4 rows."
+ ]
+}
