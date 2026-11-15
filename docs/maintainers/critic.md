@@ -441,7 +441,18 @@ sets the work's cost against it, the ledger less the critic's Run rows (`metrics
 estimate" counted the reviews), and with reviews the finding and the summary name them apart
 ("Session work cost CHF 0.12 exceeded its estimate CHF 0.05 by 140% (the reviews, CHF 0.05
 more, are not in the estimate)"; "cost CHF 0.25 (work CHF 0.15 against an estimate of CHF 0.14,
-reviews CHF 0.10)"); without reviews the words are as before. The daemon's
+reviews CHF 0.10)"); without reviews the words are as before. The estimate is the plan's figure
+the person saw on the plan line and in the Start dialog, each task counted once (L3-run-2, live
+check 3): `planEstimateOf` skips an item the runner marked `again` (a task taken again after a
+send-back or a failed try) and any later item of a task already counted, and, when items repeat a
+task, computes the figure from the first item per task instead of trusting the stored total
+(rows written before the mark summed every attempt: "against an estimate of CHF 0.21" where the
+plan said about CHF 0.11). "Plan lists the same task twice" is no finding for a repeat that is
+marked `again`, whose task the critic sent back (`handoff.sent_back`) or ran in this session; a
+plan that lists a task twice that never ran is still one. Work that tried a task again is named in
+an overrun finding (`attemptsAgainOf`: "Session work cost CHF 0.18 exceeded its estimate CHF 0.08
+by 130%, with one task tried twice (the reviews, CHF 0.05 more, are not in the estimate)"), so a
+send-back that doubled the cost is flagged instead of hidden by a doubled estimate. The daemon's
 `critic.session_review_metrics` log line still reads `actualUsdMicro` (`views.ts`, another
 area's region). The runner does not
 ask for a session review when the session ended no task (stopped in its first seconds, nothing

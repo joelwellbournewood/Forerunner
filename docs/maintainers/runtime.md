@@ -1001,7 +1001,15 @@ same session, up to the ladder; `MAX_RUNS_PER_TASK_IN_SESSION` = 6 is only a gua
 the person made ready, through the same `Planner` (so the first-session order and the handover's
 seed-only plan still apply), cut to what is left of the work budget. The session row's plan grows
 with a versioned `setPlan` ("took N more tasks as they became ready") and a `session.replanned`
-event. A task skipped for a peer, a claim, the usage limit or the sandbox is not taken again in
+event. A task the session already planned and takes again (the critic sent it back, its run
+failed and is tried again, the larger task of D4 came back ready: `takeHeld` too) is one planned
+task (L3-run-2, live check 3): its new item records the attempt, marked `again: true`
+(`PlanItem.again`), and adds nothing to the plan's `estimateUsdMicro`, which stays the figure the
+person was shown on the plan line and in the Start dialog. Before, each retry's estimate was added
+to it, and the session review said "the work cost CHF 0.12 against an estimate of CHF 0.21" where
+every screen had said about CHF 0.11, with a "Plan lists the same task twice" finding for the
+runner's own retry (`session-keeps-going.test.ts`, "l3-money-engine, run L3"; the session review
+counts each task once, `critic.md`). A task skipped for a peer, a claim, the usage limit or the sandbox is not taken again in
 the same session (`notAgain`). At autonomy 0 and 1 only the approved plan's tasks (and their
 retries) run. The loop stops when nothing runnable is left, the budget is used (the reserve
 kept), the person stops it, or the wall clock runs out. A sent-back task is counted once in

@@ -16143,4 +16143,51 @@ describe("l3-money-engine, run L3", () => {
       await rt.close();
     }
   }, 120_000);
+
+  it("L3-run-2: the session page's Details set the work against the plan's figure the person saw, after the critic sent the task back once", async () => {
+    const w = await world({ FORERUNNER_BENCH_CRITIC_REJECT: "Send back" });
+    const { rt, client } = await w.open();
+    try {
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Pairing tool", goal: "A tool" });
+      const task = await client.createTask(project.id, {
+        title: "Send back once: write page.md",
+        outcome: "page.md exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const sessionId =
+        (await client.startSession({ agentId, projectId: project.id })).session?.id ?? "";
+      const ended = await endOf(client, sessionId);
+      expect(ended.status).toBe("completed");
+      // The task was taken twice in the session: sent back once, then accepted.
+      const runs = (await rt.store.run.forSession(sessionId)).filter(
+        (r) => r.specialist !== "critic",
+      );
+      expect(runs.map((r) => r.task_id)).toEqual([task.id, task.id]);
+      const lines = (await client.sessionEvents(sessionId)).map((e) => [e.type, e.text]);
+      const said = (type: string) => lines.filter(([t]) => t === type).map(([, text]) => text);
+      const planned = chfIn(said("session.planned")[0] ?? "");
+      expect(planned).not.toBeNull();
+      expect(said("critic.session_review_metrics")).toEqual([
+        expect.stringMatching(
+          new RegExp(
+            `^Session review measured: 1 of 1 planned task done; the work cost (CHF \\d+\\.\\d{2}|less than CHF 0\\.01) against an estimate of CHF ${(planned ?? "").replace(".", "\\.")}, and the reviews `,
+          ),
+        ),
+      ]);
+      expect(said("critic.session_review")).toEqual([
+        "Session review: accepted (grade 100, 0 findings).",
+      ]);
+      const reviews = await rt.store.review.list({ session_id: sessionId });
+      const findings = await rt.store.finding.list({
+        review_id: reviews.find((r) => r.task_id === null)?.id ?? "",
+      });
+      expect(findings.map((f) => f.description)).not.toContainEqual(
+        expect.stringContaining("Plan lists the same task twice"),
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

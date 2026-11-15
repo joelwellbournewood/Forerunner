@@ -201,6 +201,13 @@ export interface PlanItem {
   specialist: string;
   estimateUsdMicro: number;
   rationale?: string;
+  /**
+   * L3-run-2: the session took this task again after planning it once (the critic sent it
+   * back, its run failed and is tried again, the larger task came back ready). The item records
+   * the attempt; its figure is not added to the plan's (`SessionPlan.estimateUsdMicro` stays
+   * what the person was shown), and the session review counts the task once.
+   */
+  again?: boolean;
 }
 
 /**
@@ -1474,11 +1481,14 @@ export class SessionRunner {
             return null;
           }
           takenId = item.taskId;
-          const taken: PlanItem = { ...item, estimateUsdMicro: room };
+          // L3-run-2: the larger task taken again (sent back, tried again) is one planned task:
+          // its new item records the attempt and adds nothing to the plan's figure.
+          const again = current.items.some((c) => c.taskId === item.taskId);
+          const taken: PlanItem = { ...item, estimateUsdMicro: room, ...(again ? { again } : {}) };
           plan = {
             ...current,
             items: [...current.items, taken],
-            estimateUsdMicro: current.estimateUsdMicro + room,
+            estimateUsdMicro: current.estimateUsdMicro + (again ? 0 : room),
             oversized: { ...item, roomUsdMicro: room },
             workBudgetUsdMicro,
           };
@@ -1583,10 +1593,22 @@ export class SessionRunner {
           );
           for (const i of cutLeftOut) notAgain.add(i.taskId);
           if (cut.items.length === 0 && leftOut.length === 0) return [];
+          // L3-run-2 (live check 3): a task this session already planned and takes again (the
+          // critic sent it back, its run failed and is tried again) is one planned task. Its
+          // item is kept, marked `again`, so the row records what ran, and the plan's figure
+          // stays the one the person was shown on the plan line and the Start dialog. Before,
+          // each retry's estimate was added to it, and the session review set the work against
+          // "an estimate of CHF 0.21" where every screen had said about CHF 0.11.
+          const taken = cut.items.map((i) =>
+            current.items.some((c) => c.taskId === i.taskId) ? { ...i, again: true } : i,
+          );
+          const newEstimate = taken
+            .filter((i) => !i.again)
+            .reduce((s, i) => s + i.estimateUsdMicro, 0);
           plan = {
             ...current,
-            items: [...current.items, ...cut.items],
-            estimateUsdMicro: current.estimateUsdMicro + cut.estimateUsdMicro,
+            items: [...current.items, ...taken],
+            estimateUsdMicro: current.estimateUsdMicro + newEstimate,
             ...(leftOut.length || current.leftOutForBudget
               ? {
                   leftOutForBudget: [...(current.leftOutForBudget ?? []), ...leftOut],

@@ -1,6 +1,8 @@
+import { reviewSession } from "@forerunner/critic";
 import { SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore, type TaskRow } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describeEvent } from "../src/daemon/views.ts";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
 import type { CriticPort, TaskReviewOutcome } from "../src/loop/ports.ts";
@@ -563,3 +565,142 @@ function outcomeOf(task: TaskRow, decision: TaskReviewOutcome["decision"], n: nu
     task,
   } as TaskReviewOutcome;
 }
+
+describe("l3-money-engine, run L3", () => {
+  let w: World;
+  beforeEach(async () => {
+    const clock = new SimulatedClock("2026-11-15T09:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    const seeded = await seedWorld(store, {}, { session: false });
+    w = { store, clock, ...seeded };
+  });
+  afterEach(async () => {
+    await w.store.close();
+  });
+
+  it("L3-run-2: a task the critic sends back once is one planned task: the session review sets the work against the plan's figure the person saw, with no finding for the retry", async () => {
+    // Live check 3: the Start dialog, the plan line and the start line said about CHF 0.11; the
+    // runner's re-plan added the retry's estimate to the plan's figure, and the session review
+    // said "against an estimate of CHF 0.21" with "Plan lists the same task twice".
+    const t = await w.store.task.insert({
+      project_id: w.project,
+      title: "Write the Swiss pairing tool with tests",
+      outcome: "the tool and its tests",
+      acceptance_criteria: ["works"],
+      risk_tier: 1,
+      status: "ready",
+      priority: 5,
+      est_cost_usd_micro: 142_000,
+      reason: "seed",
+    });
+    let reviews = 0;
+    const critic: CriticPort = {
+      async reviewTask(req) {
+        reviews++;
+        const task = await w.store.task.mustGet(req.task.id);
+        if (reviews === 1) {
+          const f = await w.store.task.transition(
+            task.id,
+            task.version,
+            "failed",
+            "critic revise",
+            {
+              agentId: w.agent,
+            },
+          );
+          const back = await w.store.task.transition(
+            f.id,
+            f.version,
+            "ready",
+            "retry after critic revise",
+            {
+              agentId: w.agent,
+            },
+          );
+          return outcomeOf(back, "revise", reviews);
+        }
+        const done = await w.store.task.transition(task.id, task.version, "done", "accepted", {
+          agentId: w.agent,
+        });
+        return outcomeOf(done, "accepted", reviews);
+      },
+      // The real tier-0 session review (no model), as the composed critic runs it.
+      async reviewSession(req) {
+        const out = await reviewSession({
+          store: w.store,
+          sessionId: req.sessionId,
+          criticAgentId: w.agent,
+          clock: w.clock,
+        });
+        return {
+          reviewId: out.reviewId ?? null,
+          tier: 0,
+          verdict: out.verdict,
+          grade: out.grade,
+          confidence: out.confidence,
+          summary: out.summary,
+          findings: out.findings.map((f) => ({
+            severity: f.severity,
+            description: f.description,
+            requiredAction: f.requiredAction,
+          })),
+          costUsdMicro: 0,
+        };
+      },
+    };
+    const executor: TaskExecutor = {
+      async execute() {
+        return { outcome: "done", summary: "did it", costUsdMicro: 60_000, checksPassed: true };
+      },
+    };
+    const r = await new SessionRunner({
+      store: w.store,
+      clock: w.clock,
+      tokens: new TokenIssuer({ now: () => w.clock.now() }),
+      kill: new KillSwitch(),
+      planner: new StaticPlanner(),
+      executor,
+      critic,
+    }).start({
+      agentId: w.agent,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: 5_000_000,
+      grant,
+    });
+    expect(r.completed).toEqual([t.id]);
+    expect(reviews).toBe(2);
+    // What the person reads under Details, line by line (the session page's log).
+    const lines = (await w.store.event.list(r.sessionId)).map((e) => ({
+      type: e.type,
+      text: describeEvent(e.type, e.payload as Record<string, unknown>),
+    }));
+    const said = (type: string) => lines.filter((l) => l.type === type).map((l) => l.text);
+    expect(said("session.planned")[0]).toMatch(/^Plan: 1 task, about CHF 0\.11\./);
+    expect(said("critic.session_review_metrics")).toEqual([
+      expect.stringMatching(
+        /^Session review measured: 1 of 1 planned task done; the work cost CHF \d+\.\d{2} against an estimate of CHF 0\.11\.$/,
+      ),
+    ]);
+    expect(said("critic.session_review")).toEqual([
+      "Session review: accepted (grade 100, 0 findings).",
+    ]);
+    const review = await w.store.review.list({ session_id: r.sessionId });
+    expect(review.map((x) => x.grade)).toEqual([100]);
+    const findings = await w.store.finding.list({ review_id: review[0]?.id ?? "" });
+    expect(findings.map((f) => f.description)).not.toContainEqual(
+      expect.stringContaining("Plan lists the same task twice"),
+    );
+    // The row keeps what ran: the second attempt is an item of its own, marked as taken again,
+    // and the plan's figure stays the one the person was shown.
+    const plan = (await w.store.session.mustGet(r.sessionId)).plan as {
+      items: { taskId: string; again?: boolean }[];
+      estimateUsdMicro: number;
+    };
+    expect(plan.items.map((i) => [i.taskId, i.again ?? false])).toEqual([
+      [t.id, false],
+      [t.id, true],
+    ]);
+    expect(plan.estimateUsdMicro).toBe(142_000);
+  });
+});
