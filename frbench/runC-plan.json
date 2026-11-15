@@ -390,7 +390,8 @@
     "[major] D1-8: 'Add it to that project as work' has no good path: a new brief for an existing project goes to the intake without the project's tasks, so the plan can redo done work; the intake is the new-project one (its prompt starts 'A new project has a brief.', intake.ts:1884) and also drafts the doc set, which for an existing project keeps only files at the same path (writeDocSet, intake.ts:2409-2440) while FIRST_DECISION_PATH allows any slug (intake.ts:147), so the approval writes a second docs/decisions/0001-<slug>.md beside the existing decision and opens another fr/intake-<id>-docs pull request; an open plan card refuses with a request id in the sentence. Owner's words: \"If there are multiple people and agents, and even if they are working on different parts of a bigger project, they should be working on one project.\" Where: packages/runtime/src/session/intake.ts:147, :1347-1353, :1878-1890, :1954-1988, :2290-2380, :2409-2440; packages/runtime/src/daemon/server.ts:959-978.",
     "[words] D1-9: W15-01 leftover: with Status pull request on and another project's status pull request open, the Docs row reads 'kept in the app: no status pull request (Settings turns it on)', untrue while the setting is on; why is said only in the daemon log. Owner's words: \"There should not be 2 projects in one repo.\" Where: packages/runtime/src/daemon/docs-routes.ts:269; packages/runtime/src/loop/docs.ts:910-919 (wave15a-fixup-w15-merge new_problems[0]).",
     "[minor] D1-10: W15-01's legacy rule has its own comparator, lists up to 5000 project rows on each call and has no end: two projects linked before the rule stay 'neither's' for good, and an unmarked docs pull request on a repository whose marker names a project that is not on this computer is taken as this project's when it is the only one linked here. Owner's words: \"Make it such that multiple projects are not done on one repo, in an intelligent way.\" Where: packages/runtime/src/loop/docs.ts:216-230, :782, :874, :1030; packages/runtime/src/daemon/pull-requests.ts:326-330.",
-    "[major] D1-14 (the owner's answer 1 of 2026-11-09, D9): two people on separate Forerunners (each their own PC, API key and subscription) cannot work on one repository as one project: this spec's offer for a project that is not on this computer was Take it over (nobody active) or Cancel, nothing lets a second install work in that project, and two installs with one project id would take each other's docs and status pull requests as their own (W15-01's marks name the project, not the computer). Today two installs on one repository share only git; each keeps its own task list and cards, so both can plan the same work. Owner's words: \"if multiple people will be running it they will be using their own api and subscription and running it on their pc.\" / \"if 2 people are working on the same project they should be able to work seamlessly in the same git. Isnt this already built in cleanly?\" (it is not). Where: packages/runtime/src/daemon/create-project.ts:41-57 (ids are always new); packages/runtime/src/loop/docs.ts:179-210 (isProjectDocsPr/isProjectStatusPr by the project mark); packages/runtime/src/daemon/pull-requests.ts:395-420 (docs rows by the mark)."
+    "[major] D1-14 (the owner's answer 1 of 2026-11-09, D9): two people on separate Forerunners (each their own PC, API key and subscription) cannot work on one repository as one project: this spec's offer for a project that is not on this computer was Take it over (nobody active) or Cancel, nothing lets a second install work in that project, and two installs with one project id would take each other's docs and status pull requests as their own (W15-01's marks name the project, not the computer). Today two installs on one repository share only git; each keeps its own task list and cards, so both can plan the same work. Owner's words: \"if multiple people will be running it they will be using their own api and subscription and running it on their pc.\" / \"if 2 people are working on the same project they should be able to work seamlessly in the same git. Isnt this already built in cleanly?\" (it is not). Where: packages/runtime/src/daemon/create-project.ts:41-57 (ids are always new); packages/runtime/src/loop/docs.ts:179-210 (isProjectDocsPr/isProjectStatusPr by the project mark); packages/runtime/src/daemon/pull-requests.ts:395-420 (docs rows by the mark).",
+    "[words] L3-github-5 (live check 3, 2026-11-15, the same problem as D1-9 seen live at 7d6b34a and still at 112227c): With 'Status pull request' on for both projects and another status PR open, both Docs tabs read 'Status docs/status.md current kept in the app: no status pull request (Settings turns it on)'. Nothing says why no status PR was written. Evidence: GET /projects/<A>/docs status row: {\"note\":\"kept in the app: no status pull request (Settings turns it on)\"} for both projects; steps 43-g2-01-b-after-session-docs.png, 45-g2-02-b-after-restart-docs.png. Known item W15B-04 (decision 'later', run C).. The verifier's sketch: Add a port DocsRoutesDeps.statusHeld?: (project) => { prNumber, projectName | null } | null, backed by a new ProjectDocs.statusHeld(project) that reads STATUS_HELD_MARK in statusInAppDir, and wire it in server.ts next to statusDocRoot. In docs.ts statusInApp(held), write the holding PR's number and its marked project id (or none for an unmarked PR) into the mark, not the fixed sentence; `foreign` already carries the PR at :911-917. Then choose the note in docs-routes.ts:268. When the status is held by a marked project on this computer, the note is 'Kept in the app while \"A\"'s status pull request is open on GitHub.' When the holder is unmarked, from a hand-opened PR or a project not on this computer, the note is 'Kept in the app while another status pull request is open on GitHub; close it there to have this one's there.' The setting-off sentence stays only for the setting-off case. These are run C's OR-09 words, slightly reworded for the unmarked case, since a hand-opened PR such as #36 is no project's. The new sentences follow the design rule 'Nothing is stuck silently'. D1 stops new duplicates, but duplicates that already exist keep this state until d1109-onerepo-merge, so the words are still needed. This includes the hand-opened, unmarked status pull request case (#36 on forerunner-sandbox), which is no project's: its note must not name a project."
    ],
    "decisions": [
     "One identity for a link (new packages/runtime/src/sources/repository-use.ts): identityOf(entry) -> keys from parseRepoLocator/repoKey (host-checked, lower-case, every spelling) and folderKey (real path, lower-case on Windows), a folder's git root and its origin's repository key (read from .git and .git/config as files), and GitHub's repository id when read; projectsUsing(store, identity) over active projects, a joined project counting as the one it joined (settings.joined_from of the kept project, written by d1109-onerepo-join; read here) and a removed project (archived by Undo of its creation) using nothing; projectIdsOf(project) = [id, ...joined_from]. Why: discovery's keys already cover every spelling (ADR 0056 point 3); one function means New project, chat, Sources, import and W15-01 agree. Validation rule 5: a folder on another drive is another link (D:\\Code\\Site is not C:\\Code\\Site), a long path compares by its real path, and 'one folder inside the other' counts only when the inner folder has no git root of its own below the linked one: with C:\\Code linked, C:\\Code\\notes is that project's but C:\\Code\\shop with its own .git is its own link, so a broad linked parent folder never swallows the repositories inside it.",
@@ -469,7 +470,8 @@
     "wave 15 run B merged (w15-words, and w15-tail if any): the base; W15-01's code (w15-merge, merged at 3600089) is what OR-09 and OR-10 change, read wave15a-fix/review/fixup-w15-merge.json first.",
     "d1109-chat-guard merged (sub-run C1): CommandOutcome.untrusted and the read-back after an untrusted answer (the refusal quotes repository text).",
     "No other run C area: d1109-onerepo-join depends on this one (the index and projectIdsOf); this area reads settings.joined_from but never writes it.",
-    "Shared files with other run C areas (append-only or the named region only): apps/ui/test/real-daemon.test.ts (own describe block), apps/ui/test/fake-daemon.ts, packages/runtime/src/daemon/api-types.ts, packages/runtime/src/daemon/server.ts (POST /projects, the intake route's words, projectCardOf's one field), apps/ui/src/pages/project/SummaryTab.tsx (one line, d1109-onerepo-join adds two more after this area merges), packages/commands/src/commands/index.ts."
+    "Shared files with other run C areas (append-only or the named region only): apps/ui/test/real-daemon.test.ts (own describe block), apps/ui/test/fake-daemon.ts, packages/runtime/src/daemon/api-types.ts, packages/runtime/src/daemon/server.ts (POST /projects, the intake route's words, projectCardOf's one field), apps/ui/src/pages/project/SummaryTab.tsx (one line, d1109-onerepo-join adds two more after this area merges), packages/commands/src/commands/index.ts.",
+    "Run L3 merged first: l3-merge changed pull-requests.ts merge(), chainOf and the view (cancelled rows); keep them (read its notes_for_other_areas in /tmp/frbench/runL3-l3-merge-*.json)."
    ],
    "handoff_items": [
     "D1-1 (OR-02)",
@@ -487,7 +489,8 @@
     "Chat recall (another run C area): the chat's project facts may say a project took over a repository or includes a joined project; this area changes no chat context.",
     "d1109-chat-guard: the refusal answers set CommandOutcome.untrusted; nothing else of the chat changes here.",
     "D1-14 (OR-15; OR-03, OR-05, OR-06 and OR-07 changed for D9)",
-    "d1109-onerepo-join (C4): OJ-11 builds Work together for a project already here on this area's together project (the Work together decision) and its joined_from reading; wave 8 (re-planned) builds the status issue, announced work and the guide on top of the together project."
+    "d1109-onerepo-join (C4): OJ-11 builds Work together for a project already here on this area's together project (the Work together decision) and its joined_from reading; wave 8 (re-planned) builds the status issue, announced work and the guide on top of the together project.",
+    "L3-github-5"
    ],
    "owner_questions": [],
    "size": "large: 15 items (OR-01 to OR-15). OR-01, OR-02, OR-06, OR-10 and OR-15 are the larger ones (a module or a composed case plus logic in two files each; OR-15 the two-home case); OR-03, OR-05, OR-07 and OR-08 medium; OR-04, OR-09, OR-11, OR-12 one function or one sentence each. Cut line: OR-11 (another host), OR-12 (the repository id), the Add to button of OR-02/OR-08 (the offer then shows Open it and Cancel; the plan-only intake stays) and OR-15's chat path (project.create's together flag: the tool answer then says 'Open New project to work on it together.') may end in not_done with the evidence; never OR-01, OR-02's refusal, OR-03's refusal, OR-04, OR-06's refusal, activity rule, Work together and Take it over, OR-07's risk, actor and undo rules (if repo.take_over's Undo is not built it must be irreversible with its read-back, never an Undo that promises what it cannot do), OR-08's plan-only form (no second doc set), OR-10 (the refusal from every entry point and from the repository itself, and the fail-closed rule), or OR-15's creation, its no-write rule, its docs and status rule and its two-home case.",
@@ -573,7 +576,8 @@
     "D7's d1109-selftasks-chat (sub-run C6) edits agent.ts after this area (the parser branch, the tool registration line beside :799-810, the results loop :982-996) and registers fix_tasks; it re-finds this area's regions; fix_tasks's changes in a turn with recordsRead are read back like every other change.",
     "Runs before d1109-chat-depth, which uses recall-steps.ts, the pass sizes of recall, CommandTurn.recordsRead and sources.",
     "d1109-onerepo-join (after this area) makes scopeOf include the projects joined into the asked one, so recall finds a closed project's records from the kept project.",
-    "Sub-run C2 beside d1109-onerepo-link and d1109-oversize-pause: d1109-onerepo-link also changes the chat's tool list (project.create's and repo.take_over's definitions): each area asserts its own definitions' exact text and C2's merge step re-baselines the whole-list tests; GET /changes' row words are extracted here with behaviour unchanged, and the 'Took over' row is repo.take_over's own change sentence (no edit to the extracted function)."
+    "Sub-run C2 beside d1109-onerepo-link and d1109-oversize-pause: d1109-onerepo-link also changes the chat's tool list (project.create's and repo.take_over's definitions): each area asserts its own definitions' exact text and C2's merge step re-baselines the whole-list tests; GET /changes' row words are extracted here with behaviour unchanged, and the 'Took over' row is repo.take_over's own change sentence (no edit to the extracted function).",
+    "Run L3 merged first: l3-chat-claims changed historyMessages, the reply guard and conversation-agent.md; l3-small exported the same-title pickers CR-2 reuses. Read their notes_for_other_areas."
    ],
    "handoff_items": [
     "D3-1",
@@ -668,7 +672,8 @@
     "run A's W15-13, W15-14, W15-16 and W15-27 (ADR 0112's amendments of 2026-11-09) are the base and stay as they are.",
     "After it: d1109-starts-engine (D6: Continue's start, the wake's start call and the outer-limit lines; it keeps this area's no-progress guard when the wake prepares instead of starting) and d1109-cred-engine (D5: a sibling function beside whereTheLastRunStopped).",
     "Shared files with run C's other areas, in the named regions only: runner.ts, budget-card.ts, request-words.ts, result.ts, views.ts, event-lines.ts, compose.ts (one hunk), real-daemon.test.ts and fake-daemon.ts (own describe block).",
-    "Run C order (runC-plan.json): sub-run C2 beside d1109-onerepo-link and d1109-chat-recall (no shared region but compose.ts hunks and the append-only test files); d1109-starts-engine (C3) changes Continue's start, the wake's start call and the outer-limit lines and keeps this area's no-progress exclusion; d1109-cred-engine (C5) adds its credential sibling beside whereTheLastRunStopped."
+    "Run C order (runC-plan.json): sub-run C2 beside d1109-onerepo-link and d1109-chat-recall (no shared region but compose.ts hunks and the append-only test files); d1109-starts-engine (C3) changes Continue's start, the wake's start call and the outer-limit lines and keeps this area's no-progress exclusion; d1109-cred-engine (C5) adds its credential sibling beside whereTheLastRunStopped.",
+    "Run L3 merged first: l3-handoff-checks changed parseHandoff's rules and added the node --test marker check; l3-small changed task-context.ts personNoteOn; l3-money-screens set the drawer's re-read key and TaskCap's figure. Read their notes_for_other_areas (/tmp/frbench/runL3-*-fix*.json)."
    ],
    "handoff_items": [
     "D4-14 (OP-0)",
@@ -918,7 +923,8 @@
     "D5 (d1109-cred-engine, sub-run C5, after this area): until it merges, chat keeps ADR 0100 point 4 (it goes on with the next credential), so an automatic hand-over runs only on the person's first credential and an explicit one names the credential in its hand-over line; d1109-cred-engine replaces that check with the policy's answer and adds its hold check before the model path.",
     "D7's d1109-selftasks-chat (sub-run C6) shares agent.ts's model path (the results loop :982-996, the tool registration) and re-finds this area's regions; d1109-cred-engine (C5) adds one hold check before the model path and the note.",
     "D8's run indicator (d1109-run-visible, sub-run C5): independent; the chat's waiting line lives inside the conversation and never reads like a running session; both add an event to /events.",
-    "D2's d1109-sessions: its sessions list line for chat spend reads the same ledger rows; not required."
+    "D2's d1109-sessions: its sessions list line for chat spend reads the same ledger rows; not required.",
+    "Run L3 merged first: l3-chat-claims changed the history and the prompt (keep the guard); l3-money-engine made the loop's abort branch book the cut-off call (D3-12 builds on it). Read their notes_for_other_areas."
    ],
    "handoff_items": [
     "D3-10",
@@ -1115,7 +1121,8 @@
     "d1109-oversize-start (sub-run C1) and d1109-oversize-pause (C2) merged first: it changes runner.ts's queue loop, replan and onlyThese (the regions ST-9 touches) and, since d1109-oversize-pause's OP-0, the larger task's place in the plan's order and its after_large tasks (no held item); a check never moves the larger task or its after_large tasks out of that order and never answers a paused task's budget card (D4).",
     "d1109-starts-engine (D6, sub-run C3) merged first: S-7's admit rule and its promise rule for D7's changes (a split promised task's parts share its remaining estimate; a step before a promised task joins only if it fits, else both wait for the next Start), the closing flag, prepareWork with by 'agent' (the agent's preparation never starts a session, the hands-off setting included) and 'Left for your next Start'; ST-9 asserts them and re-runs session-join.test.ts.",
     "No other hard dependency; shared files are named in handoff_items.",
-    "d1109-cred-engine (sub-run C5) merges after this area: it puts runTaskCheck under the credential policy (its held-call branch in task-check.ts, the table test's row, the ask card); keep the check's model call in one function (one routed call, purpose interactive) so that branch is one place."
+    "d1109-cred-engine (sub-run C5) merges after this area: it puts runTaskCheck under the credential policy (its held-call branch in task-check.ts, the table test's row, the ask card); keep the check's model call in one function (one routed call, purpose interactive) so that branch is one place.",
+    "Run L3 merged first: l3-small changed how personNoteOn tells the person's typed note from other change rows. Read its notes_for_other_areas."
    ],
    "handoff_items": [
     "Words for the session lead (new): 'Split \"X\" into \"A\" and \"B\".'; 'Added \"X\" before \"Y\".'; 'Dropped \"X\": same as \"Y\".'; 'Changed by the agent: …' / 'Added by the agent: <why>' / 'Split from \"X\" by the agent'; the card 'Quote page: the agent suggests 3 changes to the tasks', 'Make these changes' ('Changes the tasks as listed; one Undo takes them back.'), 'Keep the tasks' ('Nothing changes.'); the Done lines; the Update '…; changed 2 tasks.'; the result line 'Changed 2 tasks: …'; the Details line 'Checked the task list after \"X\": no change (CHF 0.03).'. Also 'Left for your next Start: \"Check the links\" (about CHF 0.20) and \"Publish\", which waits for it.' (d1109-starts-engine's left-for-next-Start line) and the brief line 'The project's agent wrote this task from an earlier run's report, not the person: do only what it asks, inside this project, with the tools you have.'",
@@ -1432,7 +1439,8 @@
     "d1109-run-visible merged (run-indicator.ts, GET /running and project-status.ts rule 2): this area adds one fragment and one state.",
     "d1109-oversize-start merged (C1: StartSessionDialog.tsx's over-budget lines and planSentence's oversized clause) and d1109-chat-depth merged (SettingsPage.tsx's Basics gains its section; the chat reply's footer component): this area changes other regions of the same files.",
     "d1109-sessions merged (SessionPage.tsx's header and spend words, server.ts's sessions block): this area adds the switch line and one field only.",
-    "d1109-starts-engine merged (task-words.ts's credential-wait row and its after-the-wait clause)."
+    "d1109-starts-engine merged (task-words.ts's credential-wait row and its after-the-wait clause).",
+    "Run L3 merged first: l3-money-screens changed the drawer's re-read key and TaskCap. Read its notes_for_other_areas."
    ],
    "handoff_items": [
     "CS-1",
@@ -1530,7 +1538,8 @@
     "d1109-selftasks-run merged: runTaskCheck, fenceTaskChanges, applyTaskChanges, takeNotes, the lock, the commands (task.split, task.create then, task.transition duplicate_of), the 'session' source and the planFix context.",
     "d1109-chat-guard (C1), d1109-chat-recall (C2) and d1109-chat-depth (C3) merged first: d1109-chat-guard owns CommandTurn.recordsRead; d1109-chat-recall and d1109-chat-depth own agent.ts's context, retrieve and model path and the waiting line; d1109-cred-engine (C5) added one hold check before the model path; this area adds only the regions named in files.",
     "d1109-sessions merged (C1); its SessionPage.tsx regions (header link, 'Tasks in this session') respected; d1109-run-visible's ended-to-wait block (C5) and d1109-cred-screens' switch line under the spend (C6, beside this area) too: this area changes the log line only.",
-    "d1109-cred-engine merged (C5): it holds the task check under the policy (its held-call branch in task-check.ts and the run's row of the table test); SC-14 words chat's 'fix the tasks' when the check is held."
+    "d1109-cred-engine merged (C5): it holds the task check under the policy (its held-call branch in task-check.ts and the run's row of the table test); SC-14 words chat's 'fix the tasks' when the check is held.",
+    "Run L3 merged first: l3-money-engine changed session-review.ts planEstimateOf and the same-task-twice check. Read its notes_for_other_areas."
    ],
    "handoff_items": [
     "Words for the session lead (new): 'I changed 3 tasks of Quote page.'; 'Make these 3 changes to the tasks of Quote page? …'; 'The tasks of Quote page look right; nothing changed.'; 'Checking the tasks of Quote page…'; 'Fixing the tasks needs Claude.'; 'Fixing the tasks would pass this project's budget; nothing changed.'; 'The agent is checking the tasks of Quote page now; ask again in a moment.'; 'Which project: …?'; Changes' 'In a session'; 'Kept the tasks as they are.'.",
@@ -1903,7 +1912,7 @@
   "Gone with the shared store (wave 8 builds none of them unless its planner keeps a shared-store mode, an open question of the brief): Ask to join, project.share and its refusal, sharing by name, another person's sessions, chat and spending on a shared store and their privacy rules, the offline outbox for a shared store, the shared-store rules for the hands-off setting and Continue, and the per-person reading of chat's thinking-longer setting (chat_ask_above is simply each person's own)."
  ],
  "live_check_4": {
-  "cap_usd": 6.0,
+  "cap_usd": 6,
   "estimate_usd": {
    "all": 6.45,
    "priority_1": 4.37,
@@ -1921,7 +1930,7 @@
     "step": "LC-C1 (D1 with D9: Work together and the take-over on the real sandbox; no model): before, list forerunner-sandbox's open pull requests with their authors and update times (none of the benches' since #1, #2, #3, #6 and #7 were closed on 2026-11-09 20:10 UTC). Bench home A, stand-in model, --githost off: New project with the Repository link joelwellbournewood/forerunner-sandbox (its main names 'Kite club' of a deleted bench home): expect 'joelwellbournewood/forerunner-sandbox is already the Forerunner project \"Kite club\", which is not on this computer; last active on GitHub on <date>. Work on it together, or take it over if nobody works on it any more.' (without the date when no pull request, open, merged or closed, carries a mark) with Work together first, Take it over and Cancel; press Take it over: the docs pull request replaces only that marker and says so in its body; merge it. Bench home B, the same token (one login: the person's own second computer), stand-in model: New project on the same repository: the offer names home A's project, with 'from your account' (A's merged docs pull request carries its mark), Work together first and Take it over second with its line 'The repository then names this project: choose it only if no Forerunner uses \"<name>\" now.'; press Work together: no branch, push, pull request, comment or issue appears on GitHub at the press (heads and comment counts before and after); B's Overview says 'Shared on GitHub with another Forerunner: each keeps its own tasks.'; one stand-in task in each home opens one pull request each, both with the project's mark; A's Pull requests list shows only A's and B's only B's; neither home writes to the other's pull request (heads and comment counts), and B lists no docs pull request of the project and offers Merge on none of A's; a second New project in either home on the repository gets 'already the project'. With a second GitHub account (wave 8's question), repeat B with it: the offer is Work together and Cancel only. Close or merge what the bench opened afterwards.",
     "source": "D1-D4 design /tmp/frbench/d1109/d1109-onerepo.json live_check_steps[0], revised for the activity rule and the wording, and for D9 (the owner's answer 1 of 2026-11-09: Work together; two homes)",
     "needs": "FORERUNNER_TEST_GITHUB_TOKEN in a session started after the owner's 2026-11-09 update; forerunner-sandbox attached; two bench homes with --githost off (real GitHub); the person closes or merges what the bench opened",
-    "est_usd": 0.0,
+    "est_usd": 0,
     "priority": 1,
     "after_sub_run": "C2"
    },
@@ -1948,7 +1957,7 @@
     "step": "LC-C4 (D1, Make one project on GitHub): two projects made through the store on forerunner-sandbox in a bench home, each with an open task pull request; Make one project keeping the first; the second's pull request merges from the first's Overview on GitHub; the first's Sessions list ends with the joined line; Undo after a daemon restart puts the remaining work back.",
     "source": "D1-D4 design /tmp/frbench/d1109/d1109-onerepo.json live_check_steps[3]",
     "needs": "FORERUNNER_TEST_GITHUB_TOKEN, forerunner-sandbox attached; merges on forerunner-sandbox only",
-    "est_usd": 0.0,
+    "est_usd": 0,
     "priority": 2,
     "after_sub_run": "C4"
    },
@@ -1957,7 +1966,7 @@
     "step": "LC-C5 (D2, no extra spend): after LC-C7 and LC-C8, open More > Sessions on that project: a planning row 'Drafted a plan of N tasks; you approved it.' (if a plan ran), the paused session's row with '\"<title>\" paused at this session's budget of CHF 0.40.' and 'Stopped: the budget is used', the continuing session's row; each row's 'CHF ... on your API key' equals its session page's spend and, for the last one, the Overview's Last result; no total in the heading.",
     "source": "D1-D4 spec d1109-sessions live_check_steps[0], folded onto the D4 steps' sessions",
     "needs": "LC-C7 and LC-C8 done",
-    "est_usd": 0.0,
+    "est_usd": 0,
     "priority": 1,
     "after_sub_run": "C6"
    },
@@ -2092,7 +2101,7 @@
     "step": "LC-C20 (d1109-run-visible) The desktop window on the Desktop app workflow's window job (stand-in model): while a session runs, the main window's title names the project, the bar is under the header on Home, Inbox, Settings and a project page, the Talk panel shows the line; after Stop after this task ends it, nothing shows.",
     "source": "D5-D8 spec live_check_3_additions (draft label 'd1109-starts'; area d1109-run-visible)",
     "needs": "the Desktop app workflow run on the pushed branch (Windows runner)",
-    "est_usd": 0.0,
+    "est_usd": 0,
     "priority": 2,
     "after_sub_run": "C5"
    },
@@ -2110,7 +2119,7 @@
     "step": "LC-C22 (d1109-cred-engine) Real Claude Code refusal: an invalid OAuth token as the subscription, preset 'Subscription first, then wait'. Expected: Claude Code's authentication_failed is read as a refusal, the card reads 'The sign-in has expired or was signed out. ...', nothing runs on the API key, and no second request goes to the subscription.",
     "source": "D5-D8 spec live_check_3_additions (draft label 'cred'; area d1109-cred-engine)",
     "needs": "the Agent SDK's Claude Code binary and network to api.anthropic.com from the bench; else the owner's checklist",
-    "est_usd": 0.0,
+    "est_usd": 0,
     "priority": 2,
     "after_sub_run": "C6"
    },
@@ -2146,7 +2155,7 @@
     "step": "LC-C26 (d1109-cred-engine) Anthropic's own spend limit as the real API reports it: the key rests until the time Anthropic names, and the row or the Start dialog names that time in the person's zone; under 'API key first, then subscription' the work goes on with the subscription stand-in and the log line says so.",
     "source": "D5-D8 spec live_check_3_additions (draft label 'cred'; area d1109-cred-engine)",
     "needs": "an API workspace already at its spend limit (the owner's console); if none is available it moves to the owner's checklist",
-    "est_usd": 0.0,
+    "est_usd": 0,
     "priority": 3,
     "after_sub_run": "C6"
    },
@@ -2191,7 +2200,7 @@
     "step": "LC-C31 (the owner's decision of 2026-11-09, (a); no model spend): the bench with the subscription stand-in and this environment's real API key saved second (never printed), preset 'Subscription first, then wait' (set through settings.set credential_policy after C5; its Settings screen comes in C6); a person's two-task session whose second task meets the stand-in's limit. Expect: the first task done, the session ending to wait, GET /running and the bar '<project> · waiting until <time>, then it goes on' with Cancel; zero requests to api.anthropic.com during the wait (the harness's request log); at the stand-in's reset exactly one session by 'continuation' with the budget left (the ledger) on the stand-in, its log 'Goes on with your session of <time>.'; quit and start the daemon once during the wait: still one continuation; a second run with Cancel pressed: nothing starts at the reset and the rows read 'Ready: it runs at your next Start.'; a third run with quiet hours set to cover the stand-in's reset: the bar names the end of the quiet hours and the session goes on once then; a fourth with Stop after this task pressed before the stop: the session ends without a continuation and nothing starts at the reset; while one waits, Start on that project answers 'Your session of <time> goes on by itself at <time>.' and starts nothing. A fifth run on a home where nothing was ever chosen: chat, a review and the task's planning make their calls on the subscription stand-in and none on the key (the default preset for every call, the owner's answer 4).",
     "source": "runC-plan (owner-decisions-2026-11-09.md, session lead's notes (a)); d1109-starts-engine S-10, d1109-run-visible V-1/V-5, d1109-cred-engine CE-5; the run C check's points on quiet hours, a stopped session and one wait per project",
     "needs": "the bench with the subscription stand-in and the real key as the second credential (bench-live harness request log); C5 merged (the indicator and the policy; the policy screens after C6)",
-    "est_usd": 0.0,
+    "est_usd": 0,
     "priority": 1,
     "after_sub_run": "C5"
    }
@@ -2658,5 +2667,47 @@
    "where": "-",
    "change": "the earlier summary's design call (3) leaving out 'or none' is moot: that summary is not in these files, and the rule it described is replaced by finding 3's (Work together always first)."
   }
- ]
+ ],
+ "run_L3": {
+  "why": "Live check 3 (2026-11-15, 7d6b34a, USD 2.04 of 3.00) found 27 problems: 4 major, 9 minor, 14 words; the 14 major and minor ones were checked in code and are real and still at the base. All but L3-github-5 (D1-9, in d1109-onerepo-link) are outside run C's areas, and several touch files C2 to C6 build on, so they are fixed first.",
+  "base": "112227ceb074eaf8f0c79b8b4ede93b63feac18e",
+  "wave": 23,
+  "keys": [
+   "l3-merge",
+   "l3-handoff-checks",
+   "l3-money-engine",
+   "l3-money-screens",
+   "l3-chat-claims",
+   "l3-small"
+  ],
+  "findings": {
+   "L3-github-1": "l3-merge",
+   "L3-github-2": "l3-merge",
+   "L3-github-3": "l3-merge",
+   "L3-github-4": "l3-small",
+   "L3-github-5": "d1109-onerepo-link",
+   "L3-github-6": "l3-small",
+   "L3-github-7": "l3-merge",
+   "L3-github-8": "l3-small",
+   "L3-github-9": "l3-merge",
+   "L3-github-10": "l3-merge",
+   "L3-run-1": "l3-chat-claims",
+   "L3-run-2": "l3-money-engine",
+   "L3-run-3": "l3-money-screens",
+   "L3-run-4": "l3-money-screens",
+   "L3-run-5": "l3-money-engine",
+   "L3-run-6": "l3-small",
+   "L3-run-7": "l3-small",
+   "L3-run-8": "l3-money-engine",
+   "L3-run-9": "l3-chat-claims",
+   "L3-run-10": "l3-money-engine",
+   "L3-run-11": "l3-small",
+   "L3-run-12": "l3-small",
+   "L3-run-13": "l3-money-screens",
+   "L3-research-1": "l3-handoff-checks",
+   "L3-research-4": "l3-handoff-checks",
+   "L3-research-2": "l3-handoff-checks",
+   "L3-research-3": "l3-small"
+  }
+ }
 }
