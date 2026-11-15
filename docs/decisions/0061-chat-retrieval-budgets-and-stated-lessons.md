@@ -101,3 +101,12 @@ next-session note and recorded.
   through it.
 - **Treat every "remember ..." as a lesson.** Rejected: "remember to call the vendor" is a
   next-session note, not knowledge to keep.
+
+## Amendment 2026-11-15: recall on demand beside the per-turn excerpts (d1109-chat-recall)
+
+The per-turn doc excerpts and lessons stay as decided here, under their budgets, for the line as
+said. Beside them, chat can look the documents and lessons up on demand with `recall` (ADR 0114's
+amendment of this date): the same doc set (`loadDocChunks` over `docsDirs`, docs/status.md left
+out) and the same memory port with the principal's grant, ranked by the same `rankChunks`, quoted
+inside the data envelope with their path. A lookup is a model call of the turn and counts against
+the turn's budget (ADR 0091), not against these per-turn budgets.

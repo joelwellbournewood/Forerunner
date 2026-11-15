@@ -392,7 +392,11 @@ step lines lost the underscores of `__tests__` and bolded the path between two g
 mobile screens still show plain text. Tests: `test/rich-text.test.tsx` (a reply through the fake
 daemon's `nextChatReply`, a session line, step lines with paths and globs kept as typed, names
 and arithmetic kept, two bold parts on a line, plain text unchanged, raw HTML as text) and
-`test/tasks.test.tsx` (a run report with markdown in the drawer).
+`test/tasks.test.tsx` (a run report with markdown in the drawer). d1109-chat-recall: the fake
+daemon's `nextChatSources` gives the next scripted reply the records it rests on
+(`ChatReplyView.sources`), kept on its conversation turn as `reply.sources`, as the daemon does
+(`test/contracts.test.ts` "d1109-chat-recall, run C: a reply's sources"); d1109-chat-depth draws
+the From line from it.
 
 ### Money
 

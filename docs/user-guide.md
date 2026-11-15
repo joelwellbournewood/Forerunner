@@ -357,6 +357,19 @@ them as you left them; an open file or task stays on its own tab.
   repository it answers at once from Forerunner's own record of each merge ("waiting for your
   Merge", "merged"), without waiting for GitHub; ask it to list your files to have it check
   GitHub now. It reads only your own projects and those shared with you.
+  **Ask about anything recorded.** Chat looks up what Forerunner recorded when the answer is not
+  in front of it: earlier sessions, every task with its runs, earlier titles and merges ("what
+  happened to the README task?" finds it under its new name and says it was called "Write the
+  README"; "when was the README merged?"), the cards you answered and what you answered, the
+  decisions, lessons, the project's documents, the changes made, what the work and the chat cost,
+  and earlier lines of your conversations ("what did I say about the logo?", in English or
+  German). Give it a time ("last week", "on 3 Nov") and it looks in those days of your own
+  calendar. It names what it found by its title and date ("in the session of 3 Nov"), never by an
+  id; when nothing matches it says what it looked through. While it looks it says what it is
+  doing ("Looking through last week's sessions…"). Questions about now ("what is left?") are
+  answered at once, without a lookup. Inbox Updates, notifications and the session log's lines
+  are not searched: ask about the session, task or card they are about. What a lookup returns is
+  data to Chat, like a report: a change it proposes after a lookup waits for your **Yes**.
 
 **A project linked to a GitHub repository**: each task works on a branch of its own and opens a
 pull request when it is done; Forerunner makes the commits, pushes and opens the pull request

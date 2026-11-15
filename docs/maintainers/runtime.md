@@ -4233,6 +4233,69 @@ first root win on the same repo-relative path.
 
 ### Conversation agent (`src/conversation/agent.ts`)
 
+**Recall: chat looks up anything recorded (d1109-chat-recall, ADR 0114; U-092).** Two read-only
+tools beside the four of `read-tools.ts`, registered after them on every turn (the tool list goes
+to the model sorted by name, so the cached prefix holds): `recall {words?, also?, kinds?, from?,
+to?, project?}` and `recall_open {ref}` (`src/conversation/recall.ts`, their definitions are
+`RECALL_DESCRIPTION` and `RECALL_OPEN_DESCRIPTION`, asserted word for word). The kinds and where
+each comes from: `conversation` (the person's agents' conversation sessions, `chat.human` and
+`chat.reply` through `event.ofTypes`, the newest 20,000 lines; this conversation's project and the
+one outside any project, another project's only when named or `all`), `sessions` (the project's
+listed sessions of the person's agents, the newest 500, worded by d1109-sessions'
+`sessionRowView`: gist, how it ended, CHF), `tasks` (every task with its status in design §2's
+words, earlier titles from task.update's change log rows, its merge from the merge record: "merged
+on 4 Nov", "waits for your Merge"; recall_open gives task_get's lines, `taskDetailLines`), `cards`
+(the person's cards and those to no one, the newest 2,000, without the chat's own read-backs,
+with the Inbox's title and Answered words, `requestViews`, and the answer, `cardAnswerWords`),
+`decisions` (`decisionViews` with its optional limit: the Overview's words), `lessons` (the
+memory port's `recall` with the principal's grant only; the critic's no-fix placeholder left out,
+`lessonWords`), `documents` (the doc set `docsDirs` gives, `loadDocChunks`, without
+`docs/status.md`; `recall_open` also opens a document by its path, `documentByPath`, refusing
+`..`, an absolute path, a link out of the doc root and anything but README.md and docs/*.md with
+`NOT_A_DOCUMENT`), `changes` (the change log rows of the person and the app, the newest 1,000, in
+the Changes page's words: `changeRowViews` in `src/daemon/change-rows.ts`, the function GET
+/changes uses, and `changeRowWords`), `spending` (the ledger's CHF for the window, the work and
+the chat apart, by day when opened). Scope: the conversation's project by default, another of the
+person's projects when named, all for `all` or the conversation outside any project, always
+through d1109-chat-guard's `scopeOf`; another person's lines, cards, sessions and private lessons
+never. Dates: `from` and `to` are dates in the person's zone (`windowOf`, across a clock change);
+the result names the window in dates (`windowWords`: "2 to 8 Nov"). Ranking (`rankRecords`): BM25
+over the words and the other words (the memory's `rankChunks`, a title and earlier titles as the
+heading) fused by reciprocal rank with the letter-pattern similarity of titles (the memory's
+`HashedNgramEmbedder`), an exact or quoted title (now or earlier) x3, this conversation's
+project x1.5, the newest first on ties; strong when the score is at least 0.6 of the best and the
+record holds half the terms (or the title is a near letter match), else weak. Each kind's
+candidates are read once a turn (`RecallScope.candidates`); the references r1 to r8 name the last
+search's hits of this turn only (`RecallScope.refs`). Bounds: 8 hits within 1,500 tokens a search
+and 2,000 an open (`RECALL_SEARCH_TOKENS`, `RECALL_OPEN_TOKENS`, `ConversationDeps.recallSizes`
+for d1109-chat-depth's thorough pass), counted with the provider's counter on the wrapped text;
+no id (`withoutIds`) and no credential's shape (`hasSecretShape`) in any result. Every result is
+marked untrusted (`agent_output`, origin `record:recall` for a search and `record:<kind>` for an
+open; documents `repo_file`), so the hooks wrap and scan it and `noteRecordsRead` sets the turn's
+read-back. `CHAT_RECALL_RULES` follows `CHAT_RETRIEVAL_RULES` in the stable system part; the role
+prompt is `conversation-agent.md` 1.3.0 ("What you look up"). A turn may make 6 model calls
+(`CHAT_MAX_MODEL_CALLS`, 4 before) and its default budget has room for 5 (`CHAT_TURN_CALL_ROOM`, 3
+before; the USD 0.25 ceiling stays, a Haiku turn keeps USD 0.05). `findTask` (task_get) also finds
+a task by an earlier title and, failing every title, by letter patterns (`titleSimilarity`: at
+least 0.5 and 0.08 clearer than the next); several of one title are listed apart in W15-37's
+words. Each read and recall tool says what it does through `ChatRequest.onStep`
+(`src/conversation/recall-steps.ts`, `stepLine`: "Looking through last week's sessions…",
+"Reading the decision of 4 Nov…"; at most 80 characters, record names from the store cut at 40,
+search words quoted only when the person said each of them); d1109-chat-depth shows them. The
+records a reply names among those it opened are kept on its `chat.reply` row as
+`sources.records` (`namedSources`, at most three, `{kind, title, date, link}`), read by
+`readTranscript` and served as `ChatReplyView.sources` and `ConversationTurnView.reply.sources`.
+Tests: `chat-recall.test.ts` (composed, every kind, the restart), `recall-rank.test.ts` (the
+golden set), `recall-steps.test.ts`, the record channel's record-005 and record-006, and
+`real-daemon.test.ts` "d1109-chat-recall, run C".
+
+**The history leaves out a quoted record's words (L3-left-6).** An earlier reply whose own words
+the injection scan flags (a reply that quoted a report, a card or a recall hit) is sent in the
+history as `QUOTED_RECORD_LEFT_OUT`, so the record's words reach no later call and the later
+turns do not read every change back; its "The app did:" lines stay and are scanned as before. A
+change whose result kept no sentence is named in words (`CHANGE_WORDS`: "Added a task."), never
+by its command.
+
 **Without a model (U-047).** The daemon composes the agent whether or not a Claude key or
 subscription exists (`ConversationDeps.provider` may be null). Before, without one it was not
 composed at all and `POST /chat` and `/chat/stream` refused every line with 503 "no model

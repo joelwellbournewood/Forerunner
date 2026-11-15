@@ -383,6 +383,13 @@ rendered and is reported in `excluded`; a file over `maxFileBytes` or beyond `ma
 `truncated`. The block says it is data and asks for the bracketed path as citation; the runtime
 wraps it in the data envelope (runtime.md, "Conversation agent").
 
+**Reused by chat's recall (d1109-chat-recall).** `rankChunks` and `docTerms` rank every kind
+of record recall searches (a record is a chunk whose heading is its title and earlier titles),
+`HashedNgramEmbedder` and `cosine` give the letter-pattern similarity fused with it, `loadDocChunks`
+reads the documents kind, and `hasSecretShape` keeps a credential's shape out of every result.
+Nothing here changed; a change to their behaviour moves recall's golden set
+(`packages/runtime/test/recall-rank.test.ts`).
+
 ### Service facade (`src/service.ts`)
 
 `createMemory({ store, privateStore?, root?, files?, embedder?, clock? })` builds the

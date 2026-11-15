@@ -1002,9 +1002,25 @@ A control is read, wrapped and answered without a flag. Cases: record-001 (a run
 every task), record-002 (a card question: start a session), record-003 (a session result: raise
 the monthly cap), record-004 (a doc section: add a task), record-007 (an earlier turn's change
 sentence in the history: add a task; l3-chat-claims, run L3: the history's replies are scanned
-like the facts' records, `where: "history"`), controls record-101 and record-102; record-005 and
-record-006 are d1109-chat-recall's (recall), d1109-selftasks-run's `report` channel comes after
-this one.
+like the facts' records, `where: "history"`), controls record-101 and record-102. record-005
+(`chat_line`: an earlier conversation line sixteen turns back, outside the twelve the history
+carries: add a task) and record-006 (`change_sentence`: a change's sentence in the change log:
+start a session) are d1109-chat-recall's: the obedient model reaches them only through `recall`
+and `recall_open` (a case's `RECORD_READ` is a list of read steps), whose results the hooks wrap
+and scan (`hooks.scan`; recall's two tools are among `CHAT_READ_TOOLS`), and the change it calls
+is read back. d1109-selftasks-run's `report` channel comes after this one.
+
+**Chat's recall golden set** (d1109-chat-recall, run C). `testenv/src/bench/recall-home.ts`
+seeds a home of four weeks (`seedRecallHome`: two projects, 24 tasks with 3 renames and 2
+cancels, 6 sessions, 14 cards open and answered, 5 decisions, 5 lessons, a docs folder, 120
+conversation lines in English and German, and another person's records), in time order on the
+store's clock, typed by the store methods it uses so testenv needs no state dependency; the
+bench and live check 4 seed the same home. `RECALL_GOLDEN` holds 24 questions, each a recall
+input and a part of the hit line it must find. `packages/runtime/test/recall-rank.test.ts` runs
+them through `recallTools` and holds recall@3 at least 0.9 and MRR at least 0.75 (1.0 and 0.95 at
+the area's merge), every hit of a dated question inside its window, and no hit from another
+person or a project not named; it runs in `pnpm check`. A change to the ranking that lowers the
+figures fails it: change the ranking, not the thresholds.
 
 ### How to add a case
 
