@@ -23,6 +23,7 @@ import type {
 } from "@forerunner/state";
 import { z } from "zod";
 import type { ToolResult, ToolSpec } from "../agent/tools.ts";
+import { changeRowViews } from "../daemon/change-rows.ts";
 import { decisionViews } from "../daemon/decision-views.ts";
 import { sessionRowView, sessionSpends } from "../daemon/session-list.ts";
 import {
@@ -154,7 +155,8 @@ export interface RecallRecord {
 
 /** A record a reply rests on, as the chat.reply row keeps it (`sources.records`). */
 export interface RecordSource {
-  kind: RecallKind;
+  /** The kind in one word: session, task, card, decision, lesson, document, change, spending. */
+  kind: string;
   title: string;
   /** Local date in words ("4 Nov"). */
   date: string;
@@ -982,29 +984,30 @@ async function changeHits(
   const { store } = c.deps;
   const out: RecallRecord[] = [];
   let bound: string | null = null;
-  const names = new Map<string, string>();
-  const whoOf = async (row: ChangeLogRow): Promise<string> => {
-    if (row.human_id === c.deps.humanId) return "You";
-    const key = row.human_id ? `h:${row.human_id}` : row.agent_id ? `a:${row.agent_id}` : "";
-    if (!key) return "The app";
-    if (!names.has(key))
-      names.set(
-        key,
-        row.human_id
-          ? ((await store.human.get(row.human_id))?.name ?? "Another person")
-          : ((await store.agent.get(row.agent_id ?? ""))?.name ?? "The agent"),
-      );
-    return names.get(key) as string;
-  };
+  // Who, as the Changes page's row names them (changeRowViews, GET /changes' own function).
+  const whoOf = (v: {
+    humanId: string | null;
+    humanName: string | null;
+    agentName: string | null;
+  }) =>
+    v.humanId === c.deps.humanId
+      ? "You"
+      : v.humanId
+        ? (v.humanName ?? "Another person")
+        : (v.agentName ?? "The agent");
   for (const p of c.projects) {
     c.deps.scope.reads++;
-    const rows = await store.changeLog.forProject(p.id, { limit: RECALL_BOUNDS.changes });
+    // Only this person's changes and the app's own (never another person's).
+    const rows = (await store.changeLog.forProject(p.id, { limit: RECALL_BOUNDS.changes })).filter(
+      (row) => !row.human_id || row.human_id === c.deps.humanId,
+    );
     if (rows.length >= RECALL_BOUNDS.changes)
       bound = `Only the newest ${RECALL_BOUNDS.changes} changes were searched.`;
-    for (const row of rows) {
-      // Only this person's changes and the app's own (never another person's).
-      if (row.human_id && row.human_id !== c.deps.humanId) continue;
-      const words = changeRowWords(row, await whoOf(row), c.deps.timeZone, c.today);
+    const views = await changeRowViews(store, rows, new Date(c.deps.nowMs).toISOString());
+    for (const [i, row] of rows.entries()) {
+      const view = views[i];
+      if (!view) continue;
+      const words = changeRowWords(row, whoOf(view), c.deps.timeZone, c.today);
       out.push({
         kind: "changes",
         key: `change:${row.id}`,
@@ -1563,7 +1566,8 @@ export function namedSources(
     const names = [title, ...r.earlier].map(norm).filter((n) => n.length >= 4);
     const byName = names.some((n) => said.includes(n));
     const byDate = said.includes(norm(date));
-    if (byName || byDate) out.push({ kind: r.kind, title: cut(title, 80), date, link: r.link });
+    if (byName || byDate)
+      out.push({ kind: KIND_WORD[r.kind], title: cut(title, 80), date, link: r.link });
     if (out.length >= 3) break;
   }
   return out;

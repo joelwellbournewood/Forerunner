@@ -40,6 +40,11 @@ export interface TranscriptReply {
   notice: boolean;
   /** What the turn cost (micro-USD); 0 for a command or a yes. */
   costUsdMicro: number;
+  /**
+   * The records the reply rests on (d1109-chat-recall: `sources.records` on the chat.reply row,
+   * at most three); empty for a reply that opened none.
+   */
+  sources: { kind: string; title: string; date: string; link: string | null }[];
 }
 
 export interface TranscriptTurn {
@@ -104,7 +109,23 @@ function replyOf(p: Record<string, unknown>): TranscriptReply {
     answered: typeof p.answeredId === "string" && p.answeredId ? p.answeredId : null,
     notice: p.notice === true,
     costUsdMicro: typeof p.costUsdMicro === "number" ? p.costUsdMicro : 0,
+    sources: sourcesOf(obj(p.sources).records),
   };
+}
+
+/** The records a chat.reply row keeps (`sources.records`), each with its four fields. */
+function sourcesOf(v: unknown): TranscriptReply["sources"] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map(obj)
+    .filter((s) => typeof s.kind === "string" && typeof s.title === "string")
+    .slice(0, 3)
+    .map((s) => ({
+      kind: str(s.kind),
+      title: str(s.title),
+      date: str(s.date),
+      link: typeof s.link === "string" && s.link ? s.link : null,
+    }));
 }
 
 /**

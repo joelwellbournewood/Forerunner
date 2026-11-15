@@ -608,6 +608,11 @@ export interface FakeDaemonState {
   /** When set, the next `/chat/stream` reply has this text (tests script the agent). */
   nextChatReply: string | null;
   /**
+   * d1109-chat-recall: the records the next scripted reply rests on (`ChatReplyView.sources`,
+   * kept on its conversation turn as the daemon keeps `reply.sources`).
+   */
+  nextChatSources: { kind: string; title: string; date: string; link: string | null }[] | null;
+  /**
    * The conversations as the daemon stores them (design §3.9): one per project (the key is
    * the project id; "" for the one outside any project), each turn as
    * `GET /projects/:id/conversation` shows it. `/chat` and `/chat/stream` append to them.
@@ -1134,6 +1139,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     calls: [],
     pendingConfirmation: null,
     nextChatReply: null,
+    nextChatSources: null,
     conversations: new Map(),
     nextChatActions: null,
     listeners: new Set(),
@@ -1326,6 +1332,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.pendingConfirmation = null;
     state.nextChatReply = null;
     state.nextChatActions = null;
+    state.nextChatSources = null;
     state.extensions = clone(EXTENSIONS);
     state.voiceStatus = initialVoiceStatus(options);
     state.version = HEALTH.version;
@@ -3412,9 +3419,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (state.nextChatReply !== null) {
       const reply = state.nextChatReply;
       const actions = state.nextChatActions ?? [];
+      const sources = state.nextChatSources;
       state.nextChatReply = null;
       state.nextChatActions = null;
-      return { ...base, reply, actions };
+      state.nextChatSources = null;
+      return { ...base, reply, actions, ...(sources?.length ? { sources } : {}) };
     }
     // As the daemon's session.start (`startBlocked` with the plan): while the plan from the
     // brief waits and no task is written, the chat says so at once, with no Yes/No card.
@@ -3540,6 +3549,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         readback,
         waiting: !!reply.pendingConfirmation,
         card: reply.pendingConfirmation ? "waiting" : null,
+        // d1109-chat-recall: the records the reply rests on, as the daemon keeps them.
+        ...(reply.sources?.length ? { sources: reply.sources } : {}),
       },
     });
     // A yes or a no answers the card read back before it.

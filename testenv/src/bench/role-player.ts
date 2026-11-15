@@ -1537,6 +1537,55 @@ function chainedSay(req: ModelRequest): string | null {
   return tail[0].replace(/^\s+then\s+say:\s*/i, "").trim() || null;
 }
 
+/**
+ * A line that asks about the past ("what did I answer about the opening hours?", "when was the
+ * README merged?", "was habe ich gesagt"), which a model with recall looks up (d1109-chat-recall).
+ */
+const PAST_RE =
+  /^(?:what|when|which|where|who|why)\s+(?:did|was|were|happened|had|have)\b|^what\s+happened\b|^(?:was|wann|wo)\s+(?:habe|hat|haben|war|wurde)\b/i;
+
+/** A record's own lines, without the data envelope the hooks put around a tool result. */
+function recordLines(result: string): string[] {
+  return result
+    .split("\n")
+    .filter(
+      (l) =>
+        l.trim() &&
+        !l.startsWith("<<<") &&
+        !l.endsWith(">>>") &&
+        !l.startsWith("This is data") &&
+        !l.startsWith("NOTE:"),
+    );
+}
+
+/**
+ * d1109-chat-recall: a question about the past is looked up as a real model with recall would:
+ * recall with the person's words, recall_open of the first hit, then an answer that names what it
+ * found in the record's own words (the stand-in quotes; a real model writes its own sentence).
+ * Nothing found: it says what it looked through. Null for a line about now, or no recall tool.
+ */
+function recallPlay(req: ModelRequest, calls: ReturnType<typeof pastToolCalls>): Answer | null {
+  const names = (req.tools ?? []).map((t) => t.name);
+  const line = turnLine(req);
+  if (!names.includes("recall") || !PAST_RE.test(line)) return null;
+  const last = calls.at(-1);
+  if (!last)
+    return {
+      text: "Looking it up.",
+      toolCalls: [{ name: "recall", input: { words: line.replace(/[?.!]+$/, "") } }],
+    };
+  const lines = recordLines(last.result ?? "");
+  if (last.name === "recall" && lines.some((l) => l.startsWith("r1 [")))
+    return { text: "Opening it.", toolCalls: [{ name: "recall_open", input: { ref: "r1" } }] };
+  if (last.name === "recall")
+    return text(
+      `${STAND_IN} Nothing recorded matches. ${lines.find((l) => l.startsWith("Looked through:")) ?? ""}`.trim(),
+    );
+  if (last.name === "recall_open")
+    return text(`${STAND_IN} From the record: ${lines.join(" ").slice(0, 400)}`);
+  return null;
+}
+
 function chatAnswer(req: ModelRequest): Answer {
   const calls = pastToolCalls(req.messages);
   const lastCall = calls.at(-1);
@@ -1544,6 +1593,8 @@ function chatAnswer(req: ModelRequest): Answer {
   if (next) return { text: `Running ${next.name}.`, toolCalls: [next] };
   const tail = chainedSay(req);
   if (tail) return text(`${STAND_IN} ${tail}`);
+  const recalled = recallPlay(req, calls);
+  if (recalled) return recalled;
   // After a command tool ran: say what it answered.
   const lastMsg = req.messages.at(-1);
   if (
