@@ -299,6 +299,79 @@ describe("d1109-oversize-pause, run C: the Start dialog and chat say the plan's 
     expect(sent?.body).toMatchObject({ projectId: "proj_atlas", trigger: "manual" });
   });
 
+  it("continue next time: a plain Start takes a task paused at the session's budget and its card moves to Answered with the Done line; one paused at its own budget stays", async () => {
+    const harness = createHarness();
+    const shop = readyTask(harness);
+    shop.title = "Build the shop";
+    shop.status = "needs_human";
+    shop.estimate = money(1_000_000);
+    const own = { ...shop, id: "task_own", title: "Own budget task" };
+    harness.daemon.state.tasks.push(own);
+    const pauseCard = (id: string, taskId: string, title: string, source: string) => ({
+      id,
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId,
+      taskTitle: title,
+      sessionId: "sess_1",
+      kind: "approval",
+      why: `"${title}" paused before its budget ran out.`,
+      steps: [],
+      options: ["Continue (CHF 0.80 more)", "Cancel task"],
+      blocking: true,
+      risk: "medium" as const,
+      changeCard: {
+        key: "task:budget_stop",
+        task_id: taskId,
+        task_title: title,
+        title: `"${title}" paused before its budget ran out`,
+        run_id: "run_1",
+        source,
+        specialist: "coder",
+        cap_usd_micro: 1_000_000,
+        spent_usd_micro: 300_000,
+        continue_usd_micro: 1_000_000,
+        stopped_by: "wrap_up",
+        done: "Half of it.",
+        left: ["The rest"],
+        no_progress: false,
+        chf_per_usd: 0.8,
+        applied_at: null,
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-11-10T09:00:00.000Z",
+      version: 1,
+    });
+    harness.daemon.state.requests.unshift(
+      pauseCard("req_next", shop.id, "Build the shop", "session"),
+      pauseCard("req_own", own.id, "Own budget task", "task_budget"),
+    );
+    const user = userEvent.setup();
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
+      "Build the shop",
+    );
+    expect(within(dialog).getByTestId("start-session-plan")).not.toHaveTextContent(
+      "Own budget task",
+    );
+    await user.click(within(dialog).getByTestId("confirm-start-session"));
+    await waitFor(() => expect(postedCalls(harness, "/sessions")).toHaveLength(1));
+    // The Inbox, as the daemon answers it (real-daemon.test.ts 'OP-0 continue next time').
+    renderApp("/inbox", harness);
+    await user.click(await screen.findByText(/^Answered \(\d+\)$/));
+    const entry = (await screen.findAllByTestId("answered-request")).find(
+      (e) => e.getAttribute("data-request-id") === "req_next",
+    ) as HTMLElement;
+    expect(entry).toHaveTextContent(/Your session of \d\d:\d\d went on with it\.$/);
+    expect(harness.daemon.state.tasks.find((t) => t.id === shop.id)?.status).toBe("ready");
+    expect(harness.daemon.state.requests.find((r) => r.id === "req_own")?.status).toBe("open");
+    expect(harness.daemon.state.tasks.find((t) => t.id === own.id)?.status).toBe("needs_human");
+  });
+
   it("chat's read-back for 'start a session' says the warning, then the task after it", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

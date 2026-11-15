@@ -683,7 +683,10 @@ only if budget is left.'). The amber note shows the daemon's `oversized.sentence
 task (they are in that note). The Inbox's budget card needs no change of its own: its words come
 from `requestWords` (the checks clause, the no-progress question with Continue's `input: "note"`,
 whose note box sends `{ choice, note }`), as the fake daemon renders them; the fake daemon's start
-check also takes a needs_human task whose open budget card a start continues (`fakeContinuing`).
+check also takes a needs_human task whose open budget card a start continues (`fakeContinuing`),
+and its `POST /sessions` closes that card as the daemon's `closeByStart` does (withdrawn with
+`outcome: "went_on_at_start"`, so Answered reads "Your session of HH:MM went on with it.") and
+moves the task to ready.
 Tests: `test/d1109-oversize.test.tsx` and `test/inbox.test.tsx` ("d1109-oversize-pause, run C"),
 `test/real-daemon.test.ts` ("d1109-oversize-pause, run C").
 

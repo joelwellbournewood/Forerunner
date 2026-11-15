@@ -2830,6 +2830,35 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       budgetUsdMicro: parsed.data.budgetUsdMicro ?? 6_250_000,
       note: parsed.data.note,
     });
+    // As the daemon's `closeByStart` (d1109-oversize-pause, OP-0): the session takes a task paused
+    // at a session's budget (or its specialist's limit) that got further in its turn; its card
+    // closes with the Done line and the task is ready again. A pause at its own budget, one that
+    // got no further and one at an outer limit stay on their cards.
+    if (parsed.data.projectId) {
+      const continuing = fakeContinuing(state.requests);
+      const startedAt = session.startedAt ?? new Date().toISOString();
+      const at = startedAt.slice(11, 16);
+      for (const r of state.requests) {
+        if (r.status !== "open" || !r.taskId || !continuing.has(r.taskId)) continue;
+        const task = state.tasks.find(
+          (t) => t.id === r.taskId && t.projectId === parsed.data.projectId,
+        );
+        if (task?.status !== "needs_human") continue;
+        task.status = "ready";
+        task.reason = "this session goes on with it from where it stopped";
+        touch(task);
+        r.status = "withdrawn";
+        r.version += 1;
+        r.changeCard = {
+          ...((r.changeCard ?? {}) as Record<string, unknown>),
+          applied_at: startedAt,
+          outcome: "went_on_at_start",
+          started_session_id: session.id,
+          started_session_time: at,
+        };
+      }
+      emit("inbox.changed", { blockingCount: blockingCount() });
+    }
     return c.json(StartSessionView.parse({ result: "started", startId, session }), 202);
   });
   app.get("/sessions/:id", (c) => {
