@@ -70,6 +70,7 @@ import {
 import { type ScriptedReply, textReply, toolReply } from "../../../testenv/src/provider/replies.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
+import { formatChf, formatMoney } from "../src/lib/money.ts";
 import { currentFromLog, taskStepsFromLog } from "../src/lib/session-steps.ts";
 import {
   actionExplain,
@@ -79,6 +80,7 @@ import {
 } from "../src/lib/task-actions.ts";
 import { intakeCardOf } from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
+import { latestRunByTask, taskCapWords } from "../src/pages/project/TasksTab.tsx";
 
 /**
  * The UI's own client against the real daemon (U-008 in docs/status/UPDATE-LOG.md). The screen
@@ -15976,4 +15978,265 @@ describe("d1109-sessions, run C", () => {
       await rt.close();
     }
   }, 120_000);
+});
+
+/**
+ * l3-money-screens, run L3 (live check 3's L3-run-3 and L3-run-4), against the real daemon on the
+ * fake provider (one micro-USD a token). The Tasks row's budget line said "of CHF 0.20 budget"
+ * under a cost with the critic's reviews in it, while the budget counts the work only and the
+ * run's line said "This run may spend CHF 0.11"; the drawer's run line kept its first figure
+ * while the run spent on. These cases read what the screens read, from the routes they call.
+ */
+describe("l3-money-screens, run L3", () => {
+  /** A daemon on the fake provider, its client, and its model calls. */
+  async function world(replies: ScriptedReply[], name: string) {
+    const home = mkdtempSync(join(tmpdir(), `fr-ui-real-l3money-${name}-`));
+    const clock = new SimulatedClock("2026-11-15T09:00:00Z");
+    const fake = new FakeProvider({ clock, latency: "none", onNoMatch: "echo", replies });
+    const options: ComposeOptions = {
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider: fake,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    };
+    const rt = await composeRuntime(options);
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client, fake };
+  }
+  const isRole = (role: string) => (r: ModelRequest) =>
+    (r.system ?? "").includes(`You are the ${role} specialist`);
+  const firstCall = (r: ModelRequest) => !JSON.stringify(r.messages).includes("tool_result");
+  /** The critic's first review asks for rework and costs USD 0.04; every later one accepts. */
+  const review = (verdict: "revise" | "accept", times: number, inputTokens: number) =>
+    toolReply(
+      "submit_review",
+      {
+        grade: verdict === "accept" ? 92 : 40,
+        confidence: "high",
+        verdict,
+        summary: verdict === "accept" ? "Criteria met." : "The pairing has no test yet.",
+        findings: [],
+        criteria: [],
+        checks_run: [],
+      },
+      "Reviewing the evidence.",
+      {
+        when: (r: ModelRequest) =>
+          (r.tools ?? []).some((t) => t.name === "submit_review") &&
+          !JSON.stringify(r.messages.at(-1)?.content ?? "").includes("tool_result"),
+        times,
+        usage: { input_tokens: inputTokens, output_tokens: 100 },
+      },
+    );
+  const coder: ScriptedReply[] = [
+    toolReply("list_dir", { path: "." }, "Looking first.", {
+      when: (r: ModelRequest) => isRole("coder")(r) && firstCall(r),
+      usage: { input_tokens: 20_000, output_tokens: 100 },
+      times: Number.POSITIVE_INFINITY,
+    }),
+    textReply("Wrote the pairing.\n\nLeft to do: nothing", {
+      when: isRole("coder"),
+      usage: { input_tokens: 25_000, output_tokens: 100 },
+      times: Number.POSITIVE_INFINITY,
+    }),
+  ];
+  const critic: ScriptedReply[] = [
+    review("revise", 1, 40_000),
+    review("accept", Number.POSITIVE_INFINITY, 1_000),
+    textReply("Rationale recorded.", {
+      when: { lastUserIncludes: "Review recorded" },
+      times: Number.POSITIVE_INFINITY,
+    }),
+  ];
+  /** Hold the coder's calls whose index (from 0) is in `held` until each is let go. */
+  function holdCoder(fake: FakeProvider, held: number[]) {
+    const gates = new Map(
+      held.map((i) => {
+        let open = () => {};
+        const promise = new Promise<void>((r) => {
+          open = r;
+        });
+        return [i, { promise, open }] as const;
+      }),
+    );
+    let calls = 0;
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      if (!isRole("coder")(r)) return stream(r);
+      const gate = gates.get(calls++);
+      if (!gate) return stream(r);
+      return (async function* () {
+        await new Promise<void>((resolve) => {
+          void gate.promise.then(resolve);
+          if (r.signal?.aborted) resolve();
+          r.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield* stream(r);
+      })();
+    };
+    return {
+      calls: () => calls,
+      open: (i: number) => gates.get(i)?.open(),
+      openAll: () => {
+        for (const g of gates.values()) g.open();
+      },
+    };
+  }
+  async function swissTask(client: DaemonClient, budgetUsdMicro: number) {
+    const project = await client.createProject({ name: "Chess tools", goal: "Club tools" });
+    const task = await client.createTask(project.id, {
+      title: "Write the Swiss pairing tool with tests",
+      outcome: "A tool that pairs a Swiss round, with a test",
+      acceptanceCriteria: ["a test covers the pairing"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId: project.id });
+    return { project, taskId: task.id, sessionId: started.session?.id ?? "" };
+  }
+  async function untilEnded(client: DaemonClient, sessionId: string) {
+    await eventually(
+      async () =>
+        !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+      "the session to end",
+      async () => (await client.session(sessionId)).status,
+      20_000,
+    );
+  }
+
+  it("L3-run-3: while the second run works after a review, the row's budget line names what is left for the work, the figure of that run's 'This run may spend' line, and says reviews are not counted", async () => {
+    const w = await world([...critic, ...coder], "cap");
+    // The coder's calls 0 and 1 are the first run; call 2 is the second run's first.
+    const hold = holdCoder(w.fake, [2]);
+    const { rt, client } = w;
+    try {
+      const { project, taskId, sessionId } = await swissTask(client, 250_000);
+      await eventually(
+        async () => hold.calls() === 3,
+        "the second run's first call",
+        async () => `${hold.calls()} coder calls`,
+        20_000,
+      );
+      const mayLine = async () =>
+        (await client.sessionEvents(sessionId))
+          .map((e) => e.text)
+          .filter((t) => t.startsWith("This run may spend"))
+          .at(-1) ?? "";
+      // The second run's line is the second one written.
+      await eventually(
+        async () =>
+          (await client.sessionEvents(sessionId)).filter((e) =>
+            e.text.startsWith("This run may spend"),
+          ).length === 2,
+        "the second run's budget line",
+        mayLine,
+        20_000,
+      );
+      const line = await mayLine();
+      const may = /^This run may spend (CHF \d+\.\d\d)/.exec(line)?.[1] ?? "";
+      expect(may).not.toBe("");
+      const row = (await client.tasks(project.id)).find((t) => t.id === taskId);
+      if (!row) throw new Error("no row");
+      expect(row.status).toBe("in_progress");
+      expect(row.capSource).toBe("task_budget");
+      // The cost on the row has the critic's review in it; the budget counts the work only.
+      expect(row.spent?.usdMicro ?? 0).toBeGreaterThan(row.actual.usdMicro);
+      expect(formatMoney(row.spent ?? row.actual)).not.toBe(formatMoney(row.actual));
+      // What the row says under that cost (TaskCap's words, as TasksTab renders them).
+      const words = taskCapWords(row, row.specialist);
+      expect(words?.text).toBe(
+        `${may} of ${formatMoney(row.budget)} budget left; reviews are not counted`,
+      );
+      expect(formatMoney(row.cap)).toBe(may);
+      // Before: "of CHF 0.20 budget" under the cost, which left the budget less the cost.
+      expect(formatChf(row.budget.chfMicro - (row.spent ?? row.actual).chfMicro)).not.toBe(may);
+      hold.openAll();
+      await untilEnded(client, sessionId);
+      const done = (await client.tasks(project.id)).find((t) => t.id === taskId);
+      expect(done?.status).toBe("done");
+    } finally {
+      hold.openAll();
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("L3-run-4: each booked call moves the task's spend and its run's cost on the routes the drawer's re-read key follows, and never the task's version", async () => {
+    const w = await world([...critic.slice(1), ...coder], "drawer");
+    // The first run's two calls are held in turn: what the Tasks tab and the drawer read between.
+    const hold = holdCoder(w.fake, [0, 1]);
+    const { rt, client } = w;
+    try {
+      const { project, taskId, sessionId } = await swissTask(client, 0);
+      await eventually(
+        async () => hold.calls() === 1,
+        "the coder's first call",
+        async () => `${hold.calls()} coder calls`,
+        20_000,
+      );
+      const row = async () => (await client.tasks(project.id)).find((t) => t.id === taskId);
+      const latestRun = async () =>
+        latestRunByTask(await client.runs(project.id, { limit: 500 })).get(taskId);
+      const drawerRun = async () => (await client.task(taskId)).runs.find((r) => r.kind === "work");
+      const opened = await row();
+      // What the drawer reads when it opens: the run, nothing spent yet.
+      expect(opened?.status).toBe("in_progress");
+      expect((await drawerRun())?.cost.usdMicro).toBe(0);
+      expect((await latestRun())?.cost.usdMicro).toBe(0);
+      hold.open(0);
+      await eventually(
+        async () => hold.calls() === 2,
+        "the coder's second call",
+        async () => `${hold.calls()} coder calls`,
+        20_000,
+      );
+      // The two parts of the drawer's key move: the row's spend and the polled run's cost.
+      await eventually(
+        async () =>
+          ((await row())?.spent?.usdMicro ?? 0) > 0 &&
+          ((await latestRun())?.cost.usdMicro ?? 0) > 0,
+        "the first call's cost on the row and on the run",
+        async () => JSON.stringify({ row: (await row())?.spent, run: (await latestRun())?.cost }),
+        20_000,
+      );
+      const moved = await row();
+      expect(moved?.status).toBe(opened?.status);
+      // ...while the version the drawer and the row keep does not (ADR 0112 point 6).
+      expect(moved?.version).toBe(opened?.version);
+      // A re-read then finds the drawer's run line at the run's figure, not CHF 0.00.
+      const run = await drawerRun();
+      expect(run?.outcome).toBe("Running");
+      expect(run?.cost.usdMicro).toBe((await latestRun())?.cost.usdMicro);
+      expect(formatMoney(run?.cost ?? { usdMicro: 0, chfMicro: 0 })).not.toBe("CHF 0.00");
+      expect(run?.cost.usdMicro).toBe(moved?.spent?.usdMicro);
+      hold.open(1);
+      await untilEnded(client, sessionId);
+    } finally {
+      hold.openAll();
+      await rt.close();
+    }
+  }, 60_000);
 });

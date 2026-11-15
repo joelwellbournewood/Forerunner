@@ -7,6 +7,7 @@ import { type FormEvent, useState } from "react";
 import { Link } from "react-router";
 import {
   describeError,
+  type RunView,
   type TaskDetailView,
   type TaskReviewEvidence,
   type TaskTransitionView,
@@ -62,6 +63,7 @@ import { useDockerReady, useWhoChoices } from "./NewTaskDialog.tsx";
 export function TaskDrawer({
   taskId,
   tasks,
+  latestRun,
   reference,
   onClose,
   onAction,
@@ -69,6 +71,8 @@ export function TaskDrawer({
 }: {
   taskId: string | null;
   tasks: readonly TaskView[];
+  /** The task's latest run as the Tasks tab last read the project's runs (its cost moves per call). */
+  latestRun?: Pick<RunView, "id" | "cost"> | undefined;
   reference?: MoneyLike;
   onClose: () => void;
   onAction: (task: TaskView, action: TaskActionKey) => void;
@@ -76,10 +80,22 @@ export function TaskDrawer({
 }) {
   const client = useClient();
   const row = tasks.find((t) => t.id === taskId);
-  // Read again whenever the row changes (an action, a session moved it).
+  // Read again whenever the row changes (an action, a session moved it), and while a run goes on
+  // whenever its spend moves (L3-run-4): each model call's cost reaches the task and its run
+  // without a new version (ADR 0112 point 6), so the run line kept the figure it read first. The
+  // task's spend and its latest run's cost are two writes, so both are in the key; useAsync keeps
+  // what it showed while it reads again, so nothing flickers and the Edit form is left alone.
   const detail = useAsync(
     (signal) => (taskId ? client.task(taskId, signal) : Promise.resolve(null)),
-    [client, taskId, row?.version, row?.status],
+    [
+      client,
+      taskId,
+      row?.version,
+      row?.status,
+      row?.spent?.usdMicro ?? row?.actual.usdMicro,
+      latestRun?.id,
+      latestRun?.cost.usdMicro,
+    ],
   );
   const [editing, setEditing] = useState(false);
   const [shown, setShown] = useState<string | null>(null);

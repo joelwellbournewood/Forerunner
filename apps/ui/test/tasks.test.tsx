@@ -1786,3 +1786,180 @@ describe("w15-review, wave 15", () => {
     ]);
   });
 });
+
+/**
+ * l3-money-screens, run L3 (live check 3's L3-run-3 and L3-run-4). The Tasks row showed the
+ * task's cost with its reviews ("CHF 0.13") above "of CHF 0.20 budget", while the budget counts
+ * only the work (CHF 0.09; the run's own line said "This run may spend CHF 0.11"); and the
+ * drawer's run line kept the figure it read when the drawer opened while the run spent on.
+ */
+describe("l3-money-screens, run L3", () => {
+  /** Amounts in micro-USD as a person reads them (CHF at the fake's rate of 0.8). */
+  const chf = (usdMicro: number) => formatChf(money(usdMicro).chfMicro);
+  /** A running work run of a task, as the daemon's GET /tasks/:id lists it. */
+  function runningRun(harness: Harness, id: string, taskId: string, usdMicro: number) {
+    const base = harness.daemon.state.runs[0] as (typeof harness.daemon.state.runs)[number];
+    const run = {
+      ...base,
+      id,
+      taskId,
+      specialist: "coder",
+      outcome: "Running",
+      cost: money(usdMicro),
+      verdict: null,
+      reviewId: null,
+      createdAt: new Date().toISOString(),
+    };
+    harness.daemon.state.runs.unshift(run);
+    return run;
+  }
+  const workRunIn = (drawer: HTMLElement) =>
+    within(drawer)
+      .getAllByTestId("drawer-run")
+      .find((r) => r.getAttribute("data-kind") === "work") as HTMLElement;
+
+  it("L3-run-3: after a review, a running task's budget line says what is left of it for the work and that reviews are not counted, never the bare budget beside the cost", async () => {
+    const harness = createHarness();
+    // Budget CHF 0.20; the work CHF 0.09; the work and a review CHF 0.13; left CHF 0.11.
+    addTask(harness, "t_sent_back", "Write the Swiss pairing tool with tests", {
+      status: "in_progress",
+      specialist: "coder",
+      budget: money(250_000),
+      actual: money(112_500),
+      spent: money(162_500),
+      cap: money(137_500),
+      capSource: "task_budget",
+    });
+    // The reviews took the cost past the budget while the work is still under it.
+    addTask(harness, "t_past", "Write the Elo tool with tests", {
+      status: "in_progress",
+      specialist: "coder",
+      budget: money(250_000),
+      actual: money(225_000),
+      spent: money(300_000),
+      cap: money(25_000),
+      capSource: "task_budget",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const row = await rowOf("t_sent_back");
+    expect(row).toHaveTextContent(chf(162_500));
+    const cap = within(row).getByTestId("task-cap");
+    expect(cap).toHaveTextContent(
+      `${chf(137_500)} of ${chf(250_000)} budget left; reviews are not counted`,
+    );
+    expect(cap.textContent).not.toMatch(/^of CHF/);
+    expect(cap).toHaveAttribute(
+      "title",
+      "Runs of this task stop when the work's spend reaches this budget. The critic's reviews are not counted in it.",
+    );
+    const past = await rowOf("t_past");
+    expect(past).toHaveTextContent(chf(300_000));
+    expect(within(past).getByTestId("task-cap").textContent).not.toMatch(/^of CHF/);
+    expect(within(past).getByTestId("task-cap")).toHaveTextContent(
+      `${chf(25_000)} of ${chf(250_000)} budget left; reviews are not counted`,
+    );
+  });
+
+  it("L3-run-3: before any review the cost is what the budget counts, so the line stays 'of CHF 0.20 budget'; at the budget it says it is used up", async () => {
+    const harness = createHarness();
+    addTask(harness, "t_working", "Write the Swiss pairing tool with tests", {
+      status: "in_progress",
+      specialist: "coder",
+      budget: money(250_000),
+      actual: money(75_000),
+      spent: money(75_000),
+      cap: money(175_000),
+      capSource: "task_budget",
+    });
+    addTask(harness, "t_used", "Write the Elo tool with tests", {
+      status: "in_progress",
+      specialist: "coder",
+      budget: money(250_000),
+      actual: money(250_000),
+      spent: money(300_000),
+      cap: money(0),
+      capSource: "task_budget",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    expect(within(await rowOf("t_working")).getByTestId("task-cap")).toHaveTextContent(
+      /^of CHF 0\.20 budget$/,
+    );
+    const used = within(await rowOf("t_used")).getByTestId("task-cap");
+    expect(used).toHaveTextContent(/^CHF 0\.20 budget used up; reviews are not counted$/);
+    expect(used.textContent).not.toContain("CHF 0.00");
+  });
+
+  it("L3-run-4: the drawer's run line follows the run's spend while the drawer stays open, with no Loading flash and no new version", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "t_live_spend", "Write the Swiss pairing tool with tests", {
+      status: "in_progress",
+      specialist: "coder",
+      actual: money(12_500),
+      spent: money(12_500),
+      version: 4,
+    });
+    const session = harness.daemon.state
+      .sessions[0] as (typeof harness.daemon.state.sessions)[number];
+    harness.daemon.state.sessions.push({
+      ...session,
+      id: "sess_spend",
+      status: "running",
+      endedAt: null,
+      summary: "",
+    });
+    const run = runningRun(harness, "run_spend", "t_live_spend", 12_500);
+    run.sessionId = "sess_spend";
+    renderApp("/projects/proj_atlas/tasks?task=t_live_spend", harness, liveEvents(harness));
+    const drawer = await screen.findByTestId("task-drawer");
+    await waitFor(() => expect(workRunIn(drawer)).toHaveTextContent(`Running · ${chf(12_500)}`));
+    expect(drawer).toHaveTextContent(`spent ${chf(12_500)}`);
+    // From here on the drawer never shows its Loading line again.
+    let flashed = false;
+    const watch = new MutationObserver(() => {
+      if (drawer.textContent?.includes("Loading the task")) flashed = true;
+    });
+    watch.observe(drawer, { subtree: true, childList: true, characterData: true });
+    // Two more model calls were booked: the task's spend and the run's cost moved, its version
+    // and its status did not (ADR 0112 point 6).
+    const task = harness.daemon.state.tasks.find((t) => t.id === "t_live_spend");
+    if (!task) throw new Error("no t_live_spend");
+    task.actual = money(75_000);
+    task.spent = money(75_000);
+    run.cost = money(75_000);
+    for (const l of harness.daemon.state.listeners) l("project.changed", { id: "proj_atlas" });
+    await waitFor(() => expect(drawer).toHaveTextContent(`spent ${chf(75_000)}`));
+    await waitFor(() => expect(workRunIn(drawer)).toHaveTextContent(`Running · ${chf(75_000)}`));
+    watch.disconnect();
+    expect(flashed).toBe(false);
+    // The person's Stop goes with the version the drawer read: booking moved none.
+    await user.click(within(drawer).getByTestId("drawer-action-stop"));
+    const dialog = await screen.findByTestId("action-dialog");
+    await user.click(within(dialog).getByTestId("confirm-action"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/t_live_spend/action")).toHaveLength(1));
+    expect(postedCalls(harness, "/tasks/t_live_spend/action")[0]?.body).toMatchObject({
+      version: 4,
+      action: "stop",
+    });
+  });
+
+  it("L3-run-4: the run line follows the Tasks tab's polled runs when the run's cost is written after the task's spend was read", async () => {
+    const harness = createHarness();
+    addTask(harness, "t_split", "Write the Elo tool with tests", {
+      status: "in_progress",
+      specialist: "coder",
+      actual: money(75_000),
+      spent: money(75_000),
+    });
+    // The run's own write of the last call lands after the task's (executor.ts onEvent and
+    // runner.ts recordStep are two writes): the first read finds the task ahead of its run.
+    const run = runningRun(harness, "run_split", "t_split", 12_500);
+    renderApp("/projects/proj_atlas/tasks?task=t_split", harness, liveEvents(harness));
+    const drawer = await screen.findByTestId("task-drawer");
+    await waitFor(() => expect(workRunIn(drawer)).toHaveTextContent(`Running · ${chf(12_500)}`));
+    // Now the run's write lands; the task's spend, version and status stay as they were.
+    run.cost = money(75_000);
+    for (const l of harness.daemon.state.listeners) l("project.changed", { id: "proj_atlas" });
+    await waitFor(() => expect(workRunIn(drawer)).toHaveTextContent(`Running · ${chf(75_000)}`));
+  });
+});

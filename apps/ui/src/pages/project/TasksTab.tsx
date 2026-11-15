@@ -22,7 +22,7 @@ import {
   Loading,
   Money,
 } from "../../components/ui.tsx";
-import type { MoneyLike } from "../../lib/money.ts";
+import { formatMoney, type MoneyLike } from "../../lib/money.ts";
 import { verdictLabel } from "../../lib/plain-words.ts";
 import {
   ACTIONS,
@@ -64,36 +64,67 @@ export interface TaskFilter {
   text: string;
 }
 
+/** The line under a task's cost (U-042): what it says and its tooltip. */
+export interface TaskCapWords {
+  text: string;
+  title: string;
+}
+
+const TASK_BUDGET_TITLE =
+  "Runs of this task stop when the work's spend reaches this budget. The critic's reviews are not counted in it.";
+
 /**
- * What a run of the task stops at (U-042), under its cost, for a task not done or cancelled:
- * the task's budget when it has one (the spend of all its runs together stops there), else the
- * specialist's limit per run. The estimate is the plan's forecast and never stops a run.
+ * What a run of the task stops at (U-042), under its cost, for a task not done or cancelled.
+ * With a budget of its own, the budget counts the work's spend only (`actual`, ADR 0112 point 4),
+ * while the cost above it is what the task cost with its reviews (`spent`, W15-20). While the two
+ * read the same, "of CHF 0.20 budget" goes with the cost above it. Once a review was paid they
+ * part, and the line names what is left of the budget for the work (`cap`: the budget less the
+ * work, the figure of the run's "This run may spend CHF X" line) and that reviews are not counted
+ * (L3-run-3: live check 3's row read "CHF 0.13 of CHF 0.20 budget" while the run could spend CHF
+ * 0.11). Without a budget, the specialist's limit per run. The estimate is the plan's forecast
+ * and never stops a run.
  */
-function TaskCap({ task, specialist }: { task: TaskView; specialist: string | null }) {
-  if (task.capSource === "task_budget")
-    return (
-      <div
-        className="text-xs text-neutral-500"
-        data-testid="task-cap"
-        title="Runs of this task stop when its spend reaches this budget"
-      >
-        of <Money value={task.budget} /> budget
-      </div>
-    );
-  if (task.capSource === "specialist_limit")
-    return (
-      <div
-        className="text-xs text-neutral-500"
-        data-testid="task-cap"
-        title="The task has no budget: each run stops at its specialist's limit. Set a budget to change it."
-      >
-        each run stops at <Money value={task.cap} />
-        {/* later #74: the specialist as the log names it ("the writer's limit"); Agent's
-            choice names none (before: "(coder limit)" beside "Agent's choice"). */}
-        {specialistName(specialist) ? ` (the ${specialistName(specialist)}'s limit)` : ""}
-      </div>
-    );
+export function taskCapWords(
+  task: Pick<TaskView, "capSource" | "budget" | "cap" | "actual" | "spent">,
+  specialist: string | null,
+): TaskCapWords | null {
+  if (task.capSource === "task_budget") {
+    const budget = formatMoney(task.budget);
+    if (formatMoney(task.spent ?? task.actual) === formatMoney(task.actual))
+      return { text: `of ${budget} budget`, title: TASK_BUDGET_TITLE };
+    return {
+      text:
+        task.cap.chfMicro > 0
+          ? `${formatMoney(task.cap)} of ${budget} budget left; reviews are not counted`
+          : `${budget} budget used up; reviews are not counted`,
+      title: TASK_BUDGET_TITLE,
+    };
+  }
+  if (task.capSource === "specialist_limit") {
+    // later #74: the specialist as the log names it ("the writer's limit"); Agent's choice names
+    // none (before: "(coder limit)" beside "Agent's choice").
+    const name = specialistName(specialist);
+    return {
+      text: `each run stops at ${formatMoney(task.cap)}${name ? ` (the ${name}'s limit)` : ""}`,
+      title:
+        "The task has no budget: each run stops at its specialist's limit. Set a budget to change it.",
+    };
+  }
   return null;
+}
+
+function TaskCap({ task, specialist }: { task: TaskView; specialist: string | null }) {
+  const words = taskCapWords(task, specialist);
+  if (!words) return null;
+  return (
+    <div
+      className="max-w-[14rem] whitespace-normal text-xs text-neutral-500"
+      data-testid="task-cap"
+      title={words.title}
+    >
+      {words.text}
+    </div>
+  );
 }
 
 /**
@@ -562,6 +593,7 @@ export function TasksTab({
       <TaskDrawer
         taskId={openId}
         tasks={all}
+        latestRun={openId ? byTask.get(openId) : undefined}
         reference={reference}
         onClose={() => setOpen(null)}
         onAction={(task, key) => start(task, key)}
