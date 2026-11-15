@@ -1,16 +1,9 @@
 import { readdir, stat } from "node:fs/promises";
-import { matchProjects } from "@forerunner/commands";
+import { matchProjects, pickSameTitled, pickWord, sameTitleTags } from "@forerunner/commands";
 import { join, relative, toPosix } from "@forerunner/platform";
 import type { ProjectRow, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
 import type { ToolResult, ToolSpec } from "../agent/tools.ts";
-import {
-  loadTaskDisplayContext,
-  runOrder,
-  taskDetail,
-  taskDisplay,
-} from "../daemon/task-display.ts";
-import { taskView } from "../daemon/views.ts";
 import {
   cancelledPullRequests,
   donePullRequests,
@@ -19,6 +12,16 @@ import {
   repositoryNameOf,
   tasksBlock,
 } from "./project-facts.ts";
+import {
+  localDate,
+  RECALL_BOUNDS,
+  RECALL_TOOL_NAMES,
+  type RecallDeps,
+  recallTools,
+  taskDetailLines,
+  titleSimilarity,
+} from "./recall.ts";
+import { stepLine } from "./recall-steps.ts";
 import { scopeOf } from "./scope.ts";
 
 /**
@@ -47,6 +50,13 @@ export interface ReadToolDeps {
    * demand), never by a turn's facts. Absent: files_list says nothing of the host.
    */
   openPullRequests?: (projectId: string) => Promise<readonly string[] | null>;
+  /**
+   * The recall tools' deps (d1109-chat-recall, ADR 0114): with them, readTools also returns
+   * recall and recall_open, after the four, in a fixed place (the cached prefix holds). The
+   * turn's RecallScope, the principal, the person's zone and line, the provider's counter, the
+   * memory port, the doc loader, the pass's sizes and the step callback.
+   */
+  recall?: Omit<RecallDeps, "store" | "humanId" | "projectId">;
 }
 
 /**
@@ -130,22 +140,93 @@ async function projectOf(deps: ReadToolDeps, named?: string): Promise<ProjectRow
     : "This conversation's project is not one of yours.";
 }
 
+const sameTitle = (title: string) => title.trim().toLowerCase().replace(/\s+/g, " ");
+
+/** "Two tasks are called "X": #17 and #18. Say which, for example "X #17"." (W15-37's words). */
+function sameTitleWords(title: string, tasks: readonly TaskRow[]): string {
+  const tags = sameTitleTags(tasks).map((t) => t.tag);
+  const COUNTS = ["Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
+  const count = COUNTS[tags.length - 2] ?? String(tags.length);
+  const list =
+    tags.length === 2
+      ? `${tags[0]} and ${tags[1]}`
+      : `${tags.slice(0, -1).join(", ")} and ${tags.at(-1)}`;
+  const first = tags[0] ?? "";
+  const example = first.startsWith("#") ? `${title} ${first}` : `${title} (${first})`;
+  return `${count} tasks are called "${title}": ${list}. Say which, for example "${example}".`;
+}
+
+/** Each task's earlier titles (task.update's renames in the change log), by task id. */
+async function earlierTitlesOf(
+  store: StateStore,
+  projectId: string,
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  for (const r of await store.changeLog.forProject(projectId, { limit: RECALL_BOUNDS.changes })) {
+    const before = r.before as { task_id?: unknown; title?: unknown } | null;
+    const after = r.after as { title?: unknown } | null;
+    if (!before || typeof before.task_id !== "string" || typeof before.title !== "string") continue;
+    if (
+      typeof after?.title !== "string" ||
+      after.title === before.title ||
+      r.undo_state === "undone"
+    )
+      continue;
+    const list = out.get(before.task_id) ?? [];
+    if (!list.includes(before.title)) list.push(before.title);
+    out.set(before.task_id, list);
+  }
+  return out;
+}
+
+/**
+ * The task a call names (d1109-chat-recall, D3-2): its id, its title now or an earlier one
+ * (a rename in the change log: "the README task" after "Write the README" became "Write the
+ * guide"), a part of one, or, failing those, the ranking of recall (letter patterns catch
+ * "stlye the page"). Tasks of one title are told apart by the words W15-37 gives ("#17", "the
+ * done one", "the older one") and listed apart when the call names none. Before (7aa7add) only
+ * the current title or a unique part of it was found.
+ */
 async function findTask(
   store: StateStore,
   project: ProjectRow,
   needle: string,
 ): Promise<TaskRow | string> {
-  const tasks = await store.task.forProject(project.id, {}, { limit: 10_000 });
+  const tasks = await store.task.forProject(project.id, {}, { limit: RECALL_BOUNDS.tasks });
   const direct = tasks.find((t) => t.id === needle.trim());
   if (direct) return direct;
-  const n = needle.trim().toLowerCase().replace(/^"|"$/g, "");
-  const exact = tasks.filter((t) => t.title.toLowerCase() === n);
+  const n = sameTitle(needle.replace(/^\s*"|"\s*$/g, ""));
+  const earlier = await earlierTitlesOf(store, project.id);
+  const titlesOf = (t: TaskRow) => [t.title, ...(earlier.get(t.id) ?? [])].map(sameTitle);
+  // Several of one title, picked by the words after it ("Write the guide #17").
+  const titled = tasks.filter(
+    (t) => n.startsWith(sameTitle(t.title)) && n.length > sameTitle(t.title).length,
+  );
+  const longest = Math.max(0, ...titled.map((t) => sameTitle(t.title).length));
+  const group = titled.filter((t) => sameTitle(t.title).length === longest);
+  if (group.length > 1) {
+    const picked = pickSameTitled(group, pickWord(n.slice(longest)));
+    if (picked) return picked;
+  }
+  const exact = tasks.filter((t) => sameTitle(t.title) === n);
   if (exact.length === 1) return exact[0] as TaskRow;
-  const hits = tasks.filter((t) => t.title.toLowerCase().includes(n));
+  if (exact.length > 1) return sameTitleWords((exact[0] as TaskRow).title, exact);
+  const wasCalled = tasks.filter((t) => titlesOf(t).slice(1).includes(n));
+  if (wasCalled.length === 1) return wasCalled[0] as TaskRow;
+  const hits = tasks.filter((t) => titlesOf(t).some((title) => title.includes(n)));
   if (hits.length === 1) return hits[0] as TaskRow;
-  return hits.length
-    ? `Several tasks match "${needle}": ${hits.map((t) => `"${t.title}"`).join(", ")}.`
-    : `No task of ${project.name} matches "${needle}".`;
+  if (hits.length > 1 && new Set(hits.map((h) => sameTitle(h.title))).size === 1)
+    return sameTitleWords((hits[0] as TaskRow).title, hits);
+  if (hits.length > 1)
+    return `Several tasks match "${needle}": ${hits.map((t) => `"${t.title}"`).join(", ")}.`;
+  // No title holds the words: recall's letter patterns, for a typo or a word form. The closest
+  // title is taken only when it is close (0.5) and clearly closer than the next (0.08).
+  const near = tasks
+    .map((t) => ({ t, sim: titleSimilarity(n, [t.title, ...(earlier.get(t.id) ?? [])]) }))
+    .sort((a, b) => b.sim - a.sim);
+  const [top, next] = near;
+  if (top && top.sim >= 0.5 && (!next || top.sim - next.sim >= 0.08)) return top.t;
+  return `No task of ${project.name} matches "${needle}".`;
 }
 
 /** Files under the folder, newest first, at most `max`; `.git` and `node_modules` are skipped. */
@@ -182,7 +263,12 @@ async function listFiles(root: string, max: number): Promise<{ path: string; at:
 }
 
 export function readTools(deps: ReadToolDeps): ToolSpec[] {
-  const chf = () => deps.chfPerUsd?.() ?? 1;
+  // d1109-chat-recall: each read tool says what it does while the person waits (recall-steps).
+  const rd = deps.recall;
+  const today = rd ? localDate(rd.nowMs, rd.timeZone) : "";
+  const step = (tool: string, input: unknown, extra: { taskTitle?: string } = {}) => {
+    if (rd?.onStep) rd.onStep(stepLine(tool, input, { line: rd.line, today, ...extra }));
+  };
   const tasksList: ToolSpec<{ project?: string | undefined }> = {
     name: "tasks_list",
     description:
@@ -191,6 +277,7 @@ export function readTools(deps: ReadToolDeps): ToolSpec[] {
     actionClass: "read",
     risk: "low",
     async execute(input) {
+      step("tasks_list", input);
       const project = await projectOf(deps, input.project);
       if (typeof project === "string") return err(project);
       return ok(
@@ -219,33 +306,11 @@ export function readTools(deps: ReadToolDeps): ToolSpec[] {
       const task = await findTask(deps.store, project, input.task);
       // "Several tasks match ..." names titles agents wrote: a record like the answer itself.
       if (typeof task === "string") return err(task, "task");
-      const rows = await deps.store.task.forProject(project.id, {}, { limit: 10_000 });
-      const ctx = await loadTaskDisplayContext(deps.store, rows, deps.sandboxReady?.() ?? null);
-      const views = runOrder(rows).map((t, i) =>
-        taskView(t, chf(), undefined, { display: taskDisplay(t, ctx), runOrder: i }),
-      );
-      const view = views.find((v) => v.id === task.id);
-      if (!view) return err("The task is gone.");
-      const d = await taskDetail(deps.store, view, task, views, chf());
-      const lines = [
-        `Task "${task.title}" of ${project.name}: ${view.display?.label ?? task.status}`,
-        task.outcome ? `What done looks like: ${task.outcome}` : "",
-        task.acceptance_criteria.length ? `Criteria: ${task.acceptance_criteria.join("; ")}` : "",
-        d.waitsOn.length
-          ? `Waits for: ${d.waitsOn.map((w) => `"${w.title ?? "a task that is gone"}" (${w.status})`).join(", ")}`
-          : "",
-        d.waitedOnBy.length
-          ? `Waited on by: ${d.waitedOnBy.map((w) => `"${w.title}"`).join(", ")}`
-          : "",
-        ...d.runs.map(
-          (r) =>
-            `Run (${r.kind}, ${r.specialist ?? "agent"}, ${r.startedAt}): ${r.outcome}${r.report ? `. Report: ${r.report.replace(/\n/g, " ")}` : ""}${r.files.length ? `. Files: ${r.files.join(", ")}` : ""}`,
-        ),
-        d.review
-          ? `Review: ${d.review.verdict} ${d.review.summary.replace(/\n/g, " ")}${d.review.open.length ? ` Still asked for: ${d.review.open.join("; ")}` : ""}`
-          : "",
-        ...d.cards.map((c) => `Open card: ${c.question}`),
-      ].filter(Boolean);
+      step("task_get", input, { taskTitle: task.title });
+      const lines = await taskDetailLines(deps, project, task);
+      if (!lines.length) return err("The task is gone.");
+      const renamed = (await earlierTitlesOf(deps.store, project.id)).get(task.id) ?? [];
+      if (renamed.length) lines.push(`Earlier called ${renamed.map((t) => `"${t}"`).join(", ")}.`);
       return ok(lines.join("\n"), "task");
     },
   };
@@ -257,6 +322,7 @@ export function readTools(deps: ReadToolDeps): ToolSpec[] {
     actionClass: "read",
     risk: "low",
     async execute(input) {
+      step("session_last", input);
       const project = await projectOf(deps, input.project);
       if (typeof project === "string") return err(project);
       return ok(lastSessionBlock(project) || `${project.name} has had no session yet.`, "session");
@@ -270,6 +336,7 @@ export function readTools(deps: ReadToolDeps): ToolSpec[] {
     actionClass: "read",
     risk: "low",
     async execute(input) {
+      step("files_list", input);
       const project = await projectOf(deps, input.project);
       if (typeof project === "string") return err(project);
       const folder = (await deps.folderOf?.(project.id)) ?? null;
@@ -295,8 +362,23 @@ export function readTools(deps: ReadToolDeps): ToolSpec[] {
       );
     },
   };
-  return [tasksList, taskGet, sessionLast, filesList] as ToolSpec[];
+  // d1109-chat-recall: recall and recall_open after the four, in a fixed place.
+  const recall = deps.recall
+    ? recallTools({
+        ...deps.recall,
+        store: deps.store,
+        humanId: deps.humanId,
+        projectId: deps.projectId,
+      })
+    : [];
+  return [tasksList, taskGet, sessionLast, filesList, ...recall] as ToolSpec[];
 }
 
-/** The read tools' names, for the role prompt and the tests. */
-export const READ_TOOL_NAMES = ["files_list", "session_last", "task_get", "tasks_list"] as const;
+/** The read tools' names, sorted as the model receives them (recall's two among them). */
+export const READ_TOOL_NAMES = [
+  "files_list",
+  ...RECALL_TOOL_NAMES,
+  "session_last",
+  "task_get",
+  "tasks_list",
+] as const;
