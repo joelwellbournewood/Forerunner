@@ -304,7 +304,10 @@ export function takeOverAsk(locator: string, e: Pick<Elsewhere, "ids" | "name">)
 }
 
 /** OR-07: the sentence of repo.take_over's Undo. */
-export function takeOverUndoneSentence(locator: string, e: Pick<Elsewhere, "ids" | "name">): string {
+export function takeOverUndoneSentence(
+  locator: string,
+  e: Pick<Elsewhere, "ids" | "name">,
+): string {
   return `${locator} is no longer taken over from ${projectFromWords(e)}.`;
 }
 

@@ -2,7 +2,7 @@ import { ForerunnerError } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import type { ExecuteResult } from "../src/executor.ts";
 import { toToolSpecs } from "../src/registry.ts";
-import type { RepoTakeOverFacts, RepositoryTakeOverPort } from "../src/types.ts";
+import type { RepositoryTakeOverPort, RepoTakeOverFacts } from "../src/types.ts";
 import { world } from "./helpers.ts";
 
 /**
@@ -99,10 +99,11 @@ describe("d1109-onerepo-link, run C: repo.take_over (OR-07)", () => {
       }),
       ctxFor: () => chat,
     }).find((s) => s.name === "repo_take_over");
-    const answer = await spec?.execute(
-      {},
-      { agentId: w.agent.id, sessionId: null, step: 1 } as never,
-    );
+    const answer = await spec?.execute({}, {
+      agentId: w.agent.id,
+      sessionId: null,
+      step: 1,
+    } as never);
     expect(answer?.untrusted).toEqual({ source: "repo_file", origin: "repository:o/kite" });
     const yes = await w.executor.confirm(pending.pendingId, {
       kind: "yes",

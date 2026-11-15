@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import nodePath from "node:path";
+import nodePath from "node:path"; // path-ok: path.win32 builds the Windows form the identity compares
 import { join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore, silenceSqliteExperimentalWarning } from "@forerunner/state";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";

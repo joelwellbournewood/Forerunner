@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import nodePath from "node:path";
+import nodePath from "node:path"; // path-ok: path.win32 compares a Windows path on any platform (the platform module has no win32 form)
 import {
   type GitHost,
   type PullRequestInfo,
@@ -1028,7 +1028,11 @@ export class RepositoryUse {
           projectName: verdict.project.name,
         });
       case "removed":
-        return { locator: repo.locator, projects: [verdict.projectId], name: read.marker?.name ?? null };
+        return {
+          locator: repo.locator,
+          projects: [verdict.projectId],
+          name: read.marker?.name ?? null,
+        };
       case "removed_together":
       case "elsewhere": {
         const e = verdict.elsewhere;
