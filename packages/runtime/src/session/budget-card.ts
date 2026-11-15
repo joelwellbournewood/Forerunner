@@ -80,14 +80,32 @@ export function continueLabel(moreUsdMicro: number, rate: number): string {
   return `Continue (${chfText(moreUsdMicro, rate)} more)`;
 }
 
-/** '"X" paused at its budget of CHF 0.40' (the card's title and the task's reason). */
+/**
+ * '"X" paused at its budget of CHF 0.40' (the card's title and the task's reason). A run that
+ * heard the wrap-up paused before its limit ran out, and says so: '"X" paused before its budget
+ * ran out' (live check 3, L3-research-2: the title said "paused at its budget of CHF 0.15" beside
+ * the session's "paused before its budget of CHF 0.15 ran out: it spent CHF 0.09"). Its amounts
+ * are the card's first sentence (`request-words.ts`), so the title, the task's reason and the
+ * notification's title stay whole within 60 characters.
+ */
 export function budgetStopTitle(
   task: Pick<TaskRow, "title">,
-  stop: Pick<BudgetStop, "capUsdMicro" | "source" | "specialist">,
+  stop: Pick<BudgetStop, "capUsdMicro" | "source" | "specialist" | "stoppedBy">,
   rate: number,
 ): string {
   const title = `"${task.title.replace(/\s+/g, " ").trim()}"`;
   const chf = chfText(stop.capUsdMicro, rate);
+  if (stop.stoppedBy === "wrap_up")
+    switch (stop.source) {
+      case "task_budget":
+        return `${title} paused before its budget ran out`;
+      case "specialist_limit":
+        return `${title} paused before the ${saidByName(stop.specialist) ?? "specialist"}'s limit per run ran out`;
+      case "session":
+        return `${title} paused before this session's budget ran out`;
+      default:
+        break;
+    }
   // The limit that stopped it (ADR 0112): before, every stop below the session's remainder was
   // "its budget" or the specialist's limit, whatever refused it.
   switch (stop.source) {
@@ -114,15 +132,18 @@ export function nextMonthStart(nowIso: string): string {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)).toISOString();
 }
 
-/** A run's note and to-do list as the card keeps them: plain, short, data only. */
+/**
+ * A run's note and to-do list as the card keeps them: plain, data only, each item whole as the
+ * handoff kept it (`parseHandoff` bounds them: 600 characters for the note, 200 an item, 20
+ * items). Before (live check 3, L3-research-2), the note was cut at 160 characters and each item
+ * at 80, mid-phrase ("Two pages define hint:…", "each listed page gives its…"), and no screen could
+ * show them whole again; the card's words (`request-words.ts`) choose what to show.
+ */
 function cardHandoff(handoff: RunHandoff | null | undefined): { done: string; left: string[] } {
-  const plain = (s: string, n: number) => {
-    const t = s.replace(/\s+/g, " ").trim();
-    return t.length > n ? `${t.slice(0, n - 1).trimEnd()}…` : t;
-  };
+  const plain = (s: string) => s.replace(/\s+/g, " ").trim();
   return {
-    done: plain(handoff?.stopped ?? "", 160),
-    left: (handoff?.leftToDo ?? []).slice(0, 5).map((t) => plain(t, 80)),
+    done: plain(handoff?.stopped ?? ""),
+    left: (handoff?.leftToDo ?? []).map(plain).filter(Boolean),
   };
 }
 

@@ -1306,9 +1306,25 @@ describe("Inbox", () => {
         '"Decide the versioning scheme" paused at its budget of CHF 0.40',
       );
       // Before: "So far it spent CHF 0.34; its next step would have gone over the budget."
+      // L3-research-2: what it spent, then where it stopped and what is left as lists, each item
+      // whole (before: "Done: versioning.md compares three schemes; left: pick one, write the
+      // decision.").
       expect(within(card).getByTestId("request-body")).toHaveTextContent(
-        "Done: versioning.md compares three schemes; left: pick one, write the decision.",
+        /^It spent CHF 0\.34 of its budget of CHF 0\.40\.$/,
       );
+      expect(
+        within(card)
+          .getAllByTestId("request-list")
+          .map((l) => [
+            within(l).getByTestId("request-list-label").textContent,
+            within(l)
+              .getAllByTestId("request-list-item")
+              .map((i) => i.textContent),
+          ]),
+      ).toEqual([
+        ["Where it stopped", ["versioning.md compares three schemes."]],
+        ["Left to do", ["pick one", "write the decision"]],
+      ]);
       expect(card).not.toHaveTextContent(/\$|USD/);
       expect(
         within(card)
@@ -1835,5 +1851,128 @@ describe("w15-tail, wave 15 run B: the plan card says a research task can read n
     const again = await screen.findByTestId("intake-card");
     await waitFor(() => expect(within(again).getAllByTestId("intake-task")).toHaveLength(2));
     expect(notes(again)).toEqual([null, null]);
+  });
+});
+
+/**
+ * l3-handoff-checks, run L3 (live check 3, L3-research-2): the card of a run that heard the
+ * wrap-up cut its note and its items in mid-phrase and ran them together ("Two pages define
+ * hint:…; left: Nothing is needed for the two criteria: each listed page gives its…, The list
+ * isn't exhaustive. Pages I didn't open, such as popovertarget…."), and its title said "paused at
+ * its budget of CHF 0.15" while the session said "paused before its budget of CHF 0.15 ran out:
+ * it spent CHF 0.09".
+ */
+describe("l3-handoff-checks, run L3", () => {
+  /** The card the runner now files after a wrap-up pause, as the daemon stores it. */
+  const pausedCard = () => ({
+    id: "req_l3",
+    projectId: "proj_atlas",
+    projectName: "Atlas",
+    taskId: "task_3",
+    taskTitle: "Decide the versioning scheme",
+    sessionId: "sess_1",
+    kind: "approval",
+    why: '"Decide the versioning scheme" paused before its budget ran out.',
+    steps: [],
+    options: ["Continue (CHF 0.40 more)", "Cancel task"],
+    blocking: true,
+    risk: "medium" as const,
+    changeCard: {
+      key: "task:budget_stop",
+      task_id: "task_3",
+      task_title: "Decide the versioning scheme",
+      title: '"Decide the versioning scheme" paused before its budget ran out',
+      run_id: "run_1",
+      source: "task_budget",
+      specialist: "writer",
+      cap_usd_micro: 500_000,
+      spent_usd_micro: 420_000,
+      continue_usd_micro: 500_000,
+      stopped_by: "wrap_up",
+      // Kept whole now (before: cut at 160 and at 80 characters).
+      done: "versioning.md compares three schemes: calendar, semantic and date-based. The `semantic` part has its examples; the other two have none yet.",
+      left: [
+        "Add two examples to each of the calendar and date-based parts, with the tag each would give the next release.",
+        "Pick one scheme and write the decision in docs/decisions/versioning.md.",
+        "Check the links in versioning.md.",
+        "Ask the team which tag the last release had.",
+      ],
+      chf_per_usd: 0.8,
+      applied_at: null,
+    },
+    status: "open",
+    answer: null,
+    createdAt: "2026-11-15T06:18:00.000Z",
+    version: 1,
+  });
+  const setUp = () => {
+    const harness = createHarness();
+    harness.daemon.state.requests.unshift(pausedCard());
+    const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+    if (t3) {
+      t3.status = "needs_human";
+      t3.budget = money(500_000);
+      t3.actual = money(420_000);
+      t3.reason = '"Decide the versioning scheme" paused before its budget ran out.';
+    }
+    harness.daemon.state.taskMeta.heldWork?.add("task_3");
+    return harness;
+  };
+  const cardOf = async () =>
+    (await screen.findAllByTestId("request")).find(
+      (r) => r.getAttribute("data-request-id") === "req_l3",
+    ) as HTMLElement;
+
+  it("L3-research-2: the card says it paused before its budget ran out and what it spent, and lists where it stopped and each item left whole", async () => {
+    renderApp("/inbox", setUp());
+    const card = await cardOf();
+    expect(within(card).getByTestId("request-title")).toHaveTextContent(
+      '"Decide the versioning scheme" paused before its budget ran out',
+    );
+    // As the session's line: "paused before its budget of CHF 0.40 ran out: it spent CHF 0.34".
+    expect(within(card).getByTestId("request-body")).toHaveTextContent(
+      /^It spent CHF 0\.34 of its budget of CHF 0\.40\.$/,
+    );
+    const lists = within(card).getAllByTestId("request-list");
+    expect(lists.map((l) => within(l).getByTestId("request-list-label").textContent)).toEqual([
+      "Where it stopped",
+      "Left to do",
+    ]);
+    expect(
+      within(lists[0] as HTMLElement)
+        .getAllByTestId("request-list-item")
+        .map((i) => i.textContent),
+    ).toEqual(["versioning.md compares three schemes: calendar, semantic and date-based."]);
+    // Each item whole, one per line; three, then how many more (design §5 rule 5).
+    expect(
+      within(lists[1] as HTMLElement)
+        .getAllByTestId("request-list-item")
+        .map((i) => i.textContent),
+    ).toEqual([
+      "Add two examples to each of the calendar and date-based parts, with the tag each would give the next release.",
+      "Pick one scheme and write the decision in docs/decisions/versioning.md.",
+      "Check the links in versioning.md.",
+      "and 1 more",
+    ]);
+    expect(card).not.toHaveTextContent(/…|`|\$|USD|; left:/);
+    expect(
+      within(card)
+        .getAllByTestId("option")
+        .map((b) => b.textContent),
+    ).toEqual(["Continue (CHF 0.40 more)", "Cancel task"]);
+  });
+
+  it("L3-research-2: Continue on that card sends the option the card shows", async () => {
+    const user = userEvent.setup();
+    const harness = setUp();
+    renderApp("/inbox", harness);
+    const card = await cardOf();
+    await user.click(within(card).getByRole("button", { name: "Continue (CHF 0.40 more)" }));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/requests/req_l3/answer")[0]?.body).toEqual({
+        version: 1,
+        answer: "Continue (CHF 0.40 more)",
+      }),
+    );
   });
 });

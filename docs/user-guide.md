@@ -1005,9 +1005,12 @@ Each step of a task reuses what the step before sent (Claude keeps the conversat
 minutes and charges a tenth of the price for what it already has), so a long task pays the full
 price only for what is new; a step that writes a whole file can do so in one go when the task's
 budget leaves room. When a task reaches its budget it pauses and the session goes on with the
-other tasks. The Inbox gets one card, '"Contact page" paused at its budget of CHF 0.40', with
-what its run did and what is left in its own words ("Done: contact.html has the form; left:
-check the links.") and two buttons: **Continue (CHF 0.40 more)** (adds that much to its budget,
+other tasks. The Inbox gets one card, '"Contact page" paused at its budget of CHF 0.40', or, when
+the agent stopped to wrap up before the budget ran out, '"Contact page" paused before its budget
+ran out' with what it spent ("It spent CHF 0.31 of its budget of CHF 0.40."), then where it
+stopped and what is left in its own words, each point whole on its own line (**Where it
+stopped**: "contact.html has the form."; **Left to do**: "check the links"; three at most, then
+"and 2 more"), and two buttons: **Continue (CHF 0.40 more)** (adds that much to its budget,
 the same amount again or at least its estimate, and starts a session at once that goes on from
 where it stopped) and **Cancel task**. The Tasks tab reads "Paused at its budget" with "Continue
 or cancel in the Inbox.", with Answer (the card), Edit (set another budget yourself) and

@@ -448,3 +448,17 @@ amendment of 'w15-run' (point 2) too narrow, and the card's words cut.
      "nothing" moves nothing.
    The run then goes to its review, as point 2 already says for "nothing", and the critic judges
    the criteria with the report (the notes included) as data.
+2. **The pause card lists its items whole and agrees with the session on what was spent
+   (L3-research-2; amends budget-resume's card words).** The card read "Done: I opened six MDN
+   pages ... Two pages define hint:…; left: Nothing is needed for the two criteria: each listed
+   page gives its…, The list isn't exhaustive. Pages I didn't open, such as popovertarget…." (its
+   note cut at 160 characters, each item at 80, run together into one sentence), and its title
+   and notification said '"Search MDN …" paused at its budget of CHF 0.15' beside the session's
+   "paused before its budget of CHF 0.15 ran out: it spent CHF 0.09". Now the card keeps the note
+   and the items whole as the handoff bounds them; a run that heard the wrap-up is titled '"X"
+   paused before its budget ran out' (the specialist's limit per run and the session's budget
+   likewise), the body's first sentence says what it spent ("It spent CHF 0.09 of its budget of
+   CHF 0.15."), and the note's first sentence and each item left are listed under "Where it
+   stopped" and "Left to do" (three, then "and N more"). A hard stop keeps '"X" paused at its
+   budget of CHF 0.15'. The session's result and the Sessions list say "paused before ... ran
+   out" for such a run too.

@@ -9186,9 +9186,26 @@ describe("the UI client against the real daemon: a paused task keeps its work an
     const card = (await client.inbox(me.id)).requests.find(
       (r) => r.taskId === task.id && r.status === "open",
     );
-    expect(card?.title).toBe('"Write the guide in guide.md" paused at its budget of CHF 0.04');
-    expect(card?.body ?? "").toMatch(
-      /^Done: guide\.md has \d+ parts?; left: write the rest of guide\.md, check guide\.md against the criteria\.$/,
+    // l3-handoff-checks (L3-research-2): it heard the wrap-up, so it paused before its budget
+    // ran out; what it spent is the card's first sentence, and its note and each item left are
+    // listed whole (before: '... paused at its budget of CHF 0.04' and 'Done: guide.md has N
+    // parts; left: write the rest of guide.md, check guide.md against the criteria.').
+    expect(card?.title).toBe('"Write the guide in guide.md" paused before its budget ran out');
+    expect(card?.body ?? "").toMatch(/^It spent CHF 0\.0\d of its budget of CHF 0\.04\.$/);
+    expect(card?.lists?.map((l) => l.label)).toEqual(["Where it stopped", "Left to do"]);
+    expect(card?.lists?.[0]?.items).toEqual([
+      expect.stringMatching(/^guide\.md has \d+ parts?\.$/),
+    ]);
+    expect(card?.lists?.[1]?.items).toEqual([
+      "write the rest of guide.md",
+      "check guide.md against the criteria",
+    ]);
+    // The session's line names the same spend as the card.
+    const said = (await client.sessionEvents(started.session?.id ?? ""))
+      .map((e) => String((e as { text?: unknown }).text ?? ""))
+      .find((l) => l.includes("paused before its budget"));
+    expect(said ?? "").toContain(
+      `ran out: it spent ${/^It spent (CHF \d+\.\d\d)/.exec(card?.body ?? "")?.[1]}`,
     );
     const labels = (card?.choices ?? []).map((c) => c.label);
     expect(labels[0]).toMatch(/^Continue \(CHF \d+\.\d\d more\)$/);

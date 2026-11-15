@@ -2823,6 +2823,10 @@ export class SessionRunner {
                 ),
                 // A limit no Continue lifts: it goes on by itself once raised or reset.
                 ...(offersContinue(source) ? {} : { waits: true }),
+                // L3-research-2: its run heard the wrap-up and paused before the limit ran out.
+                ...(card.stopped_by === "wrap_up" && card.review_waits !== true
+                  ? { before: true }
+                  : {}),
               };
             }),
           }

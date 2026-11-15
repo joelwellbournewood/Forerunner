@@ -2253,7 +2253,11 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   `budgetStop` to `needs_human` and files `fileBudgetStopCard` at the first stop of any kind (a
   session-budget stop included: C-36's `sessionBudgetStops`, `SESSION_BUDGET_STOP_OPTIONS` and
   the second-stop card are gone): title `budgetStopTitle` ('"X" paused at its budget of CHF
-  0.40'), the run's note and to-do list on the card (`done`, `left`, cut, data), options
+  0.40'; a run that heard the wrap-up, `stoppedBy: "wrap_up"`, '"X" paused before its budget ran
+  out', "the writer's limit per run", "this session's budget": the amounts are the card's first
+  sentence, so the title, the task's reason and the notification's title stay whole within 60
+  characters; L3-research-2), the run's note and to-do list on the card (`done`, `left`, whole as
+  the handoff kept them, data; before L3-research-2 cut at 160 and 80 characters, mid-phrase), options
   `[continueLabel(n), "Cancel task"]` where `offersContinue(source)` (the task's budget, the
   specialist's limit, the session's budget) and `["Cancel task"]` at `month`, `project` and
   `plan` (with `resets_at`: the next month's first day). `continueUsdMicro` is the same amount
@@ -2289,14 +2293,26 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   Inbox.", "It goes on by itself once that limit is raised or resets; cancel it in the Inbox.", or at
   the project's budget, which never resets, "It goes on by itself once you raise the project's budget;
   cancel it in the Inbox.", W14-6); the
-  card: `budgetCard` in `daemon/request-words.ts` (body "Done: ...; left: ...", each item plain
-  (`withoutMarkdown`: no backticks, emphasis or list marks) and ending at a word, a cut the card kept
-  (`cardHandoff`, 80 characters) losing the word it fell in, W15-57; or "It stopped
-  before it could say where it stood; its work so far is kept.", then how it goes on or what waits
+  card: `budgetCard` in `daemon/request-words.ts` (L3-research-2, live check 3: the body's "Done:
+  ...; left: a, b" cut the note and the items mid-phrase and ran them together, "Two pages define
+  hint:…; left: ... gives its…, The list isn't exhaustive. ...…."; now, after a wrap-up, the body's
+  first sentence says what it spent as the session's line does, `pausedSpendSentence`: "It spent
+  CHF 0.09 of its budget of CHF 0.15.", "It has no budget of its own: it may spend CHF 3.00 per
+  run.", "This session's budget was CHF 5.00."; the note and the to-do list are the view's `lists`
+  (`RequestListWords`, `HumanRequestView.lists`, `pausedWorkLists`): "Where it stopped" with the
+  note's first sentence whole (`firstSentences`: a sentence ends at ".", "!" or "?" before a
+  capital, so "HTMLElement.popover" stays inside one) and "Left to do" with each item whole, up to
+  three, then "and N more"; each item plain (`withoutMarkdown`: no backticks, emphasis or list
+  marks), a cut a card of before kept (`cardHandoff`, 80 characters) losing the word it fell in,
+  W15-57; a run that wrote no note: "It stopped
+  before it could say where it stood; its work so far is kept."), then how it goes on or what waits
   on it; Continue's explanation names the amount; Cancel's "Drops it; its work is set aside until
   you reopen it; ..."; a Settings link at the outer limits); the session result: the builder
   `paused` appended to `RESULT_LINE_BUILDERS` (`pausedSentences`: '"X" paused at its budget of CHF
-  0.40: continue or cancel it in the Inbox.'; at a limit no Continue lifts, `waits` on the entry,
+  0.40: continue or cancel it in the Inbox.'; a run that heard the wrap-up, `before` on the entry
+  (the runner sets it from the card's `stopped_by`, L3-research-2): '"X" paused before its budget
+  of CHF 0.15 ran out: continue or cancel it in the Inbox.', and the Sessions list's gist '"X"
+  paused before its budget of CHF 0.15 ran out.' (`sessionGist`); at a limit no Continue lifts, `waits` on the entry,
   '"X" paused at the project's budget of CHF 0.01: it goes on by itself once that limit is raised
   or resets.', since its card offers only Cancel; a mix points to the cards), fed by
   `LastSessionOutcome.paused` (tasks with an open budget card, out of `needsYou`; the runner sets

@@ -958,6 +958,25 @@ function RequestCard({
           {body}
         </p>
       ) : null}
+      {/* L3-research-2: a paused run's note and its to-do items, each whole, as lists. */}
+      {request.lists?.length ? (
+        <div className="mt-1 space-y-1 text-sm text-neutral-700 dark:text-neutral-300">
+          {request.lists.map((list) => (
+            <div key={list.label} data-testid="request-list">
+              <p className="text-xs font-medium text-neutral-500" data-testid="request-list-label">
+                {list.label}
+              </p>
+              <ul className="list-disc pl-5">
+                {list.items.map((item) => (
+                  <li key={item} data-testid="request-list-item">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {questions ? (
         <PersonQuestionsForm
           card={questions}

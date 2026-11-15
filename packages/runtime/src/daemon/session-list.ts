@@ -219,6 +219,9 @@ export function sessionGist(r: SessionRecord): string {
   if (r.paused.length) {
     const limits = [...new Set(r.paused.map((t) => t.limit).filter(Boolean))];
     const at = limits.length === 1 && limits[0] ? limits[0] : "a budget";
+    // L3-research-2: runs that heard the wrap-up paused before the limit ran out.
+    if (limits.length === 1 && r.paused.every((t) => t.before))
+      return fitted(titles(r.paused), (names) => `${names} paused before ${at} ran out.`);
     return fitted(titles(r.paused), (names) => `${names} paused at ${at}.`);
   }
   if (r.failed.length) return fitted(titles(r.failed), (names) => `${names} failed.`);

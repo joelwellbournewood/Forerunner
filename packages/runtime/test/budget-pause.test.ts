@@ -1670,4 +1670,113 @@ describe("l3-handoff-checks, run L3", () => {
       }, 60_000);
     });
   });
+
+  /**
+   * Live check 3, L3-research-2: the pause card cut its note and its items in mid-phrase and ran
+   * them together ("Two pages define hint:…; left: Nothing is needed ... gives its…, The list
+   * isn't exhaustive. Pages I didn't open, such as popovertarget…."), and its title and the
+   * notification said "paused at its budget of CHF 0.15" beside the session's "paused before its
+   * budget of CHF 0.15 ran out: it spent CHF 0.09".
+   */
+  describe("live check 3: L3-research-2", () => {
+    const PAUSE_REPORT = [
+      "I wrote `popover-hint.md` with the pages I opened so far.",
+      "",
+      "**Where I stopped:** I opened six MDN pages and listed the five that mention `hint`. The sixth, the `showPopover` page, doesn't mention it. Two pages define `hint`: the `popover` global attribute page and the `HTMLElement.popover` property page.",
+      "",
+      "**Left to do:**",
+      "- Open the `popovertarget`, `togglePopover` and `beforetoggle` pages, and add to popover-hint.md each one that mentions `hint`, with its address and one line on what it says.",
+      "- Check that each address in popover-hint.md opens.",
+    ].join("\n");
+    const clock = new SimulatedClock("2026-11-15T06:30:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-l3-research-2-"));
+    // The live names: the notification's title has 60 characters for them.
+    const title = "Search MDN for pages that mention popover hint";
+    const fake = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        ...works(title, 30_000, PAUSE_REPORT),
+      ],
+    });
+    let rt: RuntimeApp;
+    let req: Req;
+    beforeAll(async () => {
+      ({ rt, req } = await compose(home, clock, fake));
+    }, 120_000);
+    afterAll(async () => {
+      await rt?.close();
+    });
+
+    it("the card says it paused before its budget ran out and what it spent, as the session's line does, and lists its note and each item whole", async () => {
+      const r = await runOne(req, rt, title, {
+        budgetUsdMicro: 190_000,
+        projectName: "Popover hint",
+      });
+      expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+      // The session's line, as the person reads it on the session page.
+      const said = lines(r.events).find((l) => l.includes("paused before its budget")) ?? "";
+      const m =
+        /paused before its budget of (CHF \d+\.\d\d) ran out: it spent (CHF \d+\.\d\d) and listed 2 things left to do\./.exec(
+          said,
+        );
+      expect(m, said).not.toBeNull();
+      const [, cap, spent] = m as RegExpExecArray;
+      const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
+        (q) => q.taskId === r.taskId && q.status === "open",
+      );
+      // Before: '"Search MDN for pages that mention popover hint" paused at its budget of CHF 0.15'.
+      expect(card?.title).toBe(`"${title}" paused before its budget ran out`);
+      expect(card?.body).toBe(`It spent ${spent} of its budget of ${cap}.`);
+      // Before: 'Done: I opened six MDN pages and listed the five that mention hint. The sixth,
+      // the showPopover page, doesn't mention it. Two pages define hint:…; left: Open the
+      // popovertarget, togglePopover and…, Check that each address in popover-hint.md opens.'
+      expect(card?.lists).toEqual([
+        {
+          label: "Where it stopped",
+          items: ["I opened six MDN pages and listed the five that mention hint."],
+        },
+        {
+          label: "Left to do",
+          items: [
+            "Open the popovertarget, togglePopover and beforetoggle pages, and add to popover-hint.md each one that mentions hint, with its address and one line on what it says.",
+            "Check that each address in popover-hint.md opens.",
+          ],
+        },
+      ]);
+      const shown = JSON.stringify([card?.title, card?.body, card?.lists]);
+      expect(shown).not.toMatch(/…|`|\*\*|\$|USD/);
+      // The task's reason and the session's result say it the same way.
+      expect((await rt.store.task.mustGet(r.taskId)).reason).toBe(
+        `"${title}" paused before its budget ran out.`,
+      );
+      expect(String(r.session.summary)).toContain(
+        `"${title}" paused before its budget of ${cap} ran out: continue or cancel it in the Inbox.`,
+      );
+      expect(String(r.session.summary)).not.toContain("paused at its budget");
+      // The project's Sessions list (d1109-sessions) says it the same way.
+      const list = (await (await req(`/projects/${r.projectId}/sessions`)).json()) as {
+        rows: Json[];
+      };
+      const row = list.rows.find((s) => s.id === r.sessionId);
+      expect(row?.gist).toBe(`"${title}" paused before its budget of ${cap} ran out.`);
+    }, 60_000);
+
+    it("the notification of the card names the task and that it paused before its budget ran out, whole, within its length", async () => {
+      const r = (await (await req("/notifications/recent")).json()) as Json | Json[];
+      const rows = (Array.isArray(r) ? r : ((r.notifications as Json[]) ?? [])).filter(
+        (n) => n.kind === "request_blocking",
+      );
+      const n = rows.find((x) => String(x.title).includes("paused"));
+      // Before: 'Popover hint: "Search MDN…" paused at its budget of CHF 0.15'.
+      expect(n?.title).toBe('Popover hint: "Search MDN…" paused before its budget ran out');
+      expect(String(n?.title).length).toBeLessThanOrEqual(60);
+      expect(String(n?.body)).toMatch(
+        /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d\. Answer it in the Inbox\.$/,
+      );
+    });
+  });
 });

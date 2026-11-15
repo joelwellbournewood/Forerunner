@@ -343,10 +343,17 @@ describe("Cancel task on a paused task's card (budget-resume)", () => {
     const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
       (r) => r.id === request.id,
     ) as Json;
-    // What it did and left, in its own words; Cancel names what will be stuck.
+    // What it did and left, in its own words, listed whole (l3-handoff-checks, L3-research-2;
+    // before: 'Done: appendix.md has its first two parts; left: write part 3, check the
+    // appendix. "Index of the appendix" waits on it.'); Cancel names what will be stuck.
+    expect(card.title).toBe('"Long appendix" paused before this session\'s budget ran out');
     expect(card.body).toBe(
-      'Done: appendix.md has its first two parts; left: write part 3, check the appendix. "Index of the appendix" waits on it.',
+      'This session\'s budget was CHF 2.00. "Index of the appendix" waits on it.',
     );
+    expect(card.lists).toEqual([
+      { label: "Where it stopped", items: ["appendix.md has its first two parts."] },
+      { label: "Left to do", items: ["write part 3", "check the appendix"] },
+    ]);
     const cancel = (card.choices as Json[]).find((c) => c.label === "Cancel task") as Json;
     // W15-56: no run wrote anything, so nothing is set aside (before: 'Drops it; its work is set
     // aside; "Index of the appendix" will be stuck.'), as the line after the answer says.
