@@ -559,7 +559,7 @@ describe("d1109-chat-recall, run C: CR-1 the tools' skeleton", () => {
       id: lessonId,
       scope: "agent_private",
       owner_agent_id: w.alice,
-      text: "The deploy key for the logo host is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCD",
+      text: "The deploy key for the logo host is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCD", // not-a-secret
       source: "chat",
     } as never);
     w.reply([
