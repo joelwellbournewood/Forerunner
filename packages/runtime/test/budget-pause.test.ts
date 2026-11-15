@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import {
@@ -1967,6 +1967,17 @@ describe("d1109-oversize-pause, run C: a pause at the project's budget that got 
         times: Number.POSITIVE_INFINITY,
         usage: { input_tokens: 30_000, output_tokens: 10 },
       }),
+      // A run that writes the same cart.html on each first call (its second run changes nothing).
+      toolReply(
+        "write_file",
+        { path: "cart.html", content: "<p>cart</p>\n" },
+        "Writing cart.html.",
+        {
+          when: coderOn("Shop cart"),
+          times: Number.POSITIVE_INFINITY,
+          usage: { input_tokens: 30_000, output_tokens: 10 },
+        },
+      ),
     ],
   });
   const stream = fake.stream.bind(fake);
@@ -2091,6 +2102,11 @@ describe("d1109-oversize-pause, run C: a pause at the project's budget that got 
     const old = await rt.store.humanRequest.mustGet(secondRow.id);
     expect(old.status).toBe("withdrawn");
     expect(old.change_card).toMatchObject({ outcome: "asked_again" });
+    // Under Answered it points to the question that replaced it (before: "Closed: it no longer
+    // needs you." beside the card that asks).
+    expect((await cardsOf(r.taskId)).find((q) => q.id === old.id)?.outcome).toBe(
+      "Its new card asks how to go on.",
+    );
     const open = (await cardsOf(r.taskId)).filter((q) => q.status === "open");
     expect(open).toHaveLength(1);
     const question = open[0] as Json;
@@ -2150,4 +2166,48 @@ describe("d1109-oversize-pause, run C: a pause at the project's budget that got 
     // Continue at an outer limit adds no budget to the task.
     expect((await rt.store.task.mustGet(r.taskId)).budget_usd_micro).toBe(2_000_000);
   }, 180_000);
+
+  it("in the project's folder, a second run that only wrote cart.html again after the pause that wrote it got no further (its kept work the same)", async () => {
+    // A sibling of the case above with work kept: the first pause wrote cart.html, the second
+    // run writes the same file with the same content and is stopped again. The fingerprint is of
+    // the task's kept work (the folder keeps the paused run's work out of the next snapshot, so
+    // the change set still holds cart.html), and it is the same: the pause asks.
+    const r = await runOne(req, rt, "Shop cart", {
+      budgetUsdMicro: 2_000_000,
+      projectBudgetUsdMicro: 7_500,
+    });
+    const workspace = projectWorkspaceDir(rt.data.assets.projectsRoot, r.projectId);
+    expect(readFileSync(join(workspace, "cart.html"), "utf8")).toBe("<p>cart</p>\n");
+    const open = async () =>
+      (await rt.store.humanRequest.list({ task_id: r.taskId, status: "open" } as never)).filter(
+        (q) => (q.change_card as { key?: string } | null)?.key === "task:budget_stop",
+      );
+    expect((await open()).map((q) => (q.change_card as Json).no_progress)).toEqual([false]);
+    await clock.advance(60_000);
+    const sessions = async () => (await rt.store.session.forProject(r.projectId)).length;
+    await raise(r.projectId, 0.04);
+    await rt.scheduler.tick();
+    await waitFor(
+      async () => ((await sessions()) === 2 ? true : undefined),
+      async () => `a second session (${await sessions()})`,
+    );
+    await ended(r.projectId);
+    const runs = (await rt.store.run.forTask(r.taskId)).filter((x) => x.specialist !== "critic");
+    expect(runs).toHaveLength(2);
+    const second = await open();
+    expect(second.map((q) => (q.change_card as Json).no_progress)).toEqual([true]);
+    const words = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
+      (q) => q.id === second[0]?.id,
+    );
+    expect(words?.title).toBe('"Shop cart" paused again without getting further');
+    // A third raise asks instead of starting anything.
+    await clock.advance(60_000);
+    await raise(r.projectId, 5);
+    await rt.scheduler.tick();
+    expect(await sessions()).toBe(2);
+    const question = await open();
+    expect(question.map((q) => [q.options, (q.change_card as Json).question])).toEqual([
+      [["Continue", "Cancel task"], true],
+    ]);
+  }, 120_000);
 });

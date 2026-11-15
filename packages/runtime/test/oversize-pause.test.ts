@@ -484,6 +484,11 @@ describe("d1109-oversize-pause, run C: Continue's floor, the question at an oute
     expect((await store.task.mustGet(task.id)).status).toBe("needs_human");
     const old = await store.humanRequest.mustGet(request.id);
     expect(old.status).toBe("withdrawn");
+    // Its Answered entry points to the question that replaced it (the fixup's walk: before,
+    // "Closed: it no longer needs you." beside the new card that asks).
+    expect(requestWords(old, { taskTitle: "Build the shop" }).outcome).toBe(
+      "Its new card asks how to go on.",
+    );
     const open = await store.humanRequest.list({ task_id: task.id, status: "open" } as never);
     expect(open).toHaveLength(1);
     const question = open[0];

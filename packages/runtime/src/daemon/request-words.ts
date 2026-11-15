@@ -966,6 +966,11 @@ function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | nul
     }
     case "went_on":
       return `${task} goes on: its limit has room again.`;
+    // d1109-oversize-pause (OP-4): the question for the same pause replaced it once its outer
+    // limit had room (the fixup's walk: before, "Closed: it no longer needs you." beside the card
+    // that asks).
+    case "asked_again":
+      return "Its new card asks how to go on.";
     // d1109-oversize-pause (OP-0): the next session's start took it in its turn.
     case "went_on_at_start": {
       const at = str(card.started_session_time);
@@ -1558,10 +1563,12 @@ export function requestWords(
     words = budgetCard(r, card, ctx);
     outcome = budgetOutcome(card, ctx);
     // budget-resume: a card the app closed because its limit has room again says so, not
-    // "Closed: it no longer needs you."
+    // "Closed: it no longer needs you." (d1109-oversize-pause: also one its question replaced).
     if (
       r.status !== "open" &&
-      (card.outcome === "went_on" || card.outcome === "went_on_at_start") &&
+      (card.outcome === "went_on" ||
+        card.outcome === "went_on_at_start" ||
+        card.outcome === "asked_again") &&
       outcome
     ) {
       words.outcome = outcome;
