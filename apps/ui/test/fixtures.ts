@@ -731,7 +731,7 @@ export const SETTINGS: SettingView[] = [
     scopeId: "proj_atlas",
     value: null,
     description:
-      "The highest model Atlas's runs may use: specialists, retries, planning and the critic (opus unless set; fable only when set here)",
+      "The highest model the runs of Atlas may use: specialists, retries, planning and the critic (opus unless set; fable only when set here)",
     risk: "medium",
   },
   {

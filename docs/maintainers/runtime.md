@@ -5652,7 +5652,11 @@ budget (0 means no budget, the row says so, later #43), the budget per session (
 highest model (`critic_ceiling`), small-project mode, the handover test, fast mode and the
 speed-versus-quality slider. Two stored settings no run reads yet are listed as information
 and say so (validation rule 7): the language (`locale`) and the review reserve
-(`session_reserve_share`; sessions keep 20%).
+(`session_reserve_share`; sessions keep 20%). A row's description never makes the project's
+name a possessive: "the runs of Kite notes may use", "waits for your Merge on the Overview of
+Kite trips" (run L3, live check 3, L3-github-8: "Kite trips's Overview", "Kite notes's runs",
+and the change dialog repeats the row's description; `settings-undo-routes.test.ts` and the
+UI's `settings-all.test.tsx`, "l3-small, run L3").
 
 **This PC as the paired device (ADR 0030; the P1 of the 2026-10-23 triage).** A high-risk
 card (`needs_device`) from the desktop app is confirmed on the desktop's own device row: the

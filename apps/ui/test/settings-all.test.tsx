@@ -342,3 +342,25 @@ describe("every setting is visible in Settings (U-060)", () => {
     );
   });
 });
+
+/**
+ * l3-small, run L3 (live check 3, L3-github-8): the Who merges row and its change dialog read
+ * "on Kite trips's Overview". The project's name is not made a possessive.
+ */
+describe("l3-small, run L3: Settings never makes a project's name a possessive (L3-github-8)", () => {
+  it("the Who merges row and its dialog say 'on the Overview of Atlas'; the highest model says 'the runs of Atlas'", async () => {
+    const user = userEvent.setup();
+    renderApp("/settings", createHarness());
+    const row = await rowFor("project.merge_mode");
+    expect(row).toHaveTextContent("waits for your Merge on the Overview of Atlas)");
+    await user.click(within(row).getByTestId("setting-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    expect(dialog).toHaveTextContent("waits for your Merge on the Overview of Atlas)");
+    expect(dialog).not.toHaveTextContent("Atlas's");
+    expect(await rowFor("project.critic_ceiling")).toHaveTextContent(
+      "The highest model the runs of Atlas may use",
+    );
+    for (const r of await screen.findAllByTestId("setting-row"))
+      expect(r).not.toHaveTextContent("Atlas's");
+  });
+});

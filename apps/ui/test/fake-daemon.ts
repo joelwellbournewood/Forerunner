@@ -3919,7 +3919,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         scope: "project",
         scopeId: p.id,
         value: mergeModeOfFake(p.id),
-        description: `You press Merge (each accepted task's pull request waits for your Merge on ${p.name}'s Overview), or merge automatically after review (Forerunner merges it once the critic accepted it)`,
+        description: `You press Merge (each accepted task's pull request waits for your Merge on the Overview of ${p.name}), or merge automatically after review (Forerunner merges it once the critic accepted it)`,
         risk: "medium",
       });
       rows.push({
