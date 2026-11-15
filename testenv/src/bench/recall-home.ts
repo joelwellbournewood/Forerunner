@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join } from "@forerunner/platform";
 
 /**
  * A home full of records for chat's recall (d1109-chat-recall, ADR 0114, CR-7): two projects,
