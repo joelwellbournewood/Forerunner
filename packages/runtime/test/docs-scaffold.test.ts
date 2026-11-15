@@ -209,12 +209,20 @@ describe("standard doc set at project creation (G.5)", () => {
     // A second creation against the same repository writes nothing: the open scaffold PR names
     // no project and two projects are now linked to the repository, so it is neither's to
     // write into (W15-01); the first project's marker is never overwritten.
+    // d1109-onerepo-link (OR-13): POST /projects refuses a second project on the repository now;
+    // the pair is one made before that rule (through the store), scaffolded as creation did.
     const again = await req("/projects", {
       method: "POST",
       body: JSON.stringify({ name: "Delta 2", goal: "Same repo", repos: ["o/delta"] }),
     });
-    expect(again.status).toBe(201);
-    const row2 = await rt.store.project.mustGet(String((await json(again)).id));
+    expect(again.status).toBe(409);
+    const pair = await rt.store.project.insert({
+      name: "Delta 2",
+      goal: "Same repo",
+      repos: ["o/delta"],
+    });
+    await rt.docs.scaffoldProject(pair);
+    const row2 = await rt.store.project.mustGet(pair.id);
     expect(row2.summary_cache.docs).toMatchObject({ location: "repo", created: [] });
     expect((row2.summary_cache.docs as { pr_url?: unknown }).pr_url).toBeNull();
     expect(

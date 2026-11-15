@@ -358,6 +358,17 @@ export interface CommandPorts {
    * question and never refuses such a start. Absent: no warning.
    */
   startWarning?(projectId: string, budgetUsdMicro: number): Promise<string | null>;
+  /**
+   * d1109-onerepo-link (ADR 0117): one repository, one project. `project.create` asks it in its
+   * plan (so chat is refused before a read-back) and its run, before anything is written. It
+   * resolves when the links are free, and throws the refusal otherwise: a `ForerunnerError`
+   * 'validation' whose message names the project that uses the link and whose details carry the
+   * offer and, when it quotes repository text (a marker's name), the untrusted mark. Absent:
+   * nothing is checked.
+   */
+  repositoryUse?: {
+    check(repos: readonly string[]): Promise<void>;
+  };
 }
 
 export interface EmailModePortRequest {

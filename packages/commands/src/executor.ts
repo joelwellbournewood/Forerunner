@@ -86,6 +86,13 @@ export type ExecuteResult =
       reason: string;
       code: ErrorCode;
       pendingId?: string;
+      /**
+       * d1109-onerepo-link: the refusal's details as the command threw them (a link another
+       * project uses: its cause and the offer), so a caller can show the offer.
+       */
+      details?: Record<string, unknown>;
+      /** The reason quotes text the person did not write (a repository's marker name). */
+      untrusted?: CommandOutcome["untrusted"];
     };
 
 export interface PendingConfirmation {
@@ -1384,5 +1391,23 @@ function refusal(
   card: ChangeCard | null,
 ): Extract<ExecuteResult, { status: "refused" }> {
   const code: ErrorCode = isForerunnerError(e) ? e.code : "internal";
-  return { status: "refused", card, reason: errorMessage(e), code };
+  // d1109-onerepo-link: the details a command refused with (the offer of a link in use) reach
+  // the caller; a reason quoting repository text keeps the untrusted mark (ADR 0114).
+  const details = isForerunnerError(e) && e.details ? { ...e.details } : undefined;
+  const mark = details?.untrusted as { source?: unknown; origin?: unknown } | undefined;
+  const untrusted =
+    mark && typeof mark.source === "string"
+      ? ({
+          source: mark.source,
+          ...(typeof mark.origin === "string" ? { origin: mark.origin } : {}),
+        } as CommandOutcome["untrusted"])
+      : undefined;
+  return {
+    status: "refused",
+    card,
+    reason: errorMessage(e),
+    code,
+    ...(details ? { details } : {}),
+    ...(untrusted ? { untrusted } : {}),
+  };
 }

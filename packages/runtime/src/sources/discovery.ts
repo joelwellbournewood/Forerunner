@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import type { GitHost, RepoInfo, RepoRef } from "@forerunner/capabilities";
 import {
@@ -29,7 +30,8 @@ import {
   parseRepoLocator,
   repoKey,
 } from "./locators.ts";
-import { INSTALL_MARKER_FILE } from "./marker.ts";
+import { INSTALL_MARKER_FILE, parseInstallMarker } from "./marker.ts";
+import { markerNameOf } from "./repository-use.ts";
 import {
   type AcceptCandidateBody,
   type AcceptCandidateView,
@@ -74,6 +76,32 @@ export interface CreateProjectInput {
   repos: string[];
   autonomyLevel?: number;
   budgetUsdMicro?: number;
+  /** d1109-onerepo-link: the offer's Take it over (the ids the refusal named). */
+  takeOver?: { projects: string[] };
+  /** d1109-onerepo-link (D9): the offer's Work together (the id the refusal named). */
+  together?: { project: string };
+}
+
+/**
+ * The project a marker's text names, as the scan keeps it on a candidate's details (data:
+ * parsed strictly, the name cut, cleaned and scanned; `markerNameOf`). Nothing for no marker.
+ */
+function markerDetails(text: string | null): Record<string, JsonValue> {
+  if (!text) return {};
+  const parsed = parseInstallMarker(text);
+  if (!parsed || !/^[0-9a-f-]{36}$/i.test(parsed.project)) return {};
+  return {
+    marker_project: parsed.project.toLowerCase(),
+    marker_name: markerNameOf(parsed.name),
+  };
+}
+
+/** A project of this install (not archived) that the candidate's marker names, or null. */
+function markedHere(f: Found, projects: Map<string, ProjectRow>): ProjectRow | null {
+  const id = f.details.marker_project;
+  if (typeof id !== "string") return null;
+  const row = projects.get(id);
+  return row && row.status !== "archived" ? row : null;
 }
 
 /** The folder access a scan needs; tests may inject one, the default is node:fs. */
@@ -454,6 +482,9 @@ export class SourceDiscovery {
       throw e;
     }
     const projectByKey = await this.projectKeys();
+    const projectById = new Map(
+      (await this.store.project.list(undefined, { limit: MAX_PROJECTS + 1 })).map((p) => [p.id, p]),
+    );
     const existing = await this.store.sourceCandidate.forSource(source.id);
     const byKey = new Map(existing.map((c) => [c.key, c]));
     const seen = new Set<string>();
@@ -474,6 +505,11 @@ export class SourceDiscovery {
       } else if (dupProject) {
         status = "duplicate";
         projectId = dupProject.id;
+      } else if (markedHere(f, projectById)) {
+        // d1109-onerepo-link (OR-05): the marker names a project of this install: it is that
+        // project's, whatever link that project has (ADR 0056 point 4, amended).
+        status = "duplicate";
+        projectId = markedHere(f, projectById)?.id ?? null;
       } else if (others[0]) {
         status = "duplicate";
         projectId = others[0].project_id;
@@ -606,7 +642,8 @@ export class SourceDiscovery {
     const out: Found[] = [];
     for (const r of repos) {
       const ref: RepoRef = { owner: r.owner, name: r.name };
-      const marked = await this.repoHasMarker(host, ref);
+      const marker = await this.repoMarker(host, ref);
+      const marked = marker !== null;
       out.push({
         kind: "repo",
         name: r.name,
@@ -620,19 +657,23 @@ export class SourceDiscovery {
           url: r.htmlUrl,
           default_branch: r.defaultBranch,
           private: r.private,
+          ...markerDetails(marker),
         },
       });
     }
     return out;
   }
 
-  /** The marker file on the default branch; an empty or unreadable repository counts as unmarked. */
-  private async repoHasMarker(host: GitHost, ref: RepoRef): Promise<boolean> {
+  /**
+   * The marker file on the default branch (d1109-onerepo-link: with the project it names, read
+   * strictly and its name cleaned as data); an empty or unreadable repository counts as unmarked.
+   */
+  private async repoMarker(host: GitHost, ref: RepoRef): Promise<string | null> {
     try {
-      return (await host.getFile(ref, INSTALL_MARKER_FILE)) !== null;
+      return (await host.getFile(ref, INSTALL_MARKER_FILE))?.content ?? null;
     } catch (e) {
       if (e instanceof ForerunnerError && (e.code === "not_found" || e.code === "validation")) {
-        return false;
+        return null;
       }
       throw e;
     }
@@ -666,11 +707,21 @@ export class SourceDiscovery {
 
   private async folderFound(path: string, qualifier: string): Promise<Found> {
     const isGit = await this.fs.exists(join(path, ".git"));
-    const marker = (await this.fs.exists(join(path, ".forerunner", "project.json")))
+    const markerFile = join(path, ".forerunner", "project.json");
+    const hasMarker = await this.fs.exists(markerFile);
+    const marker = hasMarker
       ? INSTALL_MARKER_FILE
       : this.isOwnCheckout(path)
         ? INSTALL_MARKER_RECORD
         : null;
+    let text: string | null = null;
+    if (hasMarker) {
+      try {
+        text = readFileSync(markerFile, "utf8");
+      } catch {
+        text = null;
+      }
+    }
     return {
       kind: "folder",
       name: basename(path),
@@ -680,7 +731,7 @@ export class SourceDiscovery {
       qualifier,
       existingInstall: marker !== null,
       installMarker: marker,
-      details: {},
+      details: { ...markerDetails(text) },
     };
   }
 
@@ -696,19 +747,19 @@ export class SourceDiscovery {
       });
     }
     await this.owned(cand.source_id, actor);
-    if (cand.status === "accepted") {
-      throw conflict(`${cand.locator} was already accepted as project ${cand.project_id}`, {
-        candidateId,
-        projectId: cand.project_id,
-      });
+    // d1109-onerepo-link (OR-05): the project by its name, never an id (design section 5).
+    const nameOf = async (id: string | null) =>
+      id ? ((await this.store.project.get(id))?.name ?? null) : null;
+    const shown = cand.kind === "repo" ? cand.locator : "This folder";
+    if (cand.status === "accepted" || (cand.status === "duplicate" && cand.project_id)) {
+      const name = await nameOf(cand.project_id);
+      throw conflict(
+        name ? `${shown} is already the project "${name}".` : `${shown} is already a project.`,
+        { candidateId, projectId: cand.project_id, cause: "repository_in_use" },
+      );
     }
     if (cand.status === "duplicate") {
-      throw conflict(
-        cand.project_id
-          ? `${cand.locator} is a duplicate of project ${cand.project_id}`
-          : `${cand.locator} is a duplicate of another source's proposal`,
-        { candidateId, projectId: cand.project_id },
-      );
+      throw conflict(`${shown} is already proposed by another of your sources.`, { candidateId });
     }
     if (cand.status === "gone") {
       throw conflict(`${cand.locator} was no longer found by the last scan; rescan the source`, {
@@ -723,9 +774,10 @@ export class SourceDiscovery {
         project_id: covering.id,
         author_human: actor.humanId,
       });
-      throw conflict(`${cand.locator} is already project ${covering.id} (${covering.name})`, {
+      throw conflict(`${shown} is already the project "${covering.name}".`, {
         candidateId,
         projectId: covering.id,
+        cause: "repository_in_use",
       });
     }
     const name = input.name?.trim() || cand.proposed_name;
@@ -742,6 +794,9 @@ export class SourceDiscovery {
         repos: [cand.locator],
         ...(input.autonomyLevel !== undefined ? { autonomyLevel: input.autonomyLevel } : {}),
         ...(input.budgetUsdMicro !== undefined ? { budgetUsdMicro: input.budgetUsdMicro } : {}),
+        // d1109-onerepo-link: the offer's Take it over or Work together, as New project sends it.
+        ...(input.takeOver ? { takeOver: input.takeOver } : {}),
+        ...(input.together ? { together: input.together } : {}),
       },
       actor,
     );

@@ -77,6 +77,7 @@ import {
 } from "./credential-wait.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import { withOwnersContent } from "./intake-content.ts";
+import { openPlanSentence } from "./intake-words.ts";
 import { MAX_PERSON_QUESTIONS, MAX_QUESTION_CHARS, PERSON_SPECIALIST } from "./person-questions.ts";
 import {
   applyProjectPlan,
@@ -1379,11 +1380,10 @@ export class IntakeService {
     const changes = (opts.changes ?? []).map((c) => c.trim()).filter(Boolean);
     if (open) {
       if (opts.brief !== undefined || changes.length > 0) {
-        throw new ForerunnerError(
-          "claim_conflict",
-          "A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief.",
-          { details: { requestId: open.id, reason: "proposal_open" } },
-        );
+        // d1109-onerepo-link (OR-08): the project by its name, never an id; what to do.
+        throw new ForerunnerError("claim_conflict", openPlanSentence(project.name), {
+          details: { requestId: open.id, reason: "proposal_open" },
+        });
       }
       const card = (open.change_card ?? {}) as JsonObject;
       const proposal = IntakeProposalBody.safeParse(card.proposal);

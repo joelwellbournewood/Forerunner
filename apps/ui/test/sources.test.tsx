@@ -18,7 +18,7 @@ describe("Sources section", () => {
     const acme = SOURCES[0];
     if (!acme) throw new Error("fixture");
     expect(countsLine(acme.candidates)).toBe(
-      "1 proposed, 1 accepted, 1 duplicate, 1 with an existing install",
+      "1 proposed, 1 accepted, 1 already a project, 1 with an existing install",
     );
     expect(
       countsLine({ total: 0, proposed: 0, accepted: 0, duplicate: 0, gone: 0, installs: 0 }),
@@ -39,7 +39,7 @@ describe("Sources section", () => {
     expect(acme).toHaveTextContent("Acme");
     expect(within(acme).getByTestId("source-credential")).toHaveTextContent("secret:github_token");
     expect(within(acme).getByTestId("source-counts")).toHaveTextContent(
-      "1 proposed, 1 accepted, 1 duplicate, 1 with an existing install",
+      "1 proposed, 1 accepted, 1 already a project, 1 with an existing install",
     );
     await user.click(within(acme).getByTestId("source-candidates"));
     const candidates = await within(acme).findAllByTestId("candidate");
@@ -48,7 +48,7 @@ describe("Sources section", () => {
     const alpha = candidates.find((c) => c.dataset.candidateId === "cand_alpha");
     if (!gamma || !alpha) throw new Error("candidates");
     expect(within(gamma).getByTestId("candidate-install")).toHaveTextContent(
-      "existing install (.forerunner/project.json)",
+      "Marked as a Forerunner project",
     );
     expect(within(alpha).getByTestId("candidate-project")).toHaveAttribute(
       "href",

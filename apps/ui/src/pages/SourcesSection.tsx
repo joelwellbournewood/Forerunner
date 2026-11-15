@@ -17,7 +17,14 @@ import {
 } from "../components/ui.tsx";
 import { formatDateTime } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
-import { refreshProjects, useClient, useUiStore } from "../store/context.tsx";
+import { refreshProjects, useClient, useUiState, useUiStore } from "../store/context.tsx";
+import { linkOfferOf } from "./NewProjectDialog.tsx";
+
+/** A project's name from the store, or null when it is not loaded (d1109-onerepo-link). */
+function useStoreProjectName(projectId: string | null): string | null {
+  const projects = useUiState((s) => s.projects);
+  return projectId ? (projects.find((p) => p.id === projectId)?.name ?? null) : null;
+}
 
 /** The kinds a scan supports today; GitLab and plain remotes come later (the daemon refuses them). */
 export const SOURCE_KIND_OPTIONS: { value: AddSourceBody["kind"]; label: string; hint: string }[] =
@@ -34,6 +41,25 @@ export const SOURCE_KIND_OPTIONS: { value: AddSourceBody["kind"]; label: string;
 
 export function kindLabel(kind: SourceView["kind"]): string {
   return SOURCE_KIND_OPTIONS.find((k) => k.value === kind)?.label ?? kind;
+}
+
+/**
+ * d1109-onerepo-link (OR-05): what a candidate's Forerunner mark says, in words (no file path):
+ * the project of this install it already is, a Forerunner project that is not on this computer
+ * (its marker's name, cleaned by the daemon), or Forerunner's own folder.
+ */
+export function installWords(
+  candidate: Pick<SourceCandidateView, "existingInstall" | "installMarker" | "details" | "status">,
+): string | null {
+  if (!candidate.existingInstall) return null;
+  if (candidate.installMarker === "install_record") return "Forerunner's own folder";
+  if (candidate.status === "duplicate") return null;
+  const name = candidate.details.marker_name;
+  if (typeof candidate.details.marker_project === "string")
+    return typeof name === "string" && name
+      ? `Used by "${name}", not on this computer`
+      : "Used by another Forerunner project, not on this computer";
+  return "Marked as a Forerunner project";
 }
 
 export function candidateTone(
@@ -57,7 +83,8 @@ export function countsLine(c: SourceView["candidates"]): string {
   const parts = [
     `${c.proposed} proposed`,
     c.accepted ? `${c.accepted} accepted` : null,
-    c.duplicate ? `${c.duplicate} duplicate` : null,
+    // d1109-onerepo-link (OR-05): what a duplicate is, in words.
+    c.duplicate ? `${c.duplicate} already ${c.duplicate === 1 ? "a project" : "projects"}` : null,
     c.gone ? `${c.gone} gone` : null,
     c.installs ? `${c.installs} with an existing install` : null,
   ].filter((p): p is string => p !== null);
@@ -177,13 +204,16 @@ function CandidateRow({
   const store = useUiStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [offer, setOffer] = useState<ReturnType<typeof linkOfferOf>>(null);
+  const projectName = useStoreProjectName(candidate.projectId);
 
-  const accept = async () => {
+  const accept = async (body?: Parameters<typeof client.acceptCandidate>[1]) => {
     if (busy) return;
     setBusy(true);
     setError(null);
+    setOffer(null);
     try {
-      const result = await client.acceptCandidate(candidate.id);
+      const result = await client.acceptCandidate(candidate.id, body);
       try {
         store.dispatch({
           type: "project.upsert",
@@ -195,11 +225,16 @@ function CandidateRow({
       void refreshProjects(client, store).catch(() => {});
       onAccepted(result.candidate, result.project);
     } catch (err) {
-      setError(describeError(err));
+      // d1109-onerepo-link: a repository whose project is not on this computer is the offer
+      // (Work together, Take it over), as on New project.
+      const found = linkOfferOf(err);
+      if (found?.kind === "elsewhere") setOffer(found);
+      else setError(describeError(err));
     } finally {
       setBusy(false);
     }
   };
+  const install = installWords(candidate);
 
   return (
     <li
@@ -211,11 +246,15 @@ function CandidateRow({
       <span className="font-medium">{candidate.proposedName}</span>
       <code className="text-xs text-neutral-500">{candidate.locator}</code>
       <Badge tone={candidateTone(candidate.status)} testId="candidate-status">
-        {candidate.status}
+        {candidate.status === "duplicate"
+          ? projectName
+            ? `Already the project "${projectName}"`
+            : "Already a project"
+          : candidate.status}
       </Badge>
-      {candidate.existingInstall ? (
+      {install ? (
         <Badge tone="warn" testId="candidate-install">
-          existing install{candidate.installMarker ? ` (${candidate.installMarker})` : ""}
+          {install}
         </Badge>
       ) : null}
       {candidate.kind === "folder" && !candidate.isGit ? <Badge>not a git repository</Badge> : null}
@@ -225,13 +264,55 @@ function CandidateRow({
           className="text-blue-700 hover:underline dark:text-blue-300"
           data-testid="candidate-project"
         >
-          {candidate.status === "duplicate" ? "already a project" : "open project"}
+          {candidate.status === "duplicate" ? "Open" : "open project"}
         </Link>
       ) : null}
       {candidate.status === "proposed" ? (
-        <Button variant="primary" onClick={accept} disabled={busy} data-testid="candidate-accept">
+        <Button
+          variant="primary"
+          onClick={() => void accept()}
+          disabled={busy}
+          data-testid="candidate-accept"
+        >
           {busy ? "Creating…" : "Create project"}
         </Button>
+      ) : null}
+      {offer?.kind === "elsewhere" ? (
+        <div className="w-full space-y-1" data-testid="candidate-offer">
+          <p>{offer.message}</p>
+          <div className="flex flex-wrap gap-2">
+            {offer.canWorkTogether && offer.projects[0] ? (
+              <Button
+                variant="primary"
+                disabled={busy}
+                data-testid="candidate-together"
+                title={offer.togetherLine ?? undefined}
+                onClick={() => void accept({ together: { project: offer.projects[0] ?? "" } })}
+              >
+                Work together
+              </Button>
+            ) : null}
+            {offer.canTakeOver ? (
+              <Button
+                disabled={busy}
+                data-testid="candidate-take-over"
+                title={offer.takeOverLine ?? undefined}
+                onClick={() => void accept({ takeOver: { projects: offer.projects } })}
+              >
+                Take it over
+              </Button>
+            ) : null}
+            <Button disabled={busy} onClick={() => setOffer(null)}>
+              Cancel
+            </Button>
+          </div>
+          {offer.canWorkTogether && offer.togetherLine ? (
+            <p className="text-xs">{offer.togetherLine}</p>
+          ) : null}
+          {offer.canTakeOver && offer.takeOverLine ? (
+            <p className="text-xs">{offer.takeOverLine}</p>
+          ) : null}
+        </div>
       ) : null}
       {error ? <ErrorBanner message={error} /> : null}
     </li>

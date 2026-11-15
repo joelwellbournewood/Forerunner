@@ -350,6 +350,8 @@ export interface CommandResultView {
   reason?: string;
   /** The error code of a refusal. */
   code?: string;
+  /** A refusal's details (d1109-onerepo-link: the offer of a link another project uses). */
+  details?: Record<string, unknown>;
   /** The change card as JSON (what changes, old -> new, scope, duration, impact, undo). */
   card?: Record<string, unknown> | null;
   /** The card's cost impact, when it has one. */

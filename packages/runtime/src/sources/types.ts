@@ -112,6 +112,13 @@ export const AcceptCandidateBody = z
     goal: z.string().min(1).max(2000).optional(),
     autonomyLevel: z.number().int().min(0).max(4).optional(),
     budgetUsdMicro: z.number().int().nonnegative().optional(),
+    /**
+     * d1109-onerepo-link (ADR 0117): the offer's Take it over: the project ids the refusal named,
+     * as `POST /projects` takes them.
+     */
+    takeOver: z.object({ projects: z.array(z.string().min(1)).min(1).max(20) }).optional(),
+    /** d1109-onerepo-link (D9): the offer's Work together: the id the refusal named. */
+    together: z.object({ project: z.string().min(1).max(64) }).optional(),
   })
   .strict();
 export type AcceptCandidateBody = z.infer<typeof AcceptCandidateBody>;

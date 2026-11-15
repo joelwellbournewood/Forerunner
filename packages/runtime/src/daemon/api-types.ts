@@ -1404,6 +1404,17 @@ export const CreateProjectBody = z.object({
    * it, and Changes showed that row ("Switched the active project to …") for the click.
    */
   switch: z.boolean().optional(),
+  /**
+   * d1109-onerepo-link (ADR 0117): the offer's Take it over: the project ids the refusal named
+   * (`details.projects`). Refused again unless they are what the repository names now and no
+   * other GitHub account worked on them within 14 days.
+   */
+  takeOver: z.object({ projects: z.array(z.string().min(1)).min(1).max(20) }).optional(),
+  /**
+   * d1109-onerepo-link (D9): the offer's Work together: the id the refusal named. The id is read
+   * again from the repository at the press; this only has to match it.
+   */
+  together: z.object({ project: z.string().min(1).max(64) }).optional(),
 });
 
 /** `POST /projects/:id/intake`: an optional brief in place of the one kept at creation. */

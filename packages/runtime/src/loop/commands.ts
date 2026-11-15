@@ -297,7 +297,12 @@ export class CommandLoop implements ConversationCommands {
         return r.status === "pending"
           ? { status: "pending", pendingId: r.pendingId, card: r.card, readback: r.readback }
           : r.status === "refused"
-            ? { status: "refused", reason: r.reason }
+            ? {
+                status: "refused",
+                reason: r.reason,
+                // d1109-onerepo-link: a refusal quoting repository text goes to the model as data.
+                ...(r.untrusted ? { untrusted: r.untrusted } : {}),
+              }
             : r.status === "cancelled"
               ? { status: "cancelled" }
               : {
@@ -592,6 +597,7 @@ export function viewOf(r: ExecuteResult, commands: string[]): CommandResultView 
         reason: r.reason,
         code: r.code,
         ...(r.pendingId ? { pendingId: r.pendingId } : {}),
+        ...(r.status === "refused" && r.details ? { details: r.details } : {}),
       };
   }
 }

@@ -1637,9 +1637,8 @@ describe("w15-words, wave 15 run B", () => {
       });
       expect(refused.status).toBe(409);
       const said = await json(refused);
-      expect(said.message).toBe(
-        "A plan for this project waits in the Inbox: answer it before drafting a plan from a new brief.",
-      );
+      // d1109-onerepo-link (OR-08): the project by its name, and what to do.
+      expect(said.message).toBe('A plan for "Sample" waits for your answer. Answer it first.');
       await answer(String(first.requestId), "approve");
       const pr = (await host.listPullRequests({ owner: "o", name: "sample" })).find((p) =>
         p.head.ref.startsWith("fr/intake-"),

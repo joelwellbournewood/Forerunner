@@ -72,6 +72,8 @@ import {
   HumanView as HumanViewSchema,
   type InboxView,
   InboxView as InboxViewSchema,
+  type IntakeProposalView,
+  IntakeProposalView as IntakeProposalViewSchema,
   type IntakeStatusView,
   IntakeStatusView as IntakeStatusViewSchema,
   type KillBody as KillBodySchema,
@@ -568,6 +570,12 @@ export interface DaemonClient {
   intakeStatus(projectId: string, signal?: AbortSignal): Promise<IntakeStatusView>;
   /** Retry a failed plan (U-046): drafted again in the background; answers `drafting`. */
   retryIntake(projectId: string): Promise<IntakeStatusView>;
+  /**
+   * d1109-onerepo-link (OR-08): a new brief for a project that exists (the New project offer's
+   * Add to it): the intake plans only the new work and files its plan card in the Inbox
+   * (`POST /projects/:id/intake`, 202).
+   */
+  proposeIntake(projectId: string, body: { brief: string }): Promise<IntakeProposalView>;
   project(id: string, signal?: AbortSignal): Promise<ProjectCard>;
   projectSummary(id: string, signal?: AbortSignal): Promise<ProjectSummary>;
   /**
@@ -1042,6 +1050,7 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     intakeStatus: (id, signal) =>
       get(routePath("intakeStatus", { id }), IntakeStatusViewSchema, undefined, signal),
     retryIntake: (id) => post(routePath("intakeRetry", { id }), IntakeStatusViewSchema, {}),
+    proposeIntake: (id, body) => post(routePath("intake", { id }), IntakeProposalViewSchema, body),
     project: (id, signal) =>
       get(routePath("project", { id }), ProjectCardSchema, undefined, signal),
     projectSummary: (id, signal) =>

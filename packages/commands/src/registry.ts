@@ -205,7 +205,13 @@ export function toToolSpecs(registry: CommandRegistry, binding: ToolBinding): To
           case "cancelled":
             return { content: "Cancelled; nothing was changed." };
           default:
-            return { content: `Refused: ${out.reason ?? "not allowed"}`, isError: true };
+            return {
+              content: `Refused: ${out.reason ?? "not allowed"}`,
+              isError: true,
+              // d1109-onerepo-link: a refusal that quotes a repository's text (a marker's name)
+              // reaches the model inside the data envelope, scanned (ADR 0114).
+              ...(out.untrusted ? { untrusted: out.untrusted } : {}),
+            };
         }
       },
     };

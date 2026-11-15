@@ -282,6 +282,7 @@ import {
 import { readConfig, rememberBoundHuman, SECRET_NAMES, type SetupConfig } from "../setup/wizard.ts";
 import { SourceDiscovery } from "../sources/discovery.ts";
 import { repoHostsFor } from "../sources/locators.ts";
+import { chatLinkCheck, RepositoryUse } from "../sources/repository-use.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { type UpdateConfig, updateConfigOrClosed } from "../update/config.ts";
 import type { UpdateManager } from "../update/install.ts";
@@ -975,6 +976,11 @@ export interface RuntimeApp {
    * credential reference at scan time (an injected `gitHost` stands in for every source).
    */
   sources: SourceDiscovery;
+  /**
+   * d1109-onerepo-link (ADR 0117): which project a link already is, on this computer and in the
+   * repository itself; every creation checks it before anything is written.
+   */
+  repositoryUse: RepositoryUse;
   /** One-way GitHub Projects mirror. */
   mirror: ProjectsMirror;
   /**
@@ -1971,6 +1977,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     vault,
     defaultTokenRef: `secret:${SECRET_NAMES.github}`,
     ...(opts.data?.gitRemoteBase ? { gitRemoteBase: opts.data.gitRemoteBase } : {}),
+    // d1109-onerepo-link (OR-04): read at the import, once the runtime is composed.
+    repositoryUse: { checkHere: (repos, except) => repositoryUse.checkHere(repos, except) },
   });
   registerDataTools(tools, { assets: dataAssets, approvals: ports.approvals });
   // Desktop control (spec L.4, S.32; ADR 0021, ADR 0039): one controller per daemon behind the
@@ -2208,6 +2216,20 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
         })
       : new MemoryGitHost(human.name));
+  // d1109-onerepo-link (ADR 0117): one repository, one project. Every creation, the chat's
+  // project.create, Sources and the Data tab's import ask it first. GitHub is read with the
+  // configured host and token only (no token: the repository's own check is skipped, never
+  // guessed); an injected host stands for one in tests.
+  const repositoryUse = new RepositoryUse({
+    store,
+    clock,
+    host: async () => (opts.gitHost || (await githubTokenNow()) ? gitHost : null),
+    hosts: repoHostsFor({
+      githubApiBase: config?.githubApiBase,
+      gitRemoteBase: opts.data?.gitRemoteBase,
+    }),
+    timezone: async () => (await store.human.get(human.id))?.timezone ?? null,
+  });
   const appVersion = opts.appVersion ?? env.FORERUNNER_VERSION ?? APP_VERSION;
 
   // Memory (spec G): one root under the data directory; lessons per agent, critic and shared.
@@ -3867,6 +3889,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         const project = await store.project.get(projectId);
         if (project) void scaffoldProjectDocs({ docs }, project);
       },
+      // d1109-onerepo-link (ADR 0117): project.create by chat, voice or the palette is refused on
+      // a link another project uses, before its read-back; the chat cannot work together yet
+      // (the New project dialog can), so the answer says where.
+      repositoryUse: { check: (repos) => chatLinkCheck(repositoryUse, repos) },
       // memory.record (spec O.2, ADR 0061): a lesson stated in chat or voice goes into the
       // principal's private memory through the same loop the sessions use.
       memory: memoryCommandPort(memory),
@@ -4602,13 +4628,23 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // The dashboard's path, the standard doc set included (spec G.5): an accepted repository
       // gets its docs pull request and install marker like a typed-in one.
       const p = await createProjectRecord(
-        { store, human: { id: human.id }, agent: { id: agent.id }, events, conversation, docs },
+        {
+          store,
+          human: { id: human.id },
+          agent: { id: agent.id },
+          events,
+          conversation,
+          docs,
+          repositoryUse,
+        },
         {
           name: input.name,
           goal: input.goal,
           repos: input.repos,
           ...(input.autonomyLevel !== undefined ? { autonomyLevel: input.autonomyLevel } : {}),
           ...(input.budgetUsdMicro !== undefined ? { budgetUsdMicro: input.budgetUsdMicro } : {}),
+          ...(input.takeOver ? { takeOver: input.takeOver } : {}),
+          ...(input.together ? { together: input.together } : {}),
         },
       );
       return { id: p.id, name: p.name };
@@ -4740,6 +4776,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     desktop: { controller: desktopController, allowlist: desktopAllowlist, detect: desktopDetect },
     data: { assets: dataAssets, importer: dataImporter },
     sources,
+    repositoryUse,
     mirror,
     sandbox: { ...sandbox, port: sandboxPort },
     notifier,

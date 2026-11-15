@@ -221,15 +221,25 @@ function createSentence(p: ProjectCreateParams): string {
   return `Created the project ${p.name}${p.switch ? " and made it the active project" : ""}. Undo.`;
 }
 
+/**
+ * project.create's definition, as the chat's model receives it (d1109-onerepo-link, ADR 0117):
+ * one repository or folder is one project, so a link another project uses is refused with that
+ * project's name, and the model offers it instead of a second project.
+ */
+export const PROJECT_CREATE_DESCRIPTION =
+  "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead (open it with project.switch, or add the new work to it), never a second project.";
+
 export const projectCreate: CommandDef<ProjectCreateParams> = {
   name: "project.create",
-  description: "Create a project with a name, a goal and optional repositories.",
+  description: PROJECT_CREATE_DESCRIPTION,
   params: createParams,
   risk: "low",
   scope: "global",
   reversible: true,
   undoStrategy: "archive the created project and restore the previous active project",
   async plan(params, ctx) {
+    // d1109-onerepo-link: a link another project uses is refused here, before any read-back.
+    await ctx.ports.repositoryUse?.check(params.repos);
     const existing = await ctx.store.project.byName(params.name);
     if (existing) {
       throw new ForerunnerError("validation", duplicateProjectWords(existing.name), {
@@ -250,6 +260,9 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
     });
   },
   async run(params, ctx) {
+    // d1109-onerepo-link: checked again at the run (a read-back's yes may come later); the
+    // dialog's own creation (`createProject`) checks it itself, before anything is written.
+    if (!ctx.ports.createProject) await ctx.ports.repositoryUse?.check(params.repos);
     const existing = await ctx.store.project.byName(params.name);
     if (existing) {
       throw new ForerunnerError("validation", duplicateProjectWords(existing.name), {

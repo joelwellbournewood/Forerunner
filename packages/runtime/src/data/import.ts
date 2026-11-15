@@ -78,6 +78,11 @@ export interface DataImporterDeps {
   defaultTokenRef?: string;
   /** Wall-clock limit per git command. Default 10 minutes (a clone can be large). */
   gitTimeoutMs?: number;
+  /**
+   * d1109-onerepo-link (ADR 0117, OR-04): one repository, one project. A repository another
+   * project here uses is refused before anything is cloned (`RepositoryUse.checkHere`).
+   */
+  repositoryUse?: { checkHere(repos: readonly string[], except?: string): Promise<void> };
 }
 
 export interface GitHubImportInput {
@@ -546,6 +551,8 @@ export class DataImporter {
     const target = parseRepositorySource(input.repo, this.deps.gitRemoteBase);
     const tokenRef = await this.pickTokenRef(input.tokenRef, target.url);
     await this.checkProject(projectId);
+    // OR-04: never a second entry for a repository another project uses (D1).
+    await this.deps.repositoryUse?.checkHere([input.repo], projectId);
     const token = tokenRef ? await this.resolveToken(tokenRef) : null;
     const dir = join(
       this.deps.assets.projectReposDir(projectId),

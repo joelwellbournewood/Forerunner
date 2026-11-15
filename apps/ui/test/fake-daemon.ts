@@ -87,6 +87,39 @@ import {
 } from "@forerunner/runtime/daemon/audit-export";
 import { cancelWorkLine } from "@forerunner/runtime/daemon/cancel-words";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
+import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
+import {
+  type Elsewhere,
+  elsewhereSentence,
+  inUseSentence,
+  otherHostSentence,
+  takeOverDetails,
+  takeOverLine,
+  togetherLine,
+} from "@forerunner/runtime/sources/repository-words";
+
+/**
+ * A link as the fake compares it (the daemon's `identityOf` reads folders from the disk, which
+ * a page's test cannot): a GitHub repository in any spelling as `o/n`, another host by its
+ * name, an absolute path as it is.
+ */
+function fakeLinkOf(
+  entry: string,
+): { kind: "repo"; locator: string } | { kind: "folder"; path: string } | { host: string } | null {
+  const t = entry.trim().replace(/\/+$/, "");
+  if (t.startsWith("/") || /^[A-Za-z]:[\\/]/.test(t)) return { kind: "folder", path: t };
+  const url =
+    /^(?:https?:\/\/|ssh:\/\/git@|git@)?(?:www\.)?([^/:]+\.[^/:]+)[/:]([^/]+)\/([^/]+)/i.exec(t);
+  if (url?.[1] && url[2] && url[3]) {
+    if (url[1].toLowerCase() !== "github.com") return { host: url[1].toLowerCase() };
+    return { kind: "repo", locator: `${url[2]}/${url[3].replace(/\.git$/, "")}`.toLowerCase() };
+  }
+  const plain = /^([\w.-]+)\/([\w.-]+)$/.exec(t);
+  if (plain?.[1] && plain[2])
+    return { kind: "repo", locator: `${plain[1]}/${plain[2].replace(/\.git$/, "")}`.toLowerCase() };
+  return null;
+}
+
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import {
@@ -512,6 +545,12 @@ export interface FakeDaemonState {
    * intake (`none`). `POST /projects/:id/intake/retry` moves a failed one to `drafting`.
    */
   intake: Record<string, IntakeStatusView>;
+  /**
+   * d1109-onerepo-link: what a repository itself says (its marker and marked pull requests),
+   * by `owner/name` in lower case, as the daemon's `readRepository` and `verdictOf` read it: a
+   * project that is not on this computer, with its offer. Absent: nothing (a free repository).
+   */
+  repositoryElsewhere: Record<string, Elsewhere>;
   /**
    * R-startcred (leftovers7-web): per project, the wait every ready task's credential meets now
    * (as `RuntimeApp.billing.waits.now`): the Start check says it in one sentence
@@ -1116,6 +1155,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     events: clone(EVENTS),
     requests: clone(REQUESTS),
     intake: {},
+    repositoryElsewhere: {},
     credentialWaitNow: {},
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
@@ -1320,6 +1360,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.events = clone(EVENTS);
     state.requests = clone(REQUESTS);
     state.intake = {};
+    state.repositoryElsewhere = {};
     state.messages = clone(MESSAGES);
     state.killActive = false;
     state.calls = [];
@@ -1687,12 +1728,74 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/projects", async (c) => {
     const parsed = CreateProjectBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    // As the daemon (d1109-onerepo-link, `RepositoryUse.check`): the link first, before
+    // anything is written: a URL on another host, a project here that uses it, the repository's
+    // own project that is not on this computer (the offer, Take it over, Work together).
+    const refuse = (message: string, details: Record<string, unknown>) =>
+      c.json({ code: "conflict", message, details }, 409);
+    let togetherId: string | null = null;
+    let togetherName: string | null = null;
+    for (const entry of parsed.data.repos ?? []) {
+      const r = fakeLinkOf(entry);
+      if (!r) continue;
+      if ("host" in r) return refuse(otherHostSentence(r.host), { cause: "other_host" });
+      for (const p of state.projects) {
+        if (p.status === "archived") continue;
+        for (const theirs of p.repos ?? []) {
+          const t = fakeLinkOf(theirs);
+          if (!t || "host" in t) continue;
+          const same =
+            r.kind === "repo"
+              ? t.kind === "repo" && t.locator === r.locator
+              : t.kind === "folder" && (r.path === t.path || r.path.startsWith(`${t.path}/`));
+          if (!same) continue;
+          return refuse(
+            inUseSentence(
+              { kind: r.kind, locator: r.kind === "repo" ? r.locator : r.path },
+              p.name,
+            ),
+            { cause: "repository_in_use", projectId: p.id, projectName: p.name },
+          );
+        }
+      }
+      const repo = r.kind === "repo" ? r : null;
+      const e = repo ? state.repositoryElsewhere[repo.locator] : undefined;
+      if (repo && e) {
+        const together = parsed.data.together?.project;
+        const takeOver = parsed.data.takeOver?.projects;
+        if (together && e.canWorkTogether && together === e.ids[0]) {
+          togetherId = together;
+          togetherName = e.name;
+          continue;
+        }
+        if (
+          !together &&
+          takeOver &&
+          e.canTakeOver &&
+          [...takeOver].sort().join() === [...e.ids].sort().join()
+        )
+          continue;
+        return refuse(elsewhereSentence(repo.locator, e, "UTC"), {
+          cause: "repository_used_elsewhere",
+          projects: e.ids,
+          ...(e.name ? { projectName: e.name } : {}),
+          canWorkTogether: e.canWorkTogether,
+          canTakeOver: e.canTakeOver,
+          ...(e.canWorkTogether
+            ? { togetherLine: togetherLine(e, !!parsed.data.brief?.trim()) }
+            : {}),
+          ...(e.canTakeOver
+            ? { takeOverLine: takeOverLine(e), takeOverDetails: takeOverDetails(e) }
+            : {}),
+        });
+      }
+    }
     // As the daemon: a name another project has is refused in a sentence, nothing written.
     const clash = state.projects.find((p) => p.name === parsed.data.name);
     if (clash) return errorBody(c, 409, "validation", duplicateProjectSentence(clash.name));
     const project: ProjectCard = {
-      id: nextId("proj"),
-      name: parsed.data.name,
+      id: togetherId ?? nextId("proj"),
+      name: togetherName ?? parsed.data.name,
       goal: parsed.data.goal,
       stage: "idea",
       status: "active",
@@ -1779,6 +1882,75 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       docs: null,
       error: null,
     };
+  // As the daemon (`POST /projects/:id/intake`, d1109-onerepo-link's Add to it): a new brief
+  // for a project that exists files its plan card in the Inbox (202); while one waits, the
+  // answer names the project and what to do, never an id.
+  app.post("/projects/:id/intake", async (c) => {
+    const id = c.req.param("id");
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return errorBody(c, 404, "not_found", "no such project");
+    const body = (await c.req.json().catch(() => ({}))) as { brief?: string };
+    const key = `intake:${id}`;
+    const open = state.requests.find(
+      (r) =>
+        r.status === "open" &&
+        (r.changeCard as { key?: unknown } | null)?.key === key &&
+        r.projectId === id,
+    );
+    if (open && body.brief !== undefined)
+      return c.json(
+        {
+          code: "conflict",
+          message: openPlanSentence(project.name),
+          details: { cause: "claim_conflict", reason: "proposal_open" },
+        },
+        409,
+      );
+    const requestId = open?.id ?? nextId("req");
+    if (!open)
+      state.requests.unshift({
+        id: requestId,
+        projectId: id,
+        projectName: project.name,
+        taskId: null,
+        taskTitle: null,
+        sessionId: null,
+        kind: "approval",
+        why: `Plan for "${project.name}"`,
+        steps: [],
+        options: ["Approve", "Change the plan", "Reject"],
+        blocking: true,
+        risk: "low",
+        changeCard: { key },
+        status: "open",
+        answer: null,
+        createdAt: new Date().toISOString(),
+        version: 1,
+      } as HumanRequestView);
+    state.intake[id] = {
+      projectId: id,
+      state: "pending",
+      requestId,
+      outcome: null,
+      appliedAt: null,
+      docs: null,
+      error: null,
+    };
+    emit("project.changed", { id });
+    return c.json(
+      {
+        pending: true,
+        projectId: id,
+        requestId,
+        reused: !!open,
+        summary: { milestones: 1, tasks: 1, docs: 0, firstSessionTasks: 1 },
+        estimateUsdMicro: 0,
+        costUsdMicro: 0,
+        docsTarget: "workspace",
+      },
+      202,
+    );
+  });
   app.get("/projects/:id/intake", (c) => {
     const id = c.req.param("id");
     if (!state.projects.some((p) => p.id === id))

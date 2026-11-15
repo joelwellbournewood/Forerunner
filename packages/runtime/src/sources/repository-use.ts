@@ -13,10 +13,33 @@ import {
   type Platform,
   safeSegment,
 } from "@forerunner/platform";
-import type { JsonObject, ProjectRow, StateStore } from "@forerunner/state";
+import type { ProjectRow, StateStore } from "@forerunner/state";
 import { scanForInjection } from "../injection/scan.ts";
 import { DEFAULT_REPO_HOSTS, parseRepoLocator, type RepoLocator, repoKey } from "./locators.ts";
 import { INSTALL_MARKER_FILE, parseInstallMarker } from "./marker.ts";
+import {
+  ACTIVE_ELSEWHERE_DAYS,
+  alreadyHereSentence,
+  CHAT_TOGETHER_HINT,
+  type Elsewhere,
+  elsewhereSentence,
+  inUseSentence,
+  isLinkRefusalCause,
+  isRemovedProject,
+  isTogether,
+  type LinkRefusalDetails,
+  otherHostSentence,
+  projectIdsOf,
+  TOGETHER_UNREADABLE,
+  type TookOverFacts,
+  takeOverDetails,
+  takeOverLine,
+  togetherFolderSentence,
+  togetherLine,
+  tookOverOf,
+} from "./repository-words.ts";
+
+export * from "./repository-words.ts";
 
 /**
  * One repository, one project (D1, ADR 0117; the owner's words of 2026-11-09: "There should not
@@ -34,18 +57,6 @@ import { INSTALL_MARKER_FILE, parseInstallMarker } from "./marker.ts";
 
 /** Bound on the projects the index reads (as discovery's duplicate check); above it, words. */
 export const MAX_PROJECTS = 10_000;
-
-/** A project nobody else touched for this many days may be taken over (the 14-day rule). */
-export const ACTIVE_ELSEWHERE_DAYS = 14;
-
-/** The settings key of a project that took a repository over (`took_over`). */
-export const TOOK_OVER_KEY = "took_over";
-/** The settings key of a project worked on together with another Forerunner (D9). */
-export const TOGETHER_KEY = "together";
-/** The settings key d1109-onerepo-join writes on the kept project (read here, never written). */
-export const JOINED_FROM_KEY = "joined_from";
-/** The settings key project.create's Undo writes on a removed project (W15-36). */
-const REMOVED_NAME_KEY = "removed_name";
 
 /** A project id as a marker names it (schema 1): a UUID. */
 const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -269,76 +280,6 @@ export function sameLink(a: LinkIdentity, b: LinkIdentity, platform?: Platform):
 // Projects on this computer
 // ---------------------------------------------------------------------------------------------
 
-function settingsOf(project: Pick<ProjectRow, "settings">): JsonObject {
-  const s = project.settings;
-  return s && typeof s === "object" && !Array.isArray(s) ? s : {};
-}
-
-/** The ids a project answers to: its own and the ones joined into it (d1109-onerepo-join). */
-export function projectIdsOf(project: Pick<ProjectRow, "id" | "settings">): string[] {
-  const joined = settingsOf(project)[JOINED_FROM_KEY];
-  const ids = Array.isArray(joined) ? joined.filter((x): x is string => typeof x === "string") : [];
-  return [project.id, ...ids.filter((id) => id !== project.id)];
-}
-
-/** What a together project keeps of the repository's project (D9), or null for any other. */
-export interface TogetherFacts {
-  name: string;
-  at: string;
-  activeOn: string | null;
-  login: string | null;
-}
-
-export function togetherOf(project: Pick<ProjectRow, "settings">): TogetherFacts | null {
-  const t = settingsOf(project)[TOGETHER_KEY];
-  if (!t || typeof t !== "object" || Array.isArray(t)) return null;
-  const o = t as JsonObject;
-  return {
-    name: typeof o.name === "string" ? o.name : "",
-    at: typeof o.at === "string" ? o.at : "",
-    activeOn: typeof o.activeOn === "string" ? o.activeOn : null,
-    login: typeof o.login === "string" ? o.login : null,
-  };
-}
-
-/** Whether the project works on its repository together with another Forerunner (D9). */
-export function isTogether(project: Pick<ProjectRow, "settings">): boolean {
-  return togetherOf(project) !== null;
-}
-
-/** A take-over a project recorded: the project ids it replaced in the repository. */
-export interface TookOverFacts {
-  projects: string[];
-  name: string;
-  at: string;
-  removed: boolean;
-}
-
-export function tookOverOf(project: Pick<ProjectRow, "settings">): TookOverFacts | null {
-  const t = settingsOf(project)[TOOK_OVER_KEY];
-  if (!t || typeof t !== "object" || Array.isArray(t)) return null;
-  const o = t as JsonObject;
-  const projects = Array.isArray(o.projects)
-    ? o.projects.filter((x): x is string => typeof x === "string")
-    : [];
-  return {
-    projects,
-    name: typeof o.name === "string" ? o.name : "",
-    at: typeof o.at === "string" ? o.at : "",
-    removed: o.removed === true,
-  };
-}
-
-/** A project whose creation was undone (W15-36): archived, with its old name kept. */
-export function isRemovedProject(project: Pick<ProjectRow, "status" | "settings">): boolean {
-  return project.status === "archived" && typeof settingsOf(project)[REMOVED_NAME_KEY] === "string";
-}
-
-export function shownNameOf(project: Pick<ProjectRow, "name" | "status" | "settings">): string {
-  const kept = settingsOf(project)[REMOVED_NAME_KEY];
-  return project.status === "archived" && typeof kept === "string" && kept ? kept : project.name;
-}
-
 /** A project on this computer that uses a link, with the link it uses (for the words). */
 export interface ProjectUse {
   project: ProjectRow;
@@ -542,26 +483,6 @@ export async function readRepository(host: GitHost, ref: RepoRef): Promise<Repos
   return { marker, markerUnreadable, marked, login };
 }
 
-/** When the repository's project was last worked on, and whether by this install's account. */
-export interface Activity {
-  at: string;
-  own: boolean;
-}
-
-/** The project (or projects) a repository names that is not on this computer. */
-export interface Elsewhere {
-  /** The ids the repository names that this install does not know (marker first). */
-  ids: string[];
-  /** The marker's name for one id, cleaned; null when unknown or flagged. */
-  name: string | null;
-  /** The latest update of a pull request carrying one of the marks, any account. */
-  lastActive: Activity | null;
-  /** The latest update by another GitHub account within `ACTIVE_ELSEWHERE_DAYS`, else null. */
-  otherAccount: string | null;
-  canWorkTogether: boolean;
-  canTakeOver: boolean;
-}
-
 /** What the repository means for a new link on this computer. */
 export type RepositoryVerdict =
   | { kind: "free" }
@@ -638,19 +559,6 @@ function elsewhereOf(read: RepositoryRead, ids: string[], nowMs: number): Elsewh
 // The words (design section 5)
 // ---------------------------------------------------------------------------------------------
 
-/** "3 Nov" in the person's time zone (UTC when it is not known). */
-export function dayWords(iso: string, timezone?: string | null): string {
-  let zone = timezone || "UTC";
-  try {
-    new Intl.DateTimeFormat("en-GB", { timeZone: zone });
-  } catch {
-    zone = "UTC";
-  }
-  return new Intl.DateTimeFormat("en-GB", { timeZone: zone, day: "numeric", month: "short" })
-    .format(new Date(iso))
-    .replace(",", "");
-}
-
 /**
  * How a link reads in a sentence: a repository as `o/site`, spelled as the project that uses
  * it has it when it is given (`theirs`); a folder as its path.
@@ -661,97 +569,6 @@ export function linkWords(identity: LinkIdentity, theirs?: LinkIdentity | null):
   return identity.entry.trim();
 }
 
-/** OR-02: a link another project here uses. */
-export function inUseSentence(
-  use: { kind: "repo" | "folder"; locator: string },
-  name: string,
-): string {
-  return use.kind === "repo"
-    ? `${use.locator} is already the project "${name}". Open it, or add this to it as new work.`
-    : `This folder is already used by the project "${name}". Open it, or add this to it as new work.`;
-}
-
-/** The together creation's refusal for an id that is a row here (OR-15). */
-export function alreadyHereSentence(locator: string, name: string): string {
-  return `${locator} is already the project "${name}". Open it.`;
-}
-
-function projectWords(e: Elsewhere): string {
-  if (e.ids.length > 1) return "other Forerunner projects";
-  return e.name ? `the Forerunner project "${e.name}"` : "another Forerunner project";
-}
-
-/** OR-06: a repository whose project is not on this computer, as the offer says it. */
-export function elsewhereSentence(locator: string, e: Elsewhere, timezone?: string | null): string {
-  const many = e.ids.length > 1;
-  const subject = many
-    ? `${locator} is already used by other Forerunner projects`
-    : `${locator} is already ${projectWords(e)}`;
-  if (e.otherAccount) {
-    const day = dayWords(e.otherAccount, timezone);
-    return many
-      ? `${subject}; another GitHub account worked on them on ${day}. One repository is one project, so link another repository.`
-      : `${subject}; another GitHub account worked on it on ${day}. One repository is one project, so work on it together here.`;
-  }
-  const active = e.lastActive
-    ? `; last active on GitHub on ${dayWords(e.lastActive.at, timezone)}${e.lastActive.own ? ", from your account" : ""}`
-    : "";
-  return many
-    ? `${subject}, which are not on this computer${active}. Take it over if nobody works on them any more.`
-    : `${subject}, which is not on this computer${active}. Work on it together, or take it over if nobody works on it any more.`;
-}
-
-/** The name an offer's consequence lines use for the repository's project. */
-export function quotedNameOf(e: Pick<Elsewhere, "name" | "ids">): string {
-  if (e.ids.length > 1) return "those projects";
-  return e.name ? `"${e.name}"` : "that project";
-}
-
-/** Work together's consequence line (at most 100 characters). */
-export function togetherLine(e: Pick<Elsewhere, "name" | "ids">, withBrief: boolean): string {
-  const name = quotedNameOf(e);
-  return withBrief
-    ? `Works on ${name} too and plans your brief as its new work.`
-    : `This Forerunner works on ${name} too; nothing on GitHub changes now.`;
-}
-
-/** Take it over's consequence line (at most 100 characters). */
-export function takeOverLine(e: Pick<Elsewhere, "name" | "ids">): string {
-  return `The repository then names this project: choose it only if no Forerunner uses ${quotedNameOf(e)} now.`;
-}
-
-/** Take it over's Details line. */
-export function takeOverDetails(e: Pick<Elsewhere, "name" | "ids">): string {
-  return `The pull requests of ${quotedNameOf(e)} stay as they are.`;
-}
-
-/** OR-11: a URL on a git host this install does not use. */
-export function otherHostSentence(host: string): string {
-  return `Forerunner works with repositories on github.com, not ${host}. Link a GitHub repository or a folder.`;
-}
-
-/** OR-15: Work together needs GitHub's answer (it does not fail open as creation does). */
-export const TOGETHER_UNREADABLE =
-  "GitHub did not answer, so the project cannot be checked. Try again.";
-
-/** OR-15: Work together on a folder. */
-export function togetherFolderSentence(locator: string | null): string {
-  return locator
-    ? `Work together needs the GitHub repository: link ${locator}, not a folder.`
-    : "Work together needs the GitHub repository: link it, not a folder.";
-}
-
-/** The Overview line of a together project (D9). */
-export const TOGETHER_OVERVIEW_LINE =
-  "Shared on GitHub with another Forerunner: each keeps its own tasks.";
-export const TOGETHER_OVERVIEW_DETAILS =
-  "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.";
-
-/** The Docs row of a together project's status (D9). */
-export function togetherStatusNote(name: string): string {
-  return `Kept in the app: you work on "${name}" together, so GitHub's copy is left as it is.`;
-}
-
 /** The safe segment of an id as an intake branch carries it (for the take-over's checks). */
 export function intakeBranchOf(id: string): string {
   return `fr/intake-${safeSegment(id, "project")}-docs`;
@@ -760,4 +577,276 @@ export function intakeBranchOf(id: string): string {
 /** Whether `clock`-relative instants are within the activity window. */
 export function withinActiveWindow(iso: string, clock: Pick<Clock, "now">): boolean {
   return Date.parse(iso) >= clock.now() - ACTIVE_ELSEWHERE_DAYS * 24 * 3600_000;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The check every entry point runs before anything is written
+// ---------------------------------------------------------------------------------------------
+
+/** The refusal of a link, before anything is written. */
+export function linkRefusal(message: string, details: LinkRefusalDetails): ForerunnerError {
+  return new ForerunnerError("validation", message, { details: { ...details } });
+}
+
+/** Whether an error is a link's refusal. */
+export function isLinkRefusal(e: unknown): e is ForerunnerError & {
+  details: LinkRefusalDetails;
+} {
+  return e instanceof ForerunnerError && isLinkRefusalCause(e.details?.cause);
+}
+
+/**
+ * `project.create`'s check from chat, voice or the palette: the same check, its refusal's
+ * sentence the tool's answer (with the together hint where Work together is offered) and its
+ * details kept (the untrusted mark among them: the sentence may quote a marker's name).
+ */
+export async function chatLinkCheck(
+  use: Pick<RepositoryUse, "check">,
+  repos: readonly string[],
+): Promise<void> {
+  try {
+    await use.check(repos);
+  } catch (e) {
+    if (
+      isLinkRefusal(e) &&
+      e.details.cause === "repository_used_elsewhere" &&
+      e.details.canWorkTogether
+    )
+      throw new ForerunnerError("validation", `${e.message} ${CHAT_TOGETHER_HINT}`, {
+        details: { ...e.details },
+      });
+    throw e;
+  }
+}
+
+/** What a creation may go on with once the link is checked. */
+export interface LinkCheck {
+  /** The take-over the creation records (`settings.took_over`). */
+  tookOver?: TookOverFacts;
+  /** Work together (D9): the repository's project id and what the offer said. */
+  together?: { id: string; name: string | null; activeOn: string | null; login: string | null };
+  /** Work together on a removed together project: that row comes back. */
+  revive?: ProjectRow;
+  /** The repository the check read (null for a folder or none). */
+  repository?: RepoRef | null;
+}
+
+export interface LinkCheckOptions {
+  takeOver?: { projects: string[] } | undefined;
+  together?: { project: string } | undefined;
+  /** The creation carries a brief or a goal (Work together's line then says it plans it). */
+  withBrief?: boolean;
+  /** Leave this project out (a project's own link, e.g. the Data tab's import into it). */
+  except?: string;
+}
+
+export interface RepositoryUseDeps {
+  store: Pick<StateStore, "project">;
+  clock: Pick<Clock, "now" | "nowIso">;
+  /** The configured git host when GitHub can be read (a token is saved); null otherwise. */
+  host: () => Promise<GitHost | null>;
+  /** The git hosts a URL may name (`repoHostsFor`). */
+  hosts?: readonly string[];
+  /** The person's time zone, for the offer's dates. */
+  timezone?: () => Promise<string | null>;
+  identity?: Omit<IdentityOptions, "hosts">;
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  const x = [...new Set(a.map((s) => s.toLowerCase()))].sort();
+  const y = [...new Set(b.map((s) => s.toLowerCase()))].sort();
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+/**
+ * The one check of a link (ADR 0117), run before anything is written by every creation
+ * (`createProjectRecord`: POST /projects, Sources' accept, the chat's port), by `project.create`'s
+ * plan and run (the commands' `repositoryUse` port), and by the Data tab's import. A refusal is a
+ * `ForerunnerError` 'validation' (HTTP 409) whose details say the offer (`LinkRefusalDetails`).
+ * GitHub that cannot be read skips the repository's own check without a word (creation fails
+ * open there, the one place: ADR 0117); Work together needs GitHub's answer and is refused.
+ */
+export class RepositoryUse {
+  constructor(private readonly deps: RepositoryUseDeps) {}
+
+  private identityOptions(): IdentityOptions {
+    return { ...(this.deps.identity ?? {}), hosts: this.deps.hosts ?? DEFAULT_REPO_HOSTS };
+  }
+
+  /** The index over this computer's projects, read now. */
+  async index(): Promise<RepositoryIndex> {
+    return RepositoryIndex.read(this.deps.store, this.identityOptions());
+  }
+
+  /** The identities of the links (a URL on another host refused in words). */
+  identities(repos: readonly string[]): LinkIdentity[] {
+    const out: LinkIdentity[] = [];
+    for (const entry of repos) {
+      if (typeof entry !== "string") continue;
+      const r = identityOf(entry, this.identityOptions());
+      if (r.kind === "other_host")
+        throw linkRefusal(otherHostSentence(r.host), { cause: "other_host" });
+      if (r.kind === "identity") out.push(r.identity);
+    }
+    return out;
+  }
+
+  /** The configured host, or null when GitHub cannot be read here (no token). */
+  async host(): Promise<GitHost | null> {
+    return this.deps.host().catch(() => null);
+  }
+
+  private async zone(): Promise<string | null> {
+    try {
+      return (await this.deps.timezone?.()) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The check on this computer only (a URL on another host, a project here that uses the link),
+   * for a link added to a project that exists (the Data tab's import, OR-04): `except` is that
+   * project, whose own link it may be.
+   */
+  async checkHere(repos: readonly string[], except?: string): Promise<void> {
+    const links = this.identities(repos);
+    if (!links.length) return;
+    const index = await this.index();
+    for (const link of links) {
+      const use = index.projectsUsing(link, except)[0];
+      if (use)
+        throw linkRefusal(
+          inUseSentence(
+            { kind: link.kind, locator: linkWords(link, use.identity) },
+            use.project.name,
+          ),
+          { cause: "repository_in_use", projectId: use.project.id, projectName: use.project.name },
+        );
+    }
+  }
+
+  async check(repos: readonly string[], opts: LinkCheckOptions = {}): Promise<LinkCheck> {
+    const links = this.identities(repos);
+    if (!links.length) {
+      if (opts.together)
+        throw linkRefusal(togetherFolderSentence(null), { cause: "together_refused" });
+      return {};
+    }
+    const index = await this.index();
+    // On this computer first: a project here that uses the link is the offer, whatever GitHub says.
+    for (const link of links) {
+      const use = index.projectsUsing(link, opts.except)[0];
+      if (use) {
+        const locator = linkWords(link, use.identity);
+        throw linkRefusal(inUseSentence({ kind: link.kind, locator }, use.project.name), {
+          cause: "repository_in_use",
+          projectId: use.project.id,
+          projectName: use.project.name,
+        });
+      }
+    }
+    const repoLink = links.find((l) => l.kind === "repo" && l.repo);
+    if (!repoLink?.repo) {
+      if (opts.together) {
+        const origin = links.find((l) => l.repo)?.repo?.locator ?? null;
+        throw linkRefusal(togetherFolderSentence(origin), { cause: "together_refused" });
+      }
+      return {};
+    }
+    const ref: RepoRef = { owner: repoLink.repo.owner, name: repoLink.repo.name };
+    const locator = repoLink.repo.locator;
+    const host = await this.host();
+    let read: RepositoryRead | null = null;
+    if (host) {
+      try {
+        read = await readRepository(host, ref);
+      } catch {
+        read = null;
+      }
+    }
+    if (!read) {
+      // The one fail-open place (ADR 0117): creation never waits on GitHub's answer; the
+      // Overview's line appears once the copy shows another project's marker. Work together
+      // needs the id from GitHub, so it is refused instead.
+      if (opts.together) throw linkRefusal(TOGETHER_UNREADABLE, { cause: "github_unreadable" });
+      return { repository: ref };
+    }
+    const verdict = verdictOf(read, index, this.deps.clock.now());
+    const at = this.deps.clock.nowIso();
+    switch (verdict.kind) {
+      case "free":
+        if (opts.together)
+          throw linkRefusal(
+            `${locator} names no Forerunner project now: create it as a new project.`,
+            { cause: "together_refused" },
+          );
+        return { repository: ref };
+      case "here":
+        if (opts.except && verdict.project.id === opts.except) return { repository: ref };
+        throw linkRefusal(
+          opts.together
+            ? alreadyHereSentence(locator, verdict.project.name)
+            : inUseSentence({ kind: "repo", locator }, verdict.project.name),
+          {
+            cause: "repository_in_use",
+            projectId: verdict.project.id,
+            projectName: verdict.project.name,
+          },
+        );
+      case "removed":
+        // The person's own removed project frees the repository: its marker is replaced.
+        return {
+          repository: ref,
+          tookOver: { projects: [verdict.projectId], name: "", at, removed: true },
+        };
+      case "removed_together": {
+        if (opts.together && opts.together.project.toLowerCase() === verdict.project.id)
+          return { repository: ref, revive: verdict.project };
+        throw await this.elsewhereRefusal(locator, verdict.elsewhere, opts);
+      }
+      case "elsewhere": {
+        const e = verdict.elsewhere;
+        if (opts.together) {
+          const id = e.ids[0];
+          if (e.canWorkTogether && id && opts.together.project.toLowerCase() === id)
+            return {
+              repository: ref,
+              together: {
+                id,
+                name: e.name,
+                activeOn: e.lastActive?.at ?? null,
+                login: read.login,
+              },
+            };
+          throw await this.elsewhereRefusal(locator, e, opts);
+        }
+        if (opts.takeOver && e.canTakeOver && sameIds(opts.takeOver.projects, e.ids))
+          return {
+            repository: ref,
+            tookOver: { projects: e.ids, name: e.name ?? "", at, removed: false },
+          };
+        throw await this.elsewhereRefusal(locator, e, opts);
+      }
+    }
+  }
+
+  private async elsewhereRefusal(
+    locator: string,
+    e: Elsewhere,
+    opts: LinkCheckOptions,
+  ): Promise<ForerunnerError> {
+    return linkRefusal(elsewhereSentence(locator, e, await this.zone()), {
+      cause: "repository_used_elsewhere",
+      projects: e.ids,
+      ...(e.name ? { projectName: e.name } : {}),
+      canWorkTogether: e.canWorkTogether,
+      canTakeOver: e.canTakeOver,
+      ...(e.canWorkTogether ? { togetherLine: togetherLine(e, opts.withBrief === true) } : {}),
+      ...(e.canTakeOver
+        ? { takeOverLine: takeOverLine(e), takeOverDetails: takeOverDetails(e) }
+        : {}),
+      untrusted: { source: "repo_file", origin: `repository:${locator}` },
+    });
+  }
 }
