@@ -1,0 +1,150 @@
+{
+ "area": "l3-chat-claims",
+ "branch": "fix/l3-chat-claims",
+ "head_sha": "6447fbc1372065d30ac83128708ec2392d20bb7a",
+ "commits": [
+  {
+   "sha": "9fb2915",
+   "subject": "bench: the chat stand-in answers 'say: <text>' with no tool (L3-run-1)"
+  },
+  {
+   "sha": "5b6d389",
+   "subject": "commands: the web access read-back says \"except the ones listed\" only when some are listed (L3-run-9)"
+  },
+  {
+   "sha": "3b386d1",
+   "subject": "chat: no claim of a change or a yes unless a command of the turn made it (L3-run-1)"
+  },
+  {
+   "sha": "5720293",
+   "subject": "chat: a command's own reply is said once in the history, as the app's line (L3-run-1)"
+  },
+  {
+   "sha": "8a839ab",
+   "subject": "chat: the claim guard's nudge lets a change of an earlier turn be said as earlier (L3-run-1)"
+  },
+  {
+   "sha": "6447fbc",
+   "subject": "docs: the UI's web access read-back words in apps.md (L3-run-9)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L3-run-1 (major): the chat said 'Widening research access needs your yes, so I've asked for confirmation. Once you approve, ...' but no tool ran. No Yes/No card appeared, nothing reached the Inbox, and the rule stayed as it was. All three root causes were still present at 112227c: (1) historyMessages (transcript.ts) sent each earlier reply's prose only, dropping what the app had done; (2) conversation-agent.md said 'Say so plainly when asked' and nothing forbade claiming that a yes had been asked for; (3) nothing checked the reply after the run.",
+   "u_ids": [
+    "L3-run-1"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts, describe 'l3-chat-claims, run L3' (7 cases fail at the base: history, nudge then read-back, replacement, German/English claims, nothing-claimed / backed claim, four-call limit, prompt text). apps/ui/test/real-daemon.test.ts, describe 'l3-chat-claims, run L3' (both cases fail at the base): POST /chat with a scripted model and a daemon restart between the turns. It asserts turn 2's request history, the read-back, GET /projects/:id/conversation, the Inbox and the Overview line. Siblings: 'a model turn with no text and no command never says Done.' and the history-scan case in 'l3-chat-claims, run L3: siblings'; 'a command's own reply (no model) is said once in the history'; 'l3-chat-claims, run L3: a change of an earlier turn'. evals/test/injection.test.ts 'l3-chat-claims, run L3: the chat history in the record channel' (record-007 fails without the history scan: task_create runs with no read-back).",
+   "how": "(a) History. Each earlier reply that changed something now ends with 'The app did: <the change log's sentence without its Undo.>' (actionLines, replyInHistory, HISTORY_ACTION_LEAD in transcript.ts). The lines come from the stored chat.reply actionDetails, so the history is the same bytes on every turn and after a restart, and the cached prefix holds (R-chatcache test green). A reply that is only the change's own sentence (a command's reply, no model) is said once, as the app's line. A reply that changed nothing gets no line. (b) Prompt. conversation-agent.md 1.2.2 says what the 'The app did:' line means. It adds: never say you asked for a yes, sent a request or that a change waits unless a tool answered 'Needs confirmation' in this turn; when no command ran, say that nothing changed. 'Say so plainly when asked' is replaced with: call the command anyway, the runtime reads it back. CHAT_RETRIEVAL_RULES' Settings part and DEFAULT_PROMPT say the same. Every new line is asserted verbatim on the request. (c) Guard. claimOf (new conversation/claims.ts; English and German, first-person claims; a sentence that says 'Earlier' or 'you said' counts as history) finds a claim to have asked for a yes or to have changed something. ConversationAgent.chat checks the claim against the turn's command results: a waiting result (or a card already waiting in this conversation) backs 'asked'; a done or partial result backs 'changed'. An unbacked claim gets one more model step with CLAIM_NUDGE. The step stays inside the turn's 4 model calls (CHAT_MAX_MODEL_CALLS), the same SessionBudget and token, and the same deadline, and its text is not streamed. If the claim comes back, or no call is left, the reply becomes 'Nothing changed, and nothing waits for your yes. Say it again to try once more.' (notice). The chat.reply row keeps claimGuard {kind, phrase, nudged, replaced}, and the log line 'chat reply claimed what no command did' is written. Siblings: an empty model reply with no command now says NO_ANSWER_REPLY instead of 'Done.'. The history's assistant messages (which now carry agent-written task titles) are scanned like the facts' records: instruction-like text there sets recordsRead (every change is read back) and adds injection where 'history'. That gives a new record place chat_history, covered by injection case record-007. ADR 0091 and ADR 0114 have dated amendments.",
+   "check_in_the_app": "Live check 4 (real model, run by the session lead): 1) New project 'Reading rules'. Overview, Research reads, Change: add facebook.com to the never list and apply. The line reads 'Research reads: any public website, never facebook.com'. 2) Talk: 'only read developer.mozilla.org for research'. The reply comes with no card, and the Overview line becomes 'Research reads: only developer.mozilla.org'. 3) Talk: 'research may read any public website again'. On the first try a Yes/No read-back appears under the reply: 'Set web pages research may read for Reading rules to any public website? Research reads any public website, on the API key and on the subscription.' The reply never says 'I've asked for confirmation' without that card. If the model still answers in text only, the reply is 'Nothing changed, and nothing waits for your yes. Say it again to try once more.' and the Overview line stays 'only developer.mozilla.org'. 4) Press Yes; within a few seconds the line reads 'Research reads: any public website'. 5) In the model-call log (home/bench/model-calls.jsonl), step 3's first chat request holds turn 2's assistant message ending 'The app did: Set web pages research may read for Reading rules from any public website, never facebook.com to only developer.mozilla.org: research reads only these websites and their subdomains, on the API key and on the subscription.' Its system part contains conversation-agent.md 1.2.2's line 'Never say you asked for a yes, sent a request, or that a change waits for confirmation unless a tool answered \"Needs confirmation\" in this turn'. If the guard fired, a second request ends with the CLAIM_NUDGE text and the daemon log has 'chat reply claimed what no command did'. 6) Repeat steps 2 to 4 on two more fresh projects and record how often the first try brought the card and how often the guard fired. Bench (stand-in): Talk 'say: Widening research access needs your yes, so I've asked for confirmation.' The reply is the 'Nothing changed ...' line, there is no card, and the Overview line is unchanged (screenshot 10-after2-02-talk-claim-no-tool.png)."
+  },
+  {
+   "problem": "L3-run-9 (words): the read-back and the change sentence said 'Research reads any public website except the ones listed' for a rule that listed no site (design section 5 rule 4). Root cause: webAccessEffect (packages/commands/src/commands/settings.ts) wrote one sentence for mode 'any' whatever the never list held.",
+   "u_ids": [
+    "L3-run-9"
+   ],
+   "failing_test_before": "packages/commands/test/w15-chat.test.ts 'l3-chat-claims, run L3' > 'the web access read-back and change sentence say except the ones listed only when some are listed (L3-run-9)'. The updated real-daemon.test.ts W15-29 and W15-34 cases fail at the base too.",
+   "how": "webAccessEffect adds 'except the ones listed' only when the rule has a never list, otherwise it says 'research reads any public website, on the API key and on the subscription'. The fake daemon's settings.set web_access words it the same way. The read-back, the change sentence, the undo question and the Inbox card body all follow.",
+   "check_in_the_app": "Talk on a project limited to developer.mozilla.org: 'research may read any public website again'. The Yes/No read-back reads 'Set web pages research may read for Reading rules to any public website? Research reads any public website, on the API key and on the subscription.' with no 'except'. After Yes, the change line in Talk says the same. In Settings, change the same project's rule to Any public website with never facebook.com: the read-back says 'except the ones listed'. Bench screenshot: 12-after2-04-talk-any-readback.png."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "The guard's replacement does not take back text already streamed. While the nudge step runs (about 1 s on Haiku), Talk's live bubble can still show the first call's claim. The stored reply that Talk shows after the turn is the true one. A spoken turn has already spoken the claim sentence.",
+   "why": "Stopping it needs a stream frame that resets the live text, or a hold on streaming. Those touch chat-stream.ts and Conversation.tsx, which C3 (d1109-chat-depth) reworks for its step/waiting line. Voice is out of scope this round. Logged under new_problems for C3."
+  },
+  {
+   "problem": "Proof that Haiku now calls settings_set on the first 'research may read any public website again'.",
+   "why": "Only the real model can show this; it is the live check 4 step in check_in_the_app. The stand-in cannot reproduce the model's choice, only the code half: the history, the prompt text, the guard, the read-back."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (final head 6447fbc; lint, path lint, typecheck, unit tests, docs check, links, secret scan)",
+   "result": "EXIT 0: 493 files, 5239 passed, 7 skipped; link-check ok; secret-scan clean. The docs check inside pnpm check could not find origin/main here, so it was run separately with --base."
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (24 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "EXIT 0: 5 files passed, 6 skipped; 30 passed, 77 skipped (Postgres tests skip without FORERUNNER_TEST_PG, as at baseline)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "EXIT 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "PASS: 66 cases (47 hostile, 19 controls), 0 failed; the new record-007 passes via facts.scan (where history)"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "EXIT 0: 91 files, 1122 passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing"
+  },
+  {
+   "command": "Before/after walk on the bench fix-l3-chat-claims (stand-in, daemon 48824, UI 2424)",
+   "result": "BEFORE: the claim passes through, no card, Inbox empty, Overview stays 'only developer.mozilla.org', history text only; the read-back says 'except the ones listed'. AFTER: the claim is nudged, then replaced by the true line, no card, the Overview line is unchanged; seq 3 history carries 'The app did: ...'; the read-back has no 'except'. Bench stopped and its home deleted."
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: the desktop shell was not touched"
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/commands/test/w15-chat.test.ts 'an undo waiting for a yes asks one plain question ... (W15-34)'",
+   "why": "It asserted 'Research reads any public website except the ones listed' for an undo back to a rule with no never list. The words now say no site is excepted (L3-run-9)."
+  },
+  {
+   "test": "apps/ui/test/web-access.test.tsx 'widening (back to any public website) asks a yes first'",
+   "why": "Same words: the read-back now says 'Research reads any public website, on the API key and on the subscription.', and the test also asserts that it has no 'except'."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'w15-chat, wave 15': the W15-29 Talk case and the W15-34 undo case",
+   "why": "Same words in the read-back, the undo question and the Inbox card body for a rule with no never list."
+  },
+  {
+   "test": "packages/runtime/test/w15-chat-words.test.ts W15-76 undo fixture",
+   "why": "Input fixture text only: brought in line with the words the app now writes. Its assertions are unchanged."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-l3-chat-claims/steps/02-before-02-talk-claim-no-tool.png",
+   "/tmp/frbench/fix-l3-chat-claims/steps/03-before-03-overview-after-claim.png",
+   "/tmp/frbench/fix-l3-chat-claims/steps/04-before-04-talk-any-readback.png",
+   "/tmp/frbench/fix-l3-chat-claims/steps/before.json"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l3-chat-claims/steps/10-after2-02-talk-claim-no-tool.png",
+   "/tmp/frbench/fix-l3-chat-claims/steps/11-after2-03-overview-after-claim.png",
+   "/tmp/frbench/fix-l3-chat-claims/steps/12-after2-04-talk-any-readback.png",
+   "/tmp/frbench/fix-l3-chat-claims/steps/after2.json"
+  ]
+ },
+ "new_problems": [
+  "The claim guard cannot recall streamed text. During the nudge step the live Talk bubble still shows the first call's claim (typed), and a spoken turn has already said it. The stored and reloaded reply is the true line. Suggested for C3 (d1109-chat-depth, which adds step/waiting events to chat-stream.ts and Conversation.tsx): on a step event, replace the live text with the waiting line.",
+  "The stand-in's chat replies quote the tool's answer ('[stand-in model] The command tool settings_set answered: ...'), so the Talk bubble after a stand-in 'tool:' turn shows the change sentence twice (the reply plus the action row). Bench-only cosmetic; seen on the BEFORE and AFTER screenshots 01/05/09.",
+  "The history token budget (3,000 tokens) now also holds the 'The app did:' lines, so older turns drop out a little sooner. C3's thorough history (8,000 tokens) should account for this."
+ ],
+ "notes_for_other_areas": [
+  "C2 (d1109-chat-recall) and C3 (d1109-chat-depth): historyMessages(turns, countTokens, maxTokens) keeps its signature. Each assistant message for a reply that changed something is now '<reply text>\\n\\nThe app did: <sentence>' (one line per change; the sentence is the change log's own, without ' Undo.'). A reply that is only the change's own sentence is just 'The app did: <sentence>'. New exports in transcript.ts: HISTORY_ACTION_LEAD ('The app did: '), actionLines(reply); a private replyInHistory(reply). Keep these when reworking the history (the 8,000-token thorough history included).",
+  "The reply guard is in ConversationAgent.chat (agent.ts), right after the turn's run. The run request is now a const `run` object. `onEvent(ev, stream)` forwards text only when stream is true. maxTurns is CHAT_MAX_MODEL_CALLS (4). `falseClaim` checks claimOf against `results` and `pending`. The nudge run is `hooksDriver.run({...run, messages: [...result.messages, {role:'user', content:[{type:'text', text: CLAIM_NUDGE}]}], maxTurns: left, onEvent: no stream})`, merged with mergedRuns(). C3's thorough pass must keep the guard after its own last model step and count its calls against the same limit. The chat.reply row gains claimGuard {kind, phrase, nudged, replaced}, and notice: true when the reply was replaced. NO_ANSWER_REPLY replaces the old 'Done.' fallback when no command did anything.",
+  "New module packages/runtime/src/conversation/claims.ts: claimOf(text) -> {kind: 'asked'|'changed', phrase} | null, CLAIM_NUDGE (model-facing, asserted verbatim in conversation-memory.test.ts), NOTHING_CHANGED_REPLY (person-facing). A sentence with 'earlier', 'previously', 'you said', 'vorhin' and similar is history, not a claim.",
+  "conversation-agent.md is now 1.2.2 (C2 bumps it to 1.3.0, C3 to 1.4.0). Keep these three passages: the 'What you are given' bullet ending 'A reply that changed something ends with the\\n  app's own line \"The app did: …\"; a reply without it changed nothing, whatever it says.'; item 2's added sentences 'Never say you asked for a yes, sent a request, or that a change waits for confirmation unless a tool answered \"Needs confirmation\" in this turn; never say something changed unless a tool said so in this turn. When you called no command, say that nothing changed.'; the Limits line 'You cannot widen budgets, permissions or autonomy by yourself: when the person asks for it, call the command anyway; the runtime reads it back with Yes and No, and nothing changes until they say yes.' (replaces 'Say so plainly when asked.'). The tests in conversation-memory.test.ts and real-daemon.test.ts 'l3-chat-claims, run L3' assert them (including the version line 'version: \"1.2.2\"', which C2 must update in that test).",
+  "CHAT_RETRIEVAL_RULES' '# Settings' part changed (C2's plan said it would be unchanged). It now adds, before 'The facts' \"Research reads:\" line ...': 'A change that widens what the app may do is asked by calling its command: the runtime reads it back with Yes and No. Never say you asked for the person's yes, sent a request or that a change waits for confirmation unless a tool answered \"Needs confirmation\" in this turn. An earlier reply's line \"The app did: …\" is what that turn changed; a reply without one changed nothing.' DEFAULT_PROMPT also says 'never claim a change was made, or a yes asked for, unless a tool said so in this turn.'",
+  "Injection suite: RECORD_WHERE gains 'chat_history' (record-place 5) with case record-007 (hostile, task_create read back). The record-channel listing test in evals/test/injection.test.ts now ends with record-007, so C2's record-005/006 go before it in that list. The history's assistant messages are scanned with scanForInjection(…, 'agent_output'); a flag sets turn.recordsRead and adds {where: 'history'} to the row's injection list.",
+  "Bench stand-in: a chat line 'say: <text>' answers with that text and no tool on every call of the turn, a nudge included (testenv/src/bench/role-player.ts chatAnswer; scripts/bench/README.md).",
+  "Session lead, suggested CHANGELOG/UPDATE-LOG lines: 'Chat only says it changed something or asked for your Yes when it did: a Yes/No question appears under its reply; otherwise it says \"Nothing changed, and nothing waits for your yes. Say it again to try once more.\" (L3-run-1)'; 'The read-back for research reading any public website no longer says \"except the ones listed\" when no website is listed (L3-run-9)'. No new ADR: dated amendments were appended to ADR 0091 (the nudge stays inside the turn's budget and calls) and ADR 0114 (the history says what each turn did and is scanned like the records)."
+ ]
+}

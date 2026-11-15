@@ -1,0 +1,129 @@
+{
+ "area": "l3-merge",
+ "branch": "fix/l3-merge",
+ "head_sha": "332233c713f846e19bbe5bf3b47ac4dbaef1ee5a",
+ "commits": [
+  {
+   "sha": "332233c713f846e19bbe5bf3b47ac4dbaef1ee5a",
+   "subject": "merge: a Merge pressed after a dependency was squash- or rebase-merged on GitHub merges again; a branch check that finds unreviewed commits files the press's card (L3-github-1, L3-github-3)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Reviewer's blocking finding (regression from 2faea88). Setup: A squash- or rebase-merged on GitHub, then Merge pressed on its dependent B before Forerunner's next look. Result: the press was refused with '#B changed after the review: look at the new commits, ...'. The record became head_moved, B's row lost its Merge for good, and a card spoke of commits nobody pushed. At the base the same press merged B.\n\nRoot cause:\n1. ProjectPullRequests.merge ran the new branch check first (buildsOnGone: A's record was not merged yet).\n2. checkBeforeMerge rebuilt B onto main, and settleRecord moved B's record to the head the check pushed.\n3. The L3-github-3 head check then compared that head with `listed`, the pull requests read before the rebuild. It called headMovedNow(task, staleHead).\n4. keepsOwnChange of the stale head (which still held A's original commit) was false, so the press was refused.",
+   "u_ids": [
+    "L3-github-1",
+    "L3-github-3"
+   ],
+   "failing_test_before": "All of these failed at 2faea88. The runtime ones are in packages/runtime/test/dependent-branches-merge.test.ts \"l3-merge, run L3\":\n- \"L3-github-3 fix-up: A squash-merged on GitHub, then Merge pressed on B before any poll: the press's check rebuilds B onto main and B is merged, never refused as changed after the review\": answered {state:'refused', sentence:'#2 changed after the review: ...'}.\n- The same test with \"A rebase-merged\": same refusal.\n- \"L3-github-3 fix-up, chain of three: A squash-merged, Merge pressed on C ...\": refused, where \"Merging #2 and #3 in order.\" was expected.\n- \"L3-github-3 fix-up, sibling: the press's head check reads the pull request again, so a listing from before a rebuild Forerunner pushed itself (the watcher's poll between the press's read and its check) is no head move\": headMovedNow returned the head-moved sentence.\n- apps/ui/test/real-daemon.test.ts \"l3-merge, run L3\" > \"L3-github-3 fix-up: A squash-merged on GitHub, Merge pressed on B before any poll: the press answers 'Merging #B.' and B is merged (rebuilt onto main first), never refused as changed after the review; no card\": refused through the client.\nThe source changes were reverted to 2faea88 and these tests re-run before the fix was applied again.",
+   "how": "1. packages/runtime/src/daemon/pull-requests.ts, merge(): the head check skips a task whose record's reviewed_head_sha the press's branch check just moved (set rebuiltNow). That check pushed the head and its settleRecord already judged the branch as GitHub had it, so the stale listing is not compared.\n2. packages/runtime/src/loop/merge.ts, ReviewedPrMerge.headMovedNow: before it judges, it reads the pull request again (host.getPullRequest). It returns null when the fresh head is the reviewed commit or the pull request is no longer open. Otherwise it judges keepsOwnChange and headMoved on the fresh head, so the record, the task reason and the card name the real head. This covers a watcher's poll that rebuilt B between the press's read and its check.\nIt follows the reviewer's sketch: skip, plus a re-read for the other stale-listing case. The skip is deterministic, so GitHub's API lag after a force-push cannot bring back the false refusal. ADR 0111's 2026-11-15 amendment gets a fix-up note. docs/maintainers/runtime.md and the user guide's squash bullet are updated.",
+   "check_in_the_app": "Live check 4, on forerunner-sandbox with the real model, in \"You press Merge\" mode:\n1. Create task A ('Write kite/squash.txt with one line') and task B ('Write kite/squash-day.txt after the squash file', waits for A). Run a session; both are accepted. On the Overview, B's row says 'Merges #A first.'.\n2. On GitHub, use 'Squash and merge' on A. Within a few seconds, before Forerunner's next look (under a minute), press Merge on B's row in the app.\nExpected: the answer reads 'Merging #B.', never '#B changed after the review'. Within about 10 s B is merged on GitHub. B's pull request shows a force-push (rebuilt onto main) and holds only kite/squash-day.txt. main holds both files, and A's change appears once in main's history.\n3. Needs you has no card for B. The Tasks row for B reads 'Merged'. A's row reads 'Merged' after the next look.\n4. Repeat with GitHub's 'Rebase and merge' on A: same result.\n5. Daemon log: 'dependent pull request rebuilt' for B, then 'merge record ... merged'. There is no 'head_moved' for B."
+  },
+  {
+   "problem": "Sibling of the blocking finding (validation rule 8). Setup: a commit was pushed to B's branch on GitHub, then A was squash-merged, then Merge was pressed on B before any poll. The press was refused with the right head-moved sentence, but no card was filed. The press's own branch check found the commit, and its changedAfterReview files no card over a record that waited for the click. The L3-github-3 path (headMovedNow with pressed=true) files one card for the same press.",
+   "u_ids": [
+    "L3-github-3"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts \"l3-merge, run L3\" > \"L3-github-3 fix-up, sibling: a commit pushed to B's branch on GitHub and A squash-merged, Merge pressed on B before any poll: refused at once as changed after the review, nothing merged, one card\". It failed at 2faea88 on the card assertion (expected one card, got none).",
+   "how": "New BranchCheckOptions { pressed?: boolean } in loop/merge.ts. BranchCheck now takes (task, o?) and checkBranchNow takes (task, o = {}). The press calls checkBranchNow(task, { pressed: true }). DependentBranches.checkBeforeMerge(task, o) passes it to settleRecord(r, pr, pressed) and then to changedAfterReview(task, record, pr, pressed): wasLeft = state left_to_you && !pressed. The press's card is therefore filed as headMovedNow files it. The merge step's own check in run() passes nothing, so the retry pass and a card's Merge behave as before. compose and both test worlds (chainWorld, the w15-tail restarted world) pass the option on: (task, o) => dependents.checkBeforeMerge(task, o).",
+   "check_in_the_app": "Live check 4:\n1. With A and B accepted (as above), push one commit to B's branch on GitHub (edit a file there).\n2. Use 'Squash and merge' on A on GitHub.\n3. Within seconds, press Merge on B's row.\nExpected:\n- The red line shows at once: '#B changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.'\n- B's row offers no Merge.\n- The Inbox has exactly one card, '\"Write kite/squash-day.txt after the squash file\" changed after the review', with I merged it and Leave it open.\n- On GitHub, B is not merged."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "The reviewer's non-blocking items: notCheckedSentence has no boundary test and is two sentences. The chat's '# Your files' keeps the cancelled-PR line after the PR is closed on GitHub. A's Tasks row reads 'Accepted · waiting for you to merge' until the next poll after a press-time check. The Overview's cancelled block is plural with one row. A rebuilt-without row still sits under 'Reviewed by the critic'. The press-time rebuild costs a listPullRequests call and a git fetch per waiting dependent per retry.",
+   "why": "Not blocking; this fix-up was scoped to the blocking finding and its siblings. They remain as the reviewer listed them, for the session lead to place."
+  }
+ ],
+ "validation": [
+  {
+   "command": "npx vitest run --project unit packages/runtime/test/dependent-branches-merge.test.ts -t \"L3-github-3 fix-up\" (source changes reverted to 2faea88, new tests kept)",
+   "result": "4 failed, as the blocking finding says: squash, rebase and chain of three were refused as changed after the review; the push-then-squash sibling had no card. The fifth (re-read) test was added later and failed at 2faea88 too: headMovedNow returned the head-moved sentence."
+  },
+  {
+   "command": "apps/ui: npx vitest run --config vitest.config.ts test/real-daemon.test.ts -t \"L3-github-3 fix-up\" (fixer's sources)",
+   "result": "1 failed: {state:'refused', sentence:'#3 changed after the review: ...'} where 'Merging #3.' was expected"
+  },
+  {
+   "command": "same two runs with the fix",
+   "result": "all pass (5 runtime, 1 real-daemon)"
+  },
+  {
+   "command": "npx vitest run --project unit on 14 merge-related runtime test files (dependent-branches-*, l3-merge, loop-merge, merge-in-app*, merge-record*, merged-copy*, pr-answers, pull-requests-view, task-words-merge)",
+   "result": "14 files, 142 passed"
+  },
+  {
+   "command": "FORCE_COLOR=0 pnpm check",
+   "result": "EXIT 0. Unit: 494 files, 5245 passed, 7 skipped. docs:check inside it cannot diff against origin/main (the known condition here)."
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0; pnpm docs:links",
+   "result": "docs-check: ok (31 files); link-check: ok (209 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "EXIT 0; 5 passed, 6 skipped (Postgres tests skip without FORERUNNER_TEST_PG); 30 passed, 77 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "EXIT 0; 13 files, 25 passed, 1 skipped (same as the baseline)"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "EXIT 0, Failures: None"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "EXIT 0; 91 files, 1128 passed (the fixer's 1127 plus the new real-daemon case)"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "EXIT 0; 35 passed. The UI source is unchanged; run for completeness."
+  },
+  {
+   "command": "pnpm typecheck; biome check .",
+   "result": "EXIT 0; lint shows warnings only"
+  },
+  {
+   "command": "Bench fixup-l3-merge (--provider bench, stand-in GitHub on 48841, daemon 48840, UI 2440). Walk script /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fixup-l3-walk.cjs (the reviewer's walk plus squash, rebase and squashpush checks). Run a: squash, rebase, squashpush. Run b: lock, stale, moved, squash, after a daemon restart that loaded the headMovedNow re-read. Run c: cancel, with FORERUNNER_BENCH_CRITIC_DELAY_MS=45000.",
+   "result": "Every check passed.\n- Run a (/tmp/frbench/fixup-l3-merge/walk-a-squash-rebase-squashpush.json): 28/28. Squash and rebase answered 'Merging #B.'; B merged; A's change on main once; no card; no 'changed after the review'. Squashpush was refused at once with the head-moved sentence, one card, nothing merged.\n- Run b (walk-b-lock-stale-moved-squash.json): 39/39. Lock refused with the rebuilt-without sentence, one card with a rebuild's Details; the card's Merge merged only B's file. Stale: the card closed after the GitHub merge ('Closed: #11 was merged.'), still closed after a restart, and the chat is not told it was not merged. Moved: refused at once, one card with the title whole; it closed when merged on GitHub. Squash merged again.\n- Run c (walk-c-cancel.json): every check passed (read-back, Yes line, the Overview's cancelled heading, the chat facts, gone after the close).\nThe bench was stopped and its home and githost data deleted. Screenshots are kept in /tmp/frbench/fixup-l3-merge/steps/."
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: the desktop shell was not touched"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-l3-merge/steps/15-squash-right-after-press.png",
+   "/tmp/frbench/review-l3-merge/steps/17-squash-inbox.png",
+   "/tmp/frbench/review-l3-merge/steps/18-squash-tasks.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-l3-merge/steps/02-squash-right-after-press.png",
+   "/tmp/frbench/fixup-l3-merge/steps/03-squash-after-merge.png",
+   "/tmp/frbench/fixup-l3-merge/steps/04-squash-inbox.png",
+   "/tmp/frbench/fixup-l3-merge/steps/05-squash-tasks.png",
+   "/tmp/frbench/fixup-l3-merge/steps/07-rebase-right-after-press.png",
+   "/tmp/frbench/fixup-l3-merge/steps/08-rebase-after-merge.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/dependent-branches-merge.test.ts chainWorld() and the w15-tail restarted() world",
+   "why": "Wiring only, so the test worlds match compose: merge.checkBranchesWith((task, o) => dependents.checkBeforeMerge(task, o)) now passes the press's options. No assertion changed."
+  }
+ ],
+ "new_problems": [
+  "The race 'the watcher's poll rebuilds B between the press's read and its head check' is now handled by headMovedNow's re-read. That path depends on GitHub's PR API showing a force-push at once. If the API lags, the press can still refuse with the head-moved sentence, and the step would refuse it a moment later the same way (this predates the area). Only live check 4 can show whether real GitHub lags there.",
+  "Pre-existing in settleRecord, not changed here: the record moves to the rebuilt head before the push. If the push then fails, the record names a head GitHub does not have. The press path is safe, because the check then returns owed and the press is refused or waits. A later merge step would compare GitHub's old head with the moved record."
+ ],
+ "notes_for_other_areas": [
+  "loop/merge.ts:\n- New export BranchCheckOptions { pressed?: boolean }.\n- BranchCheck is now (task, o?: BranchCheckOptions) => Promise<BranchVerdict>; ReviewedPrMerge.checkBranchNow(task, o = {}) passes o to the check.\n- BranchVerdict { left, owed } is unchanged.\n- headMovedNow(task, head) keeps its signature. It now reads the pull request again first, and returns null for a fresh head equal to the reviewed commit or a pull request no longer open. Its record, reason and card name the fresh head.",
+  "session/dependent-branches.ts: checkBeforeMerge(task, o?: BranchCheckOptions). Private settleRecord(r, pr, pressed = false) and changedAfterReview(task, record, pr, pressed = false): with pressed, the card is filed also over a record that waited for the click. Any new wiring must pass o through, as compose.ts does: merge.checkBranchesWith((task, o) => dependentBranches.checkBeforeMerge(task, o)).",
+  "daemon/pull-requests.ts merge(): the press calls checkBranchNow(task, { pressed: true }) and keeps rebuiltNow, the tasks whose record the check moved; the head check skips them. Nothing else in read()/readView changed (C2's docs-rows edits are unaffected).",
+  "apps/ui/test/fake-daemon.ts is unchanged. The route's answer shape is unchanged, and the fake's default press answer ('Merging #N.') already matches the restored behaviour. The new real-daemon case is in the 'l3-merge, run L3' describe.",
+  "No new ADR. ADR 0111's 2026-11-15 amendment has an appended fix-up note.",
+  "Suggested UPDATE-LOG / CHANGELOG line (session lead): 'Merge pressed on a pull request right after the one it builds on was squash- or rebase-merged on GitHub merges it again, after rebuilding it onto main; it is no longer refused as changed after the review (review of L3-github-1/L3-github-3).'"
+ ]
+}

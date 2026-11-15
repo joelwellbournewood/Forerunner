@@ -1,0 +1,162 @@
+{
+ "area": "l3-money-engine",
+ "branch": "fix/l3-money-engine",
+ "head_sha": "217902c9b811621c6f0e2785114e6f59fade7249",
+ "commits": [
+  {
+   "sha": "c5f5dd3",
+   "subject": "money engine: a call Stop now cuts off is booked once, on the ledger, the session and the task (L3-run-5)"
+  },
+  {
+   "sha": "4813986",
+   "subject": "session review: a task tried again is one planned task, at the plan's figure the person saw (L3-run-2)"
+  },
+  {
+   "sha": "462a930",
+   "subject": "session review: work that waits for the person's answers says so, not \"sent back for changes\" (L3-run-8)"
+  },
+  {
+   "sha": "cab9709",
+   "subject": "review log: no line says the critic started a review that never ran (L3-run-10)"
+  },
+  {
+   "sha": "65ce01a",
+   "subject": "user guide: a stopped step's cost, the session review's estimate and waiting words (L3-run-5, L3-run-2, L3-run-8, L3-run-10)"
+  },
+  {
+   "sha": "217902c",
+   "subject": "session review: a session whose only task failed waits for your decision, not \"sent back for changes\" (L3-run-8 sibling)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L3-run-5: after Stop now during a call, the task read CHF 0.01 (Tasks row, drawer, cap fell) while the session, the session page, Costs > By task and Left this month read CHF 0.00. Root cause, confirmed at base 112227c: the abort branch in packages/runtime/src/agent/loop.ts added the cut-off call's message_start usage to the run's own total and rethrew. It skipped hooks.afterModelCall, the only writer of the ledger row and the session budget, and it skipped model_call_end, which the runner books task and session spend from. The runner then added the run's total to the task as its rest. The bench stand-in sent no usage on message_start, so only the real model showed it.",
+   "u_ids": [
+    "L3-run-5"
+   ],
+   "failing_test_before": "packages/runtime/test/loop.test.ts \"a call the kill switch cuts off keeps the input tokens its message_start reported in the run's usage and cost\" (extended: 1 ledger row with the run's ids, session budget 5000, one model_call_end, run total still 5000) and \"l3-money-engine, run L3: a cut-off call is booked once (L3-run-5) > a call the run's timeout cuts off is booked on the ledger and the session's budget too\"; apps/ui/test/real-daemon.test.ts \"l3-money-engine, run L3 > L3-run-5: a call Stop now cuts off is booked once: the task, the session, Costs and the month say one figure, also after a restart\" (at base: ledger 0 against run cost 62070)",
+   "how": "The abort branch now books the cut-off call like any other call. It calls afterModelCall(ctx, usage, cost, { afterStop: true }), because Stop has already revoked the token; a failed booking is logged and never hides the stop. It then emits model_call_end with stopReason \"error\", and only when the call reported usage. The runner's end-of-run rest is then 0, so nothing is counted twice. Siblings: intake, chat and critic all run through LoopAgentDriver, so they are covered by the same branch. The SDK path already books late usage (R-lateusage), so it needed no change. testenv/src/bench/role-player.ts now sends the input side on message_start, as the Messages API does, so the bench and the stand-in suites walk this path. Docs updated: adding-a-provider.md, runtime.md (kill mid-run) and testing.md (bench stand-in).",
+   "check_in_the_app": "Live check 4 (real model, API key):\n1. Note Left this month in the Start dialog, and the Costs tab's total.\n2. New project from a brief, then Approve and start.\n3. On the session page, press Stop now and confirm within about 1.5 s, while the first task's first step runs.\n4. The Tasks row ('Ready · … · CHF X of …') and the drawer's run line ('… · Stopped · CHF X') name a figure X.\n5. The session page shows 'Spent of this session's budget CHF X', the task's row CHF X, and the result 'Stopped by you. … CHF X.'\n6. Costs > By task lists the task at CHF X, and the total rose by X.\n7. The Start dialog's Left this month fell by X.\n8. Quit and restart Forerunner: the same figures.\n9. At the end of the day, Costs should match the Anthropic console's usage within a few centimes.\n\nBench (stand-in): start with --env FORERUNNER_BENCH_DELAY_MS=1500 --env 'FORERUNNER_BENCH_USAGE=Stop me:40000'. Start a session on the task 'Stop me: write notes.md' and press Stop now during its first step. Before the fix: task CHF 0.03, session CHF 0.00, By task empty. After: CHF 0.03 everywhere, and the month fell by 42020 USD micro."
+  },
+  {
+   "problem": "L3-run-2: the session review set the work against 'an estimate of CHF 0.21' while the plan line, the start line and the Start dialog said about CHF 0.11. It also filed its own 'Plan lists the same task twice' finding, which cost 5 grade points. Root cause, confirmed at base: replan() in packages/runtime/src/session/runner.ts appended the retaken sent-back task as a second item and added that attempt's estimate to plan.estimateUsdMicro. planEstimateOf in packages/critic/src/session-review.ts trusted that total, and the duplicate check flagged the runner's own retry.",
+   "u_ids": [
+    "L3-run-2"
+   ],
+   "failing_test_before": "packages/critic/test/session-review.test.ts \"l3-money-engine, run L3\" (3 cases: the live row's figures 142000+126565 give estimate 142000, 'against an estimate of CHF 0.11' and grade 100; a marked 'again' item with a doubled cost is still an overrun 'with one task tried twice'; a real duplicate that never ran is still a finding); packages/runtime/test/session-keeps-going.test.ts \"l3-money-engine, run L3 > L3-run-2: a task the critic sends back once is one planned task …\" (real tier-0 session review: Details lines 'Plan: 1 task, about CHF 0.11.' and '… against an estimate of CHF 0.11.', grade 100, row items [first, again]); apps/ui/test/real-daemon.test.ts \"l3-money-engine, run L3 > L3-run-2: the session page's Details set the work against the plan's figure …\"",
+   "how": "Runner: replan() and takeHeld() (the larger task taken again) keep the retaken item, marked again: true (new PlanItem.again), and add nothing to the plan's figure. Critic: planEstimateOf counts each task once, at its first item's figure. When a stored row repeats a task (rows written before the fix), it recomputes from the first item per task. The duplicate finding skips a repeat that is marked again, whose task was sent back, or that already ran in the session. An overrun finding now names a second try (new attemptsAgainOf). Docs updated: critic.md (Session review) and runtime.md (replan).",
+   "check_in_the_app": "Live check 4:\n1. Run a coder task the critic sends back once (live check 3's 'Write the Swiss pairing tool with tests' did this).\n2. Open the session's Details. 'Plan: 1 task, about CHF 0.11.' and 'Session review measured: 1 of 1 planned task done; the work cost CHF 0.12 against an estimate of CHF 0.11, and the reviews …' should name the same estimate.\n3. The review line should read 'Session review: accepted (grade 100, 0 findings).', and the Reviews tab should show no 'Plan lists the same task twice'.\n\nBench: --env 'FORERUNNER_BENCH_CRITIC_REJECT=Send back' with the task 'Send back: write page.md'. Before: 'against an estimate of CHF 0.05' and grade 95 with 1 finding. After: 'against an estimate of CHF 0.02' (the plan line's) and 'accepted (grade 100, 0 findings)'."
+  },
+  {
+   "problem": "L3-run-8: a session whose only task asked the person questions read 'Session review: sent back for changes (grade 70, 2 findings).' Nothing was sent back. Root cause: views.ts used the task verdict's words ('revise' means 'sent back for changes') for the session review. The critic gives a session 'revise' on purpose when its work only waits for the person (live 2026-11-02, decision D). Sibling of the same class: a session whose only task failed read the same.",
+   "u_ids": [
+    "L3-run-8"
+   ],
+   "failing_test_before": "packages/runtime/test/event-lines.test.ts \"l3-money-engine, run L3 > L3-run-8: …\" (exact words for answers and decision; accept and human unchanged); apps/ui/test/real-daemon.test.ts \"l3-money-engine, run L3 > L3-run-8: a session whose only task asked the person questions says the work waits for their answers\"; sibling: packages/runtime/test/session-keeps-going.test.ts \"l3-money-engine, run L3 > L3-run-8 sibling: a session whose only task failed …\"",
+   "how": "The runner adds waitsFor to the critic.session_review payload when all of these hold: the review sends nothing back; nothing is done or sent back; every task left waiting or failed holds its card. waitsFor is \"answers\" when every card asks questions, else \"decision\". views.ts then reads 'Session review: the work waits for your answers (grade 70, 2 findings).' or '… waits for your decision …'. The grade and findings stay as the critic gave them. Docs updated: runtime.md and the user guide.",
+   "check_in_the_app": "Live check 4:\n1. Start a task whose brief leaves something only you know, for example 'Contact page in contact.html' without the club's email. The specialist asks you questions.\n2. Open the session's Details. It should read 'Session review: the work waits for your answers (grade 70, 2 findings).' and never 'sent back for changes'.\n3. A session whose only task failed should read '… the work waits for your decision …'.\n\nBench: --env 'FORERUNNER_BENCH_ASK=Contact page' with the task 'Contact page in contact.html'. Before: 'sent back for changes'. After: 'the work waits for your answers'."
+  },
+  {
+   "problem": "L3-run-10 (the started line): the log said 'The critic started a light review (attempt 1).' and then '\"…\" paused before its review: the project's budget … has no room for it.' The review never ran. Root cause: the runner's reviewTask emitted critic.review_started before calling the critic port. The budget hooks then refused the critic's first model call before any model_call_start.",
+   "u_ids": [
+    "L3-run-10"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts \"l3-money-engine, run L3 > L3-run-10: no line says the critic started a review a limit refused before it ran; a review that ran says it started\" (session events read through the daemon's GET /sessions/:id/events)",
+   "how": "A new TaskReviewRequest.onStarted callback carries the start. The runtime critic port calls it on the critic run's first model_call_start, which means the limits allowed the call. The runner writes 'The critic started …' at that point, or just before a verdict reached without a model call. A review refused at a limit or by a credential says only that it paused or waits. The words are unchanged. Docs updated: runtime.md (events) and the user guide.",
+   "check_in_the_app": "Live check 4:\n1. Settings → project budget CHF 0.06 on a project with one writer task ('Write the club motto in motto.txt'), then Start.\n2. When the writer finishes and its review does not fit, the session log shows '\"Write the club motto in motto.txt\" paused before its review: the project's budget of CHF 0.06 has no room for it.' with no 'The critic started a light review' line before it.\n3. Raise the budget. The next session reads 'The critic reviews \"…\": its work was done in an earlier session.', then 'The critic started a light review (attempt 1).', then the verdict."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L3-run-10's second half: the review-only session's plan line names the writer's estimate ('Plan: 1 task, about CHF 0.03.') instead of the review, and its session review measures 'the work cost CHF 0.00 against an estimate of CHF 0.03'.",
+   "why": "This is the spec's cut line. The review-only pass has no plan line of its own today: the generic plan line prints the planner's work estimate. The app also has no estimate for a review's cost at all. The critic is paid from the session's reserve, and only its first call's worst case is ever computed. Fixing it means:\n- a new review-cost estimate (a design choice);\n- marking review-only items at plan time (latestWorkRun + pendingOfRun with a matching attempt);\n- changing the Start dialog's start-check too, or the plan line and the Start dialog would disagree again (R-estimates).\nThe Start dialog and start-check belong to other areas and run C. Suggested follow-up:\n- the runner marks a plan item reviewOnly when its task holds a pending review result, with a work estimate of 0;\n- session.planned carries reviewOnly titles, and the line reads 'Plan: the review of \"X\", whose work was done in an earlier session.' (with 'about CHF N' once a review estimate exists);\n- start-check says the same."
+  },
+  {
+   "problem": "Remove the owner-checklist line 'aborted calls are booked at CHF 0 today'.",
+   "why": "It is not in the repository (git grep finds nothing). It lives only in /tmp/frbench/wave15-areas.json:810 (owner_checklist_items), which the session lead keeps. Suggested replacement: 'Anthropic console: after a day with a Stop now and a Cancel, the console's usage matches Costs within a few centimes.'"
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan), rerun after the last commit",
+   "result": "EXIT 0; unit: 493 files, 5235 passed, 7 skipped. docs:check against origin/main cannot diff in this worktree ('nothing to check'), so I ran it separately: node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0 gave 'docs-check: ok (18 files)'. Secret scan clean (2112 files)."
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "EXIT 0: 5 files passed, 6 skipped (Postgres-backed, no FORERUNNER_TEST_PG, as expected); 30 tests passed, 77 skipped."
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "EXIT 0: 13 files, 25 passed, 1 skipped."
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "EXIT 0: 91 files, 1123 tests passed. After the last commit I reran the 'l3-money-engine, run L3' block of real-daemon.test.ts: 3 passed."
+  },
+  {
+   "command": "Failing-first checks",
+   "result": "Every new test failed at the base first:\n- real-daemon L3-run-5 with the base loop.ts restored: ledger 0 against run 62070.\n- real-daemon L3-run-2 and session-keeps-going L3-run-2 with the base runner.ts and session-review.ts restored.\n- critic unit tests (3 failed) before the session-review fix.\n- event-lines and real-daemon L3-run-8 ('sent back for changes').\n- budget-pause L3-run-10 ('The critic started' present).\n- session-keeps-going L3-run-8 sibling."
+  },
+  {
+   "command": "Playwright (local config)",
+   "result": "Not run: I changed no UI source, only apps/ui/test/real-daemon.test.ts, which the UI vitest suite covers. apps/ui/playwright.local.config.ts was copied as instructed and is git-ignored."
+  },
+  {
+   "command": "cargo fmt/clippy/test",
+   "result": "Not run: the desktop shell was not touched."
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "Not run: no chat, page, file or record channel to a model was widened. The changes are booking, plan bookkeeping and log words."
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "Nothing found. The working tree is clean and all work is committed on fix/l3-money-engine (the checked-out branch, so it follows each commit; git branch -f is refused for a checked-out branch)."
+  },
+  {
+   "command": "Bench walks (fix-l3-money-engine, --provider bench, ports 48822/2422)",
+   "result": "BEFORE reproduced all three:\n- Stop: task CHF 0.03, session CHF 0.00, By task [].\n- Send back: 'against an estimate of CHF 0.05', 'accepted (grade 95, 1 finding)'.\n- Ask: 'sent back for changes (grade 70, 2 findings)'.\nAFTER, all fixed:\n- Stop: CHF 0.03 on the task, the session, the session row, By task, the Costs total and the month delta (42020 USD micro each).\n- Send back: 'against an estimate of CHF 0.02', 'accepted (grade 100, 0 findings)'.\n- Ask: 'the work waits for your answers (grade 70, 2 findings)'.\nThe bench is stopped and its home deleted."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-l3-money-engine/steps/01-before-stop-tasks-tab.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/02-before-stop-drawer.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/03-before-stop-costs-tab.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/04-before-stop-session.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/07-before-sendback-session-details.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/09-before-ask-ask-session-details.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/before-walk.json",
+   "/tmp/frbench/fix-l3-money-engine/steps/before-ask-walk.json"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l3-money-engine/steps/10-after-stop-tasks-tab.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/11-after-stop-drawer.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/12-after-stop-costs-tab.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/13-after-stop-session.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/16-after-sendback-session-details.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/18-after-ask-session-details.png",
+   "/tmp/frbench/fix-l3-money-engine/steps/after-walk.json"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/loop.test.ts \"a call the kill switch cuts off keeps the input tokens its message_start reported in the run's usage and cost\"",
+   "why": "Extended, not weakened. It now also asserts the ledger row, the session budget and the model_call_end that the fix adds. The run's total is still 5000."
+  }
+ ],
+ "new_problems": [
+  "A session review whose 'revise' verdict has another cause still reads 'Session review: sent back for changes' for the session. Examples:\n- a cost overrun;\n- a plan estimate above the session budget;\n- spend without a plan.\nNothing is sent back in these cases either. Evidence: views.ts critic.session_review falls back to verdictWords('revise'); only the waits-for-you cases (answers, decision, failed with a card) got their own words here. It needs words that name the finding's kind (e.g. 'the work cost more than planned'). Words item for l3-small or a later run.",
+  "On a routed provider (intake, chat, critic), a call cut off by Stop or a timeout is booked on the run's current billing source: the run's default, or the last routed call's source. The routed provider's error event carries only a sourceId, not the source's billing kind, so if the router had moved the cut-off call to another source, the ledger row names the earlier one. Minor. Evidence: provider/routed.ts yields { ...failed, sourceId } on error, and message_end alone carries billing.",
+  "docs/maintainers/critic.md still says 'The daemon's critic.session_review_metrics log line still reads actualUsdMicro (views.ts, another area's region)'. That is stale since W15B-19 (views.ts:751 reads workUsdMicro). I left it, since it is not this area's sentence."
+ ],
+ "notes_for_other_areas": [
+  "loop.ts abort branch (C3 d1109-chat-depth, D3-12): when a cut-off call reported usage, the branch now does three things before rethrowing controller.signal.reason. It runs `await hooks.afterModelCall(ctx, response.usage, callCost, { afterStop: true })` in a try/catch that only logs. It adds the call to the run's usage and cost as before. It emits `model_call_end { turn, usage, costUsdMicro: callCost, ttftMs, stopReason: \"error\" }`. A call with no usage books nothing and emits no end, as before. So an aborted chat turn through LoopAgentDriver now has a ledger row equal to its cost: D3-12's 'call's cost equals the ledger's rows for the turn' holds through this branch.",
+  "critic/src/session-review.ts (C6 d1109-selftasks-chat, SC-13):\n- SessionPlanItemLike gains `again?: boolean`, and planItemsOf reads it.\n- planEstimateOf(plan, items) counts each taskId once, at its first non-again item. It recomputes from items whenever they repeat a task or carry again; otherwise it returns the stored total as before.\n- New export attemptsAgainOf(items) counts repeats plus again items; the overrun finding uses it to append ', with one task tried twice' or ', with N more attempts of tasks tried again'.\n- In sessionChecks, two sets are built before the plan-items loop: sentBackHere (handoff.sent_back) and ranHereBefore (non-critic runs of the session). The 'Plan lists the same task twice' check skips a repeat when item.again or either set has the task.\n- SC-13's split/dropped counting at the duplicate check should keep these exemptions.",
+  "runner.ts (C2 to C6 rebasing on the replan):\n- PlanItem gains `again?: boolean`.\n- replan() maps cut.items to `{ ...i, again: true }` when current.items already has that taskId, and adds only the non-again items' estimates to plan.estimateUsdMicro. The setPlan reason, the session.replanned event (whose estimateUsdMicro is still cut.estimateUsdMicro) and the returned queue items (cut.items, unmarked) are unchanged.\n- takeHeld() marks the larger task again when it is already in items, and then adds no room to the plan's figure; plan.oversized.roomUsdMicro is still overwritten as before.",
+  "runner.ts reviewTask (TR/critic areas): critic.review_started is no longer emitted before critic.reviewTask. TaskReviewRequest (loop/ports.ts) gains `onStarted?: () => void`. loop/critic.ts passes `onEvent` to CriticService.review's context and calls onStarted on the first `model_call_start`. The runner emits the start line then, or just before the verdict when no model call ran, and never on a refusal or wait. A CriticPort test double that never calls onStarted still gets the line, right before its verdict.",
+  "critic.session_review payload gains an optional `waitsFor: \"answers\" | \"decision\"`, set by the runner from needsYouNow (paused cards excluded) plus failedNow, all holding open cards. views.ts renders 'Session review: the work waits for your answers|decision (grade N, M findings).' A later area that rewords this line should update apps/ui/test/real-daemon.test.ts, event-lines.test.ts and session-keeps-going.test.ts ('l3-money-engine, run L3').",
+  "testenv/src/bench/role-player.ts: every reply's message_start now carries `usage` (input, cache read and cache write tokens, output 0). A stand-in call cut off by Stop now or a timeout now costs its input on the ledger, the session and the task. Tests that stop a stand-in mid-call and expect CHF 0.00 would see a few hundred micro-USD; none in the suite did.",
+  "Suggested UPDATE-LOG/CHANGELOG lines for the session lead:\n- 'A step Stop now cuts off is booked once: the task, the session, Costs and the month say the same figure (L3-run-5).'\n- 'The session review sets the work against the plan's estimate you saw; a task done again counts once (L3-run-2).'\n- 'A session whose work waits for your answers (or a failed task's card) says so instead of \"sent back for changes\" (L3-run-8).'\n- 'The log no longer says the critic started a review a budget refused before it ran (L3-run-10).'\nNo new ADR: no decision changed."
+ ]
+}

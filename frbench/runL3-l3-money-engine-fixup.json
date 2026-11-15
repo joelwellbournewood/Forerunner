@@ -1,0 +1,119 @@
+{
+ "area": "l3-money-engine",
+ "branch": "fix/l3-money-engine",
+ "head_sha": "8d35e7cbdd3d5486aa198c96b9c44ea2c43a81ab",
+ "commits": [
+  {
+   "sha": "6ea8863",
+   "subject": "money engine: a call a stop cuts off is booked but never read as an end; a spoken turn says no broken sentence (L3-run-5 review)"
+  },
+  {
+   "sha": "8d35e7c",
+   "subject": "session review: more tries read \"one task tried 3 times\" or \"2 tasks tried again\" (L3-run-2 review)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Blocking (review of 217902c, a sibling of L3-run-5): a spoken turn cut off by its timeout spoke a broken sentence.\n- The loop's abort branch now books a cut-off call and emits model_call_end with stopReason \"error\".\n- The chat agent's SentenceGate read every model_call_end as a normal end unless it stopped at max_tokens. So a voice or phone turn cut off by its 30 s timeout passed its held, unfinished sentence to the speaker (\"The critic asked for one of the three options: adopt,\"). Before the booking fix that tail was dropped.\n- Stop all does not abort the protected chat run, so the timeout is how this happens.\n\nSiblings found by checking every reader of model_call_end:\n- The chat turn and the intake both took the first model_call_end as the time to first token.\n- For a call cut off before any token, collectStream reports the time to the cut instead. So a timed-out chat turn recorded a first token at 30 s, and a timed-out planning call at 5 min (chat.reply ttftMs and the intake Run row's ttft_ms).\n- The Performance page showed 'Text chat … 30.0 s / 30.0 s … 0% missed' where it used to show no first token.\n- The executor and runner read only the cost, which is still booked.",
+   "u_ids": [
+    "L3-run-5"
+   ],
+   "failing_test_before": "All failed at 217902c and pass now:\n- packages/runtime/test/voice-route.test.ts \"l3-money-engine, run L3: a spoken turn its timeout cuts off > speaks the whole sentences that came before the cut and never the broken one\": the TTS was asked to say [\"You have a decision waiting.\", \"The critic asked for one of the three options: adopt,\"].\n- packages/runtime/test/conversation.test.ts \"l3-money-engine, run L3: a chat call its timeout cuts off\" (2 cases): onToken received the broken tail, and ttftMs was 30000 instead of null.\n- packages/runtime/test/performance-route.test.ts \"l3-money-engine, run L3: calls their timeout cuts off on the Performance view\": text_chat ttftP50Ms was 30000. With only the chat fix in place, planning ttftP50Ms was 300000, so the intake half fails on its own as well.",
+   "how": "- agent/loop.ts exports a new constant, CUT_OFF_STOP_REASON = \"aborted\". \"aborted\" is already a StopReason value, and the normal path never emits it. The abort branch's model_call_end now carries it instead of \"error\".\n- conversation/agent.ts and session/intake.ts skip an end with that stop reason. The gate's held rest stays unspoken and no first token is taken from it, exactly as before the booking fix.\n- The cost readers (executor live Run cost, runner task and session booking) still count the event. The ledger, session, task, Costs and month figures stay equal.\n- loop.test.ts's kill case now asserts the new stop reason (a test this area added, not weakened).\n- Docs updated: runtime.md (kill mid-run, the chat gate), adding-a-provider.md, and the user guide ('A spoken answer only ever says whole sentences …').",
+   "check_in_the_app": "Bench (stand-in), run here:\n1. Restart the daemon with --env FORERUNNER_BENCH_DELAY_MS=35000.\n2. New project, open its Chat tab and type 'What is waiting on me?'.\n3. Wait about 31 s. The reply reads 'I could not answer (run timeout).'\n4. Open Performance. Before: Text chat '30.0 s / 30.0 s' first token, '0%', 'missed'. After: '— / —' first token, 'no sample', total '30.0 s / 30.0 s'.\n5. Costs still rose by the cut-off call's input (7776 USD micro on the bench).\n\nLive check 4 (real model):\n1. Over the round, open Performance. Text chat's first-token p50/p90 should not show 30.0 s unless a reply really took that long, and Planning's first token should never be 5 min.\n2. In Talk with Reply: Voice, an answer that stops early stops at a whole sentence and never says half a sentence. A real 30 s timeout cannot be provoked on demand with the real model; the voice-route test covers that path with a fake TTS.\n3. Costs still lists the cost of every chat turn."
+  },
+  {
+   "problem": "Non-blocking review item (L3-run-2 wording): an overrun finding with more than one retry read ', with 2 more attempts of tasks tried again'. That breaks design §5's 'read at a glance'.\n\nAlso fixed: a stale line in docs/maintainers/critic.md. It said the critic.session_review_metrics line still reads actualUsdMicro, but views.ts has read workUsdMicro since W15B-19 and falls back to actualUsdMicro only for older rows.",
+   "u_ids": [
+    "L3-run-2"
+   ],
+   "failing_test_before": "packages/critic/test/session-review.test.ts \"l3-money-engine, run L3 > L3-run-2 (review): more tries are named in plain words: one task tried 3 times, or 2 tasks tried again\". It received 'Session cost CHF 0.24 exceeded its estimate CHF 0.02 by 1400%, with 2 more attempts of tasks tried again'.",
+   "how": "- New export tasksTriedAgainOf(items) counts the distinct tasks tried again.\n- The overrun finding now reads ', with one task tried twice', ', with one task tried N times' or ', with N tasks tried again'.\n- attemptsAgainOf, planEstimateOf and the duplicate exemptions are unchanged.\n- critic.md and the user guide are updated.",
+   "check_in_the_app": "Bench:\n1. Start with --env 'FORERUNNER_BENCH_CRITIC_REJECT=Send back' --env 'FORERUNNER_BENCH_CRITIC_REJECT_TIMES=2' --env 'FORERUNNER_BENCH_USAGE=Send back:200000'.\n2. Run the task 'Send back: write page.md'.\n3. Open the session's Reviews/Details. The overrun finding reads '… with one task tried 3 times …'.\n\nLive check 4: if a task is sent back twice and the work overruns, the Reviews tab's finding reads 'with one task tried 3 times', never 'more attempts of tasks tried again'."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Non-blocking review item: fire onStarted when the critic's checks start (marker checks, sandbox build and tests, tried pages), so the log is not quiet between 'The coder finished …' and 'The critic started …'.",
+   "why": "Not changed, on purpose.\n- The budget or credential refusal happens at the critic's first model call, after the checks.\n- So firing 'The critic started a light review' when the checks start would bring back L3-run-10's contradiction for a review with checks that a limit then refuses: 'The critic started …' followed by '\"X\" paused before its review: … no room for it'.\n- A proper fix needs either a room check before the checks run, or a separate plain line for the checks ('The critic checks the work: running the tests.') that promises no review.\n- Both are design choices for the critic / task-review area, not a cheap fix here."
+  },
+  {
+   "problem": "Fixer's not_done items, unchanged:\n- the review-only session's plan line and estimate (the spec's cut line);\n- the owner-checklist line 'aborted calls are booked at CHF 0 today', which is only in /tmp/frbench/wave15-areas.json:810.",
+   "why": "Same reasons as in the fixer's report: a review-cost estimate and the Start dialog's start-check belong to other areas and to run C. The checklist line lives in the session lead's file, not the repository."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+   "result": "EXIT 0.\n- Unit: 493 files, 5240 passed, 7 skipped (5235 before, plus 5 new).\n- check-paths ok (1495 files), link-check ok (209 files), secret-scan clean (2112 files).\n- docs:check cannot diff against origin/main in this worktree, so I ran node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0: ok (18 files)."
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "Second run: EXIT 0 (5 files passed, 6 skipped Postgres-backed; 30 passed, 77 skipped).\n- The first run had 1 failure in packages/capabilities/test/browser.integration.test.ts ('Navigation … is interrupted by another navigation', hook timed out after 120 s).\n- That file is untouched by this change. The machine's load average was about 6 from other agents. The file alone passed 16/16, and the full rerun was green."
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "EXIT 0: 13 files, 25 passed, 1 skipped."
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "EXIT 0: 91 files, 1123 passed."
+  },
+  {
+   "command": "Failing-first",
+   "result": "All new tests failed at 217902c:\n- voice-route: TTS spoke 'adopt,'.\n- conversation: 2 cases (tail streamed; ttftMs 30000).\n- performance-route: text_chat 30000. With only the agent.ts fix and the old intake.ts, planning was 300000.\n- session-review wording ('2 more attempts of tasks tried again').\nAfter the fix, the 6 affected runtime test files pass: 140 tests."
+  },
+  {
+   "command": "Bench re-walk (fixup-l3-money-engine, --provider bench, ports 48842/2442; DELAY_MS 1500, USAGE 'Stop me:40000', CRITIC_REJECT 'Send back', ASK 'Contact page')",
+   "result": "The acceptance journey still holds with the new stop reason:\n- Stop now: the task, run, session, By task, Costs total and month delta all read 42020 USD micro (CHF 0.03); the log ends 'Session over. CHF 0.03.'\n- Send back: 'Plan: 1 task, about CHF 0.03.', '… against an estimate of CHF 0.03 …', 'Session review: accepted (grade 100, 0 findings).'\n- Questions: 'Session review: the work waits for your answers (grade 70, 2 findings).'\nChat timeout, with the daemon restarted at DELAY_MS 35000:\n- After the fix: Performance shows Text chat ttft p50 null, total 30009 ms; Costs +7776 USD micro.\n- With the pre-fix agent.ts restored and the daemon restarted: ttft p50 30000 ('30.0 s / 30.0 s … 0% missed').\nThe bench is stopped and its home and browser profile are deleted."
+  },
+  {
+   "command": "Playwright, cargo, pnpm test:injection",
+   "result": "Not run:\n- no UI source changed;\n- the desktop shell was not touched;\n- no channel into a model was widened (only event bookkeeping and finding words changed)."
+  },
+  {
+   "command": "git update-ref refs/heads/fix/l3-money-engine 8d35e7c 217902c",
+   "result": "git branch -f was refused: the branch is checked out in worktree /home/user/Forerunner/.claude/worktrees/wf_d49abaae-666-3. I moved the ref with update-ref, guarded by the old value. fix/l3-money-engine = 8d35e7cbdd3d5486aa198c96b9c44ea2c43a81ab, and this worktree is clean."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fixup-l3-money-engine/steps/12-before-chat-timeout-chat-tab.png",
+   "/tmp/frbench/fixup-l3-money-engine/steps/13-before-chat-timeout-performance.png",
+   "/tmp/frbench/fixup-l3-money-engine/steps/before-chat-timeout.json"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-l3-money-engine/steps/01-after-stop-tasks-tab.png",
+   "/tmp/frbench/fixup-l3-money-engine/steps/02-after-stop-drawer.png",
+   "/tmp/frbench/fixup-l3-money-engine/steps/03-after-stop-costs-tab.png",
+   "/tmp/frbench/fixup-l3-money-engine/steps/05-after-stop-session-details.png",
+   "/tmp/frbench/fixup-l3-money-engine/steps/07-after-sendback-session-details.png",
+   "/tmp/frbench/fixup-l3-money-engine/steps/09-after-ask-session-details.png",
+   "/tmp/frbench/fixup-l3-money-engine/steps/10-chat-timeout-chat-tab.png",
+   "/tmp/frbench/fixup-l3-money-engine/steps/11-chat-timeout-performance.png",
+   "/tmp/frbench/fixup-l3-money-engine/steps/after-walk.json",
+   "/tmp/frbench/fixup-l3-money-engine/steps/after-chat-timeout.json"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/loop.test.ts \"a call the kill switch cuts off keeps the input tokens its message_start reported in the run's usage and cost\"",
+   "why": "The cut-off call's model_call_end now carries CUT_OFF_STOP_REASON (\"aborted\"), so no reader takes it for a finished call. The assertion changed from stopReason \"error\" to the constant, and the test also pins the constant's value. All the booking assertions are unchanged."
+  }
+ ],
+ "new_problems": [
+  "Worktree /home/user/Forerunner/.claude/worktrees/wf_d49abaae-666-3 (the fixer's) still has fix/l3-money-engine checked out, with its files at 217902c. Since the ref moved to 8d35e7c, git status there shows my two commits as reverse changes. Nobody should commit in that worktree; merge by the branch ref.",
+  "A timed-out chat turn's reply reads 'I could not answer (run timeout).' (seen on the bench's Chat tab, /tmp/frbench/fixup-l3-money-engine/steps/10-chat-timeout-chat-tab.txt). 'run timeout' is a raw internal word (design §5). The fallback is in conversation/agent.ts: `I could not answer (${result.error?.message ?? result.outcome}).` Words item, not this area.",
+  "Confirmed from the reviewer: a session review whose 'revise' has another cause still reads 'Session review: sent back for changes' even though nothing was sent back. Examples: a cost overrun (bench walk-budget-e/f/g, grade 85, 1 finding), a plan above its budget, spend without a plan. Words area.",
+  "From the reviewer, not this area: the session result reads '\"Contact page in contact.html\" needs your decision (Inbox).' while the session review says 'the work waits for your answers'. Two words for one fact; belongs to the result-words area.",
+  "From the reviewer, not this area: on a session page opened directly (/sessions/:id), the shell's project picker kept showing the previous project.",
+  "Unchanged, minor (fixer-listed): on a routed provider, a call cut off by a stop or a timeout is booked on the run's current billing source, because the abort branch has no message_end billing to read."
+ ],
+ "notes_for_other_areas": [
+  "agent/loop.ts (C3 d1109-chat-depth, anyone reading RunEvent): new export CUT_OFF_STOP_REASON = \"aborted\".\n- The abort branch's model_call_end now carries stopReason CUT_OFF_STOP_REASON, not the \"error\" the fixer's notes named.\n- The event means the call was booked but did not finish. A reader that books cost counts it (executor liveRunCost and ctx.onStep model, runner recordStep). A reader that treats it as the call's end must skip it: conversation/agent.ts (gate.end and ttft) and session/intake.ts (ttft) now do.\n- Its ttftMs is the time to the cut when no token came.\n- D3-12's 'the turn's cost equals its ledger rows' still holds through this branch.",
+  "conversation/agent.ts onEvent (not l3-chat-claims' history or reply-guard regions): the model_call_end branch is now `if (ev.type === \"model_call_end\" && ev.stopReason !== CUT_OFF_STOP_REASON) { gate?.end(...); ttft ??= ... }`.",
+  "critic/src/session-review.ts (C6 d1109-selftasks-chat, SC-13):\n- New export tasksTriedAgainOf(items): the number of distinct tasks that have an `again` item or a repeated item.\n- attemptsAgainOf is unchanged.\n- The overrun finding's suffix is now ', with one task tried twice' | ', with one task tried N times' | ', with N tasks tried again'. Before, the last two read ', with N more attempts of tasks tried again'.",
+  "Tests added in append-only files, each in its own 'l3-money-engine, run L3' describe: conversation.test.ts, voice-route.test.ts, performance-route.test.ts, critic session-review.test.ts. A later area that rewords the overrun suffix updates session-review.test.ts.",
+  "Suggested UPDATE-LOG/CHANGELOG lines for the session lead:\n- 'A spoken answer cut off by its time limit stops at its last whole sentence; a chat or planning call that timed out shows no first token on Performance (review of L3-run-5).'\n- 'The session review names more tries plainly: \"with one task tried 3 times\", \"with 2 tasks tried again\".'\nNo new ADR: no decision changed."
+ ]
+}

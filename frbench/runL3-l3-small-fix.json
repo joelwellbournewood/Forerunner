@@ -1,0 +1,265 @@
+{
+ "area": "l3-small",
+ "branch": "fix/l3-small",
+ "head_sha": "ed6e821d2575a545e900e3024ca7163672289d25",
+ "commits": [
+  {
+   "sha": "50f5121",
+   "subject": "runtime: the brief quotes only what the person typed, never a button's label (L3-github-4)"
+  },
+  {
+   "sha": "6d7e7b3",
+   "subject": "commands: a same-title word from a refusal keeps picking its task after a change (L3-run-6)"
+  },
+  {
+   "sha": "e7c3718",
+   "subject": "docs: the status file names a session by its start and says how it ended in words (L3-github-6)"
+  },
+  {
+   "sha": "a847897",
+   "subject": "settings: a project's name is never made a possessive (L3-github-8)"
+  },
+  {
+   "sha": "0a8d46d",
+   "subject": "runtime: a refused step says what was refused and why (L3-run-7)"
+  },
+  {
+   "sha": "254ecd0",
+   "subject": "workspace: the commits in the person's folder name the task, never its id (L3-run-11)"
+  },
+  {
+   "sha": "14a2272",
+   "subject": "inbox, reviews: a quoted reason has no findings tag; no \"To fix\" line without a fix (L3-research-3)"
+  },
+  {
+   "sha": "03f4185",
+   "subject": "session page: Details in words; types and payloads behind \"Show the raw events\" (L3-run-12)"
+  },
+  {
+   "sha": "683092d",
+   "subject": "user guide: the note for the agent, same-title words in Chat and the status file's entries (L3-github-4, L3-run-6, L3-github-6)"
+  },
+  {
+   "sha": "ed6e821",
+   "subject": "real-daemon: the in-app status file names the session by its start (L3-github-6)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L3-github-4 (minor): the agent's brief carried '## The person's note on this task \"Redo\"' or '\"Edit <title>\"' after the person pressed Redo or Edit with the note field empty. A note the person typed came twice and was never used up.",
+   "u_ids": [
+    "L3-github-4"
+   ],
+   "failing_test_before": "packages/runtime/test/brief-person-note.test.ts, describe 'l3-small, run L3: the brief carries what the person typed, never a button's label (L3-github-4)'. All 4 cases failed at the base: Redo with no note; Edit of only the budget; a typed note exactly once, after a restart, and not again after its work finished; Stop then Resume with no note. They run on the composed daemon through POST /tasks/:id/action and PUT /tasks/:id.",
+   "how": "Root cause: personNoteOn (session/task-context.ts) quoted the newest change-log row's words_used. For a change made in the app, words_used is the button's label when no note was typed (server.ts fills in `Edit <title>`, ACTION_WORDS, `move to <status>`, 'Change what it waits for'). I deleted personNoteOn and its section, as the verifier preferred. A typed note reaches the brief once, as the queued 'About \"<title>\": …' note (queueNote, then notesForTask and renderQueueNotes), and is used up by work that finished (design §4.7). executor-brief.test.ts's retry case now passes the typed note as a queued note and asserts that no label is quoted. Docs: runtime.md (what else a task's brief carries) and the user guide.",
+   "check_in_the_app": "Live check 4: (1) On a done task, Tasks row › Redo, leave 'Note for the agent' empty › Redo. Start a session. In <home>/bench/model-calls.jsonl the specialist's first message for that task has no '## The person's note on this task' and no '\"Redo\"'. (2) Open a ready task's drawer › Edit, change only the budget, no note › Save, then Start. The brief has no 'Edit <title>'. (3) Redo with the note 'Make the motto shorter', then Start. The brief contains the note exactly once, under 'Left for this session by the human'. After that run is accepted, Redo again with no note and Start: the note is gone. (4) Stop a running task, then Resume it, both with no note. The next brief quotes neither 'Stop' nor 'Resume'. Stand-in bench evidence: /tmp/frbench/fix-l3-small/walk-result.json shows redoBriefHasPersonsNote=false and redoBriefHasRedoLabel=false over 4 specialist calls."
+  },
+  {
+   "problem": "L3-run-6 (minor): Chat suggested 'Write the guide (the older one)'. After the older task was paused with exactly those words, the same words were refused with 'Two tasks are called \"Write the guide\": the paused one and the ready one…'.",
+   "u_ids": [
+    "L3-run-6"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts, describe 'l3-small, run L3: a same-title word from a refusal keeps picking its task (L3-run-6)': pause with the offered words, then resume and redo with the same words, with no model call. Also packages/commands/test/w15-chat.test.ts, describe 'l3-small, run L3: same-title words keep picking after a change (L3-run-6)': '(the done one)' still picks after both tasks got PRs, and '#17' still picks with a third task that has no PR. All three failed against the base task.ts.",
+   "how": "Root cause: findTask tested the person's word only against the one kind of tag sameTitleTags chose at that moment (PRs, else states, else age). The new sameTitlePickers(group) gives each task every kind of word that tells it apart: its PR number when unique in the group, its state word when unique, and its age word always. pickSameTitled(group, word) returns the one task the word picks. The refusal's sentence is unchanged (sameTitleTags). All four are exported. Docs: commands.md (the W15-37 note) and the user guide.",
+   "check_in_the_app": "Live check 4, Talk or the project's Chat: 'add a task: Write the guide' twice. 'pause Write the guide' gets the older/newer refusal with the example 'Write the guide (the older one)'. 'pause Write the guide (the older one)' › Yes: the older one is paused. 'resume Write the guide (the older one)' reads back 'Resume \"Write the guide\"? …' › Yes: the older one is ready, with no refusal and no model call. Pause it again; 'redo Write the guide (the older one)' answers '\"Write the guide\" is paused, not cancelled or done.', not the same-title refusal. Bench screenshots: /tmp/frbench/fix-l3-small/steps/01..04-c*.png."
+  },
+  {
+   "problem": "L3-github-6 (words): the status PR's docs/status.md on GitHub and the Docs tab read '### 2026-11-15 session 01a1ddbe-…' and '- Note: stop reason completed; spent CHF 0.09'.",
+   "u_ids": [
+    "L3-github-6"
+   ],
+   "failing_test_before": "packages/runtime/test/loop-docs.test.ts, describe 'l3-small, run L3: the status file names the session by its start, in words (L3-github-6)'. Both cases failed at the base: the fr/status branch's file after a runner session, and the in-app copy the Docs tab reads.",
+   "how": "memory's StatusUpdate gains startedAt, which ProjectDocs.writeSessionStatus fills from session.started_at. The entry heading is '### Session started 2026-11-15 05:46 UTC' ('### Session ended <when>' when the start is not known), never the id. The runner's note says how the session ended in the Sessions list's words (endedStatusText, using the same blocked/paused sets as the handoff) plus the spend: 'Done. Spent CHF 0.24.' or 'Ended: 1 task needs you. Spent CHF 0.09.'. Dedupe: the same entry again replaces itself, so a rerun changes nothing; another session that started in the same minute keeps its own entry. Docs: memory.md, runtime.md and the user guide.",
+   "check_in_the_app": "Live check 4: on a repository project, turn on Settings › Advanced › Other settings › Status pull request, then run a session. On GitHub, open the status PR › Files changed › docs/status.md. The entry reads '### Session started <date> <HH:MM> UTC' and '- Note: Done. Spent CHF <x>.' (or 'Ended: … needs you…'), with no UUID and no 'stop reason'. With the setting off, the project's Docs › Status shows the same. Bench: /tmp/frbench/fix-l3-small/steps/14-g6-status-md.txt."
+  },
+  {
+   "problem": "L3-github-8 (words): Settings and the Who merges change dialog read 'on Kite trips's Overview' and 'The highest model Kite notes's runs may use'.",
+   "u_ids": [
+    "L3-github-8"
+   ],
+   "failing_test_before": "packages/runtime/test/settings-undo-routes.test.ts, describe 'l3-small, run L3: a project's name is never made a possessive (L3-github-8)', calls settingsView with 'Kite trips' and 'Kite notes'. apps/ui/test/settings-all.test.tsx, describe 'l3-small, run L3: Settings never makes a project's name a possessive (L3-github-8)', checks the row and its change dialog. Both failed at the base.",
+   "how": "settings-view.ts now reads 'The highest model the runs of <project> may use: …' and '… waits for your Merge on the Overview of <project>), or …'. The fake daemon and the UI fixture follow. Docs: runtime.md (Every setting in Settings).",
+   "check_in_the_app": "Live check 4: name a repository project 'Kite trips'. Open Settings › Advanced › Other settings. The Highest model row reads 'The highest model the runs of Kite trips may use…'. Press Change on 'Who merges accepted work': the dialog reads '…waits for your Merge on the Overview of Kite trips)…'. Nowhere 'trips's'. Bench (real daemon GET /settings): /tmp/frbench/fix-l3-small/steps/13-g8-settings-api-rows.txt."
+  },
+  {
+   "problem": "L3-run-7 (words): 'was not allowed to use write file' appeared in the drawer and the session log, among the coder's writes, when only one write outside the folder was refused.",
+   "u_ids": [
+    "L3-run-7"
+   ],
+   "failing_test_before": "packages/runtime/test/executor-brief.test.ts, describe 'l3-small, run L3: a refused step says what was refused (L3-run-7)'. Both cases failed at the base: (1) through LoopTaskExecutor's onStep, a write to /tmp/players-readme.json and a tool not given give the lines the session log shows; (2) each refusal code's words.",
+   "how": "Root cause: stepLine said 'was not allowed to use <tool>' for every denied step, and the hook's code never reached it. The executor now passes tool_denied's code as TaskStep.deniedCode. refusedLine words each code: path_not_allowed 'was not allowed to write /tmp/x.json (outside the project's folder)'; domain_not_allowed '…read the web page <host/path> (not a site this task may read)'; tool_not_allowed 'was not allowed to use delete repo (not one of its tools)'; approval_required '…: you said no'; autonomy_insufficient '… without you'; validation 'could not write src/a.js: the call was not valid'. That last case was a sibling: an invalid call also read 'not allowed'. Docs: runtime.md (Live steps) and the user guide.",
+   "check_in_the_app": "Live check 4: run a coder task whose model tries to write outside the project's folder (as live R1 did with /tmp/players-readme.json). The session log and the task drawer read 'was not allowed to write /tmp/players-readme.json (outside the project's folder)' beside the 'wrote …' lines, never 'was not allowed to use write file'. The stand-in bench has no knob to make a specialist write outside, so this was not walked on the bench; the executor-level test covers it."
+  },
+  {
+   "problem": "L3-run-11 (words): git log in the project's folder showed 'Workspace before \"<title>\" (task 01a1ddb7-…)' once per attempt.",
+   "u_ids": [
+    "L3-run-11"
+   ],
+   "failing_test_before": "packages/runtime/test/workspace-runs.test.ts, describe 'l3-small, run L3: the folder's commits name the task, never its id (L3-run-11)'. Two attempts in a folder project: no id and no '(task ' in any message, and scriptsBefore still finds the folder as it was before the task. It failed at the base on the id in the message.",
+   "how": "Root cause: the id in the subject was the lookup key for loop/critic.ts (the diff of kept work) and loop/project-checks.ts scriptsBefore. The subject is now snapshotSubject: 'Workspace before \"<title>\"'. When the snapshot commit is made, the executor sets refs of Forerunner's own: snapshotRef (refs/forerunner/before/<task>, the last snapshot) and firstSnapshotRef (refs/forerunner/first/<task>). Both lookups read the refs and still read an earlier version's '(task <id>)' commits. builtOnBy accepts both subjects. Siblings fixed: 'Set aside: \"<title>\" was cancelled' and 'Left by a failed run of \"<title>\"' lost the id too; nothing looks those up by message. Docs: capabilities.md and runtime.md.",
+   "check_in_the_app": "Live check 4: run a task in a folder project (no repository) that needs two attempts, then run `git log` in <home>/data/projects/<id>/workspace (or in the folder the Overview names). Every line is 'Workspace before \"<title>\"' or the session's own commits, and no UUID appears. Then change package.json scripts in a task: the project's checks still run the scripts 'as they were before the task'. Bench: /tmp/frbench/fix-l3-small/steps/15-r11-git-log.txt."
+  },
+  {
+   "problem": "L3-run-12 (words): the session page's Details showed '#47 critic.session_review', a JSON block with reviewId, usdMicro and chfMicro, and 'session.ended' with {\"status\", \"stopReason\"}.",
+   "u_ids": [
+    "L3-run-12"
+   ],
+   "failing_test_before": "apps/ui/test/session.test.tsx, describe 'l3-small, run L3: Details in words, the raw events behind their own switch (L3-run-12)'. It failed at the base: event-type elements were shown under Details.",
+   "how": "Every event already has a line in words (event-lines.ts, with fallbackLine for unknown types). Details now shows those lines and the level filters. A second checkbox appears under it only while Details is on: 'Show the raw events' (raw-toggle). It reveals #seq, the event type and the JSON for a bug report. This is the cut line the area allows. Docs: apps.md and the user guide.",
+   "check_in_the_app": "Live check 4: open an ended session's page and tick Details. The internal steps read in words ('Session review: accepted (grade 95, 1 finding).', 'Session over: 1 done. CHF 0.18.'), with no 'critic.session_review', no '#47', no '\"reviewId\"', no usdMicro. Tick 'Show the raw events': the types and JSON appear. Untick Details: both go away. Bench: /tmp/frbench/fix-l3-small/steps/07-r12-session-details-in-words.png and 08-r12-session-show-the-raw-events.png."
+  },
+  {
+   "problem": "L3-research-3 (words): the questions card quoted a raw findings tag ('The specialist said: \"blocker: notes/plan.md is missing.\"'), and Reviews showed a critical finding with 'To fix: Resolve it and show the evidence'.",
+   "u_ids": [
+    "L3-research-3"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts, describe 'l3-small, run L3': 'the questions card quotes the specialist's reason without a findings tag (L3-research-3)' and 'a finding the critic named no fix for shows no 'To fix' line, whatever its severity; one with a fix keeps it (L3-research-3)'. Both run through the UI's client against the real daemon and both failed at the base.",
+   "how": "specialistReason (daemon/request-words.ts) quotes text without markdown and without a leading findings tag (blocker, critical, major, …). It capitalises a first word made of letters, never a file name, so 'notes/plan.md is missing.' stays as it is. The questions card and the failed-task card's 'The <specialist> said' both use it, and the fake daemon uses the same words. findingView now leaves out NO_ACTION_GIVEN at every severity, so no 'To fix' line shows; the retry brief still gets it. Docs: runtime.md and critic.md.",
+   "check_in_the_app": "Live check 4 (research S7 repro): New task with the reviewer, 'Review the launch plan in notes/plan.md' (the file does not exist), outcome 'review.md lists the gaps and risks found in notes/plan.md'. Press Start. Inbox: 'The specialist said: \"notes/plan.md is missing.\"' (or the reviewer's own sentence), with no 'blocker:'. More › Reviews: a finding the critic gave no fix for has no 'To fix' line; one with a fix keeps it."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L3-github-6, second half: the intake docs PR's branch name still carries the project's UUID (fr/intake-<project id>-docs).",
+   "why": "The branch name is how a project's docs PR is found. isProjectDocsPr (loop/docs.ts) matches /^fr\\/intake-(.+)-docs$/ against safeSegment(project.id), and intake.ts reuses an open PR by that head. intake.test.ts also requires that 'two projects of one minute never share it'. A name-based branch would need a hidden PR-body mark for ownership, plus a migration that keeps finding the open PRs earlier versions opened. The area's cut line allows leaving this out. Suggested follow-up: branch 'fr/intake-docs-<slug of the project name>' with docsPrMarker(project) in the body, isProjectDocsPr reading the mark first and the old pattern second."
+  },
+  {
+   "problem": "L3-research-3: the 'To fix' line does not name an action ('Add notes/plan.md or give its path').",
+   "why": "The critic gave no action; Forerunner cannot write one without inventing it. The spec allows the line to be left out, and it now is. Naming an action would be a critic prompt change, which is outside this area."
+  },
+  {
+   "problem": "BEFORE walk on the stand-in bench at the base.",
+   "why": "Not run separately. Each item's failing test was run at the base first (each test above was seen failing). The live check's own screenshots serve as the before evidence (listed under screenshots.before). The AFTER walk ran on bench fix-l3-small."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, path lint, typecheck, unit tests, docs check, links, secret scan), at 03f4185",
+   "result": "EXIT 0. 494 test files, 5238 passed, 7 skipped. Lint warnings shown are the baseline's (noNonNullAssertion in capabilities tests). link-check ok (209 files); secret-scan clean (2113 files)."
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (37 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "EXIT 0. 5 files passed, 6 skipped (the Postgres ones, no FORERUNNER_TEST_PG); 30 tests passed, 77 skipped."
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "EXIT 0. 13 files passed; 25 tests passed, 1 skipped."
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "First run: 1 failure. The C-49 real-daemon case asserted the session id in the in-app status file, a test the L3-github-6 design changes; updated in ed6e821. Rerun: 91 files, 1124 tests passed."
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed (e2e/session.spec.ts updated for 'Show the raw events')"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "EXIT 0 (all channels pass)"
+  },
+  {
+   "command": "pnpm --filter @forerunner/ui typecheck (after ed6e821)",
+   "result": "clean"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "nothing"
+  },
+  {
+   "command": "cargo fmt/clippy/test in apps/desktop/src-tauri",
+   "result": "not run: the desktop shell was not touched"
+  },
+  {
+   "command": "bench fix-l3-small (stand-in, --provider bench), AFTER walk /tmp/frbench/fix-l3-small/walk.cjs, walk2.cjs, walk3.cjs",
+   "result": "Chat same-title words keep picking after a pause. The Redo brief has no person's note or 'Redo' label (4 specialist calls). Details in words; raw events behind their switch. git log has no ids. status.md headed 'Session started … UTC' with 'Done. Spent CHF 0.02.'. GET /settings rows read 'the runs of Kite notes'. Bench stopped; its home and browser profile were deleted."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/live3/run/run3/steps/57-c1c-03-redo-same-title.png",
+   "/tmp/frbench/live3/run/run3/steps/60-c1c-05-redo-the-older-one.png",
+   "/tmp/frbench/live3/run/run3/steps/18-r1-09-session-details.png",
+   "/tmp/frbench/live3/github/gh3/steps/102-u1-03-who-merges-card.png",
+   "/tmp/frbench/live3/research/rs3/steps/51-s7-inbox.png",
+   "/tmp/frbench/live3/research/rs3/steps/52-s7-reviews.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l3-small/steps/01-c1-pause-same-title.png",
+   "/tmp/frbench/fix-l3-small/steps/03-c3-resume-the-older-one.png",
+   "/tmp/frbench/fix-l3-small/steps/04-c4-resumed.png",
+   "/tmp/frbench/fix-l3-small/steps/05-g4-redo-dialog-note-empty.png",
+   "/tmp/frbench/fix-l3-small/steps/06-g4-redone.png",
+   "/tmp/frbench/fix-l3-small/steps/07-r12-session-details-in-words.png",
+   "/tmp/frbench/fix-l3-small/steps/08-r12-session-show-the-raw-events.png",
+   "/tmp/frbench/fix-l3-small/steps/09-g6-docs-tab-status.png",
+   "/tmp/frbench/fix-l3-small/steps/13-g8-settings-api-rows.txt",
+   "/tmp/frbench/fix-l3-small/steps/14-g6-status-md.txt",
+   "/tmp/frbench/fix-l3-small/steps/15-r11-git-log.txt",
+   "/tmp/frbench/fix-l3-small/walk-result.json"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/executor-brief.test.ts 'a retry carries the previous attempt's error, and no 'findings below' line when none follow'",
+   "why": "It seeded a change-log row whose words_used was the note and expected '## The person's note on this task'. That section is gone (L3-github-4). The typed note now comes as the queued note, and the test asserts it appears once and that no label ('Try again') is quoted."
+  },
+  {
+   "test": "packages/runtime/test/executor-brief.test.ts 'the executor reports every model call and tool result…' (live steps)",
+   "why": "The denied step now also carries deniedCode: 'path_not_allowed' (L3-run-7), so the expected step object includes it."
+  },
+  {
+   "test": "packages/memory/test/docs.test.ts (status.md updates, 3 cases)",
+   "why": "They asserted '### <date> session <id>' headings and a 'stop reason …' note. Entries are now named by the session's start (L3-github-6). Another session of the same minute keeps its own entry, which is now asserted."
+  },
+  {
+   "test": "packages/runtime/test/loop-docs.test.ts (project docs at session end; merged-copy; w15-merge cases)",
+   "why": "They asserted 'session <id>' in docs/status.md and 'Note: stop reason completed; spent CHF 0.24'. Now they check the 'Session started …' heading, 'Done. Spent CHF 0.24.' and 'Ended: 1 task needs you. Spent CHF …'. The w15-merge fixture gives a later session a later start time, since entries are no longer told apart by id."
+  },
+  {
+   "test": "packages/runtime/test/docs-scaffold.test.ts (status on the status branch)",
+   "why": "Same as above: the heading is the session's start, not its id."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts C-49 'B starts from A's open pull request…'",
+   "why": "It asserted the session id in the in-app status file; it now asserts the 'Session started' heading and no id (L3-github-6)."
+  },
+  {
+   "test": "packages/capabilities/test/pr-executor.test.ts (budget-resume: another task's run after a pause)",
+   "why": "It asserted the snapshot subject 'Workspace before \"Write the notes\" (task <id>)'. The subject no longer carries the id (L3-run-11)."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'an accepted info note shows no 'To fix' line (L-13e)'",
+   "why": "It asserted that a medium finding keeps 'To fix: Resolve it and show the evidence'. That line is now left out at every severity (L3-research-3)."
+  },
+  {
+   "test": "apps/ui/test/session.test.tsx 'shows person-level lines without event type names; Details adds the internals' and 'Details shows the event types, the level filters and the raw payloads'",
+   "why": "Event types and payloads are no longer shown right under Details. They sit behind 'Show the raw events' (L3-run-12), so the tests open that switch first and assert none are shown before."
+  },
+  {
+   "test": "apps/ui/e2e/session.spec.ts 'Details …' part",
+   "why": "Same as above: no event-type and no event-raw under Details until 'Show the raw events' is checked."
+  }
+ ],
+ "new_problems": [
+  "Session page level filter chips read 'info (20)', 'warning (0)', 'escalation (0)', 'error (0)'. These are raw level words and zero counts (design §5.5 and §5.6; W15B-15 fixed this only on the lines). Evidence: /tmp/frbench/fix-l3-small/steps/07-r12-session-details-in-words.png. Owner: the session page UI (apps/ui/src/pages/SessionPage.tsx, LEVELS chips).",
+  "Sibling of L3-github-8, not changed: loop/take-out.ts makes a quoted task title a possessive (`\"Write the docs\"'s work is not in main`, `\"X\"'s project has no repository`). That is the take-out words, outside this area. Agent possessives (\"${agentName}'s memory\" in commands/memory.ts and model-settings.ts) were left as they are: a singular name ending in s takes 's in English.",
+  "POST /tasks/:id/transition and /dependencies with a `reason` (API clients and the e2e worlds only; the UI sends `note`): the reason no longer reaches any brief. It used to reach it only through words_used, which is the bug fixed here. If an API reason should reach the brief, the route should send it as `note`.",
+  "queueNote (commands/task.ts) records author_human = ctx.humanId even when an agent is the actor. With personNoteOn gone, a queued note is the only channel into the brief. Once C4/C6 let the agent pass `note` on its own command turns, that note would be rendered under 'Left for this session by the human'. Mark agent notes (author_agent, or a kind) before then."
+ ],
+ "notes_for_other_areas": [
+  "C2 d1109-oversize-pause (task-context.ts): I removed personNoteOn (base lines ~127-145), its call and section in taskContextBlock (base ~266-268), and reworded the header comment. whereTheLastRunStopped and its call are untouched. The only change near your hunk is that the comment replaced the three removed lines just before the sessionNote section.",
+  "C4/C6 d1109-selftasks-run/-chat: the brief no longer reads the change log at all, so an agent-actor command turn's words_used (recorded with human_id = the person) can never reach a brief as the person's note. The person's typed note reaches the brief only as the queued note: queueNote → notesForTask → renderQueueNotes under 'Left for this session by the human', used up by finished work. If agent turns may pass `note`, mark those queue rows as the agent's (see new_problems).",
+  "CR-2 d1109-chat-recall: @forerunner/commands (commands/task.ts, re-exported from the package index) now exports sameTitleTags(tasks) → {task, tag, says}[] (the one kind the refusal names; unchanged words), sameTitlePickers(tasks) → {task, says: RegExp[]}[] (every kind that tells a task apart), pickSameTitled(tasks, word) → TaskRow | undefined, and pickWord(rest). To list same-titled tasks as W15-37 words them, use sameTitleTags(group).map(t => t.tag). To resolve a word, use pickSameTitled(group, pickWord(textAfterTitle)).",
+  "Words changed that later areas may assert: the session-end status note is now `${endedStatusText(status, stopReason, {needYou, paused})}. Spent CHF x.` (runner.ts, at the writeSessionStatus call; the endedNote variable). @forerunner/memory StatusUpdate has a new optional startedAt (ProjectDocs.writeSessionStatus fills it) and a heading of '### Session started <YYYY-MM-DD HH:MM> UTC'.",
+  "runner.ts TaskStep's tool kind has a new optional deniedCode (from tool_denied.code), and stepLine words denied steps through refusedLine. l3-money-engine owns the replan and review-only plan line in runner.ts; I touched only stepLine/refusedLine, the TaskStep type, the stop-words import and the status note line.",
+  "@forerunner/capabilities exports snapshotRef(taskId), firstSnapshotRef(taskId) and snapshotSubject(task). The 'Workspace before' subject has no '(task <id>)'; loop/critic.ts and loop/project-checks.ts read the refs first, then the old message. Set-aside and failed-run commit messages have no id either.",
+  "daemon/request-words.ts exports specialistReason(text), used by the questions card and the failed-task card's 'The <specialist> said'. l3-merge owns the merge-card words in that file; I did not touch them. views.ts findingView: requiredAction is '' whenever required_action is NO_ACTION_GIVEN, whatever the severity.",
+  "UI: SessionPage has a new 'Show the raw events' checkbox (data-testid raw-toggle), shown only while Details is on. event-type and event-raw render only when both are on.",
+  "Settings descriptions: 'The highest model the runs of <project> may use: …' and '… waits for your Merge on the Overview of <project>), or …' (settings-view.ts and the fake daemon).",
+  "Suggested UPDATE-LOG/CHANGELOG lines for the session lead: 'The agent's brief quotes only what you typed: an action pressed with an empty note no longer tells the agent \"Redo\" or \"Edit <task>\"; a typed note reaches it once (L3-github-4).' 'Chat: a word that told two tasks of one title apart (\"(the older one)\", \"#17\", \"(the done one)\") keeps picking its task after a pause, a pull request or a state change (L3-run-6).' 'docs/status.md names each session by when it started and says how it ended (\"Session started 2026-11-15 05:46 UTC\", \"Done. Spent CHF 0.09.\"), never its id (L3-github-6).' 'Settings: \"the runs of Kite notes\", \"on the Overview of Kite trips\" (L3-github-8).' 'A refused step says what and why: \"was not allowed to write /tmp/x.json (outside the project's folder)\" (L3-run-7).' 'Commits in your project's folder name the task, never its id (L3-run-11).' 'The session page's Details is in words; event types and data are under \"Show the raw events\" (L3-run-12).' 'The Inbox quotes the specialist without a findings tag; Reviews shows no \"To fix\" line when the critic gave no fix (L3-research-3).'"
+ ]
+}

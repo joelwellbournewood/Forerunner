@@ -1,0 +1,142 @@
+{
+ "area": "l3-handoff-checks",
+ "branch": "fix/l3-handoff-checks",
+ "head_sha": "707ec2989bfa22a3cdd89077c58b9fc2e09c7a30",
+ "commits": [
+  {
+   "sha": "707ec2989bfa22a3cdd89077c58b9fc2e09c7a30",
+   "subject": "session page: a wrap-up pause's task row says it paused before its budget ran out (L3-research-2, review of l3-handoff-checks)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Blocking (review): this is a sibling of L3-research-2. On the session page, the 'Tasks in this session' row for a run that heard the wrap-up still read 'Paused at its budget of CHF 0.08'. The result directly under it read 'paused before its budget of CHF 0.08 ran out'. The chat's facts of the last session had the same gap: 'Paused: \"X\" at its budget of CHF 0.08' sat under 'Result: ... paused before ... ran out'.",
+   "u_ids": [
+    "L3-research-2"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts › 'l3-handoff-checks, run L3' › 'live check 3: L3-research-2' › 'the card says it paused before its budget ran out ...'. New assertions: the GET /sessions/:id/tasks row toEqual [title, 'Paused before its budget of CHF 0.15 ran out'], and lastSessionBlock contains 'Paused: \"<title>\" before its budget of CHF 0.15 ran out'. It received 'Paused at its budget of CHF 0.15'. Also › 'the same after a restart ...', where the row is part of the state compared across the restart. Also apps/ui/test/real-daemon.test.ts › 'the pause is a commit on the task's branch ...': client.sessionTasks row expected 'Paused before its budget of CHF 0.04 ran out' and received 'Paused at its budget of CHF 0.04'. All failed at 1a1a6ad and pass now. A new guard case, '... a run its budget stopped (it heard no wrap-up) still reads Paused at its budget of CHF N ...', checks the hard stop's row and chat fact. It passes before and after.",
+   "how": "Root cause: session-list.ts hereOf built the row from the persisted PausedTask but ignored `before`. Two of the record's three readers (pausedSentences, sessionGist) already used it. project-facts.ts lastSessionBlock had the same gap. Fix: hereOf returns `Paused before ${limit} ran out` when paused.before is set, and `Paused at ${limit}` otherwise (key 'answer' unchanged). lastSessionBlock writes 'Paused: \"X\" before <limit> ran out' when before is set. No route shape changed: `here` is still a string. The fake daemon needs no edit. The real-daemon case covers the UI client over GET /sessions/:id/tasks.",
+   "check_in_the_app": "Bench (stand-in): start with --env \"FORERUNNER_BENCH_LONG=Write the guide\". Create the project 'Club guide', then New task (coder) 'Write the guide in guide.md' with Budget 0.08, and Start. When the session ends, open its page (Inbox card › session, or Sessions). Under 'Tasks in this session' the row reads 'Paused before its budget of CHF 0.08 ran out'. Before the fix it read 'Paused at its budget of CHF 0.08'; see /tmp/frbench/review-l3-handoff-checks/steps/15-r2-session.png. The result under the row says '... paused before its budget of CHF 0.08 ran out: continue or cancel it in the Inbox.'. Restart the daemon: the row is unchanged. In Chat, ask 'what happened last time?': the model-call log's chat request carries 'Paused: \"Write the guide in guide.md\" before its budget of CHF 0.08 ran out'. A task with Budget 0.01 (no wrap-up) still reads 'Paused at its budget of CHF 0.01'. Live check 4: after the L3-research-2 step (a researcher or writer task with a budget of CHF 0.05-0.15 that cannot finish and hears the wrap-up), open the session page. The task row and the result line both say 'paused before its budget of CHF N ran out', and nothing on the page says 'Paused at'."
+  },
+  {
+   "problem": "Non-blocking (review), sibling of L3-research-1: parseHandoff still paused some near siblings of the live line. A reason after a full stop ('- Nothing is needed for the two criteria. Each listed page gives its address and was opened.' followed by an observation) was read as two items. So was '- No further work is required to meet the acceptance criteria.'. Separately, 'Nothing for the criteria, though the tests need a rewrite' read as nothing.",
+   "u_ids": [
+    "L3-research-1"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts › 'l3-handoff-checks, run L3' › 'live check 3: L3-research-1' › 'near siblings of the live line (fixup review): ...'. It failed at 1a1a6ad on the full-stop line, and passes now. The L3-research-1 and W15-14 cases stay green.",
+   "how": "budget-pause.ts: REASON may now start after a full stop and the next sentence (`AFTER`), both after the about-clause and for a bare 'nothing' with a done word ('Nothing. Both criteria are met.'). ABOUT also accepts 'to meet/satisfy/fulfil/cover/pass' the criteria. 'No further/more' may take a noun ('No further work is required ...'). NOT_NOTHING gains 'though|although'. These still stay work: 'Nothing for the criteria. The tests still fail.', 'Nothing. Write the tests.', 'Nothing in the task works yet', and a 'nothing' about one criterion followed by real items. The parseHandoff signature and the leftToDo/optional fields are unchanged.",
+   "check_in_the_app": "Bench: the FORERUNNER_BENCH_LEFT_NOTE walk still ends with the research Done · Reviewed and no card (walk check r1). Live check 4, as the fixer's L3-research-1 step: if the researcher's 'Left to do' starts with a 'Nothing ... for the (two) criteria' line followed by a reason after a colon OR a full stop, or says 'No further work is required to meet the acceptance criteria.', the critic reviews it. The task ends Done · Reviewed (or is sent back by the critic), with no 'listed N things left to do' line and no budget card."
+  },
+  {
+   "problem": "Non-blocking (review), L3-research-4: See what was checked, and the critic's request, showed an internal path for the node --test check ('/opt/node22/bin/node --test test/main.test.js -> exit 0 ...'). On a person's PC this would be the bundled node.exe path under their user folder (design §5). Separately, a Node older than 18 was told as 'Node.js is not installed where the checks run'.",
+   "u_ids": [
+    "L3-research-4"
+   ],
+   "failing_test_before": "packages/runtime/test/verification.test.ts › 'l3-handoff-checks, run L3' › both L3-research-4 cases. The new assertions are that the output starts with 'node --test wc.test.js -> exit 0|1 in N ms' and that neither the drawer evidence nor the critic's request contains process.execPath. They received '/opt/node22/bin/node --test ...'. Also packages/runtime/test/try-plan.test.ts › 'L3-research-4: JavaScript tests with no package.json are a node --test check ...', on the missing text. Both failed at 1a1a6ad and pass now.",
+   "how": "critic.ts runMarkerCheck no longer rewrites the candidates' argv. It wraps exec so that a leading 'node' is replaced by opts.node only when the command runs. The check's head line (`c.argv.join(' ')`) and 'node could not start' therefore name the command as typed. The lease still runs `${process.execPath} --test ...` in the process sandbox, and the composed test still asserts this. project-checks.ts: the JS marker's missing text is now 'Node.js 18 or later is not installed where the checks run'.",
+   "check_in_the_app": "Bench: New project with the brief 'A command line tool that counts the words in a file. Usage: node wc.js <file>.', then Approve and start. When it is done, open the tester task › See what was checked. You see 'node --test: passed' with 'node --test test/main.test.js -> exit 0 in N ms' and the TAP output. No path such as /opt/node22/bin/node appears, and no 'no package.json to run them'. Live check 4 (live check 3 step S6, on forerunner-sandbox or Docker): the same drawer shows 'node --test wc.test.js -> exit 0 ...' with no path of the app's Node, and the critic's request (model-call log) carries the same line."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Non-blocking (review and fixer's new_problems): after a Continue, the session line ('The run paused before its budget of CHF 0.30 ran out: it spent CHF 0.12') names only this run's spend. The card names the task's total ('It spent CHF 0.24 of its budget of CHF 0.30').",
+   "why": "The pauseSentence call is executor.ts:1767, inside the `if (handoff)` block at :1747-1792. The run C rule for executor.ts gives :1744-1790 (the share pause returned as a credential stop) to C5 d1109-cred-engine, and 'Run C's later rules still decide in the files they name, for the regions they name.'. A one-argument change there (task.actual_cost_usd_micro + result.costUsdMicro) is for C2 OP-7 or C5. On a first pause the two figures agree, which is live check 3's case and the bench walk's (CHF 0.06 = CHF 0.06)."
+  },
+  {
+   "problem": "Non-blocking (review): the specialist-limit wrap-up card does not say what was spent. Its body reads 'It has no budget of its own: it may spend CHF b per run.'. Its title phrase, \"paused before the <specialist>'s limit per run ran out\", is always cut in the 60-character notification title.",
+   "why": "card.spent_usd_micro is the task's total, while the limit is per run. 'It spent CHF X of the CHF b it may spend per run' would be wrong after a Continue, and the card row stores no per-run spend. budgetCard's limit lines belong to C3 d1109-starts-engine (request-words.ts :629, :699-703) and the notification fitting is in notifications/producers.ts. Left for C2 OP-7 / C3."
+  },
+  {
+   "problem": "Non-blocking (review): the Tasks tab, Overview 'Next' and the drawer still label a wrap-up pause 'Paused at its budget' (task-words.ts:318).",
+   "why": "It is the state's label for every budget pause and names no amount. Changing it touches many existing assertions and the display key's words outside this area's files. The amount-bearing texts (card, session row, result, gist, chat fact) now all say 'before ... ran out'."
+  },
+  {
+   "problem": "Non-blocking (review): every script directly in test/, tests/ or __tests__/ is run by node --test. A helper that never exits would hit the check timeout and block the accept.",
+   "why": "The file selection is the one the told line already used and that the spec asked for. Narrowing it, for example to files that import node:test, would turn jest-style files from a told 'not run' reason into silence. It needs a decision, not a fixup."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm lint; pnpm lint:paths; pnpm typecheck; pnpm docs:links; pnpm secrets:scan (at 707ec29)",
+   "result": "lint: no errors (39 warnings, 2 infos as at base); check-paths ok (1495 files); typecheck ok; link-check ok (209 files); secret-scan clean"
+  },
+  {
+   "command": "pnpm test",
+   "result": "493 files passed; 5243 passed, 7 skipped"
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (31 files). Without --base it cannot diff origin/main here, as in the baseline."
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "5 files passed, 6 skipped (Postgres-backed, no FORERUNNER_TEST_PG); 30 passed, 77 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "13 files passed; 25 passed, 1 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "PASS: 65 cases (46 hostile, 19 controls), 0 failed. The chat's last-session fact changed wording only."
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "91 files, 1122 tests passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed (no UI source changed; run for safety)"
+  },
+  {
+   "command": "Failing first: the new assertions were run against 1a1a6ad's session-list.ts, project-facts.ts, budget-pause.ts, critic.ts and project-checks.ts before each fix",
+   "result": "budget-pause L3-research-2 (2 cases) and the near-siblings case, the real-daemon resume case, both verification L3-research-4 cases and the try-plan marker case all failed. All pass after the fix. The hard-stop guard passes before and after."
+  },
+  {
+   "command": "Bench walk on 'fixup-l3-handoff-checks' (daemon 48841, UI 2441, --provider bench, --env FORERUNNER_BENCH_LONG='Search MDN,Write the guide', --env FORERUNNER_BENCH_LEFT_NOTE='Search MDN'), script /tmp/frbench/fixup-l3-handoff-checks/walk.cjs, through the UI",
+   "result": "19/19 checks (/tmp/frbench/fixup-l3-handoff-checks/steps/after-checks.json). r2: card 'paused before its budget ran out' / 'It spent CHF 0.06 of its budget of CHF 0.08.' with both lists. Session row 'Paused before its budget of CHF 0.08 ran out' with no 'Paused at' on the page; same after restart-daemon. Session line's CHF 0.06 equals the card's. The chat request carries 'Paused: \"Write the guide in guide.md\" before its budget of CHF 0.08 ran out'. r1: research Done, row 'Done', no 'things left to do', no card, critic ran. r4: both tasks done; drawer 'node --test: passed' with 'node --test test/main.test.js -> exit 0 in 120 ms', no Node path, no 'no package.json' line. Bench stopped; its home and browser profile deleted."
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: the desktop shell was not touched"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-l3-handoff-checks/steps/15-r2-session.png",
+   "/tmp/frbench/fix-l3-handoff-checks/after/05-after-r2-session.txt",
+   "/tmp/frbench/fix-l3-handoff-checks/after/07-after-r4-drawer-checked.txt"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-l3-handoff-checks/steps/03-r2-inbox.png",
+   "/tmp/frbench/fixup-l3-handoff-checks/steps/04-r2-session.png",
+   "/tmp/frbench/fixup-l3-handoff-checks/steps/05-r2-chat.png",
+   "/tmp/frbench/fixup-l3-handoff-checks/steps/06-r2-session-after-restart.png",
+   "/tmp/frbench/fixup-l3-handoff-checks/steps/09-r1-tasks.png",
+   "/tmp/frbench/fixup-l3-handoff-checks/steps/10-r1-session.png",
+   "/tmp/frbench/fixup-l3-handoff-checks/steps/12-r4-drawer-checked.png",
+   "/tmp/frbench/fixup-l3-handoff-checks/steps/after-checks.json"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/try-plan.test.ts › 'l3-handoff-checks, run L3' › 'L3-research-4: run through the check runner, the real node passes a passing file and fails a failing one with its output'",
+   "why": "It asserted the head '${process.execPath} --test wc.test.js -> exit 0'. By design the head now names the command as typed ('node --test wc.test.js -> exit 0'). The test also gained an assertion that the exec really ran `${process.execPath} --test wc.test.js` and that the output does not contain the path."
+  },
+  {
+   "test": "packages/runtime/test/try-plan.test.ts › 'L3-research-4: JavaScript tests with no package.json are a node --test check ...' (missing text)",
+   "why": "'Node.js is not installed where the checks run' became 'Node.js 18 or later is not installed where the checks run', which is also true when the Node is too old."
+  }
+ ],
+ "new_problems": [
+  "executor.ts:1767 pauseSentence(handoff, what, result.costUsdMicro, ...) passes the run's spend. After a Continue, the session line ('paused before its budget of CHF 0.30 ran out: it spent CHF 0.12') disagrees with the card ('It spent CHF 0.24 of its budget of CHF 0.30') and reads as more room than is left. The region belongs to C5 under the run C executor.ts rule. Suggested fix for C2 OP-7 or C5: pass task.actual_cost_usd_micro + result.costUsdMicro for a task_budget stop."
+ ],
+ "notes_for_other_areas": [
+  "session-list.ts hereOf (the GET /sessions/:id/tasks `here` words): for a PausedTask with `before`, it now returns 'Paused before <limit> ran out'; otherwise 'Paused at <limit>' as before. The key stays 'answer'. Areas that add session rows (C3 startedByWords, C4 joined line, C5 workingWords) are not affected.",
+  "project-facts.ts lastSessionBlock (the model-facing '# Last session' block): the paused line is 'Paused: \"X\" before <limit> ran out' when `before` is set, and 'Paused: \"X\" at <limit>' otherwise. Only this one line changed; l3-merge owns the pull request facts in the same file. C2 d1109-chat-recall: assert the new text if you quote this block.",
+  "budget-pause.ts parseHandoff (C2 d1109-oversize-pause builds on it): the signature and RunHandoff fields are unchanged. On top of the fixer's rules, it now also accepts: a reason after a full stop and the next sentence (`AFTER` = punctuation [:;,(–—-] or '. '), both after what the line is about and for a bare 'nothing' with a done word ('Nothing. Both criteria are met.'); what the line is about introduced by 'to meet|satisfy|fulfil|cover|pass' ('No further work is required to meet the acceptance criteria.'); and 'no more/further' followed by work/changes/steps/items/actions/tasks. NOT_NOTHING now includes 'though' and 'although'.",
+  "critic.ts runMarkerCheck(m, exec, root, { node }): `node` is now applied only when the command runs (a wrapped exec). The MarkerCheck's candidates and the output head keep 'node' as written. C2 OP-2, which reuses marker checks for kept work, should pass { node } the same way and display c.argv, never a host path.",
+  "project-checks.ts JS marker: missing = 'Node.js 18 or later is not installed where the checks run'.",
+  "Suggested lines for the session lead (UPDATE-LOG/CHANGELOG, not edited here): 'The session page's task row and the chat's facts say a run that stopped to wrap up paused before its budget ran out, as the result does (L3-research-2).' / 'A \"nothing\" for the criteria with its reason after a full stop, or \"No further work is required to meet the criteria\", goes to review too (L3-research-1).' / 'See what was checked shows node --test as typed, never the path of the app's own Node (L3-research-4).' ADR amendments appended under the existing 2026-11-15 amendments of ADR 0112 and ADR 0110; no new ADR."
+ ]
+}

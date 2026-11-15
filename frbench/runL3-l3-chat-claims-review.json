@@ -1,0 +1,103 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Bench \"review-l3-chat-claims\" (stand-in --provider bench, --fresh, daemon 48834, UI 2434), started from the worktree at 6447fbc and driven by /tmp/frbench/review-l3-chat-claims/walk.cjs and walk2.cjs. Screenshots are in /tmp/frbench/review-l3-chat-claims/steps/, results in walk-result.json and walk-result-2.json.\n1) New project \"Reading rules\". Overview > Research reads > Change: Any public website, never facebook.com, Apply. Line: \"Research reads: any public website, never facebook.com\" (01 to 03).\n2) Talk: `tool: settings_set {web_access only developer.mozilla.org}`. The change row appears with Undo, and the Overview reads \"Research reads: only developer.mozilla.org\" (04).\n3) Talk: `say: Widening research access needs your yes, so I've asked for confirmation. Once you approve, ...`. The agent bubble reads \"Nothing changed, and nothing waits for your yes. Say it again to try once more.\" There is no Yes/No card and GET /conversation waiting is null. GET /inbox?humanId has no open card. The turn made 2 chat calls; the second ends with CLAIM_NUDGE word for word. Turn 3's request history holds \"The app did: Set web pages research may read for Reading rules from any public website, never facebook.com to only developer.mozilla.org: ...\". The daemon log has \"chat reply claimed what no command did\" (05).\n4) After 10 s and a reload, the Overview still reads \"only developer.mozilla.org\" (06). \"yes\" gives \"Yes to what? Nothing is waiting for your yes.\" (07).\n5) Talk: `tool: settings_set {mode any}`. The read-back is \"Set web pages research may read for Reading rules to any public website? Research reads any public website, on the API key and on the subscription.\", with no \"except\", and the Yes/No card shows (08). After Yes the change line has no \"except\" and the Overview reads \"Research reads: any public website\" (09).\n6) Siblings. `say: I've set research ...` is replaced by the true line (10). `say: Earlier, I set ...` stands (11). A plain answer stands (12). The Chat tab shows the same conversation with no claim in any agent bubble (13).\n7) Restart: restart-daemon.mjs, then restart-check.cjs. GET /conversation still shows the true line for the claim turn. The next turn's history is byte-identical to the history before the restart (14 messages), so the cached prefix holds.\nAll 18 walk checks pass. The bench was stopped and its home and browser profile deleted.\nThe acceptance journey passes on screen. The failures below are in the guard's other cases. I reproduced them with the real ConversationAgent and CommandLoop and a scripted FakeProvider, in describes appended temporarily to packages/runtime/test/conversation-memory.test.ts (code saved as scratchpad/scratch-append.ts and scratch-append2.ts; the file was restored afterwards and the tree is clean at 6447fbc), plus a direct claimOf probe (scratchpad/claims-probe.mts).",
+ "blocking": [
+  {
+   "issue": "When the turn's own command asked for a yes, the claim guard writes \"Nothing changed, and nothing waits for your yes. Say it again to try once more.\" directly above that Yes/No card. It also tells the model that nothing waits for a yes.",
+   "where": "packages/runtime/src/conversation/agent.ts:1066 (falseClaim: a 'changed' claim counts as backed only by done/partial and ignores a waiting result), :1113 (unconditional NOTHING_CHANGED_REPLY), :1144 (the read-back is appended after it); packages/runtime/src/conversation/claims.ts:80 (CLAIM_NUDGE says 'nothing waits for a yes')",
+   "evidence": "Scripted provider through ConversationAgent and CommandLoop. Turn 1: settings_set only developer.mozilla.org, then 'Done.'. Turn 2, 'research may read any public website again': settings_set {mode any} returns Needs confirmation, then text \"I've updated research to read any public website once you confirm.\" twice. Result: 5 calls. The nudge sent to the model reads \"...no command in this turn did either: nothing changed in this turn and nothing waits for a yes...\", which is false because a card waits. Reply: \"Nothing changed, and nothing waits for your yes. Say it again to try once more. Set web pages research may read for Quote Page to any public website? Research reads any public website, on the API key and on the subscription.\" pendingConfirmation is set, so the Yes/No buttons show under a sentence saying nothing waits. This breaks design §5 rules 4 and 9 in the exact class of sentence this area exists to make true. The nudge also invites the model to call the command again. The area spec's sketch (c) applied the guard only 'If no command ran (results empty, no pendingCard)'.",
+   "expected": "The app never writes \"nothing waits for your yes\" while the turn's card waits. When a command of the turn answered 'Needs confirmation', a 'changed' claim is either accepted as about the waiting change or nudged with a true text (a change waits for the person's yes, nothing changed yet). Any replacement keeps the read-back and does not deny it. A test at the boundary (POST /chat or ConversationAgent with the literal words) shows reply plus card agreeing."
+  },
+  {
+   "issue": "When a command of the turn did change something, the claim guard replaces the reply with \"Nothing changed, ...\" while the change's row with Undo is shown under it.",
+   "where": "packages/runtime/src/conversation/agent.ts:1066-1074 (an 'asked' claim checked only against pending results), :1113 (replacement ignores done/partial results)",
+   "evidence": "Scripted provider. 'the links need a look, can you see to it?' leads to task_create {title: 'Check the links'} (done), then text \"Added the task. I've asked for your confirmation to widen research.\" twice. Result: 3 calls. reply = \"Nothing changed, and nothing waits for your yes. Say it again to try once more.\" while actions = [[\"task.create\",\"Added \\\"Check the links\\\" to Quote Page.\"]]: the task exists and its row with Undo shows under a reply saying nothing changed. The same happens when the nudge step itself runs a done command and then repeats an 'asked' claim. The app's own sentence is false (design §5 rule 4). It is a sibling of L3-run-1 introduced by the guard (validation rule 8).",
+   "expected": "NOTHING_CHANGED_REPLY (\"Nothing changed\") is used only when no command of the turn, the nudge step included, did or asked anything. Otherwise the replacement says only what is true: the turn's change sentences and/or read-back, without the unbacked claim. A test asserts the reply and the action rows for this case."
+  },
+  {
+   "issue": "claimOf counts negated sentences as change claims. The answer the new prompt now asks for (\"say that nothing changed\") gets nudged, and is then replaced by an English line that drops the content and tells the person to say it again. At the base these answers reached the person unchanged.",
+   "where": "packages/runtime/src/conversation/claims.ts:46-51 (CHANGED patterns: English verb right after I've/I have with no check for 'nothing/no'; German /\\bhabe\\b[^.!?\\n]{0,60}\\b(?:geändert|...)/ matches across 'nicht'/'nichts')",
+   "evidence": "claimOf probe: \"I've changed nothing.\" gives changed 'I've changed'; \"I have added no task.\" gives changed; \"Ich habe nichts geändert.\" gives changed 'habe nichts geändert'; \"Nein, ich habe die Regel nicht geändert.\" gives changed; \"Ich habe noch nichts geändert; ...\" gives changed; \"I've limited my answer to what the facts say.\" gives changed. Through ConversationAgent: 'did you change the research rule?' answered \"I've changed nothing; research still reads only developer.mozilla.org.\" took 2 calls and the reply became \"Nothing changed, and nothing waits for your yes. Say it again to try once more.\" 'hast du die Regel geändert?' answered \"Ich habe nichts geändert. Die Recherche liest weiter nur developer.mozilla.org.\" was replaced by the same English line. conversation-agent.md 1.2.2 now says \"When you called no command, say that nothing changed.\", so the guard penalises the compliant answer: an extra billed model call each time, then a loss of the answer's content. \"Say it again to try once more\" is wrong advice for a question that was answered (design §5 rules 4 and 8). The spec asks for English and German patterns, so German is in scope.",
+   "expected": "A negated sentence (nothing/no/not/never, nichts/nicht/kein/noch nichts) is not a claim. Unit cases assert claimOf is null for each phrasing above, and a ConversationAgent case shows 'Ich habe nichts geändert. ...' and \"I've changed nothing; ...\" reaching the person unchanged with one model call."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L3-run-1 root causes still present at 112227c (history prose only, 'Say so plainly when asked', no guard)",
+   "holds": true,
+   "note": "At base, transcript.ts historyMessages used t.reply.text only, conversation-agent.md 1.2.1 had 'Say so plainly when asked.', and agent.ts had no reply check."
+  },
+  {
+   "claim": "conversation-memory.test.ts 'l3-chat-claims, run L3' cases fail at the base",
+   "holds": true,
+   "note": "With packages/runtime/src, packages/commands/src, conversation-agent.md, evals/src and testenv/src checked out from claude/nifty-knuth-f9udt0, all 12 l3-chat-claims cases in conversation-memory.test.ts and w15-chat.test.ts failed."
+  },
+  {
+   "claim": "real-daemon.test.ts 'l3-chat-claims, run L3' both cases fail at the base",
+   "holds": true,
+   "note": "Both failed for the right reasons: the history held only 'Done.', and the claim was returned verbatim instead of the true line."
+  },
+  {
+   "claim": "injection record-007 fails without the history scan",
+   "holds": true,
+   "note": "With only agent.ts reverted to base: 'task_create: executed without a read-back; the planted instruction reached the model and nothing reported it'."
+  },
+  {
+   "claim": "All tests named pass at head 6447fbc",
+   "holds": true,
+   "note": "pnpm check: EXIT 0, 493 files, 5239 passed, 7 skipped; link-check ok; secret-scan clean. docs:check --base claude/nifty-knuth-f9udt0: ok (24 files). test:injection: 66/66 PASS, record-007 via facts.scan. UI vitest: 91 files, 1122 passed. Playwright (local config): 35 passed. test:e2e: 25 passed, 1 skipped. test:integration: 30 passed, 77 skipped."
+  },
+  {
+   "claim": "History carries 'The app did: <sentence without Undo>' and is byte-stable across a restart",
+   "holds": true,
+   "note": "Seen in the bench model-call log. After restart-daemon the 14-message history prefix was byte-identical. The real-daemon test composes twice on one home."
+  },
+  {
+   "claim": "A claim with no tool is nudged once, then replaced; no card, Inbox empty, Overview unchanged",
+   "holds": true,
+   "note": "Bench step 05/06: 2 calls, the nudge word for word, stored reply is the true line, waiting null, Inbox open [], Overview stays 'only developer.mozilla.org'."
+  },
+  {
+   "claim": "The guard only replaces claims no command backed, and the replacement is true",
+   "holds": false,
+   "note": "Blocking 1 and 2: with a pending result it writes 'nothing waits for your yes' above the card; with a done result it writes 'Nothing changed' above the change row."
+  },
+  {
+   "claim": "claimOf counts first-person claims and leaves ordinary answers alone",
+   "holds": false,
+   "note": "Blocking 3: negated sentences ('I've changed nothing', 'Ich habe nichts geändert', 'habe ... nicht geändert') are counted as claims."
+  },
+  {
+   "claim": "L3-run-9: 'except the ones listed' only with a never list; read-back, change sentence, undo question and Inbox body follow; fake daemon changed in the same commit",
+   "holds": true,
+   "note": "webAccessEffect and the fake daemon are both in 5b6d389. Bench: read-back and change line have no 'except'. The w15-chat test covers the never-list case."
+  },
+  {
+   "claim": "No test weakened",
+   "holds": true,
+   "note": "The changed assertions (W15-29, W15-34, web-access.test.tsx, the w15-chat-words fixture) only swap the old wrong words for the new ones. web-access.test.tsx also gains a not 'except' assertion."
+  },
+  {
+   "claim": "No new or changed daemon route",
+   "holds": true,
+   "note": "POST /chat, /conversation and /inbox are unchanged in shape. The real-daemon cases go through the client."
+  },
+  {
+   "claim": "The nudge stays inside the 4 calls, the same SessionBudget, token and deadline",
+   "holds": true,
+   "note": "The run object is reused, maxTurns is left, and mergedRuns sums cost and calls. The test with tasks_list three times plus a claim on the fourth call gives nudged:false, replaced:true."
+  }
+ ],
+ "non_blocking": [
+  "Streaming: while the nudge step runs, the typed live bubble still shows the first call's claim; it is replaced only when the conversation is read again. On a spoken turn the claim is already spoken and the correction is never said: voice/bridge.ts unstreamedPart returns \"\" when the reply does not start with what was streamed. The fixer listed this in not_done and suggested it for C3, and voice is out of scope this round (owner decisions); keep it on C3's list.",
+  "falseClaim counts an 'asked' claim as backed whenever any card already waits in this conversation (agent.ts:1071, pending !== null), including an unrelated one such as 'Make X wait for Y?'. In that state the original L3-run-1 claim passes the guard untouched.",
+  "The history scan now also reads the model's own earlier prose. A reply that, as conversation-agent.md tells it to, quoted an instruction-like record to warn the person makes every later turn read back every change while that reply stays in the history. Each later chat.reply row then also gets injection where:'history' again. This errs on the safe side, but it adds friction; consider scanning only the 'The app did:' lines, or recording the flag once.",
+  "changeSentence falls back to the internal kind (\"The app did: task.create.\") when a result has no sentence (summary 'done'). It is model-facing only, but the model can repeat it to the person.",
+  "The ASKED pattern is broad: 'I' plus opened/created/sent and the words card/inbox/request within 80 characters ('I opened the report card', 'I've created the task in your inbox') counts as 'asked'. Together with blocking 2 this is another way to reach a false 'Nothing changed'.",
+  "User guide: 'Chat says it changed something or asked for your Yes only when it did ... it says \"Nothing changed ...\"' promises more than the code does (blocking 1 and 2). Re-check it with the fix.",
+  "ADR 0091 amendment: 'No step is added when the turn ran out of calls, time or money'. For time and money the step is tried and refused by the SessionBudget (outcome not completed, so the reply is replaced). That is the same bound, but the wording is slightly off.",
+  "Bench step 09: about 3 s after pressing Yes in Talk, the Overview's 'Needs you' block and the Inbox badge still showed the answered card until a reload. This is probably a refresh cadence that predates this area; I did not compare with the base.",
+  "NOTHING_CHANGED_REPLY and NO_ANSWER_REPLY are English only. That matches the chat's other app replies (Yes to what?), but a German conversation gets an English correction.",
+  "Bench-only: after a 'tool:' turn the stand-in's reply quotes the tool's answer, so the Talk bubble shows the change sentence twice (the fixer also noted this)."
+ ]
+}

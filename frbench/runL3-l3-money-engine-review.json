@@ -1,0 +1,72 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I ran bench \"review-l3-money-engine\" from my worktree at 217902c on ports 48832/2432, with --provider bench, FORERUNNER_BENCH_DELAY_MS=3000, USAGE 'Stop me:40000', CRITIC_REJECT 'Send back' and ASK 'Contact page'. I drove the UI with Playwright. Screens and JSON are in /tmp/frbench/review-l3-money-engine/steps/; the bench is stopped and its home deleted.\n\nL3-run-5, the live repro (01-09):\n- New project \"Quote page\" from the brief \"A page that shows a quote.\", then Approve and start on the Inbox plan card. On the session page I pressed Stop now and confirmed during the first coder call. The model-call log shows stop \"aborted\".\n- Every figure read 2070 USD micro: the task's spent and actual, the run, GET /sessions spent, the session task row, Costs > By task, and the project total. Left this month fell by exactly 2070. The session row, ledger and task in state.sqlite agree.\n\nL3-run-5 with a visible amount (10-16):\n- Task \"Stop me: write notes.md\". I pressed Start in the Start dialog, then Stop now and confirmed on the session page.\n- Every screen named CHF 0.03 (42005 USD micro):\n  - the Tasks row: Ready · coder · CHF 0.03;\n  - the drawer: \"Ready … spent CHF 0.03\" and the run line \"coder · … · Stopped · CHF 0.03\";\n  - the Costs tab total and its By task row;\n  - the session page: \"CHF 0.03 of CHF 5.00 (1%)\", the task row, and \"Stopped by you. \"Stop me: write notes.md\" is ready to continue. CHF 0.03.\";\n  - the log's \"Session over. CHF 0.03.\"\n- monthLeft fell by exactly 42005. The ledger holds 1 row of 42005, equal to run.cost_usd_micro and task.actual.\n- I then ran restart-daemon.mjs (17-22). All figures were the same after the restart, and the Start dialog read \"Left this month: CHF 149.96\".\n\nL3-run-2, send back (23-26):\n- Details read \"Plan: 1 task, about CHF 0.03.\" and \"Session review measured: 1 of 1 planned task done; the work cost CHF 0.01 against an estimate of CHF 0.03, and the reviews CHF 0.02.\" The review read \"Session review: accepted (grade 100, 0 findings).\"\n- The DB has no \"same task twice\" finding.\n- Sibling, a task that failed 4 times with FORERUNNER_BENCH_FAIL (walk-failed.json): the plan line and the review both say CHF 0.04, so the three retries count once, and there is no duplicate finding.\n\nL3-run-8, questions (27-29): Details read \"Session review: the work waits for your answers (grade 70, 2 findings).\" and the task is needs_human with its Inbox card. Sibling, the failed-4-times task: \"Session review: the work waits for your decision (grade 70, 2 findings).\"\n\nL3-run-10:\n- A review that ran logged \"The critic started a light review (attempt N).\" right before its \"Critic review of the work\" line, in every walk.\n- I could not get the review refused at the project budget through Settings on the stand-in. Settings' \"Budget per session\" also lowers the session budget, so the writer paused first (walk-budget-c, -d), or the review still fit (-e, -f, -g).\n- The refused case is covered at the daemon's HTTP boundary by budget-pause.test.ts. I confirmed that test fails at base.\n\nThe screens I checked match design §3.7 and §5: one figure for one fact, CHF only, no ids or raw states, Stop now with its explanation that asks once.",
+ "blocking": [
+  {
+   "issue": "Regression in a sibling path the fixer reported as covered (validation rule 8). The loop's abort branch now emits model_call_end with stopReason \"error\". The chat agent's SentenceGate reads every model_call_end as \"the call ended normally\" unless stopReason is \"max_tokens\". So a spoken turn (voice or phone) whose model call is cut off by its turn timeout now sends its held, unfinished sentence to the speaker. Before the fix it was dropped. This breaks the rule that a broken sentence is never spoken (real-audio run of 2026-10-26; conversation/agent.ts comment above the gate; conversation-sentences tests). The chat run is `protected`, so Stop all does not abort it: the timeout is the path. With the real API, message_start always carries usage, so callCost > 0 and the event always fires.",
+   "where": "packages/runtime/src/agent/loop.ts:773 (new model_call_end in the abort branch) with packages/runtime/src/conversation/agent.ts:985-986 (`gate?.end(ev.stopReason === \"max_tokens\")`)",
+   "evidence": "Scratch test /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk/aborted-spoken-chat.test.ts. It uses conversation.test.ts's setup() with a provider that sends message_start usage and the text \"You have a decision waiting. The critic asked for one of the three options: adopt,\", then waits for abort. The test runs a voice turn and advances the clock past the turn timeout.\n- At 217902c it FAILS: onToken got [\"You have a decision waiting. \",\"The critic asked for one of the three options: adopt,\"], and the reply was \"I could not answer (run timeout).\"\n- With the base loop.ts restored it PASSES: onToken got only [\"You have a decision waiting. \"].\n\nI ran it in packages/runtime/test and then removed it; the worktree is clean.",
+   "expected": "A call cut off by a stop or a timeout drops the held rest of a spoken turn, as it did before. For example, in agent.ts: `gate?.end(ev.stopReason === \"max_tokens\" || ev.stopReason === \"error\")`; that line is not in l3-chat-claims' owned regions (history, reply guard). The alternative is a stop reason the gate already treats as cut. Add a failing-first case to conversation.test.ts (a spoken turn cut off by its timeout streams no broken tail), then check the other model_call_end readers: intake's ttft, executor and runner booking."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L3-run-5: the abort branch books the cut-off call once (ledger, session budget, model_call_end), so the run total is not doubled",
+   "holds": true,
+   "note": "loop.test.ts cases fail at base: the existing test with base loop.ts gives \"expected [] to have a length of 1\", and the timeout case gives \"expected [] to deeply equal [3000]\". On the bench, ledger = run = task = session = By task = month delta = 42005, also after a restart."
+  },
+  {
+   "claim": "real-daemon L3-run-5 fails at base (ledger 0 against run 62070)",
+   "holds": true,
+   "note": "With the base loop.ts: \"expected +0 to be 62070\". It passes at head. It goes through the client wire and includes a restart."
+  },
+  {
+   "claim": "L3-run-2: replan/takeHeld mark the retaken item `again` and leave the plan total alone; planEstimateOf counts each task once; the duplicate finding skips retries",
+   "holds": true,
+   "note": "With the base runner.ts and session-review.ts, 5 unit tests fail plus real-daemon L3-run-2 (\"against an estimate of CHF 0.04\"). On the bench, the send-back case (CHF 0.03) and the failed-4-times case (CHF 0.04) match the plan line, with no duplicate finding."
+  },
+  {
+   "claim": "L3-run-8: waitsFor answers/decision; views.ts words",
+   "holds": true,
+   "note": "event-lines fails at base (\"sent back for changes\"). Real-daemon L3-run-8 fails at base. Both bench walks show the new words."
+  },
+  {
+   "claim": "L3-run-8 sibling: a failed task holding its card reads 'waits for your decision'",
+   "holds": true,
+   "note": "session-keeps-going sibling fails at base. Confirmed on the bench with the critic escalating after 4 tries."
+  },
+  {
+   "claim": "L3-run-10: no 'The critic started' line for a review a limit refused before it ran",
+   "holds": true,
+   "note": "budget-pause L3-run-10 fails at base (\"not to match /The critic started/\") and passes at head, read through GET /sessions/:id/events. On the bench the started line still comes before the verdict when the review runs."
+  },
+  {
+   "claim": "Siblings: intake, chat and critic go through LoopAgentDriver and are covered by the same branch",
+   "holds": false,
+   "note": "They are covered for booking. But chat's SentenceGate also reads model_call_end, and now releases a broken sentence on a timed-out spoken turn (blocking item)."
+  },
+  {
+   "claim": "not_done: the review-only plan line (spec cut line) and the owner-checklist line (not in the repo)",
+   "holds": true,
+   "note": "The spec explicitly allows the cut line. git grep finds no checklist line in the repo; it is at /tmp/frbench/wave15-areas.json:810."
+  },
+  {
+   "claim": "Validation: pnpm check, test:integration, test:e2e, UI vitest green",
+   "holds": true,
+   "note": "I reran each here:\n- pnpm check: EXIT 0 (493 files, 5235 passed, 7 skipped);\n- docs-check against the base: ok (18 files);\n- links and secret scan: clean;\n- test:integration: 30 passed, 77 skipped;\n- test:e2e: 25 passed, 1 skipped;\n- UI vitest: 1123 passed.\nPlaywright was not run: no UI source changed, and the role-player is not used by e2e."
+  },
+  {
+   "claim": "No test weakened",
+   "holds": true,
+   "note": "The only changed assertion is the existing kill test: the token now has taskId \"task-1\" and assertions were added. Nothing was removed or skipped. No route changed, so the fake daemon needed no change."
+  }
+ ],
+ "non_blocking": [
+  "The 'The critic started …' line is now emitted at the critic run's first model_call_start. In loop/critic.ts the marker checks and the sandbox tries (build, tests, tried pages) run before review(). So for a review with checks, the log shows nothing between \"The coder finished …\" and the start line while those run. Before, the line came first. Consider firing onStarted once the checks start, and still never on a refusal.",
+  "Seen on the bench (walk-budget-e/f/g): a session whose only task was done but cost more than planned read \"Session review: sent back for changes (grade 85, 1 finding).\" Nothing was sent back. The fixer lists this in new_problems; it belongs to a words area.",
+  "Overrun finding wording for several retries: \", with N more attempts of tasks tried again\" reads awkwardly. Something like \", with 3 tasks tried again\" or \"with 3 more tries\" reads better (design §5 plain words).",
+  "On the questions session, the session result (not this area) reads '\"Contact page in contact.html\" needs your decision (Inbox).' while the new review line says \"waits for your answers\". The two words for one fact differ; worth aligning in the result words' area.",
+  "Out of this area: on a session page opened directly (/sessions/:id), the shell's project picker kept showing the previous project (\"Quote page ▾\" over the \"Notes stop\" session).",
+  "Fixer-listed and confirmed by reading the code:\n- a cut-off call on a routed provider is booked on the run's current billing source, since the abort branch does not read response.billing;\n- docs/maintainers/critic.md still says the metrics line reads actualUsdMicro, which is stale."
+ ]
+}

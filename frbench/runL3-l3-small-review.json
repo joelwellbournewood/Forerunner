@@ -1,0 +1,82 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I ran a bench called review-l3-small from my worktree on fix/l3-small at ed6e821. It used the stand-in model (--provider bench), the stand-in GitHub on port 48935, FAIL plus FAIL_SAYS=\"blocker: notes/plan.md is missing.\" on \"Review the launch plan\", and CRITIC_REJECT on the pairing task. I drove the UI with Playwright: walk1.cjs to walk4.cjs and their results are in /tmp/frbench/review-l3-small/, screenshots and texts in /tmp/frbench/review-l3-small/steps/.\n\nL3-run-6 (Chat tab, project \"Kite notes\", two \"Write the guide\" tasks):\n- \"pause Write the guide\" gave the older/newer refusal (01-c1). \"pause Write the guide (the older one)\", then Yes, paused the older task (task ids checked).\n- \"resume Write the guide (the older one)\" read back 'Resume \"Write the guide\"? …' with no same-title refusal (04-c3). After Yes the task was ready again.\n- After a second pause, \"redo … (the older one)\" answered '\"Write the guide\" is paused, not cancelled or done.' (08-c5).\n- No chat model calls were made.\n\nL3-github-4 (Tasks tab, Start pressed in the UI each time; briefs read from model-calls.jsonl):\n- Redo with the note field empty (10-g4-2): 4 specialist briefs, none with \"The person's note on this task\" or \"Redo\".\n- Redo with \"Make the motto shorter\" typed (12-g4-4): the note is in the brief exactly once, under \"Left for this session by the human\" (steps/g4-redo-typed-brief.txt).\n- Redo again with nothing typed: the note is gone.\n- Drawer Edit changing only the budget (16-g4-8): no \"Edit <title>\" in the next brief.\n\nL3-run-12 (session page):\n- Details ticked shows the steps in words: no event types, no #seq, no UUIDs, no usdMicro (19-r12-2).\n- \"Show the raw events\" shows 20 types and payloads (20-r12-3). Unticking Details hides both the raw events and the switch.\n- The level chips still read \"info (20) warning (0) escalation (0) error (0)\".\n\nL3-research-3:\n- The Inbox failed-task card reads 'The data analyst said: \"notes/plan.md is missing. I could not complete this task.\"', with no \"blocker:\" (24-r3-1).\n- I added a critical finding to the bench database whose required_action is the \"Resolve it and show the evidence\" placeholder. Reviews shows it with no \"To fix\" line (36-r3-2).\n- The task drawer's Review list still shows the bullet \"Resolve it and show the evidence\" (37-r3-3-drawer-review.png, steps/r3-drawer-review.txt).\n\nL3-github-8: Settings › Advanced reads \"waits for your Merge on the Overview of Kite trips\" and \"The highest model the runs of Kite trips may use\". The Who merges change dialog repeats it, and \"trips's\" appears nowhere (26-g8-1, 27-g8-2).\n\nL3-github-6:\n- Folder project: docs/status.md has \"### Session started 2026-11-15 12:06 UTC\" and \"- Note: Done. Spent CHF 0.01.\". A session with a failed task reads \"Ended: 1 task needs you. Spent CHF 0.08.\".\n- In-app copy (status pull request off) has the same words.\n- With Status pull request turned on in Settings, the fr/status branch's docs/status.md has the heading and the note with no UUID. Its commit reads \"docs: status after the session started 2026-11-15 12:10 UTC\" (steps/g6-*.md).\n- In the Kite notes folder, 5 sessions left only 3 entries: identical entries from the same minute collapse into one.\n\nL3-run-11:\n- `git log --format=%s` in the folders shows 'Workspace before \"<title>\"' with no \"(task <id>)\".\n- Plain `git log` in the same folders shows every session-end commit with the body \"Session 01a1df1c-82d0-75fe-bc1f-065f01a0ec37, 2026-11-15T12:09:15.298Z. Committed by Forerunner at the end of the session.\" (steps/r11-kite-notes-plain-git-log.txt).\n- The fixer's evidence (15-r11-git-log.txt) shows subjects only. The same body is in the live check 3 homes (rs3 COMMIT_EDITMSG).\n\nL3-run-7 has no stand-in knob, so it was not walked; the unit tests cover it.\n\nFailing first: with the base's task-context.ts and commands/task.ts restored, all 4 brief-person-note cases, both w15-chat l3-small cases and the conversation-memory L3-run-6 case fail. With the base's runner/executor/pr-executor/critic/project-checks/docs/request-words/views/settings-view restored, the l3-small cases fail in executor-brief (2), workspace-runs (1), loop-docs (2), settings-undo-routes (1) and real-daemon (2). All pass at head.\n\nSuites at head: pnpm check exit 0 (494 files, 5238 passed). docs:check --base ok (37 files). UI vitest 91 files / 1124 passed. Playwright 35 passed. test:e2e 13 files passed. test:injection exit 0.\n\nThe bench is stopped; its home, browser profile and repositories are deleted; the worktree is unchanged.",
+ "blocking": [
+  {
+   "issue": "L3-run-11 is only half fixed: the session-end commit Forerunner writes in the person's folder still carries the session's UUID and a raw ISO time in its message. A plain `git log` shows it on every session. The fixer's live-check step says 'no UUID appears', which is not true. This is a missed sibling of the snapshot-commit fix (validation rule 8, design §5.3), in docs.ts, a file this area owns.",
+   "where": "packages/runtime/src/loop/docs.ts:1011 (statusInFolder: `${done}\\n\\nSession ${session.id}, ${update.endedAt}. Committed by Forerunner at the end of the session.`)",
+   "evidence": "On the bench, plain `git log` in the folders of projects 'Kite notes' and 'Swiss pairing' shows bodies like 'Session 01a1df1c-82d0-75fe-bc1f-065f01a0ec37, 2026-11-15T12:09:15.298Z. Committed by Forerunner at the end of the session.' (/tmp/frbench/review-l3-small/steps/r11-kite-notes-plain-git-log.txt, r11-git-log.txt). The live check 3 homes have the same text (/tmp/frbench/live3/research/rs3/home/data/projects/*/workspace/.git/COMMIT_EDITMSG). The fixer's evidence /tmp/frbench/fix-l3-small/steps/15-r11-git-log.txt lists subjects only. workspace-runs.test.ts's l3-small case never ends a session, so it never sees this commit.",
+   "expected": "Name the session by when it started, as the status PR and the status file already do (sessionWords(session.started_at ?? session.created_at)), for example 'Session started 2026-11-15 12:09 UTC. Committed by Forerunner at the end of the session.', with no id and no ISO instant. Add a failing test that runs a session end in a folder project (loop-docs.test.ts statusInFolder, or the workspace-runs case) and checks that plain `git log --format=%B` has no UUID. Correct the check_in_the_app step to run plain `git log`."
+  },
+  {
+   "issue": "L3-research-3 is fixed in Reviews but not in the task drawer. The drawer's Review section still shows the placeholder 'Resolve it and show the evidence' as what the critic still asks for. That is the same sentence the live finding said tells the person nothing. The cause is a sibling of findingView (validation rule 8, design §5).",
+   "where": "packages/runtime/src/daemon/task-display.ts:570 (`open: [...new Set(open.map((f) => plainReason(f.required_action || f.description, 160)))]`), rendered by apps/ui/src/pages/project/TaskDrawer.tsx:270-275",
+   "evidence": "On the bench I added a critical finding with required_action 'Resolve it and show the evidence' (NO_ACTION_GIVEN) to the latest review of 'Review the launch plan in notes/plan.md'. Reviews shows it with no 'To fix' line, as fixed. The task drawer's Review list shows the bullet 'Resolve it and show the evidence' (/tmp/frbench/review-l3-small/steps/37-r3-3-drawer-review.png, r3-drawer-review.txt). The fixer's report names neither this sibling nor a follow-up.",
+   "expected": "When required_action is NO_ACTION_GIVEN, the drawer lists the finding's description, never the placeholder. Use the same test findingView uses: `f.required_action.trim() === NO_ACTION_GIVEN ? f.description : f.required_action`. Add a failing case first: the GET /tasks/:id detail through the UI client in real-daemon.test.ts ('l3-small, run L3'), or a TaskDrawer test, asserting the placeholder is absent."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L3-github-4: a Redo or Edit with an empty note puts no button label in the brief; a typed note reaches the brief once, survives a restart and is used up by finished work; Stop then Resume adds no label",
+   "holds": true,
+   "note": "brief-person-note.test.ts: all 4 cases fail with the base's task-context.ts and pass at head. On the bench, with Start pressed in the UI, Redo with an empty note, a typed note (once, then gone) and Edit of only the budget all check out. A note typed in Chat now reaches the brief only if the chat model passes `note`; before, the chat line's words_used was quoted. Worth a live check 4 step: 'redo X: make the motto shorter' in Chat."
+  },
+  {
+   "claim": "L3-run-6: a same-title word from a refusal keeps picking its task after a pause, a pull request or a state change; the refusal's sentence is unchanged",
+   "holds": true,
+   "note": "The conversation-memory and w15-chat l3-small cases fail with the base's task.ts and pass at head. Bench chat walk: pause, then resume and redo with '(the older one)' pick the older task; reopen's own refusal shows; no model calls."
+  },
+  {
+   "claim": "L3-github-6: the status file names the session by its start and says how it ended in words, never the id (status branch on GitHub and the in-app copy)",
+   "holds": true,
+   "note": "The loop-docs l3-small cases fail at base. On the bench the fr/status file, the in-app copy and the folder copy all read 'Session started … UTC' and 'Done. Spent CHF x.' or 'Ended: 1 task needs you. Spent CHF x.'. Side effect: identical entries from the same minute merge (5 sessions left 3 entries). The intake docs branch name is still in not_done, with a reason."
+  },
+  {
+   "claim": "L3-github-8: no possessive of a project name in Settings or the Who merges dialog",
+   "holds": true,
+   "note": "settings-undo-routes l3-small fails at base. On the bench the rows and the change dialog for 'Kite trips' read 'on the Overview of Kite trips' and 'the runs of Kite trips'."
+  },
+  {
+   "claim": "L3-run-7: a refused step says what was refused and why",
+   "holds": true,
+   "note": "Both executor-brief l3-small cases fail at base. Not walked on the bench (no knob). Small inaccuracies: the 'forbidden' autonomy code reads '… without you' though such an action is never allowed, the SDK's WebSearch reads 'use websearch', and budget codes fall back to 'was not allowed to …'."
+  },
+  {
+   "claim": "L3-run-11: the commits in the person's folder name the task, never its id",
+   "holds": false,
+   "note": "Snapshot, set-aside and failed-run subjects are fixed; refs and lookups work, including the base-version message fallback, and the workspace-runs case fails at base. But the session-end commit in the same folder still has 'Session <uuid>, <ISO>' in its body, visible in plain `git log` (blocking 1)."
+  },
+  {
+   "claim": "L3-run-12: Details is in words; event types and payloads only behind 'Show the raw events'",
+   "holds": true,
+   "note": "The session.test.tsx l3-small case and Playwright session.spec pass. On the bench, Details has no types, ids or micros and the raw switch shows them. The level chips are still raw words with zero counts (the fixer logged this as a new problem)."
+  },
+  {
+   "claim": "L3-research-3: the questions or failed card quotes the specialist without a findings tag; Reviews shows no 'To fix' line when the critic gave no fix",
+   "holds": false,
+   "note": "The Inbox quote and the Reviews line are fixed: both real-daemon cases fail at base, and the bench card reads '…said: \"notes/plan.md is missing. …\"'. The task drawer still lists 'Resolve it and show the evidence' (blocking 2). Separately, the phone's Reviews screen now shows an empty 'Needed:' for every severity."
+  },
+  {
+   "claim": "Validation: pnpm check, test:integration, test:e2e, UI vitest, Playwright and test:injection all pass",
+   "holds": true,
+   "note": "I re-ran pnpm check (exit 0; docs:check needs --base here: ok), UI vitest 1124 passed, Playwright 35 passed, test:e2e 25 passed and test:injection exit 0. I did not re-run test:integration: the area touches nothing Postgres-backed."
+  },
+  {
+   "claim": "not_done: the intake docs branch name, an action-naming 'To fix', and the BEFORE bench walk",
+   "holds": true,
+   "note": "The first two are within the area's cut line and give reasons. The BEFORE walk was replaced by failing-at-base tests and the live check 3 screenshots, which deviates from the acceptance text's 'bench before/after walk'."
+  }
+ ],
+ "non_blocking": [
+  "The phone's Reviews screen (apps/ui/src/mobile/screens/ReviewsScreen.tsx:192) renders 'Needed: {f.requiredAction}' without a guard. Since findingView now blanks the placeholder at every severity, a critical, high or medium finding with no fix shows an empty 'Needed:'; before, only info findings did. Hide the line when it is empty, as ReviewsTab.tsx:149 does.",
+  "Status-file dedupe: identical entries from the same minute now collapse. In the bench folder project 5 sessions (three motto redos in minute 12:06 with the same note) left 3 entries, and different sessions of one minute share one heading. memory.md documents this; the w15-merge test had to move a session's start to keep two entries.",
+  "specialistReason capitalises any first all-letter word: '`npm test` fails: …' becomes 'Npm test fails: …' and 'git push was refused' becomes 'Git push …'. Consider skipping words that look like commands, or only capitalising after a stripped tag.",
+  "Session page Details: the level filter chips still read 'info (20) warning (0) escalation (0) error (0)', raw level words with zero counts (design §5.5, §5.6). The fixer logged this as a new problem; SessionPage LEVELS chips.",
+  "The Run L3 shared_files rule gives project-checks.ts to l3-handoff-checks, which merges before l3-small. scriptsBefore changed there (firstSnapshotRef fallback), and notes_for_other_areas mentions it only in passing, so the merger should expect a possible conflict.",
+  "Commit e7c3718 left apps/ui real-daemon C-49 failing until ed6e821 fixed its assertion, so a bisect between them sees a red UI suite.",
+  "The new refs refs/forerunner/before|first/<task uuid> show in `git log --all --decorate=full`, in Git GUIs, and in default decoration on git older than about 2.39. This is the same class as the existing wip and set-aside refs; git 2.43 here hides them.",
+  "The fake daemon still says \"Added a note to ${project.name}'s next session\" (apps/ui/test/fake-daemon.ts:5760); the real note.add says 'Noted for the next session on <project>'. This is pre-existing drift, but it is the same possessive class as L3-github-8.",
+  "Live check 4 should add a chat case: 'redo <task>: make the motto shorter' (or an Edit with a note via chat) and confirm the note reaches the brief. With personNoteOn gone, the chat model's `note` parameter is the only route.",
+  "With POST /tasks/:id/transition or /dependencies, `reason` no longer reaches any brief, which the fixer reported. An agent's queued note is still recorded with author_human, which the fixer flagged for C4/C6."
+ ]
+}

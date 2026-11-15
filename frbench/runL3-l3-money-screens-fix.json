@@ -1,0 +1,131 @@
+{
+ "area": "l3-money-screens",
+ "branch": "fix/l3-money-screens",
+ "head_sha": "c3b9626aa965dc864965ae21dbe70ea3151feb92",
+ "commits": [
+  {
+   "sha": "49fcda0",
+   "subject": "bench: FORERUNNER_BENCH_CRITIC_USAGE makes a task's reviews cost cents (L3-run-3)"
+  },
+  {
+   "sha": "9743fff",
+   "subject": "ui: the Tasks row's budget line names what the budget counts, and the drawer's run line follows the spend (L3-run-3, L3-run-4)"
+  },
+  {
+   "sha": "c3b9626",
+   "subject": "ui: Costs leaves out a savings line that saved nothing (L3-run-13)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L3-run-3 (minor): the Tasks row read 'CHF 0.13 of CHF 0.20 budget' under a cost that included the critic's reviews, while the budget counts only the work and the run's own line said 'This run may spend CHF 0.11'. The row suggested CHF 0.07 was left when CHF 0.11 was. Root cause: W15-20 moved the row's cost to TaskView.spent (ledger, reviews included), but TaskCap still printed 'of <budget> budget' under it, while the budget counts actual_cost_usd_micro (runCapOf in executor.ts, ADR 0112 point 6). I re-checked this at base 112227c: TasksTab.tsx:72-81 and :510 were unchanged.",
+   "u_ids": [
+    "L3-run-3"
+   ],
+   "failing_test_before": "apps/ui/test/tasks.test.tsx 'l3-money-screens, run L3' > 'L3-run-3: after a review, a running task's budget line says what is left of it for the work and that reviews are not counted, never the bare budget beside the cost' and '... before any review the cost is what the budget counts, so the line stays 'of CHF 0.20 budget'; at the budget it says it is used up' (both read 'of CHF 0.20 budget'). Real boundary: apps/ui/test/real-daemon.test.ts 'l3-money-screens, run L3' > 'L3-run-3: while the second run works after a review, the row's budget line names what is left for the work, the figure of that run's 'This run may spend' line, ...'. It was seen failing with the old words: Expected 'CHF 0.16 of CHF 0.20 budget left; reviews are not counted', Received 'of CHF 0.20 budget'.",
+   "how": "Only the task-budget branch of TaskCap changed. Its words now come from a new exported taskCapWords(task, specialist) in apps/ui/src/pages/project/TasksTab.tsx. (1) While the row's cost (spent) reads the same as the work's figure (actual) at two decimals, the line stays 'of CHF 0.20 budget'. (2) Once a review was paid, it reads 'CHF 0.11 of CHF 0.20 budget left; reviews are not counted', using the daemon's TaskView.cap. That is the budget less the work, the same figure as the run's 'This run may spend' line. (3) With nothing left it reads 'CHF 0.20 budget used up; reviews are not counted', so it never shows 'CHF 0.00'. The tooltip now reads 'Runs of this task stop when the work's spend reaches this budget. The critic's reviews are not counted in it.' The row's cost stays `spent`, so it still matches Costs > By task. The line may wrap (max 14rem) instead of widening the column. The specialist-limit branch reads exactly as before. The daemon and engine are unchanged: making the task budget count reviews is an owner decision and is not made here. Docs: ADR 0112 has a dated amendment appended (point 1), plus docs/maintainers/apps.md (tasks tab, TaskCap) and docs/user-guide.md (the task budget paragraph). Bench before/after: /tmp/frbench/fix-l3-money-screens/steps/before-watch.json shows the row at 'CHF 0.30 of CHF 0.60 budget' while 'This run may spend CHF 0.47'. after-watch.json shows 'CHF 0.57 of CHF 0.60 budget left; reviews are not counted' at the second run's start, when its line said 'This run may spend CHF 0.57'.",
+   "check_in_the_app": "Live check 4: 1) In a project, press New task. Make it a coder task with Budget 0.20 whose criteria name a file and a test, e.g. 'Write the Swiss pairing tool with tests'. Start a session. 2) Before any review, the Tasks row reads the cost (e.g. 'CHF 0.06') with 'of CHF 0.20 budget' under it. 3) Let the critic send it back once (the real critic often does; on the bench, use --env FORERUNNER_BENCH_CRITIC_REJECT=Swiss and FORERUNNER_BENCH_CRITIC_USAGE=Swiss:15000). While the second run works, the row reads e.g. 'CHF 0.13' with 'CHF 0.11 of CHF 0.20 budget left; reviews are not counted' under it. 4) Open the task's drawer: the second run's step line 'This run may spend CHF 0.11: ...' names the same CHF 0.11. 5) Hovering the line shows 'Runs of this task stop when the work's spend reaches this budget. The critic's reviews are not counted in it.' 6) A running task never reads 'CHF 0.24 of CHF 0.20 budget'. With no work budget left it reads 'CHF 0.20 budget used up; reviews are not counted'. A done or cancelled task shows no line."
+  },
+  {
+   "problem": "L3-run-4 (minor): with the task drawer open during a run, the header moved ('spent CHF 0.06', later 0.15) while the run line under Runs stayed 'Running · CHF 0.01' (and 'CHF 0.00' in the second run) until the status changed. Root cause: TaskDrawer re-read GET /tasks/:id only when the row's version or status changed (TaskDrawer.tsx:79-83), and W15-21 books each call's cost on the task and its run without bumping the version. I re-checked this at base 112227c: unchanged.",
+   "u_ids": [
+    "L3-run-4"
+   ],
+   "failing_test_before": "apps/ui/test/tasks.test.tsx 'l3-money-screens, run L3' > 'L3-run-4: the drawer's run line follows the run's spend while the drawer stays open, with no Loading flash and no new version'. The header passed and the run line stayed 'Running · CHF 0.01'. Also '... the run line follows the Tasks tab's polled runs when the run's cost is written after the task's spend was read', which stayed 'CHF 0.01'. Real boundary: apps/ui/test/real-daemon.test.ts 'L3-run-4: each booked call moves the task's spend and its run's cost on the routes the drawer's re-read key follows, and never the task's version'. This case asserts the routes the key follows; the daemon side was already right, so it passes at base too.",
+   "how": "TaskDrawer's re-read key is now [client, taskId, row?.version, row?.status, row?.spent?.usdMicro ?? row?.actual.usdMicro, latestRun?.id, latestRun?.cost.usdMicro]. latestRun is a new prop: the task's latest run from the Tasks tab's polled GET /projects/:id/runs (latestRunByTask, already polled every 5 s while a task is active). The task's addCost and the run's cost patch are two separate writes, so either one moving re-reads the detail. useAsync keeps its old data while reloading, so there is no Loading line. The Edit form reads the row, and the task's version is untouched: a Stop sent afterwards carries the version the drawer read (asserted). Docs: ADR 0112 amendment point 2, docs/maintainers/apps.md (the drawer's RunEntry and key) and the user guide (the run's amount follows its spend). Bench before: the drawer read 'Running · CHF 0.00' for the whole of every run while the API's run cost rose to 34,445 µCHF (before-watch.json; screenshot 08). After: the run line moved CHF 0.00 → 0.01 → 0.03 in the first run and 0.00 → 0.01 → 0.02 in the second, at most one 5 s poll behind the API, with the version fixed at 4 / 11 / 18 / 25 (after-watch.json; screenshot 18).",
+   "check_in_the_app": "Live check 4: 1) Start a session on a coder task, open its drawer from the Tasks tab, and leave it open through several model calls. 2) The run line under Runs ('coder · <time> · Running · CHF X') moves within about 5 s each time the header's 'spent CHF Y' moves. 3) In a second run after a review, the new run's line starts at CHF 0.00 and grows while it runs. 4) The drawer never flashes 'Loading the task…'. 5) Press Stop while it runs: the task pauses with no 'This task changed' message."
+  },
+  {
+   "problem": "L3-run-13 (words): the Costs tab showed 'Savings (not spend) / Context compression / CHF 0.00 · 0 tokens' on a project whose only spend was planning (design section 5 rule 5: no zero counts). A sibling of the same class was seen on the bench: 'Prompt cache / CHF 0.00 · 63,793 tokens', which is unpriced cache reads beside a zero CHF.",
+   "u_ids": [
+    "L3-run-13"
+   ],
+   "failing_test_before": "apps/ui/test/project.test.tsx 'l3-money-screens, run L3' > 'L3-run-13: a Savings line that saved nothing is left out; the other stays with its CHF and tokens', 'L3-run-13: a project that saved nothing (only planning ran) shows no Savings box', 'L3-run-13: tokens read from the prompt cache that no price covers say the tokens, never 'CHF 0.00' beside them'.",
+   "how": "The new exported savingsLines(savings) in apps/ui/src/pages/project/CostsTab.tsx keeps a line only when it saved tokens or money. With no line left, the 'Savings (not spend)' box is not shown. A line reads 'CHF 2.30 · 1,200,000 tokens', or only the tokens when the CHF figure is zero; it never shows 'CHF 0.00'. The new test ids are cost-savings-compression and cost-savings-cache. The fake daemon now serves Costs from state.costs (a clone of COSTS, reset by /__test/reset) so tests can set savings. The route and its shape are unchanged, so no real-daemon case is needed. Docs: docs/maintainers/apps.md (costs tab) and the user guide (Costs bullet). Bench before: steps 12 and 13 show both zero lines. After: step 25 shows only 'Prompt cache 63,794 tokens', and step 26 (nothing spent) shows no Savings box.",
+   "check_in_the_app": "Live check 4: 1) Open More > Costs on a project whose only spend is planning (live check 3's 'Clamp review' after Stop now): there is no 'Savings (not spend)' box and no '0 tokens' anywhere. 2) Open Costs on a project whose tasks ran with prompt caching: 'Prompt cache CHF 0.0x · N tokens' is listed, and 'Context compression' is missing when nothing was compressed. Neither line ever reads 'CHF 0.00'."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "A UI render of the open drawer against the real daemon inside vitest, to extend 'W15-20, W15-21' as the acceptance describes.",
+   "why": "real-daemon.test.ts runs in the node environment, which cannot render React. A probe that composed the runtime under jsdom failed: Vite cannot bundle node:sqlite (packages/state/src/db/sqlite.ts) in the jsdom environment. Instead, the rendered drawer is covered by the jsdom UI test with the fake daemon, which was failing before the fix. The real routes the drawer's key follows are covered by a new real-daemon case. The rendered drawer against the real daemon and stand-in is covered by the bench walk (/tmp/frbench/fix-l3-money-screens/steps/*-drawer-while-running-*.png and after-watch.json)."
+  },
+  {
+   "problem": "Making the task budget count the critic's reviews too, so that one figure serves both the row's cost and the budget.",
+   "why": "This is an engine change the owner has not asked for (spec decision); it is left to the owner. The screens now say which figure each line counts."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, path lint, typecheck, unit tests, docs check, links, secret scan)",
+   "result": "exit 0; 493 test files and 5225 tests passed (7 skipped); link-check ok; secret-scan clean. The docs check inside pnpm check cannot diff against origin/main in this worktree; it is covered by the separate run below."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (13 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0; 5 files passed, 6 skipped (Postgres, as expected); 30 tests passed, 77 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0; 13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0; 91 files, 1129 tests passed (including the 4 new tasks.test.tsx cases, 3 project.test.tsx cases and 2 real-daemon.test.ts cases)"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed (1.3m)"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing found"
+  },
+  {
+   "command": "bench fix-l3-money-screens (daemon 48823, UI 2423, --provider bench, FORERUNNER_BENCH_CRITIC_REJECT=Swiss, FORERUNNER_BENCH_CRITIC_USAGE=Swiss:15000, FORERUNNER_BENCH_USAGE=Swiss:12000, FORERUNNER_BENCH_DELAY_MS=3000): walked before and after with the recorder's step()",
+   "result": "Before: drawer run line stuck at 'CHF 0.00' and row 'CHF 0.30 of CHF 0.60 budget' while 'This run may spend CHF 0.47'; Costs zero lines. After: run line follows the spend at the poll pace with the version fixed; row 'CHF 0.57 of CHF 0.60 budget left; reviews are not counted' equals 'This run may spend CHF 0.57'; Costs zero lines gone. Bench stopped with scripts/bench/stop.mjs; its home and browser profile deleted, steps kept."
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: the desktop shell is untouched"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-l3-money-screens/steps/05-before-drawer-while-running-4.png",
+   "/tmp/frbench/fix-l3-money-screens/steps/08-before-drawer-while-running-7.png",
+   "/tmp/frbench/fix-l3-money-screens/steps/10-before-tasks-after.png",
+   "/tmp/frbench/fix-l3-money-screens/steps/12-before-costs-after.png",
+   "/tmp/frbench/fix-l3-money-screens/steps/13-before-costs-nothing-spent.png",
+   "/tmp/frbench/fix-l3-money-screens/steps/before-watch.json"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l3-money-screens/steps/18-after-drawer-while-running-4.png",
+   "/tmp/frbench/fix-l3-money-screens/steps/23-after-tasks-after.png",
+   "/tmp/frbench/fix-l3-money-screens/steps/25-after-costs-after.png",
+   "/tmp/frbench/fix-l3-money-screens/steps/26-after-costs-nothing-spent.png",
+   "/tmp/frbench/fix-l3-money-screens/steps/after-watch.json"
+  ]
+ },
+ "new_problems": [
+  "Costs of a project with nothing spent reads 'Total spend CHF 0.00 / Nothing spent yet' followed by three 'Nothing yet.' tables (bench step 26). This is repetitive and arguably a zero count (design section 5 rule 5). It is a polish candidate and was not changed here, because existing tests assert those placeholders.",
+  "The Costs tab is read once when it opens and does not follow a session that is still running. The design does not ask for Costs to be live; this is a sibling of L3-run-4 that was checked and left as is.",
+  "On the bench, prompt-cache savings are priced at CHF 0.00 because the stand-in's fake-* models have no price row: packages/billing/src/ledger.ts savings() counts an unpriced run's tokens but no money. Real models are priced. The screen now shows only the tokens in that case.",
+  "The UI's jsdom vitest cannot compose the real runtime (Vite will not bundle node:sqlite under jsdom), so no vitest can render a screen against the real daemon. It may be worth a test-infra item (e.g. a node-environment render with a manual JSDOM), so drawer-style 'follows the spend' cases can run at the real boundary.",
+  "Bench note, not a product bug: with criteria naming src/main.js, the stand-in coder writes only notes/..., so the stand-in critic sends it back every time ('src/main.js is not in the task's folder') and the task ends 'Needs your decision: tried 4 times'. This was useful for this walk; other walks should not name files the stand-in does not write."
+ ],
+ "notes_for_other_areas": [
+  "d1109-oversize-pause (C2): its drawer line 'Spent CHF 4.00 of about CHF 6.00.' must name its figure. The estimate is for the work, so compare it with TaskView.actual (what the budget counts), not `spent`: the drawer header already says 'spent CHF X' from `spent`, with reviews included. Suggested wording: 'The work spent CHF 4.00 of about CHF 6.00.' / 'The work spent CHF 6.10, more than its estimate of CHF 6.00.'. If it uses `spent`, it must say the reviews are included.",
+  "d1109-cred-screens (C6, drawerRunLine): the run line's cost is RunEntry's r.cost, the run's own cost, patched after each model call. Keep TaskDrawer's re-read key exactly: [client, taskId, row?.version, row?.status, row?.spent?.usdMicro ?? row?.actual.usdMicro, latestRun?.id, latestRun?.cost.usdMicro]. TaskDrawer has a new optional prop latestRun: Pick<RunView, 'id' | 'cost'>, passed by TasksTab as byTask.get(openId) (latestRunByTask of the polled runs). A drawerRunLine that rewords the line must keep `<Money value={r.cost} />` or an equivalent that reads r.cost.",
+  "TasksTab.tsx now exports taskCapWords(task, specialist): {text, title} | null. TaskCap renders it (data-testid task-cap; it wraps at max-w-[14rem]). A later area that rewords it must update the assertions in apps/ui/test/tasks.test.tsx and apps/ui/test/real-daemon.test.ts ('l3-money-screens, run L3'). The existing U-042 assertions ('of CHF 4.80 budget', 'of CHF 4.00 budget', 'each run stops at CHF 2.00 (the researcher's limit)') still hold.",
+  "CostsTab.tsx exports savingsLines(savings) and SavingsLineView. New test ids are cost-savings-compression and cost-savings-cache. The 'cost-savings' box is not rendered when no line is left.",
+  "apps/ui/test/fake-daemon.ts: new state.costs (Record<string, CostView>, a clone of COSTS, reset by POST /__test/reset). GET /costs reads it instead of the COSTS fixture.",
+  "testenv bench: new knob FORERUNNER_BENCH_CRITIC_USAGE=<title>:<tokens>. Every critic call whose label or request names the title bills that many more input tokens. It is documented in scripts/bench/README.md and docs/maintainers/testing.md.",
+  "Merge: each of the three append-only test files (tasks.test.tsx, project.test.tsx, real-daemon.test.ts) got its own describe 'l3-money-screens, run L3' at the end. real-daemon.test.ts gained two imports: formatChf/formatMoney from ../src/lib/money.ts and latestRunByTask/taskCapWords from ../src/pages/project/TasksTab.tsx. ADR 0112 got an amendment appended at the end, 'Amendment 2026-11-15 (run L3, 'l3-money-screens')'; l3-money-engine may append its own after it.",
+  "Suggested CHANGELOG / UPDATE-LOG lines for the session lead: 'Tasks: after a review, a task's budget line says what is left of it for the work (\"CHF 0.11 of CHF 0.20 budget left; reviews are not counted\"), the same amount as the run's \"This run may spend\" line (L3-run-3).' 'Tasks: the drawer's run line follows what the run spends while it is open (L3-run-4).' 'Costs: a savings line that saved nothing is left out, and so is the Savings box when nothing was saved (L3-run-13).' No new ADR is needed; ADR 0112 was amended."
+ ],
+ "tests_changed_for_design": []
+}

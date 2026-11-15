@@ -1,0 +1,146 @@
+{
+ "area": "l3-chat-claims",
+ "branch": "fix/l3-chat-claims",
+ "head_sha": "78e55d9fd06499c9c1e037cd0a67b1c48800db44",
+ "commits": [
+  {
+   "sha": "5461ff3",
+   "subject": "bench: the chat stand-in answers 'tool: a {json} then say: <text>' (L3-run-1)"
+  },
+  {
+   "sha": "78e55d9",
+   "subject": "chat: the claim guard says what the turn did, never \"nothing waits\" above its card or \"Nothing changed\" above its change (L3-run-1)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1: a turn whose own command asked for a yes (settings_set {mode any} answered 'Needs confirmation') and whose reply said \"I've updated research to read any public website once you confirm.\" got two false things. The nudge told the model \"nothing waits for a yes\". The person then read \"Nothing changed, and nothing waits for your yes. Say it again to try once more.\" right above that turn's own Yes/No card. Root cause: falseClaim backed a 'changed' claim only with done or partial results, and the guard knew one nudge (CLAIM_NUDGE) and one replacement (NOTHING_CHANGED_REPLY), whatever the turn's commands had done.",
+   "u_ids": [
+    "L3-run-1"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts 'l3-chat-claims, run L3: what the turn did' > \"a 'changed' claim beside the turn's own Yes/No card: the nudge says the change waits, and the person gets the read-back, never 'nothing waits' (review blocking 1)\"; apps/ui/test/real-daemon.test.ts 'l3-chat-claims, run L3' > \"Talk: the reply agrees with its own Yes/No card and with the change it made, and 'I've changed nothing' reaches the person as said (L3-run-1, review)\" (POST /chat and GET /projects/:id/conversation). Both fail at 6447fbc. The sibling 'a claim while an earlier turn's card still waits ... (sibling)' also fails there: it got 'nothing waits' while the earlier card waited.",
+   "how": "agent.ts: didNow() returns TurnDid {changed, asked, waiting} from the turn's command results, the nudge step's included. 'asked' means a pending result with a pendingId in this turn. 'waiting' means a card from an earlier turn still waits and the turn read back no card of its own. falseClaim judges 'asked' by did.asked and 'changed' by did.changed. A card from an earlier turn no longer backs an 'asked' claim: the claim may be about another change, and its Yes would answer the earlier card (the reviewer's non-blocking item). claims.ts claimNudge(claim, did) returns CLAIM_NUDGE unchanged when nothing changed and nothing waits. Otherwise it says what is true: this turn's change waits for the yes under the reply, plus 'Do not call that command again.', or an earlier card still waits. trueLine() replaces a claim the model makes again: with this turn's card the replacement is empty, so the read-back alone is the reply. With no card of this turn and an earlier card waiting it is NOTHING_CHANGED_CARD_WAITS_REPLY, 'Nothing changed; the change I asked about earlier still waits for your yes.'. Only the two 'Nothing changed' lines are marked notice. Every nudge variant is asserted word for word.",
+   "check_in_the_app": "Bench (stand-in): on 'Reading rules' limited to developer.mozilla.org, type in Talk: tool: settings_set {\"key\":\"web_access\",\"value\":{\"mode\":\"any\"},\"project\":\"Reading rules\"} then say: I've updated research to read any public website once you confirm. The agent bubble is only the Yes/No card 'Set web pages research may read for Reading rules to any public website? Research reads any public website, on the API key and on the subscription.' (screenshot after/steps/06). Before the fix it read 'Nothing changed, and nothing waits for your yes. ...' above that card. Then type 'say: I've set research to read any public website.': the reply is 'Nothing changed; the change I asked about earlier still waits for your yes.' and the card above still has Yes and No (screenshot 07). Yes then changes the Overview line to 'Research reads: any public website'. Live check 4 (real model): on the same project, ask 'research may read any public website again'. Whatever the model says, the bubble above a Yes/No card never contains 'Nothing changed' or 'nothing waits'. If the daemon log has 'chat reply claimed what no command did' with kind changed, the model-call log's second request for that turn ends with a text block containing 'nothing changed yet, and the change your command read back waits for the person's yes, with Yes and No under your reply. Do not call that command again.'"
+  },
+  {
+   "problem": "Review blocking 2: a turn whose command did change something (task_create done) and whose reply said \"Added the task. I've asked for your confirmation to widen research.\" was replaced with \"Nothing changed, and nothing waits for your yes. ...\" while the change's row with Undo showed under it. The same happened when the nudge step itself made the change. Root cause: the same as blocking 1. An 'asked' claim was checked only against pending results, and the replacement ignored done and partial results.",
+   "u_ids": [
+    "L3-run-1"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts 'l3-chat-claims, run L3: what the turn did' > \"an 'asked' claim beside a change the turn made: the nudge says what changed, and the person gets the change's sentence, never 'Nothing changed' (review blocking 2)\" and 'a change the nudge step made counts: the claim made again is replaced with that change's sentence (review blocking 2)'; the real-daemon case above (its task_create part).",
+   "how": "The nudge for this case says: 'a command of this turn made a change, which the runtime shows under your reply, and nothing waits for a yes', then asks the model to say only what this turn's commands did. trueLine() replaces a claim the model makes again with the turn's change sentences, as a command's own reply says them (sentenceOf). Talk shows that sentence once, as the change's row with Undo, and the next turn's history says it once, as 'The app did: ...'. 'Nothing changed' is used only when no command of the turn, the nudge step included, changed or asked anything.",
+   "check_in_the_app": "Bench (stand-in): in Talk type: tool: settings_set {\"key\":\"web_access\",\"value\":{\"mode\":\"any\",\"never\":[\"facebook.com\"]},\"project\":\"Reading rules\"} then say: Done. I've asked for your confirmation to widen research. The bubble shows the change once, with its Undo: 'Set web pages research may read for Reading rules from any public website to any public website, never facebook.com: research reads any public website except the ones listed, on the API key and on the subscription.' It has no 'Nothing changed' and no claim (screenshot after/steps/09; before: before/steps/09 shows 'Nothing changed, and nothing waits for your yes.' above the change). Live check 4: no step; this case needs the model to claim a yes beside a change it made. If it happens, the reply is the change's sentence."
+  },
+  {
+   "problem": "Review blocking 3: claimOf counted negated sentences as claims: \"I've changed nothing.\", \"I have added no task.\", \"Ich habe nichts geändert.\", \"Nein, ich habe die Regel nicht geändert.\", \"Ich habe noch nichts geändert; ...\". conversation-agent.md 1.2.2 asks for exactly that answer. It cost an extra billed call, and then the answer was replaced with the English 'Nothing changed ... Say it again to try once more.'. Root cause: the CHANGED English pattern ended at the verb and never read the word after it. The German spans had no negation check and ran greedily over 'nicht' to a later participle.",
+   "u_ids": [
+    "L3-run-1"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts 'l3-chat-claims, run L3: what the turn did' > 'a negated sentence is no claim, in English as in German; a claim beside a negation still is (review blocking 3)' and \"'I've changed nothing' and 'Ich habe nichts geändert' reach the person as said, with one model call (review blocking 3)\"; the real-daemon case above (its negated-answer part).",
+   "how": "In claims.ts a match is a claim only when it is not negated. NEGATION covers nothing, none, neither, no, not, never, nichts, nicht, kein..., nie and niemals. It reads the match itself and, for the English verb pattern, the word right after the verb. 'no longer', 'not only', 'nicht mehr' and 'nicht nur' still claim, as do the 'No' of 'Yes/No' and the 'Nie' of 'Nie-Liste'. Nor does a verb about the reply itself claim (NOT_THE_APP: 'I've limited my answer', 'I have limited knowledge', 'I've stopped short of'). The German spans are lazy and may cross a dot inside a word ('Ich habe facebook.com nicht mehr erlaubt' is a claim). Every match of a sentence is read, so 'I've changed nothing in the budget, but I've set research to ...' still claims. A cheap non-blocking item: the asked pattern no longer takes 'I opened the report card', 'I've created the task in your inbox list' or 'I have opened the pull request'. A card or question pattern takes 'I've opened a card in your Inbox' and 'I've sent you a Yes/No question'.",
+   "check_in_the_app": "Bench (stand-in): Talk 'say: I've changed nothing; research reads any public website, never facebook.com.' and 'say: Ich habe nichts geändert. Die Recherche liest jede öffentliche Website ausser facebook.com.' Each reply is shown as said, with one chat call each in home/bench/model-calls.jsonl (screenshots after/steps/10 and 11). Before the fix each was replaced with 'Nothing changed, and nothing waits for your yes. ...' after two calls. Live check 4: ask 'did you change the research rule?' and 'hast du die Regel geändert?' on a project. The model's answer reaches Talk as it said it. The model-call log has one chat request for that turn, and the daemon log has no 'chat reply claimed what no command did' for it."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "The guard still cannot take back text that was already streamed: during the nudge step, the live Talk bubble can show the first call's claim, and a spoken turn has already said it (the reviewer's first non-blocking item, the fixer's not_done).",
+   "why": "It needs a stream frame that resets the live text. That is in chat-stream.ts and Conversation.tsx, which C3 (d1109-chat-depth) reworks. Voice is out of scope this round. It stays on C3's list."
+  },
+  {
+   "problem": "The history scan also reads the model's own earlier prose. A reply that quoted an instruction-like record to warn the person makes every later turn read back every change while that reply stays in the history (reviewer's non-blocking item).",
+   "why": "I kept the fixer's scan on purpose. It errs on the safe side: the model's earlier prose can carry a record's words back into the request, and the security rule says such text never becomes instructions. Scanning only the 'The app did:' lines would reopen that channel. The friction is bounded by the 3,000-token history."
+  },
+  {
+   "problem": "changeSentence in transcript.ts falls back to the internal kind ('The app did: task.create.') when a result has no sentence (reviewer's non-blocking item).",
+   "why": "It is model-facing only and rare: every command in the registry writes a sentence for a done result. transcript.ts's history format is what C2 and C3 build on. Left as is and named here for C2's history rework."
+  },
+  {
+   "problem": "NOTHING_CHANGED_REPLY, NOTHING_CHANGED_CARD_WAITS_REPLY and NO_ANSWER_REPLY are English only, so a German conversation gets an English correction (reviewer's non-blocking item).",
+   "why": "This matches the chat's other app replies ('Yes to what? ...'). Making the app's own lines follow the conversation's language is a separate decision."
+  },
+  {
+   "problem": "A replaced reply with two or more changes joins their sentences. Talk then shows the joined text above the change rows, because the UI hides the reply text only when it equals one action's sentence.",
+   "why": "Rare: the guard must fire on a turn with two or more done commands. The fix is a one-line UI change in Conversation.tsx, which C3 reworks. Left for C3."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (head 78e55d9: lint, path lint, typecheck, unit tests, docs check, link check, secret scan)",
+   "result": "EXIT 0: 493 test files, 5246 passed, 7 skipped; link-check ok (209 files); secret-scan clean (2114 files). The docs check inside it cannot diff against origin/main here, so it was run separately."
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0; pnpm docs:check --base 6447fbc",
+   "result": "docs-check: ok (24 files); docs-check: ok (11 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "EXIT 0: 5 files passed, 6 skipped; 30 passed, 77 skipped (Postgres tests skip without FORERUNNER_TEST_PG, as at baseline)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "EXIT 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "PASS: 66 cases (47 hostile, 19 controls), 0 failed; record-007 passes via facts.scan"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "EXIT 0: 91 files, 1123 passed (one more than the fixer's: the new real-daemon case)"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed (no UI source changed; run anyway)"
+  },
+  {
+   "command": "Failing first: the six new conversation-memory cases, the new real-daemon case and the new stand-in case, run with the fixer's agent.ts and claims.ts (6447fbc)",
+   "result": "All failed for the reviewer's reasons. Each nudge was the fixed CLAIM_NUDGE. 'Nothing changed, and nothing waits for your yes. ...' was the reply above a Yes/No card and above a change. 'I've changed nothing' and 'Ich habe nichts geändert' each took 2 calls and were replaced. After the fix all pass, and so do the fixer's 40 earlier cases in conversation-memory.test.ts."
+  },
+  {
+   "command": "Bench fixup-l3-chat-claims (stand-in --provider bench, --fresh, daemon 48844, UI 2444): /tmp/frbench/fixup-l3-chat-claims/walk.cjs",
+   "result": "AFTER: 32/32 checks pass (after/walk.log, after/walk-result.json). These cover the acceptance journey (Overview never facebook.com; Talk only developer.mozilla.org; the L3-run-1 claim nudged once with CLAIM_NUDGE and replaced by the true line, no card, Inbox empty, Overview unchanged after 10 s; the history's 'The app did:' line) and the review's cases on screen: (4) the read-back alone above Yes/No, 3 calls, the nudge says the change waits; (5) a claim while that card waits gives 'Nothing changed; the change I asked about earlier still waits for your yes.' and the card stays; (6) Yes widens, no 'except'; (7) the change sentence once with Undo, no 'Nothing changed'; (8) the English and German negated answers stand, with 1 call each; (9) the Chat tab shows no claim. BEFORE, the same walk on the fixer's guard on a fresh home: 22/32 (before/walk.log): steps 4, 5, 7 and 8 fail exactly as the review says."
+  },
+  {
+   "command": "Restart: scripts/bench/restart-daemon.mjs, then /tmp/frbench/fixup-l3-chat-claims/restart-check.cjs",
+   "result": "PASS: the conversation reads the same after the restart (8 turns: text and read-back). The next turn's history is the byte-identical prefix of the one before the restart (14 of 17 messages). The blocking-2 turn is said once, as 'The app did: ...'. No claim reaches the history. The bench was stopped and its home and browser profile deleted."
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: the desktop shell was not touched"
+  }
+ ],
+ "tests_changed_for_design": [],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fixup-l3-chat-claims/before/steps/06-06-talk-changed-claim-beside-card.png",
+   "/tmp/frbench/fixup-l3-chat-claims/before/steps/07-07-talk-claim-while-card-waits.png",
+   "/tmp/frbench/fixup-l3-chat-claims/before/steps/09-09-talk-asked-claim-beside-change.png",
+   "/tmp/frbench/fixup-l3-chat-claims/before/steps/10-10-talk-changed-nothing.png",
+   "/tmp/frbench/fixup-l3-chat-claims/before/steps/11-11-talk-nichts-geaendert.png",
+   "/tmp/frbench/fixup-l3-chat-claims/before/walk.log"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-l3-chat-claims/after/steps/04-04-talk-claim-no-tool.png",
+   "/tmp/frbench/fixup-l3-chat-claims/after/steps/06-06-talk-changed-claim-beside-card.png",
+   "/tmp/frbench/fixup-l3-chat-claims/after/steps/07-07-talk-claim-while-card-waits.png",
+   "/tmp/frbench/fixup-l3-chat-claims/after/steps/09-09-talk-asked-claim-beside-change.png",
+   "/tmp/frbench/fixup-l3-chat-claims/after/steps/10-10-talk-changed-nothing.png",
+   "/tmp/frbench/fixup-l3-chat-claims/after/steps/11-11-talk-nichts-geaendert.png",
+   "/tmp/frbench/fixup-l3-chat-claims/after/steps/12-12-chat-tab.png",
+   "/tmp/frbench/fixup-l3-chat-claims/after/walk.log",
+   "/tmp/frbench/fixup-l3-chat-claims/restart-check.log"
+  ]
+ },
+ "new_problems": [
+  "Not checked against the base: the reviewer saw, on its bench step 09, the Overview's 'Needs you' block and the Inbox badge still showing an answered card about 3 s after Yes in Talk, until a reload. My walk reloads after Yes, so it neither confirms nor clears this. It probably predates this area (a refresh cadence).",
+  "Bench-only, from the fixer's report: after a plain 'tool:' turn the stand-in's reply quotes the tool's answer, so Talk shows the change sentence twice (the reply and the action row)."
+ ],
+ "notes_for_other_areas": [
+  "C2 (d1109-chat-recall) and C3 (d1109-chat-depth): the guard in ConversationAgent.chat (agent.ts) has new parts. didNow(): TurnDid ({changed, asked, waiting}) is read from the shared `results` array, so commands the nudge step runs count. 'asked' means a pending result with a pendingId in this turn. 'waiting' means the conversation's earlier card (`pending`) still waits, the turn read back no card of its own, and no stop cancelled it. falseClaim backs 'asked' only with did.asked (a card waiting from an earlier turn no longer backs it) and 'changed' only with did.changed. The nudge text is claimNudge(claimed, didNow()). A replaced reply is this.trueLine(results, didAll): the change sentences (sentenceOf), else '' (the read-back is appended below as before), else NOTHING_CHANGED_CARD_WAITS_REPLY or NOTHING_CHANGED_REPLY. The row's notice is set only for those two 'Nothing changed' lines (guardNotice). C3's thorough pass must call didNow() after its own last model step and keep trueLine as the replacement.",
+  "claims.ts exports: claimOf(text) (same signature), the TurnDid interface, claimNudge(claim, did), CLAIM_NUDGE (unchanged text, still used when nothing changed and nothing waits), NOTHING_CHANGED_REPLY (unchanged), and the new NOTHING_CHANGED_CARD_WAITS_REPLY = 'Nothing changed; the change I asked about earlier still waits for your yes.'. Each claimNudge variant is asserted word for word in conversation-memory.test.ts 'l3-chat-claims, run L3: what the turn did'. Rewording one means updating those assertions and the real-daemon case.",
+  "claimOf now ignores negated sentences (NEGATION) and verbs about the reply itself (NOT_THE_APP), reads every match of a sentence (the patterns carry the g flag), uses lazy German spans that may cross a dot inside a word, and orders the card/question pattern ('I've opened a card', 'I've sent you a Yes/No question') before the asked-for-confirmation pattern, whose keywords no longer include card, inbox or 'pull request'.",
+  "No prompt text changed in this fix-up: conversation-agent.md stays 1.2.2 and CHAT_RETRIEVAL_RULES and DEFAULT_PROMPT are as the fixer left them. transcript.ts (historyMessages, actionLines, HISTORY_ACTION_LEAD) is untouched.",
+  "Bench stand-in (testenv/src/bench/role-player.ts): 'tool: a {json} then say: <text>' calls the chain's tools, then answers with the text and no tool on every later call of the turn, a nudge included (chainedSay, SAY_TAIL; scripts/bench/README.md, docs/maintainers/testing.md). Walks of the guard can use it.",
+  "Session lead, suggested CHANGELOG/UPDATE-LOG line in place of the fixer's first one: 'Chat only says it changed something or asked for your Yes when it did. When its answer claims more, it says only what is true: the change it made (with Undo), its Yes/No question, or \"Nothing changed, and nothing waits for your yes. Say it again to try once more.\" (\"Nothing changed; the change I asked about earlier still waits for your yes.\" while an earlier question waits). An answer like \"I changed nothing\" is shown as said. (L3-run-1)'. No new ADR. The ADR 0091 amendment of this area, which is not merged yet, was edited in place: the step's bound is worded as the code does it, and the claim is replaced with what the turn really did. The user guide's chat paragraph and runtime.md's claim guard paragraph were updated to match."
+ ]
+}

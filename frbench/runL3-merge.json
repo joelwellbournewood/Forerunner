@@ -1,0 +1,116 @@
+{
+ "merged": [
+  "fix/l3-merge at 332233c (merge commit 6b52aa2, no conflicts)",
+  "fix/l3-handoff-checks at 707ec29 (merge commit 75ca801, no conflicts)",
+  "fix/l3-money-engine at 8d35e7c (merge commit 0ec97fc, 2 conflicts resolved)",
+  "fix/l3-money-screens at c3b9626 (merge commit 9bbcca4, 4 conflicts resolved)",
+  "fix/l3-chat-claims at 78e55d9 (merge commit 9222ad8, 2 conflicts resolved)",
+  "fix/l3-small at cee66c5 (merge commit 2b2bc45, 4 conflicts resolved)"
+ ],
+ "head_sha": "7aa7add2ee13db95d051fa4fa3d6fec375ff2d6e",
+ "pushed": true,
+ "conflicts_resolved": [
+  "packages/runtime/test/budget-pause.test.ts (l3-money-engine): two areas appended blocks at the same place. Kept l3-handoff-checks' 'live check 3' describes, then l3-money-engine's 'l3-money-engine, run L3' describe, each closed on its own line.",
+  "apps/ui/test/real-daemon.test.ts (l3-money-engine, l3-money-screens, l3-chat-claims, l3-small), append-only file. Kept every area's describe in merge order: 'l3-merge, run L3', 'l3-money-engine, run L3', 'l3-money-screens, run L3', 'l3-chat-claims, run L3', 'l3-small, run L3'. For l3-chat-claims and l3-small, git had interleaved similar lines from different describes. I rebuilt those two files from our side, applied the area's other hunks with patch (the W15-29/W15-34 word changes, the C-49 status-file case and the L-13e case), then appended the area's new block byte for byte. I checked the appended block equals the branch's copy.",
+  "packages/runtime/src/conversation/agent.ts (l3-chat-claims over l3-money-engine). The import list now has both CUT_OFF_STOP_REASON and RunResult. The reply-guard region uses l3-chat-claims' version: the `run` object, onEvent(ev, stream), didNow/falseClaim/claimNudge/trueLine. Into that onEvent I carried l3-money-engine's rule, with its comment: a model_call_end whose stopReason is CUT_OFF_STOP_REASON neither ends the SentenceGate nor sets ttft. Both areas' tests pass: the voice-route, conversation and performance-route cut-off cases, and conversation-memory's claim guard cases.",
+  "docs/decisions/0112-a-budget-stop-is-a-clean-pause.md (l3-money-screens): both areas appended a dated amendment. Kept both, l3-handoff-checks' 2026-11-15 amendment first, then l3-money-screens'.",
+  "docs/maintainers/apps.md (l3-money-screens): the tasks-tab and costs-tab rows. A word-level three-way merge kept l3-merge's cancel words ('#7 stays open on GitHub ...', L3-github-10) and l3-money-screens' taskCapWords/latestRun/savingsLines text.",
+  "docs/maintainers/apps.md (l3-small): the /sessions/:id and /inbox rows. A word-level merge kept l3-small's 'Show the raw events' text and l3-handoff-checks' request `lists` text.",
+  "docs/maintainers/testing.md (l3-money-screens): the bench knob paragraph. Kept l3-money-screens' FORERUNNER_BENCH_CRITIC_USAGE sentence and appended l3-handoff-checks' FORERUNNER_BENCH_LEFT_NOTE sentence right after it.",
+  "packages/commands/test/w15-chat.test.ts and packages/runtime/test/conversation-memory.test.ts (l3-small), append-only files. Our side kept l3-chat-claims' describes; then I applied l3-small's import hunks (findingAsk, NO_FIX_NAMED, withoutNoActionGiven, NO_ACTION_GIVEN) and appended its 'l3-small, run L3' describes.",
+  "No conflict but checked: packages/runtime/src/loop/project-checks.ts auto-merged and keeps both l3-handoff-checks' JavaScript marker check and l3-small's firstSnapshotRef lookup in scriptsBefore (the reviewer's predicted conflict)."
+ ],
+ "integration_fixes": [
+  "7aa7add 'merge-w23: one blank line between the l3-money-screens and l3-chat-claims describes (l3-money-screens, l3-chat-claims)'. My chat-claims resolution in apps/ui/test/real-daemon.test.ts left two blank lines before the l3-chat-claims block, and biome format failed (pnpm lint: 1 error). I removed the extra line; no test or assertion changed. No behaviour fix was needed after the merge."
+ ],
+ "validation": [
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "nothing found"
+  },
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "Done, lockfile unchanged"
+  },
+  {
+   "command": "pnpm lint",
+   "result": "First run: 1 format error (the extra blank line from the merge). Fixed in 7aa7add. Rerun: exit 0, 39 warnings (the same count the areas report for the base)."
+  },
+  {
+   "command": "pnpm lint:paths",
+   "result": "check-paths: ok (1499 files)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "exit 0 (root tsconfig.node.json plus apps/ui and apps/approvals-web)"
+  },
+  {
+   "command": "pnpm test (unit)",
+   "result": "exit 0: 495 files passed, 5317 tests passed, 7 skipped"
+  },
+  {
+   "command": "pnpm docs:check --base origin/claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (110 files)"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "link-check: ok (209 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "secret-scan: clean (2117 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped (Postgres, no FORERUNNER_TEST_PG); 30 tests passed, 77 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "pnpm --filter @forerunner/live test (live harness dry runs)",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "exit 0, PASS: 66 cases (47 hostile, 19 controls), 0 failed; record-007 (chat_history) passes via facts.scan"
+  },
+  {
+   "command": "HOME=<empty dir> FORCE_COLOR=1 pnpm test (unit, CI-style, git with no identity)",
+   "result": "exit 0: 495 files passed, 5317 tests passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 91 files, 1152 tests passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts (local config copied from the template, git-ignored, not committed)",
+   "result": "exit 0: 35 passed"
+  },
+  {
+   "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+   "result": "not run: no area touched apps/desktop (git diff 112227c..HEAD -- apps/desktop is empty)"
+  },
+  {
+   "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "printed nothing: all 47 commits (the area commits, 6 merge commits and the format fix) are signed"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "112227c..7aa7add pushed on the first try (fast-forward, no force)"
+  }
+ ],
+ "smoke": "Bench merge-w23 (--provider bench stand-in, daemon 48850, UI 2450, --fresh): scripts/bench/journeys/smoke.cjs passed 25/25 checks with 0 findings and 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. The plan card listed 2 tasks; Approve and start wrote both and started a session; the session completed with 2/2 done; the page files were written; the Overview and Files tabs show them; Chat answered; the critic reviewed. The journey script needed no change. I stopped the bench with stop.mjs and deleted its home and browser profile. The result is at /tmp/frbench/merge-w23-logs/smoke-result.json; every validation log is in /tmp/frbench/merge-w23-logs/.",
+ "problems_left": [
+  "Nothing the merge broke is left. These are the areas' own leftovers, unchanged by the merge, for the session lead to place:",
+  "l3-merge: cards stay open when their pull request is closed on GitHub without a merge. A press on a pull request whose check failed, or that stopped merging cleanly, after the last look still answers 'Merging #N.' first. The press's 'could not check' path (notCheckedSentence) has no boundary test. A cancelled pull request's line in the chat's '# Your files' stays after the PR is closed on GitHub. L3-github-1 part 3 (merged on GitHub's website before any poll) is not done.",
+  "l3-handoff-checks: after a Continue, the session line's spend (the run's) differs from the card's (the task's total) at executor.ts pauseSentence, which belongs to C5 or C2 OP-7. The specialist-limit pause card does not say what was spent. The label 'Paused at its budget' still sits beside the card's 'paused before'. The notification title is cut when the project name is long.",
+  "l3-money-engine: a session review whose 'revise' has another cause (an overrun) still reads 'sent back for changes'. The review-only session's plan line and estimate (the spec's cut line). A cut-off call on a routed provider is booked on the run's current billing source. The chat timeout reply reads 'I could not answer (run timeout).'",
+  "l3-money-screens: no vitest can render a screen against the real daemon (jsdom cannot bundle node:sqlite). The row's 'left' figure equals 'This run may spend' only at the run's start.",
+  "l3-chat-claims: the claim guard cannot take back streamed or spoken text (left for C3). The app's correction lines are English only. A replaced reply with two or more changes repeats their joined sentence above the change rows.",
+  "l3-small: the session page's level chips still read raw words with zero counts. The intake docs branch name still carries the project id. Agent-actor queued notes are recorded as the person's (before C4/C6). Memory lessons still carry the no-fix placeholder. Between commits e7c3718 and ed6e821 on fix/l3-small the UI suite is red (a bisect would see it).",
+  "Worktrees wf_d49abaae-666-3 (fix/l3-money-engine) and wf_d49abaae-666-6 (fix/l3-small) still have files from before their branch refs moved with update-ref, so `git status` there shows the fixup commits as reversed. Nobody should commit from them.",
+  "CI (Windows/Linux) and the Desktop app workflow on 7aa7add have not been watched from here."
+ ]
+}

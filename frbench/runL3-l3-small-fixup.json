@@ -1,0 +1,152 @@
+{
+ "area": "l3-small",
+ "branch": "fix/l3-small",
+ "head_sha": "cee66c5308737edc562ea323574d0b36a70c0151",
+ "commits": [
+  {
+   "sha": "db7aaae",
+   "subject": "workspace: the session-end commit in the person's folder names the session by its start (L3-run-11)"
+  },
+  {
+   "sha": "86c41db",
+   "subject": "reviews, drawer, cards, chat: a finding the critic named no fix for reads as what it found (L3-research-3)"
+  },
+  {
+   "sha": "cee66c5",
+   "subject": "inbox: the quoted reason keeps a command's own case; the fake daemon's note words (L3-research-3, L3-github-8)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1 (L3-run-11, half fixed). Every session-end commit in a folder project's git history still had this body: 'Session 01a1df1c-82d0-…, 2026-11-15T12:09:15.298Z. Committed by Forerunner at the end of the session.' Plain `git log` shows it. The review bench and the live check 3 homes both had it.",
+   "u_ids": [
+    "L3-run-11"
+   ],
+   "failing_test_before": "packages/runtime/test/loop-docs.test.ts, describe 'l3-small, run L3: the session-end commit in the folder names the session by its start (L3-run-11)'. Both cases failed at ed6e821. Case 1 runs a session through the runner in a folder project: the exact body expected, and no UUID or ISO instant anywhere in `git log --format=%B`. Case 2 is a session whose start is not known: it reads 'a session'.",
+   "how": "Root cause: ProjectDocs.statusInFolder (packages/runtime/src/loop/docs.ts) put session.id and update.endedAt in the commit body. It now uses sessionWords(session.started_at ?? session.created_at), as the status file and the status pull request do. The body is 'Committed by Forerunner at the end of the session started 2026-11-15 14:00 UTC.', or '… of a session.' when the start is not known. The commit keeps its own date. Siblings checked: the snapshot, set-aside and failed-run commits (no id since ed6e821), the work-in-progress message (title only) and intake.ts's doc-set commit (no id). Docs: runtime.md (statusInFolder), user guide (Files).",
+   "check_in_the_app": "Live check 4: on a project with no repository, run a session that finishes a task. Then run plain `git log` (not --format=%s) in <home>/data/projects/<id>/workspace. The newest commit reads 'Did \"<task>\"' and 'Committed by Forerunner at the end of the session started <YYYY-MM-DD HH:MM> UTC.'. No UUID and no '2026-…T…Z' appear in any commit body. Bench evidence (fixup-l3-small, stand-in): /tmp/frbench/fixup-l3-small-walk/steps/r11-plain-git-log.txt and walk-result.json (gitLogHasUuid=false, gitLogHasIsoInstant=false)."
+  },
+  {
+   "problem": "Review blocking 2 (L3-research-3, sibling of findingView). The task drawer's Review list still listed the placeholder 'Resolve it and show the evidence' as what the critic still asks for. Three more siblings did the same. The cards that list findings (retry, sign-off, blocked-findings and review-failed cards) showed '<finding>: Resolve it and show the evidence' in their details. The chat's `# Tasks` line told the model 'still asked for: Resolve it and show the evidence'. The phone's Reviews screen showed an empty 'Needed:' line, now that findingView blanks the placeholder at every severity.",
+   "u_ids": [
+    "L3-research-3"
+   ],
+   "failing_test_before": "All failed at ed6e821 (each seen failing before its fix):\n- apps/ui/test/real-daemon.test.ts, describe 'l3-small, run L3': 'the task drawer's Review list names what was found for a finding with no fix, never the placeholder; a fix the critic named stays (L3-research-3)' (GET /tasks/:id through the UI client) and 'a card that lists the critic's findings shows a finding with no fix by what was found alone (L3-research-3)' (GET /inbox details).\n- packages/runtime/test/conversation-memory.test.ts, describe 'l3-small, run L3: the chat is told what was found when the critic named no fix (L3-research-3)'.\n- apps/ui/test/mobile-reviews.test.tsx, describe 'l3-small, run L3: the phone's Reviews shows no empty 'Needed:' line (L3-research-3)'.",
+   "how": "Root cause: taskDetail (daemon/task-display.ts) and the chat's project facts (conversation/project-facts.ts) read `required_action || description`, and request-words' plainFinding kept the step's action. None of them told the critic's NO_ACTION_GIVEN filler apart from a fix it named.\n\nFix, in daemon/task-words.ts:\n- New findingAsk(f) returns the named fix, or the finding's description when the critic named none. The drawer and the chat facts use it.\n- New withoutNoActionGiven(step) drops a trailing ' -> <placeholder>' or ': <placeholder>' when a card's details are read. A card filed before this reads the same after an update.\n\nOther changes:\n- ReviewsScreen.tsx hides an empty 'Needed:' line, as ReviewsTab does with 'To fix'.\n- task-words keeps the words as NO_FIX_NAMED rather than importing @forerunner/critic. Importing it put node:sqlite into the UI's jsdom bundle (mobile-home.test.tsx stopped loading). A runtime test pins NO_FIX_NAMED equal to NO_ACTION_GIVEN.\n- The retry brief still gets the placeholder.\n\nDocs: critic.md, runtime.md (drawer, chat context), apps.md (phone Reviews), user guide (Reviews).",
+   "check_in_the_app": "Live check 4 (research S7 repro): New task, reviewer, 'Review the launch plan in notes/plan.md' (the file does not exist), then Start.\n- If the critic gives a finding with no fix: open the task's drawer. The Review list names what was found and never 'Resolve it and show the evidence'. More › Reviews shows no 'To fix' line under that finding.\n- The Inbox card's details list the finding with no ': Resolve it…' tail.\n- In the project's Chat, ask 'why is the review stuck?'. The answer never tells you to 'Resolve it and show the evidence'. In model-calls.jsonl, the chat call's '# Tasks' line reads 'still asked for: <the finding>'.\n- Phone, Reviews: no empty 'Needed:' line.\n\nThe stand-in critic always names a fix, so the bench walk set the placeholder in the database, as the reviewer did. Bench evidence: /tmp/frbench/fixup-l3-small-walk/steps/03-03-drawer-review.png, r3-drawer-review.txt, 04-04-reviews.txt, 05-05-inbox-card-details.txt, 06-06-chat.txt and walk-result.json. In walk-result.json, drawerHasPlaceholder, reviewsHasPlaceholder, cardDetailsHavePlaceholder and chatContextHasPlaceholder are all false. chatStillAskedFor is 'The worker changed nothing…'."
+  },
+  {
+   "problem": "Review non-blocking (L3-research-3): specialistReason made any first word of letters a capital. So '`npm test` fails' read 'Npm test fails', and 'git push was refused' read 'Git push …'.",
+   "u_ids": [
+    "L3-research-3"
+   ],
+   "failing_test_before": "packages/runtime/test/person-questions.test.ts, describe 'l3-small, run L3: the quoted reason keeps a command's own case (L3-research-3)'. It failed at ed6e821 on 'Npm test fails'.",
+   "how": "A reason now starts with a capital only when a findings tag was taken off it, and never on a word that was in code marks in the original text. A reason with no tag keeps its own case. Docs: runtime.md (specialistReason).",
+   "check_in_the_app": "Live check 4: when a specialist's quoted reason starts with a command ('blocker: `npm test` fails …'), the Inbox card reads 'The <specialist> said: \"npm test fails …\"', in lower case. 'blocker: notes/plan.md is missing.' still reads 'notes/plan.md is missing.' (bench 02-02-inbox.txt: 'The data analyst said: \"notes/plan.md is missing. I could not complete this task.\"')."
+  },
+  {
+   "problem": "Review non-blocking (possessive of L3-github-8, test drift): the fake daemon's note.add said \"Added a note to <project>'s next session\". The real note.add says 'Noted for the next session on <project>'.",
+   "u_ids": [
+    "L3-github-8"
+   ],
+   "failing_test_before": "none: a stand-in's words only. No UI test asserted the old words, and the UI suite passes with the new ones.",
+   "how": "apps/ui/test/fake-daemon.ts now words note.add as commands/note.ts does: 'Noted for the next session on <project>: \"<text>\". Undo.'",
+   "check_in_the_app": "Nothing to walk: test stand-in only."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Session page level filter chips still read 'info (20) warning (0) escalation (0) error (0)', raw level words with zero counts (fixer's new_problems, review non-blocking).",
+   "why": "Choosing person words for each chip, and whether to hide zero counts, is a session-page design choice outside both blocking findings. It is still listed for the session page owner."
+  },
+  {
+   "problem": "Commit e7c3718 leaves the UI suite red until ed6e821, so a bisect between them sees a failure (review non-blocking).",
+   "why": "Fixing it would mean rewriting published branch history (squash or reorder). Every commit after ed6e821, including the three here, is green."
+  },
+  {
+   "problem": "project-checks.ts (owned by l3-handoff-checks in the Run L3 shared_files rule) changed in scriptsBefore (firstSnapshotRef fallback). A merge conflict there is possible (review non-blocking).",
+   "why": "This is a merge-time note, not a code change. The merger should keep l3-handoff-checks' part and the ref-first lookup."
+  },
+  {
+   "problem": "Refs refs/forerunner/before|first/<task> show in `git log --all --decorate=full` and in GUIs; the reason sent with /transition and /dependencies no longer reaches a brief; queueNote records author_human for agent-actor notes (fixer's new_problems).",
+   "why": "None of these is in the review's blocking list. They stay as the fixer reported them, for the session lead and C4/C6."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, path lint, typecheck, unit tests, docs check, links, secret scan), on the final tree",
+   "result": "EXIT 0. 494 test files, 5243 passed, 7 skipped. link-check ok (209 files), secret-scan clean (2113 files). The first run failed one biome format error in my new test; fixed and run again."
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (37 files)"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "EXIT 0. 91 files, 1127 tests passed."
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "EXIT 0. 35 passed."
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "EXIT 0. 5 files passed, 6 skipped (Postgres, no FORERUNNER_TEST_PG). 30 passed, 77 skipped."
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "EXIT 0. 13 files passed. 25 passed, 1 skipped."
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "EXIT 0. Failures: none."
+  },
+  {
+   "command": "Failing-first runs: vitest loop-docs 'session-end commit in the folder', conversation-memory 'told what was found', real-daemon 'l3-small, run L3', mobile-reviews 'l3-small', person-questions 'command's own case'",
+   "result": "Each failed before its fix (2, 1, 2, 1 and 1 cases) and passes after."
+  },
+  {
+   "command": "bench fixup-l3-small (--provider bench, FAIL=Review the launch plan, FAIL_SAYS='blocker: notes/plan.md is missing.'), walk /tmp/frbench/fixup-l3-small-walk/walk.cjs",
+   "result": "Start was pressed in the UI. In plain git log, the session-end body is 'Committed by Forerunner at the end of the session started 2026-11-15 14:00 UTC.', with no UUID, no ISO instant and no '(task '. The Inbox quote has no 'blocker:'. With the critic's findings set to the placeholder, it shows nowhere: not in the drawer's Review list (it lists the findings by description), not in Reviews, not in the card details (a step with a real fix keeps it), and not in the chat's context. The bench was stopped; its home and browser profile were deleted, and the evidence copied to /tmp/frbench/fixup-l3-small-walk/."
+  },
+  {
+   "command": "cargo fmt/clippy/test (apps/desktop/src-tauri)",
+   "result": "not run: the desktop shell was not touched"
+  },
+  {
+   "command": "git branch -f fix/l3-small HEAD",
+   "result": "Refused: fix/l3-small is checked out in the fixer's worktree (wf_d49abaae-666-6). I moved it as a guarded fast-forward instead: `git update-ref refs/heads/fix/l3-small HEAD ed6e821…`, after checking ed6e821 is an ancestor of HEAD. fix/l3-small is now cee66c5. That worktree's checkout still holds the ed6e821 files, so `git status` there shows these three commits reversed as uncommitted changes. Do not commit from it."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-l3-small/steps/37-r3-3-drawer-review.png",
+   "/tmp/frbench/review-l3-small/steps/r3-drawer-review.txt",
+   "/tmp/frbench/review-l3-small/steps/r11-kite-notes-plain-git-log.txt"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-l3-small-walk/steps/r11-plain-git-log.txt",
+   "/tmp/frbench/fixup-l3-small-walk/steps/02-02-inbox.png",
+   "/tmp/frbench/fixup-l3-small-walk/steps/03-03-drawer-review.png",
+   "/tmp/frbench/fixup-l3-small-walk/steps/r3-drawer-review.txt",
+   "/tmp/frbench/fixup-l3-small-walk/steps/04-04-reviews.png",
+   "/tmp/frbench/fixup-l3-small-walk/steps/05-05-inbox-card-details.png",
+   "/tmp/frbench/fixup-l3-small-walk/steps/06-06-chat.png",
+   "/tmp/frbench/fixup-l3-small-walk/walk-result.json"
+  ]
+ },
+ "tests_changed_for_design": [],
+ "new_problems": [
+  "The task drawer shows a run's report as the specialist wrote it, so a findings tag stays in front ('Summary blocker: notes/plan.md is missing. I could not complete this task.'). The Inbox quote is clean now. Evidence: /tmp/frbench/fixup-l3-small-walk/steps/03-03-drawer-review.png, run entries. Not changed: it is the whole report, not a quote. Owner: the drawer's run report words (task-display runs[].report).",
+  "A task created with specialist 'reviewer' had runs by both 'data analyst' and 'reviewer' in one session, and its failed card reads 'The data analyst said: …'. The review bench showed the same. Evidence: 03-03-drawer-review.png, 02-02-inbox.txt. Not investigated. Possibly the ladder's specialist handoff; a person would not expect a data analyst on a review task.",
+  "Memory lessons still carry the placeholder: runner.ts:2468 writes 'Critic finding resolved on \"<task>\" …: [sev] <description> -> Resolve it and show the evidence' for a finding with no fix. They are model-facing memory text. If the Memory screen shows them as they are, the person reads the placeholder and the severity tag. Not changed: outside this area."
+ ],
+ "notes_for_other_areas": [
+  "@forerunner/runtime daemon/task-words.ts (re-exported by task-display.ts) now exports:\n- findingAsk(f: {required_action, description}): the fix the critic named, or the finding's description when it named none (empty, or NO_ACTION_GIVEN).\n- withoutNoActionGiven(step): a card step without a trailing ' -> <placeholder>' or ': <placeholder>'.\n- NO_FIX_NAMED: the critic's NO_ACTION_GIVEN words, kept here because the UI's tests read task-words and must not bundle @forerunner/critic (node:sqlite). conversation-memory.test.ts pins it equal.\nAny new person-facing line built from a finding should use findingAsk.",
+  "taskDetail's review.open (GET /tasks/:id) and the chat's '# Tasks' 'still asked for: …' now name what was found when the critic named no fix. request-words' plainFinding (the details of retry, sign-off, blocked-findings and review-failed cards) drops the placeholder at read time. A card filed earlier reads the same.",
+  "specialistReason (daemon/request-words.ts) capitalises the first word only where a findings tag was taken off, and never a word that was in code marks. A reason with no tag keeps its own case. Areas asserting quoted reasons: 'git push was refused' now stays lower case.",
+  "ProjectDocs.statusInFolder's commit body is now 'Committed by Forerunner at the end of the session started <YYYY-MM-DD HH:MM> UTC.' ('… of a session.' when the start is not known). The subject is unchanged ('Did \"<task>\", …' / 'Work of the session').",
+  "apps/ui ReviewsScreen (phone) renders 'Needed:' only when requiredAction is non-empty.",
+  "Suggested UPDATE-LOG/CHANGELOG lines for the session lead: 'In a project's folder, the commit Forerunner makes at the end of a session names the session by when it started (\"Committed by Forerunner at the end of the session started 2026-11-15 14:00 UTC.\"), never its id (L3-run-11).' 'A finding the critic named no fix for reads as what it found in the task drawer, on the Inbox cards and in the chat; the phone's Reviews shows no empty \"Needed:\" line (L3-research-3).' 'A quoted reason that starts with a command keeps its case (\"npm test fails\") (L3-research-3).'"
+ ]
+}

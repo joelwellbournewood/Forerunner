@@ -1,0 +1,78 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I ran my own bench, \"review-l3-merge\" (daemon 48830, UI 2430, stand-in GitHub 48831, --provider bench), from the worktree at fix/l3-merge 2faea88. I drove it with my own Playwright walk, /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk.cjs. Screenshots are in /tmp/frbench/review-l3-merge/steps/ and copied to /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/evidence/. My first two attempts are not counted: a walk bug, then my own brief revert of the sources, which broke vite's module cache. I restarted the bench fresh and the walks below ran on it.\n\nL3-github-1 (lock): two tasks, B waiting on A, both accepted; B's row had first [A]. I closed A on GitHub and pressed Merge on B's Overview row (step 02-lock-right-after-press).\n- The answer came at once: refused, \"#3 was rebuilt without #2, which was closed. It was reviewed with #2's changes, so it waits for you: look at it, then merge it or redo the task.\" It showed in red; \"Merging\" never appeared.\n- B was not merged, main held only README.md, and B's pull request held only its own file. There was exactly one Inbox card, '\"Write rvr3/club-day.txt after the club file\" was rebuilt without pull request #2', with Merge and Redo.\n- Its Details read \"Look at #3 on GitHub: it no longer holds the changes of #2\" and \"Then press Merge here, or Redo to do the task again from main\" (step 04, L3-github-7). The Tasks row read \"Accepted · rebuilt: look before you merge\".\n- After a watcher poll and its retry, still nothing was merged and there was still one card.\n- I then pressed the card's Merge in the Inbox. B merged with only its own file, and A's file never reached main (step 06, \"Done: Merged #3.\").\n\nL3-github-2 (stale): I closed A and waited for a poll; the rebuild card appeared with a rebuild's Details. I merged B on GitHub and waited for the next poll.\n- No card for B was left in Needs you. Under Answered it read \"Closed: #6 was merged.\" (step 08).\n- After a daemon restart the card stayed closed.\n- I asked the chat \"what is left to merge?\": the model-call log no longer carries \"pull request #6 was not merged\".\n\nL3-github-3 and L3-github-9 (moved): a task titled 'Link trips page from rvr4/index.html as \"Our trips\"'. I pushed a commit to its branch through the stand-in GitHub's git endpoint, then pressed Merge on its row.\n- The answer came at once: refused, \"#7 changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.\" The page never showed \"Merging #7\".\n- The row then offered no Merge and said the same sentence. The Tasks row read \"Accepted · changed after the review\". GitHub showed nothing merged.\n- There was one card, titled '\"Link trips page from rvr4/index.html as \"Our trips\"\" changed after the review', with the title whole (step 12).\n- I merged #7 on GitHub; at the next poll the card closed with \"Closed: #7 was merged.\".\n\nL3-github-10 (cancel): I restarted the daemon with FORERUNNER_BENCH_CRITIC_DELAY_MS=45000.\n- In the Chat tab, \"skip the About page task\" gave the read-back 'Cancel \"Write the About page in about.html\"? Drops it. Its review stops now; #11 stays open on GitHub: close it there if you do not want it.' (step 19). Yes gave the same ending.\n- The pull request stayed open on GitHub. The Overview showed \"Cancelled, still open on GitHub\" with the explanation line, '\"Write the About page in about.html\" · pull request #11', Open and no Merge (step 20).\n- The chat's \"# Your files\" named it.\n- After I closed #11 on GitHub, the Overview heading was gone (step 21).\n\nA neighbouring journey regressed (squash phase): A and B accepted; the person squash-merges A on GitHub's website, then presses Merge on B before Forerunner's next look.\n- The press was refused with \"#9 changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.\" (step 15). Nobody pushed to #9.\n- B's row then offered no Merge. The Tasks row read \"Accepted · changed after the review\". A card titled '\"Write rvr4/squash-day.txt after the squash file\" changed after the review' offered I merged it and Leave it open.\n- A poll later, the row still had no Merge and B was not merged.\n- At the base the same journey merges B. I confirmed this with my composed probe at claude/nifty-knuth-f9udt0 sources: \"Merging #2.\", B merged.\n\nSiblings and restarts: the card's own Merge, the retry pass, the stale-card restart, a dependency merged on GitHub with a merge commit (merges B as before), and a chain press with A still open (merges #1 and #2 in order) all behave. The bench is stopped and its home deleted.",
+ "blocking": [
+  {
+   "issue": "Regression: Merge pressed on a dependent whose dependency was squash- or rebase-merged on GitHub (before Forerunner's next look) is refused with a false 'changed after the review' sentence. The record is settled as head_moved, the row loses its Merge for good, and a card says commits were pushed when none were. At the base the same press merges B.",
+   "where": "packages/runtime/src/daemon/pull-requests.ts:733",
+   "evidence": "1. merge() first runs the new branch check, because buildsOnGone is true: A's record is not merged yet. checkBranchNow(B) rebuilds B onto main, since heldState reports 'copied' for the squash-merged A. settleRecord takes the 'only what main already has was dropped' path (dependent-branches.ts:884) and moves B's record reviewed_head_sha to the rebuilt head.\n2. The L3-github-3 loop at :733-741 then compares that new reviewed head with `listed`, the PR heads from the view read before the rebuild. They differ, so it calls headMovedNow(task, staleHead) (merge.ts:2072). keepsOwnChange(staleHead) is false, so the record is settled head_moved with pressed=true, one card is filed, and the press is refused.\n3. Composed probe, chainWorld wired as compose (a scratch describe appended to dependent-branches-merge.test.ts, then reverted):\n- fix: answer {state:'refused', sentence:'#2 changed after the review: look at the new commits, ...'}; record left_to_you/head_moved with reviewed_head_sha a1e2... (the rebuilt head, which is GitHub's head now); task reason 'PR left open for you: the PR head 1bbda84ff61e is not the reviewed commit a1e21569ad4a' (the stale head named as the moved one); after two polls and retryWaiting the row is still {state:'blocked', canMerge:false} and B is not merged. A rebase-merged A gives the same answer.\n4. Same probe at claude/nifty-knuth-f9udt0 sources: {state:'queued', sentence:'Merging #2.'}; B is merged; main holds both files; no card.\n5. Bench through the UI: /tmp/frbench/review-l3-merge/steps/15-squash-right-after-press.png, 17-squash-inbox.png, 18-squash-tasks.png; walk log /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk-r4.log (squash.answer, squash.rowAfterPoll).\nThis breaks the area's own decision ('Every merge sentence says what will happen') and design section 5 rules 4 and 9 (the card and the row tell the person to look at commits nobody pushed). It also takes away the in-app Merge the person had at the base.",
+   "expected": "A dependency merged on GitHub (squash or rebase) before the next poll does not turn the person's Merge into a head-moved refusal. After a branch check that moved the record to a rebuilt head, the head check must not use the stale listing. Re-read that pull request's head (host.getPullRequest), or skip the head comparison for a task whose record the check just moved. The press then answers 'Merging #B.' and merges B, as at the base. Add a failing-first composed test to the 'l3-merge, run L3' describe: A merged with method squash on the fake GitHub, press Merge on B with no poll between; expect queued, B merged, no 'changed after the review' card. Add the rebase variant as a sibling."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L3-github-1: the three new dependent-branches-merge tests fail at 112227c (the press answered 'Merging #2.' and the retry merged B) and pass after the fix",
+   "holds": true,
+   "note": "Re-run with base sources and the test file's new wiring line commented out: all 8 new L3-github-1/2/3 cases fail for the claimed reasons (queued 'Merging #2.'; merged true; head-moved Details; card still open). With the fix, 15 of 15 pass in dependent-branches-merge.test.ts plus l3-merge.test.ts."
+  },
+  {
+   "claim": "real-daemon 'l3-merge, run L3' cases (L3-github-1/2/7, L3-github-3, L3-github-10) fail at base sources; the 2 Overview UI cases for L3-github-1 and L3-github-3 pass at base",
+   "holds": true,
+   "note": "Base sources: 5 failed, 2 passed, exactly as reported. Fix: 7 of 7 pass."
+  },
+  {
+   "claim": "Every Merge outside a session checks the branch first and never puts a closed pull request's work on main",
+   "holds": true,
+   "note": "Holds on the bench for the Overview press, the card's Merge and the retry. But the new press-time head check misfires right after that branch check: see the blocking item."
+  },
+  {
+   "claim": "Merged pull requests close their merge cards ('Closed: #N was merged.'), also after a restart, and the chat stops repeating them",
+   "holds": true,
+   "note": "Seen on the bench for the rebuilt-without card (merged on GitHub, then a restart) and the head-moved card (merged on GitHub). The real-daemon test has the restart and the chat facts."
+  },
+  {
+   "claim": "The press answers a moved head with its own sentence at once; Update branch is still merged",
+   "holds": true,
+   "note": "Seen on the bench and in the counter-case test. The false positive after a press-time rebuild is the blocking item."
+  },
+  {
+   "claim": "Rebuild card Details give a rebuild's steps (L3-github-7); card titles never cut inside quotes (L3-github-9)",
+   "holds": true,
+   "note": "Seen on the bench (steps 04 and 12) and in the l3-merge.test.ts cases."
+  },
+  {
+   "claim": "A cancelled task's open PR is listed under its own heading with Open and no Merge, named by the read-back, the Yes line and the chat facts, and leaves the Overview once closed",
+   "holds": true,
+   "note": "Seen on the bench (steps 19-21). The chat's '# Your files' line stays after GitHub closes it: see non_blocking."
+  },
+  {
+   "claim": "pnpm typecheck, lint and test:injection pass; the merge-related runtime test files pass",
+   "holds": true,
+   "note": "I ran typecheck (exit 0), lint (exit 0, warnings only), test:injection (exit 0), and 15 merge-related runtime test files (147 of 147 pass). I did not re-run the full pnpm check, test:integration, test:e2e or Playwright."
+  },
+  {
+   "claim": "Changed assertions in commands.test.ts, tasks.test.tsx and real-daemon.test.ts reflect a design change (L3-github-10 wording), not a weakening",
+   "holds": true,
+   "note": "Each changed expectation now asserts the longer sentence naming #N. No assertion was removed or skipped."
+  },
+  {
+   "claim": "The new route behaviour has a real-daemon case and the fake daemon changed in the same commit",
+   "holds": true,
+   "note": "One commit holds both: real-daemon cases for the merge press and the pull-requests view, plus fake-daemon pullRequestPressFinds and the preview refusing cancelled rows."
+  },
+  {
+   "claim": "not_done items (L3-github-1 part 3, and the optional Close button) are on the spec's cut line, with reasons",
+   "holds": true,
+   "note": "Both are in not_done with reasons and recorded in the ADR 0111 and 0105 amendments."
+  }
+ ],
+ "non_blocking": [
+  "The press's 'could not check' path (notCheckedSentence: '#N is not merged yet: Forerunner first checks what it holds of the work it builds on. Press Merge again in a minute.') has no test at the boundary. It is also two sentences, and the promise 'in a minute' rests on the watcher's poll interval. The fixer listed this.",
+  "Chat facts: after the person closes a cancelled task's pull request on GitHub, '# Your files' still carries 'Left open on GitHub when their task was cancelled (the person closes them there if not wanted): ... /pull/11'. The bench shows it (walk-r6 note cancel.factsAfterClose: true). The facts come from records only, and a cancelled task in review has no merge record. The line is worded as history, but the model may say the pull request is still open. Live check 4 should ask 'where are my files?' after closing it. files_list asks GitHub and is correct.",
+  "Right after a press-time check finds A closed, A's Tasks row still reads 'Accepted · waiting for you to merge' until the watcher's next poll records the close (bench walk-r3 lock.taskLabels). The check read A's state on GitHub but does not update A's record. This timing existed before the fix but is now more visible.",
+  "The Overview's cancelled block reads 'Their tasks were cancelled ... close them on GitHub, or reopen the task in Tasks.' even with one row (step 20). A singular form would read better.",
+  "The rebuilt-without row still sits under 'Reviewed by the critic', next to a sentence saying the review read work that went away (step 02). This predates the area.",
+  "run() now runs rebuildTask before every merge outside a session whose task has dependencies, the retry pass included. Each waiting dependent costs one listPullRequests call and one git fetch per poll. Its behaviour is correct (it fails closed to owed); only the cost changed.",
+  "New problems the fixer listed, confirmed plausible: cards stay open when their pull request is closed without merging; the failed-check and not-mergeable press siblings still answer 'Merging #N.' first; the header reads 'No tasks yet' for a project whose only task is cancelled."
+ ]
+}

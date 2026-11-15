@@ -1,0 +1,76 @@
+{
+ "verdict": "pass",
+ "acceptance_walk": "I ran bench \"review-l3-money-screens\" (daemon 48833, UI 2433) from my worktree at c3b9626 with --provider bench and these knobs: FORERUNNER_BENCH_CRITIC_REJECT=Swiss, FORERUNNER_BENCH_CRITIC_USAGE=Swiss:15000 and FORERUNNER_BENCH_USAGE=Swiss:12000. DELAY_MS was 3000 at first; I restarted the daemon with 8000 for walk B. The walk scripts are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk/. The steps, watch records and screenshots are in /tmp/frbench/review-l3-money-screens/steps/. problems.jsonl was never created: no console errors, no failed requests, no HTTP >= 400.\n\nWalk A (A-watch.json, steps 01-11). Through the UI I pressed New task: coder, Budget 0.60, criteria \"a test covers the pairing\". Then Start session, then I opened the drawer and left it open.\n- Before the review the row read \"of CHF 0.60 budget\".\n- After the critic sent it back, the row read \"CHF 0.57 of CHF 0.60 budget left; reviews are not counted\". The second run's log line said \"This run may spend CHF 0.57\". The cost was CHF 0.08 (reviews included).\n- While the second run spent, the line went down 0.57 -> 0.55 -> 0.54. The drawer's run line went from \"Running · CHF 0.00\" to \"Running · CHF 0.02\", at most one 5 s poll behind the API's run cost.\n- Version stayed 4, then 11. No \"Loading the task\" flash (MutationObserver: []). A done task shows no cap line.\n- Costs (step 11) shows only \"Prompt cache 28,428 tokens\" under Savings, with no \"CHF 0.00\" and no \"0 tokens\".\n\nWalk B (B-watch.json, steps 12-17), a second Swiss task.\n- Step 12: during the second run, with the drawer closed, the row read \"Running · CHF 0.08 · CHF 0.57 of CHF 0.60 budget left; reviews are not counted\". It wraps cleanly in the Cost column.\n- Step 14: in the open drawer the run line moved \"Running · CHF 0.00\" -> \"CHF 0.01\" while the header said \"spent CHF 0.09\".\n- I pressed Stop in the drawer and confirmed. The run line read \"Stopped · CHF 0.01\". There was no \"This task changed\" message and no error banner.\n- Step 17: the row reads \"Paused by you · CHF 0.09 · CHF 0.55 of CHF 0.60 budget left; reviews are not counted\".\n\nRestart case (walk C, steps 18-19). After restart-daemon.mjs, the paused row reads exactly the same line.\n\nL3-run-13 repro (walk C, steps 20-21). Costs of \"Clamp review\", a project planned but not approved, whose only spend is planning: no Savings box and no \"0 tokens\" (screenshot 20). An empty project has no Savings box either.\n\nScreens match design §3.5 (rows and the drawer follow a running session) and §5 (CHF only, no ids, the line has 57 characters, no zero counts). I stopped the bench with stop.mjs and deleted its home and browser profile.\n\nTests.\n- I reverted the source fix (base TaskDrawer.tsx and CostsTab.tsx, and taskCapWords forced to the old words) and kept the new tests. All 7 new jsdom cases and the real-daemon L3-run-3 case failed, for the right reasons: the drawer received \"Running · CHF 0.01\" where \"Running · CHF 0.06\" was expected; the real daemon gave \"of CHF 0.20 budget\" where \"CHF 0.16 of CHF 0.20 budget left; reviews are not counted\" was expected.\n- With only `spent` in the drawer's key (latestRun removed), the second L3-run-4 case fails. So both parts of the key are tested.\n- After restoring the fix, the new cases passed 3 times in a row.\n- Full UI vitest: 91 files, 1129 passed. Playwright (local config): 35 passed.\n- pnpm lint, lint:paths and typecheck: exit 0. docs-check --base claude/nifty-knuth-f9udt0: ok (13 files).\n- Unit tests of testenv and scripts: 493 passed. The 5 runtime and testenv test files that use the role-player: 45 passed.\n- Worktree left clean at c3b9626.",
+ "blocking": [],
+ "claims_checked": [
+  {
+   "claim": "L3-run-3 root cause still at base 112227c: TaskCap printed 'of <budget> budget' under `spent` while the budget counts actual (runCapOf)",
+   "holds": true,
+   "note": "runCapOf (executor.ts:696-706) gives budget less actual; views.ts:446-448 sets spent from the ledger and cap from runCapOf. The base TaskCap printed the bare budget."
+  },
+  {
+   "claim": "The new taskCapWords reads 'CHF X of CHF Y budget left; reviews are not counted' from TaskView.cap once a review was paid, 'of CHF Y budget' before, and 'CHF Y budget used up; reviews are not counted' at nothing left",
+   "holds": true,
+   "note": "Seen on the bench (0.57 equal to 'This run may spend CHF 0.57') and in the tests. The specialist-limit branch reads exactly as before."
+  },
+  {
+   "claim": "The new tasks.test.tsx and real-daemon L3-run-3 cases fail on the base code",
+   "holds": true,
+   "note": "Reverted the source locally: 4 tasks cases, 3 project cases and the real-daemon L3-run-3 case failed with the old words."
+  },
+  {
+   "claim": "L3-run-4: TaskDrawer's re-read key now includes the row's spent and the polled latest run's id and cost, without bumping the version; no Loading flash; Stop carries the version the drawer read",
+   "holds": true,
+   "note": "Diff verified. On the bench the run line followed the API at the poll pace, there was no flash, and Stop succeeded with no conflict. Removing latestRun from the key makes the 'cost written after the task's spend' case fail."
+  },
+  {
+   "claim": "real-daemon 'L3-run-4' case passes at base too (the daemon side was already right)",
+   "holds": true,
+   "note": "It checks the routes the key follows, not the rendered drawer. The rendered drawer is covered by the jsdom case, which failed at base, and by my bench walk."
+  },
+  {
+   "claim": "No UI vitest can render against the real daemon (jsdom cannot bundle node:sqlite)",
+   "holds": true,
+   "note": "Plausible and consistent: real-daemon.test.ts is the only UI test that composes the runtime, and it runs in the node environment. Playwright runs only against the fake daemon."
+  },
+  {
+   "claim": "L3-run-13: savingsLines leaves out a line that saved nothing, the box when none is left, and never shows 'CHF 0.00' beside tokens",
+   "holds": true,
+   "note": "Bench: the planning-only project has no Savings box; the stand-in project shows 'Prompt cache 28,428 tokens'. 3 unit cases failed before the fix."
+  },
+  {
+   "claim": "Fake daemon serves GET /costs from state.costs, reset by /__test/reset; the route and its shape are unchanged, so no real-daemon case is owed",
+   "holds": true,
+   "note": "Same commit as the UI change. The real daemon's /costs is untouched."
+  },
+  {
+   "claim": "No test weakened; append-only describes 'l3-money-screens, run L3'",
+   "holds": true,
+   "note": "The only removed lines in tests and testenv are the three fake-daemon COSTS reads that were replaced."
+  },
+  {
+   "claim": "UI vitest 1129 passed; Playwright 35 passed; lint/typecheck/docs-check green",
+   "holds": true,
+   "note": "Re-run here with the same results."
+  },
+  {
+   "claim": "Docs: ADR 0112 amendment appended at the end, apps.md, testing.md, bench README, user guide; no edit to UPDATE-LOG, CHANGELOG, requirements or core-experience",
+   "holds": true,
+   "note": "Diff stat confirms. The user guide's 'they count against the session's budget' matches ADR 0112 (the critic's run cap is the session's budget)."
+  },
+  {
+   "claim": "Commits carry the required trailers",
+   "holds": true,
+   "note": "All three end with the Co-Authored-By and Claude-Session lines."
+  }
+ ],
+ "non_blocking": [
+  "The row's 'left' figure equals the run's 'This run may spend CHF X' only at the run's start. As the run spends, the row moves on (bench: 0.57 -> 0.55 -> 0.54) while the log line keeps the start figure. It also differs whenever the session's work budget left is smaller than the task's (executor.ts:989-1039: then the brief's budget is the session's figure). The user guide says 'the same amount as the run's own line in the session's log', ADR 0112 says 'the run's \"This run may spend\" figure', and check_in_the_app step 4 asks for 'the same CHF 0.11'. Suggest wording such as 'what the next run of the task may spend, unless the session has less left', and in the live check step, 'at the second run's start'.",
+  "The spec asked for a rendered drawer against the real daemon (extending 'W15-20, W15-21') and a Playwright check against the real daemon with the stand-in. Neither exists. Playwright here drives only the fake daemon, and jsdom cannot compose the runtime. The fixer covered it with a fake-daemon jsdom test (failing at base), a real-daemon route test and a bench walk, which I repeated. The test-infra gap is worth an item, as the fixer suggests.",
+  "The real-daemon L3-run-3 case calls taskCapWords on the real row instead of rendering it. Validation rule 2 still holds, because taskCapWords returns the visible text and the jsdom test renders TaskCap. A node-environment render would be stronger.",
+  "The budget figure in the row line lost its USD hover tooltip (it was <Money>, now plain formatMoney text inside a div with the explanation tooltip). Design §5 rule 7 says never USD, so this is fine; mentioned only as a behaviour change.",
+  "The new bench knob FORERUNNER_BENCH_CRITIC_USAGE has no unit test of its own (neither has its sibling FORERUNNER_BENCH_USAGE). It matches on any critic request whose messages mention the title, which is fine for a bench knob.",
+  "Pre-existing, not from this area: Costs on a project with nothing spent reads 'CHF 0.00 / Nothing spent yet' and then three 'Nothing yet.' tables (bench step 21). Also, the stand-in's cache savings are priced at CHF 0, so on the bench the line shows tokens alone. On real models it should read 'CHF 0.0x · N tokens'; check that in live check 4.",
+  "Edge case to keep in mind (not seen): if the ledger ever holds less for a task than its actual, the line switches to the 'left; reviews are not counted' wording without any review. The words are still true, but the reason would be odd."
+ ]
+}

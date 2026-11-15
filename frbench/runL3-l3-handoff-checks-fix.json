@@ -1,0 +1,189 @@
+{
+ "area": "l3-handoff-checks",
+ "branch": "fix/l3-handoff-checks",
+ "head_sha": "1a1a6ad2c0b379bd88f8d71d4d181375fdf99d39",
+ "commits": [
+  {
+   "sha": "296e7eaece695a3027d2d531404cd8d9f848a81b",
+   "subject": "budget-pause: a \"nothing\" for the criteria with a reason is nothing, and what follows it is a note (L3-research-1)"
+  },
+  {
+   "sha": "c5f4e44849372294156b6e01d718e0c54a25685b",
+   "subject": "bench: FORERUNNER_BENCH_LEFT_NOTE replays live check 3's \"Left to do\" (L3-research-1)"
+  },
+  {
+   "sha": "8159d9315cb77faa6a4defc538393b11bc1a3209",
+   "subject": "budget card: a wrap-up pause says it paused before its budget ran out, and lists its note and items whole (L3-research-2)"
+  },
+  {
+   "sha": "4e2dc5c80f714ab5e152dbb10ef774ef0a3fa690",
+   "subject": "checks: JavaScript tests with no package.json test script run with node --test (L3-research-4)"
+  },
+  {
+   "sha": "1a1a6ad2c0b379bd88f8d71d4d181375fdf99d39",
+   "subject": "checks: mark the node:test fixture lines for the path lint (L3-research-4)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L3-research-1 (major): finished research was paused at its budget instead of reviewed when its 'Left to do' said 'Nothing is needed for the two criteria: <reason>' and added an observation ('The list isn't exhaustive. ...'). Card asked for CHF 0.15 more; no critic ran.",
+   "u_ids": [
+    "L3-research-1"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts › 'l3-handoff-checks, run L3' › 'live check 3: L3-research-1' (4 cases: the live seq-11 reply word for word parses to leftToDo [] with the caveat in optional; the reason forms read as nothing; work stays work; and 'through the composed runtime' › 'a run that heard the wrap-up and says nothing is needed for the criteria, then adds an observation, is reviewed and done: no budget card, no things left to do'). All four failed at 112227c (composed case: task 'needs_human').",
+   "how": "Root cause (budget-pause.ts): NOTHING had the about-clause and a reason after punctuation as alternatives, so one line could not have both; and parseHandoff judged each bullet alone. Fix: the about-clause may be followed by a reason (ABOUT + optional REASON), a criterion may be named by its number; NOT_NOTHING still reads the whole line ('Nothing for the criteria: but the tests still fail' stays work; after the clause only punctuation or end may follow, so 'Nothing in the task works yet' stays work). A 'nothing' about the whole set (aboutWholeSet: criteria/brief/task/scope/requirements/deliverables, 'all/every/each/both criteria'; not ONE_CRITERION such as 'criterion 2' or 'the first criterion') moves the list's other items that do not name a criterion (NAMES_CRITERION) to `optional`. A bare 'nothing' moves nothing. parseHandoff's signature and leftToDo/optional fields unchanged; executor.ts untouched (leftToDo empty -> review). Bench knob FORERUNNER_BENCH_LEFT_NOTE added so the stand-in can replay the live shape.",
+   "check_in_the_app": "Bench (stand-in): start with --env \"FORERUNNER_BENCH_LONG=Search MDN\" --env \"FORERUNNER_BENCH_LEFT_NOTE=Search MDN\"; new project, New task (researcher) 'Search MDN for pages that mention popover hint', Budget CHF 0.08, Start. Before: Tasks 'Paused at its budget', session line '... paused before its budget of CHF 0.08 ran out: it spent CHF 0.07 and listed 2 things left to do.', an Inbox card. After: the task is Done · Reviewed, the session result 'Did 1 task: ...', no Inbox card. Live check 4 (bench-live, as live check 3 step S1): new project (goal only), Overview › Research reads › Change › Only these websites: developer.mozilla.org; New task: researcher, 'Search MDN for pages that mention popover hint', outcome 'popover-hint.md lists the MDN pages that mention the popover value hint, each with its address and one line on what it says about hint.', criteria 'Each page listed in popover-hint.md gives its address.' / 'Each page listed was opened, not taken from memory.', Budget 0.15; Start. Expect: the session log says 'Told the researcher to wrap up...', then the critic reviews (model-call log: a critic call right after the researcher's final reply) and the task ends Done · Reviewed (or sent back by the critic on the criteria), with no 'listed N things left to do' line and no budget card when its 'Left to do' starts with a 'Nothing ... for the (two) criteria' line; any observation the model adds is in the drawer's 'The whole report'. If the model lists a real work item instead, the pause card is correct."
+  },
+  {
+   "problem": "L3-research-2 (words): the budget-pause card cut its note and items mid-phrase and joined them ('hint:…; left: ... gives its…, The list...'), and its title and notification said 'paused at its budget of CHF 0.15' beside the session line 'paused before its budget of CHF 0.15 ran out: it spent CHF 0.09'.",
+   "u_ids": [
+    "L3-research-2"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts › 'l3-handoff-checks, run L3' › 'live check 3: L3-research-2' › 'the card says it paused before its budget ran out and what it spent, as the session's line does, and lists its note and each item whole' and › 'the notification of the card names the task and that it paused before its budget ran out, whole, within its length' (both failed at base: title 'paused at its budget of CHF 0.15'); apps/ui/test/inbox.test.tsx › 'l3-handoff-checks, run L3' › 'L3-research-2: the card says it paused before its budget ran out ...' (no lists rendered at base). Restart case added: '... the same after a restart: the card's title, body and lists, the session's result and the Sessions list read as before'.",
+   "how": "Root cause: budget-card.ts cardHandoff stored the note cut at 160 chars and items at 80; request-words.ts pausedWorkSentence cut again and joined into one sentence; budgetStopTitle had one 'paused at' title for every stop. Fix: cardHandoff keeps note and items whole (bounded by parseHandoff); budgetStopTitle for stoppedBy 'wrap_up': '\"X\" paused before its budget ran out' / \"... before the writer's limit per run ran out\" / \"... before this session's budget ran out\" (amount-free so the title, the task's reason and the 60-char notification title stay whole; a hard stop keeps 'paused at its budget of CHF N'); body's first sentence (pausedSpendSentence): 'It spent CHF 0.09 of its budget of CHF 0.15.' / 'It has no budget of its own: it may spend CHF N per run.' / \"This session's budget was CHF N.\"; new `lists` field on RequestWords and HumanRequestView (GET /inbox; views.ts passes it; fake daemon gets it through requestWords): 'Where it stopped' (first whole sentence, firstSentences) and 'Left to do' (each item whole, three then 'and N more'); InboxPage renders them (request-list, request-list-label, request-list-item). Siblings fixed: session result pausedSentences ('\"X\" paused before its budget of CHF 0.15 ran out: continue or cancel it in the Inbox.', PausedTask.before set by the runner from card.stopped_by) and the Sessions list gist (sessionGist).",
+   "check_in_the_app": "Bench (stand-in): start with --env \"FORERUNNER_BENCH_LONG=Write the guide\"; New task (coder) 'Write the guide in guide.md', Budget CHF 0.08, Start; open the Inbox. Expect the card '\"Write the guide in guide.md\" paused before its budget ran out', body 'It spent CHF 0.06 of its budget of CHF 0.08.', then 'Where it stopped' • 'guide.md has 18 parts.' and 'Left to do' • 'write the rest of guide.md' • 'check guide.md against the criteria', Continue (CHF 0.08 more) / Cancel task; the session page's line and result say 'paused before its budget of CHF 0.08 ran out' with the same CHF 0.06. Live check 4: in a project named with a short name (e.g. 'Popover hint'), a researcher or writer task with a small budget (CHF 0.05-0.15) that cannot finish (e.g. 'Write a 3,000-word guide to the club in guide.md'); after its wrap-up the Inbox card shows those three parts with no text cut mid-phrase and no '…' inside an item, the body's CHF equals the session line's 'it spent CHF N', and the desktop notification title reads '<project>: \"<task…>\" paused before its budget ran out'."
+  },
+  {
+   "problem": "L3-research-4 (minor): JavaScript tests a task wrote (wc.test.js with node:test) and the README names (`node --test`) were never run in a project without package.json; 'See what was checked' only said 'the project has test files (wc.test.js) that no check ran: there is no package.json to run them'.",
+   "u_ids": [
+    "L3-research-4"
+   ],
+   "failing_test_before": "packages/runtime/test/try-plan.test.ts › 'l3-handoff-checks, run L3' (5 cases: the 'node --test' marker of the files, file selection, package.json rules, not-run reasons, a real Node run passing and failing) and packages/runtime/test/verification.test.ts › 'l3-handoff-checks, run L3' › 'L3-research-4: a folder with wc.js and a node:test wc.test.js and no package.json: node --test runs in the task's sandbox, passes, and the drawer shows it; no line says no check ran them' and › 'L3-research-4: a wc.test.js with a failing assertion: the check fails, the accept is blocked (never Done), and the drawer shows the failed node --test with its output' (both run against the real ProcessSandbox and real Node; both failed with base project-checks.ts/critic.ts).",
+   "how": "Root cause: project-checks.ts markerChecks had Python/Rust/Go entries but none for JavaScript, and projectChecks returns nothing without package.json. Fix: a JavaScript marker 'node --test' when the folder has JS test files (JS_TEST: *.test|spec.{js,mjs,cjs} or scripts directly in test/, tests/, __tests__/, from projectFileList so never node_modules, dot folders like .forerunner-try, Local only, or TypeScript) and no package.json, or one with no real test script and no dependencies (nodeTestApplies). Candidate argv ['node','--test',...files] (max 100), probe node -e for Node >= 18, missing 'Node.js is not installed where the checks run'; notRunBecause: missing package (\"Cannot find module/package 'x'\", not relative/absolute/node:) -> 'they need the package x, which is not installed where the checks run'; jest-style globals -> 'they are written for a test runner that is not installed (...)'; 'tests 0' -> 'node --test found no tests in them'. Required check in the same lease, so a failure blocks the accept ('Check failed: node --test'). runMarkerCheck gains opts {node}: critic.ts passes process.execPath for the process sandbox and no lease, 'node' for a container (as tries do). untestedFiles leaves out what node --test runs; what is left is told with what runs ('node --test runs only JavaScript files, and there is no package.json with a test script for these'; 'its package.json names no test script' for a package.json with dependencies). Brief line (verification.ts HOW_WORK_IS_CHECKED): '(its package.json scripts as they were before your task, or node --test, pytest, cargo test or go test)'.",
+   "check_in_the_app": "Bench (stand-in): New project from a non-web brief (e.g. 'A command line tool that counts the words in a file, run with node; it prints the count. Tests check it.'), Approve and start; when done, open 'Add a check for src/main.js in test/main.test.js' › See what was checked. Before: only 'the project has test files (test/main.test.js) that no check ran: there is no package.json to run them'. After: 'The project's checks' › 'node --test: passed' with '<node> --test test/main.test.js -> exit 0 ...' and the TAP output; no 'no check ran' line. Live check 4 (as live check 3 step S6): New project with the brief 'A command line tool that counts the words in a file. Usage: node wc.js <file>.', Approve and start; open the tester task's drawer › See what was checked: 'node --test: passed' with its output (on forerunner-sandbox/Docker the image's node, else the app's own Node), no 'there is no package.json to run them'; the row still reads 'Reviewed' (or 'Reviewed and tried' only if a try ran). Optional failing variant: change an expected count in wc.test.js in the project's folder and Redo the tester task: the review shows 'node --test: failed' with the assertion and the task is not Done."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Verifier's sketch (c) for L3-research-1: add 'a caveat or what you did not cover goes under Where I stopped:, not Left to do:' to the model-facing wrap-up words (wrapUpText, WRAP_UP_BRIEF_LINE).",
+   "why": "Optional in the spec and explicitly 'in d1109-oversize-pause's OP-1 wording': C2 rewrites wrapUpText and WRAP_UP_BRIEF_LINE (OP-1) and must test the exact text on both drivers; changing it here would conflict with that rewrite. The parser fix alone makes the live case go to review. Proposed sentence for OP-1 is in notes_for_other_areas."
+  },
+  {
+   "problem": "Verifier's sketch item 4 for L3-research-4: one line in the intake prompt naming the checks Forerunner can run.",
+   "why": "Optional; the JavaScript marker check makes it unnecessary for this case (the intake's '`node --test` passes' criterion is now checked), and intake.ts prompt text is outside this area's files."
+  },
+  {
+   "problem": "The notification title of a wrap-up pause can still be cut at 60 characters when the project name is long (bench: 'Club guide after: \"Write the…\" paused before its budget…').",
+   "why": "Pre-existing notification fitting (notifications/producers.ts titled/fit, not this area's file): the project name, a task name of at least ~12 characters and the phrase cannot all fit in 60 characters for long project names. With live check 3's names ('Popover hint') the title is whole and the test asserts it. Reported under new_problems."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan) at 1a1a6ad",
+   "result": "EXIT 0: 494 test files, 5240 passed, 7 skipped; check-paths ok (1495 files); link-check ok; secret-scan clean. docs:check without --base cannot diff origin/main here (no remote), as in the baseline"
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (30 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "5 files passed, 6 skipped (Postgres-backed, no FORERUNNER_TEST_PG); 30 tests passed, 77 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "PASS: 65 cases (46 hostile, 19 controls), 0 failed"
+  },
+  {
+   "command": "cd apps/ui && FORCE_COLOR=1 pnpm vitest run --config vitest.config.ts",
+   "result": "91 files, 1122 tests passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "nothing found"
+  },
+  {
+   "command": "Base-code confirmation: research-1/2 tests run against base budget-pause.ts / budget-card.ts / request-words.ts; research-4 composed tests run with base project-checks.ts and critic.ts swapped in",
+   "result": "all new cases failed at base, pass after the fix"
+  },
+  {
+   "command": "Bench walk before (base budget-pause.ts swapped in) and after on bench fix-l3-handoff-checks (ports 48829/2429: 48821 was held by fix-l3-merge's bench)",
+   "result": "before: research task paused 'listed 2 things left to do', card text cut mid-phrase, notification 'paused at its budget of…', drawer 'no package.json to run them'; after: research task Done · Reviewed with no card, card title/body/lists whole, drawer 'node --test: passed'. Bench stopped, its home and browser profile deleted"
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: the desktop shell was not touched"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-l3-handoff-checks/before/01-before-r1-tasks.png",
+   "/tmp/frbench/fix-l3-handoff-checks/before/02-before-r1-session.png",
+   "/tmp/frbench/fix-l3-handoff-checks/before/03-before-r1-inbox.png",
+   "/tmp/frbench/fix-l3-handoff-checks/before/04-before-r2-inbox.png",
+   "/tmp/frbench/fix-l3-handoff-checks/before/05-before-r2-session.png",
+   "/tmp/frbench/fix-l3-handoff-checks/before/07-before-r4-drawer-checked.png",
+   "/tmp/frbench/fix-l3-handoff-checks/before/before-l3.json"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l3-handoff-checks/after/01-after-r1-tasks.png",
+   "/tmp/frbench/fix-l3-handoff-checks/after/02-after-r1-session.png",
+   "/tmp/frbench/fix-l3-handoff-checks/after/03-after-r1-inbox.png",
+   "/tmp/frbench/fix-l3-handoff-checks/after/04-after-r2-inbox.png",
+   "/tmp/frbench/fix-l3-handoff-checks/after/05-after-r2-session.png",
+   "/tmp/frbench/fix-l3-handoff-checks/after/07-after-r4-drawer-checked.png",
+   "/tmp/frbench/fix-l3-handoff-checks/after/after-l3.json"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/w15-words.test.ts › 'W15-57: the budget card quotes the run's note in plain words, each item ending at a word' (both cases)",
+   "why": "They asserted the joined body 'Done: ...; left: a, b ... and 2 more.' that L3-research-2 replaces; now they assert the same plain-word/word-boundary rules on the card's `lists` (stored cuts still end at a word, 'and 2 more' kept)."
+  },
+  {
+   "test": "packages/runtime/test/w15-words.test.ts › W15-56 'the card says it stopped before it wrote anything and Cancel only drops it' (last assertion)",
+   "why": "The run's note is listed under 'Where it stopped' instead of the body's 'Done: members.md has an outline.'"
+  },
+  {
+   "test": "apps/ui/test/inbox.test.tsx › 'a task paused at its budget (budget-resume)' › 'names the limit in CHF, what it did and what is left...'",
+   "why": "Body is now the spend sentence and the note/items are rendered as lists (the fixture's stored title is an old card's and still shows)."
+  },
+  {
+   "test": "packages/runtime/test/session-budget-card.test.ts › 'Cancel task names the task that will be stuck...'",
+   "why": "A session-budget wrap-up card is titled \"paused before this session's budget ran out\", body \"This session's budget was CHF 2.00. ...\", lists instead of 'Done: ...; left: ...'."
+  },
+  {
+   "test": "packages/runtime/test/oversized-task.test.ts › d1109-oversize-start 'a project whose only ready task is larger than the work budget...' (title assertion)",
+   "why": "The oversized task pauses after a wrap-up at the session's budget: title \"paused before this session's budget ran out\" with body \"This session's budget was CHF 1.60.\" (was \"paused at this session's budget of CHF 1.60\")."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts › resume case 'the pause is a commit on the task's branch ...; Continue (CHF N more) starts a session at once ...'",
+   "why": "Title/body of the wrap-up pause card through the real daemon changed; it now also asserts `lists` over GET /inbox (the changed route shape) and that the body's CHF equals the session line's 'it spent CHF N'."
+  },
+  {
+   "test": "packages/runtime/test/try-plan.test.ts › 'test files no check runs are told' and 'W15-50: ...'",
+   "why": "A folder with no package.json, or a package.json without dependencies and test script, now has its JavaScript tests run by node --test (null told line); the told line is kept and asserted for a package.json with dependencies."
+  },
+  {
+   "test": "packages/runtime/test/executor-brief.test.ts (the 'How your work is checked' brief line)",
+   "why": "The brief's check list now names node --test."
+  },
+  {
+   "test": "packages/runtime/test/budget-pause.test.ts › W15-13 fixture (test/elo.test.js, test/swiss.test.js content)",
+   "why": "The fixture's test files declared `export const x` twenty times (invalid JavaScript); the review now runs them with node --test and correctly fails them. Replaced with comment lines of exactly the same length so the budget math the test checks is unchanged."
+  }
+ ],
+ "new_problems": [
+  "Notification titles of a wrap-up pause card are cut at 60 characters when the project name is long (bench: project 'Club guide after' -> 'Club guide after: \"Write the…\" paused before its budget…'): notifications/producers.ts titled() keeps the project prefix and fit() cuts the end after shortening the task name; before the fix the same happened to '... paused at its budget of…'. With short project names (live check 3's 'Popover hint') it fits whole. Possible fix (not this area): drop the project prefix when the text would otherwise be cut.",
+  "After a Continue, the session log's pause line ('The run paused before its budget of CHF 0.30 ran out: it spent CHF 0.12', pauseSentence fed result.costUsdMicro = the run's spend) names the run's spend against the task's whole budget, while the card's body now names the task's total ('It spent CHF 0.24 of its budget of CHF 0.30', BudgetStop.spentUsdMicro). On a first pause they are equal (live check 3's case); after a Continue they differ and the session line can read as more room than is left. Evidence: executor.ts pauseSentence call passes result.costUsdMicro with limitWords(task.budget_usd_micro). Suggested for C2 OP-7 or the money areas.",
+  "Port 48821 assigned to this area's bench was already held by fix-l3-merge's bench (/tmp/frbench/fix-l3-merge/bench.json); this area's bench ran on 48829/2429 instead."
+ ],
+ "notes_for_other_areas": [
+  "C2 d1109-oversize-pause (parseHandoff, W15-14, OP-4): parseHandoff's signature and the RunHandoff fields (stopped, leftToDo, optional, stoppedBy) are unchanged. The rules now accept: (1) a 'nothing' with what it is about AND a reason after punctuation ('Nothing is needed for the two criteria: each listed page gives its address and was opened.', 'Nothing for the criteria; both are met.'), and a criterion named by number ('Nothing for criterion 1.'); NOT_NOTHING still reads the whole line. (2) A 'nothing' about the whole set (aboutWholeSet: criteria/brief/task/scope/requirements/deliverables or 'all/every/each/both criteria', not ONE_CRITERION like 'criterion 2'/'the first criterion') moves the list's other items that do not name a criterion (NAMES_CRITERION) into `optional`; a bare 'nothing' moves nothing. OP-4's 'listed fewer items' comparison should compare leftToDo only (optional notes are not work).",
+  "C2 OP-1 (wrap-up words, not done here): suggested addition to wrapUpText and WRAP_UP_BRIEF_LINE: 'A caveat or what you did not cover goes under Where I stopped:, not Left to do:'.",
+  "C2 OP-7 / anyone touching the pause card: budget-card.ts budgetStopTitle now reads BudgetStop.stoppedBy (Pick includes it): wrap_up -> '\"X\" paused before its budget ran out' / \"... before the <specialist>'s limit per run ran out\" / \"... before this session's budget ran out\"; a hard stop (stoppedBy budget) and the review-waits card keep '\"X\" paused at <limit>'. The card row stores `done` and `left` whole now (cardHandoff). request-words.ts budgetCard: body = pausedSpendSentence (wrap_up: 'It spent CHF a of its budget of CHF b.' using card.spent_usd_micro = the task's total; specialist_limit: 'It has no budget of its own: it may spend CHF b per run.'; session: \"This session's budget was CHF b.\") + goesOn/waiting; when there is no note: the old fallback sentences. New field `lists?: RequestListWords[]` ({label, items}) on RequestWords and HumanRequestView (api-types.ts, views.ts requestView spreads it only when non-empty; the fake daemon gets it via requestWords); labels 'Where it stopped' (firstSentences of the note) and 'Left to do' (items whole, three then 'and N more'). InboxPage renders request.lists (testids request-list, request-list-label, request-list-item).",
+  "Session result/Sessions list: PausedTask gains optional `before` (runner.ts sets it when card.stopped_by === 'wrap_up' and not review_waits); pausedSentences uses 'paused before <limit> ran out' for a single such task, sessionGist uses '<names> paused before <limit> ran out.' when every paused task has `before` and one limit. Persisted in the session's lastSession outcome (restart-tested).",
+  "C2 OP-2 (kept-work check reusing markerChecks): markerChecks now may return a JavaScript entry {name 'node --test', language 'JavaScript', candidates[0].argv ['node','--test',...files], probe ['node','-e',...]}; runMarkerCheck has a 4th parameter opts {node?: string} that replaces a leading 'node' in argv and probe. Pass {node: process.execPath} for the process sandbox or no lease and {node: 'node'} for a container, as critic.ts does, or the check may not find Node on a person's PATH. untestedFiles no longer reports JS tests that node --test runs.",
+  "The brief's HOW_WORK_IS_CHECKED line (verification.ts) now reads '... (its package.json scripts as they were before your task, or node --test, pytest, cargo test or go test) ...' — it is 13 characters longer, which can shift composed tests that tune budgets to prompt size.",
+  "testenv: new bench knob FORERUNNER_BENCH_LEFT_NOTE=<title substrings> (role-player wrapUpReport's leftNote) replays live check 3's 'Left to do' (a 'nothing' for the criteria with a reason, then an observation); documented in scripts/bench/README.md and docs/maintainers/testing.md.",
+  "Suggested lines for the session lead (UPDATE-LOG/CHANGELOG/requirements, not edited here): 'A run that heard the wrap-up and says nothing is needed for the criteria, with a reason or an observation after it, goes to its review instead of a budget pause (L3-research-1).' / 'The pause card lists where the run stopped and each item left whole, and says \"paused before its budget ran out\" with what it spent, as the session's line does (L3-research-2).' / 'JavaScript test files with no package.json test script are run with node --test in the review; a failing one keeps the task from Done (L3-research-4).' ADR amendments appended: ADR 0112 (2026-11-15, points 1 and 2), ADR 0110 (2026-11-15, rule 5). No new ADR."
+ ]
+}
