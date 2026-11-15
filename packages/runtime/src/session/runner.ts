@@ -19,7 +19,13 @@ import {
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import { REVIEW_RESUMED_EVENT, TOOK_LARGER_EVENT } from "../daemon/event-audience.ts";
 import { couldNotWords } from "../daemon/event-lines.ts";
-import { cardKindOf, holdsTask, isDockerCard, isPausedByPerson } from "../daemon/task-words.ts";
+import {
+  cardKindOf,
+  holdsTask,
+  isDockerCard,
+  isPausedByPerson,
+  withoutNoActionGiven,
+} from "../daemon/task-words.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
@@ -2487,7 +2493,11 @@ export class SessionRunner {
                 lessonCandidates.push({
                   text: `Critic finding resolved on "${task.title}" (${result.specialist ?? runItem.specialist}): ${
                     finding
-                      ? `[${finding.severity}] ${finding.description} -> ${finding.required_action}`
+                      ? // L3-left-7 (d1109-chat-recall): a finding the critic named no fix for
+                        // reads as what it found, as run L3 made Reviews and the cards say it.
+                        withoutNoActionGiven(
+                          `[${finding.severity}] ${finding.description} -> ${finding.required_action}`,
+                        )
                       : `finding ${id} was resolved by the rework`
                   }`,
                   tags: ["critic-finding", "resolved", ...(finding ? [finding.severity] : [])],

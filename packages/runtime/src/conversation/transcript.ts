@@ -1,4 +1,5 @@
 import type { EventRow, StateStore } from "@forerunner/state";
+import { scanForInjection } from "../injection/scan.ts";
 
 /**
  * One conversation per project (design §3.9, core-experience.md): the chat lines live as events
@@ -208,14 +209,53 @@ const cap = (s: string) =>
  */
 export const HISTORY_ACTION_LEAD = "The app did: ";
 
+/**
+ * A change named in words when its result kept no sentence (L3-left-6, d1109-chat-recall): before,
+ * the history fell back to the command's name ("The app did: task.create."), which the model then
+ * read as a word of the person's. One map; an unknown command is "Made a change".
+ */
+const CHANGE_WORDS: Record<string, string> = {
+  "task.create": "added a task",
+  "task.update": "changed a task",
+  "task.transition": "changed a task's status",
+  "task.reopen": "reopened a task",
+  "task.retry": "tried a task again",
+  "task.depends": "changed what a task waits for",
+  "session.start": "started a session",
+  "session.stop": "stopped the work",
+  "session.resume": "allowed sessions to start again",
+  "settings.set": "changed a setting",
+  "budget.set": "changed a budget",
+  "note.add": "left a note for the next session",
+  "memory.record": "kept a lesson",
+  "request.answer": "answered a card",
+  "project.switch": "switched the project",
+  "project.create": "created a project",
+  undo: "undid a change",
+};
+
 /** A change's sentence as the history says it: without its "Undo." (the change log's own words). */
 function changeSentence(a: TranscriptAction): string {
   const said = a.summary
     .trim()
     .replace(/\s*\bUndo\.?$/, "")
     .trim();
-  return said && said !== "done" ? said : `${a.kind.split("+").join(" and ")}.`;
+  if (said && said !== "done") return said;
+  const words = a.kind.split("+").map((k) => CHANGE_WORDS[k] ?? "made a change");
+  const joined = [...new Set(words)].join(" and ");
+  return `${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`;
 }
+
+/**
+ * What the history says in place of an earlier reply's own words when the injection scan reads
+ * instructions in them (L3-left-6, d1109-chat-recall): a reply that quoted a record (a report, a
+ * card, a recall hit) would otherwise carry the record's words into every later turn, which then
+ * reads back every change while it stays in the history. Left out, the words reach no later
+ * model call; the reply's "The app did:" lines stay and are scanned as before (they are the app's
+ * own sentences, which can quote a title an agent wrote).
+ */
+export const QUOTED_RECORD_LEFT_OUT =
+  "(This reply quoted a record whose words read like instructions; they are left out here.)";
 
 /**
  * What an earlier reply changed, one line per change, in the change log's own sentence without
@@ -242,8 +282,12 @@ export function actionLines(reply: TranscriptReply): string[] {
  * the app's lines.
  */
 function replyInHistory(reply: TranscriptReply): string {
-  const text = reply.text.trim();
+  const raw = reply.text.trim();
   const did = actionLines(reply);
+  // The reply's own words, unless they quote instructions (the action lines are kept apart).
+  let prose = raw;
+  for (const a of reply.actions) prose = prose.split(changeSentence(a)).join(" ");
+  const text = scanForInjection(prose, "agent_output").suspicious ? QUOTED_RECORD_LEFT_OUT : raw;
   if (!did.length) return cap(text);
   let rest = text;
   for (const a of reply.actions) rest = rest.split(changeSentence(a)).join(" ");
