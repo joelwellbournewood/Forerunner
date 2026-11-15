@@ -16190,4 +16190,39 @@ describe("l3-money-engine, run L3", () => {
       await rt.close();
     }
   }, 120_000);
+
+  it("L3-run-8: a session whose only task asked the person questions says the work waits for their answers", async () => {
+    const w = await world({ FORERUNNER_BENCH_ASK: "Contact page" });
+    const { rt, client } = await w.open();
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Chess club", goal: "A club site" });
+      const task = await client.createTask(project.id, {
+        title: "Contact page in contact.html",
+        outcome: "contact.html exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const sessionId =
+        (await client.startSession({ agentId, projectId: project.id })).session?.id ?? "";
+      await endOf(client, sessionId);
+      // The task waits on its questions card in the Inbox.
+      expect((await client.task(task.id)).task.status).toBe("needs_human");
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.taskId === task.id && r.status === "open",
+      );
+      expect(card).toBeDefined();
+      const lines = (await client.sessionEvents(sessionId)).map((e) => [e.type, e.text]);
+      const review = lines.filter(([t]) => t === "critic.session_review").map(([, x]) => x);
+      expect(review).toEqual([
+        expect.stringMatching(
+          /^Session review: the work waits for your answers \(grade \d+, \d+ findings?\)\.$/,
+        ),
+      ]);
+      expect(lines.map(([, x]) => x).join("\n")).not.toContain("sent back for changes");
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

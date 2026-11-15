@@ -3283,6 +3283,27 @@ export class SessionRunner {
           agentId: agent.id,
           projectId: project?.id ?? null,
         });
+        // L3-run-8 (live check 3): a review that sends nothing back of a session whose work
+        // waits only for the person (nothing done, failed or sent back; each task it left
+        // waiting holds a card) says what they can do: answer the questions, or decide in the
+        // Inbox. Before, it read "Session review: sent back for changes" (its verdict's words
+        // for a task review) though nothing was sent back.
+        const waitingOnYou = needsYouNow.filter((id) => !pausedCards.has(id));
+        const sentBackHere = retried.filter(
+          (id) => !completed.includes(id) && !failed.includes(id) && !needsHuman.includes(id),
+        );
+        const cardOf = (id: string) => openCards.find((r) => r.task_id === id && holdsTask(r));
+        const waitsFor =
+          sessionReview.verdict === "revise" &&
+          waitingOnYou.length > 0 &&
+          doneNow.length === 0 &&
+          failedNow.length === 0 &&
+          sentBackHere.length === 0 &&
+          waitingOnYou.every((id) => cardOf(id))
+            ? waitingOnYou.every((id) => cardKindOf(cardOf(id)) === "questions")
+              ? ("answers" as const)
+              : ("decision" as const)
+            : null;
         await emit(
           "critic.session_review",
           {
@@ -3293,6 +3314,7 @@ export class SessionRunner {
             verdict: sessionReview.verdict,
             findings: sessionReview.findings.length,
             summary: sessionReview.summary,
+            ...(waitsFor ? { waitsFor } : {}),
             ...(sessionReview.verdict === "human"
               ? { escalation: true, warning: "the session review needs the human" }
               : {}),

@@ -400,3 +400,33 @@ describe("w15-review, wave 15", () => {
     for (const l of [withFinding, older, line]) expect(l).not.toContain("\n");
   });
 });
+
+describe("l3-money-engine, run L3", () => {
+  it("L3-run-8: a session review of work that waits for the person's answers says so, never 'sent back for changes'", () => {
+    // Live check 3 (X1): the only task asked the person questions; the session's Details read
+    // "Session review: sent back for changes (grade 70, 2 findings)." Nothing was sent back.
+    expect(
+      describeEvent("critic.session_review", {
+        verdict: "revise",
+        grade: 70,
+        findings: 2,
+        waitsFor: "answers",
+      }),
+    ).toBe("Session review: the work waits for your answers (grade 70, 2 findings).");
+    expect(
+      describeEvent("critic.session_review", {
+        verdict: "revise",
+        grade: 85,
+        findings: 1,
+        waitsFor: "decision",
+      }),
+    ).toBe("Session review: the work waits for your decision (grade 85, 1 finding).");
+    // An accept, and a review that needs the person, read as before.
+    expect(
+      describeEvent("critic.session_review", { verdict: "accept", grade: 100, findings: 0 }),
+    ).toBe("Session review: accepted (grade 100, 0 findings).");
+    expect(
+      describeEvent("critic.session_review", { verdict: "human", grade: 40, findings: 1 }),
+    ).toBe("Session review: needs you (grade 40, 1 finding).");
+  });
+});

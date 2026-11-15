@@ -2998,7 +2998,12 @@ page by page to the last page, so an answer that sat behind hundreds of later an
 during a long downtime is still applied. At session end `reviewSession` runs the critic's honesty, plan and cost checks on the
 stored summary (tier 0 by default, `SessionRunnerDeps.sessionReviewTier`), persisted as a
 review with `session_id` set; `critic.session_review` carries the grade and a `human` verdict
-as an escalation. Lesson proposals (repeat findings) are recorded in critic memory through the
+as an escalation. A review that sends nothing back of a session whose work waits only for the
+person (nothing done, failed or sent back; every task it left waiting holds its card) carries
+`waitsFor: "answers"` (every card asks questions) or `"decision"`, and its log line says what the
+person can do: "Session review: the work waits for your answers (grade 70, 2 findings)." (L3-run-8,
+live check 3: it read "sent back for changes" though nothing was; `event-lines.test.ts` and
+`real-daemon.test.ts`, "l3-money-engine, run L3"). Lesson proposals (repeat findings) are recorded in critic memory through the
 memory port. Events: `critic.review_resumed` (the review-only pass, W15B-14),
 `critic.review_started`, `critic.verdict`, `critic.review_failed`
 (the task stays in review with a card for the person, U-045), `critic.session_review`,
