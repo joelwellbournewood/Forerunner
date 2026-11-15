@@ -546,6 +546,11 @@ describe("d1109-oversize-pause, run C: Continue's floor, the question at an oute
     const answered = await store.humanRequest.mustGet(question?.id as string);
     expect(answered.change_card).toMatchObject({ outcome: "continue" });
     expect((answered.change_card as { start?: unknown }).start).toBeDefined();
+    // Its Done line says it went on, and no amount: Continue at an outer limit adds no money (the
+    // fixup's walk: before, 'Gave "Build the shop" CHF 0.00 more: a session started.').
+    expect(requestWords(answered, { taskTitle: "Build the shop" }).outcome).toBe(
+      'Went on with "Build the shop": a session started.',
+    );
   });
 
   it("OP-8: a card filed before this change (none of the new fields) reads and answers as today", async () => {

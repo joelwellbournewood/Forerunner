@@ -2154,6 +2154,10 @@ describe("d1109-oversize-pause, run C: a pause at the project's budget that got 
     const closed = await rt.store.humanRequest.mustGet(questionRow.id);
     expect(closed.change_card).toMatchObject({ outcome: "continue" });
     expect((closed.change_card as { start?: unknown }).start).toBeDefined();
+    // Under Answered, without an amount (before: 'Gave "Shop checkout" CHF 0.00 more: ...').
+    expect((await cardsOf(r.taskId)).find((q) => q.id === questionRow.id)?.outcome).toBe(
+      `Went on with "${title}": a session started.`,
+    );
     // The continuing brief has the note and the "try another way" line, as data for the model.
     const brief = calls.find((c) => coderOn(title)(c) && JSON.stringify(c.messages).includes(NOTE));
     expect(brief).toBeDefined();

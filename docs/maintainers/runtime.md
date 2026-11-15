@@ -1340,7 +1340,8 @@ session's budget asks for at least what lets the estimate left fit the next sess
 budget (`continueUsdMicro`'s floor, OP-6). A no-progress card is never made ready by itself:
 `wakeBudgetWaits` leaves it out and, once its outer limit changed and has room, withdraws it
 (`asked_again`, whose Answered line is "Its new card asks how to go on.") and files one
-question card (`question: true`, options Continue and Cancel task); Continue on it (or on any budget card) passes the person's note to the task's notes
+question card (`question: true`, options Continue and Cancel task, Done line 'Went on with "X": a
+session started.', no amount); Continue on it (or on any budget card) passes the person's note to the task's notes
 (`noteAboutTask`) and starts through Continue's own path, adding nothing at an outer limit. The
 next brief (`whereTheLastRunStopped(handoff, files, kept)`, `keptChecksLines`) adds the next
 step first, the checks with a failed check's output end quoted as data, and after a pause

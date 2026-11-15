@@ -961,6 +961,10 @@ function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | nul
   const started = startWords(card.start);
   switch (card.outcome) {
     case "continue": {
+      // d1109-oversize-pause (OP-4): Continue on the question at an outer limit adds no money
+      // (the fixup's walk: before, 'Gave "X" CHF 0.00 more: a session started.').
+      if (card.question === true || card.continued_usd_micro === 0)
+        return `Went on with ${task}${started ? `: ${started}` : ": the next session continues it"}.`;
       const more = chfAt(card.continued_usd_micro, card.chf_per_usd);
       return `Gave ${task}${more ? ` ${more}` : ""} more${started ? `: ${started}` : ": the next session continues it"}.`;
     }
