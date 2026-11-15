@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import {
@@ -285,9 +285,11 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     expect(task.attempt).toBe(0);
     expect(await reviewOf(r.taskId)).toBeUndefined();
     expect(calls.some((c) => (c.origin?.label ?? "").includes(r.taskId))).toBe(false);
+    // L3-left-3 (d1109-oversize-pause): a run that heard the wrap-up paused before its budget ran
+    // out, as its card says (before: "Paused at its budget").
     expect(r.view.display).toMatchObject({
       key: "answer",
-      label: "Paused at its budget",
+      label: "Paused before its budget ran out",
       blocker: { kind: "card", cardKind: "budget" },
     });
     // The Run row says paused, keeps the report and the handoff (data only).
@@ -443,7 +445,8 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     const view = (
       (await (await req(`/projects/${guide?.project_id}/tasks`)).json()) as Json[]
     ).find((t) => t.id === guide?.id) as Json;
-    expect(view.display).toMatchObject({ label: "Paused at its budget" });
+    // L3-left-3: as its card says it (before: "Paused at its budget").
+    expect(view.display).toMatchObject({ label: "Paused before its budget ran out" });
     const runs = (await rt.store.run.forTask(guide?.id ?? "")).filter(
       (x) => x.specialist !== "critic",
     );
@@ -1089,11 +1092,12 @@ describe("w15-run, wave 15: 'Left to do' counts only what the criteria still nee
   });
 
   it("the wrap-up the model hears and the brief's line ask for what the criteria still need, or nothing", () => {
+    // d1109-oversize-pause (OP-1): "as a list with the next step first" (before: "as a list").
     expect(wrapUpText(10_000, 100_000)).toContain(
-      "Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",
+      "Left to do: (only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras).",
     );
     expect(WRAP_UP_BRIEF_LINE).toContain(
-      "'Left to do:' (only what the task's criteria still need, as a list, or 'nothing'; no optional extras)",
+      "'Left to do:' (only what the task's criteria still need, as a list with the next step first, or 'nothing'; no optional extras)",
     );
   });
 
@@ -1130,9 +1134,10 @@ describe("w15-run, wave 15: 'Left to do' counts only what the criteria still nee
       const mine = calls.filter(coderOn("Popover notes"));
       const told = mine.find(heardWrapUp);
       expect(told).toBeDefined();
-      // The request the model received asked for what the criteria still need, or nothing.
+      // The request the model received asked for what the criteria still need, or nothing
+      // (d1109-oversize-pause, OP-1: "as a list with the next step first").
       expect(JSON.stringify(told?.messages.at(-1))).toContain(
-        "only what the task's criteria still need, as a list, or nothing; no optional extras",
+        "only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras",
       );
       // Reviewed and done; never paused at its budget.
       const task = await rt.store.task.mustGet(r.taskId);
@@ -1176,8 +1181,10 @@ describe("w15-run, wave 15: the wrap-up's words say what is true (W15-16)", () =
   // The share is of the run's cap, which on a continued run is what is left of the task's
   // budget: "this run ... of what it may spend" is true on every run (review of W15-16).
   it("the model hears the share it really used, not 'about a fifth is left'", () => {
+    // d1109-oversize-pause (OP-1): what a good wrap-up leaves (before: "Start nothing new, leave
+    // the files working, and end your report with Where I stopped: and Left to do: (...)").
     expect(wrapUpText(29_045, 187_500)).toBe(
-      "Wrap up now: this run has used 15% of what it may spend, and its next step could take it past the share kept to finish. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",
+      "Wrap up now: this run has used 15% of what it may spend, and its next step could take it past the share kept to finish. Finish the step you are on and start nothing new. Leave the files so the work can go on: what you changed builds and runs, and a change you cannot finish in a step or two is undone or kept out of use. End your report with Where I stopped: (what is done, anything half done with its file, and any caveat or what you did not cover) and Left to do: (only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras).",
     );
     expect(wrapUpText(1_000, 300_000)).toMatch(
       /^Wrap up now: this run has used under 1% of what it may spend,/,
@@ -1763,7 +1770,12 @@ describe("l3-handoff-checks, run L3", () => {
       );
       // Before: '"Search MDN for pages that mention popover hint" paused at its budget of CHF 0.15'.
       expect(card?.title).toBe(`"${title}" paused before its budget ran out`);
-      expect(card?.body).toBe(`It spent ${spent} of its budget of ${cap}.`);
+      // d1109-oversize-pause (OP-7): its spend passed its estimate (the learned estimate of a
+      // small coder task, as the Start dialog prices it), so the same sentence says so (before:
+      // 'It spent CHF 0.12 of its budget of CHF 0.15.').
+      expect(card?.body).toBe(
+        `It spent ${spent} of its budget of ${cap}, more than its estimate of CHF 0.03.`,
+      );
       // Before: 'Done: I opened six MDN pages and listed the five that mention hint. The sixth,
       // the showPopover page, doesn't mention it. Two pages define hint:…; left: Open the
       // popovertarget, togglePopover and…, Check that each address in popover-hint.md opens.'
@@ -1821,7 +1833,9 @@ describe("l3-handoff-checks, run L3", () => {
       expect(n?.title).toBe('Popover hint: "Search MDN…" paused before its budget ran out');
       expect(String(n?.title).length).toBeLessThanOrEqual(60);
       expect(String(n?.body)).toMatch(
-        /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d\. Answer it in the Inbox\.$/,
+        // d1109-oversize-pause (OP-7): the card's body, with its spend past its estimate (before:
+        // 'It spent CHF 0.12 of its budget of CHF 0.15. Answer it in the Inbox.').
+        /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d, more than its estimate of CHF 0\.03\. Answer it in the Inbox\.$/,
       );
     });
 
@@ -1913,5 +1927,291 @@ describe("l3-money-engine, run L3", () => {
     expect(types.filter((t) => t === "critic.review_started")).toHaveLength(1);
     expect(types.indexOf("critic.review_started")).toBeLessThan(types.indexOf("critic.verdict"));
     expect(lines(ok.events)).toContain("The critic started a light review (attempt 1).");
+  }, 120_000);
+});
+
+/**
+ * d1109-oversize-pause (OP-4; the owner's D4 of 2026-11-09, "such that the work can be continued
+ * in the next run": continued, not repeated), through the composed runtime, the Settings command,
+ * the scheduler and a restart (validation rule 4): a task paused at the project's budget, woken
+ * once its budget was raised, that paused again without getting further (no file changed, the
+ * same list) is never made ready by itself again. Once the budget is raised again, its card is
+ * withdrawn and one question asks (Continue with a note, Cancel task), and nothing starts until
+ * the person answers. Before the review of d1109-oversize-pause only the store-level case had
+ * this, and the composed case found that it never happened: a hard stop at the project's budget
+ * leaves a `budget_exceeded` Run row, and only `paused` rows counted as the task's earlier pause,
+ * so the second pause read as progress and went on by itself at the next raise.
+ */
+describe("d1109-oversize-pause, run C: a pause at the project's budget that got no further asks, across a restart (OP-4)", () => {
+  const clock = new SimulatedClock("2026-11-15T10:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-op4-restart-"));
+  const calls: ModelRequest[] = [];
+  const title = "Shop checkout";
+  const NOTE = "use the existing parser";
+  const fake = new FakeProvider({
+    clock,
+    latency: "none",
+    onNoMatch: "echo",
+    replies: [
+      submitReply({}, { times: Number.POSITIVE_INFINITY }),
+      closingReply(),
+      // After the person's Continue with a note, the run finishes.
+      textReply("Wrote checkout.html.\n\nWhere I stopped: checkout works.\n\nLeft to do: nothing", {
+        when: (r: ModelRequest) => coderOn(title)(r) && JSON.stringify(r.messages).includes(NOTE),
+        times: Number.POSITIVE_INFINITY,
+        usage: { input_tokens: 500, output_tokens: 20 },
+      }),
+      // Before it, a call that writes nothing (a project's budget too small stops it first).
+      toolReply("list_dir", { path: "." }, "Working on the next part.", {
+        when: coderOn(title),
+        times: Number.POSITIVE_INFINITY,
+        usage: { input_tokens: 30_000, output_tokens: 10 },
+      }),
+      // A run that writes the same cart.html on each first call (its second run changes nothing).
+      toolReply(
+        "write_file",
+        { path: "cart.html", content: "<p>cart</p>\n" },
+        "Writing cart.html.",
+        {
+          when: coderOn("Shop cart"),
+          times: Number.POSITIVE_INFINITY,
+          usage: { input_tokens: 30_000, output_tokens: 10 },
+        },
+      ),
+    ],
+  });
+  const stream = fake.stream.bind(fake);
+  fake.stream = (r) => {
+    calls.push({ ...r, messages: structuredClone(r.messages) });
+    return stream(r);
+  };
+  let rt: RuntimeApp;
+  let req: Req;
+  beforeAll(async () => {
+    ({ rt, req } = await compose(home, clock, fake));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  const cardsOf = async (taskId: string) =>
+    ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.filter(
+      (q) => q.taskId === taskId,
+    );
+  /** The person sets the project's budget in Settings (the command its row sends). */
+  const raise = async (projectId: string, amountChf: number) => {
+    const set = await req("/commands/execute", {
+      method: "POST",
+      body: JSON.stringify({
+        commands: [
+          { name: "budget.set", params: { scope: "project", amountChf, project: projectId } },
+        ],
+        wordsUsed: `Settings: Project budget to ${amountChf}`,
+        source: "ui",
+        projectId,
+      }),
+    });
+    let result = (await set.json()) as Json;
+    if (result.status === "pending")
+      result = (await (
+        await req(`/commands/${String(result.pendingId)}/confirm`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "tap" }),
+        })
+      ).json()) as Json;
+    expect(result.status, JSON.stringify(result)).toBe("done");
+  };
+  const ended = async (projectId: string) =>
+    waitFor(
+      async () =>
+        (await rt.store.session.forProject(projectId)).every((s) =>
+          ["completed", "stopped", "failed", "killed"].includes(s.status),
+        )
+          ? true
+          : undefined,
+      async () =>
+        `the project's sessions to end (${(await rt.store.session.forProject(projectId))
+          .map((s) => s.status)
+          .join(", ")})`,
+    );
+
+  it("paused twice without getting further, then a restart and a raise in Settings: no session starts, one question asks; Continue with a note goes on from the note", async () => {
+    // The project's budget (USD 0.0075, CHF 0.01) lets one call run, which writes nothing; the
+    // next is refused: it pauses at the project's budget with no file changed.
+    const r = await runOne(req, rt, title, {
+      budgetUsdMicro: 2_000_000,
+      projectBudgetUsdMicro: 7_500,
+    });
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+    const first = (await cardsOf(r.taskId)).filter((q) => q.status === "open");
+    expect(first).toHaveLength(1);
+    const firstRow = await rt.store.humanRequest.mustGet(String(first[0]?.id));
+    expect(firstRow.change_card).toMatchObject({ source: "project", no_progress: false });
+    const sessions = async () => (await rt.store.session.forProject(r.projectId)).length;
+    expect(await sessions()).toBe(1);
+    const workRuns = async () =>
+      (await rt.store.run.forTask(r.taskId)).filter((x) => x.specialist !== "critic").length;
+
+    // Time passes between sessions, as in use (two runs in one simulated millisecond sort by
+    // their random ids, and the next brief reads the newest).
+    await clock.advance(60_000);
+    // The person raises the budget a little (to CHF 0.04): the next tick wakes it as its card
+    // says, and its run pauses again at the project's budget, with nothing more done: before,
+    // this card read as progress (no_progress false).
+    await raise(r.projectId, 0.04);
+    await rt.scheduler.tick();
+    await waitFor(
+      async () => ((await sessions()) === 2 ? true : undefined),
+      async () => `a second session (${await sessions()})`,
+    );
+    await ended(r.projectId);
+    expect(await workRuns()).toBe(2);
+    const second = (await cardsOf(r.taskId)).filter((q) => q.status === "open");
+    expect(second).toHaveLength(1);
+    const secondRow = await rt.store.humanRequest.mustGet(String(second[0]?.id));
+    expect(secondRow.id).not.toBe(firstRow.id);
+    expect(secondRow.change_card).toMatchObject({ source: "project", no_progress: true });
+    expect(second[0]?.title).toBe(`"${title}" paused again without getting further`);
+    expect(String(second[0]?.body)).toMatch(
+      / Its last run changed no file and left the same list, so it waits for you\.$/,
+    );
+    expect(JSON.stringify(second[0])).not.toMatch(/by itself/);
+
+    // Quit and restart between the pause and the raise: the card reads the same.
+    await clock.advance(60_000);
+    const before = second[0];
+    await rt.close();
+    ({ rt, req } = await compose(home, clock, fake));
+    expect((await cardsOf(r.taskId)).filter((q) => q.status === "open")).toEqual([before]);
+
+    // Ticks with nothing changed start nothing.
+    for (let i = 0; i < 2; i++) {
+      await clock.advance(30_000);
+      await rt.scheduler.tick();
+    }
+    expect(await sessions()).toBe(2);
+
+    // The person raises the project's budget in Settings, and the scheduler ticks: nothing
+    // starts; the card is withdrawn and one question asks for the same pause.
+    await raise(r.projectId, 5);
+    await rt.scheduler.tick();
+    await rt.scheduler.tick();
+    expect(await sessions()).toBe(2);
+    expect(await workRuns()).toBe(2);
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+    const old = await rt.store.humanRequest.mustGet(secondRow.id);
+    expect(old.status).toBe("withdrawn");
+    expect(old.change_card).toMatchObject({ outcome: "asked_again" });
+    // Under Answered it points to the question that replaced it (before: "Closed: it no longer
+    // needs you." beside the card that asks).
+    expect((await cardsOf(r.taskId)).find((q) => q.id === old.id)?.outcome).toBe(
+      "Its new card asks how to go on.",
+    );
+    const open = (await cardsOf(r.taskId)).filter((q) => q.status === "open");
+    expect(open).toHaveLength(1);
+    const question = open[0] as Json;
+    const questionRow = await rt.store.humanRequest.mustGet(String(question.id));
+    expect(questionRow.options).toEqual(["Continue", "Cancel task"]);
+    expect(questionRow.change_card).toMatchObject({
+      source: "project",
+      no_progress: true,
+      question: true,
+    });
+    expect(question.title).toBe(`"${title}" paused again without getting further`);
+    expect(String(question.body)).toMatch(
+      / Its last run changed no file and left the same list: continue with a note on what to do differently, or cancel it\.$/,
+    );
+    const choices = (question.choices ?? []) as Json[];
+    expect(choices.map((c) => [c.label, c.input ?? null])).toEqual([
+      ["Continue", "note"],
+      ["Cancel task", null],
+    ]);
+    expect(JSON.stringify(question)).not.toMatch(/by itself/);
+
+    // The same after a second restart, between the question and its answer.
+    await rt.close();
+    ({ rt, req } = await compose(home, clock, fake));
+    await rt.scheduler.tick();
+    expect(await sessions()).toBe(2);
+    expect((await cardsOf(r.taskId)).filter((q) => q.status === "open")).toEqual([question]);
+
+    // Continue with a note, as the Inbox's note box sends it: the task goes on from the note.
+    const answered = await req(`/requests/${String(question.id)}/answer`, {
+      method: "POST",
+      body: JSON.stringify({
+        version: question.version,
+        answer: { choice: choices[0]?.value ?? choices[0]?.label, note: NOTE },
+      }),
+    });
+    expect(answered.status, await answered.clone().text()).toBeLessThan(300);
+    await waitFor(
+      async () => ((await rt.store.task.mustGet(r.taskId)).status === "done" ? true : undefined),
+      async () =>
+        `"${title}" to be done (${(await rt.store.task.mustGet(r.taskId)).status}, ${await sessions()} sessions)`,
+    );
+    await ended(r.projectId);
+    expect(await sessions()).toBe(3);
+    const closed = await rt.store.humanRequest.mustGet(questionRow.id);
+    expect(closed.change_card).toMatchObject({ outcome: "continue" });
+    expect((closed.change_card as { start?: unknown }).start).toBeDefined();
+    // Under Answered, without an amount (before: 'Gave "Shop checkout" CHF 0.00 more: ...').
+    expect((await cardsOf(r.taskId)).find((q) => q.id === questionRow.id)?.outcome).toBe(
+      `Went on with "${title}": a session started.`,
+    );
+    // The continuing brief has the note and the "try another way" line, as data for the model.
+    const brief = calls.find((c) => coderOn(title)(c) && JSON.stringify(c.messages).includes(NOTE));
+    expect(brief).toBeDefined();
+    const text = textOf(brief?.messages[0] as ChatMessage);
+    expect(text).toContain(
+      "The last two runs of this task did not get further: try another way, and if something outside the task blocks it, say so under Where I stopped:.",
+    );
+    // The person's note, quoted as data in the brief's notes.
+    expect(text).toContain(JSON.stringify(`About "${title}": ${NOTE}`));
+    // Continue at an outer limit adds no budget to the task.
+    expect((await rt.store.task.mustGet(r.taskId)).budget_usd_micro).toBe(2_000_000);
+  }, 180_000);
+
+  it("in the project's folder, a second run that only wrote cart.html again after the pause that wrote it got no further (its kept work the same)", async () => {
+    // A sibling of the case above with work kept: the first pause wrote cart.html, the second
+    // run writes the same file with the same content and is stopped again. The fingerprint is of
+    // the task's kept work (the folder keeps the paused run's work out of the next snapshot, so
+    // the change set still holds cart.html), and it is the same: the pause asks.
+    const r = await runOne(req, rt, "Shop cart", {
+      budgetUsdMicro: 2_000_000,
+      projectBudgetUsdMicro: 7_500,
+    });
+    const workspace = projectWorkspaceDir(rt.data.assets.projectsRoot, r.projectId);
+    expect(readFileSync(join(workspace, "cart.html"), "utf8")).toBe("<p>cart</p>\n");
+    const open = async () =>
+      (await rt.store.humanRequest.list({ task_id: r.taskId, status: "open" } as never)).filter(
+        (q) => (q.change_card as { key?: string } | null)?.key === "task:budget_stop",
+      );
+    expect((await open()).map((q) => (q.change_card as Json).no_progress)).toEqual([false]);
+    await clock.advance(60_000);
+    const sessions = async () => (await rt.store.session.forProject(r.projectId)).length;
+    await raise(r.projectId, 0.04);
+    await rt.scheduler.tick();
+    await waitFor(
+      async () => ((await sessions()) === 2 ? true : undefined),
+      async () => `a second session (${await sessions()})`,
+    );
+    await ended(r.projectId);
+    const runs = (await rt.store.run.forTask(r.taskId)).filter((x) => x.specialist !== "critic");
+    expect(runs).toHaveLength(2);
+    const second = await open();
+    expect(second.map((q) => (q.change_card as Json).no_progress)).toEqual([true]);
+    const words = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
+      (q) => q.id === second[0]?.id,
+    );
+    expect(words?.title).toBe('"Shop cart" paused again without getting further');
+    // A third raise asks instead of starting anything.
+    await clock.advance(60_000);
+    await raise(r.projectId, 5);
+    await rt.scheduler.tick();
+    expect(await sessions()).toBe(2);
+    const question = await open();
+    expect(question.map((q) => [q.options, (q.change_card as Json).question])).toEqual([
+      [["Continue", "Cancel task"], true],
+    ]);
   }, 120_000);
 });

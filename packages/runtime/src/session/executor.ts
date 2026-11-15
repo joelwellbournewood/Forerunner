@@ -1772,6 +1772,8 @@ export class LoopTaskExecutor implements TaskExecutor {
           result.costUsdMicro,
           source === "specialist_limit" || source === "task_budget" ? cap.usdMicro : capUsdMicro,
           (n) => this.chfText(n),
+          // L3-left-1 (d1109-oversize-pause): the task's spend in all, as its card names it.
+          task.actual_cost_usd_micro + result.costUsdMicro,
         ),
         costUsdMicro: result.costUsdMicro,
         budgetStop: {

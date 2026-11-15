@@ -51,6 +51,7 @@ import {
   log,
   osFacts,
   type Platform,
+  redact as redactLogText,
   safeSegment,
   systemClock,
 } from "@forerunner/platform";
@@ -70,6 +71,7 @@ import {
   ensureInstallWrapKey,
   openVault,
   parseSecretRef,
+  redactValues,
   SecretResolver,
   type Vault,
 } from "@forerunner/vault";
@@ -120,6 +122,7 @@ import { expireOrphanedCards, syncAnsweredCards } from "../loop/answered-cards.t
 import { CommandLoop, sessionCapFromSettings, sessionCommandPorts } from "../loop/commands.ts";
 import { CriticLoop } from "../loop/critic.ts";
 import { ProjectDocs, parseRepoRef, projectWorkspaceDir } from "../loop/docs.ts";
+import { keptWorkChecker } from "../loop/kept-work-check.ts";
 import {
   isMemoryConsolidationRequest,
   MemoryLoop,
@@ -2685,6 +2688,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     schemaSync,
     // U-079: full-review tasks wait while the container sandbox is not ready.
     sandboxGate: sandbox.gate,
+    // d1109-oversize-pause (OP-2): the project's own checks on a paused run's kept work, in the
+    // task's sandbox the critic uses (no network), no model; their output redacted (the vault's
+    // values, then the platform's patterns) before it is stored.
+    keptWorkCheck: keptWorkChecker({
+      store,
+      sandbox: sandboxPort,
+      clock,
+      redact: async (text) => {
+        const values: string[] = [];
+        for (const name of await vault.list().catch(() => [] as string[])) {
+          const v = await vault.get(name).catch(() => null);
+          if (v) values.push(v);
+        }
+        return redactLogText(redactValues(text, values));
+      },
+    }),
     // U-037: a plan with code work on a project without a repository gets the agent's
     // proposal of one (a card, or the repository itself at Autopilot).
     onPlanned: async ({ sessionId, projectId, plan }) => {

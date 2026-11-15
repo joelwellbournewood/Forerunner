@@ -1283,6 +1283,77 @@ not refused, the pause with one card, the plan row, fitting tasks first, autonom
 after a restart), `oversize-words.test.ts`, `where-last-run-stopped.test.ts` (the result) and
 `apps/ui/test/real-daemon.test.ts` ("d1109-oversize-start, run C").
 
+**The larger task in its turn, and the pause that keeps, checks and goes on (d1109-oversize-pause,
+ADR 0115's appended part, ADR 0112 amended; the owner's answer 5 of 2026-11-09: "As i said, it
+should work on tasks even when it cannot complete them, and be able to wrap up and continue next
+time").** The hold above is gone (OP-0). `cutPlanToBudget` takes the items in the planner's order
+(priority, then age): the first task whose figure alone is more than the work budget goes into
+`items` at its place, its planned figure the room left (`roomUsdMicro - total`, at least
+`oversizedMinRoomUsdMicro`) and its whole figure on the item as `wholeEstimateUsdMicro`
+(`plan.oversized` keeps both); every item after it is left out `after_large` with `after` (the
+larger task's title); with less than a fifth left it is `no_room` and the cut goes on. The queue
+loop takes it at its turn (`takeLarger`: the room then, the plan row's "took ..." reason, the Took
+line once, a take again silent); the re-plan has no held task, keeps `after_large` tasks out of
+`notAgain` (they are the session's own: it takes them first, by the room left) and drops what it
+takes from `leftOutForBudget`. `one_large` is gone. `planned(p)` (the approval at autonomy 0 and
+1) lists the larger task with its whole figure and the `after_large` tasks after it. The Start
+check reports `oversized.before` and `oversized.comesAfter` (the `after_large` titles, then the
+`later` ones) and its `room` is what the tasks before it in the order leave; `oversize-words.ts`
+says 'after "A" it works with about CHF 2.80' (`before`), `comesAfterSentence` ('"B" comes after
+it: it runs if "Build the shop" leaves budget, else in your next session.', the dialog's amber
+note and chat's read-back through `oversizedWarning`), `waitsForNextSessionSentence` (the
+result's '"B" waits for your next session: "Build the shop" used the rest of this one.') and
+`oversizedPlanClause(title, alone, after)`. **Continue next time:** `continuableTasks(store,
+project)` (budget-card.ts) are the needs_human tasks whose open budget card `continuesAtStart`
+(source `session`, `session_budget` or `specialist_limit`, `no_progress` not true); the start's
+plan and the Start check take them in their turn at what is left of their estimate, and as the
+session claims one `closeByStart` moves it to ready and withdraws its card (`went_on_at_start`,
+`started_session_time`; Done line 'Your session of 14:05 went on with it.') in one transaction,
+adding money to no budget. Not taken: a pause at its own budget, one without progress, one at an
+outer limit.
+
+The pause itself (OP-1 to OP-8). The wrap-up (`wrapUpText`, both drivers) and the brief's
+`WRAP_UP_BRIEF_LINE` say what a good wrap-up leaves (the step it is on finished, files that build
+and run, a change it cannot finish undone or kept out of use, what is half done with its file,
+a caveat under "Where I stopped:", the next step first); the trigger, the line, the reserve,
+`WRAP_UP_MARK` and `parseHandoff` are unchanged. After a paused run the runner's
+`keepPausedWork` keeps `{ kept }` on its Run row (`keptArtifact`/`keptOf` in budget-pause.ts:
+`hash` = `workHash` over the changed files, `checks`, `notRun`, `noProgress`), runs the
+project's own checks when the change is code (`keptWorkCheck`, `loop/kept-work-check.ts`:
+`codeTaskChecks` shared with the critic, in the task's sandbox with no network, never on the
+host, within `PROJECT_CHECK_TIMEOUT_MS` (timed by the daemon's `Clock`), under the session's
+signal; each output's end, at most `KEPT_OUTPUT_CHARS` 1,500, redacted with the vault's values and the platform's patterns; no
+model, nothing booked), and compares it with the task's last paused run (`madeProgress`: a
+different hash or a shorter list; a first pause counts). A paused run is a wrap-up's `paused` Run
+row or a hard stop's `budget_exceeded` one (`KEPT_WORK_OUTCOMES`): a pause at the project's
+budget or this month's cap is mostly a hard stop, and before the review of d1109-oversize-pause
+it was never compared, so it went on by itself at each raise. At its specialist's limit per run with
+progress, room for a fifth, no Stop after this task and runs left, the task goes on at once in
+the session (`TASK_CONTINUES_EVENT` = `session.task_continues`: 'The coder goes on with "X"
+from where it stopped.'), with no card between (OP-5). Else the card stores `no_progress`,
+`kept_checks` {passed, failed}, `estimate_usd_micro`, `estimate_left_usd_micro` and
+`run_spent_usd_micro` (OP-8); a card without them reads and answers as before. Both estimates
+are priced as the planner and the Start check price the task (`Planner.wholeEstimateOf`: the
+learned estimate when there is one, then what is left once the kept work is counted, within the
+task's budget), so the card's Continue and the next Start's plan agree. Continue at the
+session's budget asks for at least what lets the estimate left fit the next session's work
+budget (`continueUsdMicro`'s floor, OP-6). A no-progress card is never made ready by itself:
+`wakeBudgetWaits` leaves it out and, once its outer limit changed and has room, withdraws it
+(`asked_again`, whose Answered line is "Its new card asks how to go on.") and files one
+question card (`question: true`, options Continue and Cancel task, Done line 'Went on with "X": a
+session started.', no amount); Continue on it (or on any budget card) passes the person's note to the task's notes
+(`noteAboutTask`) and starts through Continue's own path, adding nothing at an outer limit. The
+next brief (`whereTheLastRunStopped(handoff, files, kept)`, `keptChecksLines`) adds the next
+step first, the checks with a failed check's output end quoted as data, and after a pause
+without progress "try another way". The words (request-words.ts' `budgetCard`,
+`withChecksClause`, `pastEstimate`; result.ts' `pausedSentences` with `checksFail` and
+`noProgress` from the card; task-words.ts' `budgetPauseLabelOf`/`budgetPauseDetailOf`, a
+wrap-up pause reading "Paused before its budget ran out", L3-left-3) never say a no-progress
+task goes on by itself. Tests: `oversize-words.test.ts`, `task-dependencies.test.ts`,
+`oversized-task.test.ts` (composed, restarts), `wrap-up.test.ts`, `kept-work-check.test.ts`,
+`oversize-pause.test.ts` and `apps/ui/test/real-daemon.test.ts`, each in its
+"d1109-oversize-pause" describe.
+
 **The figure for kept work (OS-1).** `planEstimateUsdMicro(port, task, kept?)` prices a task
 that resumes from the work its paused runs kept at what is left of its estimate:
 `keptWorkOf(runs)` / `keptWorkFor(store, task)` (estimates/model.ts) sum the cost of the
@@ -2290,6 +2361,8 @@ budget-stop; the owner's decision of 2026-11-02).**
   `task-budget-cap.test.ts`, and `real-daemon.test.ts` ("a budget stop is a clean pause", "a
   session ended at this month's cap names it") in `apps/ui`.
 
+d1109-oversize-pause (run C) adds to this pause: the wrap-up's words say what a good wrap-up leaves (`wrapUpText`, `WRAP_UP_BRIEF_LINE`), the kept work is fingerprinted and checked by the project's own checks in the task's sandbox (`{ kept }` on the Run row, `loop/kept-work-check.ts`), a pause at the specialist's limit per run with progress goes on at once in the session (`session.task_continues`), and a pause that got no further asks the person and is never made ready by itself (`no_progress`): see "The larger task in its turn, and the pause that keeps, checks and goes on" above.
+
 **A paused task keeps its work and continues from it (budget-resume, [ADR 0112](../decisions/0112-a-budget-stop-is-a-clean-pause.md)
 amended 2026-11-08; the owner's decision of 2026-11-02).**
 - *One card per pause (`session/budget-card.ts`).* The runner moves every `paused` result with a
@@ -2401,6 +2474,8 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   Continue, `continueUsdMicro`), `budget-pause.test.ts` (the month's card: no Continue, a Settings
   link, the wake), `real-daemon.test.ts` ("a paused task keeps its work and continues from it")
   and `inbox.test.tsx` in `apps/ui`, and scenario 5 (`tests/e2e`).
+
+d1109-oversize-pause (run C): a pause at a session's budget, or at the specialist's limit per run as the session's last pause, with progress is also taken by the next session's start in its turn (`continuableTasks`, `closeByStart`: the card is withdrawn as `went_on_at_start`); Continue at the session's budget asks for what the estimate left needs (`continueUsdMicro`'s floor); the next brief adds the next step first, the checks on the kept work (quoted as data) and, after a pause without progress, "try another way"; Continue's note reaches it as a task note.
 
 **Cancelling a task that runs or is reviewed (phase C, live walk 2 C1, ADR 0105).** Before, the
 run was stopped (U-039) but its files stayed in the project's folder, the next task built on

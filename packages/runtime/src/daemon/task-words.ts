@@ -361,9 +361,45 @@ export function budgetPauseDetail(source: unknown): string {
   // W14-6 (polish-words): a project's budget never resets; only raising it lets the task on.
   if (source === "project")
     return "It goes on by itself once you raise the project's budget; cancel it in the Inbox.";
+  // d1109-oversize-pause (OP-0, "continue next time"): a pause at a session's budget or at its
+  // specialist's limit per run is taken by the next Start in its turn (`continuesAtStart`).
+  if (source === "session" || source === "session_budget" || source === "specialist_limit")
+    return "Your next Start goes on with it, or Continue in the Inbox.";
   return source === "month" || source === "plan"
     ? "It goes on by itself once that limit is raised or resets; cancel it in the Inbox."
     : "Continue or cancel in the Inbox.";
+}
+
+/**
+ * d1109-oversize-pause: a paused task's label and line from its whole card. L3-left-3: a run that
+ * heard the wrap-up paused before its limit ran out, as its card, its session's line, the result
+ * and chat say it ("paused before its budget of CHF 0.40 ran out"), so the row says "Paused
+ * before its budget ran out" (before: "Paused at its budget" beside them). OP-4: after a pause that
+ * got no further the row asks, and never says it goes on by itself.
+ */
+export function budgetPauseLabelOf(card: unknown): string {
+  const c = (card ?? {}) as Record<string, unknown>;
+  if (c.stopped_by === "wrap_up" && c.review_waits !== true)
+    switch (c.source) {
+      case "session":
+      case "session_budget":
+        return "Paused before the session's budget ran out";
+      case "task_budget":
+        return "Paused before its budget ran out";
+      case "specialist_limit":
+        return "Paused before its limit per run ran out";
+      default:
+        break;
+    }
+  return budgetPauseLabel(c.source);
+}
+
+/** The line under a paused task's label (`budgetPauseDetail`), from its whole card (OP-4). */
+export function budgetPauseDetailOf(card: unknown): string {
+  const c = (card ?? {}) as Record<string, unknown>;
+  if (c.no_progress === true)
+    return "It paused again without getting further: answer its card in the Inbox.";
+  return budgetPauseDetail(c.source);
 }
 
 function cardKey(card: { change_card?: unknown }): unknown {
@@ -644,26 +680,21 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
         // Live walk 2 (B2): it read "Paused" with no card; the card asks to raise the budget.
         // C-36: a session's budget that stopped it twice says so. ADR 0112: every other stop at
         // a budget is a pause, named by the limit that stopped it.
-        return display(
-          "answer",
-          budgetPauseLabel((card.change_card as { source?: unknown } | null)?.source),
-          "warn",
-          {
-            detail: budgetPauseDetail((card.change_card as { source?: unknown } | null)?.source),
-            // W15-56: only when its run wrote something (`taskHeldWork`); a task paused before
-            // any step wrote a file is only dropped ("Drops it.").
-            ...(ctx.heldWork?.has(task.id)
-              ? { cancelWork: cancelWorkOf(task, ctx, { paused: true }) }
-              : {}),
-            blocker: {
-              kind: "card",
-              taskId: null,
-              requestId: card.id,
-              title: null,
-              cardKind: "budget",
-            },
+        return display("answer", budgetPauseLabelOf(card.change_card), "warn", {
+          detail: budgetPauseDetailOf(card.change_card),
+          // W15-56: only when its run wrote something (`taskHeldWork`); a task paused before
+          // any step wrote a file is only dropped ("Drops it.").
+          ...(ctx.heldWork?.has(task.id)
+            ? { cancelWork: cancelWorkOf(task, ctx, { paused: true }) }
+            : {}),
+          blocker: {
+            kind: "card",
+            taskId: null,
+            requestId: card.id,
+            title: null,
+            cardKind: "budget",
           },
-        );
+        });
       if (card && cardKindOf(card) === "cannot_run")
         // Live walk 4: it read "Paused" with "Press Resume", and Resume only started the same
         // refusal again; its card says why and offers Try again once that is fixed.

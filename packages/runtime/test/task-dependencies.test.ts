@@ -6,9 +6,12 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { StartCheckView } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
+import { requestWords } from "../src/daemon/request-words.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { budgetPauseDetail } from "../src/daemon/task-words.ts";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
+import { closeByStart, fileBudgetStopCard } from "../src/session/budget-card.ts";
 import {
   cutPlanToBudget,
   SessionRunner,
@@ -42,11 +45,14 @@ describe("the plan is cut by skipping what does not fit (U-040)", () => {
       estimateUsdMicro: 8_500_000,
       summary: "4 ready task(s) in priority order",
     };
-    const cut = cutPlanToBudget(plan, 3_000_000);
+    // d1109-oversize-pause (OP-0): a re-plan's room of 3.00 in a work budget of 6.00, so "big"
+    // fits the work budget but not what is left (before, the room was the whole work budget,
+    // and a task larger than that now runs in its turn: the cases further down).
+    const cut = cutPlanToBudget(plan, 3_000_000, 6_000_000);
     expect(cut.items.map((i) => i.taskId)).toEqual(["small", "medium"]);
     expect(cut.estimateUsdMicro).toBe(3_000_000);
     expect(cut.leftOutForBudget?.map((i) => i.taskId)).toEqual(["big", "tiny"]);
-    expect(cut.workBudgetUsdMicro).toBe(3_000_000);
+    expect(cut.workBudgetUsdMicro).toBe(6_000_000);
     // W15-60: "items" as the number says (before: "item(s)").
     expect(cut.summary).toBe("4 ready task(s) in priority order (2 items cut to fit the budget)");
     // A plan that fits is unchanged and says nothing was left out.
@@ -103,15 +109,16 @@ describe("a session with tasks that cannot run says which and why (U-040)", () =
     ran.length = 0;
   });
 
-  it("one task larger than the budget no longer empties the plan: it runs after the tasks that fit (D4)", async () => {
+  it("one task larger than the budget no longer empties the plan: it runs in its turn (D4)", async () => {
     await add("Rewrite the engine", { priority: 9, est_cost_usd_micro: 5_000_000 });
     await add("Fix the typo", { priority: 5 });
     await add("Update the README", { priority: 1 });
     const r = await start();
     // d1109-oversize-start (the owner's D4 of 2026-11-09): before, "Rewrite the engine" was
-    // left for next time in every session of this size; now it is taken after the two that fit,
-    // with what they leave of the work budget.
-    expect(ran).toEqual(["Fix the typo", "Update the README", "Rewrite the engine"]);
+    // left for next time in every session of this size. d1109-oversize-pause (OP-0, the owner's
+    // answer 5): it runs in its turn, first by its priority; it spent nothing here, so the two
+    // after it run with what it left.
+    expect(ran).toEqual(["Rewrite the engine", "Fix the typo", "Update the README"]);
     expect(r.completed).toHaveLength(3);
     expect(r.plan?.leftOutForBudget).toBeUndefined();
     expect(r.plan?.oversized?.title).toBe("Rewrite the engine");
@@ -298,8 +305,13 @@ describe("dependencies at the daemon's routes (U-040)", () => {
     expect(view.ready).toBe(3);
     expect(view.sessionBudget.usdMicro).toBe(5_000_000);
     expect(view.workBudget.usdMicro).toBe(4_000_000);
-    expect(view.runnable.map((t) => t.title)).toEqual(["After done"]);
-    expect(view.overBudget.map((t) => t.title)).toEqual(["Huge task"]);
+    // d1109-oversize-pause (OP-0): the huge task runs first by its priority, with the whole work
+    // budget; the small one comes after it (before: it ran first and the huge one was held).
+    expect(view.runnable.map((t) => t.title)).toEqual([]);
+    expect(view.overBudget.map((t) => [t.title, t.why])).toEqual([
+      ["Huge task", "oversized"],
+      ["After done", "after_large"],
+    ]);
     expect(view.waiting).toEqual([
       {
         taskId: expect.any(String),
@@ -333,17 +345,23 @@ describe("d1109-oversize-start, run C: a task larger than the work budget runs a
     summary: `${items.length} ready tasks in priority order`,
   });
 
-  it("cutPlanToBudget holds the first larger task apart, leaves out a second one and one there is no room for", () => {
+  // d1109-oversize-pause (OP-0, the owner's answer 5): the larger task is in the plan at its
+  // place with the room left; the items after it wait behind it ("after_large"). Before, it was
+  // held apart until the work that fits was done, one a session ("one_large").
+  it("cutPlanToBudget takes the first larger task at its place, the tasks after it behind it, and leaves out one there is no room for", () => {
     const a = cutPlanToBudget(planOf(item("A", 0.4), item("Big", 6), item("B", 0.3)), usd(4));
-    expect(a.items.map((i) => i.taskId)).toEqual(["A", "B"]);
-    expect(a.oversized).toEqual(item("Big", 6));
-    expect(a.leftOutForBudget).toBeUndefined();
+    expect(a.items.map((i) => [i.taskId, i.estimateUsdMicro])).toEqual([
+      ["A", usd(0.4)],
+      ["Big", usd(3.6)],
+    ]);
+    expect(a.oversized).toEqual({ ...item("Big", 6), roomUsdMicro: usd(3.6) });
+    expect(a.leftOutForBudget?.map((i) => [i.taskId, i.reason])).toEqual([["B", "after_large"]]);
     expect(a.workBudgetUsdMicro).toBe(usd(4));
     const b = cutPlanToBudget(planOf(item("Big", 6), item("Big2", 9)), usd(4));
-    expect(b.items).toEqual([]);
+    expect(b.items.map((i) => i.taskId)).toEqual(["Big"]);
     expect(b.oversized?.taskId).toBe("Big");
-    expect(b.leftOutForBudget?.map((i) => [i.taskId, i.reason])).toEqual([["Big2", "one_large"]]);
-    // The tasks that fit leave CHF 0.70 of 4.00, less than a fifth: no larger task starts.
+    expect(b.leftOutForBudget?.map((i) => [i.taskId, i.reason])).toEqual([["Big2", "after_large"]]);
+    // The tasks before it leave CHF 0.70 of 4.00, less than a fifth: no larger task starts.
     const c = cutPlanToBudget(planOf(item("A", 2), item("B", 1.3), item("Big", 6)), usd(4));
     expect(c.items.map((i) => i.taskId)).toEqual(["A", "B"]);
     expect(c.oversized).toBeUndefined();
@@ -422,7 +440,14 @@ describe("d1109-oversize-start, run C: a task larger than the work budget runs a
     expect(r.summary).not.toContain("Nothing could run");
     // The plan row lists it with the room it was given: what the session review measures.
     expect(r.plan?.items).toEqual([
-      { taskId: shop.id, title: "Build the shop", specialist: "coder", estimateUsdMicro: usd(1.6) },
+      {
+        taskId: shop.id,
+        title: "Build the shop",
+        specialist: "coder",
+        estimateUsdMicro: usd(1.6),
+        // d1109-oversize-pause (OP-0): its whole figure, beside the room it got.
+        wholeEstimateUsdMicro: usd(8),
+      },
     ]);
     expect(r.plan?.oversized).toMatchObject({ estimateUsdMicro: usd(8), roomUsdMicro: usd(1.6) });
     const row = await store.session.mustGet(r.sessionId);
@@ -452,44 +477,50 @@ describe("d1109-oversize-start, run C: a task larger than the work budget runs a
     await store.close();
   });
 
-  it("with tasks that fit, they run first and the larger task gets what they leave", async () => {
+  // d1109-oversize-pause (OP-0, the owner's answer 5: "no special ordering"): before, the tasks
+  // that fit ran first whatever their priority, and a second larger task waited ("one_large").
+  it("with tasks after it in the plan's order, the larger task runs first and they take what it leaves", async () => {
     await add("Build the shop", 8, { priority: 9 });
     await add("Write the intro", 0.3, { priority: 5 });
     await add("Write the about page", 0.3, { priority: 4 });
+    // The larger task spends USD 1.00 of the work budget of USD 1.60.
+    costs.set("Build the shop", usd(1));
     const r = await start();
-    // The planner's order puts the larger task first; it still runs after the work that fits.
-    expect(ran).toEqual(["Write the intro", "Write the about page", "Build the shop"]);
+    expect(ran).toEqual(["Build the shop", "Write the intro", "Write the about page"]);
     expect(r.plan?.items.map((i) => [i.title, i.estimateUsdMicro])).toEqual([
+      ["Build the shop", usd(1.6)],
       ["Write the intro", usd(0.3)],
       ["Write the about page", usd(0.3)],
-      ["Build the shop", usd(1)],
     ]);
     expect(r.plan?.leftOutForBudget).toBeUndefined();
     await store.close();
   });
 
-  it("a task that becomes ready during the session runs before the larger one", async () => {
+  it("a task that becomes ready during the session runs after the larger one", async () => {
     const first = await add("Write the intro", 0.3);
     await add("Write the outro", 0.3, { depends_on: [first.id] });
     await add("Build the shop", 8, { priority: 1 });
+    costs.set("Build the shop", usd(0.5));
     await start();
-    expect(ran).toEqual(["Write the intro", "Write the outro", "Build the shop"]);
+    expect(ran).toEqual(["Write the intro", "Build the shop", "Write the outro"]);
     await store.close();
   });
 
-  it("one larger task a session: a second one waits for the next session, with why", async () => {
+  it("a second larger task comes after the first: it runs if the first leaves a fifth, else it waits with why", async () => {
     await add("Build the shop", 8, { priority: 9 });
     await add("Big two", 9, { priority: 5 });
+    costs.set("Build the shop", usd(1.5));
     const r = await start();
+    // USD 1.50 of 1.60 spent: less than a fifth (0.32) is left, so "Big two" waits.
     expect(ran).toEqual(["Build the shop"]);
     expect(r.plan?.leftOutForBudget?.map((i) => [i.title, i.reason])).toEqual([
-      ["Big two", "one_large"],
+      ["Big two", "no_room"],
     ]);
     // OS-7: the result says why it waits, in its one sentence; never "Nothing could run".
     expect(r.summary).toMatch(
-      /"Big two" needs about CHF [\d.]+, more than this session's work budget: one task that large runs a session, so it waits for the next one\./,
+      /"Big two" needs about CHF [\d.]+, more than this session's work budget: the tasks before it leave too little to start it, so it waits for the next session\./,
     );
-    expect(r.summary).not.toContain("Nothing could run");
+    expect(r.summary).not.toMatch(/one task that large|Nothing could run/);
     await store.close();
   });
 
@@ -511,9 +542,9 @@ describe("d1109-oversize-start, run C: a task larger than the work budget runs a
     await store.close();
   });
 
-  it("the Start check holds the same task, with the room the tasks before it leave (those that follow included)", async () => {
+  it("the Start check takes the same task at its place, with the room the tasks before it leave", async () => {
     const check = () => startCheck({ store }, w.project, usd(2));
-    const big = await add("Build the shop", 8, { priority: 9 });
+    const big = await add("Build the shop", 8, { priority: 4 });
     let c = await check();
     expect(c.runnable).toEqual([]);
     expect(c.oversized).toEqual({
@@ -522,24 +553,34 @@ describe("d1109-oversize-start, run C: a task larger than the work budget runs a
       estimateUsdMicro: usd(8),
       roomUsdMicro: usd(1.6),
       after: false,
+      before: [],
+      comesAfter: [],
     });
     expect(c.overBudget.map((t) => [t.title, t.reason])).toEqual([["Build the shop", "oversized"]]);
-    // A task that fits, and one that follows it once it is done: both run first.
-    const intro = await add("Write the intro", 0.3);
+    // A task before it in the plan's order, and one that follows that task once it is done:
+    // d1109-oversize-pause (OP-0) runs the first before it and the second after it (before, both
+    // ran before it and its room was what they left together).
+    const intro = await add("Write the intro", 0.3, { priority: 5 });
     await add("Write the outro", 0.3, { depends_on: [intro.id] });
     c = await check();
     expect(c.runnable.map((t) => t.title)).toEqual(["Write the intro"]);
     expect(c.later.map((t) => t.title)).toEqual(["Write the outro"]);
-    expect(c.oversized).toMatchObject({ roomUsdMicro: usd(1), after: true });
-    // A second larger task waits for the next session.
+    expect(c.oversized).toMatchObject({
+      roomUsdMicro: usd(1.3),
+      after: true,
+      before: ["Write the intro"],
+      comesAfter: ["Write the outro"],
+    });
+    // A second larger task comes after the first.
     await add("Big two", 9, { priority: 1 });
     c = await check();
     expect(c.overBudget.map((t) => [t.title, t.reason])).toEqual([
       ["Build the shop", "oversized"],
-      ["Big two", "one_large"],
+      ["Big two", "after_large"],
     ]);
-    // The tasks before it leave less than a fifth: neither starts.
-    await add("Write the menu", 0.75, { priority: 3 });
+    expect(c.oversized?.comesAfter).toEqual(["Big two", "Write the outro"]);
+    // The tasks before it leave less than a fifth: it waits, and the cut goes on after it.
+    await add("Write the menu", 1.2, { priority: 5 });
     c = await check();
     expect(c.oversized).toBeNull();
     expect(c.overBudget.map((t) => [t.title, t.reason])).toEqual([
@@ -563,6 +604,346 @@ describe("d1109-oversize-start, run C: a task larger than the work budget runs a
     const approved = await start({ planApproved: planId });
     expect(ran).toEqual(["Build the shop"]);
     expect(approved.plan?.items.map((i) => i.taskId)).toEqual([shop.id]);
+    await store.close();
+  });
+});
+
+/**
+ * d1109-oversize-pause (OP-0; the owner's answer 5 of 2026-11-09: "As i said, it should work on
+ * tasks even when it cannot complete them, and be able to wrap up and continue next time. Again,
+ * I thought we talked about this."): no special ordering. A task larger than the work budget runs
+ * in its turn (priority, then the plan's order) with what is left of the work budget; the tasks
+ * after it are the session's own and take only what it leaves, else they wait for the next
+ * session. Before (d1109-oversize-start), it was held out of the queue until the work that fits
+ * was done and a re-plan added nothing, one a session.
+ */
+describe("d1109-oversize-pause, run C: the larger task in its turn (OP-0)", () => {
+  const usd = (n: number) => Math.round(n * 1_000_000);
+  const item = (id: string, n: number) => ({
+    taskId: id,
+    title: id,
+    specialist: "coder",
+    estimateUsdMicro: usd(n),
+  });
+  const planOf = (...items: ReturnType<typeof item>[]) => ({
+    items,
+    estimateUsdMicro: items.reduce((s, i) => s + i.estimateUsdMicro, 0),
+    summary: `${items.length} ready tasks in priority order`,
+  });
+
+  it("cutPlanToBudget: the acceptance's four plans", () => {
+    const a = cutPlanToBudget(planOf(item("A", 0.4), item("Big", 6), item("B", 0.3)), usd(4));
+    expect(a.items.map((i) => [i.taskId, i.estimateUsdMicro])).toEqual([
+      ["A", usd(0.4)],
+      ["Big", usd(3.6)],
+    ]);
+    expect(a.leftOutForBudget?.map((i) => [i.taskId, i.reason, i.after])).toEqual([
+      ["B", "after_large", "Big"],
+    ]);
+    const b = cutPlanToBudget(planOf(item("Big", 6), item("A", 0.4)), usd(4));
+    expect(b.items.map((i) => [i.taskId, i.estimateUsdMicro])).toEqual([["Big", usd(4)]]);
+    expect(b.leftOutForBudget?.map((i) => [i.taskId, i.reason])).toEqual([["A", "after_large"]]);
+    const c = cutPlanToBudget(planOf(item("Big", 6), item("Big2", 9)), usd(4));
+    expect(c.items.map((i) => i.taskId)).toEqual(["Big"]);
+    expect(c.leftOutForBudget?.map((i) => [i.taskId, i.reason])).toEqual([["Big2", "after_large"]]);
+    const d = cutPlanToBudget(planOf(item("A", 3.5), item("Big", 6), item("B", 0.3)), usd(4));
+    expect(d.items.map((i) => i.taskId)).toEqual(["A", "B"]);
+    expect(d.oversized).toBeUndefined();
+    expect(d.leftOutForBudget?.map((i) => [i.taskId, i.reason])).toEqual([["Big", "no_room"]]);
+    // 'one_large' appears nowhere.
+    expect(JSON.stringify([a, b, c, d])).not.toContain("one_large");
+  });
+
+  let store: StateStore;
+  let clock: SimulatedClock;
+  let w: Awaited<ReturnType<typeof seedWorld>>;
+  const ran: string[] = [];
+  /** What each task's run does: done at a cost (default USD 0.30), failed, or paused. */
+  const runs = new Map<string, { outcome: "done" | "failed" | "paused"; cost: number }>();
+  const executor: TaskExecutor = {
+    async execute({ task, budget }) {
+      ran.push(task.title);
+      const r = runs.get(task.title) ?? { outcome: "done" as const, cost: usd(0.3) };
+      budget.record(`run-${task.id}-${ran.length}`, r.cost);
+      if (r.outcome === "paused")
+        return {
+          outcome: "paused",
+          summary: "paused at the session's budget",
+          costUsdMicro: r.cost,
+          checksPassed: false,
+          budgetStop: {
+            capUsdMicro: usd(1.6),
+            spentUsdMicro: r.cost,
+            source: "session",
+            specialist: "coder",
+            stoppedBy: "wrap_up",
+          },
+          handoff: {
+            stopped: "Built the cart.",
+            leftToDo: ["Build checkout"],
+            stoppedBy: "wrap_up",
+          },
+        };
+      if (r.outcome === "failed")
+        return {
+          outcome: "failed",
+          summary: "it broke",
+          costUsdMicro: r.cost,
+          checksPassed: false,
+        };
+      return { outcome: "done", summary: "done", costUsdMicro: r.cost, checksPassed: true };
+    },
+  };
+  const add = (title: string, estimate: number, over: Record<string, unknown> = {}) =>
+    store.task.insert({
+      project_id: w.project,
+      title,
+      outcome: `${title} done`,
+      acceptance_criteria: ["works"],
+      risk_tier: 0,
+      status: "ready",
+      priority: 5,
+      est_cost_usd_micro: usd(estimate),
+      reason: "seed",
+      ...over,
+    });
+  /** A session of USD 2.00: its work budget is USD 1.60. */
+  const start = () =>
+    new SessionRunner({
+      store,
+      clock,
+      tokens: new TokenIssuer({ now: () => clock.now() }),
+      kill: new KillSwitch(),
+      planner: new StaticPlanner(),
+      executor,
+    }).start({
+      agentId: w.agent,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: usd(2),
+      grant,
+    });
+
+  beforeEach(async () => {
+    clock = new SimulatedClock("2026-11-10T07:00:00Z");
+    store = await openStore({ url: "sqlite::memory:", clock });
+    w = await seedWorld(store, {}, { session: false });
+    ran.length = 0;
+    runs.clear();
+  });
+
+  it("A, then the larger task until the session's budget is used; B waits for the next session, as the result says", async () => {
+    await add("A", 0.4, { priority: 9 });
+    await add("Build the shop", 8, { priority: 5 });
+    await add("B", 0.3, { priority: 1 });
+    runs.set("A", { outcome: "done", cost: usd(0.4) });
+    runs.set("Build the shop", { outcome: "paused", cost: usd(1.15) });
+    const r = await start();
+    expect(ran).toEqual(["A", "Build the shop"]);
+    expect(r.plan?.leftOutForBudget?.map((i) => [i.title, i.reason, i.after])).toEqual([
+      ["B", "after_large", "Build the shop"],
+    ]);
+    expect(r.summary).toContain(
+      '"B" waits for your next session: "Build the shop" used the rest of this one.',
+    );
+    expect(r.summary).not.toMatch(
+      /after the other tasks|after the work that fits|one task that large/,
+    );
+    // The take is in the log once, at its turn after A.
+    const events = await store.event.list(r.sessionId);
+    const took = events.filter((e) => e.type === "session.took_larger");
+    expect(took.map((e) => (e.payload as { roomUsdMicro: number }).roomUsdMicro)).toEqual([
+      usd(1.2),
+    ]);
+    await store.close();
+  });
+
+  it("with the larger task at the highest priority it runs first, and the others wait for what it leaves", async () => {
+    await add("A", 0.4, { priority: 5 });
+    await add("Build the shop", 8, { priority: 9 });
+    await add("B", 0.3, { priority: 1 });
+    runs.set("Build the shop", { outcome: "paused", cost: usd(1.5) });
+    const r = await start();
+    expect(ran).toEqual(["Build the shop"]);
+    expect(r.plan?.leftOutForBudget?.map((i) => i.title)).toEqual(["A", "B"]);
+    expect(r.summary).toContain(
+      '"A" and 1 more wait for your next session: "Build the shop" used the rest of this one.',
+    );
+    await store.close();
+  });
+
+  it("when the larger task fails at once, the re-plan takes the tasks after it in the same session", async () => {
+    await add("Build the shop", 8, { priority: 9 });
+    await add("B", 0.3, { priority: 5 });
+    runs.set("Build the shop", { outcome: "failed", cost: usd(0.05) });
+    const r = await start();
+    expect(ran).toEqual(["Build the shop", "B"]);
+    expect(r.plan?.leftOutForBudget).toBeUndefined();
+    expect(r.summary).not.toContain("waits for your next session");
+    await store.close();
+  });
+
+  it("at autonomy 1 the plan the person approves lists the larger task at its place and the tasks after it", async () => {
+    const project = await store.project.mustGet(w.project);
+    await store.project.update(project.id, project.version, { autonomy_level: 1 });
+    await add("Build the shop", 8, { priority: 9 });
+    await add("B", 0.3, { priority: 5 });
+    const filed = await start();
+    expect(filed.stopReason).toBe("plan_awaiting_approval");
+    const [req] = await store.humanRequest.list({ session_id: filed.sessionId } as never);
+    expect(req?.steps).toEqual([
+      "Build the shop (coder, about CHF 6.40)",
+      "B (coder, about CHF 0.24)",
+    ]);
+    await store.close();
+  });
+});
+
+/**
+ * d1109-oversize-pause (OP-0, "continue next time"; the owner's answer 5: "be able to wrap up and
+ * continue next time", and D4: "continues from there in the next run"). Before, a task paused at
+ * the session's budget waited on its card until the person pressed Continue; a plain Start left it
+ * out. Now the next start takes it in its turn from its kept work and closes its card; a pause at
+ * the task's own budget, one that got no further and one at an outer limit are not taken.
+ */
+describe("d1109-oversize-pause, run C: the next Start continues a session-budget pause (OP-0)", () => {
+  const usd = (n: number) => Math.round(n * 1_000_000);
+  let store: StateStore;
+  let clock: SimulatedClock;
+  let w: Awaited<ReturnType<typeof seedWorld>>;
+  const ran: string[] = [];
+  const executor: TaskExecutor = {
+    async execute({ task, budget }) {
+      ran.push(task.title);
+      budget.record(`run-${task.id}-${ran.length}`, usd(0.1));
+      return { outcome: "done", summary: "done", costUsdMicro: usd(0.1), checksPassed: true };
+    },
+  };
+  /** A task paused at a limit, with the card its run filed. */
+  const paused = async (
+    title: string,
+    source: "session" | "task_budget" | "project" | "specialist_limit",
+    over: { noProgress?: boolean; priority?: number } = {},
+  ) => {
+    const task = await store.task.insert({
+      project_id: w.project,
+      title,
+      outcome: `${title} done`,
+      acceptance_criteria: ["works"],
+      risk_tier: 0,
+      status: "needs_human",
+      priority: over.priority ?? 5,
+      est_cost_usd_micro: usd(0.4),
+      reason: "paused",
+    });
+    const { request } = await fileBudgetStopCard({
+      store,
+      task,
+      session: null,
+      humanId: w.human,
+      agentId: w.agent,
+      runId: null,
+      stop: {
+        capUsdMicro: usd(1),
+        spentUsdMicro: usd(0.3),
+        source,
+        specialist: "coder",
+        stoppedBy: "wrap_up",
+      },
+      handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "wrap_up" },
+      now: clock.nowIso(),
+      chfPerUsd: 0.8,
+    });
+    if (over.noProgress)
+      await store.humanRequest.patch(request.id, {
+        change_card: { ...(request.change_card as object), no_progress: true },
+      });
+    return { task, card: request };
+  };
+  const start = () =>
+    new SessionRunner({
+      store,
+      clock,
+      tokens: new TokenIssuer({ now: () => clock.now() }),
+      kill: new KillSwitch(),
+      planner: new StaticPlanner(),
+      executor,
+    }).start({
+      agentId: w.agent,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: usd(2),
+      grant,
+    });
+
+  beforeEach(async () => {
+    clock = new SimulatedClock("2026-11-10T13:05:00Z");
+    store = await openStore({ url: "sqlite::memory:", clock });
+    w = await seedWorld(store, {}, { session: false });
+    ran.length = 0;
+  });
+
+  it("a plain Start takes the session-budget pause in its turn, closes its card in one step and grows no budget; the others wait on their cards", async () => {
+    const shop = await paused("Build the shop", "session", { priority: 9 });
+    const own = await paused("Own budget", "task_budget");
+    const stuck = await paused("No progress", "session", { noProgress: true });
+    const outer = await paused("Project limit", "project");
+    const limit = await paused("Coder limit", "specialist_limit", { priority: 1 });
+    // Before the start: the card's Continue and the task row say the next Start takes it.
+    const before = requestWords(shop.card, { taskTitle: "Build the shop" });
+    expect(before.choices[0]?.explain).toBe(
+      "Starts a session now with CHF 0.80; without it, your next Start takes it in its turn.",
+    );
+    expect(budgetPauseDetail("session")).toBe(
+      "Your next Start goes on with it, or Continue in the Inbox.",
+    );
+    expect(budgetPauseDetail("specialist_limit")).toBe(
+      "Your next Start goes on with it, or Continue in the Inbox.",
+    );
+    // The Start check counts the two it takes, at what is left of their estimates.
+    const check = await startCheck({ store }, w.project, usd(2));
+    expect(check.runnable.map((t) => t.title)).toEqual(["Build the shop", "Coder limit"]);
+    const r = await start();
+    expect(ran).toEqual(["Build the shop", "Coder limit"]);
+    for (const t of [shop, limit]) {
+      const card = await store.humanRequest.mustGet(t.card.id);
+      expect(card.status).toBe("withdrawn");
+      expect(card.change_card).toMatchObject({
+        outcome: "went_on_at_start",
+        started_session_id: r.sessionId,
+      });
+      // No budget grew: the task's own stays as it was.
+      expect((await store.task.mustGet(t.task.id)).budget_usd_micro).toBe(t.task.budget_usd_micro);
+    }
+    const done = requestWords(await store.humanRequest.mustGet(shop.card.id), {
+      taskTitle: "Build the shop",
+    });
+    expect(done.outcome).toMatch(/^Your session of \d\d:\d\d went on with it\.$/);
+    for (const t of [own, stuck, outer]) {
+      expect((await store.humanRequest.mustGet(t.card.id)).status).toBe("open");
+      expect((await store.task.mustGet(t.task.id)).status).toBe("needs_human");
+    }
+    await store.close();
+  });
+
+  it("a card answered before the claim is left as it is: the task moved on", async () => {
+    const shop = await paused("Build the shop", "session");
+    // The person cancels it before the session claims it.
+    const t = await store.task.mustGet(shop.task.id);
+    await store.task.transition(t.id, t.version, "cancelled", "you cancelled it", {
+      humanId: w.human,
+    });
+    expect(
+      await closeByStart({
+        store,
+        task: shop.task,
+        session: { id: "s1" },
+        agentId: w.agent,
+        startTime: "14:05",
+        now: clock.nowIso(),
+      }),
+    ).toBe(false);
+    expect((await store.humanRequest.mustGet(shop.card.id)).status).toBe("open");
     await store.close();
   });
 });

@@ -180,11 +180,17 @@ describe("a task the session's budget stops pauses at the first stop with one ca
     expect(card.title).toBe('"Long report" paused at this session\'s budget of CHF 2.00');
     // A hard stop wrote no note, and its run only listed the folder: the card says it wrote
     // nothing (W15-56; before: "... its work so far is kept.").
-    expect(card.body).toBe("It stopped before it wrote anything.");
+    // d1109-oversize-pause (OP-7): its spend past its estimate is the second sentence.
+    expect(card.body).toMatch(
+      /^It stopped before it wrote anything\. It has spent CHF \d+\.\d\d, more than its estimate of CHF \d+\.\d\d\.$/,
+    );
     expect(card.choices).toEqual([
       expect.objectContaining({
         label: "Continue (CHF 2.00 more)",
-        explain: "Starts a session of CHF 2.00 now; it goes on from where it stopped.",
+        // d1109-oversize-pause (OP-0): the next Start takes it without Continue (before:
+        // "Starts a session of CHF 2.00 now; it goes on from where it stopped.").
+        explain:
+          "Starts a session now with CHF 2.00; without it, your next Start takes it in its turn.",
         tone: "primary",
       }),
       expect.objectContaining({
@@ -219,7 +225,8 @@ describe("a task the session's budget stops pauses at the first stop with one ca
     expect(view.display).toMatchObject({
       key: "answer",
       label: "Paused at the session's budget",
-      detail: "Continue or cancel in the Inbox.",
+      // OP-0 (before: "Continue or cancel in the Inbox.").
+      detail: "Your next Start goes on with it, or Continue in the Inbox.",
       blocker: { kind: "card", requestId: card.id, cardKind: "budget" },
     });
     for (const text of [card.title, card.body, JSON.stringify(card.choices), view.reason])

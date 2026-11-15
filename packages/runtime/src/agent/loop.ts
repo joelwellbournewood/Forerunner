@@ -94,11 +94,19 @@ export const WRAP_UP_MARK = "Wrap up now:";
  * the budget left; "About a fifth of this task's budget is left" was told to a run that had
  * spent 13% of it (live check 2, F4). The share is of the run's cap, which on a continued run is
  * what is left of the task's budget, so it says "this run ... of what it may spend".
+ *
+ * d1109-oversize-pause (OP-1; the owner's D4: "wrap up in an organized and error free way such
+ * that the work can be continued in the next run"): it says what a good wrap-up leaves: the step
+ * it is on finished, files that build and run, a change it cannot finish undone or kept out of
+ * use, what is half done and where, the next step first, and a caveat or what the run did not
+ * cover under "Where I stopped:", never as work left (run L3's L3-left-4). It asks for no commit
+ * (Forerunner commits) and promises no check. Before: "Start nothing new, leave the files
+ * working, and end your report with Where I stopped: and Left to do: (...)".
  */
 export function wrapUpText(spentUsdMicro: number, capUsdMicro: number): string {
   const share = capUsdMicro > 0 ? (Math.max(0, spentUsdMicro) / capUsdMicro) * 100 : 100;
   const used = spentUsdMicro > 0 && share < 1 ? "under 1%" : `${Math.min(100, Math.round(share))}%`;
-  return `${WRAP_UP_MARK} this run has used ${used} of what it may spend, and its next step could take it past the share kept to finish. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).`;
+  return `${WRAP_UP_MARK} this run has used ${used} of what it may spend, and its next step could take it past the share kept to finish. Finish the step you are on and start nothing new. Leave the files so the work can go on: what you changed builds and runs, and a change you cannot finish in a step or two is undone or kept out of use. End your report with Where I stopped: (what is done, anything half done with its file, and any caveat or what you did not cover) and Left to do: (only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras).`;
 }
 
 /**

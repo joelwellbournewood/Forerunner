@@ -693,6 +693,23 @@ invalid), sends the canonical chord with `hotkey_set`, offers Reset to default a
 "unavailable" and why. The chord is a per-install shell preference, not a daemon setting, so
 it does not run through the command registry.
 
+**A task larger than one session in its turn, and the pause card (d1109-oversize-pause, ADR
+0115 appended).** The Start dialog's `planSentence` names the larger task at its place: with tasks
+before it, "..., then works on "X" with what is left." (the tasks that become ready meanwhile come
+after it, so they are not counted before it); first in order, `oversizedPlanClause(title, true,
+oversized.comesAfter)` ('This session works on "X" until its work budget is used; "B" runs after it
+only if budget is left.'). The amber note shows the daemon's `oversized.sentence` and, under it,
+`oversized.afterSentence` (`start-session-comes-after`); `BlockerLines` lists no `after_large`
+task (they are in that note). The Inbox's budget card needs no change of its own: its words come
+from `requestWords` (the checks clause, the no-progress question with Continue's `input: "note"`,
+whose note box sends `{ choice, note }`), as the fake daemon renders them; the fake daemon's start
+check also takes a needs_human task whose open budget card a start continues (`fakeContinuing`),
+and its `POST /sessions` closes that card as the daemon's `closeByStart` does (withdrawn with
+`outcome: "went_on_at_start"`, so Answered reads "Your session of HH:MM went on with it.") and
+moves the task to ready.
+Tests: `test/d1109-oversize.test.tsx` and `test/inbox.test.tsx` ("d1109-oversize-pause, run C"),
+`test/real-daemon.test.ts` ("d1109-oversize-pause, run C").
+
 ### Fake daemon
 
 A task paused at a budget (ADR 0112) reads as the daemon words it, "Paused at its budget" (or the limit its card names), since the fake builds every task's `display` with the daemon's own `taskDisplay`; `test/inbox.test.tsx` and `test/real-daemon.test.ts` ("a budget stop is a clean pause": the stand-in's wrap-up, no critic call, the run's report in the drawer) check it on both sides. A session a pause at this month's cap ended reads "Stopped at this month's cap" (the daemon's `statusText`, which the session page shows as it comes) with "Stopped at this month's cap of CHF ..." in its result and Update; the fake simulates no budget stop, so only `test/real-daemon.test.ts` ("a session ended at this month's cap names it") checks it.

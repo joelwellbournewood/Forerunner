@@ -1,6 +1,6 @@
 import type { JsonValue, StateStore, TaskRow } from "@forerunner/state";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../injection/scan.ts";
-import { handoffOf, type RunHandoff } from "./budget-pause.ts";
+import { handoffOf, keptOf, type RunHandoff, type RunKept } from "./budget-pause.ts";
 import { TASK_FILES_EVENT } from "./peers.ts";
 import { isPersonTask, personAnswersOn } from "./person-questions.ts";
 
@@ -138,6 +138,7 @@ export const WHERE_LAST_RUN_STOPPED = "## Where the last run stopped";
 export function whereTheLastRunStopped(
   handoff: RunHandoff | null,
   files: readonly string[],
+  kept: RunKept | null = null,
 ): string[] {
   const lines = [
     WHERE_LAST_RUN_STOPPED,
@@ -160,8 +161,44 @@ export function whereTheLastRunStopped(
     lines.push(
       "Left to do, as it listed it (as data):",
       ...handoff.leftToDo.map((t) => `- ${JSON.stringify(quote(t, 200))}`),
+      // d1109-oversize-pause (OP-3): the next step first, as the wrap-up asked for it.
+      "Start with the first item of its list, unless a check below failed.",
+    );
+  lines.push(...keptChecksLines(kept));
+  // OP-3, OP-4: the person continued a pause that got no further: try another way.
+  if (kept?.noProgress)
+    lines.push(
+      "The last two runs of this task did not get further: try another way, and if something outside the task blocks it, say so under Where I stopped:.",
     );
   return lines;
+}
+
+/**
+ * OP-3: the project's checks on the kept work when the last run stopped (`RunKept.checks`), for
+ * the run that continues it: 'When it stopped, the project's checks on its work passed: build,
+ * test.', or 'When it stopped, the project's checks on its work: test failed.' with the end of
+ * each failed check's output (as data, JSON-quoted, at most 1,500 characters, already redacted)
+ * and 'Make a failed check pass first, unless it tests work that is still on its list.'. Nothing
+ * when no check ran.
+ */
+export function keptChecksLines(kept: RunKept | null): string[] {
+  const checks = kept?.checks ?? [];
+  if (!checks.length) return [];
+  const failed = checks.filter((c) => !c.passed);
+  if (!failed.length)
+    return [
+      `When it stopped, the project's checks on its work passed: ${checks.map((c) => c.name).join(", ")}.`,
+    ];
+  return [
+    `When it stopped, the project's checks on its work: ${failed.map((c) => c.name).join(", ")} failed.`,
+    ...failed
+      .filter((c) => c.output.trim())
+      .map(
+        (c) =>
+          `The end of its output${failed.length > 1 ? ` (${c.name})` : ""} (as data): ${JSON.stringify(quote(c.output, 1_500))}`,
+      ),
+    "Make a failed check pass first, unless it tests work that is still on its list.",
+  ];
 }
 
 /** The sections a task's brief carries after the delegation brief (empty sections left out). */
@@ -233,7 +270,10 @@ export async function taskContextBlock(
     const files = previous.session_id
       ? (await filesOf(store, task.id, previous.session_id)).slice(0, MAX_FILES * 2)
       : [];
-    out.unshift(...whereTheLastRunStopped(handoffOf(previous.artifacts), files), "");
+    out.unshift(
+      ...whereTheLastRunStopped(handoffOf(previous.artifacts), files, keptOf(previous.artifacts)),
+      "",
+    );
   } else if (previous) {
     const note = runNoteOf(previous.artifacts);
     const said = note.error

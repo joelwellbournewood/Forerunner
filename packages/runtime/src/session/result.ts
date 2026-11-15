@@ -1,6 +1,6 @@
 import { formatChf } from "@forerunner/billing";
 import type { StateStore, TaskRow, WaitingTask } from "@forerunner/state";
-import { leftOutSentence } from "../daemon/oversize-words.ts";
+import { leftOutSentence, waitsForNextSessionSentence } from "../daemon/oversize-words.ts";
 import { plainReason } from "../daemon/task-words.ts";
 import { aboutWords, moneyWords, moneyWordsFirst } from "./money-words.ts";
 import { namesOf } from "./recovery.ts";
@@ -75,12 +75,14 @@ export interface ResultFacts {
   inReview: NamedTask[];
   /**
    * Ready tasks left out because they did not fit the work budget, with their estimate and why
-   * (D4: `one_large`, a second task larger than the session; `no_room`, too little was left for
-   * a task larger than the session; `after_others` or absent, it did not fit after the others).
+   * (D4: `after_large`, it came after a task larger than the session, `after` its title, which
+   * used the rest of it (d1109-oversize-pause, OP-0); `no_room`, too little was left for a task
+   * larger than the session; `after_others` or absent, it did not fit after the others).
    */
   leftOutForBudget: (NamedTask & {
     estimateChfMicro: number;
-    reason?: "after_others" | "one_large" | "no_room";
+    reason?: "after_others" | "after_large" | "no_room";
+    after?: string;
   })[];
   /** The session's cap, in CHF (the "this session's CHF 0.90 was used" line). */
   sessionCapChfMicro: number;
@@ -320,19 +322,28 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     line: 3,
     build: (f, o) => {
       // D4: a task larger than the session's work budget that waits for the next session says
-      // why in its own sentence (a second such task; too little left after the tasks before it).
-      const larger = f.leftOutForBudget.filter(
-        (t) => t.reason === "one_large" || t.reason === "no_room",
-      );
+      // why in its own sentence (too little left after the tasks before it).
+      const larger = f.leftOutForBudget.filter((t) => t.reason === "no_room");
       const work = f.workBudgetChfMicro ?? 0;
       const why = larger.slice(0, 3).map((t) =>
-        leftOutSentence(t.reason === "one_large" ? "one_large" : "no_room", {
+        leftOutSentence("no_room", {
           title: t.title,
           estimate: { chfMicro: t.estimateChfMicro, text: formatChf(t.estimateChfMicro) },
           workBudget: { chfMicro: work, text: formatChf(work) },
         }),
       );
-      const fitting = f.leftOutForBudget.filter((t) => !larger.includes(t));
+      // d1109-oversize-pause (OP-0): the tasks that came after a larger task that used the rest
+      // of the session, named once per larger task: '"B" waits for your next session: "Build
+      // the shop" used the rest of this one.'
+      const behind = new Map<string, string[]>();
+      for (const t of f.leftOutForBudget)
+        if (t.reason === "after_large" && t.after)
+          behind.set(t.after, [...(behind.get(t.after) ?? []), t.title]);
+      const after = [...behind].map(([big, titles]) => waitsForNextSessionSentence(titles, big));
+      why.push(...after);
+      const fitting = f.leftOutForBudget.filter(
+        (t) => !larger.includes(t) && !(t.reason === "after_large" && t.after),
+      );
       // A session that ran nothing used no budget: "Nothing could run" says why (W6-23).
       if (fitting.length && o.stopReason !== "nothing_runnable") {
         const named = fitting
@@ -443,7 +454,25 @@ function goesOnByItself(limit: string): string {
  * A task paused at a budget, as the result names it (`LastSessionOutcome.paused`); `before`: its
  * run heard the wrap-up and paused before the limit ran out (L3-research-2), as its log line says.
  */
-export type PausedTask = NamedTask & { limit: string; waits?: boolean; before?: boolean };
+export type PausedTask = NamedTask & {
+  limit: string;
+  waits?: boolean;
+  before?: boolean;
+  /**
+   * d1109-oversize-pause (OP-7, from its card's `kept_checks`): the names of the project's checks
+   * that fail on its kept work; absent when none ran or all passed.
+   */
+  checksFail?: string[];
+  /** OP-7 (its card's `no_progress`): it paused again without getting further. */
+  noProgress?: boolean;
+};
+
+/** "test", "test and lint", "test, lint and 1 more": at most two check names. */
+function checkNames(names: readonly string[]): string {
+  return names.length > 2
+    ? `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`
+    : names.join(" and ");
+}
 
 /**
  * '"Write the guide" paused at its budget of CHF 0.40: continue or cancel it in the Inbox.'; two
@@ -462,12 +491,20 @@ export function pausedSentences(paused: readonly PausedTask[], told?: ToldByCard
   // line for it says ("paused before its budget of CHF 0.15 ran out: it spent CHF 0.09"); "paused
   // at its budget of CHF 0.15" beside it read as all of it spent.
   const how = one.before ? `paused before ${one.limit} ran out` : `paused at ${one.limit}`;
-  if (shown.length === 1)
+  if (shown.length === 1) {
+    // d1109-oversize-pause (OP-7): a pause that got no further asks; never "goes on by itself".
+    if (one.noProgress)
+      return [`"${one.title}" paused again without getting further: answer its card in the Inbox.`];
+    // OP-7: the project's check that fails on its kept work is said with the pause.
+    const fails = one.checksFail?.length
+      ? `, and the project's ${checkNames(one.checksFail)} ${one.checksFail.length === 1 ? "fails" : "fail"} on its work`
+      : "";
     return [
       one.waits
-        ? `"${one.title}" ${how}: ${goesOnByItself(one.limit)}`
-        : `"${one.title}" ${how}: continue or cancel it in the Inbox.`,
+        ? `"${one.title}" ${how}${fails}: ${goesOnByItself(one.limit)}`
+        : `"${one.title}" ${how}${fails}: continue or cancel it in the Inbox.`,
     ];
+  }
   const names = namesOf(titlesOf(shown));
   if (waiting === shown.length)
     return [`${names} paused at a limit: they go on by themselves once it is raised or resets.`];

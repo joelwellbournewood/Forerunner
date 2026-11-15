@@ -126,6 +126,7 @@ function fakeLinkOf(
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import {
+  comesAfterSentence,
   leftOutSentence,
   oversizedAsk,
   oversizedSentence,
@@ -909,6 +910,23 @@ function fakePrice(t: TaskView): number {
   return Math.min(estimate, Math.max(0, t.budget.usdMicro - t.actual.usdMicro));
 }
 
+/**
+ * As the daemon's `continuableTasks` (d1109-oversize-pause, OP-0): the tasks a start takes in
+ * their turn from their kept work, waiting on an open budget card at a session's budget or at
+ * their specialist's limit that got further (`no_progress` not true).
+ */
+function fakeContinuing(requests: readonly HumanRequestView[]): Set<string> {
+  const ids = new Set<string>();
+  for (const r of requests) {
+    const card = (r.changeCard ?? {}) as Record<string, unknown>;
+    if (r.status !== "open" || card.key !== "task:budget_stop" || !r.taskId) continue;
+    if (card.no_progress === true) continue;
+    if (["session", "session_budget", "specialist_limit"].includes(String(card.source)))
+      ids.add(r.taskId);
+  }
+  return ids;
+}
+
 function fakeStartCheck(
   tasks: readonly TaskView[],
   projectId: string,
@@ -924,23 +942,34 @@ function fakeStartCheck(
      * project's session makes none of this project's tasks ready.
      */
     busyHere?: boolean;
+    /** OP-0: paused tasks the start takes in their turn (`fakeContinuing`). */
+    continuing?: ReadonlySet<string>;
   } = {},
 ): StartCheckView {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   // High first, as the daemon's stored numbers order them (U-041).
   const rank = { high: 3, medium: 2, low: 1 } as const;
   const ready = tasks
-    .filter((t) => t.projectId === projectId && t.status === "ready")
+    .filter(
+      (t) =>
+        t.projectId === projectId &&
+        (t.status === "ready" || (t.status === "needs_human" && !!opts.continuing?.has(t.id))),
+    )
     .sort((a, b) => rank[b.priority] - rank[a.priority]);
   const cap = budgetUsdMicro ?? FAKE_SESSION_CAP_USD_MICRO;
   const work = Math.floor(cap * 0.8);
   const runnable: StartCheckView["runnable"] = [];
-  let overBudget: (StartCheckView["overBudget"][number] & { at: number })[] = [];
+  const overBudget: (StartCheckView["overBudget"][number] & { at: number })[] = [];
   const waiting: StartCheckView["waiting"] = [];
   const sandboxTasks: StartCheckView["runnable"] = [];
   let total = 0;
-  /** D4: the first ready task whose figure alone is more than the work budget (as the runner). */
-  let larger: (StartCheckView["runnable"][number] & { at: number; aheadUsd: number }) | null = null;
+  /**
+   * D4: the first ready task whose figure alone is more than the work budget, at its place in the
+   * plan's order with the room left (d1109-oversize-pause, OP-0, as the runner's cut).
+   */
+  let larger:
+    | (StartCheckView["runnable"][number] & { at: number; aheadUsd: number; roomUsd: number })
+    | null = null;
   for (const [at, t] of ready.entries()) {
     const waitsOn = t.dependsOn
       .filter((d) => byId.get(d)?.status !== "done")
@@ -957,11 +986,16 @@ function fakeStartCheck(
     const named = { taskId: t.id, title: t.title, estimate: money(estimate) };
     // U-079: a full-review task waits while the Docker sandbox is not ready.
     if (sandbox && !sandbox.ready && t.riskTier >= 2) sandboxTasks.push(named);
-    // D4 (d1109-oversize-start): larger than the whole work budget: the first is held for after
-    // the work that fits; a second one waits for the next session (one a session).
+    // D4 (d1109-oversize-pause, OP-0): every task after the larger one waits behind it.
+    else if (larger) overBudget.push({ ...named, ahead: money(total), why: "after_large", at });
+    // Larger than the whole work budget: in at its place with what is left, when that is at
+    // least a fifth of the work budget; else it waits (no_room) and the cut goes on.
     else if (estimate > work) {
-      if (larger === null) larger = { ...named, at, aheadUsd: total };
-      else overBudget.push({ ...named, ahead: money(total), why: "one_large", at });
+      const left = work - total;
+      if (left >= Math.max(1, Math.ceil(work * 0.2))) {
+        larger = { ...named, at, aheadUsd: total, roomUsd: left };
+        total += left;
+      } else overBudget.push({ ...named, ahead: money(total), why: "no_room", at });
     }
     // C-45: what the tasks before it take (polish-screens, wave 13).
     else if (total + estimate > work)
@@ -972,7 +1006,7 @@ function fakeStartCheck(
     }
   }
   // As the daemon (design §3.6): what follows as it becomes ready, and why nothing would run.
-  const comes = new Set(runnable.map((r) => r.taskId));
+  const comes = new Set([...runnable.map((r) => r.taskId), ...(larger ? [larger.taskId] : [])]);
   const later: StartCheckView["later"] = [];
   for (let changed = true; changed; ) {
     changed = false;
@@ -988,35 +1022,31 @@ function fakeStartCheck(
       changed = true;
     }
   }
-  // D4: the larger task gets what the tasks before it leave (those that follow included), at
-  // least a fifth of the work budget; with less, it and any other larger one wait (no_room).
+  // D4 (OP-0): the larger task gets what the tasks before it in the plan's order leave; the
+  // tasks after it (ready now or later) run only if it leaves budget.
   const chf = (m: { chfMicro: number }) => ({ chfMicro: m.chfMicro, text: formatChf(m.chfMicro) });
   let oversized: StartCheckView["oversized"] = null;
   if (larger) {
-    const before =
-      total +
-      later
-        .filter((l) => l.estimate.usdMicro <= work)
-        .reduce((sum, l) => sum + l.estimate.usdMicro, 0);
-    const room = Math.max(0, work - before);
-    const { at, aheadUsd, ...named } = larger;
-    if (room >= Math.max(1, Math.ceil(work * 0.2))) {
-      oversized = {
-        ...named,
-        room: money(room),
-        after: before > 0,
-        sentence: oversizedSentence({
-          title: named.title,
-          estimate: chf(named.estimate),
-          workBudget: chf(money(work)),
-          room: before > 0 ? chf(money(room)) : null,
-        }),
-      };
-      overBudget.push({ ...named, ahead: money(aheadUsd), why: "oversized", at });
-    } else {
-      overBudget.push({ ...named, ahead: money(aheadUsd), why: "no_room", at });
-      overBudget = overBudget.map((o) => (o.why === "one_large" ? { ...o, why: "no_room" } : o));
-    }
+    const { at, aheadUsd, roomUsd, ...named } = larger;
+    const comesAfter = [
+      ...overBudget.filter((o) => o.why === "after_large").map((o) => o.title),
+      ...later.map((l) => l.title),
+    ];
+    oversized = {
+      ...named,
+      room: money(roomUsd),
+      after: runnable.length > 0,
+      sentence: oversizedSentence({
+        title: named.title,
+        estimate: chf(named.estimate),
+        workBudget: chf(money(work)),
+        room: runnable.length > 0 ? chf(money(roomUsd)) : null,
+        before: runnable.map((r) => r.title),
+      }),
+      comesAfter,
+      afterSentence: comesAfterSentence(comesAfter, named.title),
+    };
+    overBudget.push({ ...named, ahead: money(aheadUsd), why: "oversized", at });
     overBudget.sort((a, b) => a.at - b.at);
   }
   const overBudgetView: StartCheckView["overBudget"] = overBudget.map(({ at: _at, ...o }) => ({
@@ -1024,12 +1054,16 @@ function fakeStartCheck(
     sentence:
       o.why === "oversized" && oversized
         ? oversized.sentence
-        : leftOutSentence(o.why === "oversized" || !o.why ? "after_others" : o.why, {
-            title: o.title,
-            estimate: chf(o.estimate),
-            workBudget: chf(money(work)),
-            ahead: chf(o.ahead ?? money(0)),
-          }),
+        : leftOutSentence(
+            o.why === "oversized" || o.why === "one_large" || !o.why ? "after_others" : o.why,
+            {
+              title: o.title,
+              estimate: chf(o.estimate),
+              workBudget: chf(money(work)),
+              ahead: chf(o.ahead ?? money(0)),
+              after: oversized?.title ?? null,
+            },
+          ),
   }));
   const stuckOn = waiting
     .flatMap((w) => w.waitsOn.map((d) => ({ w, d })))
@@ -2814,6 +2848,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         killActive: state.killActive,
         busy: (options.startOutcome ?? "started") === "queued",
         busyHere: options.busyProjectId === id,
+        continuing: fakeContinuing(state.requests),
       },
     );
     // leftovers7-tailrun TR-12: a planning call holds the agent, as the daemon says it.
@@ -3008,6 +3043,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           killActive: false,
           busy: (options.startOutcome ?? "started") === "queued",
           busyHere: options.busyProjectId === parsed.data.projectId,
+          continuing: fakeContinuing(state.requests),
         },
       );
       if (check.blocked?.kind === "nothing_runnable")
@@ -3032,6 +3068,35 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       budgetUsdMicro: parsed.data.budgetUsdMicro ?? 6_250_000,
       note: parsed.data.note,
     });
+    // As the daemon's `closeByStart` (d1109-oversize-pause, OP-0): the session takes a task paused
+    // at a session's budget (or its specialist's limit) that got further in its turn; its card
+    // closes with the Done line and the task is ready again. A pause at its own budget, one that
+    // got no further and one at an outer limit stay on their cards.
+    if (parsed.data.projectId) {
+      const continuing = fakeContinuing(state.requests);
+      const startedAt = session.startedAt ?? new Date().toISOString();
+      const at = startedAt.slice(11, 16);
+      for (const r of state.requests) {
+        if (r.status !== "open" || !r.taskId || !continuing.has(r.taskId)) continue;
+        const task = state.tasks.find(
+          (t) => t.id === r.taskId && t.projectId === parsed.data.projectId,
+        );
+        if (task?.status !== "needs_human") continue;
+        task.status = "ready";
+        task.reason = "this session goes on with it from where it stopped";
+        touch(task);
+        r.status = "withdrawn";
+        r.version += 1;
+        r.changeCard = {
+          ...((r.changeCard ?? {}) as Record<string, unknown>),
+          applied_at: startedAt,
+          outcome: "went_on_at_start",
+          started_session_id: session.id,
+          started_session_time: at,
+        };
+      }
+      emit("inbox.changed", { blockingCount: blockingCount() });
+    }
     return c.json(StartSessionView.parse({ result: "started", startId, session }), 202);
   });
   app.get("/sessions/:id", (c) => {
@@ -3677,11 +3742,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const big = turnProject
         ? fakeStartCheck(state.tasks, turnProject, null, state.sandbox)
         : null;
+      // d1109-oversize-pause (OP-0): then the tasks after it in the plan's order.
       const warning = big?.oversized
         ? ` ${oversizedAsk(big.oversized.title, {
             chfMicro: big.workBudget.chfMicro,
             text: formatChf(big.workBudget.chfMicro),
-          })}`
+          })}${big.oversized.afterSentence ? ` ${big.oversized.afterSentence}` : ""}`
         : "";
       const readback = `You want to start a session with a budget of CHF 4.00.${warning}`;
       state.pendingConfirmation = { id, readback };

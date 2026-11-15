@@ -39,6 +39,7 @@ import { fileLeftOpenRequest, headMovedSentence } from "@forerunner/runtime/loop
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
+import { fileBudgetStopCard } from "@forerunner/runtime/session/budget-card";
 import { conflictNoticeSentence } from "@forerunner/runtime/session/dependent-branches";
 import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
@@ -7944,7 +7945,9 @@ describe("the UI client against the real daemon: a budget stop is a clean pause 
     expect(view?.status).toBe("needs_human");
     expect(view?.display).toMatchObject({
       key: "answer",
-      label: "Paused at its budget",
+      // d1109-oversize-pause (L3-left-3): a wrap-up pause reads as its card does (before: "Paused
+      // at its budget" on the row, "paused before its budget ran out" on the card).
+      label: "Paused before its budget ran out",
       blocker: { kind: "card", cardKind: "budget" },
     });
     // No critic call for it, and no try counted.
@@ -9223,7 +9226,8 @@ describe("the UI client against the real daemon: a paused task keeps its work an
     // The row and its card name the limit; the card says what it did and left.
     const row = (await client.tasks(project.id)).find((t) => t.id === task.id);
     expect(row?.display).toMatchObject({
-      label: "Paused at its budget",
+      // L3-left-3: the wrap-up pause's row reads as its card (before: "Paused at its budget").
+      label: "Paused before its budget ran out",
       detail: "Continue or cancel in the Inbox.",
       cancelWork:
         "Its work so far is set aside unless a later task built on it; Undo brings it back.",
@@ -12039,7 +12043,12 @@ describe("polish-words, wave 13: Cancel on a ready task holding its work so far 
     expect(existsSync(join(folder, "members.md")), "the second run wrote nothing").toBe(false);
     for (const t of [wrote, empty]) {
       const row = (await client.tasks(project.id)).find((r) => r.id === t.id);
-      expect(row?.display?.label, `${t.title}: ${row?.reason}`).toBe("Paused at its budget");
+      // L3-left-3: the guide that wrote its file heard the wrap-up and reads "Paused before its
+      // budget ran out", as its card; the members guide, stopped at its budget before it wrote
+      // anything, still reads "Paused at its budget" (before: that for both).
+      expect(row?.display?.label, `${t.title}: ${row?.reason}`).toBe(
+        t === wrote ? "Paused before its budget ran out" : "Paused at its budget",
+      );
     }
     // Cancel each from the Tasks tab, then Reopen it, as the person does.
     const back: Record<string, string> = {};
@@ -14675,9 +14684,12 @@ describe("w15-words, wave 15 run B", () => {
       expect(existsSync(join(folder, "members.md")), "the first run wrote nothing").toBe(false);
       const rows = await client.tasks(project.id);
       const row = (id: string) => rows.find((r) => r.id === id);
+      // L3-left-3: the guide that wrote its file heard the wrap-up and reads as its card; the
+      // members guide, stopped at its budget before it wrote anything, reads "Paused at its
+      // budget" (before: "Paused at its budget" for both).
       for (const t of [wrote, empty])
         expect(row(t.id)?.display?.label, `${t.title}: ${row(t.id)?.reason}`).toBe(
-          "Paused at its budget",
+          t === wrote ? "Paused before its budget ran out" : "Paused at its budget",
         );
       // The row's button title, the dialog and the drawer read actionExplain.
       const nothing = row(empty.id);
@@ -15255,6 +15267,9 @@ describe("d1109-oversize-start, run C", () => {
         after: false,
         sentence:
           '"Build the shop" needs about CHF 6.40, more than this session\'s work budget of CHF 1.28: it works until that budget is used, keeps its work, and asks you to continue.',
+        // d1109-oversize-pause (OP-0): nothing comes after it.
+        comesAfter: [],
+        afterSentence: null,
       });
       expect(check.overBudget.map((t) => [t.title, t.why])).toEqual([
         ["Build the shop", "oversized"],
@@ -15295,7 +15310,7 @@ describe("d1109-oversize-start, run C", () => {
     }
   }, 90_000);
 
-  it("with two tasks that fit first, the warning says what they leave; a second larger task waits, with why", async () => {
+  it("with two tasks that fit first, the warning says what they leave; a second larger task comes after it", async () => {
     const { rt, client } = await composeWithRolePlayer({});
     try {
       const project = await client.createProject({ name: "Shop two", goal: "A shop page" });
@@ -15311,13 +15326,16 @@ describe("d1109-oversize-start, run C", () => {
       ]);
       // USD 1.60 less 0.40: USD 1.20, CHF 0.96.
       expect(check.oversized?.room).toEqual({ usdMicro: 1_200_000, chfMicro: 960_000 });
+      // d1109-oversize-pause (OP-0): the tasks before it by name, and the second larger task
+      // after it (before: "after the other tasks", and "one_large" with 'one task that large
+      // runs a session, so it waits for the next one.').
       expect(check.oversized?.sentence).toBe(
-        '"Build the shop" needs about CHF 6.40, more than this session\'s work budget of CHF 1.28: after the other tasks it works with about CHF 0.96, keeps its work, and asks you to continue.',
+        '"Build the shop" needs about CHF 6.40, more than this session\'s work budget of CHF 1.28: after "Write the intro" and "Write the about page" it works with about CHF 0.96, keeps its work, and asks you to continue.',
       );
       const second = check.overBudget.find((t) => t.title === "Big two");
-      expect(second?.why).toBe("one_large");
+      expect(second?.why).toBe("after_large");
       expect(second?.sentence).toBe(
-        '"Big two" needs about CHF 7.20, more than this session\'s work budget: one task that large runs a session, so it waits for the next one.',
+        '"Big two" comes after it: it runs if "Build the shop" leaves budget, else in your next session.',
       );
     } finally {
       await rt.close();
@@ -18512,4 +18530,167 @@ describe("d1109-chat-recall, run C", () => {
       await b.rt.close();
     }
   });
+});
+
+/**
+ * d1109-oversize-pause (OP-0; the owner's answer 5 of 2026-11-09: "As i said, it should work on
+ * tasks even when it cannot complete them, and be able to wrap up and continue next time"): the
+ * routes the Start dialog, chat and the Inbox use, with the larger task in its turn in the plan's
+ * order and the tasks after it taking only what it leaves.
+ */
+describe("d1109-oversize-pause, run C", () => {
+  /** A coder task of the project, ready, priced at `usd` (its own estimate). */
+  const task = async (
+    rt: RuntimeApp,
+    client: DaemonClient,
+    projectId: string,
+    title: string,
+    usd: number,
+    priority: "high" | "medium" | "low" = "medium",
+  ) => {
+    const t = await client.createTask(projectId, {
+      title,
+      outcome: `${title} is done`,
+      acceptanceCriteria: [],
+      priority,
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    await rt.store.task.patch(t.id, { est_cost_usd_micro: Math.round(usd * 1_000_000) });
+    return t;
+  };
+
+  it("OP-0: GET start-check names the task before the larger one and the one after it; POST /sessions runs them in that order and the result says B waits", async () => {
+    const { rt, client } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_LONG: "Build the shop",
+      FORERUNNER_BENCH_USAGE: "Build the shop:100000",
+    });
+    try {
+      const project = await client.createProject({ name: "Shop order", goal: "A shop page" });
+      const a = await task(rt, client, project.id, "Write the intro", 0.05, "high");
+      const big = await task(rt, client, project.id, "Build the shop", 8);
+      const b = await task(rt, client, project.id, "Write the notes", 0.05, "low");
+      const check = await client.startCheck(project.id, { budgetUsdMicro: 2_000_000 });
+      expect(check.blocked).toBeNull();
+      expect(check.runnable.map((t) => t.title)).toEqual(["Write the intro"]);
+      expect(check.oversized?.sentence).toMatch(
+        /^"Build the shop" needs about CHF 6\.40, more than this session's work budget of CHF 1\.28: after "Write the intro" it works with about CHF 1\.2\d, keeps its work, and asks you to continue\.$/,
+      );
+      expect(check.oversized?.comesAfter).toEqual(["Write the notes"]);
+      expect(check.oversized?.afterSentence).toBe(
+        '"Write the notes" comes after it: it runs if "Build the shop" leaves budget, else in your next session.',
+      );
+      expect(check.overBudget.map((t) => [t.title, t.why])).toEqual([
+        ["Build the shop", "oversized"],
+        ["Write the notes", "after_large"],
+      ]);
+      expect(JSON.stringify(check)).not.toMatch(
+        /after the other tasks|after the work that fits|one task that large/,
+      );
+      const started = await client.startSession({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        budgetUsdMicro: 2_000_000,
+      });
+      const sessionId = started.session?.id ?? "";
+      expect(sessionId, JSON.stringify(started)).toBeTruthy();
+      await eventually(
+        async () =>
+          !["planned", "running", "paused"].includes((await client.session(sessionId)).status),
+        "the session to end (at least 10 s of real time)",
+        async () => `${(await client.session(sessionId)).status}`,
+        60_000,
+      );
+      const order = (await rt.store.event.list(sessionId))
+        .filter((e) => e.type === "task.started")
+        .map((e) => (e.payload as { taskId?: string }).taskId);
+      expect(order).toEqual([a.id, big.id]);
+      expect((await rt.store.task.mustGet(b.id)).status).toBe("ready");
+      const ended = await client.session(sessionId);
+      expect(ended.summary ?? "").toContain(
+        '"Write the notes" waits for your next session: "Build the shop" used the rest of this one.',
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+  it("OP-0 continue next time: GET /inbox and the task row say the next Start takes it; GET start-check counts it; a plain POST /sessions runs it and closes its card; a pause at its own budget is not taken", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Shop next", goal: "A shop page" });
+      const me = await client.me();
+      const pausedTask = async (title: string, source: "session" | "task_budget") => {
+        const t = await task(rt, client, project.id, title, 0.05);
+        const row = await rt.store.task.mustGet(t.id);
+        const waiting = await rt.store.task.transition(
+          row.id,
+          row.version,
+          "needs_human",
+          "paused",
+          {
+            agentId: rt.agent.id,
+          },
+        );
+        const { request } = await fileBudgetStopCard({
+          store: rt.store,
+          task: waiting,
+          session: null,
+          humanId: me.id,
+          agentId: rt.agent.id,
+          runId: null,
+          stop: {
+            capUsdMicro: 1_000_000,
+            spentUsdMicro: 300_000,
+            source,
+            specialist: "coder",
+            stoppedBy: "wrap_up",
+          },
+          handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "wrap_up" },
+          now: new Date().toISOString(),
+          chfPerUsd: 0.8,
+        });
+        return { task: t, card: request };
+      };
+      const next = await pausedTask("Build the shop", "session");
+      const own = await pausedTask("Own budget task", "task_budget");
+      const card = (await client.inbox(me.id)).requests.find((r) => r.id === next.card.id);
+      expect(card?.choices?.[0]?.explain).toBe(
+        "Starts a session now with CHF 0.80; without it, your next Start takes it in its turn.",
+      );
+      const rows = await client.tasks(project.id);
+      expect(rows.find((t) => t.id === next.task.id)?.display?.detail).toBe(
+        "Your next Start goes on with it, or Continue in the Inbox.",
+      );
+      const check = await client.startCheck(project.id, { budgetUsdMicro: 2_000_000 });
+      expect(check.runnable.map((t) => t.title)).toEqual(["Build the shop"]);
+      expect(check.blocked).toBeNull();
+      const started = await client.startSession({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        budgetUsdMicro: 2_000_000,
+      });
+      const sessionId = started.session?.id ?? "";
+      expect(sessionId, JSON.stringify(started)).toBeTruthy();
+      await eventually(
+        async () =>
+          !["planned", "running", "paused"].includes((await client.session(sessionId)).status),
+        "the session to end (at least 10 s of real time)",
+        async () => `${(await client.session(sessionId)).status}`,
+        60_000,
+      );
+      const after = (await client.inbox(me.id)).requests;
+      const closed = after.find((r) => r.id === next.card.id);
+      expect(closed?.status).toBe("withdrawn");
+      expect(closed?.outcome).toMatch(/^Your session of \d\d:\d\d went on with it\.$/);
+      expect(after.find((r) => r.id === own.card.id)?.status).toBe("open");
+      expect((await rt.store.task.mustGet(own.task.id)).status).toBe("needs_human");
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

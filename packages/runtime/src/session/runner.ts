@@ -17,7 +17,11 @@ import {
   type WaitingTask,
 } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
-import { REVIEW_RESUMED_EVENT, TOOK_LARGER_EVENT } from "../daemon/event-audience.ts";
+import {
+  REVIEW_RESUMED_EVENT,
+  TASK_CONTINUES_EVENT,
+  TOOK_LARGER_EVENT,
+} from "../daemon/event-audience.ts";
 import { couldNotWords } from "../daemon/event-lines.ts";
 import {
   cardKindOf,
@@ -33,9 +37,9 @@ import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
 import {
   type EstimatePort,
   estimateLeftUsdMicro,
+  KEPT_WORK_OUTCOMES,
   type KeptWork,
   keptWorkFor,
-  planEstimateUsdMicro,
   withinTaskBudget,
 } from "../estimates/model.ts";
 import {
@@ -56,6 +60,7 @@ import {
   type SessionStatusOutcome,
   type TaskReviewOutcome,
 } from "../loop/ports.ts";
+import { isCodeChange } from "../loop/project-checks.ts";
 import { isSandboxNotReady } from "../sandbox/readiness.ts";
 import type { SchemaSyncPort } from "../update/sync.ts";
 import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
@@ -65,12 +70,19 @@ import {
   BUDGET_STOP_KEY,
   budgetCardSource,
   budgetStopTitle,
+  closeByStart,
+  continuableTasks,
   fileBudgetStopCard,
   offersContinue,
 } from "./budget-card.ts";
 import {
   type BudgetStopSource,
+  handoffOf,
+  type KeptCheck,
+  keptArtifact,
+  keptOf,
   limitWords,
+  madeProgress,
   REVIEW_PAUSED_EVENT,
   type RunHandoff,
   reviewPausedWords,
@@ -82,6 +94,7 @@ import {
   CREDENTIAL_WAIT_REASON,
   CREDENTIAL_WAIT_STOP,
   type CredentialWait,
+  clockTime,
   stoppedRunSentence,
   waitSentence,
 } from "./credential-wait.ts";
@@ -215,20 +228,31 @@ export interface PlanItem {
    * what the person was shown), and the session review counts the task once.
    */
   again?: boolean;
+  /**
+   * D4 (d1109-oversize-pause, OP-0): set on the item of a task whose figure alone is more than
+   * the work budget, which the plan takes at its place with the room left: its whole figure, its
+   * `estimateUsdMicro` being that room (what the session review measures it against).
+   */
+  wholeEstimateUsdMicro?: number;
 }
 
 /**
  * Why a ready task was left out of a session's plan for its budget (U-040; D4, the owner's
- * decision of 2026-11-09): `after_others`, it fits the work budget but not after the tasks before
- * it; `one_large`, its figure alone is more than the work budget and another such task already
- * takes what is left (one a session); `no_room`, its figure alone is more than the work budget
- * and the tasks before it leave less than a fifth of it (`OVERSIZED_MIN_ROOM_SHARE`).
+ * decision of 2026-11-09, ordered by the owner's answer 5 of 2026-11-09): `after_others`, it fits
+ * the work budget but not after the tasks before it; `after_large`, it comes after a task larger
+ * than the work budget in the plan's order, which works until the wrap-up line (the session's own:
+ * a re-plan takes it if that task leaves room, else it waits for the next session); `no_room`,
+ * its figure alone is more than the work budget and the tasks before it leave less than a fifth
+ * of it (`OVERSIZED_MIN_ROOM_SHARE`). (d1109-oversize-start's `one_large`, a second such task, is
+ * gone: it comes after the first, `after_large`.)
  */
-export type LeftOutReason = "after_others" | "one_large" | "no_room";
+export type LeftOutReason = "after_others" | "after_large" | "no_room";
 
 /** A planned item left out for the budget, with why (absent on a plan written before D4). */
 export interface LeftOutItem extends PlanItem {
   reason?: LeftOutReason;
+  /** `after_large`: the title of the larger task it comes after. */
+  after?: string;
 }
 
 export interface SessionPlan {
@@ -240,10 +264,10 @@ export interface SessionPlan {
   /** The work budget the plan was cut to, set with `leftOutForBudget` or `oversized`. */
   workBudgetUsdMicro?: number;
   /**
-   * D4 (d1109-oversize-start): the first ready task whose figure alone is more than the work
-   * budget, with that figure. The runner holds it out of the queue and takes it after the work
-   * that fits, with what is left of the work budget (`roomUsdMicro`, set once taken: its item in
-   * `items` then carries that room as its planned figure).
+   * D4: the ready task whose figure alone is more than the work budget that the plan takes at its
+   * place in the planner's order (d1109-oversize-pause, OP-0), with that whole figure and the room
+   * it gets (`roomUsdMicro`: its item in `items` carries that room as its planned figure). The
+   * last such task the session took when a re-plan took another.
    */
   oversized?: PlanItem & { roomUsdMicro?: number };
 }
@@ -267,6 +291,13 @@ export interface PlannerContext {
 
 export interface Planner {
   plan(ctx: PlannerContext): Promise<SessionPlan>;
+  /**
+   * d1109-oversize-pause (OP-6, OP-8): the whole estimate the plan prices a task from (the learned
+   * estimate, else its own figure, its budget or the default), before its kept work is counted.
+   * A pause's card stores it and what is left of it, so the card's Continue and the next Start
+   * price the task alike. Absent: the task's own figure.
+   */
+  wholeEstimateOf?(task: TaskRow): number | undefined;
 }
 
 export interface TaskExecutionResult {
@@ -359,6 +390,29 @@ export interface SearchSeen {
   title: string;
   /** The injection scan's rules, when the result's plain fields read like instructions. */
   flagged?: string[];
+}
+
+/**
+ * d1109-oversize-pause (OP-2): the project's own checks on a paused run's kept work, in the task's
+ * sandbox (`loop/kept-work-check.ts`): no network, no model, nothing booked, the output redacted.
+ * `notRun` says why none ran (no sandbox here, it could not open).
+ */
+export type KeptWorkCheckPort = (input: {
+  task: TaskRow;
+  worktree: string | null;
+  changedFiles: readonly string[];
+  signal: AbortSignal;
+}) => Promise<{ checks?: KeptCheck[]; notRun?: string }>;
+
+/** What the runner learnt of a paused run's kept work (OP-2, OP-4, OP-8), for its card. */
+export interface PausedWork {
+  /** It got further than the task's last paused run (`madeProgress`). */
+  progress: boolean;
+  /** The names of the checks that passed and failed on its kept work, when they ran. */
+  checks?: { passed: string[]; failed: string[] };
+  /** The task's whole estimate at the pause, and what is left of it after its kept work. */
+  estimateUsdMicro: number;
+  estimateLeftUsdMicro: number;
 }
 
 /** Where a run paused at a budget, in micro-USD (`TaskExecutionResult.budgetStop`). */
@@ -686,6 +740,12 @@ export interface SessionRunnerDeps {
    * summary, and their attempt count does not change. Absent: every ready task is planned.
    */
   sandboxGate?: SandboxGate;
+  /**
+   * d1109-oversize-pause (OP-2): the project's own checks on a paused run's kept work, in the
+   * task's sandbox (`loop/kept-work-check.ts`). Absent: no check runs (the card says nothing of
+   * checks), as before.
+   */
+  keptWorkCheck?: KeptWorkCheckPort;
   /**
    * How often the runner re-reads a running task's row (U-039), default
    * `DEFAULT_TASK_WATCH_MS`: a person's move made where no route of this process sees it (the
@@ -1061,6 +1121,8 @@ export class SessionRunner {
     let waiting: WaitingTask[] = [];
     /** Ready tasks at tier 2+ that wait for the container sandbox (U-079). */
     const waitingForSandbox: SandboxWaitingTask[] = [];
+    /** OP-0: paused tasks this start took in its turn; each card closes as it is claimed. */
+    const continuingIds = new Set<string>();
     let sandboxAnswer: SandboxGateAnswer | null = null;
     /** The Claude credential the session's work waits for, when it ended on one (U-078). */
     let credentialWait: CredentialWait | null = null;
@@ -1283,6 +1345,22 @@ export class SessionRunner {
       // D4: a task that resumes from the work its paused runs kept is planned at what is left.
       const keptWork = (t: TaskRow) => keptWorkFor(store, t);
       let readyTasks = project ? await store.task.readyTasks(project.id, { limit: 100 }) : [];
+      // d1109-oversize-pause (OP-0, the owner's answer 5: "continue next time"): a task paused at
+      // a session's budget (or at its specialist's limit, as its session's last pause) with
+      // progress is ready for this start's plan, in its turn, from its kept work; its card closes
+      // when the session claims it (`closeByStart`). Only the start's plan takes it: the session
+      // that paused it does not take it again.
+      if (project) {
+        const continuing = await continuableTasks(store, project.id);
+        for (const t of continuing) continuingIds.add(t.id);
+        if (continuing.length)
+          readyTasks = [...readyTasks, ...continuing].sort(
+            (a, b) =>
+              b.priority - a.priority ||
+              a.created_at.localeCompare(b.created_at) ||
+              a.id.localeCompare(b.id),
+          );
+      }
       // U-079: a full-review task runs only in the container sandbox; while it is not ready
       // the task waits (left out of the plan, its attempt count unchanged) and the session
       // goes on with the others. The gate re-checks Docker before every plan.
@@ -1307,9 +1385,15 @@ export class SessionRunner {
       });
       /** What the session's tasks may spend: its cap less the review reserve. */
       const workBudgetUsdMicro = Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare));
-      // D4: the first task whose figure alone is more than the work budget is held apart
-      // (`plan.oversized`) and taken after the work that fits, with what is left.
+      // D4 (d1109-oversize-pause, OP-0, the owner's answer 5): the first task whose figure alone
+      // is more than the work budget goes in at its place in the plan's order with what is left
+      // (`plan.oversized`); the tasks after it wait behind it (`after_large`).
       plan = cutPlanToBudget(plan, workBudgetUsdMicro);
+      /** The plan's items before its larger task: what the session runs before it. */
+      const beforeLarger = (p: SessionPlan): PlanItem[] => {
+        const at = p.items.findIndex((i) => i.wholeEstimateUsdMicro !== undefined);
+        return at < 0 ? p.items : p.items.slice(0, at);
+      };
       /** Every task row the session planned, by id (the start's ready tasks, then each re-plan). */
       const knownTasks = new Map<string, TaskRow>(readyTasks.map((t) => [t.id, t]));
       // What cannot run is named, never silent (U-040): the ready tasks that wait on a task not
@@ -1330,9 +1414,14 @@ export class SessionRunner {
         planReason(plan),
         { agentId: agent.id },
       );
+      // With a larger task, `items` and `estimateUsdMicro` count what runs before it (the
+      // Details line: 'Plan: 1 task, about CHF 0.03, then "X" (about CHF 6.40), ...').
+      const plannedBefore = plan.oversized ? beforeLarger(plan) : plan.items;
       await emit("session.planned", {
-        items: plan.items.length,
-        estimateUsdMicro: plan.estimateUsdMicro,
+        items: plannedBefore.length,
+        estimateUsdMicro: plan.oversized
+          ? plannedBefore.reduce((s, i) => s + i.estimateUsdMicro, 0)
+          : plan.estimateUsdMicro,
         summary: plan.summary,
         ...(plan.leftOutForBudget?.length
           ? {
@@ -1345,7 +1434,7 @@ export class SessionRunner {
               workBudgetUsdMicro: plan.workBudgetUsdMicro,
             }
           : {}),
-        // D4: the task larger than the work budget the session takes after the work that fits.
+        // D4: the task larger than the work budget the session takes at its place in the plan.
         ...(plan.oversized
           ? {
               oversized: {
@@ -1397,13 +1486,21 @@ export class SessionRunner {
         }
       }
       /**
-       * What this session plans to run (D4): the items that fit, then the task larger than the
-       * work budget it takes with what is left. At levels 0 and 1 the person approves both.
+       * What this session plans to run (D4, d1109-oversize-pause OP-0): its items in the plan's
+       * order, the task larger than the work budget at its place with its whole figure, then the
+       * tasks after it (`after_large`, the session's own: they run if it leaves room). At levels 0
+       * and 1 the person approves them all.
        */
-      const planned = (p: SessionPlan): PlanItem[] =>
-        p.oversized && !p.items.some((i) => i.taskId === p.oversized?.taskId)
-          ? [...p.items, p.oversized]
-          : p.items;
+      const planned = (p: SessionPlan): PlanItem[] => [
+        ...p.items.map(({ wholeEstimateUsdMicro, ...i }) =>
+          wholeEstimateUsdMicro !== undefined
+            ? { ...i, estimateUsdMicro: wholeEstimateUsdMicro }
+            : i,
+        ),
+        ...(p.leftOutForBudget ?? [])
+          .filter((l) => l.reason === "after_large")
+          .map(({ reason: _r, after: _a, ...i }) => i),
+      ];
       try {
         await this.deps.onPlanned?.({
           sessionId: session.id,
@@ -1485,7 +1582,7 @@ export class SessionRunner {
           });
         }
         // Nothing runnable means nothing is consumed, reviewed or graded (design §4.8).
-        // D4: a task larger than the work budget runs too, after the work that fits.
+        // D4: a task larger than the work budget runs too, in its turn (OP-0).
         if (approvalItems.length === 0) stopReason = NOTHING_RUNNABLE;
         // 3. Execute, claim-before-work, inbox re-check between tasks. The session keeps going
         // (design §4.2): once the plan is run it looks again and takes the tasks that became
@@ -1508,48 +1605,52 @@ export class SessionRunner {
         /** At levels 0 and 1 only what the person approved runs (its retries included). */
         const onlyThese = autonomy < 2 ? new Set(approvalItems.map((i) => i.taskId)) : null;
         /**
-         * D4: the task larger than the work budget, held out of the queue until the work that
-         * fits is done and a re-plan adds nothing (`takeHeld`); one a session. `takenId`: the
-         * one the session took (it may come back ready, sent back by the critic or a retry, and
-         * is then held again).
+         * D4 (d1109-oversize-pause, OP-0; the owner's answer 5 of 2026-11-09): a task larger than
+         * the work budget runs at its place in the plan's order, so it is taken at its turn with
+         * what is left of the work budget then, when that is at least a fifth of it and the
+         * session still takes new work; else it is left out (`no_room`) and the tasks after it are
+         * the re-plan's, by the room left. Its planned figure becomes that room (the plan row and
+         * the session review measure what it was allowed to spend) and the log says the take
+         * once. The run itself is capped as every run is (its own budget left, else its
+         * specialist's limit per run, the work budget left, the hooks' outer caps). Before
+         * (d1109-oversize-start) it was held out of the queue until the work that fits was done
+         * and a re-plan added nothing, one a session.
          */
-        let held: PlanItem | null = plan.oversized ?? null;
-        let takenId: string | null = null;
-        /**
-         * Takes the held task with what is left of the work budget (D4), when that is at least a
-         * fifth of it and the session still takes new work; else it is left out (`no_room`).
-         * Its planned figure becomes that room: the plan row and the session review measure what
-         * it was allowed to spend. The run itself is capped as every run is (its own budget left,
-         * else its specialist's limit per run, the work budget left, the hooks' outer caps).
-         */
-        const takeHeld = async (): Promise<PlanItem | null> => {
-          const item = held;
-          if (!item) return null;
-          held = null;
+        const takeLarger = async (item: PlanItem): Promise<boolean> => {
+          const whole = item.wholeEstimateUsdMicro ?? item.estimateUsdMicro;
           const room = budget.workRemainingUsdMicro();
           const current = plan as SessionPlan;
           if (budget.noNewWork || room < oversizedMinRoomUsdMicro(workBudgetUsdMicro)) {
             notAgain.add(item.taskId);
             plan = {
               ...current,
+              items: current.items.filter((i) => i !== item),
+              estimateUsdMicro: current.estimateUsdMicro - (item.again ? 0 : item.estimateUsdMicro),
               leftOutForBudget: [
                 ...(current.leftOutForBudget ?? []).filter((l) => l.taskId !== item.taskId),
-                { ...item, reason: "no_room" },
+                {
+                  ...item,
+                  estimateUsdMicro: whole,
+                  wholeEstimateUsdMicro: undefined,
+                  reason: "no_room",
+                },
               ],
               workBudgetUsdMicro,
             };
-            return null;
+            // The tasks that waited behind it are the re-plan's now, by the room left.
+            for (const l of plan.leftOutForBudget ?? [])
+              if (l.reason === "after_large" && l.after === item.title) l.reason = "after_others";
+            return false;
           }
-          takenId = item.taskId;
-          // L3-run-2: the larger task taken again (sent back, tried again) is one planned task:
-          // its new item records the attempt and adds nothing to the plan's figure.
-          const again = current.items.some((c) => c.taskId === item.taskId);
-          const taken: PlanItem = { ...item, estimateUsdMicro: room, ...(again ? { again } : {}) };
+          // Its planned figure is the room it gets now, in place (L3-run-2: a take again adds
+          // nothing to the plan's figure).
+          const taken: PlanItem = { ...item, estimateUsdMicro: room };
           plan = {
             ...current,
-            items: [...current.items, taken],
-            estimateUsdMicro: current.estimateUsdMicro + (again ? 0 : room),
-            oversized: { ...item, roomUsdMicro: room },
+            items: current.items.map((i) => (i === item ? taken : i)),
+            estimateUsdMicro:
+              current.estimateUsdMicro + (item.again ? 0 : room - item.estimateUsdMicro),
+            oversized: { ...item, estimateUsdMicro: whole, roomUsdMicro: room },
             workBudgetUsdMicro,
           };
           const fresh = await store.session.mustGet(session.id);
@@ -1560,15 +1661,18 @@ export class SessionRunner {
             `took "${item.title}", larger than this session's work budget, with what is left`,
             { agentId: agent.id },
           );
-          await emit(TOOK_LARGER_EVENT, {
-            taskId: item.taskId,
-            title: item.title,
-            estimateUsdMicro: item.estimateUsdMicro,
-            roomUsdMicro: room,
-            workBudgetUsdMicro,
-          });
-          return taken;
+          if (!item.again)
+            await emit(TOOK_LARGER_EVENT, {
+              taskId: item.taskId,
+              title: item.title,
+              estimateUsdMicro: whole,
+              roomUsdMicro: room,
+              workBudgetUsdMicro,
+            });
+          Object.assign(item, taken);
+          return true;
         };
+
         /** Tasks whose run failed with a transient error and were tried again at once. */
         const transientRetried = new Set<string>();
         /** How often a credential stopped each task and the next one took over (U-078). */
@@ -1580,8 +1684,6 @@ export class SessionRunner {
             (t) =>
               !notAgain.has(t.id) &&
               !queued.has(t.id) &&
-              // D4: the held task waits for the work that fits; it is not planned again.
-              t.id !== held?.taskId &&
               (runsOf.get(t.id) ?? 0) < MAX_RUNS_PER_TASK_IN_SESSION &&
               (!onlyThese || onlyThese.has(t.id)),
           );
@@ -1619,7 +1721,7 @@ export class SessionRunner {
           }
           if (ready.length === 0) return [];
           for (const t of ready) knownTasks.set(t.id, t);
-          const next = await this.deps.planner.plan({
+          const planned = await this.deps.planner.plan({
             brief,
             briefText,
             readyTasks: ready,
@@ -1630,6 +1732,23 @@ export class SessionRunner {
             budget,
             keptWork,
           });
+          // D4 (d1109-oversize-pause, OP-0): the tasks that waited behind a larger task are the
+          // session's own after it: the re-plan takes them first, in the plan's order, then the
+          // rest in the planner's order.
+          const behind = ((plan as SessionPlan).leftOutForBudget ?? [])
+            .filter((l) => l.reason === "after_large")
+            .map((l) => l.taskId);
+          const rank = (i: PlanItem) => {
+            const at = behind.indexOf(i.taskId);
+            return at < 0 ? behind.length : at;
+          };
+          const next: SessionPlan = {
+            ...planned,
+            items: planned.items
+              .map((i, at) => ({ i, at }))
+              .sort((a, b) => rank(a.i) - rank(b.i) || a.at - b.at)
+              .map(({ i }) => i),
+          };
           // What is left of the work budget now, not at the start.
           const room = Math.max(
             0,
@@ -1637,22 +1756,23 @@ export class SessionRunner {
               budget.snapshot().sessionSpentUsdMicro,
           );
           // A task larger than the whole work budget is told apart from one that only does not
-          // fit what is left (D4): the first is held for after the work that fits.
+          // fit what is left (D4): it goes in at its place with the room left, and the tasks
+          // after it wait behind it (`after_large`), as at the start.
           const cut = cutPlanToBudget(next, room, workBudgetUsdMicro);
           const cutLeftOut: LeftOutItem[] = [...(cut.leftOutForBudget ?? [])];
-          if (cut.oversized) {
-            // One a session: the session holds the first; another one waits for the next
-            // session. The one it took, back ready (sent back, tried again), is held again.
-            if (held === null && (takenId === null || takenId === cut.oversized.taskId))
-              held = cut.oversized;
-            else cutLeftOut.push({ ...cut.oversized, reason: "one_large" });
-          }
           const current = plan as SessionPlan;
-          const leftOut = cutLeftOut.filter(
-            (i) => !(current.leftOutForBudget ?? []).some((l) => l.taskId === i.taskId),
-          );
-          for (const i of cutLeftOut) notAgain.add(i.taskId);
-          if (cut.items.length === 0 && leftOut.length === 0) return [];
+          // What the cut took or left out again is said as it is now: a task that waited behind
+          // a larger one and runs now is no longer left out, and one that no longer fits is
+          // left out for that (OP-0: "Left for next time").
+          const recut = new Set([...cut.items, ...cutLeftOut].map((i) => i.taskId));
+          const before = (current.leftOutForBudget ?? []).filter((l) => !recut.has(l.taskId));
+          const leftOut = cutLeftOut;
+          // A task left out waits for the next session, except one behind a larger task: it is
+          // the session's own and a later re-plan takes it if that task leaves room.
+          for (const i of cutLeftOut) if (i.reason !== "after_large") notAgain.add(i.taskId);
+          const changedLeftOut =
+            leftOut.length > 0 || before.length !== (current.leftOutForBudget ?? []).length;
+          if (cut.items.length === 0 && !changedLeftOut) return [];
           // L3-run-2 (live check 3): a task this session already planned and takes again (the
           // critic sent it back, its run failed and is tried again) is one planned task. Its
           // item is kept, marked `again`, so the row records what ran, and the plan's figure
@@ -1665,13 +1785,16 @@ export class SessionRunner {
           const newEstimate = taken
             .filter((i) => !i.again)
             .reduce((s, i) => s + i.estimateUsdMicro, 0);
+          const stillLeftOut = [...before, ...leftOut];
           plan = {
             ...current,
             items: [...current.items, ...taken],
             estimateUsdMicro: current.estimateUsdMicro + newEstimate,
             ...(leftOut.length || current.leftOutForBudget
               ? {
-                  leftOutForBudget: [...(current.leftOutForBudget ?? []), ...leftOut],
+                  // OP-0: none left out any more (the tasks behind a larger one all ran) reads
+                  // as a plan that left nothing out.
+                  leftOutForBudget: stillLeftOut.length ? stillLeftOut : undefined,
                   workBudgetUsdMicro: Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare)),
                 }
               : {}),
@@ -1694,7 +1817,7 @@ export class SessionRunner {
             estimateUsdMicro: cut.estimateUsdMicro,
             text: `Continuing with ${namesOf(cut.items.map((i) => i.title))}.`,
           });
-          return cut.items;
+          return taken;
         };
         for (;;) {
           if (controller.signal.aborted) throw new ForerunnerError("killed", "session stopped");
@@ -1709,18 +1832,15 @@ export class SessionRunner {
                 continue;
               }
             }
-            // D4: the work that fits is done and nothing new is ready: the task larger than the
-            // work budget is taken with what is left (or left out when too little is left).
-            const larger = await takeHeld();
-            if (!larger) break;
-            queue.push(larger);
-            continue;
+            break;
           }
           const item = queue.shift() as PlanItem;
           if (budget.noNewWork) {
             skipped.push(item.taskId);
             continue;
           }
+          // D4 (OP-0): the task larger than the work budget, at its turn, with what is left.
+          if (item.wholeEstimateUsdMicro !== undefined && !(await takeLarger(item))) continue;
           const recheck = await this.recheckInbox(agent.id, session.id, emit, heard);
           if (recheck.interrupt) {
             stopReason = "stopped_by_message";
@@ -1766,6 +1886,29 @@ export class SessionRunner {
             notAgain.add(item.taskId);
             await emit("task.skipped", { taskId: item.taskId, reason: "peer_in_flight" });
             continue;
+          }
+          // OP-0: a paused task this start took goes back to ready with its card closed, in one
+          // transaction, as the session claims it; nothing is added to any budget.
+          if (continuingIds.has(item.taskId)) {
+            continuingIds.delete(item.taskId);
+            await closeByStart({
+              store,
+              task: { id: item.taskId },
+              session,
+              agentId: agent.id,
+              startTime: clockTime(
+                session.started_at ?? clock.nowIso(),
+                (await store.human.get(agent.owner_human_id).catch(() => undefined))?.timezone ??
+                  undefined,
+                clock.now(),
+              ),
+              now: clock.nowIso(),
+            }).catch((e: unknown) =>
+              this.logger.warn("the card of a task this start took was not closed", {
+                taskId: item.taskId,
+                error: errorMessage(e),
+              }),
+            );
           }
           const claim = await store.task.claim(item.taskId, agent.id, claimTtlMs, clock.now(), {
             reason: `session ${session.id}`,
@@ -2570,6 +2713,38 @@ export class SessionRunner {
             // session after it: nothing else of it can run there. Before, a stop at the
             // session's budget filed nothing the first time (C-36: a card at the second).
             const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
+            // d1109-oversize-pause (OP-2, OP-4): what the pause kept, checked and compared with
+            // the task's last pause, kept on its Run row; and whether it got further.
+            const pause =
+              result.outcome === "paused" && result.budgetStop
+                ? await this.keepPausedWork(task, item, result, controller.signal)
+                : null;
+            // OP-5 (the owner's "the agent will do as much as it can"): a pause at its
+            // specialist's limit per run is one run's bound, not the session's: while it got
+            // further, the session still takes new work, a fifth of the work budget is left, the
+            // person did not press Stop after this task and the runs allow, the task goes on at
+            // once from where it stopped, with no card in between. Never at its own budget or an
+            // outer limit, and never after a pause that got no further.
+            if (
+              pause &&
+              result.budgetStop?.source === "specialist_limit" &&
+              pause.progress &&
+              !budget.noNewWork &&
+              budget.workRemainingUsdMicro() >= oversizedMinRoomUsdMicro(workBudgetUsdMicro) &&
+              (runsOf.get(task.id) ?? 0) < MAX_RUNS_PER_TASK_IN_SESSION &&
+              (await store.session.get(session.id))?.status !== "paused"
+            ) {
+              await releaseIfHeld(task.id, "it goes on in this session from where it stopped");
+              await emit(TASK_CONTINUES_EVENT, {
+                taskId: task.id,
+                title: task.title,
+                specialist: result.budgetStop.specialist,
+              });
+              // A run again of the same planned task: no second take of a larger one, nothing
+              // added to the plan's figure (L3-run-2).
+              queue.unshift({ ...item, wholeEstimateUsdMicro: undefined, again: true });
+              continue;
+            }
             const waiting = await store.task.transition(
               task.id,
               task.version,
@@ -2601,6 +2776,16 @@ export class SessionRunner {
                   handoff: result.handoff ?? null,
                   now: clock.nowIso(),
                   chfPerUsd: rate,
+                  // OP-8: one place per fact: the card stores what every screen reads of it.
+                  ...(pause
+                    ? {
+                        noProgress: !pause.progress,
+                        keptChecks: pause.checks,
+                        estimateUsdMicro: pause.estimateUsdMicro,
+                        estimateLeftUsdMicro: pause.estimateLeftUsdMicro,
+                        runSpentUsdMicro: Math.max(0, result.costUsdMicro),
+                      }
+                    : {}),
                 });
               else
                 await fileCannotRunCard({
@@ -2913,6 +3098,9 @@ export class SessionRunner {
                 ...(card.stopped_by === "wrap_up" && card.review_waits !== true
                   ? { before: true }
                   : {}),
+                // d1109-oversize-pause (OP-7, OP-8): from the card, the one place of the fact.
+                ...failedChecksOf(card),
+                ...(card.no_progress === true ? { noProgress: true } : {}),
               };
             }),
           }
@@ -2956,8 +3144,9 @@ export class SessionRunner {
           id: i.taskId,
           title: i.title,
           estimateChfMicro: usdToChfMicro(Math.max(0, Math.round(i.estimateUsdMicro)), rate),
-          // D4: why it waits (a second task larger than the session, or too little left).
+          // D4: why it waits (after a task larger than the session, or too little left).
           ...(i.reason ? { reason: i.reason } : {}),
+          ...(i.reason === "after_large" && i.after ? { after: i.after } : {}),
         })),
       sessionCapChfMicro: usdToChfMicro(opts.budgetCapUsdMicro, rate),
       ...(plan?.workBudgetUsdMicro !== undefined
@@ -3522,6 +3711,114 @@ export class SessionRunner {
   }
 
   /**
+   * d1109-oversize-pause (OP-2, OP-4, OP-8): what a paused run kept, kept on its Run row as
+   * `{ kept }` (`keptArtifact`): the fingerprint of the files the task changed (`workHash`), and
+   * the project's own checks on that work when the run changed a code file and the daemon wired
+   * the check (`keptWorkCheck`: in the task's sandbox, no network, no model, nothing booked; its
+   * output redacted). Whether it got further than the task's last paused run (`madeProgress`),
+   * and the task's estimate and what is left of it, for its card. A failure to check or keep it
+   * is logged and counts as progress: the pause is filed as before.
+   */
+  private async keepPausedWork(
+    task: TaskRow,
+    item: PlanItem,
+    result: TaskExecutionResult,
+    signal: AbortSignal,
+  ): Promise<PausedWork> {
+    const { store } = this.deps;
+    const files = result.changedFiles ?? [];
+    let hash = "";
+    let progress = true;
+    let checks: KeptCheck[] | undefined;
+    let notRun: string | undefined;
+    try {
+      hash = workHash(result.worktree, files);
+      // The task's earlier pauses: a wrap-up (`paused`) or a hard stop at a limit
+      // (`budget_exceeded`, a pause at the project's budget or this month's cap is mostly one).
+      // Before (the review of d1109-oversize-pause), only `paused` counted, so a hard stop at the
+      // project's budget that got no further was never one, and its card went on by itself at
+      // each raise.
+      const earlier = (await store.run.forTask(task.id))
+        .filter(
+          (r) =>
+            r.specialist !== "critic" &&
+            !r.parent_run_id &&
+            r.id !== result.runId &&
+            KEPT_WORK_OUTCOMES.includes(r.outcome),
+        )
+        .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+      const last = earlier.find((r) => keptOf(r.artifacts));
+      const lastKept = last ? keptOf(last.artifacts) : null;
+      progress = madeProgress(
+        { hash, leftToDo: result.handoff?.leftToDo.length ?? 0 },
+        last && lastKept
+          ? { hash: lastKept.hash, leftToDo: handoffOf(last.artifacts)?.leftToDo.length ?? 0 }
+          : null,
+      );
+      if (this.deps.keptWorkCheck && isCodeChange(files)) {
+        const checked = await this.deps.keptWorkCheck({
+          task,
+          worktree: result.worktree ?? null,
+          changedFiles: files,
+          signal,
+        });
+        checks = checked.checks;
+        notRun = checked.notRun;
+      }
+      if (result.runId) {
+        const run = await store.run.get(result.runId);
+        if (run)
+          await store.run.patch(run.id, {
+            artifacts: [
+              ...(run.artifacts ?? []).filter(
+                (a) => !(a && typeof a === "object" && !Array.isArray(a) && "kept" in a),
+              ),
+              keptArtifact({
+                hash,
+                ...(checks ? { checks } : {}),
+                ...(notRun ? { notRun } : {}),
+                ...(progress ? {} : { noProgress: true }),
+              }) as never,
+            ],
+          });
+      }
+    } catch (e) {
+      if (signal.aborted) throw e;
+      this.logger.warn("the paused run's kept work was not checked", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+    }
+    const fresh = (await store.task.get(task.id)) ?? task;
+    // Priced as the planner and the Start check price it (the learned estimate when there is
+    // one), so the card's Continue and the next Start's plan agree on what is left.
+    const estimateUsdMicro =
+      this.deps.planner.wholeEstimateOf?.(fresh) ??
+      (fresh.est_cost_usd_micro > 0
+        ? fresh.est_cost_usd_micro
+        : (item.wholeEstimateUsdMicro ?? item.estimateUsdMicro));
+    const left = {
+      usdMicro: withinTaskBudget(
+        estimateLeftUsdMicro(estimateUsdMicro, await keptWorkFor(store, fresh)).usdMicro,
+        fresh,
+      ),
+    };
+    return {
+      progress,
+      ...(checks
+        ? {
+            checks: {
+              passed: checks.filter((c) => c.passed).map((c) => c.name),
+              failed: checks.filter((c) => !c.passed).map((c) => c.name),
+            },
+          }
+        : {}),
+      estimateUsdMicro,
+      estimateLeftUsdMicro: left.usdMicro,
+    };
+  }
+
+  /**
    * W15-27 (TR-15): keeps the result of a run whose review a limit refused on its Run row, for
    * the review-only pass. A failure to keep it only costs the rerun of today.
    */
@@ -4069,12 +4366,19 @@ export function oversizedMinRoomUsdMicro(workBudgetUsdMicro: number): number {
  * to name.
  *
  * D4 (the owner's decision of 2026-11-09, "it should get a warning, but it should get done
- * anyway"): a task whose figure alone is more than the work budget (`workBudgetUsdMicro`, the
- * session's cap less the review reserve) can never fit, so the first one in the planner's order
- * is returned apart as `oversized`, for the runner to take after the work that fits with what is
- * left; when the items that fit leave less than a fifth of the work budget it is left out
- * (`no_room`), and any other such task too (`one_large`: one a session). `roomUsdMicro` is what
- * the items may take: the work budget at a session's start, what is left of it at a re-plan.
+ * anyway"), as the owner's answer 5 of 2026-11-09 orders it (d1109-oversize-pause, OP-0: "it
+ * should work on tasks even when it cannot complete them, and be able to wrap up and continue
+ * next time"; no special ordering): a task whose figure alone is more than the work budget
+ * (`workBudgetUsdMicro`, the session's cap less the review reserve) goes in at its place in the
+ * planner's order with what is left of `roomUsdMicro` as its planned figure, when that is at least
+ * a fifth of the work budget (`OVERSIZED_MIN_ROOM_SHARE`), and is also returned as `oversized`
+ * (its whole figure, `roomUsdMicro` the room); it works until the wrap-up line, so every item
+ * after it waits behind it (`after_large`, a fitting one too; the runner's re-plan takes them by
+ * the room it leaves). With less than a fifth left at its turn it is left out (`no_room`) and the
+ * cut goes on with the items after it, as for any task that does not fit. Before (d1109-oversize-
+ * start), it was held apart and taken after the work that fits, one a session (`one_large`).
+ * `roomUsdMicro` is what the items may take: the work budget at a session's start, what is left
+ * of it at a re-plan.
  */
 export function cutPlanToBudget(
   plan: SessionPlan,
@@ -4082,48 +4386,47 @@ export function cutPlanToBudget(
   workBudgetUsdMicro: number = roomUsdMicro,
 ): SessionPlan {
   const items: PlanItem[] = [];
-  const leftOut: { item: LeftOutItem; at: number }[] = [];
-  let larger: { item: PlanItem; at: number } | null = null;
+  const leftOut: LeftOutItem[] = [];
+  let larger: (PlanItem & { roomUsdMicro: number }) | undefined;
   let total = 0;
-  plan.items.forEach((item, at) => {
+  for (const item of plan.items) {
+    if (larger) {
+      leftOut.push({ ...item, reason: "after_large", after: larger.title });
+      continue;
+    }
     if (item.estimateUsdMicro > workBudgetUsdMicro) {
-      if (larger === null) larger = { item, at };
-      else leftOut.push({ item: { ...item, reason: "one_large" }, at });
-      return;
+      const left = roomUsdMicro - total;
+      if (left < oversizedMinRoomUsdMicro(workBudgetUsdMicro)) {
+        leftOut.push({ ...item, reason: "no_room" });
+        continue;
+      }
+      larger = { ...item, roomUsdMicro: left };
+      items.push({ ...item, estimateUsdMicro: left, wholeEstimateUsdMicro: item.estimateUsdMicro });
+      total += left;
+      continue;
     }
     if (total + item.estimateUsdMicro > roomUsdMicro) {
-      leftOut.push({ item: { ...item, reason: "after_others" }, at });
-      return;
+      leftOut.push({ ...item, reason: "after_others" });
+      continue;
     }
     items.push(item);
     total += item.estimateUsdMicro;
-  });
-  let oversized: PlanItem | undefined;
-  const held = larger as { item: PlanItem; at: number } | null;
-  if (held) {
-    if (roomUsdMicro - total >= oversizedMinRoomUsdMicro(workBudgetUsdMicro)) oversized = held.item;
-    else {
-      // The tasks that fit leave too little: no larger task starts in this session.
-      leftOut.push({ item: { ...held.item, reason: "no_room" }, at: held.at });
-      for (const l of leftOut) if (l.item.reason === "one_large") l.item.reason = "no_room";
-    }
   }
-  leftOut.sort((a, b) => a.at - b.at);
-  const left = leftOut.map((l) => l.item);
   return {
     items,
     estimateUsdMicro: total,
     summary:
-      left.length > 0
-        ? `${plan.summary} (${left.length} ${left.length === 1 ? "item" : "items"} cut to fit the budget)`
+      leftOut.length > 0
+        ? `${plan.summary} (${leftOut.length} ${leftOut.length === 1 ? "item" : "items"} cut to fit the budget)`
         : plan.summary,
-    ...(left.length > 0 || oversized ? { workBudgetUsdMicro } : {}),
-    ...(left.length > 0 ? { leftOutForBudget: left } : {}),
-    ...(oversized ? { oversized } : {}),
+    ...(leftOut.length > 0 || larger ? { workBudgetUsdMicro } : {}),
+    ...(leftOut.length > 0 ? { leftOutForBudget: leftOut } : {}),
+    ...(larger ? { oversized: larger } : {}),
   };
 }
 
 /**
+
  * What a session that ended on a stop or pause read before the session-end writes still wrote
  * after reading it, and what it did not (spec E.4): the record of the session is written so the
  * next session and the peers know where it stopped; no further task is claimed or started.
@@ -4189,6 +4492,18 @@ export class StaticPlanner implements Planner {
     private readonly defaultEstimateUsdMicro = 500_000,
     private readonly estimates?: EstimatePort,
   ) {}
+  wholeEstimateOf(t: TaskRow): number {
+    return this.estimates
+      ? this.estimates.estimate({
+          specialist: t.specialist,
+          risk_tier: t.risk_tier,
+          est_cost_usd_micro: t.est_cost_usd_micro,
+          budget_usd_micro: t.budget_usd_micro,
+          outcome: t.outcome,
+          acceptance_criteria: t.acceptance_criteria,
+        }).usdMicro
+      : t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro;
+  }
   async plan(ctx: PlannerContext): Promise<SessionPlan> {
     const free = ctx.readyTasks.filter(
       (t) => !t.claimed_by || (t.claim_expires && t.claim_expires < ctx.brief.generatedAt),
@@ -4207,15 +4522,11 @@ export class StaticPlanner implements Planner {
         taskId: t.id,
         title: t.title,
         specialist: t.specialist ?? "coder",
-        estimateUsdMicro: this.estimates
-          ? planEstimateUsdMicro(this.estimates, t, kept)
-          : withinTaskBudget(
-              estimateLeftUsdMicro(
-                t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
-                kept,
-              ).usdMicro,
-              t,
-            ),
+        // `planEstimateUsdMicro` with the learned estimates, the task's own figure without.
+        estimateUsdMicro: withinTaskBudget(
+          estimateLeftUsdMicro(this.wholeEstimateOf(t), kept).usdMicro,
+          t,
+        ),
       });
     }
     return {
@@ -4227,4 +4538,13 @@ export class StaticPlanner implements Planner {
         : `${items.length} ready ${items.length === 1 ? "task" : "tasks"} in priority order`,
     };
   }
+}
+
+/** OP-7: `{ checksFail }` of a budget card's `kept_checks` when a check failed, else {}. */
+function failedChecksOf(card: Record<string, unknown>): { checksFail?: string[] } {
+  const k = card.kept_checks as { failed?: unknown } | null | undefined;
+  const failed = Array.isArray(k?.failed)
+    ? k.failed.filter((x): x is string => typeof x === "string" && x.trim() !== "")
+    : [];
+  return failed.length ? { checksFail: failed } : {};
 }

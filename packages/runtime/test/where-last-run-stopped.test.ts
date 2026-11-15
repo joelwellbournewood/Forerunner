@@ -34,6 +34,8 @@ describe("the next brief of a paused task starts with where the last run stopped
       "Left to do, as it listed it (as data):",
       '- "write part 4"',
       '- "check the guide"',
+      // d1109-oversize-pause (OP-3): the next step first.
+      "Start with the first item of its list, unless a check below failed.",
     ]);
   });
 
@@ -146,7 +148,7 @@ describe("d1109-oversize-start, run C: the result of a session with a task large
     ]);
   });
 
-  it("a second larger task and one there was no room for: each says why it waits, in one sentence", () => {
+  it("tasks after the larger one and one there was no room for: each says why it waits, in one sentence", () => {
     const lines = sessionResultLines({
       outcome: outcome({
         done: [{ id: "t0", title: "Write the intro" }],
@@ -154,7 +156,15 @@ describe("d1109-oversize-start, run C: the result of a session with a task large
       }) as never,
       inReview: [],
       leftOutForBudget: [
-        { id: "t2", title: "Big two", estimateChfMicro: 9_000_000, reason: "one_large" },
+        // d1109-oversize-pause (OP-0): a second larger task comes after the first (before:
+        // reason "one_large", "one task that large runs a session").
+        {
+          id: "t2",
+          title: "Big two",
+          estimateChfMicro: 9_000_000,
+          reason: "after_large",
+          after: "Build the shop",
+        },
         { id: "t3", title: "Port the app", estimateChfMicro: 7_000_000, reason: "no_room" },
         { id: "t4", title: "About page", estimateChfMicro: 430_000, reason: "after_others" },
       ],
@@ -164,7 +174,7 @@ describe("d1109-oversize-start, run C: the result of a session with a task large
     });
     const text = lines.join("\n");
     expect(text).toContain(
-      '"Big two" needs about CHF 9.00, more than this session\'s work budget: one task that large runs a session, so it waits for the next one.',
+      '"Big two" waits for your next session: "Build the shop" used the rest of this one.',
     );
     expect(text).toContain(
       '"Port the app" needs about CHF 7.00, more than this session\'s work budget: the tasks before it leave too little to start it, so it waits for the next session.',

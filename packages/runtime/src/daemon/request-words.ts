@@ -656,6 +656,13 @@ function chfAt(usdMicro: unknown, rate: unknown): string | null {
  * left (its own words, as data) and, for a limit no bigger budget lifts, how it goes on; then
  * Continue (CHF N more) and Cancel task. Cards filed before budget-resume keep their options
  * ("Raise the budget"), each still doing what it said.
+ *
+ * d1109-oversize-pause (OP-2, OP-4, OP-7): the body's first sentence says whether the project's
+ * checks pass on the kept work ('...; the project's test fails on its work.', at most two check
+ * names, never their output); after a pause that got no further the title asks plainly ('"X"
+ * paused again without getting further'), the second sentence says why and Continue takes a note;
+ * a spend past the estimate is the second sentence when nothing else takes it. A card filed
+ * before (none of these fields) reads as before.
  */
 function budgetCard(
   r: Pick<HumanRequestRow, "why" | "options">,
@@ -665,29 +672,52 @@ function budgetCard(
   const waiting = ctx.waiting ?? [];
   const more = chfAt(card.continue_usd_micro ?? card.raise_to_usd_micro, card.chf_per_usd);
   const session = card.source === "session" || card.source === "session_budget";
-  const goesOn = goesOnWords(card);
+  const stuck = card.no_progress === true;
+  // A pause that got no further never goes on by itself (OP-4): no "goes on by itself" line.
+  const goesOn = stuck ? null : goesOnWords(card);
+  const outer = card.source === "project" || card.source === "month" || card.source === "plan";
   const lists = pausedWorkLists(card);
-  const body =
-    [
-      pausedSpendSentence(card) ?? (lists.length ? null : pausedWorkSentence(card, ctx.heldWork)),
-      goesOn ?? waitingSentence(waiting),
-    ]
-      .filter(Boolean)
-      .join(" ") || null;
+  const spend = pausedSpendSentence(card);
+  const past = pastEstimate(card);
+  // A first sentence that already says what it spent says the estimate in it (one sentence).
+  const spendPast =
+    spend && past && spend.startsWith("It spent ")
+      ? spend.replace(/\.$/, `, more than its estimate of ${past.estimate}.`)
+      : spend;
+  const first = withChecksClause(
+    spendPast ?? (lists.length ? null : pausedWorkSentence(card, ctx.heldWork)),
+    card,
+  );
+  const second = stuck
+    ? outer && card.question !== true
+      ? "Its last run changed no file and left the same list, so it waits for you."
+      : "Its last run changed no file and left the same list: continue with a note on what to do differently, or cancel it."
+    : (goesOn ??
+      waitingSentence(waiting) ??
+      (past && spendPast === spend
+        ? `It has spent ${past.spent}, more than its estimate of ${past.estimate}.`
+        : null));
+  const body = [first, second].filter(Boolean).join(" ") || null;
   const choices: RequestChoiceWords[] = [];
   for (const option of r.options.map(optionLabel)) {
     const what = budgetStopAnswer(option);
     if (what === "continue")
       choices.push({
         label: option,
-        explain: !more
-          ? "Gives it more and starts a session that goes on from where it stopped."
-          : session
-            ? `Starts a session of ${more} now; it goes on from where it stopped.`
-            : `Adds ${more} to its budget and starts a session that goes on from where it stopped.`,
+        explain: stuck
+          ? more
+            ? `Starts a session of ${more}; your note goes into its next brief.`
+            : "Starts a session that goes on from where it stopped; your note goes into its next brief."
+          : !more
+            ? "Gives it more and starts a session that goes on from where it stopped."
+            : session
+              ? // d1109-oversize-pause (OP-0): the next Start takes it in its turn without Continue.
+                `Starts a session now with ${more}; without it, your next Start takes it in its turn.`
+              : `Adds ${more} to its budget and starts a session that goes on from where it stopped.`,
         tone: "primary",
         confirm: null,
-        input: null,
+        // OP-4: after a pause that got no further, Continue asks what to do differently.
+        input: stuck ? "note" : null,
       });
     else if (what === "cancel")
       choices.push({
@@ -698,26 +728,75 @@ function budgetCard(
         input: null,
       });
   }
+  const task = q(ctx.taskTitle ?? str(card.task_title) ?? "the task");
   return {
-    title: str(card.title) ?? firstSentence(r.why),
+    title: stuck
+      ? `${task} paused again without getting further`
+      : (str(card.title) ?? firstSentence(r.why)),
     body,
     choices,
-    links: goesOn
-      ? [
-          {
-            label: "Open Settings",
-            // P7-19: the project's budget is under Other settings, not Basics (as the
-            // Overview's Change links it).
-            to: card.source === "project" ? "/settings#other-settings" : "/settings",
-            explain: card.source === "plan" ? null : "Raise it there; the task goes on by itself.",
-          },
-        ]
-      : [],
+    links:
+      goesOn || (stuck && outer && card.question !== true)
+        ? [
+            {
+              label: "Open Settings",
+              // P7-19: the project's budget is under Other settings, not Basics (as the
+              // Overview's Change links it).
+              to: card.source === "project" ? "/settings#other-settings" : "/settings",
+              explain: stuck
+                ? "Raise it there; this card then asks how to go on."
+                : card.source === "plan"
+                  ? null
+                  : "Raise it there; the task goes on by itself.",
+            },
+          ]
+        : [],
     reply: "none",
     details: [],
     ...(lists.length ? { lists } : {}),
     outcome: null,
   };
+}
+
+/**
+ * OP-2: the kept work's checks as a clause of the card's first sentence: '...; the project's
+ * checks pass on its work.', '...; the project's test fails on its work.', '...; the project's
+ * test and lint fail on its work.', '...; the project's test, lint and 1 more fail on its work.'
+ * (at most two names). Nothing when no check ran; a first sentence of its own when the card has
+ * none.
+ */
+function withChecksClause(sentence: string | null, card: JsonObject): string | null {
+  const k = card.kept_checks;
+  if (!isRecord(k)) return sentence;
+  const names = (v: unknown) =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
+  const passed = names(k.passed);
+  const failed = names(k.failed);
+  if (!passed.length && !failed.length) return sentence;
+  const shown =
+    failed.length > 2
+      ? `${failed.slice(0, 2).join(", ")} and ${failed.length - 2} more`
+      : failed.join(" and ");
+  const clause = failed.length
+    ? `the project's ${shown} ${failed.length === 1 ? "fails" : "fail"} on its work`
+    : "the project's checks pass on its work";
+  if (!sentence) return `${clause.charAt(0).toUpperCase()}${clause.slice(1)}.`;
+  return `${sentence.replace(/[.\s]+$/, "")}; ${clause}.`;
+}
+
+/**
+ * OP-7: a spend past the estimate (the card's `spent_usd_micro`, the task's in all, against its
+ * `estimate_usd_micro`), for 'It has spent CHF 6.10, more than its estimate of CHF 6.00.' when the
+ * card has room for it. Null when within the estimate or not known (a card filed before OP-8).
+ */
+function pastEstimate(card: JsonObject): { spent: string; estimate: string } | null {
+  const spent = card.spent_usd_micro;
+  const estimate = card.estimate_usd_micro;
+  if (typeof spent !== "number" || typeof estimate !== "number" || !(estimate > 0)) return null;
+  if (spent <= estimate) return null;
+  const s = chfAt(spent, card.chf_per_usd);
+  const e = chfAt(estimate, card.chf_per_usd);
+  return s && e && s !== e ? { spent: s, estimate: e } : null;
 }
 
 /**
@@ -739,9 +818,14 @@ function pausedSpendSentence(card: JsonObject): string | null {
   switch (card.source) {
     case "task_budget":
       return spentOk ? `It spent ${spent} of its budget of ${cap}.` : null;
-    case "specialist_limit":
-      // The title names whose limit it is ("the writer's limit per run").
-      return `It has no budget of its own: it may spend ${cap} per run.`;
+    case "specialist_limit": {
+      // The title names whose limit it is ("the writer's limit per run"). L3-left-2
+      // (d1109-oversize-pause): what this run spent of it, when the card kept it.
+      const run = chfAt(card.run_spent_usd_micro, card.chf_per_usd);
+      return run
+        ? `It has no budget of its own: this run spent ${run} of the ${cap} it may spend per run.`
+        : `It has no budget of its own: it may spend ${cap} per run.`;
+    }
     case "session":
     case "session_budget":
       return `This session's budget was ${cap}.`;
@@ -879,11 +963,25 @@ function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | nul
   const started = startWords(card.start);
   switch (card.outcome) {
     case "continue": {
+      // d1109-oversize-pause (OP-4): Continue on the question at an outer limit adds no money
+      // (the fixup's walk: before, 'Gave "X" CHF 0.00 more: a session started.').
+      if (card.question === true || card.continued_usd_micro === 0)
+        return `Went on with ${task}${started ? `: ${started}` : ": the next session continues it"}.`;
       const more = chfAt(card.continued_usd_micro, card.chf_per_usd);
       return `Gave ${task}${more ? ` ${more}` : ""} more${started ? `: ${started}` : ": the next session continues it"}.`;
     }
     case "went_on":
       return `${task} goes on: its limit has room again.`;
+    // d1109-oversize-pause (OP-4): the question for the same pause replaced it once its outer
+    // limit had room (the fixup's walk: before, "Closed: it no longer needs you." beside the card
+    // that asks).
+    case "asked_again":
+      return "Its new card asks how to go on.";
+    // d1109-oversize-pause (OP-0): the next session's start took it in its turn.
+    case "went_on_at_start": {
+      const at = str(card.started_session_time);
+      return at ? `Your session of ${at} went on with it.` : "Your next session went on with it.";
+    }
     // Cards answered before budget-resume.
     case "raise_session": {
       const to = chfAt(card.session_cap_usd_micro_set ?? card.raise_to_usd_micro, card.chf_per_usd);
@@ -1471,8 +1569,14 @@ export function requestWords(
     words = budgetCard(r, card, ctx);
     outcome = budgetOutcome(card, ctx);
     // budget-resume: a card the app closed because its limit has room again says so, not
-    // "Closed: it no longer needs you."
-    if (r.status !== "open" && card.outcome === "went_on" && outcome) {
+    // "Closed: it no longer needs you." (d1109-oversize-pause: also one its question replaced).
+    if (
+      r.status !== "open" &&
+      (card.outcome === "went_on" ||
+        card.outcome === "went_on_at_start" ||
+        card.outcome === "asked_again") &&
+      outcome
+    ) {
       words.outcome = outcome;
       return words;
     }

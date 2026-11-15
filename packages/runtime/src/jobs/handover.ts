@@ -45,6 +45,7 @@ import {
   type ProjectRow,
   type SessionStatus,
   type StateStore,
+  type TaskRow,
   type TaskStatus,
 } from "@forerunner/state";
 import { scanForInjection } from "../injection/scan.ts";
@@ -178,6 +179,9 @@ export class SeedOnlyPlanner implements Planner {
       ...ctx,
       readyTasks: ctx.readyTasks.filter((t) => t.id === this.taskId),
     });
+  }
+  wholeEstimateOf(task: TaskRow): number | undefined {
+    return this.inner.wholeEstimateOf?.(task);
   }
 }
 

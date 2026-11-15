@@ -12,8 +12,8 @@ import { quotedWords, saidByName } from "@forerunner/critic";
 import { AUTONOMY_NAMES } from "../enforcement/autonomy.ts";
 import { aboutWords, moneyWords, moneyWordsFirst } from "../session/money-words.ts";
 import { sessionStatusText } from "../session/stop-words.ts";
-import { REVIEW_RESUMED_EVENT, TOOK_LARGER_EVENT } from "./event-audience.ts";
-import { takenLine } from "./oversize-words.ts";
+import { REVIEW_RESUMED_EVENT, TASK_CONTINUES_EVENT, TOOK_LARGER_EVENT } from "./event-audience.ts";
+import { continuesLine, takenLine } from "./oversize-words.ts";
 import { balancedCut } from "./quoted-title.ts";
 
 type Payload = Record<string, unknown>;
@@ -606,6 +606,9 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
       const chfMicro = usdToChfMicro(room, chfPerUsd);
       return takenLine(s("title") || "the task", { chfMicro, text: formatChf(chfMicro) });
     }
+    // d1109-oversize-pause (OP-5): the run again in the session, from where it stopped.
+    case TASK_CONTINUES_EVENT:
+      return continuesLine(saidByName(s("specialist")) ?? "specialist", s("title") || "the task");
     // The engine's step and replan lines carry their own words (`text`).
     case "task.step":
     case "session.replanned":

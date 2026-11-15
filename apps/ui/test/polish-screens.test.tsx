@@ -296,7 +296,7 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
     expect(dialog).not.toHaveTextContent(/\((ready|draft|failed|cancelled|needs_human)\)/);
   });
 
-  it("two tasks larger than the work budget: the first runs with the warning, the second is one line of why it waits", async () => {
+  it("two tasks larger than the work budget: the first runs with the warning, the second comes after it", async () => {
     const harness = createHarness();
     const ready = readyTask(harness);
     ready.estimate = money(10_000_000);
@@ -314,11 +314,12 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
     expect(await within(dialog).findByTestId("start-session-oversized")).toHaveTextContent(
       '"Decide the versioning scheme" needs about CHF 8.00, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
     );
-    const lines = within(dialog).getAllByTestId("start-session-over-budget");
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toHaveTextContent(
-      '"Port the app" needs about CHF 9.60, more than this session\'s work budget: one task that large runs a session, so it waits for the next one.',
+    // d1109-oversize-pause (OP-0): the second comes after the first, said once in the note
+    // (before: 'one task that large runs a session, so it waits for the next one.').
+    expect(within(dialog).getByTestId("start-session-comes-after")).toHaveTextContent(
+      '"Port the app" comes after it: it runs if "Decide the versioning scheme" leaves budget, else in your next session.',
     );
+    expect(within(dialog).queryAllByTestId("start-session-over-budget")).toHaveLength(0);
     expect(dialog).not.toHaveTextContent("smaller ones");
   });
 

@@ -112,7 +112,9 @@ async function refuseBlockedStart(s: StartPlan, ctx: CommandContext): Promise<vo
  * (d1109-oversize-start): when the session would take a task larger than its work budget, the
  * Start dialog's warning follows ('Start a session on Shop (up to CHF 5.00)? "Build the shop"
  * needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to
- * continue.'); the start itself is not refused for it.
+ * continue.'), then the tasks after it in the plan's order (d1109-oversize-pause, OP-0: '"B"
+ * comes after it: it runs if "Build the shop" leaves budget, else in your next session.'), as
+ * the port's one text; the start itself is not refused for it.
  */
 function startAsk(s: StartPlan, warning: string | null = null): string {
   const where = s.runner === "cloud" ? " on the cloud runner" : "";

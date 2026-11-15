@@ -144,20 +144,23 @@ function about(values: readonly { estimate: MoneyLike }[]): string {
  * #48), a task ready now was one of "up to N more as they become ready". Null when nothing runs.
  */
 export function planSentence(check: StartCheckView): string | null {
-  // D4 (d1109-oversize-start): the task larger than the work budget the session takes after the
-  // work that fits, named by the daemon's clause (`oversizedPlanClause`): alone, "This session
-  // works on "X" until its work budget is used."; after the others, "..., then works on "X"
-  // with what is left."
+  // D4: the task larger than the work budget the session takes at its place in the plan's order
+  // (d1109-oversize-pause, OP-0, the owner's answer 5), named by the daemon's clause
+  // (`oversizedPlanClause`): first in order, "This session works on "X" until its work budget is
+  // used; "B" runs after it only if budget is left."; after the tasks before it, "..., then works
+  // on "X" with what is left." The tasks that become ready meanwhile come after it too (the
+  // daemon's `comesAfter`), so they are not counted before it.
   const big = check.oversized ?? null;
   const [first, ...rest] = check.runnable;
-  if (!first) return big ? oversizedPlanClause(big.title, true) : null;
+  if (!first) return big ? oversizedPlanClause(big.title, true, big.comesAfter ?? []) : null;
   const head = `This session runs "${first.title}" (${about([first])})`;
   const now = rest.length > 0 ? ` and ${rest.length} more (${about(rest)})` : "";
+  if (big) return `${head}${now}, ${oversizedPlanClause(big.title, false)}.`;
   const runs =
     check.later.length === 0
       ? `${head}${now}`
       : `${head}${now}${now ? ", then" : " and"} continues with up to ${check.later.length} more as they become ready (${about(check.later)})`;
-  return big ? `${runs}, ${oversizedPlanClause(big.title, false)}.` : `${runs}.`;
+  return `${runs}.`;
 }
 
 /**
@@ -205,11 +208,11 @@ function BlockerLines({ check }: { check: StartCheckView }) {
     });
   // D4 (d1109-oversize-start): a task larger than the whole work budget is no longer refused or
   // told to shrink ("Give the session a larger budget, or the task a smaller one." is gone): the
-  // one the session takes is said in the amber note (`start-session-oversized`), and a second
-  // one, or one the tasks before it leave too little for, in the daemon's sentence of why it
-  // waits (`overBudget[].sentence`).
+  // one the session takes is said in the amber note (`start-session-oversized`), the tasks after
+  // it there too (`afterSentence`, d1109-oversize-pause OP-0), and one the tasks before it leave
+  // too little for in the daemon's sentence of why it waits (`overBudget[].sentence`).
   const others = check.overBudget.filter(
-    (t) => t.why !== "oversized" && t.taskId !== check.oversized?.taskId,
+    (t) => t.why !== "oversized" && t.why !== "after_large" && t.taskId !== check.oversized?.taskId,
   );
   const waitsForNext = others.filter((t) => t.why === "one_large" || t.why === "no_room");
   for (const t of waitsForNext)
@@ -453,6 +456,9 @@ export function StartSessionDialog({
                 data-testid="start-session-oversized-note"
               >
                 <p data-testid="start-session-oversized">{data.oversized.sentence}</p>
+                {data.oversized.afterSentence ? (
+                  <p data-testid="start-session-comes-after">{data.oversized.afterSentence}</p>
+                ) : null}
                 <BlockerLines check={data} />
               </div>
             ) : data && plan ? (

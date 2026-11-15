@@ -717,15 +717,23 @@ what is left of that budget, since its runs never spend more.
 **A task larger than one session still runs.** When a ready task needs more than the session's
 work budget on its own, Start stays on and the dialog warns in an amber note: '"Build the shop"
 needs about CHF 6.00, more than this session's work budget of CHF 4.00: it works until that
-budget is used, keeps its work, and asks you to continue.' The session first does the tasks
-that fit (the plan line reads 'This session runs "A" (about CHF 0.12), then works on "Build the
-shop" with what is left.'), then takes the larger task with what is left of its work budget; the
-session's log says so once ('Took "Build the shop", larger than this session's work budget, with
-about CHF 2.80 left.'). It works until that budget is used, keeps its work and pauses with one
-card in the Inbox whose **Continue** goes on from where it stopped. One such task runs per
-session: a second one waits for the next ('"Big two" needs about CHF 9.00, more than this
-session's work budget: one task that large runs a session, so it waits for the next one.'), and
-so does one the tasks before it leave less than a fifth of the work budget for. The plan card
+budget is used, keeps its work, and asks you to continue.' It runs in its turn like any task:
+by priority, then the plan's order. With tasks before it, the plan line reads 'This session runs
+"A" (about CHF 0.12), then works on "Build the shop" with what is left.' and the warning says
+'after "A" it works with about CHF 2.80'; first in order it reads 'This session works on "Build
+the shop" until its work budget is used; "B" runs after it only if budget is left.', and the note
+adds '"B" comes after it: it runs if "Build the shop" leaves budget, else in your next session.'
+The session's log says the take once ('Took "Build the shop", larger than this session's work
+budget, with about CHF 2.80 left.'). It works until that budget is used, keeps its work and
+pauses with one card in the Inbox; the tasks after it run only if it leaves budget (if it fails
+at once they run in the same session), else the result says '"B" waits for your next session:
+"Build the shop" used the rest of this one.' A larger task the tasks before it leave less than a
+fifth of the work budget for waits for the next session. **Your next Start goes on with it**: a
+task that paused at a session's budget is taken in its turn by the next session you start, from
+where it stopped, and its card closes ("Your session of 14:05 went on with it."); the card's
+**Continue** is for going on at once. While its coder still gets further, a task that pauses at
+the coder's limit per run goes on at once in the same session ('The coder goes on with "Build
+the shop" from where it stopped.'). The plan card
 says it under the task before you approve ("More than a session's work budget (CHF 4.00): it
 pauses with its work kept and asks you to continue."), and "start a session" in the chat reads
 the same warning back with its question. A task that goes on from work it kept is counted at what
@@ -1111,9 +1119,21 @@ stopped and what is left in its own words, each point whole on its own line (**W
 stopped**: "contact.html has the form."; **Left to do**: "check the links"; three at most, then
 "and 2 more"), and two buttons: **Continue (CHF 0.40 more)** (adds that much to its budget,
 the same amount again or at least its estimate, and starts a session at once that goes on from
-where it stopped) and **Cancel task**. The Tasks tab reads "Paused at its budget" with "Continue
-or cancel in the Inbox.", with Answer (the card), Edit (set another budget yourself) and
-Cancel.
+where it stopped) and **Cancel task**. At a session's budget Continue asks for what the work left
+needs to fit a session ("Starts a session now with CHF 3.00; without it, your next Start takes
+it in its turn."). When the run changed code, the card's first sentence also says whether the
+project's own checks pass on the work it kept ("...; the project's test fails on its work.");
+they ran once in the task's sandbox, cost nothing, and their output goes to the next run, never
+onto the card. A spend past the task's estimate is said too ("It has spent CHF 6.10, more than
+its estimate of CHF 6.00."). After a pause that got no further than the one before (no file
+changed, the same list), the card asks: '"Build the shop" paused again without getting further'
+with "Its last run changed no file and left the same list: continue with a note on what to do
+differently, or cancel it."; type a note above **Continue** and it goes into the next run's
+brief. Such a task never goes on by itself, not at your next Start and not when a limit is
+raised. The Tasks tab reads "Paused at its budget" (or "Paused before its budget ran out" when it
+heard the wrap-up) with "Continue or cancel in the Inbox." ("Your next Start goes on with it, or
+Continue in the Inbox." at a session's budget), with Answer (the card), Edit (set another budget
+yourself) and Cancel.
 
 A budget stop is a pause, not a failure. Before a task's run reaches its budget, the agent is
 told once to wrap up, with how much of its budget it has used: it starts nothing new, leaves the
@@ -1159,8 +1179,11 @@ off by default: a push starts the repository's automatic checks and others see t
 file in Local only is never pushed). The next run of the task continues from that work: in a
 repository it starts from the task's branch (with main merged in when it moved; if main changed
 the same lines, you get the usual conflict card), and its brief starts with "Where the last run
-stopped": the run's note, the files it changed and its to-do list (a run that stopped before it
-could write a note says so and lists the files). **Cancel** on a paused task sets its work aside
+stopped": the run's note, the files it changed and its to-do list, with its first item as the
+next step, and whether the project's checks passed on that work (the end of a failed check's
+output is quoted to it as data). A run that stopped before it could write a note says so and
+lists the files. When Forerunner tells a run to wrap up, it asks it to finish the step it is on,
+leave the files building and working, and undo or keep out of use a change it cannot finish. **Cancel** on a paused task sets its work aside
 and names the tasks that will be stuck ("Drops it. Its work so far is set aside unless a later
 task built on it; Undo brings it back."); in a project's folder that another task has built on
 since, its files stay and the line says why. A task paused before its run wrote anything has no

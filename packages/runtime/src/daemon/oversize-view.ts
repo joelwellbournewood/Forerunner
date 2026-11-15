@@ -3,6 +3,7 @@ import type { StartCheck } from "../session/start-check.ts";
 import type { StartCheckView } from "./api-types.ts";
 import {
   type ChfAmount,
+  comesAfterSentence,
   leftOutSentence,
   oversizedAsk,
   oversizedSentence,
@@ -38,8 +39,12 @@ export function oversizedView(check: StartCheck, chfPerUsd: number): StartCheckV
       estimate: at(o.estimateUsdMicro),
       workBudget: at(check.workBudgetUsdMicro),
       room: o.after ? at(o.roomUsdMicro) : null,
+      before: o.before,
       spent: o.spentUsdMicro ? at(o.spentUsdMicro) : null,
     }),
+    // d1109-oversize-pause (OP-0): the tasks after it, named once.
+    comesAfter: [...o.comesAfter],
+    afterSentence: comesAfterSentence(o.comesAfter, o.title),
   };
 }
 
@@ -64,6 +69,7 @@ export function overBudgetView(check: StartCheck, chfPerUsd: number): StartCheck
               estimate: at(t.estimateUsdMicro),
               workBudget: at(check.workBudgetUsdMicro),
               ahead: at(t.aheadUsdMicro ?? 0),
+              after: big?.title ?? null,
             }),
     };
   });
@@ -72,9 +78,13 @@ export function overBudgetView(check: StartCheck, chfPerUsd: number): StartCheck
 /**
  * The chat's warning after its "Start a session on Shop (up to CHF 5.00)?" (OS-6): '"Build the
  * shop" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to
- * continue.' Null when the session would take no task larger than its work budget.
+ * continue.', then the tasks after it in the plan's order (d1109-oversize-pause, OP-0): '"B"
+ * comes after it: it runs if "Build the shop" leaves budget, else in your next session.'. Null
+ * when the session would take no task larger than its work budget.
  */
 export function oversizedWarning(check: StartCheck, chfPerUsd: number): string | null {
   if (!check.oversized) return null;
-  return oversizedAsk(check.oversized.title, chfAmountOf(check.workBudgetUsdMicro, chfPerUsd));
+  const after = comesAfterSentence(check.oversized.comesAfter, check.oversized.title);
+  const ask = oversizedAsk(check.oversized.title, chfAmountOf(check.workBudgetUsdMicro, chfPerUsd));
+  return after ? `${ask} ${after}` : ask;
 }
