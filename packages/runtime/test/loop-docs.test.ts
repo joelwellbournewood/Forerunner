@@ -1290,3 +1290,63 @@ describe("l3-small, run L3: the status file names the session by its start, in w
     await w.close();
   });
 });
+
+/**
+ * l3-small fix-up, run L3 (L3-run-11, review): the commit Forerunner makes at the end of a
+ * session in a project's folder (no repository) read 'Session 01a1df1c-82d0-..., 2026-11-15T12:09:
+ * 15.298Z. Committed by Forerunner at the end of the session.' in its body: plain `git log` showed
+ * an id and a raw instant on every session (bench review-l3-small, live check 3's rs3 home). The
+ * session is named by when it started, as the status file and the status pull request name it.
+ */
+describe("l3-small, run L3: the session-end commit in the folder names the session by its start (L3-run-11)", () => {
+  it("plain git log in the project's folder has no id and no raw instant after a session", async () => {
+    const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
+    const { root } = await bareRepo();
+    const { docs } = await docsFor(w, root, null);
+    const folder = join(root, "projects", w.project, WORKSPACE_DIR);
+    await docs.scaffoldProject(await w.store.project.mustGet(w.project));
+    await w.addTask("Write 404.html", { risk_tier: 1 });
+    const result = await w.start(w.runner(doneExecutor(w), { docs }));
+    expect(result.completed).toHaveLength(1);
+    const started = (await w.store.session.mustGet(result.sessionId)).started_at ?? "";
+    const when = `${started.slice(0, 10)} ${started.slice(11, 16)} UTC`;
+    const last = (await run(["git", "-C", folder, "log", "-n", "1", "--format=%B"])).stdout;
+    expect(last.trim()).toBe(
+      `Did "Write 404.html"\n\nCommitted by Forerunner at the end of the session started ${when}.`,
+    );
+    const all = (await run(["git", "-C", folder, "log", "--format=%B"])).stdout;
+    expect(all).not.toContain(result.sessionId);
+    expect(all).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i);
+    expect(all).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
+    await w.close();
+  });
+
+  it("a session whose start is not known is 'a session', never its id", async () => {
+    const w = await loopWorld();
+    const { root } = await bareRepo();
+    const { docs } = await docsFor(w, root, null);
+    const folder = join(root, "projects", w.project, WORKSPACE_DIR);
+    const project = await w.store.project.mustGet(w.project);
+    const id = "0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e5f";
+    await docs.writeSessionStatus({
+      project,
+      session: { id, started_at: null, created_at: null } as unknown as SessionRow,
+      update: {
+        sessionId: id,
+        endedAt: "2026-11-15T05:59:00.000Z",
+        done: [],
+        inFlight: [],
+        blocked: [],
+        next: [],
+        note: "Done. Spent CHF 0.01.",
+      },
+    });
+    const last = (await run(["git", "-C", folder, "log", "-n", "1", "--format=%B"])).stdout;
+    expect(last.trim()).toBe(
+      "Work of the session\n\nCommitted by Forerunner at the end of a session.",
+    );
+    expect(last).not.toContain(id);
+    expect(last).not.toContain("2026-11-15T05:59");
+    await w.close();
+  });
+});

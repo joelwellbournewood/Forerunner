@@ -1007,8 +1007,10 @@ export class ProjectDocs implements ProjectDocsPort {
       const done = update.done.length
         ? `Did ${update.done.map((t) => `"${t}"`).join(", ")}`
         : "Work of the session";
+      // The session by when it started, never its id or a raw instant (L3-run-11, W15-08): the
+      // body is what plain `git log` shows the person in their folder; the commit has its date.
       const made = await git.commitAll(
-        `${done.slice(0, 200)}\n\nSession ${session.id}, ${update.endedAt}. Committed by Forerunner at the end of the session.`,
+        `${done.slice(0, 200)}\n\nCommitted by Forerunner at the end of ${sessionWords(session.started_at ?? session.created_at)}.`,
       );
       commit = made.committed ? made.sha : null;
     } catch (e) {

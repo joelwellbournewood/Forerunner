@@ -4004,8 +4004,10 @@ and the status commit pushed onto it after the review put a file the critic neve
 reviewed PR (GitHub walk, 2026-11-02). A repository without `docs/status.md` gets it scaffolded
 in the same commit. Without a repository the file in the project's folder is updated and the
 session's work is committed with it (`statusInFolder`: "Did "<task>", …", after a `.gitignore`
-for caches when the folder has none; `commit` on the outcome), since the executor commits only a
-baseline before each run and the last task's files stayed uncommitted (live, 2026-11-02). Every
+for caches when the folder has none; `commit` on the outcome; its body is "Committed by Forerunner
+at the end of the session started <YYYY-MM-DD HH:MM> UTC." by `sessionWords`, never the session's
+id or a raw instant, since plain `git log` shows it to the person: L3-run-11, review of run L3),
+since the executor commits only a baseline before each run and the last task's files stayed uncommitted (live, 2026-11-02). Every
 docs write on a repository first makes sure the default branch exists (`ensureBaseBranch`, ADR
 0106): an empty repository gets the doc set as its first commit there (`scaffoldProject`
 answers `firstCommit: true`, `branch` the default branch, no PR; `summary_cache.docs.first_commit`).

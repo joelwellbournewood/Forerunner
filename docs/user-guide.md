@@ -143,7 +143,10 @@ them as you left them; an open file or task stays on its own tab.
   project.
 - **Files**: the project's folder on this computer (its own folder, the folder you linked, or
   this computer's copy of its repository as merged: work still in a pull request is on the
-  Overview) as a list with sizes and when each file changed.
+  Overview) as a list with sizes and when each file changed. A project without a repository
+  keeps its folder's history in git: `git log` there shows 'Workspace before "<task>"' before
+  each run and, at the end of each session, 'Did "<task>"' with "Committed by Forerunner at the
+  end of the session started 2026-11-15 12:09 UTC.", never an id.
   Click a file to read it here (text files; nothing can be changed from this tab). **Open
   folder** (desktop app) opens it in your file manager; **Copy path** copies where it is. Until
   the work writes something it says "Nothing written yet". For a repository project the line on
