@@ -452,9 +452,11 @@ marked `again`, whose task the critic sent back (`handoff.sent_back`) or ran in 
 plan that lists a task twice that never ran is still one. Work that tried a task again is named in
 an overrun finding (`attemptsAgainOf`: "Session work cost CHF 0.18 exceeded its estimate CHF 0.08
 by 130%, with one task tried twice (the reviews, CHF 0.05 more, are not in the estimate)"), so a
-send-back that doubled the cost is flagged instead of hidden by a doubled estimate. The daemon's
-`critic.session_review_metrics` log line still reads `actualUsdMicro` (`views.ts`, another
-area's region). The runner does not
+send-back that doubled the cost is flagged instead of hidden by a doubled estimate; more tries
+read "with one task tried 3 times" or "with 2 tasks tried again" (`tasksTriedAgainOf`; before:
+"with 2 more attempts of tasks tried again"). The daemon's `critic.session_review_metrics` log
+line reads `workUsdMicro` against the estimate and names the reviews apart (W15B-19; a row
+written before falls back to `actualUsdMicro`). The runner does not
 ask for a session review when the session ended no task (stopped in its first seconds, nothing
 planned): there is no work to grade, and it read "Session review: accepted (grade 100)". Its
 summary counts as the number says ("1 done task", "2 findings"; P7-34: never "(s)"). The

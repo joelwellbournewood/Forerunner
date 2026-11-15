@@ -170,6 +170,17 @@ export function attemptsAgainOf(items: SessionPlanItemLike[]): number {
   return again;
 }
 
+/** How many of the plan's tasks it took again at least once (`attemptsAgainOf` counts tries). */
+export function tasksTriedAgainOf(items: SessionPlanItemLike[]): number {
+  const seen = new Set<string>();
+  const again = new Set<string>();
+  for (const i of items) {
+    if (i.again || seen.has(i.taskId)) again.add(i.taskId);
+    seen.add(i.taskId);
+  }
+  return again.size;
+}
+
 export async function loadSessionReviewData(
   store: StateStore,
   sessionId: string,
@@ -344,13 +355,18 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
     const pct = Math.round(((work - estimate) / estimate) * 100);
     // L3-run-2: the estimate counts each task once; work that tried a task again is named as
     // such, so a send-back that doubled the cost is flagged and its cause read at a glance.
+    // Plain words for the tries (design §5): one task tried twice or N times, or N tasks tried
+    // again (review: ", with 2 more attempts of tasks tried again" read at no glance).
     const again = attemptsAgainOf(planItems);
+    const triedTasks = tasksTriedAgainOf(planItems);
     const tried =
       again === 0
         ? ""
-        : again === 1
-          ? ", with one task tried twice"
-          : `, with ${again} more attempts of tasks tried again`;
+        : triedTasks > 1
+          ? `, with ${triedTasks} tasks tried again`
+          : again === 1
+            ? ", with one task tried twice"
+            : `, with one task tried ${again + 1} times`;
     add(
       "medium",
       reviews > 0

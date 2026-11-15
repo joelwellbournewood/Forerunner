@@ -814,6 +814,48 @@ describe("l3-money-engine, run L3", () => {
     }
   });
 
+  it("L3-run-2 (review): more tries are named in plain words: one task tried 3 times, or 2 tasks tried again", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "done", title: "A" });
+      const b = await w.newTask({ status: "done", title: "B" });
+      const overrun = async (
+        items: { taskId: string; title: string; estimateUsdMicro: number; again?: true }[],
+      ) => {
+        await w.store.session.patch(w.ids.session, {
+          reason: "planned for the test",
+          author_agent: w.ids.owner,
+          plan: { items, estimateUsdMicro: 20_000, summary: "" },
+          summary: 'Did 2 tasks: "A", "B".',
+          handoff: { done: [a.id, b.id], sent_back: [a.id, b.id], blocked: [] },
+          status: "completed",
+        });
+        const checks = sessionChecks(await loadSessionReviewData(w.store, w.ids.session));
+        return checks.findings.map((f) => f.description).find((d) => d.includes("exceeded"));
+      };
+      await runsOf(w, a.id, [
+        ["coder", 100_000],
+        ["coder", 100_000],
+        ["coder", 100_000],
+      ]);
+      const item = (t: { id: string; title: string }, again = false) => ({
+        taskId: t.id,
+        title: t.title,
+        estimateUsdMicro: 10_000,
+        ...(again ? { again: true as const } : {}),
+      });
+      // Before: ", with 2 more attempts of tasks tried again" for either plan.
+      expect(await overrun([item(a), item(b), item(a, true), item(a, true)])).toContain(
+        "by 1400%, with one task tried 3 times",
+      );
+      expect(await overrun([item(a), item(b), item(a, true), item(b, true)])).toContain(
+        "by 1400%, with 2 tasks tried again",
+      );
+    } finally {
+      await w.close();
+    }
+  });
+
   it("L3-run-2: a task a plan lists twice that never ran twice is still a finding", async () => {
     const w = await world();
     try {

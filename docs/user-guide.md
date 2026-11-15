@@ -1004,8 +1004,8 @@ estimate and names the critic's reviews apart ("cost CHF 0.25 (work CHF 0.15 aga
 estimate of CHF 0.14, reviews CHF 0.10)"), since the estimate is the work's. That estimate is
 the one the plan line and the Start dialog showed you: a task the critic sent back and the
 session did again counts once, and when the second try makes the work cost much more than
-planned, the review says so ("with one task tried twice"). Questions the plan asks
-you cost nothing and the plan counts them at CHF 0.00. A task that stopped at its budget does
+planned, the review says so ("with one task tried twice", "with 2 tasks tried again").
+Questions the plan asks you cost nothing and the plan counts them at CHF 0.00. A task that stopped at its budget does
 not count toward what the estimates learn, even after you raise its budget and it finishes,
 since its first run did not finish its work; restarting the app changes none of these figures.
 Each step of a task reuses what the step before sent (Claude keeps the conversation for five
