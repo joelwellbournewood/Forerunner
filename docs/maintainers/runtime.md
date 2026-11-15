@@ -2719,8 +2719,9 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   refuses means the checks are not run (`evidence.notChecked` says why); without a sandbox port
   (an engine test world) they run as processes in the folder.
 - **The scripts as they were before the task** (L-5, ADR 0110). When the task changed
-  `package.json`, `scriptsBefore` reads its scripts from git (the folder's first `Workspace before
-  … (task <id>)` commit, else the merge base with `origin/HEAD`) and `projectChecks(root, before)`
+  `package.json`, `scriptsBefore` reads its scripts from git (the folder's first snapshot for the
+  task: an earlier version's `Workspace before … (task <id>)` commit, else `firstSnapshotRef`,
+  since run L3 the snapshot's message names no id; else the merge base with `origin/HEAD`) and `projectChecks(root, before)`
   runs a changed or removed `build` / `lint` / `typecheck` / `test` as it was (`npm exec -c
   "<script>"`, required, under its own name) and the changed one beside it as "<name> (as this
   task changed it)" (`CHANGED_SCRIPT_SUFFIX`, not required); the notes ("this task changed the
@@ -2950,7 +2951,8 @@ the next task started or the session ended (fixup-w15-words). Tests: `budget-pau
 verdict and read the session view, the project's line, the chat block and `currentFromLog` (no
 task in flight). The critic's diff of
 a project's folder whose session end committed the work is the task's files since its last
-"Workspace before ..." snapshot (`GitDiffPort.diffFor(..., { taskFiles })`), and its artifacts say
+"Workspace before ..." snapshot (`GitDiffPort.diffFor(..., { taskFiles })`; the snapshot is
+found by `snapshotRef`, else an earlier version's "(task <id>)" message, L3-run-11), and its artifacts say
 the review is of a run from an earlier session. Anything else (another attempt, a changed file, no
 worktree, a folder linked from the person's own computer, whose executor has no hook) runs the
 specialist again, as before. Test: `budget-pause.test.ts` 'w15-review, wave 15' (one coder run in

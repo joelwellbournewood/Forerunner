@@ -1539,7 +1539,8 @@ describe("a paused task keeps its work and continues from it (budget-resume)", {
     expect(notes.changedFiles).toEqual(["notes.md"]);
     // Its snapshot ("Workspace before ...") took nothing of the paused task's work.
     const snapshot = await s.gitIn(s.workspace, ["show", "--name-only", "--format=%s", "HEAD"]);
-    expect(snapshot.split("\n")[0]).toBe(`Workspace before "Write the notes" (task ${other.id})`);
+    // L3-run-11: the subject names the task, never its id.
+    expect(snapshot.split("\n")[0]).toBe(`Workspace before "Write the notes"`);
     expect(snapshot).not.toContain("guide.md");
     const exec = s.exec(agent(() => undefined));
     const aside = await exec.setAsideWork(await s.w.store.task.mustGet(s.task.id));

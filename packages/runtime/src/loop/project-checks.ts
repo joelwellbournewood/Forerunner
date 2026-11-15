@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { LOCAL_ONLY_DIR } from "@forerunner/capabilities";
+import { firstSnapshotRef, LOCAL_ONLY_DIR } from "@forerunner/capabilities";
 import type { CheckCommand } from "@forerunner/critic";
 import { join, type RunOptions, type RunResult } from "@forerunner/platform";
 import { TRY_FOLDER } from "./try-plan.ts";
@@ -195,7 +195,18 @@ export async function scriptsBefore(
       `--grep=(task ${taskId})`,
       "--reverse",
     ]);
+    // An earlier version's first snapshot named the task's id in its message; since run L3 the
+    // first snapshot is found by its ref (L3-run-11).
     let base = mine.code === 0 ? (mine.stdout.split(/\r?\n/).find((l) => l.trim()) ?? "") : "";
+    if (!base) {
+      const first = await git([
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `${firstSnapshotRef(taskId)}^{commit}`,
+      ]);
+      base = first.code === 0 ? first.stdout.trim() : "";
+    }
     if (!base) {
       const origin = await git(["rev-parse", "--verify", "--quiet", "origin/HEAD"]);
       if (origin.code !== 0) return null;

@@ -11,6 +11,7 @@ import { fileTools } from "../src/daemon/tools.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
 import { GitDiffPort } from "../src/loop/critic.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
+import { scriptsBefore } from "../src/loop/project-checks.ts";
 import type { TaskBillingPick } from "../src/session/billing.ts";
 import { LoopTaskExecutor, type SpecialistSpec } from "../src/session/executor.ts";
 import { flatPricing, harness, issue, ScriptedProvider } from "./helpers.ts";
@@ -253,5 +254,69 @@ describe("a project without a repository works in its workspace folder (U-037)",
     expect(second.changedFiles).toEqual(["CHANGELOG.md"]);
     const log = await run(["git", "log", "--format=%s"], { cwd: w.workspace });
     expect(log.stdout).toContain(`Workspace before "${w.task.title}"`);
+  });
+});
+
+/**
+ * l3-small, run L3 (live check 3, L3-run-11): git log in the project's folder read 'Workspace
+ * before "Write the Swiss pairing tool with tests" (task 01a1ddb7-8b9f-...)', once per attempt.
+ * The commit names the task; the task's snapshots are found by refs of Forerunner's own, so the
+ * checks that compare against the folder before the task still find them.
+ */
+describe("l3-small, run L3: the folder's commits name the task, never its id (L3-run-11)", () => {
+  it("two attempts leave 'Workspace before \"<title>\"' twice, no id in any message; the checks still find the snapshot before the task", async () => {
+    const w = await world("loop");
+    writeFileSync(
+      join(w.workspace, "package.json"),
+      JSON.stringify({ scripts: { test: "node --test" } }),
+      "utf8",
+    );
+    const attempt = (change: () => void) =>
+      new PrTaskExecutor({
+        store: w.store,
+        clock: w.h.clock,
+        host: new MemoryGitHost("alice"),
+        inner: {
+          execute: async () => ({ outcome: "done", summary: "x", costUsdMicro: 0 }),
+          withWorktree: () => ({
+            execute: async () => {
+              change();
+              return { outcome: "done", summary: "x", costUsdMicro: 0 };
+            },
+          }),
+        },
+        repoFor: async () => null,
+        workspaceFor: async () => w.workspace,
+        worktreeRoot: join(w.workspace, "..", "wt"),
+      }).execute({
+        task: w.task,
+        session: {} as never,
+        token: {} as never,
+        budget: {} as never,
+        item: { taskId: w.task.id, title: w.task.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      });
+    await attempt(() =>
+      writeFileSync(
+        join(w.workspace, "package.json"),
+        JSON.stringify({ scripts: { test: "echo changed by the first attempt" } }),
+        "utf8",
+      ),
+    );
+    await attempt(() => writeFileSync(join(w.workspace, "pairing.js"), "export {};\n", "utf8"));
+    const messages = (await run(["git", "log", "--format=%B"], { cwd: w.workspace })).stdout;
+    expect(messages).not.toContain(w.task.id);
+    expect(messages).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/);
+    expect(messages).not.toContain("(task ");
+    const subjects = (await run(["git", "log", "--format=%s"], { cwd: w.workspace })).stdout
+      .split("\n")
+      .filter((s) => s.startsWith("Workspace before"));
+    // One snapshot per attempt at least, each named by the task's title alone.
+    expect(subjects.length).toBeGreaterThanOrEqual(2);
+    expect([...new Set(subjects)]).toEqual([`Workspace before "${w.task.title}"`]);
+    // The project's checks compare the scripts with the folder as it was before the task: its
+    // first snapshot (the world's first attempt, before any package.json), found without an id
+    // in any message; not the package.json the attempts changed since, and not "unknown" (null).
+    expect(await scriptsBefore(w.workspace, w.task.id, run)).toEqual({ scripts: {} });
   });
 });
