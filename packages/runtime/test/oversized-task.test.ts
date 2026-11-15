@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
@@ -7,7 +7,7 @@ import { ModelCallLog } from "../../../testenv/src/bench/call-log.ts";
 import { benchOptionsFromEnv, createRolePlayer } from "../../../testenv/src/bench/role-player.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
-import { handoffOf } from "../src/session/budget-pause.ts";
+import { handoffOf, WRAP_UP_BRIEF_LINE } from "../src/session/budget-pause.ts";
 
 /**
  * d1109-oversize-start (U-089, OS-2; the owner's D4 of 2026-11-09: "it should get a warning, but
@@ -370,6 +370,21 @@ describe("d1109-oversize-pause", () => {
     expect(String(ended.summary)).not.toMatch(
       /after the other tasks|after the work that fits|one task that large/,
     );
+    // OP-1: the larger task's brief, as the model received it, has the wrap-up line word for
+    // word, and its run heard the wrap-up's new words once.
+    const calls = readFileSync(join(home, "model-calls.jsonl"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as { task?: string; specialist?: string; messages: unknown[] });
+    const shopCalls = calls.filter(
+      (c) => c.specialist === "coder" && JSON.stringify(c.messages[0]).includes("Build the shop"),
+    );
+    expect(shopCalls.length).toBeGreaterThan(0);
+    expect(JSON.stringify(shopCalls[0]?.messages[0])).toContain(
+      JSON.stringify(WRAP_UP_BRIEF_LINE).slice(1, -1),
+    );
+    const last = JSON.stringify(shopCalls.at(-1)?.messages ?? []);
+    expect(last.split("Finish the step you are on and start nothing new.").length - 1).toBe(1);
   }, 240_000);
 
   it("with the larger task at the highest priority it runs first, and the others wait for what it leaves", async () => {

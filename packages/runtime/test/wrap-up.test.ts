@@ -7,6 +7,7 @@ const WRAP_UP_TEXT = wrapUpText(50_000, 250_000);
 
 import { type QueryLike, SdkAgentDriver } from "../src/agent/sdk.ts";
 import type { ChatMessage } from "../src/provider/types.ts";
+import { parseHandoff, WRAP_UP_BRIEF_LINE } from "../src/session/budget-pause.ts";
 import { budget, flatPricing, harness, issue, registry, ScriptedProvider } from "./helpers.ts";
 
 /**
@@ -235,5 +236,144 @@ describe("the Agent SDK path's wrap-up message (budget-stop)", () => {
       saveOnly: true,
     });
     expect(events.at(-1)?.type).toBe("run_end");
+  });
+});
+
+/**
+ * d1109-oversize-pause (OP-1; the owner's D4 of 2026-11-09: "wrap up in an organized and error
+ * free way such that the work can be continued in the next run"): the wrap-up says what a good
+ * wrap-up leaves (the step it is on finished, files that build and run, a change it cannot finish
+ * undone or kept out of use, what is half done and where, the next step first, a caveat under
+ * "Where I stopped:"), exactly as the model receives it on both drivers, and the brief's line
+ * says the same. The trigger, the line, the reserve and WRAP_UP_MARK are unchanged.
+ */
+describe("d1109-oversize-pause, run C: the words of a good wrap-up (OP-1)", () => {
+  const EXACT_62 =
+    "Wrap up now: this run has used 62% of what it may spend, and its next step could take it past the share kept to finish. Finish the step you are on and start nothing new. Leave the files so the work can go on: what you changed builds and runs, and a change you cannot finish in a step or two is undone or kept out of use. End your report with Where I stopped: (what is done, anything half done with its file, and any caveat or what you did not cover) and Left to do: (only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras).";
+  /** The delivered text with its share set to 62%, to compare with the exact words. */
+  const at62 = (text: string) =>
+    text.replace(/^(Wrap up now: this run has used )\S+(?: 1%)?/, "$162%");
+
+  it("the text, word for word, with the run's share", () => {
+    expect(wrapUpText(62_000, 100_000)).toBe(EXACT_62);
+    expect(wrapUpText(62_000, 100_000).startsWith(WRAP_UP_MARK)).toBe(true);
+    // It asks for no commit (Forerunner commits) and promises no check.
+    expect(EXACT_62).not.toMatch(/\bcommit|\bcheck/i);
+  });
+
+  it("the loop driver: the request after the line carries it once, after the tool results", async () => {
+    const h = harness();
+    const provider = new ScriptedProvider(
+      [
+        ...Array.from({ length: 5 }, () => ({
+          text: "Working.",
+          tools: [{ name: "echo", input: { text: "part" } }],
+          usage: { input_tokens: 5_000, output_tokens: 10 },
+        })),
+        {
+          text: "Where I stopped: two parts; part three is half done in parts.md.\n\nLeft to do:\n- Finish part three in parts.md\n- Write part four",
+          usage: { input_tokens: 5_000, output_tokens: 10 },
+        },
+      ],
+      h.clock,
+    );
+    const res = await new LoopAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock }).run({
+      token: issue(h, { budgetUsdMicro: 30_000 }),
+      budget: budget("sess-1", 50_000_000, h.clock),
+      provider,
+      model: "fake-haiku",
+      billingSourceId: "bs",
+      system: "You are a test agent.",
+      messages: [{ role: "user", content: "do the parts" }],
+      tools: registry(),
+      pricing: flatPricing,
+      timeoutMs: 60_000,
+      maxTokensPerCall: 1_000,
+      // As the executor passes it: worded from the run's spend when it is sent.
+      wrapUp: wrapUpText,
+    });
+    expect(res.wrapUpSent).toBe(true);
+    const all = provider.calls.at(-1)?.messages ?? [];
+    const told = all
+      .flatMap((m) => textBlocks(m))
+      .filter((b) => b.text.startsWith(WRAP_UP_MARK))
+      .map((b) => b.text);
+    expect(told).toHaveLength(1);
+    expect(at62(told[0] as string)).toBe(EXACT_62);
+    // The report written as the words ask, the next step first, reads into the same handoff.
+    expect(parseHandoff(res.finalText ?? "")).toEqual({
+      stopped: "two parts; part three is half done in parts.md.",
+      leftToDo: ["Finish part three in parts.md", "Write part four"],
+    });
+  });
+
+  it("the Agent SDK path: PostToolUse's additionalContext is the same words, once", async () => {
+    type Hook = (i: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    const h = harness();
+    const outputs: Record<string, unknown>[] = [];
+    const q: QueryLike = ({ options }) => {
+      const hooks = (options as { hooks: { PostToolUse: { hooks: Hook[] }[] } }).hooks;
+      const post = hooks.PostToolUse[0]?.hooks[0] as Hook;
+      return (async function* () {
+        for (let i = 0; i < 6; i++) {
+          yield {
+            type: "assistant",
+            message: {
+              id: `msg_${i}`,
+              content: [{ type: "tool_use", id: `t${i}`, name: "mcp__forerunner__echo" }],
+              usage: {
+                input_tokens: 140_000,
+                output_tokens: 1,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+              },
+            },
+          };
+          outputs.push(
+            await post({
+              tool_name: "mcp__forerunner__echo",
+              tool_input: { text: "x" },
+              tool_use_id: `t${i}`,
+              tool_response: "ok",
+            }),
+          );
+        }
+        yield { type: "result", subtype: "success", is_error: false, result: "done" };
+      })();
+    };
+    const res = await new SdkAgentDriver({
+      hooks: h.hooks,
+      kill: h.kill,
+      clock: h.clock,
+      queryImpl: q,
+    }).run({
+      token: issue(h, { allowedTools: ["echo"], budgetUsdMicro: 1_000_000 }),
+      budget: budget("sess-1", 50_000_000, h.clock),
+      billingSourceId: "bs",
+      credential: { kind: "oauth_token", value: "oat-value" },
+      model: "claude-sonnet-5-5",
+      systemPrompt: "sys",
+      prompt: "p",
+      cwd: process.cwd(),
+      tools: registry(),
+      pricing: flatPricing,
+      timeoutMs: 60_000,
+      wrapUp: wrapUpText,
+    });
+    expect(res.wrapUpSent).toBe(true);
+    const contexts = outputs
+      .map(
+        (o) =>
+          (o.hookSpecificOutput as { additionalContext?: string } | undefined)?.additionalContext,
+      )
+      .filter((c): c is string => typeof c === "string");
+    expect(contexts).toHaveLength(1);
+    expect(at62(contexts[0] as string)).toBe(EXACT_62);
+  });
+
+  it("the brief's line, word for word", () => {
+    expect(WRAP_UP_BRIEF_LINE).toBe(
+      "If Forerunner tells you to wrap up, finish the step you are on, start nothing new, and leave the files so the work can go on (what you changed builds and runs; a change you cannot finish is undone or kept out of use). Then end your report with 'Where I stopped:' (what is done, anything half done with its file, and any caveat or what you did not cover) and 'Left to do:' (only what the task's criteria still need, as a list with the next step first, or 'nothing'; no optional extras): the run that continues this task starts from them.",
+    );
   });
 });

@@ -1089,11 +1089,12 @@ describe("w15-run, wave 15: 'Left to do' counts only what the criteria still nee
   });
 
   it("the wrap-up the model hears and the brief's line ask for what the criteria still need, or nothing", () => {
+    // d1109-oversize-pause (OP-1): "as a list with the next step first" (before: "as a list").
     expect(wrapUpText(10_000, 100_000)).toContain(
-      "Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",
+      "Left to do: (only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras).",
     );
     expect(WRAP_UP_BRIEF_LINE).toContain(
-      "'Left to do:' (only what the task's criteria still need, as a list, or 'nothing'; no optional extras)",
+      "'Left to do:' (only what the task's criteria still need, as a list with the next step first, or 'nothing'; no optional extras)",
     );
   });
 
@@ -1130,9 +1131,10 @@ describe("w15-run, wave 15: 'Left to do' counts only what the criteria still nee
       const mine = calls.filter(coderOn("Popover notes"));
       const told = mine.find(heardWrapUp);
       expect(told).toBeDefined();
-      // The request the model received asked for what the criteria still need, or nothing.
+      // The request the model received asked for what the criteria still need, or nothing
+      // (d1109-oversize-pause, OP-1: "as a list with the next step first").
       expect(JSON.stringify(told?.messages.at(-1))).toContain(
-        "only what the task's criteria still need, as a list, or nothing; no optional extras",
+        "only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras",
       );
       // Reviewed and done; never paused at its budget.
       const task = await rt.store.task.mustGet(r.taskId);
@@ -1176,8 +1178,10 @@ describe("w15-run, wave 15: the wrap-up's words say what is true (W15-16)", () =
   // The share is of the run's cap, which on a continued run is what is left of the task's
   // budget: "this run ... of what it may spend" is true on every run (review of W15-16).
   it("the model hears the share it really used, not 'about a fifth is left'", () => {
+    // d1109-oversize-pause (OP-1): what a good wrap-up leaves (before: "Start nothing new, leave
+    // the files working, and end your report with Where I stopped: and Left to do: (...)").
     expect(wrapUpText(29_045, 187_500)).toBe(
-      "Wrap up now: this run has used 15% of what it may spend, and its next step could take it past the share kept to finish. Start nothing new, leave the files working, and end your report with Where I stopped: and Left to do: (only what the task's criteria still need, as a list, or nothing; no optional extras).",
+      "Wrap up now: this run has used 15% of what it may spend, and its next step could take it past the share kept to finish. Finish the step you are on and start nothing new. Leave the files so the work can go on: what you changed builds and runs, and a change you cannot finish in a step or two is undone or kept out of use. End your report with Where I stopped: (what is done, anything half done with its file, and any caveat or what you did not cover) and Left to do: (only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras).",
     );
     expect(wrapUpText(1_000, 300_000)).toMatch(
       /^Wrap up now: this run has used under 1% of what it may spend,/,

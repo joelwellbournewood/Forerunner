@@ -43,10 +43,14 @@ export interface RunHandoff {
 
 /**
  * The brief's line for the two headings (ADR 0112): what they are for, so a run that hears the
- * wrap-up ends its report with them.
+ * wrap-up ends its report with them. d1109-oversize-pause (OP-1, the owner's "wrap up in an
+ * organized and error free way"): it also says what a good wrap-up leaves, as `wrapUpText` does,
+ * and that a caveat goes under "Where I stopped:" (L3-left-4). Before: "If Forerunner tells you to
+ * wrap up, start nothing new and end your report with 'Where I stopped:' (what is done and where
+ * the work stands) and 'Left to do:' (...)".
  */
 export const WRAP_UP_BRIEF_LINE =
-  "If Forerunner tells you to wrap up, start nothing new and end your report with 'Where I stopped:' (what is done and where the work stands) and 'Left to do:' (only what the task's criteria still need, as a list, or 'nothing'; no optional extras): the run that continues this task starts from them.";
+  "If Forerunner tells you to wrap up, finish the step you are on, start nothing new, and leave the files so the work can go on (what you changed builds and runs; a change you cannot finish is undone or kept out of use). Then end your report with 'Where I stopped:' (what is done, anything half done with its file, and any caveat or what you did not cover) and 'Left to do:' (only what the task's criteria still need, as a list with the next step first, or 'nothing'; no optional extras): the run that continues this task starts from them.";
 
 const MAX_STOPPED_CHARS = 600;
 const MAX_ITEMS = 20;
