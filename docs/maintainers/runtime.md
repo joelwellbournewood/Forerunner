@@ -364,10 +364,20 @@ reports it when the message opens, so a call aborted before `message_end` still 
 billed input tokens on record; the live harness's spend ledger reads it (testing.md, "Live
 runs"). `collectStream` keeps that figure as the response's usage until `message_end` replaces
 it, so a stream cut off with `error: aborted` returns the input side with `stop_reason:
-"error"`, and the loop driver adds a cut-off call's reported usage and cost to the run before
-it rethrows the kill or the timeout: the Run row and the session budget still count the billed
-input of a killed call (`loop.test.ts`, "a call the kill switch cuts off keeps the input
-tokens").
+"error"`, and the loop driver books a cut-off call like any call before it rethrows the kill or
+the timeout (L3-run-5, live check 3): its reported usage and cost go into the run's total, one
+cost-ledger row and the session's budget (`hooks.afterModelCall` with `afterStop`, since Stop
+has already revoked the token; a failed booking is logged and never hides the stop), and one
+`model_call_end` with `stopReason: "error"`, from which the runner books the session's spend
+and the task's cost live and the executor the Run row's (the runner's end-of-run `rest` is then
+0, so nothing is counted twice). A call that reported no usage costs nothing and says no end, as
+before. Before, the abort branch kept the cost in the run's total only: after Stop now during
+the reviewer's first call the Tasks row and the drawer read CHF 0.01 while the session, Costs
+and the month read CHF 0.00, and the ledger under-reported what the provider billed (`loop.test.ts`,
+"a call the kill switch cuts off keeps the input tokens" and "l3-money-engine, run L3";
+`real-daemon.test.ts`, "l3-money-engine, run L3", L3-run-5). The bench's stand-in sends the
+input side on `message_start` too (`role-player.ts`), so a stopped stand-in call is booked as a
+real one is.
 
 **What the subprocess inherits and what it gets back (security review, `test/security-sdk.test.ts`).**
 `scrubEnv` builds the subprocess environment (and the process sandbox's base environment): a

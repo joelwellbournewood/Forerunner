@@ -15977,3 +15977,170 @@ describe("d1109-sessions, run C", () => {
     }
   }, 120_000);
 });
+
+describe("l3-money-engine, run L3", () => {
+  /**
+   * Live check 3's money and session-review findings (L3-run-5, L3-run-2, L3-run-8, L3-run-10),
+   * on the bench's stand-in (the role-player) on a home on disk, so the same home can be
+   * composed again. `holdNextCall()`: the next specialist call sends its message_start (the
+   * input side of the bill, as the Messages API does) and then waits until its run is stopped,
+   * as the reviewer's first call did when the person pressed Stop now.
+   */
+  async function world(env: Record<string, string> = {}) {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l3-money-"));
+    const bench = benchOptionsFromEnv(
+      { FORERUNNER_BENCH_DELAY_MS: "0", ...env },
+      new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+    );
+    const provider = createRolePlayer(bench);
+    const stream = provider.stream.bind(provider);
+    let held: (() => void) | null = null;
+    const holdNextCall = () =>
+      new Promise<void>((started) => {
+        held = started;
+      });
+    provider.stream = (req) => {
+      const label = req.origin?.label ?? "";
+      const started = held;
+      if (!started || label.startsWith("critic") || !label.includes(" on ")) return stream(req);
+      held = null;
+      return (async function* () {
+        for await (const ev of stream(req)) {
+          yield ev;
+          if (ev.type !== "message_start") continue;
+          started();
+          await new Promise<void>((resolve) => {
+            if (req.signal?.aborted) resolve();
+            else req.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          yield { type: "error" as const, code: "aborted", message: "aborted", retryable: false };
+          return;
+        }
+      })();
+    };
+    const open = async () => {
+      const rt = await composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock: new SystemClock(),
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault(),
+        provider,
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+      });
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+    return { open, bench, home, holdNextCall };
+  }
+
+  const ENDED = ["completed", "stopped", "failed", "killed"];
+  const endOf = async (client: DaemonClient, sessionId: string) => {
+    await eventually(
+      async () => ENDED.includes((await client.session(sessionId)).status),
+      `session ${sessionId} to end`,
+      async () => (await client.session(sessionId)).status,
+      30_000,
+    );
+    return client.session(sessionId);
+  };
+  /** The CHF figure a sentence names ("… CHF 0.04."), or null. */
+  const chfIn = (text: string) => /CHF (\d+\.\d{2})/.exec(text)?.[1] ?? null;
+
+  it("L3-run-5: a call Stop now cuts off is booked once: the task, the session, Costs and the month say one figure, also after a restart", async () => {
+    // The plan's first task bills 60,000 input tokens more per call, so the cut-off call is
+    // worth a few centimes (the live reviewer's was CHF 0.01).
+    const w = await world({ FORERUNNER_BENCH_USAGE: "page:60000" });
+    let { rt, client } = await w.open();
+    try {
+      const me = await client.me();
+      const project = await client.createProject({
+        name: "Quote page",
+        goal: "A quote page",
+        brief: "A page that shows a quote.",
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      const monthBefore = (await client.startCheck(project.id)).monthLeft?.usdMicro ?? 0;
+      expect(monthBefore).toBeGreaterThan(0);
+      const costsBefore = (await client.costs({ projectId: project.id })).totals.usdMicro;
+      // Approve and start: the session's first specialist call is held after its message_start.
+      const started = w.holdNextCall();
+      await client.answerRequest(card?.id ?? "", {
+        version: card?.version ?? 0,
+        answer: "Approve and start",
+      });
+      await started;
+      const sessionId =
+        (await client.sessions({ projectId: project.id })).find((s) => !s.planning)?.id ?? "";
+      expect(sessionId).not.toBe("");
+      // Stop now, as the session page sends it.
+      await client.stopSession(sessionId);
+      const session = await endOf(client, sessionId);
+      const run = (await rt.store.run.forSession(sessionId)).find((r) => r.specialist !== "critic");
+      const taskId = run?.task_id ?? "";
+      const runCost = run?.cost_usd_micro ?? 0;
+      expect(runCost).toBeGreaterThan(0);
+      // The ledger's rows for the session are the run's cost: the cut-off call is on it once.
+      expect((await rt.store.costLedger.sum({ sessionId })).usd_micro).toBe(runCost);
+
+      const read = async (c: DaemonClient) => {
+        const task = (await c.task(taskId)).task;
+        const s = await c.session(sessionId);
+        const costs = await c.costs({ projectId: project.id });
+        const row = (await c.sessionTasks(sessionId)).tasks.find((t) => t.id === taskId);
+        return {
+          task: task.spent?.usdMicro ?? task.actual.usdMicro,
+          session: s.spent.usdMicro,
+          sessionRow: row?.spent.usdMicro ?? null,
+          byTask: costs.byTask.find((b) => b.key === taskId)?.cost.usdMicro ?? null,
+          costs: costs.totals.usdMicro - costsBefore,
+          monthFell: monthBefore - ((await c.startCheck(project.id)).monthLeft?.usdMicro ?? 0),
+          sessionWords: chfIn(s.summary),
+          rowWords: chfIn(row?.spentWords ?? ""),
+        };
+      };
+      const seen = await read(client);
+      const chf = seen.rowWords;
+      expect(chf).not.toBeNull();
+      expect(chf).not.toBe("0.00");
+      expect(seen).toEqual({
+        task: runCost,
+        session: runCost,
+        sessionRow: runCost,
+        byTask: runCost,
+        costs: runCost,
+        monthFell: runCost,
+        sessionWords: chf,
+        rowWords: chf,
+      });
+      // The session's result names that figure ("Stopped by you. … CHF 0.04.").
+      expect(session.summary).toMatch(/^Stopped by you\b/);
+      expect(session.summary).toContain(`CHF ${chf}`);
+      // Restart: the same figures, read from the same home.
+      await rt.close();
+      ({ rt, client } = await w.open());
+      expect(await read(client)).toEqual(seen);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
