@@ -496,3 +496,29 @@ Two lines of point 6 of the wave 15 amendment ('w15-run', W15-20 and W15-21), af
    cost are two writes: the run line follows each call at the tab's pace (its 5 s poll and
    `project.changed`), with no Loading line, and the version a Stop is sent with stays the one
    the drawer read.
+
+## Amendment 2026-11-15 (run C, C2, 'd1109-oversize-pause'): the wrap-up's words, the kept work's check, the next Start and no loop
+
+The owner's D4 ("wrap up in an organized and error free way such that the work can be continued
+in the next run") and answer 5 ("be able to wrap up and continue next time").
+
+- **Point 3's words and the W15-16 wording.** The wrap-up the model hears (`wrapUpText`) and the
+  brief's line (`WRAP_UP_BRIEF_LINE`) now say what a good wrap-up leaves: finish the step it is on
+  and start nothing new; what it changed builds and runs; a change it cannot finish is undone or
+  kept out of use; "Where I stopped:" says what is done, anything half done with its file, and
+  any caveat or what it did not cover; "Left to do:" has only what the criteria still need, the
+  next step first. The trigger, the line, the reserve, `WRAP_UP_MARK` and `parseHandoff` stay.
+- **Point 5.** A paused task is still reviewed only when its work is done. After a pause that
+  changed a code file, the project's own checks run once on the kept work in the task's sandbox
+  (no network, no model, nothing booked; their output redacted and kept on the Run row as data).
+  The card, the result and the next brief say whether they pass; a failing check never reverts,
+  hides or reviews the work.
+- **The budget-resume amendment's points 4 and 5.** Continue at the session's budget asks for at
+  least what lets the estimate left fit the next session's work budget; a pause at a session's
+  budget (or at the specialist's limit as its session's last pause) with progress is also taken
+  by the next session's start, its card closed as that start went on with it; a pause at the
+  specialist's limit with progress goes on at once in the same session while a fifth of the work
+  budget is left. A pause that got no further than the last (the same kept work, no shorter list)
+  files a card that asks, with a note on Continue, and is never made ready by itself: the wake at
+  an outer limit leaves it out and, once the limit has room, files one question card for the same
+  pause instead. Cards filed before this amendment read and answer as before.

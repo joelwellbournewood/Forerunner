@@ -102,3 +102,48 @@ that starts as today.
 - **Two larger tasks a session, sharing what is left:** neither would get a useful share.
 - **Price every task at its estimate less its spend:** a task that starts over would read as
   fitting when it does not.
+
+## Amendment 2026-11-15 (run C, C2, 'd1109-oversize-pause'): in its turn, and the pause that keeps, checks and goes on
+
+The owner's answer 5 of 2026-11-09 decided the open question above: "As i said, it should work
+on tasks even when it cannot complete them, and be able to wrap up and continue next time. Again,
+I thought we talked about this." No special ordering.
+
+1. **In its turn (OP-0).** The larger task goes into the plan at its place in the planner's order
+   (priority, then the plan's order) with what is left of the work budget, at least a fifth
+   (`OVERSIZED_MIN_ROOM_SHARE` stays); every task after it waits behind it (`after_large`) and is
+   the session's own: when the larger task ends before the work budget is used (done, failed,
+   paused at its own budget or without progress) the re-plan takes them first, each by the room
+   left, and those it cannot take are "Left for next time" ('"B" waits for your next session:
+   "Build the shop" used the rest of this one.'). With less than a fifth left at its turn it is
+   left out (`no_room`) and the cut goes on. The hold (`takeHeld`) and `one_large` are gone; a
+   second larger task comes after the first. The Start dialog, chat's read-back and the result
+   name the tasks before it ('after "A" it works with about CHF 2.80') and after it ('"B" comes
+   after it: it runs if "Build the shop" leaves budget, else in your next session.').
+2. **Continue next time.** A task paused at a session's work budget (or at its specialist's limit
+   per run as its session's last pause) whose pause got further is taken by the next session's
+   start in its turn, planned at what is left of its estimate; its card is closed in the same
+   transaction as its move to ready ('Your session of 14:05 went on with it.'), adding money to no
+   budget. Continue stays for going on at once ('Starts a session now with CHF 3.00; without it,
+   your next Start takes it in its turn.'). Not taken: a pause at the task's own budget, one
+   without progress, one at an outer limit.
+3. **Do as much as it can (OP-5).** A pause at its specialist's limit per run with progress, a
+   fifth of the work budget left, no Stop after this task and runs left goes on at once in the
+   same session from where it stopped, with no card in between; every run is capped as before.
+4. **A good wrap-up (OP-1)** is asked for in the words the model hears, on both drivers and in
+   the brief: finish the step, leave files that build and run, undo or keep out of use what cannot
+   be finished, say what is half done and where, put the next step first, a caveat under "Where I
+   stopped:".
+5. **The kept work is checked (OP-2)** by the project's own checks (the critic's list) in the
+   task's sandbox with no network, never on the host, no model and nothing booked; the end of each
+   output, redacted, is kept on the Run row and quoted as data in the next brief (OP-3), and the
+   card says whether they pass. A failing check never reverts or hides the work.
+6. **No loop (OP-4).** A pause that got no further (the same fingerprint of its kept work and no
+   shorter list) asks the person (a note on Continue goes into the next brief) and is never made
+   ready again by itself: not by the next Start, not by a raised or reset outer limit (the card
+   becomes one question once the limit has room).
+7. **Continue's floor (OP-6):** at the session's budget, at least what lets the estimate left fit
+   the next session's work budget (the estimate left over one less the reserve share).
+
+Who starts the next session follows ADR 0118 (d1109-starts-engine, C3), which keeps the larger
+task at its place, the `after_large` tasks after it and the no-progress guard.
