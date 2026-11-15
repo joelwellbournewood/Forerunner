@@ -596,9 +596,11 @@ needs something I do not have here". Trying again." and how it ended ("Session o
 needs you. CHF 0.06."). A task the critic sends back is tried again in the same session; each
 try is one line, and "The writer takes over …" says when another specialist tries it; the lines
 after it name that specialist, including "The writer could not do …" when its own try fails too. **Details**
-adds the internal steps (the brief, memory, each tool call, each start and finish of a retry, the
-notifications sent), each line's event type, the level filters and the raw output; escalations
-are highlighted. The page's title says when the session began ("Quote page · session at
+adds the internal steps in words (the brief, memory, each tool call, each start and finish of a
+retry, the notifications sent) and the level filters; escalations are highlighted. Under it,
+**Show the raw events** adds each line's event type and the raw data the app records, for a bug
+report. A step that was refused says what and why: "was not allowed to write
+/tmp/players-readme.json (outside the project's folder)". The page's title says when the session began ("Quote page · session at
 14:05"); every time on it is written in 24 hours, the log's too. While it runs, a badge says
 how the page follows it: **Live**, or **Updates every 5 s** when live updates do not work in
 this window. A session that has ended shows its status only: its log is complete and the page
