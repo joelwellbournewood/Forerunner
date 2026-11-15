@@ -703,4 +703,81 @@ describe("l3-money-engine, run L3", () => {
     ]);
     expect(plan.estimateUsdMicro).toBe(142_000);
   });
+
+  it("L3-run-8 sibling: a session whose only task failed and waits on its card says the work waits for your decision, not 'sent back for changes'", async () => {
+    const t = await w.store.task.insert({
+      project_id: w.project,
+      title: "Import the members",
+      outcome: "members.csv imported",
+      acceptance_criteria: ["works"],
+      risk_tier: 1,
+      status: "ready",
+      priority: 5,
+      est_cost_usd_micro: 50_000,
+      reason: "seed",
+    });
+    const critic: CriticPort = {
+      async reviewTask() {
+        throw new Error("a failed run is not reviewed");
+      },
+      async reviewSession(req) {
+        const out = await reviewSession({
+          store: w.store,
+          sessionId: req.sessionId,
+          criticAgentId: w.agent,
+          clock: w.clock,
+        });
+        return {
+          reviewId: out.reviewId ?? null,
+          tier: 0,
+          verdict: out.verdict,
+          grade: out.grade,
+          confidence: out.confidence,
+          summary: out.summary,
+          findings: out.findings.map((f) => ({
+            severity: f.severity,
+            description: f.description,
+            requiredAction: f.requiredAction,
+          })),
+          costUsdMicro: 0,
+        };
+      },
+    };
+    const executor: TaskExecutor = {
+      async execute() {
+        return {
+          outcome: "failed",
+          summary: "The members file is not in the folder.",
+          costUsdMicro: 20_000,
+        };
+      },
+    };
+    const r = await new SessionRunner({
+      store: w.store,
+      clock: w.clock,
+      tokens: new TokenIssuer({ now: () => w.clock.now() }),
+      kill: new KillSwitch(),
+      planner: new StaticPlanner(),
+      executor,
+      critic,
+    }).start({
+      agentId: w.agent,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: 5_000_000,
+      grant,
+    });
+    expect(r.failed).toEqual([t.id]);
+    // The failed task's one card (Try again, Mark done anyway, Cancel task) is open.
+    const cards = await w.store.humanRequest.list({ task_id: t.id, status: "open" } as never);
+    expect(cards).toHaveLength(1);
+    const said = (await w.store.event.list(r.sessionId))
+      .filter((e) => e.type === "critic.session_review")
+      .map((e) => describeEvent(e.type, e.payload as Record<string, unknown>));
+    expect(said).toEqual([
+      expect.stringMatching(
+        /^Session review: the work waits for your decision \(grade \d+, \d+ findings?\)\.$/,
+      ),
+    ]);
+  });
 });
