@@ -2144,7 +2144,14 @@ budget-stop; the owner's decision of 2026-11-02).**
   done are whole words, and a "nothing" that goes on to name work ("but", "except", "not",
   "still", "missing", "incomplete", "fails" ...: `NOT_NOTHING`) stays an item, as does a hedge
   alone ("Maybe fix the failing build"; review of W15-14); the wrap-up and `WRAP_UP_BRIEF_LINE` ask for only what the criteria
-  still need, or nothing) and decides: a run is paused when it stopped
+  still need, or nothing; L3-research-1, ADR 0112's amendment of 2026-11-15: a "nothing" with
+  what it is about may also go on with a reason after punctuation, "Nothing is needed for the two
+  criteria: each listed page gives its address and was opened.", and a criterion may be named by
+  its number, "Nothing for criterion 1."; a "nothing" about the whole set of criteria, the brief
+  or the task (`aboutWholeSet`; not one criterion, `ONE_CRITERION`) makes the list's other items
+  that name no criterion `optional` notes, so a caveat beside it, "The list isn't exhaustive.
+  ...", no longer pauses finished work; an item that names a criterion stays work, a bare
+  "nothing" moves nothing) and decides: a run is paused when it stopped
   at a budget of any level (`stoppedBy: "budget"`), or when it heard the wrap-up in this run and
   listed at least one item (`stoppedBy: "wrap_up"`); a run that ends normally without a wrap-up,
   or after one with nothing left, is reviewed as usual. The result is `TaskExecutionResult`

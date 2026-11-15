@@ -169,13 +169,18 @@ async function runOne(
     sessionBudgetUsdMicro?: number;
     /** The project's own budget (0: none), set before its task is added. */
     projectBudgetUsdMicro?: number;
+    /** The project's name (default: the task's title and " project"). */
+    projectName?: string;
   } = {},
 ) {
   const projectId = (
     (await (
       await req("/projects", {
         method: "POST",
-        body: JSON.stringify({ name: `${title} project`, goal: "Pages for the club" }),
+        body: JSON.stringify({
+          name: opts.projectName ?? `${title} project`,
+          goal: "Pages for the club",
+        }),
       })
     ).json()) as Json
   ).id as string;
@@ -1535,4 +1540,134 @@ describe("w15-words, wave 15 run B", () => {
       async () => "the waiting review's session to end",
     );
   }, 120_000);
+});
+
+/**
+ * l3-handoff-checks, run L3 (live check 3, L3-research-1): the researcher heard the wrap-up and
+ * ended its report with a "Left to do:" whose first item said nothing is needed for the two
+ * criteria, with the reason after a colon, and whose second was an observation (the list is not
+ * exhaustive). Both were read as work left: the task was paused at its budget with a card that
+ * asked for CHF 0.15 more ("listed 2 things left to do"), and no critic read the finished work.
+ * The reply below is the model's final message (model-calls seq 11) word for word.
+ */
+const LIVE_L3_REPORT = [
+  "I wrote `popover-hint.md`. It lists five MDN pages that mention the `hint` value, each with its address and one line on what it says. I opened every page listed, and the list is partial.",
+  "",
+  '**Where I stopped:** I opened six MDN pages and listed the five that mention `hint`. The sixth, the `showPopover` page, doesn\'t mention it. Two pages define `hint`: the `popover` global attribute page and the `HTMLElement.popover` property page. The other three only mention it. The "Using the Popover API" page and the interest invokers page were cut off in the fetch. For "Using the Popover API" I saw only the headings of its `hint` section, and the file says so. No page was blocked by the domain rule. I wrote no tests and ran no commands. The brief asked only for the list, so nothing runs.',
+  "",
+  "**Left to do:**",
+  "- Nothing is needed for the two criteria: each listed page gives its address and was opened.",
+  "- The list isn't exhaustive. Pages I didn't open, such as `popovertarget`, `togglePopover`, `beforetoggle` and the Popover API examples, may also mention `hint`.",
+  "",
+  "Lesson: A fetched page can be cut off, so check which sections were actually read before making claims about them.",
+  "Lesson: In a task that offers no search tool, say in the result that the list is partial.",
+].join("\n");
+
+describe("l3-handoff-checks, run L3", () => {
+  describe("live check 3: L3-research-1", () => {
+    const left = (lines: string[]) =>
+      parseHandoff(["Where I stopped: here.", "", "Left to do:", ...lines].join("\n"));
+
+    it("the live report: nothing is left for the criteria; the observation after it is a note, not work", () => {
+      const h = parseHandoff(LIVE_L3_REPORT);
+      expect(h.leftToDo).toEqual([]);
+      expect(h.optional).toEqual([
+        "The list isn't exhaustive. Pages I didn't open, such as `popovertarget`, `togglePopover`, `beforetoggle` and the Popover API examples, may also mention `hint`.",
+      ]);
+      expect(h.stopped.startsWith("I opened six MDN pages and listed the five")).toBe(true);
+    });
+
+    it("a 'nothing' with what it is about and a reason after it is nothing", () => {
+      for (const line of [
+        "Nothing for the criteria; both are met.",
+        "Nothing is needed for the criteria: both are met.",
+        "Nothing is needed for the two criteria: each listed page gives its address and was opened.",
+        "None required by the brief (the file lists every page it names).",
+      ])
+        expect(left([`- ${line}`]).leftToDo, line).toEqual([]);
+    });
+
+    it("work stays work: a 'nothing' that goes on to name work, one about a part only, and what follows it", () => {
+      for (const line of [
+        "Nothing for the criteria: but the tests still fail",
+        "Nothing in the task works yet",
+        "Nothing for the criteria, except the tests still fail",
+        "Nothing: the criteria are not met yet",
+      ])
+        expect(left([`- ${line}`]).leftToDo, line).toEqual([line]);
+      // A "nothing" about one criterion says nothing of the rest: the next item is work.
+      expect(left(["- Nothing for criterion 1.", "- write the tests"])).toEqual({
+        stopped: "here.",
+        leftToDo: ["write the tests"],
+      });
+      expect(left(["- Nothing for the first criterion.", "- write the tests"]).leftToDo).toEqual([
+        "write the tests",
+      ]);
+      // An item that names a criterion is work even beside a "nothing" for the criteria.
+      expect(
+        left(["- Nothing for the criteria.", "- criterion 2 still needs its test"]).leftToDo,
+      ).toEqual(["criterion 2 still needs its test"]);
+      // A bare "nothing" says nothing about the criteria: what follows it stays work (as before).
+      expect(left(["- nothing", "- write the tests"]).leftToDo).toEqual(["write the tests"]);
+    });
+
+    it("the earlier W15-14 cases still read as they did", () => {
+      expect(parseHandoff(LIVE_F4_REPORT)).toMatchObject({ leftToDo: [] });
+      expect(left(["- write the last section", "- (optional) add a print style"])).toMatchObject({
+        leftToDo: ["write the last section"],
+        optional: ["(optional) add a print style"],
+      });
+    });
+
+    describe("through the composed runtime", () => {
+      const clock = new SimulatedClock("2026-11-15T06:18:00Z");
+      const home = mkdtempSync(join(tmpdir(), "fr-l3-research-1-"));
+      const calls: ModelRequest[] = [];
+      const title = "Search MDN for pages that mention popover hint";
+      const fake = new FakeProvider({
+        clock,
+        latency: "none",
+        onNoMatch: "echo",
+        replies: [
+          submitReply({}, { times: Number.POSITIVE_INFINITY }),
+          closingReply(),
+          ...works(title, 30_000, LIVE_L3_REPORT),
+        ],
+      });
+      const stream = fake.stream.bind(fake);
+      fake.stream = (r) => {
+        calls.push({ ...r, messages: structuredClone(r.messages) });
+        return stream(r);
+      };
+      let rt: RuntimeApp;
+      let req: Req;
+      beforeAll(async () => {
+        ({ rt, req } = await compose(home, clock, fake));
+      }, 120_000);
+      afterAll(async () => {
+        await rt?.close();
+      });
+
+      it("a run that heard the wrap-up and says nothing is needed for the criteria, then adds an observation, is reviewed and done: no budget card, no 'things left to do'", async () => {
+        const r = await runOne(req, rt, title, { budgetUsdMicro: 190_000 });
+        // The model heard the wrap-up (so this is the path that paused it live).
+        expect(calls.filter(coderOn(title)).find(heardWrapUp)).toBeDefined();
+        const task = await rt.store.task.mustGet(r.taskId);
+        expect(task.status).toBe("done");
+        expect(await rt.store.review.latestForTask(r.taskId)).toBeDefined();
+        expect(r.runs.map((x) => x.outcome)).toEqual(["completed"]);
+        const said = lines(r.events).join(" | ");
+        expect(said).not.toMatch(/paused before its budget/);
+        expect(said).not.toContain("things left to do");
+        expect(said).not.toContain("thing left to do");
+        const cards = (
+          (await (await req("/inbox")).json()) as { requests: Json[] }
+        ).requests.filter((q) => q.taskId === r.taskId);
+        expect(cards).toEqual([]);
+        // The critic read the report with its observation, as data.
+        const review = calls.find((c) => (c.tools ?? []).some((t) => t.name === "submit_review"));
+        expect(JSON.stringify(review?.messages)).toContain("The list isn't exhaustive.");
+      }, 60_000);
+    });
+  });
 });

@@ -421,3 +421,30 @@ its estimate after the work its paused runs kept (`estimateLeftUsdMicro`, ADR 01
 the same condition under which its brief starts with "## Where the last run stopped" (point 4
 above). The learner still takes no sample from a paused task (the cost amendment). W6-23's
 question of a card for a task that never ran is closed: it runs.
+
+## Amendment 2026-11-15 (run L3, 'l3-handoff-checks'): done work is reviewed, and the pause card lists its items whole
+
+Live check 3 (2026-11-15, the real model on wave 15's code) found the W15-14 rules of the
+amendment of 'w15-run' (point 2) too narrow, and the card's words cut.
+
+1. **A "nothing" for the criteria with a reason after it is nothing, and what follows it is a
+   note (L3-research-1; amends point 2 of 'w15-run').** A researcher that heard the wrap-up ended
+   with "Left to do: - Nothing is needed for the two criteria: each listed page gives its address
+   and was opened. - The list isn't exhaustive. Pages I didn't open ... may also mention hint."
+   and was paused at its budget with a card that asked for CHF 0.15 more ("listed 2 things left
+   to do"); no critic read the finished work, and Continue spent CHF 0.15 on what the criteria did
+   not need. `parseHandoff` read a line as nothing with what it is about OR with a reason, never
+   both, and judged each item alone. Now:
+   - a "nothing" with what it is about may go on with a reason after punctuation ("Nothing for
+     the criteria; both are met."), and a criterion may be named by its number ("Nothing for
+     criterion 1."); a reason that names work still keeps the line an item ("but", "except",
+     "not", "still", "missing", "fails" ...: unchanged), and after what it is about only
+     punctuation or the end of the line may follow ("Nothing in the task works yet" stays work);
+   - a "nothing" about the whole set ("the criteria", "the two criteria", "the brief", "the
+     task", "all criteria are met", "every criterion"; not "criterion 2" or "the first
+     criterion") makes the list's other items that name no criterion notes (`optional`): a
+     caveat, an observation or what the run did not cover is for the critic or the run that
+     continues, never work left. An item that names a criterion stays work, and a bare
+     "nothing" moves nothing.
+   The run then goes to its review, as point 2 already says for "nothing", and the critic judges
+   the criteria with the report (the notes included) as data.
