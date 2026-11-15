@@ -276,7 +276,8 @@ them as you left them; an open file or task stays on its own tab.
   each session's summary is folded under **Session checks**. The "review" link in a task's
   drawer opens its review highlighted.
 - **Costs** (under More): spend by model, specialist and task, in CHF, with the savings from
-  caching and context compression.
+  caching and context compression (a kind that saved nothing is not listed, and a project that
+  saved nothing shows no savings).
 - **Data** (under More): files and datasets the project knows about; agents see metadata and
   samples, never whole files.
 - **Chat**: ask about this project and change it in words. It knows the conversation so far,

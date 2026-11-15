@@ -751,3 +751,67 @@ describe("w15-tail, wave 15 run B: a removed project's page (W15B-02)", () => {
     ).rejects.toThrow('The project "Beacon" was removed, so nothing of it runs.');
   });
 });
+
+/**
+ * l3-money-screens, run L3 (live check 3's L3-run-13): Costs of a project whose only spend was
+ * planning read "Savings (not spend) / Context compression / CHF 0.00 · 0 tokens" (design §5
+ * rule 5: no zero counts). A line that saved nothing is left out, and so is the box when both did.
+ */
+describe("l3-money-screens, run L3", () => {
+  it("L3-run-13: a Savings line that saved nothing is left out; the other stays with its CHF and tokens", async () => {
+    const harness = createHarness();
+    const atlas = harness.daemon.state.costs.proj_atlas;
+    if (!atlas) throw new Error("no costs for proj_atlas");
+    // Nothing compressed; the prompt cache saved some.
+    atlas.savings = {
+      compressionTokens: 0,
+      compression: money(0),
+      cacheTokens: 1_200_000,
+      cache: money(2_880_000),
+    };
+    renderApp("/projects/proj_atlas/costs", harness);
+    const savings = await screen.findByTestId("cost-savings");
+    expect(savings).toHaveTextContent("Savings (not spend)");
+    expect(savings).toHaveTextContent("Prompt cache");
+    expect(within(savings).getByTestId("cost-savings-cache")).toHaveTextContent(
+      "CHF 2.30 · 1,200,000 tokens",
+    );
+    expect(savings).not.toHaveTextContent("Context compression");
+    expect(savings.textContent).not.toMatch(/\b0 tokens/);
+    expect(savings.textContent).not.toContain("CHF 0.00");
+  });
+
+  it("L3-run-13: a project that saved nothing (only planning ran) shows no Savings box", async () => {
+    const harness = createHarness();
+    const atlas = harness.daemon.state.costs.proj_atlas;
+    if (!atlas) throw new Error("no costs for proj_atlas");
+    atlas.savings = {
+      compressionTokens: 0,
+      compression: money(0),
+      cacheTokens: 0,
+      cache: money(0),
+    };
+    renderApp("/projects/proj_atlas/costs", harness);
+    expect(await screen.findByTestId("cost-total")).toHaveTextContent("CHF 25.00");
+    expect(screen.queryByTestId("cost-savings")).toBeNull();
+    expect(screen.getByTestId("costs")).not.toHaveTextContent("Savings");
+    expect(screen.getByTestId("costs").textContent).not.toMatch(/\b0 tokens/);
+  });
+
+  it("L3-run-13: tokens read from the prompt cache that no price covers say the tokens, never 'CHF 0.00' beside them", async () => {
+    const harness = createHarness();
+    const atlas = harness.daemon.state.costs.proj_atlas;
+    if (!atlas) throw new Error("no costs for proj_atlas");
+    atlas.savings = {
+      compressionTokens: 0,
+      compression: money(0),
+      cacheTokens: 63_793,
+      cache: money(0),
+    };
+    renderApp("/projects/proj_atlas/costs", harness);
+    const line = await screen.findByTestId("cost-savings-cache");
+    expect(line).toHaveTextContent(/^63,793 tokens$/);
+    expect(screen.getByTestId("cost-savings").textContent).not.toContain("CHF 0.00");
+    expect(screen.queryByTestId("cost-savings-compression")).toBeNull();
+  });
+});

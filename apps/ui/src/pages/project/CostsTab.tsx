@@ -70,6 +70,51 @@ function BucketTable({ title, rows, testId }: { title: string; rows: Bucket[]; t
   );
 }
 
+/** One line of "Savings (not spend)": what saved it, what that is worth and how many tokens. */
+export interface SavingsLineView {
+  kind: "compression" | "cache";
+  label: string;
+  money: CostView["savings"]["cache"];
+  tokens: number;
+}
+
+/**
+ * The lines of "Savings (not spend)" (ADR 0003, ADR 0008), with no zero counts (design §5 rule
+ * 5, L3-run-13): a line that saved nothing is left out (live check 3 read "Context compression /
+ * CHF 0.00 · 0 tokens" on a project whose only spend was planning), and no line means no box.
+ */
+export function savingsLines(savings: CostView["savings"]): SavingsLineView[] {
+  const lines: SavingsLineView[] = [
+    {
+      kind: "compression",
+      label: "Context compression",
+      money: savings.compression,
+      tokens: savings.compressionTokens,
+    },
+    { kind: "cache", label: "Prompt cache", money: savings.cache, tokens: savings.cacheTokens },
+  ];
+  return lines.filter((l) => l.tokens > 0 || l.money.chfMicro > 0);
+}
+
+/**
+ * "CHF 2.30 · 1,200,000 tokens"; tokens that no price covers (a model without a price row) read
+ * as the tokens alone, never "CHF 0.00" beside them.
+ */
+function SavingsLine({ line }: { line: SavingsLineView }) {
+  const worth = line.money.chfMicro > 0;
+  const tokens = line.tokens > 0 ? `${line.tokens.toLocaleString()} tokens` : "";
+  return (
+    <>
+      <dt className="text-neutral-500">{line.label}</dt>
+      <dd data-testid={`cost-savings-${line.kind}`}>
+        {worth ? <Money value={line.money} /> : null}
+        {worth && tokens ? " · " : ""}
+        {tokens}
+      </dd>
+    </>
+  );
+}
+
 /** Costs tab: totals, by model, by specialist, by task; savings shown separately (ADR 0008). */
 export function CostsTab({ projectId }: { projectId: string }) {
   const client = useClient();
@@ -80,6 +125,7 @@ export function CostsTab({ projectId }: { projectId: string }) {
     return <ErrorBanner message={costs.error} onRetry={costs.reload} />;
   const data = costs.data;
   if (!data) return null;
+  const savings = savingsLines(data.savings);
 
   return (
     <div className="space-y-4" data-testid="costs">
@@ -106,24 +152,19 @@ export function CostsTab({ projectId }: { projectId: string }) {
         <BucketTable title="By model" rows={data.byModel} testId="cost-by-model" />
         <BucketTable title="By specialist" rows={data.bySpecialist} testId="cost-by-specialist" />
         <BucketTable title="By task" rows={data.byTask} testId="cost-by-task" />
-        <div
-          data-testid="cost-savings"
-          className="rounded border border-emerald-200 p-3 dark:border-emerald-900"
-        >
-          <h3 className="text-sm font-semibold">Savings (not spend)</h3>
-          <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
-            <dt className="text-neutral-500">Context compression</dt>
-            <dd>
-              <Money value={data.savings.compression} /> ·{" "}
-              {data.savings.compressionTokens.toLocaleString()} tokens
-            </dd>
-            <dt className="text-neutral-500">Prompt cache</dt>
-            <dd>
-              <Money value={data.savings.cache} /> · {data.savings.cacheTokens.toLocaleString()}{" "}
-              tokens
-            </dd>
-          </dl>
-        </div>
+        {savings.length > 0 ? (
+          <div
+            data-testid="cost-savings"
+            className="rounded border border-emerald-200 p-3 dark:border-emerald-900"
+          >
+            <h3 className="text-sm font-semibold">Savings (not spend)</h3>
+            <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+              {savings.map((line) => (
+                <SavingsLine key={line.kind} line={line} />
+              ))}
+            </dl>
+          </div>
+        ) : null}
       </div>
     </div>
   );

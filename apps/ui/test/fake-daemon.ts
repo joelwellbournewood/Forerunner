@@ -11,6 +11,7 @@ import type {
   ConsolidationReportView,
   ConversationTurnView,
   ConversationView,
+  CostView,
   DaemonDeviceView,
   DesktopAllowEntryView,
   DesktopControlView,
@@ -484,6 +485,11 @@ export interface FakeDaemonState {
   reviewEvidence: Map<string, TaskReviewEvidence>;
   /** Screenshots `GET /tasks/:id/evidence?file=` serves, by `<task id>/<file>`, base64. */
   evidenceFiles: Map<string, string>;
+  /**
+   * What `GET /costs?projectId=` answers, by project (l3-money-screens: a test sets a project's
+   * savings to zero, or prices one line at nothing); a project not in it reads as Beacon's.
+   */
+  costs: Record<string, CostView>;
   sessions: SessionView[];
   /**
    * d1109-sessions (ADR 0116): each project's ended sessions as `GET /projects/:id/sessions`
@@ -1092,6 +1098,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     taskMeta: createTaskMeta(TASKS),
     reviewEvidence: new Map(),
     evidenceFiles: new Map(),
+    costs: clone(COSTS),
     runs: clone(RUNS),
     sessions: clone(SESSIONS),
     projectSessions: clone(PROJECT_SESSIONS),
@@ -1295,6 +1302,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.taskMeta = createTaskMeta(TASKS);
     state.reviewEvidence = new Map();
     state.evidenceFiles = new Map();
+    state.costs = clone(COSTS);
     state.sessions = clone(SESSIONS);
     state.projectSessions = clone(PROJECT_SESSIONS);
     state.projectSessionsChat = {};
@@ -3837,10 +3845,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.get("/costs", (c) => {
     const projectId = c.req.query("projectId");
     if (projectId) {
-      const found = COSTS[projectId];
-      return found ? c.json(found) : c.json(COSTS.proj_beacon);
+      const found = state.costs[projectId];
+      return found ? c.json(found) : c.json(state.costs.proj_beacon);
     }
-    return c.json(COSTS.proj_atlas);
+    return c.json(state.costs.proj_atlas);
   });
   // Spec D.4 (ADR 0072): temperature only for a provider that accepts one.
   app.get("/settings/models", (c) => {
