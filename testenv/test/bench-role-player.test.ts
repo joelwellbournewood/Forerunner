@@ -15,6 +15,7 @@ import {
   intakeProposal,
   judgeCriterion,
   ModelCallLog,
+  recallWords,
   reviewedTitle,
   STAND_IN,
   withModelCallLog,
@@ -1153,9 +1154,14 @@ describe("bench role-player: critic and chat", () => {
     const { p } = player();
     const line = "what did I say about the pizza oven?";
     const first = await call(p, chat(line, ["recall", "recall_open"]));
+    // The words name the thing asked about, not the question (as a real model gives them).
     expect(first.calls).toEqual([
-      expect.objectContaining({ name: "recall", input: { words: line.slice(0, -1) } }),
+      expect.objectContaining({ name: "recall", input: { words: "the pizza oven" } }),
     ]);
+    expect(recallWords("what happened to the FAQ task?")).toBe("the FAQ");
+    expect(recallWords("when was the README merged?")).toBe("the README merged");
+    expect(recallWords("what did we decide about hosting last week?")).toBe("hosting last week");
+    expect(recallWords("was habe ich über das Logo gesagt?")).toBe("das Logo gesagt");
     const after = (result: string) =>
       call(p, {
         ...chat(line, ["recall", "recall_open"]),

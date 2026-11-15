@@ -2778,11 +2778,14 @@ confirmation" with no tool, L3-run-1), so a walk can show the reply guard; `tool
 say: <text>` calls the tool first and then answers with that text on every later call (a claim
 beside what the command did: a change beside its Yes/No read-back, a yes asked beside a change;
 `chainedSay`). A chat line about the past ("what did …", "was habe …") is looked up as the
-recall rules ask (`recallPlay`, d1109-chat-recall): recall with the line's words, recall_open
-of the first strong hit, then "From the record: …"; when every hit is weak or none comes back
-it answers "Nothing recorded matches." with the "Looked through:" line (before the review of
-d1109-chat-recall it opened a weak r1, so the looked-through answer never showed while any word
-matched). The
+recall rules ask (`recallPlay`, d1109-chat-recall): recall with the line's words without its
+question frame (`recallWords`: "what happened to the FAQ task?" gives "the FAQ", as a real model
+names the thing asked about), recall_open of the first strong hit, then "From the record: …";
+when every hit is weak or none comes back it answers "Nothing recorded matches." with the
+"Looked through:" line (before the review of d1109-chat-recall it passed the whole line and
+opened a weak r1, so the looked-through answer never showed while any word matched, and the
+fix-up's walk saw the person's earlier "what happened to the notes task?" ranked above the FAQ
+task on the frame's words). The
 intake stand-in reads the person's words after "Change the plan" (`splitChanges` reads them
 from the brief as `briefWithChanges` in `session/intake.ts` writes them; `applyChanges` in
 `plans.ts`): "drop|remove|... <name>" removes the tasks it names, "add|include|insert <name>"

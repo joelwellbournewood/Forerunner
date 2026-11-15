@@ -1544,6 +1544,28 @@ function chainedSay(req: ModelRequest): string | null {
 const PAST_RE =
   /^(?:what|when|which|where|who|why)\s+(?:did|was|were|happened|had|have)\b|^what\s+happened\b|^(?:was|wann|wo)\s+(?:habe|hat|haben|war|wurde)\b/i;
 
+/**
+ * The question's frame ("what happened to", "when was", "what did I say about", "was habe ich
+ * über"): words a model leaves out of its recall words, as it names the thing asked about.
+ */
+const QUESTION_FRAME_RE =
+  /^(?:(?:what|when|which|where|who|why)\s+(?:did|was|were|happened|had|have)(?:\s+(?:to|i|we|you))?(?:\s+(?:say|said|decide|answer|ask|do))?(?:\s+(?:about|on|to|with))?|(?:was|wann|wo)\s+(?:habe|hat|haben|war|wurde)(?:\s+(?:ich|wir))?(?:\s+(?:über|zu))?)\s+/i;
+
+/**
+ * The words the stand-in gives recall for a line about the past: the line without its question
+ * frame and a closing "task" (a real model names the thing, not the question: the bench walk of
+ * d1109-chat-recall's fix-up found "what happened to the FAQ task?" ranking the person's earlier
+ * "what happened to the notes task?" first, and the notes task weak, on the frame's words).
+ */
+export function recallWords(line: string): string {
+  const bare = line.replace(/[?.!]+$/, "").trim();
+  const words = bare
+    .replace(QUESTION_FRAME_RE, "")
+    .replace(/\s+task$/i, "")
+    .trim();
+  return words || bare;
+}
+
 /** A record's own lines, without the data envelope the hooks put around a tool result. */
 function recordLines(result: string): string[] {
   return result
@@ -1575,7 +1597,7 @@ function recallPlay(req: ModelRequest, calls: ReturnType<typeof pastToolCalls>):
   if (!last)
     return {
       text: "Looking it up.",
-      toolCalls: [{ name: "recall", input: { words: line.replace(/[?.!]+$/, "") } }],
+      toolCalls: [{ name: "recall", input: { words: recallWords(line) } }],
     };
   const lines = recordLines(last.result ?? "");
   const strong = lines.map((l) => /^(r\d+) \[[^\]]*, strong\] /.exec(l)?.[1]).find(Boolean);
