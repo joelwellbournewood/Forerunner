@@ -429,7 +429,13 @@ export interface DocsScaffoldOutcome {
    */
   marker?:
     | { path: string; status: "created" | "kept" }
-    | { path: string; status: "other_project"; project: string | null };
+    | { path: string; status: "other_project"; project: string | null }
+    | { path: string; status: "replaced"; was: { project: string; name: string } };
+  /**
+   * d1109-onerepo-link (D9): the project works on the repository together with another
+   * Forerunner, so nothing was written to it (no marker, no doc set, no pull request).
+   */
+  together?: boolean;
   /**
    * True when the repository was empty and the set went in as its first commit on the default
    * branch (ADR 0106): no pull request then.

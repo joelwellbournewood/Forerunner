@@ -208,6 +208,20 @@ export const TOGETHER_OVERVIEW_LINE =
 export const TOGETHER_OVERVIEW_DETAILS =
   "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.";
 
+/**
+ * OR-09 (L3-github-5): the Docs row of a status kept in the app because another status pull
+ * request is open on `fr/status` while this project's status pull request is on: the holder by
+ * its name when it is a project here, else what it is, and what to do. Never "(Settings turns
+ * it on)", which was untrue while the setting is on.
+ */
+export function heldStatusNote(holder: { projectName: string | null; marked: boolean }): string {
+  if (holder.projectName)
+    return `Kept in the app while "${holder.projectName}"'s status pull request is open on GitHub.`;
+  return holder.marked
+    ? "Kept in the app while another project's status pull request is open on GitHub; close it there to have this one's there."
+    : "Kept in the app while another status pull request is open on GitHub; close it there to have this one's there.";
+}
+
 /** The Docs row of a together project's status (D9). */
 export function togetherStatusNote(name: string): string {
   return `Kept in the app: you work on "${name}" together, so GitHub's copy is left as it is.`;

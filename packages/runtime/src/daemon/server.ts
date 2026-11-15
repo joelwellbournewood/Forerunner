@@ -688,6 +688,8 @@ export function createDaemonApp(
       docsInPullRequests: (project) => rt.docs.docsInPullRequests(project),
       // C-57: a repository project's status kept in the app is the Status the tab shows.
       statusDocRoot: (project) => rt.docs.statusDocRoot(project),
+      // OR-09: why a status pull request that is on kept the status in the app.
+      statusHeld: (project) => rt.docs.statusHeld(project),
       // merge-in-app: each waiting pull request says what Merge does, and the person's Merge
       // (POST /projects/:id/pull-requests/:number/merge) is answered at once.
       pullRequests: (project) => rt.pullRequests.view(project),

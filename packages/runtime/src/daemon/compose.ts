@@ -2603,6 +2603,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     ...(opts.gitHost ? {} : { hasToken: async () => !!(await githubTokenNow()) }),
     merge,
     agentId: agent.id,
+    // d1109-onerepo-link: W15-01's ownership reads this computer's copy's marker too.
+    copyMarker: (projectId) => docs.copyMarker(projectId),
     changed: (projectId) => {
       events.emit("project", { id: projectId });
       // merged-copy with merge-in-app: a docs pull request merged on the click has no task, so

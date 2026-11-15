@@ -506,3 +506,142 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(`${failed.reason}${card?.why}`).not.toContain("\n");
   });
 });
+
+describe("d1109-onerepo-link, run C: a take-over's docs pull request replaces exactly the marker it took over and says so; a together project writes nothing (OR-06, OR-15)", () => {
+  const KITE = "01a1a000-0000-7000-8000-00000000c1ab";
+  const marker = JSON.stringify({ schema: 1, project: KITE, name: "Kite club" }, null, 2);
+  // A second Forerunner's project on another repository (an id this computer never took over).
+  const OTHER = "01a1a000-0000-7000-8000-00000000d2cd";
+  const otherMarker = JSON.stringify({ schema: 1, project: OTHER, name: "Shared club" }, null, 2);
+
+  it("Take it over: the scaffold's pull request carries this project's marker in place of exactly the taken-over one and the line; Work together: no branch, no pull request, no marker", async () => {
+    const root = mkdtempSync(join(tmpdir(), "fr-docs-takeover-"));
+    const host = new MemoryGitHost("alice");
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const seeded = async (name: string, files: Record<string, string>) => {
+      const bare = join(root, `${name}.git`);
+      await run(["git", "init", "--bare", "-b", "main", bare]);
+      const seed = new GitOps({ cwd: join(root, `${name}-seed`), identity });
+      await seed.clone(bare);
+      for (const [path, text] of Object.entries(files)) {
+        await mkdir(
+          join(root, `${name}-seed`, fromPosix(path.slice(0, path.lastIndexOf("/") + 1) || ".")),
+          {
+            recursive: true,
+          },
+        );
+        writeFileSync(join(root, `${name}-seed`, fromPosix(path)), text);
+      }
+      await seed.commitAll("seed");
+      await seed.push("main");
+      await host.createRepo({ owner: "o", name, private: true, cloneUrl: bare });
+      for (const [path, text] of Object.entries(files))
+        await host.putFile(
+          { owner: "o", name },
+          { path, content: text, message: "seed", branch: "main" },
+        );
+      return bare;
+    };
+    const kiteBare = await seeded("kite", {
+      "README.md": "# kite\n",
+      [INSTALL_MARKER_FILE]: marker,
+    });
+    const sharedBare = await seeded("shared", {
+      "README.md": "# shared\n",
+      [INSTALL_MARKER_FILE]: otherMarker,
+    });
+    const home = join(root, "home");
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "Noted." }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      gitHost: host,
+      data: { projectsRoot: join(root, "projects") },
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const req = (path: string, body: unknown) =>
+      app.request(path, {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      });
+    try {
+      // Refused first, with the offer; then taken over with the ids the refusal named.
+      const offer = await req("/projects", { name: "Kites", goal: "g", repos: ["o/kite"] });
+      expect(offer.status).toBe(409);
+      expect((await json(offer)).details).toMatchObject({ projects: [KITE], canTakeOver: true });
+      const made = await req("/projects", {
+        name: "Kites",
+        goal: "g",
+        repos: ["o/kite"],
+        takeOver: { projects: [KITE] },
+      });
+      expect(made.status).toBe(201);
+      const id = String((await json(made)).id);
+      const [pr] = await host.listPullRequests(
+        { owner: "o", name: "kite" },
+        { head: DOCS_SCAFFOLD_BRANCH },
+      );
+      expect(pr?.body).toContain(
+        'This repository was the Forerunner project "Kite club"; it is now "Kites"\'s.',
+      );
+      expect(
+        parseInstallMarker((await show(kiteBare, DOCS_SCAFFOLD_BRANCH, INSTALL_MARKER_FILE)) ?? "")
+          ?.project,
+      ).toBe(id);
+      expect(
+        parseInstallMarker((await show(kiteBare, "main", INSTALL_MARKER_FILE)) ?? "")?.project,
+      ).toBe(KITE);
+      // Any other project's marker is never overwritten: a project here without the take-over
+      // (a pair made before the rule) leaves it as it is.
+      const pair = await rt.store.project.insert({
+        name: "Shared",
+        goal: "g",
+        repos: ["o/shared"],
+      });
+      await rt.docs.scaffoldProject(pair);
+      expect(
+        parseInstallMarker(
+          (await show(sharedBare, DOCS_SCAFFOLD_BRANCH, INSTALL_MARKER_FILE)) ?? "",
+        )?.project ?? OTHER,
+      ).toBe(OTHER);
+      // Work together on o/shared's project (D9): nothing is written to the repository.
+      const branchesBefore = (await run(["git", "--git-dir", sharedBare, "branch", "--list"]))
+        .stdout;
+      const prsBefore = (
+        await host.listPullRequests({ owner: "o", name: "shared" }, { state: "all" })
+      ).length;
+      await rt.store.project.update(pair.id, (await rt.store.project.mustGet(pair.id)).version, {
+        status: "archived",
+        active: false,
+        author_human: rt.human.id,
+      });
+      const together = await req("/projects", {
+        name: "Mine",
+        goal: "g",
+        repos: ["o/shared"],
+        together: { project: OTHER },
+      });
+      expect(together.status, JSON.stringify(await together.clone().json())).toBe(201);
+      expect(String((await json(together)).id)).toBe(OTHER);
+      expect((await run(["git", "--git-dir", sharedBare, "branch", "--list"])).stdout).toBe(
+        branchesBefore,
+      );
+      expect(
+        (await host.listPullRequests({ owner: "o", name: "shared" }, { state: "all" })).length,
+      ).toBe(prsBefore);
+      const row = await rt.store.project.mustGet(OTHER);
+      expect(row.summary_cache.docs).toMatchObject({ together: true, created: [] });
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+});

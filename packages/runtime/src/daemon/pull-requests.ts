@@ -6,9 +6,9 @@ import {
   DOCS_SCAFFOLD_BRANCH,
   isDocsBranch,
   isProjectDocsPr,
+  ownsUnmarkedDocs,
   parseRepoRef,
   STATUS_BRANCH,
-  soleLinkedProject,
 } from "../loop/docs.ts";
 import { buildsOnSentence, type ReviewedPrMerge, rulesBlock } from "../loop/merge.ts";
 import {
@@ -124,6 +124,12 @@ export interface ProjectPullRequestsDeps {
    * settled as merged or closed. Absent: none is listed.
    */
   takeOuts?: Pick<TaskTakeOut, "openOf" | "settle" | "merged">;
+  /**
+   * d1109-onerepo-link (W15-01 through the index): the install marker this computer's copy of
+   * the project's repository holds (`ProjectDocs.copyMarker`); an unmarked docs pull request is
+   * never the project's while it names another project. Absent: not read.
+   */
+  copyMarker?: (projectId: string) => string | null;
 }
 
 /** "Open this version" of a waiting pull request (merged-actions), as `ProjectDocs` has it. */
@@ -364,7 +370,7 @@ export class ProjectPullRequests {
     // W15-01: an unmarked docs PR (an earlier version's) is a project's only while it is the one
     // project on this install linked to the repository; asked only when a docs PR is open.
     const soleLinked = prs.some((p) => isDocsBranch(p.head.ref))
-      ? await soleLinkedProject(store, project, ref)
+      ? await ownsUnmarkedDocs(store, project, ref, this.deps.copyMarker?.(project.id) ?? null)
       : false;
     const tasks = await store.task.list({ project_id: project.id } as never, { limit: 2000 });
     const byId = new Map(tasks.map((t) => [t.id, t]));

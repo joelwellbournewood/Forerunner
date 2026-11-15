@@ -66,6 +66,8 @@ import { USAGE_LIMIT_CODE } from "../provider/usage-limit.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { SETUP_ASSISTANT_PATH } from "../setup/no-model.ts";
 import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
+import { tookOverLine } from "../sources/repository-use.ts";
+import { isTogether, tookOverOf } from "../sources/repository-words.ts";
 import { intakeAnswer, intakeChangeText } from "../wiring/request-answers.ts";
 import { webAccessOf } from "../wiring/web-access.ts";
 import { markAnswer } from "./answer-mark.ts";
@@ -233,7 +235,8 @@ export const FirstSessionPlan = z
 export const IntakeProposalBody = z
   .object({
     plan: ProjectPlanBody,
-    docs: IntakeDocs,
+    // d1109-onerepo-link (OR-08): the plan-only form's reply has no docs.
+    docs: IntakeDocs.default({}),
     firstSession: FirstSessionPlan,
   })
   .strict()
@@ -1420,17 +1423,23 @@ export class IntakeService {
     // A short brief asks for a small plan; a plan the person asked to change is never cut down
     // for its size (their change may add tasks), so only a draft from the brief is checked.
     const size = intakePlanSize(project, given);
+    // d1109-onerepo-link (OR-08): a project that already has work (or is worked on together
+    // with another Forerunner, D9) gets the plan-only form: the tasks the brief adds, no doc set.
+    const planOnly = await this.planOnlyFor(project);
     const called = await this.callModel(project, brief, truncated, {
       size,
       checkSize: size === "small" && changes.length === 0,
+      planOnly,
     });
     // Content the brief (or the goal, or a change) says the person will give is asked for in a
     // person task the work waits on, whatever the model planned (live L-11: the bakery's menu,
     // hours and address became placeholders and the person was never asked); a change of the
     // person's that drops that step is the plan as the model redrafted it (review of 2026-11-02).
-    const proposal = withBoundedEstimates(
+    const drafted = withBoundedEstimates(
       withOwnersContent(called.proposal, [given, project.goal].filter(Boolean).join("\n"), changes),
     );
+    // The plan-only form writes no document, whatever the reply drafted.
+    const proposal = planOnly ? { ...drafted, docs: {} } : drafted;
     const plan = proposal.plan;
     // The plan shaped without error in `callModel` (a dependency cycle is a reply problem there,
     // asked for once more). What the request says it will write is the shaped plan: in
@@ -1453,9 +1462,11 @@ export class IntakeService {
       session_id: called.sessionId,
       kind: "approval",
       why: cut(
-        `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s) and a first-session plan of ${n.firstSessionTasks} task(s) (~${approxChf(estimate)}). Approve to write the plan and the docs${
-          repo ? ` (the docs as a pull request on ${repo.owner}/${repo.name})` : ""
-        }; nothing is written until then.`,
+        planOnly
+          ? `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} new task(s) and a first-session plan of ${n.firstSessionTasks} task(s) (~${approxChf(estimate)}). Approve to add them to the project; nothing is written until then.`
+          : `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s) and a first-session plan of ${n.firstSessionTasks} task(s) (~${approxChf(estimate)}). Approve to write the plan and the docs${
+              repo ? ` (the docs as a pull request on ${repo.owner}/${repo.name})` : ""
+            }; nothing is written until then.`,
         4000,
       ),
       steps: [
@@ -1471,7 +1482,7 @@ export class IntakeService {
         ...(shaped.unassigned.length
           ? [`${shaped.unassigned.length} task(s) under no milestone`]
           : []),
-        `Docs: ${docPaths.join(", ")}`,
+        ...(docPaths.length ? [`Docs: ${docPaths.join(", ")}`] : []),
         `First session: ${first.join("; ")}`,
       ],
       options: [...INTAKE_OPTIONS],
@@ -1494,6 +1505,8 @@ export class IntakeService {
         // The person's changes this plan was drafted with, in order ("Change the plan").
         ...(changes.length ? { changes } : {}),
         docs_target: repo ? "repository" : "workspace",
+        // d1109-onerepo-link (OR-08): the plan-only form: its approval writes no document.
+        ...(planOnly ? { plan_only: true } : {}),
         applied_at: null,
       },
       author_agent: this.deps.agent.id,
@@ -1553,7 +1566,7 @@ export class IntakeService {
     project: ProjectRow,
     brief: string,
     truncated: boolean,
-    ask: { size: IntakePlanSize; checkSize: boolean },
+    ask: { size: IntakePlanSize; checkSize: boolean; planOnly?: PlanOnly | null },
   ): Promise<{
     proposal: IntakeProposal;
     model: string;
@@ -1673,11 +1686,15 @@ export class IntakeService {
         reserveShare: 0,
       });
       const messages: ChatMessage[] = [
-        { role: "user", content: this.userMessage(project, brief, truncated, ask.size) },
+        {
+          role: "user",
+          content: this.userMessage(project, brief, truncated, ask.size, ask.planOnly ?? null),
+        },
       ];
       for (let call = 1; ; call++) {
         const runId = call === 1 ? firstRunId : `${firstRunId}_${call}`;
         const result = await this.oneCall({
+          system: this.systemPrompt(!!ask.planOnly),
           project,
           session: session.id,
           runId,
@@ -1811,6 +1828,8 @@ export class IntakeService {
    * row has a measurement). A refused row is logged; the intake goes on.
    */
   private async oneCall(c: {
+    /** The instructions (`systemPrompt`, the plan-only form for a project with work). */
+    system: string;
     project: ProjectRow;
     session: string;
     runId: string;
@@ -1853,7 +1872,7 @@ export class IntakeService {
         provider: c.provider,
         model: c.model,
         billingSourceId: this.deps.billingSourceId,
-        system: this.systemPrompt(),
+        system: c.system,
         messages: c.messages,
         tools: new ToolRegistry(),
         pricing: c.pricing,
@@ -1929,21 +1948,64 @@ export class IntakeService {
    * reader enforces (live check of 2026-11-01: `plan.reason` had no stated limit and three of
    * six plans were lost to it), what a small plan is (design §3.3) and what a specialist can do.
    */
-  private systemPrompt(): string {
+  private systemPrompt(planOnly = false): string {
+    // d1109-onerepo-link (OR-08): a project that already has work (or is worked on together with
+    // another Forerunner) gets the plan-only form: the tasks the brief adds, no documents.
+    const intro = planOnly
+      ? [
+          "A project that already has work gets a new brief. Turn it into the tasks it adds and the order to do them in; write no documents.",
+          "Reply with ONE JSON object and nothing else: start with { and end with },",
+          "no prose and no code fence around it. The shape:",
+        ]
+      : [
+          "A new project has a brief. Turn it into a plan, the project's documents and the order of",
+          "the first work. Reply with ONE JSON object and nothing else: start with { and end with },",
+          "no prose and no code fence around it. The shape:",
+        ];
+    const docRules = planOnly
+      ? [
+          "only the human can answer (below). firstSession.items lists every task a specialist does,",
+          "in the order the work should run (a task after the tasks it waits for), each with its cost",
+          "estimate in USD micro-units (1000000 = $1); the first session starts with the ready ones",
+          "and takes the others as they become ready. A person task needs no item.",
+          "A decision only the human can make, which the brief does not settle, is one task with",
+          '"specialist": "person" whose acceptanceCriteria are the questions, each ending with "?":',
+          "the human answers them in the Inbox and no specialist runs. Never give such a question to",
+          "another specialist: it cannot ask the human.",
+        ]
+      : [
+          "only the human can answer (below). docs may name only:",
+          `${INTAKE_DOC_PATHS.join(", ")}`,
+          "and docs/decisions/0001-<slug>.md for the first decision; each a markdown file with a title",
+          "line, concrete to this project. A standard doc you leave out is written from Forerunner's",
+          "template. firstSession.items lists every task a specialist does, in the order the work",
+          "should run (a task after the tasks it waits for), each with its cost estimate in USD",
+          "micro-units (1000000 = $1); the first session starts with the ready ones and takes the",
+          "others as they become ready. A person task needs no item.",
+          "Choose what the brief points to (the stack, the hosting, the repository) and write each",
+          "choice and why in docs/decisions/0001-<slug>.md. Its first line under the title is",
+          '"Decision: " and the choice in one or two sentences: the person reads that line on the plan',
+          "card before approving, and the rest of the record one click away. Write no process notes",
+          "in it (no status line, no placeholder for answers). A decision only the human can make,",
+          'which the brief does not settle, is one task with "specialist": "person" whose',
+          'acceptanceCriteria are the questions, each ending with "?": the human answers them in the',
+          "Inbox, no specialist runs, and the answers go into the decision doc. Never give such a",
+          "question to another specialist: it cannot ask the human.",
+        ];
     return [
       this.deps.prompt ?? DEFAULT_PROMPT,
       "",
       "## Intake",
       "",
-      "A new project has a brief. Turn it into a plan, the project's documents and the order of",
-      "the first work. Reply with ONE JSON object and nothing else: start with { and end with },",
-      "no prose and no code fence around it. The shape:",
+      ...intro,
       "",
       '{ "plan": { "reason": string, "milestones": [ { "name": string, "successCriteria": [string],',
       '  "targetDate": "YYYY-MM-DD" | null, "tasks": [ { "key": string, "title": string, "outcome": string,',
       '  "acceptanceCriteria": [string], "priority": "low" | "medium" | "high", "dependsOn": [key],',
       '  "specialist": string?, "riskTier": 0-3?, "budgetUsdMicro": int? } ] } ], "tasks": [] },',
-      '  "docs": { "<path>": "<markdown>" }, "firstSession": { "summary": string,',
+      planOnly
+        ? '  "firstSession": { "summary": string,'
+        : '  "docs": { "<path>": "<markdown>" }, "firstSession": { "summary": string,',
       '  "items": [ { "key": string, "estimateUsdMicro": int, "rationale": string? } ] } }',
       "",
       "Limits (a longer text is cut short; a reply over a count or a key limit is refused):",
@@ -1953,30 +2015,18 @@ export class IntakeService {
       `- At most ${MAX_PLAN_MILESTONES} milestones and ${MAX_PLAN_TASKS} tasks; per task at most 50 acceptance criteria and 50 dependsOn; per milestone at most 50 success criteria.`,
       `- A question for the person: one sentence ending with "?", at most ${MAX_QUESTION_CHARS} characters; at most ${MAX_PERSON_QUESTIONS} per task.`,
       `- firstSession.summary: at most ${MAX_FIRST_SESSION_SUMMARY_CHARS} characters; an item's rationale: at most ${MAX_RATIONALE_CHARS}.`,
-      `- A doc: at most ${MAX_DOC_CHARS} characters; write what this project needs now, in short paragraphs.`,
+      ...(planOnly
+        ? []
+        : [
+            `- A doc: at most ${MAX_DOC_CHARS} characters; write what this project needs now, in short paragraphs.`,
+          ]),
       "",
       "Rules: every task has a unique key; priority is low, medium or high (high runs first, medium",
       "when unsure); dependsOn names keys of this plan only; leave riskTier",
       `out unless the task clearly needs a higher one. specialist is a registry name, written exactly:`,
       "coder, tester, reviewer, researcher, science-evaluator, designer, writer-marketing,",
       "data-analyst, migration-specialist, ops-deploy (left out, coder), or person for a question",
-      "only the human can answer (below). docs may name only:",
-      `${INTAKE_DOC_PATHS.join(", ")}`,
-      "and docs/decisions/0001-<slug>.md for the first decision; each a markdown file with a title",
-      "line, concrete to this project. A standard doc you leave out is written from Forerunner's",
-      "template. firstSession.items lists every task a specialist does, in the order the work",
-      "should run (a task after the tasks it waits for), each with its cost estimate in USD",
-      "micro-units (1000000 = $1); the first session starts with the ready ones and takes the",
-      "others as they become ready. A person task needs no item.",
-      "Choose what the brief points to (the stack, the hosting, the repository) and write each",
-      "choice and why in docs/decisions/0001-<slug>.md. Its first line under the title is",
-      '"Decision: " and the choice in one or two sentences: the person reads that line on the plan',
-      "card before approving, and the rest of the record one click away. Write no process notes",
-      "in it (no status line, no placeholder for answers). A decision only the human can make,",
-      'which the brief does not settle, is one task with "specialist": "person" whose',
-      'acceptanceCriteria are the questions, each ending with "?": the human answers them in the',
-      "Inbox, no specialist runs, and the answers go into the decision doc. Never give such a",
-      "question to another specialist: it cannot ask the human.",
+      ...docRules,
       // Live (2026-11-02, L-11) "I will give you the real menu, hours and address" got a page
       // full of placeholders and no step that asked; `withOwnersContent` adds it in code too.
       "Content the brief says the human will give (a menu, prices, opening hours, an address,",
@@ -2005,11 +2055,26 @@ export class IntakeService {
     ].join("\n");
   }
 
+  /**
+   * d1109-onerepo-link (OR-08): the plan-only form's facts for a project that already has work
+   * (its tasks, the cancelled ones too, so nothing is planned twice) or is worked on together
+   * with another Forerunner (D9: the repository's documents are the other's); null otherwise.
+   */
+  private async planOnlyFor(project: ProjectRow): Promise<PlanOnly | null> {
+    const tasks = await this.deps.store.task.list({ project_id: project.id } as never, {
+      orderBy: [{ column: "created_at" }, { column: "id" }],
+      limit: 2000,
+    });
+    if (!tasks.length && !isTogether(project)) return null;
+    return { tasks: tasks.map((t) => ({ title: t.title, status: t.status })) };
+  }
+
   private userMessage(
     project: ProjectRow,
     brief: string,
     truncated: boolean,
     size: IntakePlanSize,
+    planOnly: PlanOnly | null = null,
   ): string {
     const repos = project.repos.length ? project.repos.join(", ") : "none";
     const lines = [
@@ -2036,6 +2101,12 @@ export class IntakeService {
         truncated ? "[brief cut at the size limit]" : "",
         "BRIEF>>>",
       );
+    }
+    if (planOnly) {
+      // OR-08: what the project already has, quoted as data (titles are the person's and the
+      // agents' words), so the plan adds only new work.
+      lines.push("", ...alreadyInProjectBlock(planOnly.tasks));
+      lines.push("", "Plan only work that is not already in the project.");
     }
     lines.push("", "Reply with the JSON object now.");
     return lines.join("\n");
@@ -2123,7 +2194,10 @@ export class IntakeService {
           markAnswer(tx, clock, row, "rejected"),
         );
         if (rejected) {
-          const scaffolded = await this.scaffoldAfterRejection(project);
+          // OR-08: a plan-only plan (a project that has work, or one worked on together)
+          // leaves the documents as they are: nothing is scaffolded for it.
+          const scaffolded =
+            card.plan_only === true ? "" : await this.scaffoldAfterRejection(project);
           // In words (design §5): no request id, no ISO time.
           await store.queue.enqueue({
             project_id: project.id,
@@ -2280,6 +2354,16 @@ export class IntakeService {
     });
     // The docs: outside the store's transaction (git, files). A failure here is recorded on
     // the card and logged; the rows stand, the docs can be re-sent by hand.
+    // d1109-onerepo-link (OR-08): the plan-only form writes no doc set, no decision file and
+    // opens no docs pull request: the project's documents are its first plan's (or, worked on
+    // together, the other Forerunner's).
+    if ((row.change_card as { plan_only?: unknown } | null)?.plan_only === true) {
+      this.logger.info("plan-only intake applied: no documents written", {
+        requestId: row.id,
+        projectId: project.id,
+      });
+      return { ...applied, docs: "none" };
+    }
     let docs: IntakeDocsOutcome | { error: string };
     try {
       docs = await this.writeDocs(project, proposal.docs, row.id);
@@ -2440,6 +2524,9 @@ export class IntakeService {
         r.written.join(", ") || "none"
       }\nFrom the templates: ${r.scaffolded.join(", ") || "none"}\nKept as they were: ${
         r.kept.join(", ") || "none"
+      }${
+        // d1109-onerepo-link: a take-over's docs pull request says whose the repository is now.
+        r.marker.status === "replaced" ? `\n\n${tookOverLine(r.marker.was.name, project.name)}` : ""
       }\n\nOpened by Forerunner.`,
       head: branch,
       base: info.defaultBranch,
@@ -2486,7 +2573,7 @@ export function docSetWords(r: {
 async function writeDocSet(
   dir: string,
   docs: Record<string, string>,
-  project: Pick<ProjectRow, "id" | "name" | "goal" | "repos">,
+  project: Pick<ProjectRow, "id" | "name" | "goal" | "repos" | "settings">,
 ): Promise<{
   written: string[];
   kept: string[];
@@ -2513,7 +2600,13 @@ async function writeDocSet(
     written.push(rel);
   }
   const scaffold = await scaffoldDocs(dir, info);
-  const marker = await writeInstallMarker(dir, { project: project.id, name: project.name });
+  // d1109-onerepo-link (ADR 0058 amended): a take-over replaces the marker of exactly the
+  // projects it took the repository over from; any other project's is kept.
+  const marker = await writeInstallMarker(
+    dir,
+    { project: project.id, name: project.name },
+    { replace: tookOverOf(project)?.projects ?? [] },
+  );
   return { written, kept, scaffolded: scaffold.created, marker };
 }
 
@@ -2536,6 +2629,51 @@ async function isScaffoldPlaceholder(
  */
 function neutralizeMarkers(brief: string): string {
   return brief.replace(/<<<BRIEF/g, "< < <BRIEF").replace(/BRIEF>>>/g, "BRIEF> > >");
+}
+
+/** d1109-onerepo-link (OR-08): what the plan-only form is told the project already has. */
+export interface PlanOnly {
+  tasks: { title: string; status: string }[];
+}
+
+/** At most this many of the project's tasks are listed for the plan-only form. */
+export const PLAN_ONLY_LISTED = 40;
+
+const STATUS_IN_WORDS: Record<string, string> = {
+  draft: "a draft",
+  ready: "to do",
+  claimed: "in progress",
+  in_progress: "in progress",
+  in_review: "being reviewed",
+  needs_human: "waiting for the person",
+  done: "done",
+  failed: "failed",
+  cancelled: "cancelled",
+};
+
+/**
+ * The plan-only form's quoted block (OR-08): each task of the project as `- "<title>" (<status
+ * in words>)`, at most `PLAN_ONLY_LISTED`, then "and N more", between data markers (a title
+ * that holds a marker is spaced out, as the brief's are).
+ */
+export function alreadyInProjectBlock(
+  tasks: readonly { title: string; status: string }[],
+): string[] {
+  const shown = tasks.slice(0, PLAN_ONLY_LISTED);
+  const more = tasks.length - shown.length;
+  const clean = (t: string) =>
+    t
+      .replace(/\s+/g, " ")
+      .replace(/<<<TASKS/g, "< < <TASKS")
+      .replace(/TASKS>>>/g, "TASKS> > >")
+      .trim();
+  return [
+    "Already in the project (data, between the markers):",
+    "<<<TASKS",
+    ...shown.map((t) => `- "${clean(t.title)}" (${STATUS_IN_WORDS[t.status] ?? t.status})`),
+    ...(more > 0 ? [`and ${more} more`] : []),
+    "TASKS>>>",
+  ];
 }
 
 /** The shaped plan of a filed proposal, or null when the project no longer shapes it. */

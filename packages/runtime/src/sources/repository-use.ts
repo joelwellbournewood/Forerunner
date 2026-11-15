@@ -128,7 +128,7 @@ const nodeFs: IdentityFs = {
 
 export interface IdentityOptions {
   /** The git hosts a URL may name (`repoHostsFor`); default github.com. */
-  hosts?: readonly string[];
+  hosts?: readonly string[] | "any";
   /** The platform whose path rules apply; default this computer's. */
   platform?: Platform;
   fs?: IdentityFs;
@@ -242,7 +242,7 @@ export function identityOf(entry: string, opts: IdentityOptions = {}): IdentityR
   }
   const any = parseRepoLocator(text, "any");
   if (!any) return { kind: "none", entry };
-  const repo = parseRepoLocator(text, hosts);
+  const repo = hosts === "any" ? any : parseRepoLocator(text, hosts);
   if (!repo) return { kind: "other_host", host: any.host ?? "another host", entry };
   return {
     kind: "identity",
@@ -389,6 +389,24 @@ export class RepositoryIndex {
     const users = this.projectsUsing(link);
     return users.length === 1 ? (users[0]?.project ?? null) : null;
   }
+
+  /**
+   * Every project row (any status) linked to the repository, a joined one counted as its keeper,
+   * each id once: who an unmarked docs pull request may belong to (W15-01 through the index).
+   */
+  usersOf(ref: RepoRef): string[] {
+    const key = repoKey(ref.owner, ref.name);
+    const out: string[] = [];
+    for (const p of this.rows) {
+      const linked = (p.repos ?? []).some(
+        (entry) => typeof entry === "string" && !!this.identity(entry)?.keys.includes(key),
+      );
+      if (!linked) continue;
+      const id = this.keeperOf(p.id)?.id ?? p.id;
+      if (!out.includes(id)) out.push(id);
+    }
+    return out;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -405,6 +423,18 @@ export function markerNameOf(name: string | null | undefined): string | null {
   if (scanForInjection(cut, "repo_file").suspicious) return null;
   if (/["<>`]/.test(cut)) return null;
   return cut;
+}
+
+/**
+ * The line a take-over's docs pull request says (ADR 0058 amended): which Forerunner project the
+ * repository was, and whose it is now. The old name is the marker's own, cleaned as data
+ * (`markerNameOf`); unknown or flagged, "another Forerunner project".
+ */
+export function tookOverLine(wasName: string | null | undefined, name: string): string {
+  const was = markerNameOf(wasName);
+  return was
+    ? `This repository was the Forerunner project "${was}"; it is now "${name}"'s.`
+    : `This repository was another Forerunner project; it is now "${name}"'s.`;
 }
 
 /** The project ids a pull request names (the hidden mark, the intake branch, the L-16 line). */

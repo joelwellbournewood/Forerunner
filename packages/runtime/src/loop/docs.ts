@@ -51,7 +51,14 @@ import {
   safeSegment,
 } from "@forerunner/platform";
 import type { ProjectRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
-import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
+import {
+  INSTALL_MARKER_FILE,
+  type InstallMarkerWrite,
+  parseInstallMarker,
+  writeInstallMarker,
+} from "../sources/marker.ts";
+import { RepositoryIndex, tookOverLine } from "../sources/repository-use.ts";
+import { isTogether, projectIdsOf, tookOverOf } from "../sources/repository-words.ts";
 import type {
   DocsScaffoldOutcome,
   ProjectDocsPort,
@@ -173,19 +180,24 @@ export function isProjectDocsPr(
   pr: { head: { ref: string }; body: string; htmlUrl?: string },
   opts: { soleLinked?: boolean } = {},
 ): boolean {
+  // D9 (d1109-onerepo-link): a project worked on together with another Forerunner shares the
+  // other's project id; every docs pull request that names it is the other Forerunner's.
+  if (isTogether(project)) return false;
+  // A project joined into this one (d1109-onerepo-join) counts as this one.
+  const ids = projectIdsOf(project);
   const ref = pr.head.ref;
   if (ref === STATUS_BRANCH)
     return statusPullRequestOn(project) && isProjectStatusPr(project, pr, opts);
   const intake = /^fr\/intake-(.+)-docs$/.exec(ref);
-  if (intake) return intake[1] === safeSegment(project.id, "project");
+  if (intake) return ids.some((id) => intake[1] === safeSegment(id, "project"));
   if (ref === DOCS_SCAFFOLD_BRANCH) {
     // The PR the project's scaffold wrote its docs onto (recorded at creation) is its own.
     const recorded = (project.summary_cache?.docs as { pr_url?: unknown } | undefined)?.pr_url;
     if (pr.htmlUrl && recorded === pr.htmlUrl) return true;
     const body = pr.body ?? "";
     const marked = readForerunnerMarker(body)?.project;
-    if (marked) return marked === project.id;
-    if (body.includes(scaffoldProjectLine(project))) return true;
+    if (marked) return ids.includes(marked);
+    if (ids.some((id) => body.includes(scaffoldProjectLine({ id })))) return true;
     if (/Forerunner project \S+\./.test(body)) return false;
     return opts.soleLinked === true;
   }
@@ -194,38 +206,52 @@ export function isProjectDocsPr(
 
 /**
  * Whether the open status pull request on `fr/status` is this project's (W15-01), whatever its
- * setting: its hidden mark names it, or it names no project and this project is the one on this
- * install linked to the repository (an earlier version's PR). One with another project's mark,
- * or an unmarked one while two projects are linked, is never written to, commented on or listed.
+ * setting: its hidden mark names it (or a project joined into it), or it names no project and
+ * this project owns the repository's unmarked docs pull requests (`ownsUnmarkedDocs`: an earlier
+ * version's PR). One with another project's mark, or an unmarked one while it is not the one
+ * owner, is never written to, commented on or listed. A together project owns none (D9).
  */
 export function isProjectStatusPr(
-  project: Pick<ProjectRow, "id">,
+  project: Pick<ProjectRow, "id" | "settings">,
   pr: { body: string },
   opts: { soleLinked?: boolean } = {},
 ): boolean {
+  if (isTogether(project)) return false;
   const marked = readForerunnerMarker(pr.body)?.project;
-  if (marked) return marked === project.id;
+  if (marked) return projectIdsOf(project).includes(marked);
   return opts.soleLinked === true;
 }
 
 /**
- * Whether `project` is the one project on this install linked to `repo` (W15-01: who an earlier
- * version's unmarked docs pull request belongs to). Every project row counts, archived ones too:
- * an unmarked pull request one of them opened is not another's to take.
+ * Whether an unmarked docs pull request (status, scaffold: an earlier version's) on `repo` is
+ * `project`'s (W15-01, through the one index of d1109-onerepo-link, ADR 0106 amended): it is
+ * the one project on this install using the repository, by the index's identity of a link
+ * (every row counts, archived ones too: an unmarked pull request a removed project opened is not
+ * another's to take; a project joined into it counts as it; one it took the repository over
+ * from does not count), it is no together project (D9: the repository is the other Forerunner's
+ * project too), and this computer's copy's marker (`copyMarker`, read as a file) names no other
+ * project. Fails closed: an index that cannot be read owns nothing.
  */
-export async function soleLinkedProject(
+export async function ownsUnmarkedDocs(
   store: Pick<StateStore, "project">,
-  project: Pick<ProjectRow, "id">,
+  project: Pick<ProjectRow, "id" | "settings">,
   repo: RepoRef,
+  copyMarker: string | null = null,
 ): Promise<boolean> {
-  const same = (r: RepoRef | null) =>
-    !!r &&
-    r.owner.toLowerCase() === repo.owner.toLowerCase() &&
-    r.name.toLowerCase() === repo.name.toLowerCase();
-  const linked = (await store.project.list({} as never, { limit: 5000 })).filter((p) =>
-    same(repositoryOf(p)),
-  );
-  return linked.length === 1 && linked[0]?.id === project.id;
+  if (isTogether(project)) return false;
+  const own = new Set([...projectIdsOf(project), ...(tookOverOf(project)?.projects ?? [])]);
+  if (copyMarker) {
+    const named = parseInstallMarker(copyMarker)?.project;
+    if (named && !own.has(named.toLowerCase()) && !own.has(named)) return false;
+  }
+  let index: RepositoryIndex;
+  try {
+    index = await RepositoryIndex.read(store, { hosts: "any" });
+  } catch {
+    return false;
+  }
+  const users = index.usersOf(repo).filter((id) => !own.has(id) || id === project.id);
+  return users.length === 1 && users[0] === project.id;
 }
 
 /** A doc of the set that is not on the default branch yet: the pull request it waits in. */
@@ -455,7 +481,8 @@ export class ProjectDocs implements ProjectDocsPort {
     if (!parseRepoRef(project.repos[0] ?? "") || isAbsolute(project.repos[0] ?? "")) return null;
     const dir = this.statusInAppDir(project.id);
     if (!existsSync(join(dir, fromPosix(STATUS_DOC)))) return null;
-    if (!statusPullRequestOn(project)) return dir;
+    // D9: a together project's status is always the app's (it writes none to the repository).
+    if (!statusPullRequestOn(project) || isTogether(project)) return dir;
     return existsSync(join(dir, STATUS_HELD_MARK)) ? dir : null;
   }
 
@@ -483,6 +510,48 @@ export class ProjectDocs implements ProjectDocsPort {
   /** `<worktreeRoot>/<project id>`: this computer's copy of a repository project. */
   copyDir(projectId: string): string {
     return join(this.deps.worktreeRoot, safeSegment(projectId, "project"));
+  }
+
+  /**
+   * The install marker this computer's copy of the repository holds (`.forerunner/project.json`
+   * on the default branch as last refreshed), read as a file, or null (d1109-onerepo-link).
+   */
+  copyMarker(projectId: string): string | null {
+    try {
+      return readFileSync(join(this.copyDir(projectId), fromPosix(INSTALL_MARKER_FILE)), "utf8");
+    } catch {
+      return null;
+    }
+  }
+
+  /** W15-01 through the index: whether the repository's unmarked docs pull requests are its. */
+  private ownsUnmarked(project: ProjectRow, repo: RepoRef): Promise<boolean> {
+    return ownsUnmarkedDocs(this.deps.store, project, repo, this.copyMarker(project.id));
+  }
+
+  /**
+   * OR-09 (L3-github-5): why the project's status was last kept in the app although its status
+   * pull request is on: the open status pull request that held it, by its number and the
+   * project its mark names (null for an unmarked one); null when nothing held it.
+   */
+  statusHeld(project: ProjectRow): { prNumber: number | null; projectId: string | null } | null {
+    if (!statusPullRequestOn(project)) return null;
+    let text: string;
+    try {
+      text = readFileSync(join(this.statusInAppDir(project.id), STATUS_HELD_MARK), "utf8");
+    } catch {
+      return null;
+    }
+    try {
+      const o = JSON.parse(text) as { pr?: unknown; project?: unknown };
+      return {
+        prNumber: typeof o.pr === "number" ? o.pr : null,
+        projectId: typeof o.project === "string" ? o.project : null,
+      };
+    } catch {
+      // A mark an earlier version wrote: held, by whom is not known.
+      return { prNumber: null, projectId: null };
+    }
   }
 
   /**
@@ -725,6 +794,29 @@ export class ProjectDocs implements ProjectDocsPort {
   async scaffoldProject(project: ProjectRow): Promise<DocsScaffoldOutcome> {
     const info = { name: project.name, goal: project.goal, repos: project.repos };
     let outcome: DocsScaffoldOutcome;
+    // D9 (d1109-onerepo-link): a project worked on together with another Forerunner writes
+    // nothing to the repository by itself (no marker, no doc set, no pull request): its docs and
+    // marker are the other Forerunner's. Only this computer's copy is brought along (nothing
+    // pushed), so the Docs and Files tabs read the repository.
+    if (isTogether(project)) {
+      try {
+        await this.refreshCopy(project);
+      } catch (e) {
+        this.logger.warn("this computer's copy of the repository not made", {
+          projectId: project.id,
+          error: errorMessage(e),
+        });
+      }
+      const together: DocsScaffoldOutcome = {
+        location: "repo",
+        prUrl: null,
+        created: [],
+        existing: [],
+        together: true,
+      };
+      await this.record(project, { ...together, scaffolded_at: this.deps.clock.nowIso() });
+      return together;
+    }
     try {
       const target = await this.deps.repoFor(project);
       if (!target) {
@@ -779,7 +871,7 @@ export class ProjectDocs implements ProjectDocsPort {
   ): Promise<DocsScaffoldOutcome> {
     const info = { name: project.name, goal: project.goal, repos: project.repos };
     const branch = DOCS_SCAFFOLD_BRANCH;
-    const soleLinked = await soleLinkedProject(this.deps.store, project, target.repo);
+    const soleLinked = await this.ownsUnmarked(project, target.repo);
     const { git, dir, existingPr, first, foreign } = await this.checkout(project, target, branch, {
       // W15-01: another project's open scaffold PR is never written to or commented on.
       ours: (pr) => isProjectDocsPr(project, pr, { soleLinked }),
@@ -811,7 +903,10 @@ export class ProjectDocs implements ProjectDocsPort {
     }
     const res = await scaffoldDocs(dir, info);
     const marker = await this.mark(project, dir);
-    const written = [...res.created, ...(marker.status === "created" ? [marker.path] : [])];
+    const written = [
+      ...res.created,
+      ...(marker.status === "created" || marker.status === "replaced" ? [marker.path] : []),
+    ];
     // An open scaffold PR is this project's here (`foreign` above, W15-01): its docs PR.
     let prUrl = existingPr ? existingPr.htmlUrl : null;
     if (written.length) {
@@ -819,7 +914,9 @@ export class ProjectDocs implements ProjectDocsPort {
       const markerNote =
         marker.status === "created"
           ? `\n\n\`${marker.path}\` marks the repository as managed by a Forerunner project (spec A.4); a source scan by any install reads it.`
-          : "";
+          : marker.status === "replaced"
+            ? `\n\n${tookOverLine(marker.was.name, project.name)}`
+            : "";
       await git.commitAll(`docs: scaffold the standard doc set\n\n${list}`);
       await git.push(branch, { defaultBranch: target.base });
       if (existingPr) {
@@ -866,7 +963,10 @@ export class ProjectDocs implements ProjectDocsPort {
     if (!target) return this.statusInFolder(project, session, update);
     // C-57: unless the person turned the status pull request on, a repository project's status
     // stays in the app: one PR to merge after every session was noise, even for one task.
-    if (!statusPullRequestOn(project)) return this.statusInApp(project, update);
+    // D9: a project worked on together writes nothing to the repository: its status stays in
+    // the app, whatever the setting (the repository's docs are the other Forerunner's).
+    if (!statusPullRequestOn(project) || isTogether(project))
+      return this.statusInApp(project, update);
     // Forerunner's own status branch, never a task's: the critic accepted the task's branch,
     // and a commit after the review would put a file it never saw into the reviewed PR. Under
     // the copy's lock (merged-copy): a refresh never moves the clone off the branch mid-write.
@@ -876,7 +976,7 @@ export class ProjectDocs implements ProjectDocsPort {
     // commented on (live check 2: a second project's session pushed its status into the first
     // project's PR). Its own is told by the hidden mark, or an unmarked one by being the one
     // project linked (an earlier version's PR). One PR at a time (owner question W15-112).
-    const soleLinked = await soleLinkedProject(this.deps.store, project, target.repo);
+    const soleLinked = await this.ownsUnmarked(project, target.repo);
     const written = await this.withCopy(project.id, async () => {
       const { git, dir, existingPr, foreign } = await this.checkout(project, target, branch, {
         // A status PR that was merged or closed: the branch starts again from the default one.
@@ -920,7 +1020,7 @@ export class ProjectDocs implements ProjectDocsPort {
         "status pull request not written: another project's status pull request is open",
         { projectId: project.id, branch, prUrl: foreign?.htmlUrl ?? null },
       );
-      return this.statusInApp(project, update, { refresh: false, held: true });
+      return this.statusInApp(project, update, { refresh: false, held: foreign });
     }
     // Its own status pull request has it again: the app's copy is no longer read first.
     rmSync(join(this.statusInAppDir(project.id), STATUS_HELD_MARK), { force: true });
@@ -943,13 +1043,23 @@ export class ProjectDocs implements ProjectDocsPort {
   private async statusInApp(
     project: ProjectRow,
     update: StatusUpdate,
-    opts: { refresh?: boolean; held?: boolean } = {},
+    opts: { refresh?: boolean; held?: Pick<PullRequestInfo, "number" | "body"> | null } = {},
   ): Promise<SessionStatusOutcome> {
     const dir = this.statusInAppDir(project.id);
     mkdirSync(dir, { recursive: true });
     const res = await writeStatusUpdate(dir, update);
     const mark = join(dir, STATUS_HELD_MARK);
-    if (opts.held) writeFileSync(mark, "another project's status pull request is open\n", "utf8");
+    // OR-09: which pull request held it and the project its mark names (null: unmarked), so the
+    // Docs row says why, after a restart too.
+    if (opts.held)
+      writeFileSync(
+        mark,
+        `${JSON.stringify({
+          pr: opts.held.number,
+          project: readForerunnerMarker(opts.held.body)?.project ?? null,
+        })}\n`,
+        "utf8",
+      );
     else rmSync(mark, { force: true });
     // The status write was also what kept this computer's copy of the repository current;
     // without it a project made from a brief had no copy at all (its Docs tab said README.md
@@ -1034,7 +1144,7 @@ export class ProjectDocs implements ProjectDocsPort {
     if (!existsSync(join(this.copyDir(project.id), ".git"))) return [];
     // Only this project's docs PRs (L-16, W15-01): another project's on the same repository is
     // not where this project's docs wait.
-    const soleLinked = await soleLinkedProject(this.deps.store, project, target.repo);
+    const soleLinked = await this.ownsUnmarked(project, target.repo);
     const prs = (await this.deps.host.listPullRequests(target.repo, { state: "open" })).filter(
       (p) => isDocsBranch(p.head.ref) && isProjectDocsPr(project, p, { soleLinked }),
     );
@@ -1314,7 +1424,13 @@ export class ProjectDocs implements ProjectDocsPort {
    * project of this install on it) is reported on the outcome and never overwritten.
    */
   private async mark(project: ProjectRow, dir: string): Promise<InstallMarkerWrite> {
-    const marker = await writeInstallMarker(dir, { project: project.id, name: project.name });
+    // d1109-onerepo-link (ADR 0058 amended): a project that took the repository over replaces
+    // the marker of exactly the projects it took over from; any other project's is kept.
+    const marker = await writeInstallMarker(
+      dir,
+      { project: project.id, name: project.name },
+      { replace: tookOverOf(project)?.projects ?? [] },
+    );
     if (marker.status === "other_project") {
       this.logger.warn("install marker of another project kept", {
         projectId: project.id,

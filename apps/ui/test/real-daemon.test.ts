@@ -12404,6 +12404,11 @@ describe("w15-merge, wave 15", () => {
       const statusOfB = async () => {
         const row = (await client.docs(b.id)).find((d) => d.path === "docs/status.md");
         expect(row?.exists, row?.note ?? "no status row").toBe(true);
+        // d1109-onerepo-link (OR-09, L3-github-5): why, in words; never "(Settings turns it on)",
+        // which was untrue while the setting is on.
+        expect(row?.note).toBe(
+          `Kept in the app while "Shared A"'s status pull request is open on GitHub.`,
+        );
         const text = (await client.doc(b.id, "docs/status.md")).content;
         expect(text).toContain("Write the notes in b-notes.md");
         expect(text).not.toContain("Write the notes in a-notes.md");
