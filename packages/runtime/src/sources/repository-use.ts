@@ -20,6 +20,7 @@ import { INSTALL_MARKER_FILE, parseInstallMarker } from "./marker.ts";
 import {
   ACTIVE_ELSEWHERE_DAYS,
   alreadyHereSentence,
+  alsoElsewhereSentence,
   CHAT_TOGETHER_HINT,
   type Elsewhere,
   elsewhereSentence,
@@ -28,10 +29,18 @@ import {
   isRemovedProject,
   isTogether,
   type LinkRefusalDetails,
+  nothingToTakeOverSentence,
   otherHostSentence,
   projectIdsOf,
+  TAKE_OVER_UNDO_MERGED,
+  TAKE_OVER_UNDO_OPEN,
+  TAKE_OVER_UNDO_UNREADABLE,
+  TAKE_OVER_UNREADABLE,
+  TOGETHER_OVERVIEW_DETAILS,
+  TOGETHER_OVERVIEW_LINE,
   TOGETHER_UNREADABLE,
   type TookOverFacts,
+  takeOverActiveSentence,
   takeOverDetails,
   takeOverLine,
   togetherFolderSentence,
@@ -680,7 +689,36 @@ export interface RepositoryUseDeps {
   /** The person's time zone, for the offer's dates. */
   timezone?: () => Promise<string | null>;
   identity?: Omit<IdentityOptions, "hosts">;
+  /**
+   * OR-07: this computer's copy of a project's repository, its marker file's text (the default
+   * branch, read as a file: `ProjectDocs.copyMarker`); null without one.
+   */
+  copyMarker?: (projectId: string) => string | null;
 }
+
+/**
+ * OR-07: the Overview's line about the project's repository (`ProjectCard.repositoryElsewhere`):
+ * `elsewhere` when this computer's copy names a Forerunner project that is not on this computer
+ * (with Take it over unless another GitHub account worked on it within 14 days), `together` for
+ * a project worked on together with another Forerunner (D9).
+ */
+export interface RepositoryOverview {
+  kind: "elsewhere" | "together";
+  text: string;
+  canTakeOver: boolean;
+  /** Take it over's consequence line; null without the button. */
+  takeOverLine: string | null;
+  /** The line's Details. */
+  details: string | null;
+}
+
+/** How long the Overview reuses a read of a repository's marks (the press always reads anew). */
+const OVERVIEW_READ_MS = 5 * 60_000;
+/** The Overview never waits longer than this on GitHub: the line shows, the press checks. */
+const OVERVIEW_WAIT_MS = 4_000;
+
+/** Forerunner's docs branches: the scaffold's and an intake's doc set (`loop/docs.ts`). */
+const DOCS_BRANCH = /^fr\/(?:docs-scaffold|intake-[^/]+-docs)$/;
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
   const x = [...new Set(a.map((s) => s.toLowerCase()))].sort();
@@ -698,6 +736,9 @@ function sameIds(a: readonly string[], b: readonly string[]): boolean {
  */
 export class RepositoryUse {
   constructor(private readonly deps: RepositoryUseDeps) {}
+
+  /** The Overview's reads of a repository's marks, by repository key (`OVERVIEW_READ_MS`). */
+  private readonly reads = new Map<string, { at: number; read: RepositoryRead | null }>();
 
   private identityOptions(): IdentityOptions {
     return { ...(this.deps.identity ?? {}), hosts: this.deps.hosts ?? DEFAULT_REPO_HOSTS };
@@ -784,7 +825,11 @@ export class RepositoryUse {
       }
       return {};
     }
-    const ref: RepoRef = { owner: repoLink.repo.owner, name: repoLink.repo.name };
+    // GitHub reads owner and name in any case; the key's lower case is the one spelling read.
+    const ref: RepoRef = {
+      owner: repoLink.repo.owner.toLowerCase(),
+      name: repoLink.repo.name.toLowerCase(),
+    };
     const locator = repoLink.repo.locator;
     const host = await this.host();
     let read: RepositoryRead | null = null;
@@ -858,6 +903,184 @@ export class RepositoryUse {
           };
         throw await this.elsewhereRefusal(locator, e, opts);
       }
+    }
+  }
+
+  /** The project's GitHub repository, as the index keys it; null for a folder or none. */
+  private repositoryOf(
+    project: Pick<ProjectRow, "repos">,
+  ): { ref: RepoRef; locator: string; key: string } | null {
+    let links: LinkIdentity[];
+    try {
+      links = this.identities(project.repos ?? []);
+    } catch {
+      return null;
+    }
+    const link = links.find((l) => l.kind === "repo" && l.repo);
+    if (!link?.repo) return null;
+    return {
+      ref: { owner: link.repo.owner.toLowerCase(), name: link.repo.name.toLowerCase() },
+      locator: link.repo.locator,
+      key: link.keys[0] ?? link.repo.locator.toLowerCase(),
+    };
+  }
+
+  /**
+   * OR-07: the Overview's line about the project's repository, or null. The copy's marker is
+   * read as a file (no git process, no GitHub call); only a marker naming a project that is not on
+   * this computer reads the repository's pull request marks for the 14-day rule, reused for
+   * `OVERVIEW_READ_MS` and never waited on longer than `OVERVIEW_WAIT_MS` (the press reads anew).
+   */
+  async overviewOf(project: ProjectRow): Promise<RepositoryOverview | null> {
+    if (project.status === "archived") return null;
+    if (isTogether(project))
+      return {
+        kind: "together",
+        text: TOGETHER_OVERVIEW_LINE,
+        canTakeOver: false,
+        takeOverLine: null,
+        details: TOGETHER_OVERVIEW_DETAILS,
+      };
+    const repo = this.repositoryOf(project);
+    if (!repo) return null;
+    const text = this.deps.copyMarker?.(project.id) ?? null;
+    const parsed = text ? parseInstallMarker(text) : null;
+    const id = parsed && PROJECT_ID.test(parsed.project) ? parsed.project.toLowerCase() : null;
+    if (!id) return null;
+    const own = new Set([...projectIdsOf(project), ...(tookOverOf(project)?.projects ?? [])]);
+    if (own.has(id)) return null;
+    const index = await this.index();
+    // A project here (two on one repository made before the rule: d1109-onerepo-join's line),
+    // or one joined into or taken over by a project here, is not "not on this computer".
+    if (index.row(id) || index.knows(id)) return null;
+    const name = markerNameOf(parsed?.name);
+    const read = await this.overviewRead(repo.key, repo.ref);
+    const e: Elsewhere = read
+      ? { ...elsewhereOf(read, [id], this.deps.clock.now()), name }
+      : {
+          ids: [id],
+          name,
+          lastActive: null,
+          otherAccount: null,
+          canWorkTogether: true,
+          canTakeOver: true,
+        };
+    return {
+      kind: "elsewhere",
+      text: alsoElsewhereSentence(repo.locator, e, await this.zone()),
+      canTakeOver: e.canTakeOver,
+      takeOverLine: e.canTakeOver ? takeOverLine(e) : null,
+      details: e.canTakeOver ? takeOverDetails(e) : null,
+    };
+  }
+
+  private async overviewRead(key: string, ref: RepoRef): Promise<RepositoryRead | null> {
+    const now = this.deps.clock.now();
+    const kept = this.reads.get(key);
+    if (kept && now - kept.at < OVERVIEW_READ_MS) return kept.read;
+    const host = await this.host();
+    if (!host) return null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = await Promise.race([
+      readRepository(host, ref).catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), OVERVIEW_WAIT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    this.reads.set(key, { at: now, read });
+    return read;
+  }
+
+  /**
+   * OR-07 (`repo.take_over`'s check, at the press and again at its run): the ids the repository
+   * names that are not on this computer, read from GitHub now. Refused in words when GitHub does
+   * not answer, when another GitHub account worked on it within 14 days, or when there is
+   * nothing to take over.
+   */
+  async takeOverFacts(
+    projectId: string,
+  ): Promise<{ locator: string; projects: string[]; name: string | null }> {
+    const project = await this.deps.store.project.mustGet(projectId);
+    const repo = this.repositoryOf(project);
+    if (!repo || isTogether(project))
+      throw linkRefusal(nothingToTakeOverSentence(repo?.locator ?? "This project's repository"), {
+        cause: "together_refused",
+      });
+    const host = await this.host();
+    let read: RepositoryRead | null = null;
+    if (host) read = await readRepository(host, repo.ref).catch(() => null);
+    if (!read) throw linkRefusal(TAKE_OVER_UNREADABLE, { cause: "github_unreadable" });
+    this.reads.set(repo.key, { at: this.deps.clock.now(), read });
+    const index = await this.index();
+    const verdict = verdictOf(read, index, this.deps.clock.now());
+    const untrusted = { source: "repo_file", origin: `repository:${repo.locator}` } as const;
+    switch (verdict.kind) {
+      case "free":
+        throw linkRefusal(nothingToTakeOverSentence(repo.locator), { cause: "together_refused" });
+      case "here":
+        if (verdict.project.id === project.id)
+          throw linkRefusal(nothingToTakeOverSentence(repo.locator), {
+            cause: "together_refused",
+          });
+        throw linkRefusal(alreadyHereSentence(repo.locator, verdict.project.name), {
+          cause: "repository_in_use",
+          projectId: verdict.project.id,
+          projectName: verdict.project.name,
+        });
+      case "removed":
+        return { locator: repo.locator, projects: [verdict.projectId], name: read.marker?.name ?? null };
+      case "removed_together":
+      case "elsewhere": {
+        const e = verdict.elsewhere;
+        if (!e.canTakeOver)
+          throw linkRefusal(takeOverActiveSentence(repo.locator, e, await this.zone()), {
+            cause: "repository_used_elsewhere",
+            projects: e.ids,
+            canWorkTogether: e.canWorkTogether,
+            canTakeOver: false,
+            untrusted,
+          });
+        return { locator: repo.locator, projects: e.ids, name: e.name };
+      }
+    }
+  }
+
+  /**
+   * OR-07 (`repo.take_over`'s Undo): refused once the take-over's docs pull request exists on
+   * GitHub, open (close it there first) or merged (the repository names this project); and when
+   * GitHub cannot be read, since an Undo that cannot see GitHub would promise what it cannot do.
+   */
+  async takeOverUndoBlocked(
+    projectId: string,
+    since: string,
+    prUrl: string | null,
+  ): Promise<string | null> {
+    const project = await this.deps.store.project.mustGet(projectId);
+    const repo = this.repositoryOf(project);
+    if (!repo) return null;
+    const host = await this.host();
+    if (!host) return TAKE_OVER_UNDO_UNREADABLE;
+    try {
+      const file = await host.getFile(repo.ref, INSTALL_MARKER_FILE).catch((e: unknown) => {
+        if (e instanceof ForerunnerError && e.code === "not_found") return null;
+        throw e;
+      });
+      const named = file ? parseInstallMarker(file.content)?.project?.toLowerCase() : null;
+      if (named && named === project.id.toLowerCase()) return TAKE_OVER_UNDO_MERGED;
+      const prs = await host.listPullRequests(repo.ref, { state: "all", sort: "updated" });
+      const its = prs.filter(
+        (pr) =>
+          (!!prUrl && pr.htmlUrl === prUrl) ||
+          (DOCS_BRANCH.test(pr.head.ref) &&
+            projectIdsNamedBy(pr).includes(project.id.toLowerCase()) &&
+            !!pr.updatedAt &&
+            (!since || pr.updatedAt >= since)),
+      );
+      if (its.some((pr) => pr.merged)) return TAKE_OVER_UNDO_MERGED;
+      if (its.some((pr) => pr.state === "open")) return TAKE_OVER_UNDO_OPEN;
+      return null;
+    } catch {
+      return TAKE_OVER_UNDO_UNREADABLE;
     }
   }
 

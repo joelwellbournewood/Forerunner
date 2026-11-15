@@ -92,10 +92,13 @@ import {
   type Elsewhere,
   elsewhereSentence,
   inUseSentence,
+  nothingToTakeOverSentence,
   otherHostSentence,
+  takeOverAsk,
   takeOverDetails,
   takeOverLine,
   togetherLine,
+  tookOverSentence,
 } from "@forerunner/runtime/sources/repository-words";
 
 /**
@@ -551,6 +554,12 @@ export interface FakeDaemonState {
    * project that is not on this computer, with its offer. Absent: nothing (a free repository).
    */
   repositoryElsewhere: Record<string, Elsewhere>;
+  /**
+   * OR-07: per project id, the Overview's line about its repository, as the daemon's
+   * `RepositoryUse.overviewOf` gives it (`ProjectCard.repositoryElsewhere`). `repo.take_over`
+   * removes it (its Undo puts it back); a test sets it.
+   */
+  repositoryOverview: Record<string, NonNullable<ProjectCard["repositoryElsewhere"]>>;
   /**
    * R-startcred (leftovers7-web): per project, the wait every ready task's credential meets now
    * (as `RuntimeApp.billing.waits.now`): the Start check says it in one sentence
@@ -1156,6 +1165,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     requests: clone(REQUESTS),
     intake: {},
     repositoryElsewhere: {},
+    repositoryOverview: {},
     credentialWaitNow: {},
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
@@ -1361,6 +1371,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.requests = clone(REQUESTS);
     state.intake = {};
     state.repositoryElsewhere = {};
+    state.repositoryOverview = {};
     state.messages = clone(MESSAGES);
     state.killActive = false;
     state.calls = [];
@@ -1719,6 +1730,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       repository,
       // 'sites': as the daemon's card, from "Web pages research may read".
       researchReads: researchReadsLine(webAccessFake(p.id)),
+      // OR-07: the repository is also a project that is not on this computer (or together).
+      repositoryElsewhere: state.repositoryOverview[p.id] ?? null,
     };
   };
   app.get("/projects", (c) => {
@@ -5375,6 +5388,46 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         },
       };
     }
+    if (name === "repo.take_over") {
+      // OR-07, as the daemon's `repo.take_over`: the Overview's Take it over (medium: the press
+      // is the yes); the line goes, and the Undo puts it back.
+      const project = projectByRef(projectRef);
+      if (!project) return refuse("no such project", "not_found");
+      const line = state.repositoryOverview[project.id];
+      const locator = project.repos?.[0] ?? "the repository";
+      if (line?.kind !== "elsewhere") return refuse(nothingToTakeOverSentence(locator));
+      if (!line.canTakeOver)
+        return refuse(`${line.text.replace(/\.$/, "")}, so it cannot be taken over now.`);
+      const shown = /"([^"]+)"/.exec(line.text)?.[1] ?? null;
+      const e = { ids: ["elsewhere"], name: shown };
+      return {
+        name,
+        params,
+        risk: "medium",
+        card: {
+          ...card(
+            {
+              command: "repo.take_over",
+              what: `the repository ${locator}`,
+              oldValue: shown ? `"${shown}"` : "another Forerunner project",
+              newValue: `"${project.name}"`,
+              scope: "project",
+              sentence: tookOverSentence(locator, e),
+              projectId: project.id,
+              projectName: project.name,
+              usesActiveProject: projectRef === undefined,
+            },
+            "medium",
+          ),
+          ask: takeOverAsk(locator, e),
+        },
+        apply: () => {
+          delete state.repositoryOverview[project.id];
+          emit("project.changed", { id: project.id });
+          return { before: { line }, after: { took_over: { name: shown ?? "" } } };
+        },
+      };
+    }
     if (name === "repo.create") {
       // As the daemon's `repo.create` (U-037): a project without a repository, the name from
       // the project's, under the token's account (the fake host's alice) unless an owner is
@@ -6481,6 +6534,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const back = typeof before?.active_project === "string" ? before.active_project : null;
       // Another project made active since stays active.
       if (project.active) for (const p of state.projects) p.active = p.id === back;
+      emit("project.changed", { id: project.id });
+    }
+    // OR-07: repo.take_over's Undo: the Overview's line comes back.
+    if (first?.name === "repo.take_over" && project && before?.line) {
+      state.repositoryOverview[project.id] = before.line as NonNullable<
+        ProjectCard["repositoryElsewhere"]
+      >;
       emit("project.changed", { id: project.id });
     }
     if (first?.name === "autonomy.set" && project && typeof before?.autonomyLevel === "number") {

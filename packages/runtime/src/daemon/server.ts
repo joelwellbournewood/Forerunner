@@ -890,6 +890,8 @@ export function createDaemonApp(
       stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
       // W15-67: the ready line names a credential wait now, kept or not (as the Start check).
       credentialWaitNow: (projectId) => rt.billing.waits.now(projectId),
+      // OR-07 (d1109-onerepo-link): the repository is also a project not on this computer.
+      repositoryElsewhere: (project) => rt.repositoryUse.overviewOf(project),
     });
   app.get("/projects", async (c) => {
     const rows = await rt.store.project.active({ limit: 100 });

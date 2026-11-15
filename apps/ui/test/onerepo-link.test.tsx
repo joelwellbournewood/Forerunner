@@ -205,3 +205,97 @@ describe("d1109-onerepo-link, run C: the New project offer (OR-02, OR-15)", () =
     expect(await screen.findByTestId("project-header")).toHaveTextContent("Kites");
   });
 });
+
+/**
+ * OR-07: a project made before the rule (or while GitHub could not be read) whose repository is
+ * also a Forerunner project that is not on this computer: one line on the Overview, no card.
+ */
+describe("d1109-onerepo-link, run C: the Overview's line about the repository (OR-07)", () => {
+  const ELSEWHERE = {
+    kind: "elsewhere" as const,
+    text: 'org/atlas is also the Forerunner project "Kite club", which is not on this computer.',
+    canTakeOver: true,
+    takeOverLine:
+      'The repository then names this project: choose it only if no Forerunner uses "Kite club" now.',
+    details: 'The pull requests of "Kite club" stay as they are.',
+  };
+
+  it("the line with Take it over and its consequence line; the press takes it over at once (the press is the yes), the line goes, Changes has the row with its Undo, and Undo brings the line back", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = ELSEWHERE;
+    renderApp("/projects/proj_atlas/summary", harness);
+    const section = await screen.findByTestId("repository-elsewhere");
+    expect(within(section).getByTestId("repository-elsewhere-line")).toHaveTextContent(
+      'org/atlas is also the Forerunner project "Kite club", which is not on this computer.',
+    );
+    expect(within(section).getByTestId("repository-take-over-line")).toHaveTextContent(
+      'The repository then names this project: choose it only if no Forerunner uses "Kite club" now.',
+    );
+    await user.click(within(section).getByTestId("repository-elsewhere-details-toggle"));
+    expect(within(section).getByTestId("repository-elsewhere-details")).toHaveTextContent(
+      'The pull requests of "Kite club" stay as they are.',
+    );
+    // No Inbox card: the line is visible, not blocking.
+    expect(harness.daemon.state.requests.some((r) => /Kite club/.test(String(r.why)))).toBe(false);
+    await user.click(within(section).getByTestId("repository-take-over"));
+    expect(await screen.findByTestId("repository-took-over")).toHaveTextContent(
+      'Took over org/atlas from "Kite club". Changes has its Undo.',
+    );
+    const posted = postedCalls(harness, "/commands/execute");
+    expect(posted.at(-1)?.body).toMatchObject({
+      commands: [{ name: "repo.take_over", params: { project: "proj_atlas" } }],
+      source: "ui",
+      confirm: "tap",
+    });
+    await waitFor(() => expect(screen.queryByTestId("repository-elsewhere-line")).toBeNull());
+    const row = harness.daemon.state.changes[0];
+    expect(row?.sentence).toBe('Took over org/atlas from "Kite club".');
+    expect(row?.undoable).toBe(true);
+    // Undo from Changes puts the line back.
+    await harness.client.undoChange(String(row?.id));
+    expect(harness.daemon.state.repositoryOverview.proj_atlas).toEqual(ELSEWHERE);
+  });
+
+  it("another GitHub account worked on it within 14 days: the line says when, with no Take it over", async () => {
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = {
+      ...ELSEWHERE,
+      text: 'org/atlas is also the Forerunner project "Kite club", which is not on this computer; another GitHub account worked on it on 8 Nov.',
+      canTakeOver: false,
+      takeOverLine: null,
+      details: null,
+    };
+    renderApp("/projects/proj_atlas/summary", harness);
+    const section = await screen.findByTestId("repository-elsewhere");
+    expect(section).toHaveTextContent(
+      'org/atlas is also the Forerunner project "Kite club", which is not on this computer; another GitHub account worked on it on 8 Nov.',
+    );
+    expect(within(section).queryByTestId("repository-take-over")).toBeNull();
+    expect(within(section).queryByTestId("repository-take-over-line")).toBeNull();
+  });
+
+  it("a project worked on together says so, with Details; a project with no line shows none", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = {
+      kind: "together",
+      text: "Shared on GitHub with another Forerunner: each keeps its own tasks.",
+      canTakeOver: false,
+      takeOverLine: null,
+      details:
+        "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.",
+    };
+    renderApp("/projects/proj_atlas/summary", harness);
+    const section = await screen.findByTestId("repository-elsewhere");
+    expect(within(section).getByTestId("repository-elsewhere-line")).toHaveTextContent(
+      "Shared on GitHub with another Forerunner: each keeps its own tasks.",
+    );
+    expect(within(section).queryByTestId("repository-take-over")).toBeNull();
+    await user.click(within(section).getByTestId("repository-elsewhere-details-toggle"));
+    expect(within(section).getByTestId("repository-elsewhere-details")).toHaveTextContent(
+      "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.",
+    );
+    delete harness.daemon.state.repositoryOverview.proj_atlas;
+  });
+});

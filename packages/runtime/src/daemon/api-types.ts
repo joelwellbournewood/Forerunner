@@ -224,6 +224,24 @@ export const ProjectCard = z.object({
    * card the state service serves.
    */
   researchReads: z.string().optional(),
+  /**
+   * d1109-onerepo-link (ADR 0117, OR-07): the Overview's line about the repository. `elsewhere`:
+   * this computer's copy of the repository names a Forerunner project that is not on this
+   * computer ('o/kite is also the Forerunner project "Kite club", which is not on this
+   * computer.'), with Take it over (`repo.take_over`) unless another GitHub account worked on it
+   * within 14 days; `together`: worked on together with another Forerunner (D9). Null without a
+   * line; absent on a card the state service serves.
+   */
+  repositoryElsewhere: z
+    .object({
+      kind: z.enum(["elsewhere", "together"]),
+      text: z.string(),
+      canTakeOver: z.boolean(),
+      takeOverLine: z.string().nullable(),
+      details: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 export type ProjectCard = z.infer<typeof ProjectCard>;
 

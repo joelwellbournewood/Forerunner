@@ -2229,6 +2229,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       gitRemoteBase: opts.data?.gitRemoteBase,
     }),
     timezone: async () => (await store.human.get(human.id))?.timezone ?? null,
+    // OR-07: the Overview reads this computer's copy of the repository (made further down).
+    copyMarker: (projectId) => docs.copyMarker(projectId),
   });
   const appVersion = opts.appVersion ?? env.FORERUNNER_VERSION ?? APP_VERSION;
 
@@ -3895,6 +3897,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // a link another project uses, before its read-back; the chat cannot work together yet
       // (the New project dialog can), so the answer says where.
       repositoryUse: { check: (repos) => chatLinkCheck(repositoryUse, repos) },
+      // OR-07: repo.take_over reads GitHub at the press; its marker goes in this project's docs
+      // pull request (the scaffold run again replaces exactly the taken-over marker).
+      repositoryTakeOver: {
+        check: (projectId) => repositoryUse.takeOverFacts(projectId),
+        writeMarker: async (projectId) => {
+          try {
+            const out = await docs.scaffoldProject(await store.project.mustGet(projectId));
+            return { prUrl: out.prUrl ?? null };
+          } catch {
+            return { prUrl: null };
+          }
+        },
+        undoBlocked: (projectId, since, prUrl) =>
+          repositoryUse.takeOverUndoBlocked(projectId, since, prUrl),
+      },
       // memory.record (spec O.2, ADR 0061): a lesson stated in chat or voice goes into the
       // principal's private memory through the same loop the sessions use.
       memory: memoryCommandPort(memory),

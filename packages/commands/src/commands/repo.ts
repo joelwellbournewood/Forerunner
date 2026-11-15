@@ -1,9 +1,24 @@
 import { ForerunnerError } from "@forerunner/platform";
+import {
+  ONLY_YOU_TAKE_OVER,
+  TOOK_OVER_KEY,
+  takeOverAsk,
+  takeOverUndoneSentence,
+  tookOverSentence,
+} from "@forerunner/runtime/sources/repository-words";
 import { ANSWER_CARD_KEYS } from "@forerunner/runtime/wiring/request-answers";
+import type { JsonValue } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
-import type { CommandContext, CommandDef, RepoPreview, Risk } from "../types.ts";
-import { resolveProject } from "./shared.ts";
+import type {
+  CommandContext,
+  CommandDef,
+  CommandOutcome,
+  RepoPreview,
+  RepoTakeOverFacts,
+  Risk,
+} from "../types.ts";
+import { asObject, authorOf, patchProjectSettings, resolveProject } from "./shared.ts";
 
 /**
  * repo.create (U-037, ADR 0097): a GitHub repository for a project that has none, created with
@@ -154,5 +169,139 @@ export const repoCreate: CommandDef<RepoCreateParams> = {
       projectId: project.id,
       reversible: false,
     };
+  },
+};
+
+/**
+ * repo.take_over (d1109-onerepo-link, ADR 0117, OR-07): the repository of this project names a
+ * Forerunner project that is not on this computer (its marker, `.forerunner/project.json`);
+ * nobody else worked on it for 14 days, so the person takes it over. The take-over is recorded
+ * on the project (`settings.took_over`: the ids, the marker's name, when) and this project's
+ * docs pull request replaces exactly that marker with its own, saying so in one line; nothing of
+ * the other project's on GitHub is pushed to, commented on or closed.
+ *
+ * It replaces another project's file through a pull request, so it is medium risk for every
+ * actor: the person confirms (the Overview's press is the yes; chat reads it back with Yes and
+ * No). No agent takes a repository over by itself: an agent outside the person's chat is
+ * refused. The facts are read from GitHub at the press, never from the model's words. Undo
+ * puts the project back as it was until its docs pull request exists: refused while that pull
+ * request is open (close it there first) and once it merged (the repository names this project).
+ */
+const takeOverParams = z.object({
+  /** Project id or name; the active project when left out. */
+  project: z.string().optional(),
+});
+export type RepoTakeOverParams = z.infer<typeof takeOverParams>;
+
+function takeOverPort(ctx: CommandContext) {
+  const port = ctx.ports.repositoryTakeOver;
+  if (!port) {
+    throw new ForerunnerError(
+      "unavailable",
+      "taking over a repository needs the git host; this install has none wired",
+    );
+  }
+  return port;
+}
+
+/** An agent acting on its own (not on the person's words in chat or voice) never takes over. */
+function assertThePerson(ctx: CommandContext): void {
+  if (ctx.actor.kind === "agent" && ctx.source !== "chat" && ctx.source !== "voice")
+    throw new ForerunnerError("autonomy_insufficient", ONLY_YOU_TAKE_OVER, {
+      details: { reason: "agent_actor" },
+    });
+}
+
+function untrustedOf(facts: RepoTakeOverFacts): CommandOutcome["untrusted"] | undefined {
+  return facts.name ? { source: "repo_file", origin: `repository:${facts.locator}` } : undefined;
+}
+
+function factsOf(v: JsonValue | undefined): RepoTakeOverFacts | null {
+  const o = asObject(v ?? null);
+  if (typeof o.locator !== "string" || !Array.isArray(o.projects)) return null;
+  return {
+    locator: o.locator,
+    projects: o.projects.filter((x): x is string => typeof x === "string"),
+    name: typeof o.name === "string" ? o.name : null,
+  };
+}
+
+export const repoTakeOver: CommandDef<RepoTakeOverParams> = {
+  name: "repo.take_over",
+  description:
+    "Take over the project's GitHub repository from a Forerunner project that is not on this computer, when nobody worked on it for 14 days: the repository then names this project through its docs pull request. Only for the repository the Overview says is also another Forerunner project, and only when the person asks.",
+  params: takeOverParams,
+  risk: "medium",
+  maxRisk: "medium",
+  askFromChat: true,
+  scope: "project",
+  reversible: true,
+  undoStrategy:
+    "remove the take-over from the project while its docs pull request does not exist (closed on GitHub, or never opened)",
+  actionClass: "external_send",
+  async plan(p, ctx) {
+    assertThePerson(ctx);
+    const { project, usedActive } = await resolveProject(ctx, p.project);
+    const facts = await takeOverPort(ctx).check(project.id);
+    const e = { ids: facts.projects, name: facts.name };
+    const untrusted = untrustedOf(facts);
+    return buildCard({
+      command: "repo.take_over",
+      what: `the repository ${facts.locator}`,
+      oldValue: facts.name ? `"${facts.name}"` : "another Forerunner project",
+      newValue: `"${project.name.replace(/\s+/g, " ").trim()}"`,
+      scope: "project",
+      risk: "medium",
+      sentence: takeOverAsk(facts.locator, e),
+      reversible: true,
+      projectId: project.id,
+      projectName: project.name,
+      usesActiveProject: usedActive,
+      ask: takeOverAsk(facts.locator, e),
+      ...(untrusted ? { untrusted } : {}),
+    });
+  },
+  async run(p, ctx) {
+    assertThePerson(ctx);
+    const { project } = await resolveProject(ctx, p.project);
+    const port = takeOverPort(ctx);
+    // Read again at the run: a card answered later still meets the 14-day rule.
+    const facts = await port.check(project.id);
+    const before = asObject(project.settings)[TOOK_OVER_KEY] ?? null;
+    const at = ctx.clock.nowIso();
+    const tookOver: JsonValue = { projects: facts.projects, name: facts.name ?? "", at };
+    await patchProjectSettings(ctx.store, project.id, { [TOOK_OVER_KEY]: tookOver }, authorOf(ctx));
+    const written = await port.writeMarker(project.id);
+    const untrusted = untrustedOf(facts);
+    return {
+      before: { took_over: before },
+      after: {
+        took_over: tookOver,
+        repository: { locator: facts.locator, projects: facts.projects, name: facts.name },
+        pr_url: written.prUrl,
+      },
+      sentence: tookOverSentence(facts.locator, { ids: facts.projects, name: facts.name }),
+      projectId: project.id,
+      ...(untrusted ? { untrusted } : {}),
+    };
+  },
+  async undoBlocked(p, _before, after, ctx) {
+    const { project } = await resolveProject(ctx, p.project);
+    const a = asObject(after);
+    const took = asObject(a.took_over ?? null);
+    const since = typeof took.at === "string" ? took.at : "";
+    const prUrl = typeof a.pr_url === "string" ? a.pr_url : null;
+    return takeOverPort(ctx).undoBlocked(project.id, since, prUrl);
+  },
+  async undo(p, before, _after, ctx) {
+    const { project } = await resolveProject(ctx, p.project);
+    const was = asObject(before).took_over ?? null;
+    await patchProjectSettings(ctx.store, project.id, { [TOOK_OVER_KEY]: was }, authorOf(ctx));
+  },
+  undoSentence(_p, _before, after) {
+    const facts = factsOf(asObject(after).repository);
+    return facts
+      ? takeOverUndoneSentence(facts.locator, { ids: facts.projects, name: facts.name })
+      : "The repository is no longer taken over.";
   },
 };

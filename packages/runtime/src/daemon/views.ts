@@ -175,6 +175,8 @@ export interface ProjectCardFacts {
     save: { label: string; to: string } | null;
     startable?: boolean;
   } | null>;
+  /** OR-07: the Overview's line about the repository (`RepositoryUse.overviewOf`). */
+  repositoryElsewhere?: (project: ProjectRow) => Promise<ProjectCard["repositoryElsewhere"]>;
 }
 
 export async function projectCard(
@@ -269,6 +271,10 @@ export async function projectCard(
     repository,
     // 'sites': "Research reads: any public website" (the Overview's line).
     researchReads: researchReadsLine(webAccessOf(p.settings)),
+    // OR-07: the repository is also a Forerunner project that is not on this computer.
+    ...(facts?.repositoryElsewhere
+      ? { repositoryElsewhere: await facts.repositoryElsewhere(p).catch(() => null) }
+      : {}),
   };
 }
 

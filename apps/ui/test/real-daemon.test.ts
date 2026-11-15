@@ -18037,4 +18037,203 @@ describe("d1109-onerepo-link, run C", () => {
       await rt.close();
     }
   }, 120_000);
+
+  it("a project whose copy of its repository names a project that is not on this computer: the Overview's line, with Take it over only without another account's activity in 14 days; the press runs repo.take_over (one Changes row) and the line goes; after the daemon starts again Undo is refused while its docs pull request is open and once it merged, and takes it back once it is closed; a together project's line (OR-07)", async () => {
+    const host = new MemoryGitHost("alice");
+    const repo = { owner: "o", name: "kite" };
+    await host.createRepo({ ...repo, private: true });
+    const { compose } = onHome(host);
+    let { rt, client } = await compose();
+    try {
+      // Made while the repository named no project (as before the rule, or GitHub unreadable).
+      const made = await client.createProject({ name: "Kites", goal: "Kites", repos: ["o/kite"] });
+      expect((await client.project(made.id)).repositoryElsewhere ?? null).toBeNull();
+      // Another Forerunner's marker lands on the default branch; this computer's copy has it.
+      const marker = `${JSON.stringify({ schema: 1, project: KITE_ID, name: "Kite club" }, null, 2)}\n`;
+      await host.putFile(repo, {
+        path: ".forerunner/project.json",
+        content: marker,
+        message: "marker",
+        branch: "main",
+      });
+      const copy = rt.docs.copyDir(made.id);
+      mkdirSync(join(copy, ".forerunner"), { recursive: true });
+      writeFileSync(join(copy, ".forerunner", "project.json"), marker);
+      const theirs = await host.openPullRequestAs(repo, "bob", {
+        title: "Kite page",
+        body: `Work.\n\n<!-- forerunner:pr project=${KITE_ID} task=t1 -->`,
+        head: "fr/kite-page",
+        updatedAt: daysAgo(3),
+      });
+      const theirsBefore = JSON.stringify(theirs);
+      const press = (c: DaemonClient) =>
+        c.executeCommands({
+          commands: [{ name: "repo.take_over", params: { project: made.id } }],
+          wordsUsed: "Take it over (Overview)",
+          source: "ui",
+          projectId: made.id,
+          confirm: "tap",
+        });
+      // Another GitHub account worked on it 3 days ago: the line, and no Take it over.
+      expect((await client.project(made.id)).repositoryElsewhere).toEqual({
+        kind: "elsewhere",
+        text: `o/kite is also the Forerunner project "Kite club", which is not on this computer; another GitHub account worked on it on ${dayWords(daysAgo(3))}.`,
+        canTakeOver: false,
+        takeOverLine: null,
+        details: null,
+      });
+      const busy = await press(client);
+      expect(busy.status).toBe("refused");
+      expect(busy.reason).toBe(
+        `o/kite is also the Forerunner project "Kite club", which is not on this computer; another GitHub account worked on it on ${dayWords(daysAgo(3))}, so it cannot be taken over now.`,
+      );
+      expect((await rt.store.project.mustGet(made.id)).settings.took_over).toBeUndefined();
+      // Nobody else for 20 days; the daemon starts again (a fresh read): Take it over is offered.
+      theirs.updatedAt = daysAgo(20);
+      await rt.close();
+      ({ rt, client } = await compose());
+      expect((await client.project(made.id)).repositoryElsewhere).toEqual({
+        kind: "elsewhere",
+        text: 'o/kite is also the Forerunner project "Kite club", which is not on this computer.',
+        canTakeOver: true,
+        takeOverLine:
+          'The repository then names this project: choose it only if no Forerunner uses "Kite club" now.',
+        details: 'The pull requests of "Kite club" stay as they are.',
+      });
+      const done = await press(client);
+      expect(done.status).toBe("done");
+      expect(done.sentence).toBe('Took over o/kite from "Kite club".');
+      const rows = (await client.changes()).filter((r) => r.sentence.startsWith("Took over"));
+      expect(rows.map((r) => r.sentence)).toEqual(['Took over o/kite from "Kite club".']);
+      expect((await rt.store.project.mustGet(made.id)).settings.took_over).toMatchObject({
+        projects: [KITE_ID],
+        name: "Kite club",
+      });
+      expect((await client.project(made.id)).repositoryElsewhere ?? null).toBeNull();
+      // The other project's pull request is untouched (no push, comment or close).
+      expect(JSON.stringify(theirs)).toBe(theirsBefore.replace(daysAgo(3), daysAgo(20)));
+      expect(await host.listPullRequestComments(repo, theirs.number)).toEqual([]);
+      // The daemon starts again; this project's docs pull request (with its marker) is open.
+      await rt.close();
+      ({ rt, client } = await compose());
+      expect((await client.project(made.id)).repositoryElsewhere ?? null).toBeNull();
+      // Opened (on GitHub's clock) after the take-over, with this project's mark.
+      const tookOverAt = String(
+        ((await rt.store.project.mustGet(made.id)).settings.took_over as { at: string }).at,
+      );
+      const docsPr = await host.openPullRequestAs(repo, "alice", {
+        title: "docs: scaffold the standard project doc set",
+        body: `This repository was the Forerunner project "Kite club"; it is now "Kites"'s.\n\n<!-- forerunner:pr project=${made.id} -->`,
+        head: "fr/docs-scaffold",
+        updatedAt: new Date(Date.parse(tookOverAt) + 60_000).toISOString(),
+      });
+      const changeId = String(done.changeLogId);
+      const open = await client.undoChange(changeId);
+      expect(open.status).toBe("refused");
+      expect(open.reason).toBe(
+        "Its pull request on GitHub already names this project: close it there first.",
+      );
+      docsPr.state = "closed";
+      docsPr.merged = true;
+      const merged = await client.undoChange(changeId);
+      expect(merged.reason).toBe(
+        "The repository already names this project on GitHub, so this cannot be undone here.",
+      );
+      // Closed without merging: Undo puts it back, and the line comes back with Take it over.
+      docsPr.merged = false;
+      const undone = await client.undoChange(changeId);
+      expect(undone.status).toBe("done");
+      expect(undone.sentence).toBe('o/kite is no longer taken over from "Kite club".');
+      expect((await rt.store.project.mustGet(made.id)).settings.took_over).toBeUndefined();
+      expect((await client.project(made.id)).repositoryElsewhere).toMatchObject({
+        kind: "elsewhere",
+        canTakeOver: true,
+      });
+      // A project worked on together has its own line, and nothing to take over.
+      const together = await rt.store.project.insert({
+        name: "Shared",
+        goal: "g",
+        repos: ["o/shared"],
+        settings: {
+          together: { name: "Shared", at: rt.clock.nowIso(), activeOn: null, login: null },
+        },
+      });
+      expect((await client.project(together.id)).repositoryElsewhere).toEqual({
+        kind: "together",
+        text: "Shared on GitHub with another Forerunner: each keeps its own tasks.",
+        canTakeOver: false,
+        takeOverLine: null,
+        details:
+          "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.",
+      });
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("repo.take_over from chat: refused while another account worked on it within 14 days, the answer quoting the marker as data; otherwise read back with Yes and No, and the yes takes it over (OR-07)", async () => {
+    const host = new MemoryGitHost("alice");
+    const repo = { owner: "o", name: "kite" };
+    await host.createRepo({ ...repo, private: true });
+    const { compose } = onHome(host);
+    const { rt, client, chatCalls } = await compose();
+    try {
+      const made = await client.createProject({ name: "Kites", goal: "Kites", repos: ["o/kite"] });
+      const marker = `${JSON.stringify({ schema: 1, project: KITE_ID, name: "Kite club" }, null, 2)}\n`;
+      await host.putFile(repo, {
+        path: ".forerunner/project.json",
+        content: marker,
+        message: "marker",
+        branch: "main",
+      });
+      mkdirSync(join(rt.docs.copyDir(made.id), ".forerunner"), { recursive: true });
+      writeFileSync(join(rt.docs.copyDir(made.id), ".forerunner", "project.json"), marker);
+      const theirs = await host.openPullRequestAs(repo, "bob", {
+        title: "Kite page",
+        body: `Work.\n\n<!-- forerunner:pr project=${KITE_ID} task=t1 -->`,
+        head: "fr/kite-page",
+        updatedAt: daysAgo(3),
+      });
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const said = async (text: string) => {
+        chatCalls.length = 0;
+        const reply = await client.chat({
+          humanId: me.id,
+          agentId,
+          projectId: made.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+        const answer = JSON.stringify(chatCalls[1]?.messages.at(-1)?.content ?? "");
+        return { reply, answer };
+      };
+      const busy = await said(`tool: repo_take_over {"project":"${made.id}"}`);
+      expect(busy.reply.pendingConfirmation).toBeNull();
+      expect(busy.answer).toContain(
+        `Refused: o/kite is also the Forerunner project \\"Kite club\\", which is not on this computer; another GitHub account worked on it on ${dayWords(daysAgo(3))}, so it cannot be taken over now.`,
+      );
+      expect(busy.answer).toContain("UNTRUSTED_CONTENT");
+      theirs.updatedAt = daysAgo(20);
+      const asked = await said(`tool: repo_take_over {"project":"${made.id}"}`);
+      expect(asked.answer).toContain(
+        'Take over o/kite from \\"Kite club\\"? The repository then names this project: choose it only if no Forerunner uses \\"Kite club\\" now.',
+      );
+      expect(asked.answer).toContain("UNTRUSTED_CONTENT");
+      const pending = asked.reply.pendingConfirmation;
+      expect(pending?.readback).toBe(
+        'Take over o/kite from "Kite club"? The repository then names this project: choose it only if no Forerunner uses "Kite club" now.',
+      );
+      expect((await rt.store.project.mustGet(made.id)).settings.took_over).toBeUndefined();
+      const yes = await client.confirmCommand(String(pending?.id), { answer: "yes" });
+      expect(yes.status).toBe("done");
+      expect(yes.sentence).toBe('Took over o/kite from "Kite club".');
+      expect((await rt.store.project.mustGet(made.id)).settings.took_over).toMatchObject({
+        projects: [KITE_ID],
+      });
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

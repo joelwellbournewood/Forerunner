@@ -137,7 +137,7 @@ export function alreadyHereSentence(locator: string, name: string): string {
   return `${locator} is already the project "${name}". Open it.`;
 }
 
-function projectWords(e: Elsewhere): string {
+function projectWords(e: Pick<Elsewhere, "ids" | "name">): string {
   if (e.ids.length > 1) return "other Forerunner projects";
   return e.name ? `the Forerunner project "${e.name}"` : "another Forerunner project";
 }
@@ -269,3 +269,74 @@ export function isLinkRefusalCause(cause: unknown): cause is LinkRefusalCause {
  * line: project.create has no together flag yet, the New project dialog has Work together).
  */
 export const CHAT_TOGETHER_HINT = "Open New project to work on it together.";
+
+/**
+ * OR-07: the Overview line of a project whose repository (this computer's copy of its default
+ * branch) names a Forerunner project that is not on this computer: 'o/kite is also the
+ * Forerunner project "Kite club", which is not on this computer.', with "; another GitHub
+ * account worked on it on 8 Nov" when one did within the 14 days (then there is no Take it
+ * over).
+ */
+export function alsoElsewhereSentence(
+  locator: string,
+  e: Pick<Elsewhere, "ids" | "name" | "otherAccount">,
+  timezone?: string | null,
+): string {
+  const many = e.ids.length > 1;
+  const subject = many
+    ? `${locator} is also used by other Forerunner projects, which are not on this computer`
+    : `${locator} is also ${projectWords(e)}, which is not on this computer`;
+  if (!e.otherAccount) return `${subject}.`;
+  return `${subject}; another GitHub account worked on ${many ? "them" : "it"} on ${dayWords(e.otherAccount, timezone)}.`;
+}
+
+/** OR-07: an agent never takes a repository over (repo.take_over). */
+export const ONLY_YOU_TAKE_OVER = "Only you can take over a repository.";
+
+/** OR-07: repo.take_over's change sentence, also the Changes row: 'Took over o/kite from "Kite club".' */
+export function tookOverSentence(locator: string, e: Pick<Elsewhere, "ids" | "name">): string {
+  return `Took over ${locator} from ${projectFromWords(e)}.`;
+}
+
+/** OR-07: repo.take_over's read-back question. */
+export function takeOverAsk(locator: string, e: Pick<Elsewhere, "ids" | "name">): string {
+  return `Take over ${locator} from ${projectFromWords(e)}? ${takeOverLine(e)}`;
+}
+
+/** OR-07: the sentence of repo.take_over's Undo. */
+export function takeOverUndoneSentence(locator: string, e: Pick<Elsewhere, "ids" | "name">): string {
+  return `${locator} is no longer taken over from ${projectFromWords(e)}.`;
+}
+
+function projectFromWords(e: Pick<Elsewhere, "ids" | "name">): string {
+  if (e.ids.length > 1) return "other Forerunner projects";
+  return e.name ? `"${e.name}"` : "another Forerunner project";
+}
+
+/** OR-07: repo.take_over's Undo while its docs pull request is open. */
+export const TAKE_OVER_UNDO_OPEN =
+  "Its pull request on GitHub already names this project: close it there first.";
+/** OR-07: repo.take_over's Undo once that pull request merged. */
+export const TAKE_OVER_UNDO_MERGED =
+  "The repository already names this project on GitHub, so this cannot be undone here.";
+/** OR-07: Undo cannot see GitHub, so it cannot tell whether the repository names this project. */
+export const TAKE_OVER_UNDO_UNREADABLE =
+  "GitHub did not answer, so whether the repository names this project cannot be checked. Try again.";
+
+/** OR-07: Take it over refused at the press because GitHub could not be read. */
+export const TAKE_OVER_UNREADABLE =
+  "GitHub did not answer, so the repository cannot be checked. Try again.";
+
+/** OR-07: Take it over refused because the repository names no project elsewhere now. */
+export function nothingToTakeOverSentence(locator: string): string {
+  return `${locator} names no Forerunner project that is not on this computer now, so there is nothing to take over.`;
+}
+
+/** OR-07: Take it over refused because another GitHub account worked on it within 14 days. */
+export function takeOverActiveSentence(
+  locator: string,
+  e: Pick<Elsewhere, "ids" | "name" | "otherAccount">,
+  timezone?: string | null,
+): string {
+  return `${alsoElsewhereSentence(locator, e, timezone).replace(/\.$/, "")}, so it cannot be taken over now.`;
+}

@@ -8,7 +8,7 @@ import { memoryRecord } from "./memory.ts";
 import { modelSettingsSet } from "./model-settings.ts";
 import { noteAdd } from "./note.ts";
 import { projectCreate, projectSwitch } from "./project.ts";
-import { repoCreate } from "./repo.ts";
+import { repoCreate, repoTakeOver } from "./repo.ts";
 import { requestAnswer } from "./request.ts";
 import { sessionPause, sessionResume, sessionStart, sessionStop } from "./session.ts";
 import { settingsSet } from "./settings.ts";
@@ -70,5 +70,6 @@ export function defaultRegistry(): CommandRegistry {
     .register(memoryRecord)
     .register(modelSettingsSet)
     .register(specialistPropose)
-    .register(repoCreate);
+    .register(repoCreate)
+    .register(repoTakeOver);
 }
