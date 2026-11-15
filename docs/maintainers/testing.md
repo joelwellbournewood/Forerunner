@@ -2747,7 +2747,10 @@ of them first and writes its markdown file from them: each fact quoted with its 
 the pages not read under "Uncertainty" with the refusal's words, every page under "Sources
 read", ADR 0107; `urlsNamed`, `factsOf`, `researchContent` in `plans.ts`), a `submit_review` verdict, a chat reply that says what context it got
 and quotes back the plan's state (`# Plan from the brief`) and the first task line it was told
-(`chatFacts`), so a journey can check that a reply names a task as a real model's would. The
+(`chatFacts`), so a journey can check that a reply names a task as a real model's would. A
+chat line `say: <text>` is answered with that text and no tool on every call of the turn, a
+nudge included (l3-chat-claims, run L3: the live chat model claimed "I've asked for
+confirmation" with no tool, L3-run-1), so a walk can show the reply guard. The
 intake stand-in reads the person's words after "Change the plan" (`splitChanges` reads them
 from the brief as `briefWithChanges` in `session/intake.ts` writes them; `applyChanges` in
 `plans.ts`): "drop|remove|... <name>" removes the tasks it names, "add|include|insert <name>"

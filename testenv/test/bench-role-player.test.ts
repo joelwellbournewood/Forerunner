@@ -1041,6 +1041,27 @@ describe("bench role-player: critic and chat", () => {
     expect(done.text).toMatch(/task_create answered: Needs confirmation\./);
   });
 
+  it("answers 'say: <text>' with that text and no tool, also after a nudge (l3-chat-claims, run L3)", async () => {
+    const { p } = player();
+    const line = "say: Widening needs your yes, so I've asked for confirmation.";
+    const first = await call(p, chat(line, ["settings_set"]));
+    expect(first.calls).toEqual([]);
+    expect(first.text).toBe(
+      "[stand-in model] Widening needs your yes, so I've asked for confirmation.",
+    );
+    // The turn's own line has a stable start; a nudge after the reply is a block of text.
+    const nudged = await call(p, {
+      ...chat(line, ["settings_set"]),
+      messages: [
+        { role: "user", content: `${line}\n\n# Now\n- now: x`, stableChars: line.length },
+        { role: "assistant", content: first.text },
+        { role: "user", content: [{ type: "text", text: "You called no tool in this turn." }] },
+      ],
+    });
+    expect(nudged.calls).toEqual([]);
+    expect(nudged.text).toBe(first.text);
+  });
+
   it("FORERUNNER_BENCH_FAIL_SAYS puts its sentence first in the planted failure's report", async () => {
     const { p } = player({
       FORERUNNER_BENCH_FAIL: "Style",

@@ -1480,6 +1480,12 @@ function chatAnswer(req: ModelRequest): Answer {
     return text(
       `${STAND_IN} The command tool ${lastCall.name} answered${lastCall.isError ? " with an error" : ""}: ${(lastCall.result ?? "").slice(0, 400)}`,
     );
+  // l3-chat-claims (live check 3, L3-run-1): "say: <text>" answers with that text and calls no
+  // tool, every call of the turn, as the live chat model did when it claimed "I've asked for
+  // confirmation" with no card; read from the turn's own line, so a nudge after it is answered
+  // the same way.
+  const say = /^say:\s*([\s\S]+)$/i.exec(turnLine(req));
+  if (say?.[1]) return text(`${STAND_IN} ${say[1].trim()}`);
   const line = chatLine(req);
   const names = (req.tools ?? []).map((t) => t.name);
   if (/^tools\??$/i.test(line) || /^list tools$/i.test(line))
