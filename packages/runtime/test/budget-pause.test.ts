@@ -903,7 +903,10 @@ describe("w15-run, wave 15: a coder's multi-file write is paid from below its li
   const heard = (r: ModelRequest) => JSON.stringify(r.messages).includes(WRAP_UP_MARK);
   const writes = FILES.map((path) => ({
     name: "write_file",
-    input: { path, content: `// ${path}\n${"export const x = 1;\n".repeat(20)}` },
+    // Valid JavaScript (each line a comment): the review runs the two test files with node
+    // --test (l3-handoff-checks, L3-research-4); the same length as the "export const x = 1;"
+    // lines before, which declared x twenty times, so the budget math is unchanged.
+    input: { path, content: `// ${path}\n${"// one line of code\n".repeat(20)}` },
   }));
   const model = new FakeProvider({
     clock,
@@ -1778,5 +1781,31 @@ describe("l3-handoff-checks, run L3", () => {
         /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d\. Answer it in the Inbox\.$/,
       );
     });
+
+    it("the same after a restart: the card's title, body and lists, the session's result and the Sessions list read as before (validation rule 4)", async () => {
+      const read = async () => {
+        const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
+          (q) => q.taskTitle === title && q.status === "open",
+        );
+        const sessionId = String(card?.sessionId ?? "");
+        const session = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
+        const projectId = String(card?.projectId ?? "");
+        const list = (await (await req(`/projects/${projectId}/sessions`)).json()) as {
+          rows: Json[];
+        };
+        return {
+          title: card?.title,
+          body: card?.body,
+          lists: card?.lists,
+          summary: session.summary,
+          gist: list.rows.find((s) => s.id === sessionId)?.gist,
+        };
+      };
+      const before = await read();
+      expect(before.title).toBe(`"${title}" paused before its budget ran out`);
+      await rt.close();
+      ({ rt, req } = await compose(home, clock, fake));
+      expect(await read()).toEqual(before);
+    }, 60_000);
   });
 });

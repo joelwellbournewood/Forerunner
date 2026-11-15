@@ -2748,9 +2748,23 @@ Proportional verification (ADR 0104, ADR 0110, `src/loop/verification.ts`, `proj
   a sandbox port); none is "the project's <language> tests were not run: <tool> is not installed
   where the checks run", a run that could not get its dependencies (`notRunBecause`) or found no
   tests (exit 5) is not run either, and a run is otherwise a required check (`pytest`,
-  `unittest`, `cargo test`, `go test`) in `evidence.checkResults`. `untestedFiles` tells of
-  JavaScript test files no script runs, true now (W15-50): "there is no package.json to run
-  them" in a folder without one, "its package.json names no test script" otherwise.
+  `unittest`, `cargo test`, `go test`, `node --test`) in `evidence.checkResults`. JavaScript
+  (L3-research-4, live check 3: a tester's node:test file and the README's `node --test` were
+  never run in a folder with no package.json): when the folder has `*.test.js` / `*.spec.js`
+  files (`.mjs`, `.cjs`) or scripts in `test/`, `tests/` or `__tests__/` (`JS_TEST`, from
+  `projectFileList`, so never `node_modules`, a dot folder such as `.forerunner-try` or the Local
+  only folder) and no package.json, or one whose scripts name no real test and that has no
+  dependencies (`nodeTestApplies`), the check is `node --test <the files>` (at most 100, by
+  name), probed with `node -e` for Node 18 or later; `runMarkerCheck(m, exec, root, { node })`
+  runs a "node" command with the daemon's own Node (`process.execPath`) in the process sandbox
+  and without a lease, the image's `node` in a container (as a try does). A missing package
+  ("Cannot find module 'x'" / "Cannot find package 'x'", not the project's own file or a
+  built-in), tests written for another runner's globals (`describe`, `it`, `expect` not defined)
+  and "tests 0" are "not run, because ...". `untestedFiles` tells of the test files no check
+  runs, true now (W15-50): the JavaScript ones `node --test` runs are not among them; what is left
+  is TypeScript or JSX ("node --test runs only JavaScript files, and there is no package.json with
+  a test script for these") or the tests of a package.json with dependencies and no test script
+  ("its package.json names no test script").
 - **Read access.** `readTools` (default: the runtime's `read_file` and `list_dir`) and the
   folder's file list (`projectFileList`, at most 200) go to the review; the critic's token
   confines them to the task's folder.

@@ -193,7 +193,8 @@ them as you left them; an open file or task stays on its own tab.
   after the critic reviewed it; the row then says how it was checked: **Reviewed** (the critic
   read the work and the project's files against each point, and the project's own build and
   tests ran when it has them, whatever the language: its package.json scripts, pytest, cargo
-  test or go test) or **Reviewed and tried** (the work was also used as you would use it: a page
+  test or go test, and `node --test` for JavaScript test files that no package.json test script
+  runs, such as a `wc.test.js` written with Node's own test module) or **Reviewed and tried** (the work was also used as you would use it: a page
   it made was opened in a browser, a command line tool it made was run with sample input, for
   example `node wc.js <file>` with a small text file, or a server it made was started and the
   routes its brief names were called; a route the brief says answers 401 or 404, or refuses,

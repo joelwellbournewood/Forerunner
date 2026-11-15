@@ -242,10 +242,16 @@ function isDir(p: string): boolean {
  * - Rust (`Cargo.toml`): `cargo test --offline`;
  * - Go (`go.mod`): `go test ./...` with the module proxy off.
  *
+ * - JavaScript (test files `*.test.js` / `*.spec.js`, `.mjs` and `.cjs` too, or the scripts of
+ *   a `test/`, `tests/` or `__tests__/` folder) when the folder has no package.json, or one whose
+ *   scripts name no real test and that has no dependencies: `node --test <the files>`, Node's
+ *   own runner (L3-research-4, live check 3: a tester's node:test file and the README's `node
+ *   --test` were never run, as Python's unittest is without a pyproject).
+ *
  * A tool missing where the checks run is a "not run, because ..." line, never a failure; so is
  * a run that could not get its dependencies (the network is off during the checks). A project
- * whose test files no check runs (a JavaScript project whose package.json names no test script)
- * is told too (`untestedFiles`).
+ * whose test files no check runs (a JavaScript project whose package.json has dependencies and
+ * names no test script, TypeScript tests with no test script) is told too (`untestedFiles`).
  */
 export interface MarkerCheck {
   /** The check's name as the person reads it: "pytest", "unittest", "cargo test", "go test". */
@@ -305,6 +311,55 @@ function pythonTestFiles(root: string): string[] {
   };
   walk(root, "", 0);
   return out;
+}
+
+/** A JavaScript test file `node --test` runs as it is (no build step): `.js`, `.mjs`, `.cjs`. */
+const JS_TEST = /\.(test|spec)\.[cm]?js$|^(test|tests|__tests__)\/[^/]+\.[cm]?js$/;
+/** Any test file of a JavaScript or TypeScript project (`untestedFiles`). */
+const ANY_JS_TEST = /\.(test|spec)\.[cm]?[jt]sx?$|^(test|tests|__tests__)\/[^/]+\.[cm]?[jt]s$/;
+/** At most this many test files are named to `node --test` (the command line stays short). */
+const MAX_NODE_TEST_FILES = 100;
+
+/** The folder's package.json as the JavaScript checks read it; `unreadable` when it is not JSON. */
+type PackageJson = {
+  scripts?: Record<string, unknown>;
+  dependencies?: Record<string, unknown>;
+  devDependencies?: Record<string, unknown>;
+};
+function readPackageJson(root: string): PackageJson | null | "unreadable" {
+  const file = join(root, "package.json");
+  if (!existsSync(file)) return null;
+  try {
+    const pkg = JSON.parse(readFileSync(file, "utf8")) as unknown;
+    return pkg && typeof pkg === "object" && !Array.isArray(pkg)
+      ? (pkg as PackageJson)
+      : "unreadable";
+  } catch {
+    return "unreadable";
+  }
+}
+
+/**
+ * Whether `node --test` runs the folder's JavaScript tests (L3-research-4): no package.json, or
+ * one whose scripts name no real test (npm's placeholder is none) and that has no dependencies (a
+ * package.json with dependencies wants its own runner, which its test script would name).
+ */
+function nodeTestApplies(pkg: PackageJson | null | "unreadable"): boolean {
+  if (pkg === "unreadable") return false;
+  if (!pkg) return true;
+  if (realScript("test", pkg.scripts?.test)) return false;
+  return (
+    Object.keys(pkg.dependencies ?? {}).length + Object.keys(pkg.devDependencies ?? {}).length === 0
+  );
+}
+
+/** A Node.js "cannot find" for a package (not the project's own file, not a built-in), or null. */
+function missingPackage(output: string): string | null {
+  const m = /Cannot find (?:module|package) '([^']+)'/.exec(output);
+  const name = m?.[1];
+  if (!name || /^(?:\.|\/|[A-Za-z]:[\\/]|node:|file:)/.test(name)) return null;
+  const parts = name.split("/");
+  return name.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] ?? null);
 }
 
 /** The marker checks of the task's folder (C-3). */
@@ -398,35 +453,69 @@ export function markerChecks(root: string | undefined): MarkerCheck[] {
           : null,
       missing: "Go is not installed where the checks run",
     });
+  // L3-research-4: JavaScript tests with no test script to run them: Node's own runner, on the
+  // files by name (a try's samples, node_modules and TypeScript stay out; the run is the same
+  // every time).
+  const jsTests = projectFileList(root, 400).filter((f) => JS_TEST.test(f));
+  if (jsTests.length && nodeTestApplies(readPackageJson(root)))
+    out.push({
+      name: "node --test",
+      language: "JavaScript",
+      candidates: [
+        {
+          name: "node --test",
+          argv: ["node", "--test", ...jsTests.slice(0, MAX_NODE_TEST_FILES)],
+          probe: ["node", "-e", 'process.exit(+process.versions.node.split(".")[0] >= 18 ? 0 : 1)'],
+          tool: "Node.js 18 or later",
+        },
+      ],
+      notRunBecause: (output) => {
+        const pkg = missingPackage(output);
+        if (pkg) return `they need the package ${pkg}, which is not installed where the checks run`;
+        if (
+          /ReferenceError: (?:describe|it|test|expect|beforeEach|afterEach|beforeAll|afterAll|jest|vi) is not defined/.test(
+            output,
+          )
+        )
+          return "they are written for a test runner that is not installed (they use its describe, it or expect without importing them)";
+        if (/^\s*(?:#|ℹ)\s*tests 0\b/m.test(output)) return "node --test found no tests in them";
+        return null;
+      },
+      missing: "Node.js is not installed where the checks run",
+    });
   return out;
 }
 
 /**
- * JavaScript test files no check runs (C-3): the folder has `*.test.js` / `*.spec.js` files or a
- * `test/` / `__tests__/` folder of scripts, and its package.json names no test script. The
- * review says so instead of saying nothing.
+ * JavaScript and TypeScript test files no check runs (C-3): the folder has `*.test.js` /
+ * `*.spec.js` files (TypeScript and JSX too) or a `test/` / `__tests__/` folder of scripts, and
+ * no test script runs them. The review says so instead of saying nothing. The JavaScript files
+ * `node --test` runs (`markerChecks`, L3-research-4) are not among them: before, a folder with no
+ * package.json was told "there is no package.json to run them" while its README said `node
+ * --test`. What is left says what runs and what does not: TypeScript is not run by `node --test`,
+ * and a package.json with dependencies names its own runner in a test script.
  */
 export function untestedFiles(root: string | undefined): string | null {
   if (!root || !isDir(root)) return null;
-  const files = projectFileList(root, 400).filter(
-    (f) =>
-      /\.(test|spec)\.[cm]?[jt]sx?$/.test(f) ||
-      /^(test|tests|__tests__)\/[^/]+\.[cm]?[jt]s$/.test(f),
-  );
+  const all = projectFileList(root, 400).filter((f) => ANY_JS_TEST.test(f));
+  if (!all.length) return null;
+  const pkg = readPackageJson(root);
+  if (pkg && pkg !== "unreadable" && realScript("test", pkg.scripts?.test)) return null;
+  const byNode = nodeTestApplies(pkg);
+  const files = byNode ? all.filter((f) => !JS_TEST.test(f)) : all;
   if (!files.length) return null;
   // W15-50: true now (design §5 rule 4): a folder with no package.json is told so, never that
   // "its package.json" names no test script (live check 2, RUN-13).
-  let why = "there is no package.json to run them";
-  if (existsSync(join(root, "package.json")))
-    try {
-      const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
-        scripts?: Record<string, unknown>;
-      };
-      if (realScript("test", pkg.scripts?.test)) return null;
-      why = "its package.json names no test script";
-    } catch {
-      why = "its package.json cannot be read";
-    }
+  const why =
+    pkg === "unreadable"
+      ? "its package.json cannot be read"
+      : byNode
+        ? `node --test runs only JavaScript files, and ${
+            pkg
+              ? "its package.json names no test script"
+              : "there is no package.json with a test script"
+          } for these`
+        : "its package.json names no test script";
   const shown = files.slice(0, 3).join(", ");
   return `the project has test files (${shown}${files.length > 3 ? ", ..." : ""}) that no check ran: ${why}`;
 }
