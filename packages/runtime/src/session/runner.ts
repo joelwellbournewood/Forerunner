@@ -3528,15 +3528,35 @@ export class SessionRunner {
     const { emit, ranBy, ...request } = req;
     const critic = this.deps.critic;
     if (!critic) return null;
-    await emit("critic.review_started", {
-      taskId: request.task.id,
-      tier: request.task.risk_tier,
-      attempt: request.task.attempt,
-    });
+    // L3-run-10 (live check 3): "The critic started ..." is said once the review runs (its
+    // first model call under way, `onStarted`), or just before a verdict reached without one;
+    // a review a limit refused before it ran says only that it paused. Before, the line came
+    // first whatever happened: "The critic started a light review (attempt 1)." and then
+    // '"X" paused before its review: the project's budget ... has no room for it.'
+    let started: Promise<void> | null = null;
+    const sayStarted = () => {
+      started ??= emit("critic.review_started", {
+        taskId: request.task.id,
+        tier: request.task.risk_tier,
+        attempt: request.task.attempt,
+      }).catch((e: unknown) =>
+        this.logger.warn("the review's start line was not written", {
+          taskId: request.task.id,
+          error: errorMessage(e),
+        }),
+      );
+      return started;
+    };
     let outcome: TaskReviewOutcome;
     try {
-      outcome = await critic.reviewTask(request);
+      outcome = await critic.reviewTask({
+        ...request,
+        onStarted: () => {
+          void sayStarted();
+        },
+      });
     } catch (e) {
+      await started;
       // A limit or a credential refused the review before its verdict: the caller pauses the
       // task or lets it wait (no verdict, no failed try).
       const refused = reviewRefusalOf(e);
@@ -3544,6 +3564,7 @@ export class SessionRunner {
       // The caller files the card and reports it (U-045).
       return { failed: true, error: errorMessage(e) };
     }
+    await sayStarted();
     // A run that said it could not do the work: the verdict's line quotes it, so the session log
     // tells the attempt in one line (design §5, "Log line").
     const couldNot =

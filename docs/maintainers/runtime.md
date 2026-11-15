@@ -3005,7 +3005,12 @@ person can do: "Session review: the work waits for your answers (grade 70, 2 fin
 live check 3: it read "sent back for changes" though nothing was; `event-lines.test.ts` and
 `real-daemon.test.ts`, "l3-money-engine, run L3"). Lesson proposals (repeat findings) are recorded in critic memory through the
 memory port. Events: `critic.review_resumed` (the review-only pass, W15B-14),
-`critic.review_started`, `critic.verdict`, `critic.review_failed`
+`critic.review_started` (said once the review runs: at its first model call the limits allowed,
+through `TaskReviewRequest.onStarted`, which the critic port fires on the critic run's first
+`model_call_start`, or just before a verdict reached without a call; a review a limit or a
+credential refused before it ran says only that it paused or waits. L3-run-10, live check 3:
+"The critic started a light review (attempt 1)." came before '"X" paused before its review';
+`budget-pause.test.ts`, "l3-money-engine, run L3"), `critic.verdict`, `critic.review_failed`
 (the task stays in review with a card for the person, U-045), `critic.session_review`,
 `task.blocked_by_findings`.
 

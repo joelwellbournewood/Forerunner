@@ -693,6 +693,15 @@ export class CriticLoop implements CriticPort {
           humanId: owner,
           ...(asksPerson ? { questionsCardInstead: true } : {}),
           ...(root && readTools.length ? { project: { root, tools: readTools } } : {}),
+          // L3-run-10: the review started once its first model call is under way (the
+          // limits allowed it); a review refused before that call never says it started.
+          ...(req.onStarted
+            ? {
+                onEvent: (ev: { type: string }) => {
+                  if (ev.type === "model_call_start") req.onStarted?.();
+                },
+              }
+            : {}),
         },
       );
     } catch (e) {

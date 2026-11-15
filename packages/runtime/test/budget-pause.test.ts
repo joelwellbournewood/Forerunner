@@ -1536,3 +1536,42 @@ describe("w15-words, wave 15 run B", () => {
     );
   }, 120_000);
 });
+
+describe("l3-money-engine, run L3", () => {
+  const clock = new SimulatedClock("2026-11-15T09:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-l3-review-started-"));
+  const calls: ModelRequest[] = [];
+  const fake = provider(clock, calls);
+  let rt: RuntimeApp;
+  let req: Req;
+
+  beforeAll(async () => {
+    ({ rt, req } = await compose(home, clock, fake));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("L3-run-10: no line says the critic started a review a limit refused before it ran; a review that ran says it started", async () => {
+    // Live check 3 (R3): "The critic started a light review (attempt 1)." and then '"Write the
+    // club motto in motto.txt" paused before its review: the project's budget of CHF 0.06 has
+    // no room for it.' The review never ran.
+    const r = await runOne(req, rt, "Review page of the motto", {
+      budgetUsdMicro: 2_000_000,
+      projectBudgetUsdMicro: 10_000,
+    });
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
+    const said = lines(r.events);
+    expect(said).toContain(
+      '"Review page of the motto" paused before its review: the project\'s budget of CHF 0.01 has no room for it.',
+    );
+    expect(said.join(" | ")).not.toMatch(/The critic started/);
+    expect(r.events.map((e) => e.type)).not.toContain("critic.review_started");
+    // A review that runs says it started, once, before its verdict.
+    const ok = await runOne(req, rt, "Review page of the club", { budgetUsdMicro: 2_000_000 });
+    const types = ok.events.map((e) => e.type);
+    expect(types.filter((t) => t === "critic.review_started")).toHaveLength(1);
+    expect(types.indexOf("critic.review_started")).toBeLessThan(types.indexOf("critic.verdict"));
+    expect(lines(ok.events)).toContain("The critic started a light review (attempt 1).");
+  }, 120_000);
+});

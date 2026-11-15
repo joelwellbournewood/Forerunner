@@ -61,6 +61,12 @@ export interface TaskReviewRequest {
   /** The principal agent that ran the task (owner of the retry message). */
   agentId: string;
   signal: AbortSignal;
+  /**
+   * L3-run-10: called once when the review really runs, at its first model call the limits
+   * allowed (the runner's "The critic started ..." line). A review a limit refuses before that
+   * call never calls it, so no line says a review started that never ran.
+   */
+  onStarted?: () => void;
 }
 
 export interface TaskReviewOutcome {
