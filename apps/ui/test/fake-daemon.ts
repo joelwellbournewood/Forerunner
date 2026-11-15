@@ -5757,7 +5757,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
             oldValue: "",
             newValue: text,
             scope: "project",
-            sentence: `Added a note to ${project.name}'s next session. Undo.`,
+            // As note.add words it (commands/note.ts): no possessive of the project's name
+            // (L3-github-8's sibling; review of run L3).
+            sentence: `Noted for the next session on ${project.name}: "${text.replace(/\s+/g, " ").trim().slice(0, 80)}". Undo.`,
             projectId: project.id,
             projectName: project.name,
           },

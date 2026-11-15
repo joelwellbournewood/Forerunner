@@ -133,12 +133,18 @@ const FINDING_TAG =
 /**
  * Why a specialist asks or failed, as a card quotes it (l3-small, run L3; live check 3,
  * L3-research-3: 'The specialist said: "blocker: notes/plan.md is missing."'): its words
- * without markdown and without a findings tag before them, and a first word of letters made a
- * capital ("Missing ..."), never a file name ("notes/plan.md is missing.").
+ * without markdown and without a findings tag before them. Where a tag was taken off, the
+ * sentence it left starts with a capital ("blocker: missing ..." reads "Missing ..."), never a
+ * file name ("notes/plan.md is missing.") or a word that was in code marks ("`npm test` fails"
+ * reads "npm test fails"); a reason with no tag keeps its own case ("git push was refused").
  */
 export function specialistReason(text: string): string {
-  const t = withoutMarkdown(text).replace(FINDING_TAG, "").trim();
-  return /^[a-z]+\b(?![./\\])/.test(t) ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+  const plain = withoutMarkdown(text);
+  const t = plain.replace(FINDING_TAG, "").trim();
+  if (t === plain.trim()) return t;
+  const word = /^[a-z]+\b(?![./\\])/.exec(t)?.[0];
+  if (!word || text.includes(`\`${word}`)) return t;
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 /**

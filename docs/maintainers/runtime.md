@@ -1854,8 +1854,9 @@ a sign-off without the questions. One card, three ways in:
   quotes it through `specialistReason` (`daemon/request-words.ts`, also the failed-task card's
   "The <specialist> said: …"): no markdown and no findings tag before it (run L3, live check 3,
   L3-research-3: a reviewer's "- **blocker**: `notes/plan.md` is missing." read 'The specialist
-  said: "blocker: notes/plan.md is missing."'), a first word of letters as a capital, never a
-  file name.
+  said: "blocker: notes/plan.md is missing."'); where a tag was taken off, a first word of
+  letters as a capital, never a file name or a word in code marks ("`npm test` fails" reads "npm
+  test fails"), and a reason with no tag keeps its own case (review of run L3).
 
 The card: kind `decision`, blocking, risk low, `steps` the questions, the one option
 `CANCEL_TASK_OPTION` ("Cancel the task"), `change_card` `{ key: "person_questions:<task>",
