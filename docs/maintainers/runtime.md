@@ -4251,7 +4251,8 @@ itself: <the record's sentence>", no date once a take-out pull request was asked
 moves the record's time), nothing for a record of an older pull request; before the review of
 d1109-chat-recall any record but a merged or checks-waiting one read "waits for your Merge", a
 closed pull request included, while the same turn's facts said it was closed; recall_open gives
-task_get's lines, `taskDetailLines`, and the same merge sentence), `cards`
+task_get's lines, `taskDetailLines`, and the same merge sentence; in both a run's start is in the
+person's zone, "Run (work, writer, Thu 12 Nov 10:40)", where it was the UTC ISO time), `cards`
 (the person's cards and those to no one, the newest 2,000, without the chat's own read-backs,
 with the Inbox's title and Answered words, `requestViews`, and the answer, `cardAnswerWords`),
 `decisions` (`decisionViews` with its optional limit: the Overview's words), `lessons` (the

@@ -1379,6 +1379,32 @@ describe("d1109-chat-recall, run C: the review's fix-up", () => {
     await w.store.close();
   });
 
+  it("a task's runs are dated in the person's time zone in recall_open and task_get, as every other recall line (before, an ISO time in UTC)", async () => {
+    const w = await setup();
+    const s = await session(w, "2026-11-12T09:00:00.000Z", {}, 100_000, "Checked the FAQ.");
+    await w.store.run.insert({
+      session_id: s.id,
+      task_id: w.tasks["Write the FAQ"]?.id,
+      specialist: "writer",
+      model: "fake-sonnet",
+      outcome: "done",
+    } as never);
+    const [, open, got] = await lookups(w, [
+      { tool: "recall", input: { words: "FAQ", kinds: ["tasks"] } },
+      { tool: "recall_open", input: { ref: "r1" } },
+      { tool: "task_get", input: { task: "Write the FAQ" } },
+    ]);
+    for (const result of [open, got]) {
+      const run = inner(result)
+        .split("\n")
+        .find((l) => l.startsWith("Run ("));
+      // The run began at 09:40 UTC, 10:40 in Zurich.
+      expect(run).toMatch(/^Run \([\w ]+, writer, Thu 12 Nov 10:40\): /);
+      expect(inner(result)).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:/);
+    }
+    await w.store.close();
+  });
+
   it("a line of the conversation outside any project is a source with no link (that conversation has no page; before, '/talk', which no route serves); a project's line links to its Chat", async () => {
     const w = await setup();
     w.reply([textReply("Noted.")]);

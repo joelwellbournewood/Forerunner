@@ -587,14 +587,25 @@ function ordinal(n: number): string {
 /**
  * One task in detail, as task_get says it: what it asks for, its status in design §2's words,
  * what it waits for and what waits on it, each run (specialist, outcome, report, files), the
- * critic's review and open cards. Shared by task_get and recall_open.
+ * critic's review and open cards. Shared by task_get and recall_open. A run's start is in the
+ * person's zone ("Thu 12 Nov 10:40") when the zone is given, as every other recall line; before
+ * the review of d1109-chat-recall it was the UTC ISO time.
  */
 export async function taskDetailLines(
-  deps: { store: StateStore; chfPerUsd?: () => number; sandboxReady?: () => boolean | null },
+  deps: {
+    store: StateStore;
+    chfPerUsd?: () => number;
+    sandboxReady?: () => boolean | null;
+    timeZone?: string;
+    nowMs?: number;
+  },
   project: ProjectRow,
   task: TaskRow,
 ): Promise<string[]> {
   const chf = deps.chfPerUsd?.() ?? 1;
+  const zone = deps.timeZone;
+  const today = zone ? localDate(deps.nowMs ?? Date.now(), zone) : "";
+  const began = (iso: string) => (zone ? timeWords(iso, zone, today) || iso : iso);
   const rows = await deps.store.task.forProject(project.id, {}, { limit: RECALL_BOUNDS.tasks });
   const ctx = await loadTaskDisplayContext(deps.store, rows, deps.sandboxReady?.() ?? null);
   const views = runOrder(rows).map((t, i) =>
@@ -615,7 +626,7 @@ export async function taskDetailLines(
       : "",
     ...d.runs.map(
       (r) =>
-        `Run (${r.kind}, ${r.specialist ?? "agent"}, ${r.startedAt}): ${r.outcome}${r.report ? `. Report: ${r.report.replace(/\n/g, " ")}` : ""}${r.files.length ? `. Files: ${r.files.join(", ")}` : ""}`,
+        `Run (${r.kind}, ${r.specialist ?? "agent"}, ${began(r.startedAt)}): ${r.outcome}${r.report ? `. Report: ${r.report.replace(/\n/g, " ")}` : ""}${r.files.length ? `. Files: ${r.files.join(", ")}` : ""}`,
     ),
     d.review
       ? `Review: ${d.review.verdict} ${d.review.summary.replace(/\n/g, " ")}${d.review.open.length ? ` Still asked for: ${d.review.open.join("; ")}` : ""}`
@@ -632,7 +643,13 @@ async function taskText(
   extra: { label: string; earlier: string[]; merge: string | null },
 ): Promise<string> {
   const lines = await taskDetailLines(
-    { store: c.deps.store, chfPerUsd: () => c.chf, sandboxReady: () => null },
+    {
+      store: c.deps.store,
+      chfPerUsd: () => c.chf,
+      sandboxReady: () => null,
+      timeZone: c.deps.timeZone,
+      nowMs: c.deps.nowMs,
+    },
     p,
     t,
   );

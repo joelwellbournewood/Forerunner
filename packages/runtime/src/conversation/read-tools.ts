@@ -306,7 +306,15 @@ export function readTools(deps: ReadToolDeps): ToolSpec[] {
       // "Several tasks match ..." names titles agents wrote: a record like the answer itself.
       if (typeof task === "string") return err(task, "task");
       step("task_get", input, { taskTitle: task.title });
-      const lines = await taskDetailLines(deps, project, task);
+      // A run's start in the person's zone, as recall dates everything (with recall's deps).
+      const lines = await taskDetailLines(
+        {
+          ...deps,
+          ...(deps.recall ? { timeZone: deps.recall.timeZone, nowMs: deps.recall.nowMs } : {}),
+        },
+        project,
+        task,
+      );
       if (!lines.length) return err("The task is gone.");
       const renamed = (await earlierTitlesOf(deps.store, project.id)).get(task.id) ?? [];
       if (renamed.length) lines.push(`Earlier called ${renamed.map((t) => `"${t}"`).join(", ")}.`);
