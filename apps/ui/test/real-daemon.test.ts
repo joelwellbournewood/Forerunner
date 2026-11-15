@@ -16918,7 +16918,6 @@ describe("l3-money-screens, run L3", () => {
   }, 60_000);
 });
 
-
 /**
  * l3-chat-claims, run L3 (live check 3, L3-run-1 and L3-run-9), through POST /chat (the Chat
  * tab's and Talk's route) on the real daemon with a scripted chat model. Live: on "Reading
