@@ -992,16 +992,22 @@ describe("l3-chat-claims, run L3", () => {
     await w.store.close();
   });
 
-  it("a command's own reply (no model) is not repeated in the history (L3-run-1)", async () => {
+  it("a command's own reply (no model) is said once in the history, as the app's line (L3-run-1)", async () => {
     const w = await setup([textReply("ok", { ttftMs: 0 })]);
     await task(w, "Write the README");
     const paused = await w.chat('pause "Write the README"');
-    if (paused.pendingConfirmation) await w.chat("yes");
+    const done = paused.pendingConfirmation ? await w.chat("yes") : paused;
     expect(w.provider.calls).toHaveLength(0);
+    const sentence = done.actions[0]?.summary ?? "";
+    expect(sentence.startsWith('Paused "Write the README"')).toBe(true);
+    expect(done.reply).toBe(sentence);
     await w.chat("what is paused?");
+    // The reply was the change's own sentence: the history says it once, without "Undo.", as
+    // what the app did (so "a reply without that line changed nothing" holds for it too).
+    const said = `The app did: ${sentence.replace(/ Undo\.$/, "")}`;
     const history = w.messages(0).slice(0, -1);
-    expect(history.length).toBeGreaterThan(0);
-    expect(history.map((m) => m.content).join("\n")).not.toContain("The app did:");
+    expect(history.at(-1)).toEqual({ role: "assistant", content: said });
+    expect(history.map((m) => m.content).join("\n")).not.toContain("Undo.");
     await w.store.close();
   });
 

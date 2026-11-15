@@ -4142,9 +4142,11 @@ in one project cancelled a task in another. Now:
   `HISTORY_ACTION_LEAD` in `src/conversation/transcript.ts`; l3-chat-claims, live check 3's
   L3-run-1). Before, the history held the model's prose alone ("Done. For the Reading rules
   project, research may now only read …"), a change that read as claimed in words, and the live
-  model claimed "I've asked for confirmation" one turn later with no tool. A sentence the reply
-  already says (a command's own reply, no model) is not repeated; a reply that changed nothing
-  gets no line. The lines come from the stored row (`chat.reply` `actionDetails`), so the history
+  model claimed "I've asked for confirmation" one turn later with no tool. Every reply that
+  changed something gets its lines, so "a reply without one changed nothing" (what the model is
+  told) holds; a reply that is only the changes' own sentences (a command's reply, no model:
+  'Paused "X" ... Undo.') is said once, as the app's lines (`replyInHistory`); a reply that
+  changed nothing gets none. The lines come from the stored row (`chat.reply` `actionDetails`), so the history
   is the same bytes on every turn and after a restart and the cached prefix holds. The history's
   assistant messages (the replies and these lines, whose sentences quote task titles agents may
   write) are scanned like the facts' records: instruction-like text there sets
