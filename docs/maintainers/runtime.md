@@ -1850,7 +1850,12 @@ a sign-off without the questions. One card, three ways in:
   placeholder): the report's sentence that shares most words with the first question (the next
   question's when the first shares none), a sentence under "Not done / risks" or one that says
   something is missing, a placeholder or assumed weighing more; else the report's first
-  sentences (`quotedWords`), else the critic's summary. `ask_person` stores its `why`.
+  sentences (`quotedWords`), else the critic's summary. `ask_person` stores its `why`. The card
+  quotes it through `specialistReason` (`daemon/request-words.ts`, also the failed-task card's
+  "The <specialist> said: …"): no markdown and no findings tag before it (run L3, live check 3,
+  L3-research-3: a reviewer's "- **blocker**: `notes/plan.md` is missing." read 'The specialist
+  said: "blocker: notes/plan.md is missing."'), a first word of letters as a capital, never a
+  file name.
 
 The card: kind `decision`, blocking, risk low, `steps` the questions, the one option
 `CANCEL_TASK_OPTION` ("Cancel the task"), `change_card` `{ key: "person_questions:<task>",

@@ -123,6 +123,24 @@ export function withoutMarkdown(text: string): string {
 }
 
 /**
+ * A findings list's severity tag at the start of a quoted sentence ("blocker:", "**major**:",
+ * "Critical -"), which the reviewers' reports put before each item.
+ */
+const FINDING_TAG =
+  /^(?:blocker|blocking|critical|major|minor|high|medium|low|nit(?:pick)?|info|warning|error|issue|gap|risk)s?\s*(?::|-|–|—)\s+/i;
+
+/**
+ * Why a specialist asks or failed, as a card quotes it (l3-small, run L3; live check 3,
+ * L3-research-3: 'The specialist said: "blocker: notes/plan.md is missing."'): its words
+ * without markdown and without a findings tag before them, and a first word of letters made a
+ * capital ("Missing ..."), never a file name ("notes/plan.md is missing.").
+ */
+export function specialistReason(text: string): string {
+  const t = withoutMarkdown(text).replace(FINDING_TAG, "").trim();
+  return /^[a-z]+\b(?![./\\])/.test(t) ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+}
+
+/**
  * W15-57: an item of a paused run's note as the budget card quotes it: plain words, a list's
  * heading colon dropped, and cut at a word well under what the card kept (`cardHandoff` cut it at
  * 80 or 160 characters, mid-word: "rounds(players…"), so a stored cut never shows.
@@ -311,7 +329,7 @@ function retryCard(
   const saidBy = str(card.said_by);
   const first = said
     ? saidBy
-      ? `The ${saidBy} said: "${said.replace(/"/g, "'")}"`
+      ? `The ${saidBy} said: "${specialistReason(said).replace(/"/g, "'")}"`
       : card.reason === "failed"
         ? `What failed: ${said}`
         : said
@@ -399,7 +417,7 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
   // W15-61 (design §5 rule 6): the specialist's words without their markdown (live: "a bare
   // `node wc.js`", "**Summary**"), backticks, emphasis and list marks dropped.
   const raw = str(card.context);
-  const context = raw ? withoutMarkdown(raw) : undefined;
+  const context = raw ? specialistReason(raw) : undefined;
   const body =
     [
       planned

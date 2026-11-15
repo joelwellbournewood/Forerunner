@@ -11610,10 +11610,9 @@ describe("polish-words, wave 13", () => {
     const view = await client.reviews(project.id);
     const findings = view.reviews.flatMap((r) => r.findings);
     expect(findings.find((f) => f.severity === "info")?.requiredAction).toBe("");
-    // A finding that asks for a fix keeps it.
-    expect(findings.find((f) => f.severity === "medium")?.requiredAction).toBe(
-      "Resolve it and show the evidence",
-    );
+    // l3-small, run L3 (L3-research-3): a finding of any severity the critic named no fix for
+    // has no "To fix" line either; "Resolve it and show the evidence" told the person nothing.
+    expect(findings.find((f) => f.severity === "medium")?.requiredAction).toBe("");
   });
 
   it("the Tasks screen names a specialist as the session log and the cards do (later #74)", () => {
@@ -15976,4 +15975,111 @@ describe("d1109-sessions, run C", () => {
       await rt.close();
     }
   }, 120_000);
+});
+
+/**
+ * l3-small, run L3 (live check 3, L3-research-3): the Inbox quoted a reviewer's raw findings tag
+ * as its reason ('The specialist said: "blocker: notes/plan.md is missing."'), and Reviews showed
+ * a finding with 'To fix: Resolve it and show the evidence', a line the critic filled in when it
+ * named no fix. Read through the UI's own client against the real daemon.
+ */
+describe("l3-small, run L3", () => {
+  let rt: RuntimeApp;
+  let client: DaemonClient;
+
+  beforeAll(async () => {
+    ({ rt, client } = await composeWithRolePlayer({}));
+  }, 60_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("the questions card quotes the specialist's reason without a findings tag (L3-research-3)", async () => {
+    const project = await client.createProject({ name: "Launch review", goal: "A review" });
+    const created = await client.createTask(project.id, {
+      title: "Review the launch plan in notes/plan.md",
+      outcome: "review.md lists the gaps",
+    });
+    let t = await rt.store.task.mustGet(created.id);
+    t = await rt.store.task.transition(t.id, t.version, "needs_human", "asks", {
+      agentId: rt.agent.id,
+    });
+    const me = await client.me();
+    const filed = await rt.store.humanRequest.insert({
+      human_id: me.id,
+      project_id: project.id,
+      task_id: t.id,
+      kind: "decision",
+      why: `"${t.title}" needs your answers.`,
+      steps: ["Where is the launch plan?"],
+      options: ["Cancel the task"],
+      blocking: true,
+      risk: "low",
+      change_card: {
+        key: `person_questions:${t.id}`,
+        task_id: t.id,
+        task_title: t.title,
+        questions: ["Where is the launch plan?"],
+        source: "critic",
+        on_answer: "ready",
+        // The reviewer's report line, as the card keeps it.
+        context: "- **blocker**: `notes/plan.md` is missing.",
+        applied_at: null,
+      },
+    });
+    const shown = (await client.inbox(me.id)).requests.find((r) => r.id === filed.id);
+    expect(shown?.body).toContain('The specialist said: "notes/plan.md is missing."');
+    expect(shown?.body).not.toMatch(/blocker/i);
+  });
+
+  it("a finding the critic named no fix for shows no 'To fix' line, whatever its severity; one with a fix keeps it (L3-research-3)", async () => {
+    const project = await client.createProject({ name: "Plan review", goal: "A review" });
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Review the launch plan",
+      outcome: "review.md lists the gaps",
+      status: "needs_human",
+      risk_tier: 1,
+    } as never);
+    const review = await rt.store.review.insert({
+      task_id: task.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 20,
+      confidence: 0.9,
+      verdict: "revise",
+      evidence: [],
+      summary: "Sent back: the file under review is missing.",
+      author_agent: rt.criticAgent.id,
+    } as never);
+    for (const [severity, description, action, fp] of [
+      [
+        "critical",
+        "The file under review is missing, so review.md could not be written.",
+        "Resolve it and show the evidence",
+        "fp-missing",
+      ],
+      [
+        "high",
+        "No gap quotes a line of notes/plan.md.",
+        "Quote the line each gap refers to.",
+        "fp-quote",
+      ],
+    ] as const)
+      await rt.store.finding.insert({
+        review_id: review.id,
+        task_id: task.id,
+        severity,
+        description,
+        required_action: action,
+        status: "open",
+        fingerprint: fp,
+        author_agent: rt.criticAgent.id,
+      } as never);
+    const findings = (await client.reviews(project.id)).reviews.flatMap((r) => r.findings);
+    expect(findings.find((f) => f.severity === "critical")?.requiredAction).toBe("");
+    expect(findings.find((f) => f.severity === "high")?.requiredAction).toBe(
+      "Quote the line each gap refers to.",
+    );
+  });
 });

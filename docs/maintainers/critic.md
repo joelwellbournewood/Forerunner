@@ -144,8 +144,11 @@ Verification (ADR 0104, `types.ts`):
 - A `doc_drift` that starts with "none" (or "no drift", "n/a") is no drift (`noDocDrift`; live,
   "none (docs/testing.md still says …)" turned an accept into a revise), and a finding the model
   gave no action for asks to "Resolve it and show the evidence" (`NO_ACTION_GIVEN`), never
-  "Fix: <the finding>". The Reviews tab shows no "To fix" line for an info note that carries
-  only `NO_ACTION_GIVEN` (`findingView`, L-13e, polish-words): a note asks for no fix.
+  "Fix: <the finding>". That words the retry brief only: the Reviews tab shows no "To fix" line
+  for a finding of any severity that carries only `NO_ACTION_GIVEN` (`findingView`; L-13e,
+  polish-words, for an info note; run L3, live check 3, L3-research-3, for every severity: a
+  critical finding read "To fix: Resolve it and show the evidence", which tells the person
+  nothing to do).
 
 Mandatory tiers (open decision in the spec): anything touching main, security, data, money or
 science claims is reviewed at tier 2 or higher. The runtime reviews every task an agent finished
