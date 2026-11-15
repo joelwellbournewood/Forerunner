@@ -64,7 +64,12 @@ command of the turn backs now gets one more model step with a short nudge
 the same turn: it runs under the same `SessionBudget` (this ADR's budget, its step cap and its
 deadline) and the same capability token, and only while the turn's four model calls
 (`CHAT_MAX_MODEL_CALLS`, the loop's `maxTurns` before) are not used up; its cost is booked on the
-turn's `chat.reply` row with the first run's. No step is added when the turn ran out of calls,
-time or money: the claim is replaced with "Nothing changed, and nothing waits for your yes. Say it
-again to try once more." So the turn's spend bound is unchanged; a turn whose reply makes no
-unbacked claim costs exactly what it did.
+turn's `chat.reply` row with the first run's. No step is added when the turn's four calls are
+used up or the person stopped the turn; a step the turn's budget or deadline refuses ends
+unfinished. Either way, as when the claim comes back after the step, the claim is replaced with
+what the turn really did (`claimNudge` and `trueLine` say it from the turn's command results):
+the change sentences of the commands that ran, or the read-back of the turn's Yes/No card, or
+"Nothing changed, and nothing waits for your yes. Say it again to try once more." (with "the
+change I asked about earlier still waits for your yes" when an earlier card does). So the turn's
+spend bound is unchanged; a turn whose reply makes no unbacked claim costs exactly what it did,
+and a negated sentence ("I've changed nothing") is no claim and costs no step.

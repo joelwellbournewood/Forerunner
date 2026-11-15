@@ -1280,3 +1280,280 @@ describe("l3-chat-claims, run L3: a change of an earlier turn", () => {
     await w.store.close();
   });
 });
+
+/**
+ * l3-chat-claims, run L3: the review of the claim guard. The guard judged a claim against the
+ * turn's commands one way only: a "changed" claim beside a command that asked for a yes, or an
+ * "asked" claim beside a command that changed something, was replaced with "Nothing changed,
+ * and nothing waits for your yes" right above that Yes/No card or that change's row with Undo,
+ * and the nudge told the model the same untruth. A negated sentence ("I've changed nothing",
+ * "Ich habe nichts geändert"), the answer the prompt asks for, was counted as a claim, nudged,
+ * then replaced. What the model is sent and what the person gets back, with the literal words.
+ */
+describe("l3-chat-claims, run L3: what the turn did", () => {
+  const ONLY = { key: "web_access", value: { mode: "only", only: ["developer.mozilla.org"] } };
+  const ANY = { key: "web_access", value: { mode: "any" } };
+  const READBACK =
+    "Set web pages research may read for Quote Page to any public website? Research reads any public website, on the API key and on the subscription.";
+  const ADDED = 'Added "Check the links" to Quote Page.';
+  const webAccess = async (w: World) =>
+    ((await w.store.project.mustGet(w.quote)).settings as Record<string, unknown>).web_access;
+  const lastRow = async (w: World) => {
+    const sessionId = await w.agent.conversationSessionId(w.alice, w.quote);
+    return (await w.store.event.list(sessionId, 0, 500))
+      .filter((e) => e.type === "chat.reply")
+      .at(-1)?.payload as Record<string, unknown>;
+  };
+  const nudgeOf = (w: World) => w.provider.calls.at(-1)?.request.messages.at(-1);
+
+  it("a 'changed' claim beside the turn's own Yes/No card: the nudge says the change waits, and the person gets the read-back, never 'nothing waits' (review blocking 1)", async () => {
+    const SAY = "I've updated research to read any public website once you confirm.";
+    const NUDGE =
+      "Your reply says that you changed something, but no command in this turn changed anything: nothing changed yet, and the change your command read back waits for the person's yes, with Yes and No under your reply. Do not call that command again. If you meant a change an earlier turn made, say so (\"Earlier, ...\"). Otherwise answer again and say only what this turn's commands did.";
+    for (const [after, reply] of [
+      [SAY, READBACK],
+      [
+        "That widens research, so it needs your yes.",
+        `That widens research, so it needs your yes. ${READBACK}`,
+      ],
+    ] as const) {
+      const w = await setup([
+        toolReply("settings_set", ONLY),
+        textReply("Done.", { ttftMs: 0 }),
+        toolReply("settings_set", ANY),
+        textReply(SAY, { ttftMs: 0 }),
+        textReply(after, { ttftMs: 0 }),
+      ]);
+      await w.chat("only read developer.mozilla.org for research");
+      const before = w.provider.calls.length;
+      const res = await w.chat("research may read any public website again");
+      expect(w.provider.calls.length - before, after).toBe(3);
+      expect(nudgeOf(w), after).toEqual({ role: "user", content: [{ type: "text", text: NUDGE }] });
+      expect(res.pendingConfirmation?.readback, after).toBe(READBACK);
+      expect(res.reply, after).toBe(reply);
+      expect(res.reply, after).not.toMatch(/Nothing changed|nothing waits/i);
+      expect(await lastRow(w), after).toMatchObject({
+        text: reply,
+        pendingId: res.pendingConfirmation?.id,
+        claimGuard: {
+          kind: "changed",
+          phrase: "I've updated",
+          nudged: true,
+          replaced: after === SAY,
+        },
+      });
+      expect((await lastRow(w)).notice, after).toBeUndefined();
+      // Nothing widened before the yes; the card is the one waiting.
+      expect(await webAccess(w), after).toEqual({
+        mode: "only",
+        only: ["developer.mozilla.org"],
+        never: [],
+      });
+      const yes = await w.chat("yes");
+      expect(
+        yes.actions.map((a) => a.kind),
+        after,
+      ).toEqual(["settings.set"]);
+      expect(await webAccess(w), after).toEqual({ mode: "any", only: [], never: [] });
+      await w.store.close();
+    }
+  });
+
+  it("an 'asked' claim beside a change the turn made: the nudge says what changed, and the person gets the change's sentence, never 'Nothing changed' (review blocking 2)", async () => {
+    const SAY = "Added the task. I've asked for your confirmation to widen research.";
+    const NUDGE =
+      "Your reply says that you asked for the person's yes, but no command in this turn asked for one: a command of this turn made a change, which the runtime shows under your reply, and nothing waits for a yes. If the person asked for a change that no command made, call its command now; the runtime reads a change that needs a yes back with Yes and No. If you meant a change an earlier turn made, say so (\"Earlier, ...\"). Otherwise answer again and say only what this turn's commands did.";
+    const w = await setup([
+      toolReply("task_create", { title: "Check the links" }),
+      textReply(SAY, { ttftMs: 0 }),
+      textReply(SAY, { ttftMs: 0 }),
+      textReply("ok", { ttftMs: 0 }),
+    ]);
+    const res = await w.chat("the links need a look, can you see to it?");
+    expect(w.provider.calls).toHaveLength(3);
+    expect(nudgeOf(w)).toEqual({ role: "user", content: [{ type: "text", text: NUDGE }] });
+    expect(res.actions.map((a) => [a.kind, a.summary])).toEqual([["task.create", ADDED]]);
+    expect(res.reply).toBe(ADDED);
+    expect(res.pendingConfirmation).toBeNull();
+    expect(await lastRow(w)).toMatchObject({
+      text: ADDED,
+      claimGuard: {
+        kind: "asked",
+        phrase: "I've asked for your confirmation",
+        nudged: true,
+        replaced: true,
+      },
+    });
+    // The next turn's history says the change once, as the app's line.
+    await w.chat("thanks");
+    expect(w.messages(3).slice(0, -1)).toEqual([
+      { role: "user", content: "the links need a look, can you see to it?" },
+      { role: "assistant", content: `The app did: ${ADDED}` },
+    ]);
+    await w.store.close();
+  });
+
+  it("a change the nudge step made counts: the claim made again is replaced with that change's sentence (review blocking 2)", async () => {
+    const SAY = "I've asked for your confirmation to widen research.";
+    const w = await setup([
+      textReply(SAY, { ttftMs: 0 }),
+      toolReply("task_create", { title: "Check the links" }),
+      textReply(`Added the task. ${SAY}`, { ttftMs: 0 }),
+    ]);
+    const res = await w.chat("the links need a look, can you see to it?");
+    expect(w.provider.calls).toHaveLength(3);
+    expect(res.actions.map((a) => a.summary)).toEqual([ADDED]);
+    expect(res.reply).toBe(ADDED);
+    expect((await lastRow(w)).claimGuard).toEqual({
+      kind: "asked",
+      phrase: "I've asked for your confirmation",
+      nudged: true,
+      replaced: true,
+    });
+    await w.store.close();
+  });
+
+  it("a negated sentence is no claim, in English as in German; a claim beside a negation still is (review blocking 3)", async () => {
+    const { claimOf } = await import("../src/conversation/claims.ts");
+    for (const said of [
+      "I've changed nothing.",
+      "I have added no task.",
+      "I've set nothing; research reads any public website.",
+      "I have started nothing yet; two tasks are ready.",
+      "I've added nothing, the plan already has a README task.",
+      "I've removed nothing.",
+      "I've now changed nothing.",
+      "I've sent no request.",
+      "I've limited my answer to what the facts say.",
+      "I have limited knowledge of that page.",
+      "Nothing changed: I've stopped short of widening research, since that needs your yes.",
+      "Ich habe nichts geändert.",
+      "Nein, ich habe die Regel nicht geändert.",
+      "Ich habe noch nichts geändert; die Recherche liest nur developer.mozilla.org.",
+      "Ich habe keine Aufgabe hinzugefügt.",
+      "Ich habe nicht um deine Bestätigung gebeten.",
+      "Ich habe keine Anfrage gesendet.",
+      // Not a card or a yes asked for: a report, a task, a pull request (review, non-blocking).
+      "I opened the report card: it says the footer link is broken.",
+      "I've created the task in your inbox list.",
+      "I have opened the pull request for the README.",
+    ])
+      expect(claimOf(said), said).toBeNull();
+    for (const [said, claim] of [
+      ["I've set research to read any public website.", { kind: "changed", phrase: "I've set" }],
+      [
+        "I've changed nothing in the budget, but I've set research to any public website.",
+        { kind: "changed", phrase: "I've set" },
+      ],
+      [
+        "I've changed the rule so that research no longer reads facebook.com.",
+        { kind: "changed", phrase: "I've changed" },
+      ],
+      [
+        "Ich habe facebook.com nicht mehr erlaubt.",
+        { kind: "changed", phrase: "habe facebook.com nicht mehr erlaubt" },
+      ],
+      [
+        "Ich habe nicht nur die Regel geändert, sondern auch das Budget.",
+        { kind: "changed", phrase: "habe nicht nur die Regel geändert" },
+      ],
+      [
+        "Ich habe die Recherche auf alle öffentlichen Websites umgestellt.",
+        {
+          kind: "changed",
+          phrase: "habe die Recherche auf alle öffentlichen Websites umgestellt",
+        },
+      ],
+      [
+        "Widening research access needs your yes, so I've asked for confirmation.",
+        { kind: "asked", phrase: "I've asked for confirmation" },
+      ],
+      ["I've opened a card in your Inbox.", { kind: "asked", phrase: "I've opened a card" }],
+      [
+        "I've sent you a Yes/No question.",
+        { kind: "asked", phrase: "I've sent you a Yes/No question" },
+      ],
+      ["I have sent a request for your yes.", { kind: "asked", phrase: "I have sent a request" }],
+    ] as const)
+      expect(claimOf(said), said).toEqual(claim);
+  });
+
+  it("'I've changed nothing' and 'Ich habe nichts geändert' reach the person as said, with one model call (review blocking 3)", async () => {
+    for (const [line, said] of [
+      [
+        "did you change the research rule?",
+        "I've changed nothing; research still reads only developer.mozilla.org.",
+      ],
+      [
+        "hast du die Regel geändert?",
+        "Ich habe nichts geändert. Die Recherche liest weiter nur developer.mozilla.org.",
+      ],
+    ] as const) {
+      const w = await setup([
+        textReply(said, { ttftMs: 0 }),
+        textReply("never sent", { ttftMs: 0 }),
+      ]);
+      const res = await w.chat(line);
+      expect(w.provider.calls, said).toHaveLength(1);
+      expect(res.reply, said).toBe(said);
+      expect((await lastRow(w)).claimGuard, said).toBeUndefined();
+      await w.store.close();
+    }
+  });
+
+  it("a claim while an earlier turn's card still waits: the nudge and the reply say that card waits, never 'nothing waits'; Yes still answers it (sibling)", async () => {
+    const WAITS = "Nothing changed; the change I asked about earlier still waits for your yes.";
+    for (const [say, kind, phrase, lead] of [
+      [
+        "I've set research to read any public website.",
+        "changed",
+        "I've set",
+        "Your reply says that you changed something, but no command in this turn changed anything",
+      ],
+      [
+        "I've asked for your confirmation.",
+        "asked",
+        "I've asked for your confirmation",
+        "Your reply says that you asked for the person's yes, but no command in this turn asked for one",
+      ],
+    ] as const) {
+      const w = await setup([
+        toolReply("settings_set", ONLY),
+        textReply("Done.", { ttftMs: 0 }),
+        toolReply("settings_set", ANY),
+        textReply("That needs your yes.", { ttftMs: 0 }),
+        textReply(say, { ttftMs: 0 }),
+        textReply(say, { ttftMs: 0 }),
+      ]);
+      await w.chat("only read developer.mozilla.org for research");
+      const asked = await w.chat("research may read any public website again");
+      expect(asked.pendingConfirmation?.readback, say).toBe(READBACK);
+      const res = await w.chat("what can research read now?");
+      expect(w.provider.calls, say).toHaveLength(6);
+      expect(nudgeOf(w), say).toEqual({
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `${lead}: nothing changed in this turn, and a change read back in an earlier turn still waits for the person's yes. If the person asked for a change that no command made, call its command now; the runtime reads a change that needs a yes back with Yes and No. If you meant a change an earlier turn made, say so ("Earlier, ..."). Otherwise answer again and say that nothing changed.`,
+          },
+        ],
+      });
+      expect(res.reply, say).toBe(WAITS);
+      expect(res.pendingConfirmation, say).toBeNull();
+      expect(await lastRow(w), say).toMatchObject({
+        text: WAITS,
+        notice: true,
+        claimGuard: { kind, phrase, nudged: true, replaced: true },
+      });
+      // The earlier card still waits: "yes" answers it.
+      const yes = await w.chat("yes");
+      expect(
+        yes.actions.map((a) => a.kind),
+        say,
+      ).toEqual(["settings.set"]);
+      expect(await webAccess(w), say).toEqual({ mode: "any", only: [], never: [] });
+      await w.store.close();
+    }
+  });
+});

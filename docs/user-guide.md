@@ -297,9 +297,12 @@ them as you left them; an open file or task stays on its own tab.
   for Reading rules to any public website? Research reads any public website, on the API key
   and on the subscription."; "except the ones listed" only when your rule lists websites it never
   reads). Chat says it changed something or asked for your **Yes** only when it did: a Yes/No
-  question appears right under its reply. If its answer claimed one without doing it, Chat
-  tries once more, and when it still cannot it says "Nothing changed, and nothing waits for your
-  yes. Say it again to try once more." A rule like that is a setting,
+  question appears right under its reply, and a change it made shows under it with **Undo**. If
+  its answer claimed more than it did, Chat tries once more, and when it still claims it, Chat
+  says only what is true: the change it made, its Yes/No question, or "Nothing changed, and
+  nothing waits for your yes. Say it again to try once more." ("Nothing changed; the change I
+  asked about earlier still waits for your yes." while an earlier question still waits). A rule
+  like that is a setting,
   never a lesson: "remember that …" keeps a lesson for later sessions, and its line says it
   changes no setting. A change to a task is read back once in one line ('Make "Write the FAQ"
   wait for "Write the README"?') with **Yes** and **No**; the card stays while you type other

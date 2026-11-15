@@ -16198,4 +16198,89 @@ describe("l3-chat-claims, run L3", () => {
       await rt.close();
     }
   }, 60_000);
+
+  // The review of the guard: it judged a claim one way only, so "Nothing changed, and nothing
+  // waits for your yes" stood above the turn's own Yes/No card and above a change the turn made,
+  // and "I've changed nothing" was nudged and replaced. The reply, its card and its changes as
+  // the person gets them from POST /chat and GET /projects/:id/conversation.
+  it("Talk: the reply agrees with its own Yes/No card and with the change it made, and 'I've changed nothing' reaches the person as said (L3-run-1, review)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l3-chat-claims-agree-"));
+    const UPDATED = "I've updated research to read any public website once you confirm.";
+    const ASKED = "Added the task. I've asked for your confirmation to widen research.";
+    const NOTHING = "I've changed nothing; research reads any public website.";
+    const provider = new FakeProvider({
+      clock: new SystemClock(),
+      latency: "none",
+      onNoMatch: "echo",
+      replies: scripted([
+        toolReply("settings_set", {
+          key: "web_access",
+          value: { mode: "only", only: ["developer.mozilla.org"] },
+        }),
+        textReply("Done."),
+        toolReply("settings_set", { key: "web_access", value: { mode: "any" } }),
+        textReply(UPDATED),
+        textReply(UPDATED),
+        toolReply("task_create", { title: "Check the links" }),
+        textReply(ASKED),
+        textReply(ASKED),
+        textReply(NOTHING),
+      ]),
+    });
+    const { rt, client } = await composeOn(home, provider);
+    try {
+      const { project, say } = await readingRules(client);
+      await say("only read developer.mozilla.org for research");
+      const chatCalls = () => provider.calls.map((c) => c.request).filter(chatTurn);
+      // A widening read back in the turn: a "changed" claim is nudged with what is true, and the
+      // person gets the read-back with Yes and No, never "nothing waits for your yes".
+      let before = chatCalls().length;
+      const widened = await say("research may read any public website again");
+      expect(chatCalls().length - before).toBe(3);
+      expect(JSON.stringify(chatCalls().at(-1)?.messages.at(-1)?.content)).toContain(
+        "nothing changed yet, and the change your command read back waits for the person's yes, with Yes and No under your reply. Do not call that command again.",
+      );
+      expect(widened.pendingConfirmation?.readback).toBe(READBACK);
+      expect(widened.reply).toBe(READBACK);
+      let conversation = await client.conversation(project.id);
+      const asked = conversation.turns.at(-1)?.reply;
+      expect(asked?.readback).toBe(READBACK);
+      expect(asked?.waiting).toBe(true);
+      expect(asked?.text ?? "").not.toMatch(/Nothing changed|nothing waits/i);
+      expect(conversation.waiting?.readback).toBe(READBACK);
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: only developer.mozilla.org",
+      );
+      const yes = await say("yes");
+      expect(yes.actions.map((x) => x.kind)).toEqual(["settings.set"]);
+      expect((await client.project(project.id)).researchReads).toBe(
+        "Research reads: any public website",
+      );
+      // A change made in the turn: an "asked" claim beside it is replaced with the change's own
+      // sentence, the one its row with Undo shows; nothing waits.
+      before = chatCalls().length;
+      const added = await say("the links need a look, can you see to it?");
+      expect(chatCalls().length - before).toBe(3);
+      const sentence = 'Added "Check the links" to Reading rules.';
+      expect(added.actions.map((x) => [x.kind, x.summary])).toEqual([["task.create", sentence]]);
+      expect(added.reply).toBe(sentence);
+      expect(added.pendingConfirmation).toBeNull();
+      conversation = await client.conversation(project.id);
+      const made = conversation.turns.at(-1)?.reply;
+      expect(made?.text).toBe(sentence);
+      expect(made?.actions.map((x) => [x.kind, x.sentence, x.canUndo])).toEqual([
+        ["task.create", sentence, true],
+      ]);
+      expect(conversation.waiting).toBeNull();
+      expect((await client.tasks(project.id)).map((t) => t.title)).toContain("Check the links");
+      // A negated answer claims nothing: one model call, the words as the model said them.
+      before = chatCalls().length;
+      const asking = await say("did you change the research rule?");
+      expect(chatCalls().length - before).toBe(1);
+      expect(asking.reply).toBe(NOTHING);
+      expect((await client.conversation(project.id)).turns.at(-1)?.reply?.text).toBe(NOTHING);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });

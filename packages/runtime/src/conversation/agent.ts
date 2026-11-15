@@ -47,7 +47,14 @@ import { isChatOnlyCard } from "../wiring/request-answers.ts";
 import { isYes } from "../wiring/state-ports.ts";
 import { researchReadsLine, webAccessOf } from "../wiring/web-access.ts";
 import { cardFate } from "./card-fate.ts";
-import { CLAIM_NUDGE, claimOf, NOTHING_CHANGED_REPLY, type ReplyClaim } from "./claims.ts";
+import {
+  claimNudge,
+  claimOf,
+  NOTHING_CHANGED_CARD_WAITS_REPLY,
+  NOTHING_CHANGED_REPLY,
+  type ReplyClaim,
+  type TurnDid,
+} from "./claims.ts";
 import {
   cardLine,
   cardNames,
@@ -1057,20 +1064,32 @@ export class ConversationAgent {
     };
     let result = await this.deps.hooksDriver.run({ ...run, onEvent: (ev) => onEvent(ev, true) });
     // l3-chat-claims (live check 3, L3-run-1): a reply that says it changed something or asked
-    // for the person's yes when no command of this turn did (`claimOf`; a card that already
-    // waits in this conversation makes "asked" true) gets one more model step with
-    // `CLAIM_NUDGE`, inside the turn's model calls, budget and deadline; its text is not
-    // streamed. A claim still made then, or with no call left, is replaced with
-    // `NOTHING_CHANGED_REPLY`. Live, "I've asked for confirmation. Once you approve, ..." reached
-    // the person with no card, nothing in the Inbox and the rule unchanged.
+    // for the person's yes when no command of this turn did (`claimOf`, judged by `didNow`: what
+    // the turn's commands did, the nudge step's included) gets one more model step with
+    // `claimNudge` (what the turn did, in words), inside the turn's model calls, budget and
+    // deadline; its text is not streamed. A claim still made then, or with no call left, is
+    // replaced with what is true (`trueLine`): the turn's change sentences, the read-back of its
+    // card alone, or a "Nothing changed" line that says whether an earlier card still waits.
+    // Live, "I've asked for confirmation. Once you approve, ..." reached the person with no card,
+    // nothing in the Inbox and the rule unchanged. The guard's review: it knew one answer only,
+    // and wrote "Nothing changed, and nothing waits for your yes" above the turn's own Yes/No
+    // card and above a change the turn made.
+    const didNow = (): TurnDid => {
+      const asked = results.some((r) => r.status === "pending" && !!r.pendingId);
+      return {
+        changed: results.some((r) => r.status === "done" || r.status === "partial"),
+        asked,
+        // The card an earlier turn read back still waits (a card of this turn replaces it). A
+        // card waiting from before backs no "asked" claim of this turn: the claim may be about
+        // another change, and its Yes would answer the earlier card.
+        waiting: !asked && pending !== null && !cancelledForStop,
+      };
+    };
     const falseClaim = (text: string): ReplyClaim | null => {
       const claim = claimOf(text);
       if (!claim) return null;
-      const backed =
-        claim.kind === "asked"
-          ? pending !== null || results.some((r) => r.status === "pending")
-          : results.some((r) => r.status === "done" || r.status === "partial");
-      return backed ? null : claim;
+      const did = didNow();
+      return (claim.kind === "asked" ? did.asked : did.changed) ? null : claim;
     };
     let claimGuard: (ReplyClaim & { nudged: boolean; replaced: boolean }) | null = null;
     const claimed =
@@ -1086,7 +1105,7 @@ export class ConversationAgent {
           ...run,
           messages: [
             ...result.messages,
-            { role: "user", content: [{ type: "text", text: CLAIM_NUDGE }] },
+            { role: "user", content: [{ type: "text", text: claimNudge(claimed, didNow()) }] },
           ],
           maxTurns: left,
           onEvent: (ev) => onEvent(ev, false),
@@ -1109,8 +1128,12 @@ export class ConversationAgent {
     // A reply cut off at max_tokens ends at its last complete sentence, spoken or typed, and
     // the turn is recorded as truncated (never as a completed answer).
     const truncated = !claimGuard?.replaced && result.stopReason === "max_tokens";
+    // What the turn did once its runs are over (the nudge step's commands count), for the true
+    // line and its notice: a "Nothing changed" line is about the app, not an answer.
+    const didAll = didNow();
+    const guardNotice = !!claimGuard?.replaced && !didAll.changed && !didAll.asked;
     let reply = claimGuard?.replaced
-      ? NOTHING_CHANGED_REPLY
+      ? this.trueLine(results, didAll)
       : truncated
         ? completeSentencesOf(result.finalText)
         : result.finalText.trim();
@@ -1215,9 +1238,9 @@ export class ConversationAgent {
               },
             }
           : {}),
-        // The true line put in for a claim is about the app, not an answer ("make this a task"
-        // skips it).
-        ...(claimGuard?.replaced ? { notice: true } : {}),
+        // A "Nothing changed" line put in for a claim is about the app, not an answer ("make this
+        // a task" skips it); a true line of changes or a read-back is the turn's own reply.
+        ...(guardNotice ? { notice: true } : {}),
       } as never,
       result.costUsdMicro,
     );
@@ -1360,6 +1383,22 @@ export class ConversationAgent {
       return finish(`${dropped}${card.readback}${tail}`, [], { pendingConfirmation: card });
     }
     return finish(`${this.sentenceOf(r, "Done")}${tail}`, this.actionsOf(r, commands));
+  }
+
+  /**
+   * What the person reads in place of a claim no command backed (l3-chat-claims): the turn's
+   * change sentences, as a command's own reply says them (the changes' rows with Undo show the
+   * same words, so the reply shows once); else nothing, and the read-back of the turn's card is
+   * the reply; else "Nothing changed", with the earlier card that still waits when there is one.
+   * Never "nothing waits" above a Yes/No card, nor "Nothing changed" above a change.
+   */
+  private trueLine(results: readonly CommandResultView[], did: TurnDid): string {
+    const changes = results
+      .filter((r) => r.status === "done" || r.status === "partial")
+      .map((r) => this.sentenceOf(r, "Done"));
+    if (changes.length) return changes.join(" ");
+    if (did.asked) return "";
+    return did.waiting ? NOTHING_CHANGED_CARD_WAITS_REPLY : NOTHING_CHANGED_REPLY;
   }
 
   private sentenceOf(r: CommandResultView, prefix: string): string {
