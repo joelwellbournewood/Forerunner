@@ -228,12 +228,15 @@ describe("d1109-oversize-start", () => {
     }).toEqual(before);
   }, 180_000);
 
-  it("with two tasks that fit first, they are done and reviewed before the larger task starts", async () => {
+  it("with two tasks that fit first in the plan's order, they are done and reviewed before the larger task starts", async () => {
     const home = mkdtempSync(join(tmpdir(), "fr-oversized-fit-"));
     const w = await compose(home, clock);
     opened.push(w.rt);
     const projectId = await newProject(w, "Shop two");
-    const shop = await addTask(w, projectId, "Build the shop in shop.md", "shop.md", 8, "high");
+    // d1109-oversize-pause (OP-0, the owner's answer 5): the larger task runs in its turn, so it
+    // comes after the two by its lower priority (before: at "high" it was still held until the
+    // work that fits was done; at "high" it now runs first, the 'd1109-oversize-pause' cases).
+    const shop = await addTask(w, projectId, "Build the shop in shop.md", "shop.md", 8, "low");
     const intro = await addTask(w, projectId, "Write the intro in intro.md", "intro.md", 0.05);
     const about = await addTask(w, projectId, "Write the about page in about.md", "about.md", 0.05);
     const ended = await runSession(w, projectId);
@@ -292,4 +295,103 @@ describe("d1109-oversize-start", () => {
         `the approved session to run the task (${(await w.rt.store.task.mustGet(shop)).status})`,
     );
   }, 180_000);
+});
+
+/**
+ * d1109-oversize-pause (OP-0; the owner's answer 5 of 2026-11-09: "As i said, it should work on
+ * tasks even when it cannot complete them, and be able to wrap up and continue next time. Again,
+ * I thought we talked about this."): no special ordering. The larger task runs in its turn in the
+ * plan's order (priority first), works until its wrap-up and pauses; the tasks after it take only
+ * what it leaves, else they wait for the next session, and every screen says it in that order.
+ * Before, d1109-oversize-start held it out of the queue until the work that fits was done.
+ */
+describe("d1109-oversize-pause", () => {
+  const clock = new SimulatedClock("2026-11-10T09:00:00Z");
+  const opened: RuntimeApp[] = [];
+  afterAll(async () => {
+    for (const rt of opened) await rt.close().catch(() => undefined);
+  });
+  const checkOf = async (w: World, projectId: string) =>
+    (await w.json(`/projects/${projectId}/start-check?budgetUsdMicro=2000000`)) as Json;
+
+  it("A, then the larger task at its place until its wrap-up; B comes after it and waits for the next session; the same order after a restart between the start check and the run", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-oversize-pause-order-"));
+    let w = await compose(home, clock);
+    opened.push(w.rt);
+    const projectId = await newProject(w, "Shop order");
+    const a = await addTask(w, projectId, "Write the intro in intro.md", "intro.md", 0.05, "high");
+    const big = await addTask(w, projectId, "Build the shop in shop.md", "shop.md", 8, "medium");
+    const b = await addTask(w, projectId, "Write the notes in notes.md", "notes.md", 0.05, "low");
+
+    // The Start dialog's facts: the warning names the task before it, the note the one after.
+    const check = await checkOf(w, projectId);
+    const over = check.oversized as Json;
+    expect(String(over.sentence)).toMatch(
+      /^"Build the shop in shop\.md" needs about CHF 6\.40, more than this session's work budget of CHF 1\.28: after "Write the intro in intro\.md" it works with about CHF [\d.]+, keeps its work, and asks you to continue\.$/,
+    );
+    expect(over.afterSentence).toBe(
+      '"Write the notes in notes.md" comes after it: it runs if "Build the shop in shop.md" leaves budget, else in your next session.',
+    );
+    expect((check.runnable as Json[]).map((t) => t.title)).toEqual(["Write the intro in intro.md"]);
+    expect((check.overBudget as Json[]).map((t) => [t.title, t.why])).toEqual([
+      ["Build the shop in shop.md", "oversized"],
+      ["Write the notes in notes.md", "after_large"],
+    ]);
+    expect(JSON.stringify(check)).not.toMatch(
+      /after the other tasks|after the work that fits|one task that large/,
+    );
+
+    // Composed again between the start check and the run: the same order and figures.
+    await w.rt.close();
+    w = await compose(home, clock);
+    opened.push(w.rt);
+    expect(await checkOf(w, projectId)).toEqual(check);
+
+    const ended = await runSession(w, projectId);
+    const sessionId = String(ended.id);
+    const events = (await w.rt.store.event.list(sessionId)).map((e) => ({
+      type: e.type,
+      p: (e.payload ?? {}) as Json,
+    }));
+    const started = events.filter((e) => e.type === "task.started").map((e) => e.p.taskId);
+    // A ran and was reviewed first, then the larger task; B did not start.
+    expect(started.filter((id) => id !== undefined)).toEqual([a, big]);
+    expect((await w.rt.store.task.mustGet(a)).status).toBe("done");
+    expect((await w.rt.store.task.mustGet(big)).status).toBe("needs_human");
+    expect((await w.rt.store.task.mustGet(b)).status).toBe("ready");
+    const cards = (await w.rt.store.humanRequest.list({ task_id: big, status: "open" } as never))
+      .length;
+    expect(cards).toBe(1);
+    const said = await personLines(w, sessionId);
+    expect(said.filter((l) => l.startsWith("Took "))).toHaveLength(1);
+    expect(String(ended.summary)).toContain(
+      '"Write the notes in notes.md" waits for your next session: "Build the shop in shop.md" used the rest of this one.',
+    );
+    expect(String(ended.summary)).not.toMatch(
+      /after the other tasks|after the work that fits|one task that large/,
+    );
+  }, 240_000);
+
+  it("with the larger task at the highest priority it runs first, and the others wait for what it leaves", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-oversize-pause-first-"));
+    const w = await compose(home, clock);
+    opened.push(w.rt);
+    const projectId = await newProject(w, "Shop first");
+    const big = await addTask(w, projectId, "Build the shop in shop.md", "shop.md", 8, "high");
+    const a = await addTask(w, projectId, "Write the intro in intro.md", "intro.md", 0.05);
+    const check = await checkOf(w, projectId);
+    expect((check.runnable as Json[]).length).toBe(0);
+    expect((check.oversized as Json).afterSentence).toBe(
+      '"Write the intro in intro.md" comes after it: it runs if "Build the shop in shop.md" leaves budget, else in your next session.',
+    );
+    const ended = await runSession(w, projectId);
+    const events = (await w.rt.store.event.list(String(ended.id))).filter(
+      (e) => e.type === "task.started",
+    );
+    expect(events.map((e) => (e.payload as Json).taskId)[0]).toBe(big);
+    expect((await w.rt.store.task.mustGet(a)).status).toBe("ready");
+    expect(String(ended.summary)).toContain(
+      '"Write the intro in intro.md" waits for your next session: "Build the shop in shop.md" used the rest of this one.',
+    );
+  }, 240_000);
 });

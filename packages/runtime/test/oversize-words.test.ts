@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import { TOOK_LARGER_EVENT } from "../src/daemon/event-audience.ts";
 import {
   type ChfAmount,
+  comesAfterSentence,
   leftOutSentence,
   oversizedAsk,
   oversizedPlanClause,
   oversizedPlanNote,
   oversizedSentence,
   takenLine,
+  waitsForNextSessionSentence,
 } from "../src/daemon/oversize-words.ts";
 import { describeEvent, eventView } from "../src/daemon/views.ts";
 
@@ -37,15 +39,17 @@ describe("d1109-oversize-start, run C: the sentences about a task larger than on
     ).toBe(
       '"Build the shop" needs about CHF 6.00, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
     );
+    // d1109-oversize-pause (OP-0, the owner's answer 5): the tasks before it by name.
     expect(
       oversizedSentence({
         title: "Build the shop",
         estimate: chf(7.5),
         workBudget: chf(5),
         room: chf(3.5),
+        before: ["A"],
       }),
     ).toBe(
-      '"Build the shop" needs about CHF 6.00, more than this session\'s work budget of CHF 4.00: after the other tasks it works with about CHF 2.80, keeps its work, and asks you to continue.',
+      '"Build the shop" needs about CHF 6.00, more than this session\'s work budget of CHF 4.00: after "A" it works with about CHF 2.80, keeps its work, and asks you to continue.',
     );
     // A task that resumes from kept work names what is left and what it spent so far.
     expect(
@@ -61,7 +65,7 @@ describe("d1109-oversize-start, run C: the sentences about a task larger than on
     );
   });
 
-  it("why a task waits for the next session: no room, a second larger task, after the others", () => {
+  it("why a task waits for the next session: no room, after the larger task, after the others", () => {
     expect(
       leftOutSentence("no_room", {
         title: "Build the shop",
@@ -71,10 +75,16 @@ describe("d1109-oversize-start, run C: the sentences about a task larger than on
     ).toBe(
       '"Build the shop" needs about CHF 6.00, more than this session\'s work budget: the tasks before it leave too little to start it, so it waits for the next session.',
     );
+    // d1109-oversize-pause (OP-0): a second larger task comes after the first ("after_large").
     expect(
-      leftOutSentence("one_large", { title: "Big two", estimate: chf(11.25), workBudget: chf(5) }),
+      leftOutSentence("after_large", {
+        title: "Big two",
+        estimate: chf(11.25),
+        workBudget: chf(5),
+        after: "Build the shop",
+      }),
     ).toBe(
-      '"Big two" needs about CHF 9.00, more than this session\'s work budget: one task that large runs a session, so it waits for the next one.',
+      '"Big two" comes after it: it runs if "Build the shop" leaves budget, else in your next session.',
     );
     expect(
       leftOutSentence("after_others", {
@@ -170,5 +180,96 @@ describe("d1109-oversize-start, run C: the sentences about a task larger than on
     expect(describeEvent("session.planned", { items: 1, estimateUsdMicro: 500_000 }, RATE)).toBe(
       "Plan: 1 task, about CHF 0.40.",
     );
+  });
+});
+
+/**
+ * d1109-oversize-pause (OP-0; the owner's answer 5 of 2026-11-09: "As i said, it should work on
+ * tasks even when it cannot complete them, and be able to wrap up and continue next time"): the
+ * larger task runs in its turn in the plan's order, so the sentences name the tasks before it and
+ * the ones after it; "after the other tasks", "after the work that fits" and "one task that large
+ * runs a session" are gone.
+ */
+describe("d1109-oversize-pause, run C: the order sentences (OP-0)", () => {
+  it("the warning names the tasks before it, up to three, then 'and N more'", () => {
+    const facts = (before: string[]) =>
+      oversizedSentence({
+        title: "Build the shop",
+        estimate: chf(7.5),
+        workBudget: chf(5),
+        room: chf(3.5),
+        before,
+      });
+    expect(facts(["A", "B"])).toBe(
+      '"Build the shop" needs about CHF 6.00, more than this session\'s work budget of CHF 4.00: after "A" and "B" it works with about CHF 2.80, keeps its work, and asks you to continue.',
+    );
+    expect(facts(["A", "B", "C", "D", "E"])).toBe(
+      '"Build the shop" needs about CHF 6.00, more than this session\'s work budget of CHF 4.00: after "A", "B", "C" and 2 more it works with about CHF 2.80, keeps its work, and asks you to continue.',
+    );
+    // First in order: the sentence of before, unchanged.
+    expect(
+      oversizedSentence({
+        title: "Build the shop",
+        estimate: chf(7.5),
+        workBudget: chf(5),
+        room: null,
+      }),
+    ).toBe(
+      '"Build the shop" needs about CHF 6.00, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
+    );
+  });
+
+  it("the tasks after it, before the run and in the result, in two forms that stay true", () => {
+    expect(comesAfterSentence(["B"], "Build the shop")).toBe(
+      '"B" comes after it: it runs if "Build the shop" leaves budget, else in your next session.',
+    );
+    expect(comesAfterSentence(["B", "C"], "Build the shop")).toBe(
+      '"B" and 1 more come after it: they run if "Build the shop" leaves budget, else in your next session.',
+    );
+    expect(comesAfterSentence([], "Build the shop")).toBeNull();
+    expect(waitsForNextSessionSentence(["B"], "Build the shop")).toBe(
+      '"B" waits for your next session: "Build the shop" used the rest of this one.',
+    );
+    expect(waitsForNextSessionSentence(["B", "C"], "Build the shop")).toBe(
+      '"B" and 1 more wait for your next session: "Build the shop" used the rest of this one.',
+    );
+  });
+
+  it("the plan clause: first in order it names what runs after it only if budget is left", () => {
+    expect(oversizedPlanClause("Build the shop", true, ["B"])).toBe(
+      'This session works on "Build the shop" until its work budget is used; "B" runs after it only if budget is left.',
+    );
+    expect(oversizedPlanClause("Build the shop", true, ["B", "C"])).toBe(
+      'This session works on "Build the shop" until its work budget is used; "B" and 1 more run after it only if budget is left.',
+    );
+    expect(oversizedPlanClause("Build the shop", true)).toBe(
+      'This session works on "Build the shop" until its work budget is used.',
+    );
+    expect(oversizedPlanClause("Build the shop", false, ["B"])).toBe(
+      'then works on "Build the shop" with what is left',
+    );
+  });
+
+  it("no sentence says the order of before", () => {
+    const all = [
+      oversizedSentence({
+        title: "X",
+        estimate: chf(7.5),
+        workBudget: chf(5),
+        room: chf(1),
+        before: ["A"],
+      }),
+      leftOutSentence("after_large", {
+        title: "B",
+        estimate: chf(1),
+        workBudget: chf(5),
+        after: "X",
+      }),
+      leftOutSentence("no_room", { title: "B", estimate: chf(9), workBudget: chf(5) }),
+      oversizedPlanClause("X", true, ["B"]),
+      comesAfterSentence(["B"], "X") ?? "",
+      waitsForNextSessionSentence(["B"], "X"),
+    ].join(" ");
+    expect(all).not.toMatch(/after the other tasks|after the work that fits|one task that large/);
   });
 });

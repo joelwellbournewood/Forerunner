@@ -3,11 +3,14 @@
  * 2026-11-09: "it should get a warning, but it should get done anyway"), written from the facts
  * the Start check and the runner hold, so the Start dialog, the plan card, the chat's read-back,
  * the session's log and its result say it the same way (design §5: one sentence, CHF only,
- * "about" for estimates, task titles in quotes, no ids). The runner takes such a task after the
- * work that fits, with what is left of the session's work budget (`cutPlanToBudget`,
- * `OVERSIZED_MIN_ROOM_SHARE`); it pauses at that budget with its work kept and one card whose
- * Continue goes on from it (ADR 0112 amended), which is what "keeps its work, and asks you to
- * continue" promises.
+ * "about" for estimates, task titles in quotes, no ids). The runner takes such a task in its turn
+ * in the plan's order (priority, then the plan's order; d1109-oversize-pause, the owner's answer 5
+ * of 2026-11-09: "it should work on tasks even when it cannot complete them, and be able to wrap
+ * up and continue next time"), with what is left of the session's work budget (`cutPlanToBudget`,
+ * `OVERSIZED_MIN_ROOM_SHARE`); the tasks after it get only what it leaves. It pauses at that
+ * budget with its work kept and one card whose Continue goes on from it (ADR 0112 amended), and
+ * the next Start takes it in its turn, which is what "keeps its work, and asks you to continue"
+ * promises.
  *
  * No Node-only import: the UI's Start dialog takes `oversizedPlanClause` from here, and the
  * fake daemon every sentence. Amounts come formatted by the caller (billing's `formatChf`).
@@ -25,6 +28,16 @@ const plain = (a: ChfAmount) => moneyWords(a.text, a.chfMicro);
 /** A task's title in quotes, on one line. */
 const quoted = (title: string) => `"${title.replace(/\s+/g, " ").trim()}"`;
 
+/**
+ * Titles in quotes, at most `max` named, then "and N more": '"A"', '"A" and "B"', '"A", "B" and
+ * "C"', '"A", "B", "C" and 2 more' (max 3); '"B" and 1 more' (max 1).
+ */
+function namedUpTo(titles: readonly string[], max: number): string {
+  const q = titles.map(quoted);
+  if (q.length > max) return `${q.slice(0, max).join(", ")} and ${q.length - max} more`;
+  return q.length <= 1 ? (q[0] ?? "") : `${q.slice(0, -1).join(", ")} and ${q[q.length - 1]}`;
+}
+
 /** What the sentences about the larger task the session takes are written from. */
 export interface OversizedFacts {
   title: string;
@@ -33,10 +46,15 @@ export interface OversizedFacts {
   /** The session's work budget (its cap less the fifth kept for reviews). */
   workBudget: ChfAmount;
   /**
-   * What it works with after the other tasks of the session; null when nothing runs before it
-   * (it then works until the work budget is used).
+   * What it works with after the tasks before it in the plan's order; null when nothing runs
+   * before it (it then works until the work budget is used).
    */
   room: ChfAmount | null;
+  /**
+   * d1109-oversize-pause (OP-0): the tasks before it in the plan's order, by title; the sentence
+   * names up to three ('after "A" it works with ...'). Without them it reads as first in order.
+   */
+  before?: readonly string[];
   /** What its kept work cost, when it resumes from it (OS-1). */
   spent?: ChfAmount | null;
 }
@@ -44,20 +62,31 @@ export interface OversizedFacts {
 /**
  * The warning before Start (the Start dialog's amber note, the Start check's `oversized`):
  * '"Build the shop" needs about CHF 6.00, more than this session's work budget of CHF 4.00: it
- * works until that budget is used, keeps its work, and asks you to continue.'
+ * works until that budget is used, keeps its work, and asks you to continue.'; with tasks before
+ * it in the plan's order (d1109-oversize-pause, OP-0): '...: after "A" it works with about CHF
+ * 2.80, keeps its work, and asks you to continue.' (before: "after the other tasks", when it was
+ * held until the work that fits was done).
  */
 export function oversizedSentence(f: OversizedFacts): string {
   const needs = f.spent
     ? `${about(f.estimate)} more (${plain(f.spent)} spent so far)`
     : about(f.estimate);
-  const how = f.room
-    ? `after the other tasks it works with ${about(f.room)}, keeps its work, and asks you to continue`
-    : "it works until that budget is used, keeps its work, and asks you to continue";
+  const before = f.before ?? [];
+  const how =
+    f.room && before.length > 0
+      ? `after ${namedUpTo(before, 3)} it works with ${about(f.room)}, keeps its work, and asks you to continue`
+      : "it works until that budget is used, keeps its work, and asks you to continue";
   return `${quoted(f.title)} needs ${needs}, more than this session's work budget of ${plain(f.workBudget)}: ${how}.`;
 }
 
-/** Why a task is left out of a session for its budget (the runner's `LeftOutReason`). */
-export type LeftOutWhy = "after_others" | "one_large" | "no_room";
+/**
+ * Why a task is left out of a session for its budget (the runner's `LeftOutReason`): `after_large`
+ * (d1109-oversize-pause, OP-0), it comes after a task larger than the work budget in the plan's
+ * order and runs only if that task leaves budget; `no_room`, a task larger than the work budget
+ * the tasks before it leave too little for; `after_others`, it fits the work budget but not after
+ * the tasks before it.
+ */
+export type LeftOutWhy = "after_others" | "after_large" | "no_room";
 
 /** What a left-out task's sentence is written from. */
 export interface LeftOutFacts {
@@ -66,6 +95,8 @@ export interface LeftOutFacts {
   workBudget: ChfAmount;
   /** `after_others`: what the tasks that run first take of the work budget. */
   ahead?: ChfAmount | null;
+  /** `after_large`: the title of the larger task it comes after. */
+  after?: string | null;
 }
 
 /**
@@ -73,22 +104,47 @@ export interface LeftOutFacts {
  * check's `overBudget[].sentence`, the session result's "Left for next time"):
  * - `no_room`: '"Build the shop" needs about CHF 6.00, more than this session's work budget:
  *   the tasks before it leave too little to start it, so it waits for the next session.'
- * - `one_large`: '"Big two" needs about CHF 9.00, more than this session's work budget: one task
- *   that large runs a session, so it waits for the next one.'
+ * - `after_large` (OP-0): '"B" comes after it: it runs if "Build the shop" leaves budget, else in
+ *   your next session.' (`comesAfterSentence` for one task)
  * - `after_others` (the Start dialog's line of W15-38, now the daemon's): '"About page" (about
  *   CHF 2.40) may be left for next time: the tasks that run first take about CHF 2.40 of this
  *   session's work budget of CHF 4.00 (the budget less a fifth kept for reviews). Give the
  *   session a larger budget to be sure it runs.'
+ *
+ * Before (d1109-oversize-start): `one_large`, '"Big two" needs about CHF 9.00, more than this
+ * session's work budget: one task that large runs a session, so it waits for the next one.'; a
+ * second larger task now comes after the first (`after_large`).
  */
 export function leftOutSentence(why: LeftOutWhy, f: LeftOutFacts): string {
   const t = quoted(f.title);
   if (why === "no_room")
     return `${t} needs ${about(f.estimate)}, more than this session's work budget: the tasks before it leave too little to start it, so it waits for the next session.`;
-  if (why === "one_large")
-    return `${t} needs ${about(f.estimate)}, more than this session's work budget: one task that large runs a session, so it waits for the next one.`;
+  if (why === "after_large" && f.after) return comesAfterSentence([f.title], f.after) as string;
   return `${t} (${about(f.estimate)}) may be left for next time: the tasks that run first take ${about(
     f.ahead ?? { chfMicro: 0, text: "CHF 0.00" },
   )} of this session's work budget of ${plain(f.workBudget)} (the budget less a fifth kept for reviews). Give the session a larger budget to be sure it runs.`;
+}
+
+/**
+ * The tasks after the larger one in the plan's order, before the run (OP-0; the Start dialog's
+ * amber note and chat's read-back after the warning), named once: '"B" comes after it: it runs if
+ * "Build the shop" leaves budget, else in your next session.'; more: '"B" and 1 more come after
+ * it: they run if "Build the shop" leaves budget, else in your next session.'. Null for none.
+ */
+export function comesAfterSentence(titles: readonly string[], larger: string): string | null {
+  if (titles.length === 0) return null;
+  const one = titles.length === 1;
+  return `${namedUpTo(titles, 1)} ${one ? "comes" : "come"} after it: ${one ? "it runs" : "they run"} if ${quoted(larger)} leaves budget, else in your next session.`;
+}
+
+/**
+ * The tasks after the larger one that did not run (OP-0; the result's "Left for next time"): '"B"
+ * waits for your next session: "Build the shop" used the rest of this one.'; more: '"B" and 1
+ * more wait for your next session: "Build the shop" used the rest of this one.'.
+ */
+export function waitsForNextSessionSentence(titles: readonly string[], larger: string): string {
+  const one = titles.length === 1;
+  return `${namedUpTo(titles, 1)} ${one ? "waits" : "wait"} for your next session: ${quoted(larger)} used the rest of this one.`;
 }
 
 /**
@@ -101,15 +157,23 @@ export function oversizedPlanNote(workBudget: ChfAmount): string {
 }
 
 /**
- * The Start dialog's plan sentence about the larger task (OS-4): alone, the whole sentence
- * 'This session works on "Build the shop" until its work budget is used.'; after other tasks,
- * the clause the sentence ends with, 'then works on "Build the shop" with what is left' (the
- * caller adds ", " before it and the full stop).
+ * The Start dialog's plan sentence about the larger task (OS-4): first in the plan's order, the
+ * whole sentence 'This session works on "Build the shop" until its work budget is used.', with the
+ * tasks after it (OP-0) 'This session works on "Build the shop" until its work budget is used;
+ * "B" runs after it only if budget is left.'; after other tasks, the clause the sentence ends
+ * with, 'then works on "Build the shop" with what is left' (the caller adds ", " before it and
+ * the full stop).
  */
-export function oversizedPlanClause(title: string, alone: boolean): string {
-  return alone
-    ? `This session works on ${quoted(title)} until its work budget is used.`
-    : `then works on ${quoted(title)} with what is left`;
+export function oversizedPlanClause(
+  title: string,
+  alone: boolean,
+  after: readonly string[] = [],
+): string {
+  if (!alone) return `then works on ${quoted(title)} with what is left`;
+  const head = `This session works on ${quoted(title)} until its work budget is used`;
+  if (after.length === 0) return `${head}.`;
+  const one = after.length === 1;
+  return `${head}; ${namedUpTo(after, 1)} ${one ? "runs" : "run"} after it only if budget is left.`;
 }
 
 /**

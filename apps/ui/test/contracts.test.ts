@@ -200,12 +200,16 @@ describe("d1109-oversize-start, run C: the Start check's larger task", () => {
       sentence:
         '"Build the shop" needs about CHF 6.00, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
     });
+    // d1109-oversize-pause (OP-0): the second larger task comes after the first (before:
+    // "one_large", 'one task that large runs a session, so it waits for the next one.').
     expect(view.overBudget.map((t) => [t.title, t.why])).toEqual([
       ["Build the shop", "oversized"],
-      ["Big two", "one_large"],
+      ["Big two", "after_large"],
     ]);
     expect(view.overBudget[1]?.sentence).toBe(
-      '"Big two" needs about CHF 9.00, more than this session\'s work budget: one task that large runs a session, so it waits for the next one.',
+      '"Big two" comes after it: it runs if "Build the shop" leaves budget, else in your next session.',
     );
+    expect(view.oversized?.comesAfter).toEqual(["Big two"]);
+    expect(view.oversized?.afterSentence).toBe(view.overBudget[1]?.sentence);
   });
 });

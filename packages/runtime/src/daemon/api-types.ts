@@ -1581,12 +1581,14 @@ export const StartCheckTaskView = z.object({
   ahead: Money.optional(),
   /**
    * `overBudget` only (D4, d1109-oversize-start): why it is not in the work that fits:
-   * `oversized`, it is the task larger than the work budget the session takes after that work
-   * (`StartCheckView.oversized`); `one_large`, a second such task (one a session); `no_room`, such
-   * a task the tasks before it leave too little for; `after_others`, it fits the work budget but
-   * not after the tasks before it. Absent from an older daemon.
+   * `oversized`, it is the task larger than the work budget the session takes at its place in the
+   * plan's order (`StartCheckView.oversized`); `after_large`, it comes after that task and runs
+   * only if it leaves budget (d1109-oversize-pause, OP-0; it replaced `one_large`, a second such
+   * task, which an older daemon may still send); `no_room`, such a task the tasks before it leave
+   * too little for; `after_others`, it fits the work budget but not after the tasks before it.
+   * Absent from an older daemon.
    */
-  why: z.enum(["oversized", "one_large", "no_room", "after_others"]).optional(),
+  why: z.enum(["oversized", "after_large", "one_large", "no_room", "after_others"]).optional(),
   /** `overBudget` only (D4): the daemon's one sentence about it (`daemon/oversize-words.ts`). */
   sentence: z.string().optional(),
 });
@@ -1611,6 +1613,14 @@ export const StartCheckOversizedView = z.object({
   /** What its kept work cost, when it resumes from it. */
   spent: Money.optional(),
   sentence: z.string(),
+  /**
+   * d1109-oversize-pause (OP-0): the titles of the tasks after it in the plan's order (they run
+   * only if it leaves budget) and their one sentence ('"B" comes after it: it runs if "Build the
+   * shop" leaves budget, else in your next session.'), shown after the warning. Empty and null
+   * from an older daemon.
+   */
+  comesAfter: z.array(z.string()).default([]),
+  afterSentence: z.string().nullable().default(null),
 });
 export type StartCheckOversizedView = z.infer<typeof StartCheckOversizedView>;
 
