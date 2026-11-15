@@ -148,7 +148,13 @@ Verification (ADR 0104, `types.ts`):
   for a finding of any severity that carries only `NO_ACTION_GIVEN` (`findingView`; L-13e,
   polish-words, for an info note; run L3, live check 3, L3-research-3, for every severity: a
   critical finding read "To fix: Resolve it and show the evidence", which tells the person
-  nothing to do).
+  nothing to do). Its siblings say what was found instead (review of run L3): the task
+  drawer's Review list and the chat's `# Tasks` line ("still asked for: …") read the finding
+  through `findingAsk` (`daemon/task-words.ts`), a card that lists findings drops the
+  placeholder from each step (`withoutNoActionGiven`, so a card filed earlier reads the same),
+  and the phone's Reviews screen shows no empty "Needed:" line. `task-words.ts` keeps the
+  words as `NO_FIX_NAMED` rather than importing them, since the UI's tests read that module and
+  the critic package brings the state store; a runtime test pins the two equal.
 
 Mandatory tiers (open decision in the spec): anything touching main, security, data, money or
 science claims is reviewed at tier 2 or higher. The runtime reviews every task an agent finished

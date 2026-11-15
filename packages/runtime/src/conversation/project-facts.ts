@@ -9,6 +9,7 @@ import type {
 } from "@forerunner/state";
 import { requestWords } from "../daemon/request-words.ts";
 import {
+  findingAsk,
   loadTaskDisplayContext,
   plainReason,
   reviewSentence,
@@ -100,7 +101,8 @@ async function taskLine(
     // What the critic still asks for, in its words: the "why" behind a send-back or a failure.
     if (t.status !== "done") {
       const open = review ? await store.finding.openFor(t.id) : [];
-      const asked = open[0] ? plainReason(open[0].required_action || open[0].description, 200) : "";
+      // What it found when it named no fix, never the placeholder (`findingAsk`, L3-research-3).
+      const asked = open[0] ? plainReason(findingAsk(open[0]), 200) : "";
       if (asked) parts.push(`still asked for: ${asked}`);
     }
   }

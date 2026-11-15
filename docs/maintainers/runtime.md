@@ -4165,7 +4165,8 @@ in one project cancelled a task in another. Now:
   <project>` (every task in run order, at most `CONTEXT_TASKS_MAX` by name, each with its status
   in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,
   who does it, the critic's last word and the first thing it still asks for (an open finding's
-  required action); `sandboxReady` from the daemon for "Waiting for Docker"), `# Last session` (the engine's `summary_cache.last_session`: the result, then done,
+  required action, or what it found when the critic named no fix: `findingAsk`, review of run L3,
+  L3-research-3); `sandboxReady` from the daemon for "Waiting for Docker"), `# Last session` (the engine's `summary_cache.last_session`: the result, then done,
   failed with the reason, needs you, not reached, waiting for Docker, how it ended in words
   (`stopWords`: "How it ended: Stopped by you.", nothing when it ran out of work; phase E:
   before, the raw reason, "Ended because: plan awaiting approval"), the spend,
@@ -5627,7 +5628,9 @@ words (`ACTION_WORDS`: "Pause", "Go ahead without"), so Changes never shows an a
 `GET /tasks/:id` is the task drawer (`TaskDetailView`, `taskDetail` in
 `daemon/task-display.ts`): what it waits for and what waits on it, its runs, the critic's last
 review in a sentence (`reviewSentence`), the open findings (each once, however many reviews
-raised it), its open cards (`plainReason`: the retry card's text reads ""X" failed 4 times",
+raised it; a finding the critic named no fix for by what it found, never "Resolve it and show the
+evidence": `findingAsk`, review of run L3, L3-research-3), its open cards (`plainReason`: the
+retry card's text reads ""X" failed 4 times",
 "2 question(s)" reads "2 questions"). Each run has `kind`: `work` (a specialist's run) or
 `review` (the critic's run, `specialist: "critic"`, whose words are under `review`; it carries
 no report or files). A work run's report and files come from its session's log: the runner

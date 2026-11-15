@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { NO_ACTION_GIVEN } from "@forerunner/critic";
 import type { SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
@@ -12,6 +13,7 @@ import {
   YES_TO_WHAT_REPLY,
 } from "../src/conversation/agent.ts";
 import { readTranscript } from "../src/conversation/transcript.ts";
+import { findingAsk, NO_FIX_NAMED, withoutNoActionGiven } from "../src/daemon/task-words.ts";
 import { syncAnsweredCards } from "../src/loop/answered-cards.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
 import { flatPricing, harness } from "./helpers.ts";
@@ -963,5 +965,68 @@ describe("l3-small, run L3: a same-title word from a refusal keeps picking its t
     expect((await w.store.task.mustGet(older.id)).status).toBe("ready");
     expect((await w.store.task.mustGet(newer.id)).status).toBe("ready");
     await w.store.close();
+  });
+});
+
+/**
+ * l3-small fix-up, run L3 (L3-research-3, a sibling of findingView): the chat's `# Tasks` line
+ * told the model what the critic still asks for from the finding's required action, which is the
+ * placeholder 'Resolve it and show the evidence' when the critic named no fix; the chat could pass
+ * it on to the person as what to do. What was found is sent instead.
+ */
+describe("l3-small, run L3: the chat is told what was found when the critic named no fix (L3-research-3)", () => {
+  it("'still asked for' quotes the finding, never the placeholder", async () => {
+    const w = await setup([textReply("ok", { ttftMs: 0 })]);
+    const review = await task(w, "Review the launch plan", {
+      status: "needs_human",
+      reason: "the critic sent it back",
+      attempt: 2,
+    } as never);
+    const r = await w.store.review.insert({
+      task_id: review.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 20,
+      confidence: 0.9,
+      verdict: "revise",
+      evidence: [],
+      summary: "The file under review is missing.",
+      author_agent: w.alice,
+    });
+    await w.store.finding.insert({
+      review_id: r.id,
+      task_id: review.id,
+      severity: "critical",
+      description: "notes/plan.md is missing, so review.md could not be written",
+      required_action: "Resolve it and show the evidence",
+      status: "open",
+      fingerprint: "fp-missing",
+      author_agent: w.alice,
+    });
+    await w.chat("why is the review stuck?");
+    const sent = w.last(0);
+    expect(sent).toContain(
+      "still asked for: notes/plan.md is missing, so review.md could not be written",
+    );
+    expect(sent).not.toContain("Resolve it and show the evidence");
+    await w.store.close();
+  });
+
+  it("the words left out are the critic's own placeholder, kept equal to it", () => {
+    expect(NO_FIX_NAMED).toBe(NO_ACTION_GIVEN);
+    expect(
+      findingAsk({ required_action: ` ${NO_ACTION_GIVEN} `, description: "x is missing" }),
+    ).toBe("x is missing");
+    expect(findingAsk({ required_action: "", description: "x is missing" })).toBe("x is missing");
+    expect(findingAsk({ required_action: "Add x.", description: "x is missing" })).toBe("Add x.");
+    expect(withoutNoActionGiven(`[high] x is missing -> ${NO_ACTION_GIVEN}`)).toBe(
+      "[high] x is missing",
+    );
+    expect(withoutNoActionGiven(`[high] x is missing.: ${NO_ACTION_GIVEN}`)).toBe(
+      "[high] x is missing.",
+    );
+    expect(withoutNoActionGiven("[high] x is missing -> Add x.")).toBe(
+      "[high] x is missing -> Add x.",
+    );
   });
 });

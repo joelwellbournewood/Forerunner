@@ -242,3 +242,26 @@ describe("Reviews screen", () => {
     h.controller.close();
   });
 });
+
+/**
+ * l3-small fix-up, run L3 (L3-research-3, review): a finding the critic named no fix for comes
+ * with an empty required action (the daemon's findingView leaves out the placeholder at every
+ * severity), and the phone showed an empty "Needed:" under it. The line is left out, as the
+ * desktop's Reviews tab leaves out its "To fix" line.
+ */
+describe("l3-small, run L3: the phone's Reviews shows no empty 'Needed:' line (L3-research-3)", () => {
+  it("a finding with no fix has no 'Needed:' line; one with a fix keeps it", async () => {
+    const h = await createMobileHarness();
+    const parserReview = h.service.state.reviews.find((r) => r.id === "rev_parser");
+    const noFix = parserReview?.findings.find((f) => f.id === "find_retry");
+    if (!noFix) throw new Error("no finding to change");
+    noFix.requiredAction = "";
+    renderMobile("/reviews", h);
+    await waitFor(() => expect(reviewCard("rev_parser")).toBeDefined());
+    const findings = within(reviewCard("rev_parser") as HTMLElement).getAllByTestId("m-finding");
+    expect(findings[0]).toHaveTextContent("Needed: Add a recorded EMA fixture.");
+    expect(findings[1]).toHaveTextContent("Network errors are swallowed without a retry.");
+    expect(findings[1]).not.toHaveTextContent("Needed");
+    h.controller.close();
+  });
+});

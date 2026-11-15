@@ -16087,4 +16087,97 @@ describe("l3-small, run L3", () => {
       "Quote the line each gap refers to.",
     );
   });
+
+  // Review of l3-small (siblings of findingView, validation rule 8): the task drawer's Review list
+  // and the cards that list the critic's findings still showed the placeholder the critic's code
+  // fills in when it named no fix ('Resolve it and show the evidence', bench review-l3-small,
+  // 37-r3-3-drawer-review.png). Each says what was found instead.
+  it("the task drawer's Review list names what was found for a finding with no fix, never the placeholder; a fix the critic named stays (L3-research-3)", async () => {
+    const project = await client.createProject({ name: "Drawer review", goal: "A review" });
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Review the launch plan in notes/plan.md",
+      outcome: "review.md lists the gaps",
+      status: "needs_human",
+      risk_tier: 1,
+      attempt: 1,
+    } as never);
+    const review = await rt.store.review.insert({
+      task_id: task.id,
+      critic_model: "fake-sonnet",
+      tier: 1,
+      grade: 20,
+      confidence: 0.9,
+      verdict: "revise",
+      evidence: [],
+      summary: "Sent back: the file under review is missing.",
+      author_agent: rt.criticAgent.id,
+    } as never);
+    for (const [severity, description, action, fp] of [
+      [
+        "critical",
+        "The file under review is missing, so review.md could not be written.",
+        "Resolve it and show the evidence",
+        "fp-drawer-missing",
+      ],
+      [
+        "high",
+        "No gap quotes a line of notes/plan.md.",
+        "Quote the line each gap refers to.",
+        "fp-drawer-quote",
+      ],
+    ] as const)
+      await rt.store.finding.insert({
+        review_id: review.id,
+        task_id: task.id,
+        severity,
+        description,
+        required_action: action,
+        status: "open",
+        fingerprint: fp,
+        author_agent: rt.criticAgent.id,
+      } as never);
+    const detail = await client.task(task.id);
+    expect(detail.review?.open).toEqual([
+      "The file under review is missing, so review.md could not be written.",
+      "Quote the line each gap refers to.",
+    ]);
+    expect(JSON.stringify(detail)).not.toContain("Resolve it and show the evidence");
+  });
+
+  it("a card that lists the critic's findings shows a finding with no fix by what was found alone (L3-research-3)", async () => {
+    const project = await client.createProject({ name: "Card review", goal: "A review" });
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "Review the launch notes",
+      outcome: "review.md lists the gaps",
+      status: "needs_human",
+      risk_tier: 1,
+    } as never);
+    const me = await client.me();
+    const filed = await rt.store.humanRequest.insert({
+      human_id: me.id,
+      project_id: project.id,
+      task_id: task.id,
+      kind: "approval",
+      why: `"${task.title}" did not pass review after 2 attempts.`,
+      // The steps as the critic's retry card (loop/critic.ts) and the findings cards
+      // (session/findings.ts) write them.
+      steps: [
+        "[critical] The file under review is missing.: Resolve it and show the evidence",
+        "[high] No gap quotes a line -> Quote the line each gap refers to.",
+        "[medium] The summary is long -> Resolve it and show the evidence",
+      ],
+      options: ["Try again", "Cancel task"],
+      blocking: true,
+      risk: "high",
+      change_card: { key: "critic:signoff", task_id: task.id, reason: "verdict" },
+    } as never);
+    const shown = (await client.inbox(me.id)).requests.find((r) => r.id === filed.id);
+    expect(shown?.details).toEqual([
+      "The file under review is missing.",
+      "No gap quotes a line: Quote the line each gap refers to.",
+      "The summary is long",
+    ]);
+  });
 });

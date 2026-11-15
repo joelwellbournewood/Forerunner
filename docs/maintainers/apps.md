@@ -2311,7 +2311,8 @@ is lost if the app closes before it is sent; `flushOutbox` sends it first on rec
 and a resend after a lost answer is answered with the asset already made (the service's
 `clientId` idempotency), so the project never gets a second copy. The Reviews screen (nav
 "Reviews") lists `GET /reviews?projectId=` for the chosen project: task, PR link, verdict,
-grade, tier, summary and every finding with severity, status and the required action; the
+grade, tier, summary and every finding with severity, status and the required action ("Needed:
+…", left out when the critic named no fix: the daemon sends it empty, run L3, L3-research-3); the
 open approval request on the review's task (from the inbox) is shown as "waiting on you".
 Comment is `POST /reviews/:id/comment` (a message to the agent responsible); Approve and
 Reject are `POST /reviews/:id/approve|reject { body?, requestVersion? }`, which answer that

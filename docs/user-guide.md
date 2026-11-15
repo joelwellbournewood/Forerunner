@@ -279,8 +279,9 @@ them as you left them; an open file or task stays on its own tab.
   records in docs/decisions.
 - **Reviews** (under More): the critic's verdict on each task in words ("accepted", "sent
   back"), its grade in the verdict's colour, and what is still to fix, counted once per task (a
-  task that is done has nothing open). The critic's evidence is under **Details**; its check of
-  each session's summary is folded under **Session checks**. The "review" link in a task's
+  task that is done has nothing open). A finding the critic named no fix for shows what it found
+  and no "To fix" line, here, in the task's drawer and on the cards. The critic's evidence is
+  under **Details**; its check of each session's summary is folded under **Session checks**. The "review" link in a task's
   drawer opens its review highlighted.
 - **Costs** (under More): spend by model, specialist and task, in CHF, with the savings from
   caching and context compression.

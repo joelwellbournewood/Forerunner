@@ -11,6 +11,7 @@ import {
   signoffAnswer,
 } from "../wiring/request-answers.ts";
 import { TAKE_OUT_NOTICE_PREFIX, takeOutConflictBody } from "./take-out-words.ts";
+import { withoutNoActionGiven } from "./task-words.ts";
 
 /*
  * What an Inbox card says and offers (design §3.8, core-experience.md), with no store and
@@ -242,7 +243,8 @@ function afterFirstSentence(text: string): string | null {
 
 /** A finding line as a person reads it: no "[high]" tag, no "Required:" machine words. */
 function plainFinding(step: string): string {
-  return step
+  // A finding the critic named no fix for reads as what it found (L3-research-3).
+  return withoutNoActionGiven(step)
     .replace(/^\[(?:critical|high|medium|low|info)\]\s*/i, "")
     .replace(/\[stand-in model\]\s*/gi, "")
     .replace(/\s*(?:->|:)\s*/, ": ")

@@ -21,7 +21,13 @@ import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
 import { waitingOf } from "../wiring/billing-pick.ts";
 import type { TaskCheck, TaskDetailView, TaskReviewEvidence, TaskView } from "./api-types.ts";
 import { verdictWords } from "./event-lines.ts";
-import { holdsTask, plainPlurals, plainReason, type TaskDisplayContext } from "./task-words.ts";
+import {
+  findingAsk,
+  holdsTask,
+  plainPlurals,
+  plainReason,
+  type TaskDisplayContext,
+} from "./task-words.ts";
 
 export * from "./task-words.ts";
 
@@ -566,8 +572,9 @@ export async function taskDetail(
         id: latest.id,
         verdict: reviewSentence(latest.verdict),
         summary: reportText(latest.summary, 4) ?? "",
-        // Each thing the critic still asks for once, however many reviews raised it.
-        open: [...new Set(open.map((f) => plainReason(f.required_action || f.description, 160)))],
+        // Each thing the critic still asks for once, however many reviews raised it; what it
+        // found when it named no fix, never the placeholder (`findingAsk`, L3-research-3).
+        open: [...new Set(open.map((f) => plainReason(findingAsk(f), 160)))],
         check: taskCheck(task, latest),
         ...(reviewEvidence(latest) ? { evidence: reviewEvidence(latest) } : {}),
       }

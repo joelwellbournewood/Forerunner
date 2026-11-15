@@ -188,9 +188,12 @@ function ReviewCard({ review, onDone }: { review: ReviewView; onDone: () => void
                 <Badge>{f.status}</Badge>
               </div>
               <p className="mt-1">{f.description}</p>
-              <p className="text-xs text-neutral-600 dark:text-neutral-400">
-                Needed: {f.requiredAction}
-              </p>
+              {/* A finding the critic named no fix for has none (L3-research-3), as on the desktop. */}
+              {f.requiredAction ? (
+                <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                  Needed: {f.requiredAction}
+                </p>
+              ) : null}
             </li>
           ))}
         </ul>
