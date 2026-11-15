@@ -5463,10 +5463,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           return refuse(
             `Web pages research may read for ${project.name} is already ${webAccessWords(before)}.`,
           );
+        // As webAccessEffect (l3-chat-claims, L3-run-9): "except the ones listed" only with a
+        // never list.
         const effect =
           mode === "only"
             ? "research reads only these websites and their subdomains, on the API key and on the subscription"
-            : "research reads any public website except the ones listed, on the API key and on the subscription";
+            : never.sites.length
+              ? "research reads any public website except the ones listed, on the API key and on the subscription"
+              : "research reads any public website, on the API key and on the subscription";
         const r: Risk = webAccessNarrows(value, before) ? "low" : risk;
         return {
           name,

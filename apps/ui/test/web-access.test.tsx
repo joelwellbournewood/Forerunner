@@ -114,8 +114,12 @@ describe("Settings: Web pages research may read ('sites')", () => {
     await user.click(within(dialog).getByTestId("setting-apply"));
     const pending = await within(dialog).findByTestId("command-pending");
     expect(pending).toHaveAttribute("data-decision", "needs_yes");
-    // P7-10: what it changes is the read-back's second sentence.
-    expect(pending).toHaveTextContent("Research reads any public website except the ones listed");
+    // P7-10: what it changes is the read-back's second sentence. l3-chat-claims (L3-run-9): no
+    // site is listed, so it says none is excepted.
+    expect(pending).toHaveTextContent(
+      "Research reads any public website, on the API key and on the subscription.",
+    );
+    expect(pending).not.toHaveTextContent("except");
     await user.click(within(pending).getByTestId("command-yes"));
     await within(dialog).findByTestId("command-done");
     expect(harness.daemon.state.settingValues["web_access:proj_atlas"]).toEqual({

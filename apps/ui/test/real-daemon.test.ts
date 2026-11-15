@@ -13361,8 +13361,9 @@ describe("w15-chat, wave 15", () => {
         .find((t) => t.startsWith('"research may read any public website again'));
       expect(facts).toContain("- Research reads: only developer.mozilla.org");
       // A widening waits for the person's yes.
+      // l3-chat-claims (L3-run-9): no site is listed, so none is excepted.
       expect(widened.pendingConfirmation?.readback).toBe(
-        "Set web pages research may read for Reading rules to any public website? Research reads any public website except the ones listed, on the API key and on the subscription.",
+        "Set web pages research may read for Reading rules to any public website? Research reads any public website, on the API key and on the subscription.",
       );
       expect((await client.project(project.id)).researchReads).toBe(
         "Research reads: only developer.mozilla.org",
@@ -13411,8 +13412,9 @@ describe("w15-chat, wave 15", () => {
       const QUESTION =
         "Put web pages research may read for Reading rules back to any public website?";
       expect(asked.status).toBe("pending");
+      // l3-chat-claims (L3-run-9): the rule put back lists no site, so none is excepted.
       expect(asked.readback).toBe(
-        `${QUESTION} Research reads any public website except the ones listed, on the API key and on the subscription.`,
+        `${QUESTION} Research reads any public website, on the API key and on the subscription.`,
       );
       // The person leaves Changes. Home and the Inbox read the card the Inbox route serves.
       const me = await client.me();
@@ -13421,7 +13423,7 @@ describe("w15-chat, wave 15", () => {
       );
       expect(card?.title).toBe(QUESTION);
       expect(card?.body).toBe(
-        "Research reads any public website except the ones listed, on the API key and on the subscription.",
+        "Research reads any public website, on the API key and on the subscription.",
       );
       expect(card?.choices?.map((c) => [c.label, c.explain])).toEqual([
         ["Yes", "Makes the change now."],
