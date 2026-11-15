@@ -7927,7 +7927,9 @@ describe("the UI client against the real daemon: a budget stop is a clean pause 
     expect(view?.status).toBe("needs_human");
     expect(view?.display).toMatchObject({
       key: "answer",
-      label: "Paused at its budget",
+      // d1109-oversize-pause (L3-left-3): a wrap-up pause reads as its card does (before: "Paused
+      // at its budget" on the row, "paused before its budget ran out" on the card).
+      label: "Paused before its budget ran out",
       blocker: { kind: "card", cardKind: "budget" },
     });
     // No critic call for it, and no try counted.
@@ -9186,7 +9188,8 @@ describe("the UI client against the real daemon: a paused task keeps its work an
     // The row and its card name the limit; the card says what it did and left.
     const row = (await client.tasks(project.id)).find((t) => t.id === task.id);
     expect(row?.display).toMatchObject({
-      label: "Paused at its budget",
+      // L3-left-3: the wrap-up pause's row reads as its card (before: "Paused at its budget").
+      label: "Paused before its budget ran out",
       detail: "Continue or cancel in the Inbox.",
       cancelWork:
         "Its work so far is set aside unless a later task built on it; Undo brings it back.",
@@ -11970,7 +11973,11 @@ describe("polish-words, wave 13: Cancel on a ready task holding its work so far 
     expect(existsSync(join(folder, "members.md")), "the second run wrote nothing").toBe(false);
     for (const t of [wrote, empty]) {
       const row = (await client.tasks(project.id)).find((r) => r.id === t.id);
-      expect(row?.display?.label, `${t.title}: ${row?.reason}`).toBe("Paused at its budget");
+      // L3-left-3: a pause after the wrap-up reads "Paused before its budget ran out", as its
+      // card; one stopped at the limit "Paused at its budget" (before: that for both).
+      expect(row?.display?.label, `${t.title}: ${row?.reason}`).toMatch(
+        /^Paused (at its budget|before its budget ran out)$/,
+      );
     }
     // Cancel each from the Tasks tab, then Reopen it, as the person does.
     const back: Record<string, string> = {};
@@ -14597,9 +14604,10 @@ describe("w15-words, wave 15 run B", () => {
       expect(existsSync(join(folder, "members.md")), "the first run wrote nothing").toBe(false);
       const rows = await client.tasks(project.id);
       const row = (id: string) => rows.find((r) => r.id === id);
+      // L3-left-3: a wrap-up pause reads as its card (before: "Paused at its budget" for both).
       for (const t of [wrote, empty])
-        expect(row(t.id)?.display?.label, `${t.title}: ${row(t.id)?.reason}`).toBe(
-          "Paused at its budget",
+        expect(row(t.id)?.display?.label, `${t.title}: ${row(t.id)?.reason}`).toMatch(
+          /^Paused (at its budget|before its budget ran out)$/,
         );
       // The row's button title, the dialog and the drawer read actionExplain.
       const nothing = row(empty.id);

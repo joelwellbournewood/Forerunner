@@ -462,24 +462,21 @@ describe("w15-words, wave 15 run B", () => {
       );
     });
 
-    it("tasks each larger than the work budget: the first runs with the warning, at most three more named, then 'and N more'", async () => {
+    it("tasks each larger than the work budget: the first runs with the warning, the ones after it are named once, then 'and N more'", async () => {
       const harness = seed(["About page", "Contact page", "Menu", "Footer"], 100_000);
       const dialog = await openWithBudget(harness, "0.04");
-      // d1109-oversize-start (D4): the first runs with what the session has; each other one
-      // says why it waits (before: one line, '... and 2 more each need more than this
-      // session's work budget of CHF 0.03 ...', with Start off).
+      // d1109-oversize-start (D4): the first runs with what the session has. d1109-oversize-pause
+      // (OP-0, the owner's answer 5): the tasks after it come after it, in one line (before: a
+      // line for each of three, '"About page" needs ...', then 'and 1 more').
       await waitFor(() =>
         expect(within(dialog).getByTestId("start-session-oversized")).toHaveTextContent(
           /^"Decide the versioning scheme" needs about CHF 0\.08, more than this session's work budget of CHF 0\.03: /,
         ),
       );
-      const lines = within(dialog).getAllByTestId("start-session-over-budget");
-      expect(lines.map((l) => l.textContent?.split(" needs ")[0])).toEqual([
-        '"About page"',
-        '"Contact page"',
-        '"Menu"',
-      ]);
-      expect(within(dialog).getByTestId("start-session-more")).toHaveTextContent("and 1 more");
+      expect(within(dialog).getByTestId("start-session-comes-after")).toHaveTextContent(
+        '"About page" and 3 more come after it: they run if "Decide the versioning scheme" leaves budget, else in your next session.',
+      );
+      expect(within(dialog).queryAllByTestId("start-session-over-budget")).toHaveLength(0);
       expect(dialog).not.toHaveTextContent("Footer");
     });
   });
