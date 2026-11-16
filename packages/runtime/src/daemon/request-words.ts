@@ -18,6 +18,11 @@ import {
 } from "../wiring/request-answers.ts";
 import { balancedCut } from "./quoted-title.ts";
 import { TAKE_OUT_NOTICE_PREFIX, takeOutConflictBody } from "./take-out-words.ts";
+import {
+  proposalOutcome,
+  TASK_PROPOSAL_KEY,
+  TASK_PROPOSAL_OPTIONS,
+} from "./task-proposal-words.ts";
 import { withoutNoActionGiven } from "./task-words.ts";
 
 /*
@@ -1395,6 +1400,42 @@ function repoOfferCard(
 }
 
 /**
+ * d1109-selftasks-run (ADR 0119 point 7): the agent's suggested changes to its own task list, one
+ * card per project (`task-proposal.ts`). Titled by the project and the count ('Quote page: the
+ * agent suggests 3 changes to the tasks'), its body what showed it and that nothing changes until
+ * the person says yes, the changes as its lines (open), and two answers with what each does.
+ */
+function taskProposalCard(
+  r: Pick<HumanRequestRow, "why" | "steps" | "options">,
+  card: JsonObject,
+  ctx: RequestWordsContext,
+): RequestWords {
+  const changes = Array.isArray(card.changes) ? card.changes.length : r.steps.length;
+  const choices: RequestChoiceWords[] = r.options.map(optionLabel).map((label, i) => ({
+    label,
+    explain:
+      label === TASK_PROPOSAL_OPTIONS[0]
+        ? "Changes the tasks as listed; one Undo takes them back."
+        : label === TASK_PROPOSAL_OPTIONS[1]
+          ? "Nothing changes."
+          : null,
+    tone: i === 0 ? "primary" : "secondary",
+    confirm: null,
+    input: null,
+  }));
+  const project = ctx.projectName?.replace(/\s+/g, " ").trim();
+  return {
+    title: `${project ? `${project}: the` : "The"} agent suggests ${changes} ${changes === 1 ? "change" : "changes"} to the tasks`,
+    body: r.why,
+    choices,
+    links: [],
+    reply: "none",
+    details: r.steps,
+    outcome: proposalOutcome(card),
+  };
+}
+
+/**
  * A "Take this work out" that conflicted with later work (merged-actions, `TaskTakeOut.notice`,
  * key `take_out:conflict:<task>`): a notice titled by its task, the files and what to do as
  * the body, closed with Got it. Before (review of merged-actions), the title was the text's
@@ -1661,6 +1702,14 @@ export function requestWords(
       outcome = `${ctx.taskTitle ? q(ctx.taskTitle) : "The task"} was cancelled.`;
   } else if (key?.startsWith(ANSWER_CARD_KEYS.repoCreatePrefix)) {
     words = repoOfferCard(r, ctx);
+  } else if (key === TASK_PROPOSAL_KEY) {
+    // d1109-selftasks-run: the agent's suggested task changes; a replaced one says so.
+    words = taskProposalCard(r, card, ctx);
+    outcome = proposalOutcome(card);
+    if (r.status === "withdrawn" && card.replaced === true) {
+      words.outcome = outcome;
+      return words;
+    }
   } else if (key?.startsWith(TAKE_OUT_NOTICE_PREFIX)) {
     words = takeOutNoticeCard(r, card);
     outcome = takeOutNoticeOutcome(card);

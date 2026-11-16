@@ -58,3 +58,75 @@ describe("autonomy policy", () => {
     expect(decideAutonomy("destructive", { level: 4 })).toBe("approval_required");
   });
 });
+
+/**
+ * d1109-selftasks-run, run C (ST-1, ADR 0119; the owner, 2026-11-09: "The agent changing its own
+ * tasks with the autonomy level deciding when it asks first. That's also good.", and the session
+ * lead's notes of 16:35 UTC: "The agent changes its own tasks without asking from Standard up;
+ * at Advisor and Assisted it asks first on one card"). The agent's bounded fixes of its own task
+ * list are their own class, `plan_fix`: free from Standard (level 2) up, asked first at Advisor
+ * and Assisted (also once the plan is approved), and a human's yes frees it at every level.
+ */
+describe("d1109-selftasks-run, run C: plan_fix (ST-1)", () => {
+  it("asks first at Advisor and Assisted, also with the plan approved, and is free from Standard up", () => {
+    expect(decideAutonomy("plan_fix", { level: 0 })).toBe("approval_required");
+    expect(decideAutonomy("plan_fix", { level: 0, planApproved: true })).toBe("approval_required");
+    expect(decideAutonomy("plan_fix", { level: 1 })).toBe("approval_required");
+    expect(decideAutonomy("plan_fix", { level: 1, planApproved: true })).toBe("approval_required");
+    expect(decideAutonomy("plan_fix", { level: 2 })).toBe("allow");
+    expect(decideAutonomy("plan_fix", { level: 3 })).toBe("allow");
+    expect(decideAutonomy("plan_fix", { level: 4 })).toBe("allow");
+  });
+
+  it("a yes frees it at every level", () => {
+    for (const level of levels)
+      expect(decideAutonomy("plan_fix", { level, actionApproved: true })).toBe("allow");
+  });
+
+  it("every other row of the table answers as before", () => {
+    const table: Record<string, string[]> = {};
+    for (const a of [
+      "read",
+      "routine_reversible",
+      "non_routine",
+      "merge_pr",
+      "deploy_staging",
+      "deploy_production",
+      "external_send",
+    ] as ActionClass[])
+      table[a] = levels.map((level) => decideAutonomy(a, { level }));
+    expect(table).toEqual({
+      read: ["allow", "allow", "allow", "allow", "allow"],
+      routine_reversible: ["approval_required", "approval_required", "allow", "allow", "allow"],
+      non_routine: [
+        "approval_required",
+        "approval_required",
+        "approval_required",
+        "allow",
+        "allow",
+      ],
+      merge_pr: Array(5).fill("approval_required"),
+      deploy_staging: [
+        "approval_required",
+        "approval_required",
+        "approval_required",
+        "allow",
+        "allow",
+      ],
+      deploy_production: [
+        "approval_required",
+        "approval_required",
+        "approval_required",
+        "approval_required",
+        "allow",
+      ],
+      external_send: [
+        "approval_required",
+        "approval_required",
+        "approval_required",
+        "approval_required",
+        "allow",
+      ],
+    });
+  });
+});

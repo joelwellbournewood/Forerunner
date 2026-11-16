@@ -191,6 +191,13 @@ export function specialistMode(name: string): Mode {
  */
 export const INTAKE_RUN_SPECIALIST = "intake";
 
+/**
+ * d1109-selftasks-run (ADR 0119): the specialist name on the Run row of the session's task check,
+ * a planning-model call the project's agent makes between tasks. The Performance view counts it
+ * as planning, as the intake's.
+ */
+export const TASK_CHECK_RUN_SPECIALIST = "task-check";
+
 const EFFORTS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"] as const;
 
 export function tierIndex(t: ModelTier): number {

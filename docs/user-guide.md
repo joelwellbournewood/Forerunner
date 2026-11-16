@@ -735,7 +735,11 @@ accepted "Create the page skeleton".", "The designer could not do "Style the pag
 needs something I do not have here". Trying again." and how it ended ("Session over: 2 done, 1
 needs you. CHF 0.06."). A task the critic sends back is tried again in the same session; each
 try is one line, and "The writer takes over …" says when another specialist tries it; the lines
-after it name that specialist, including "The writer could not do …" when its own try fails too. **Details**
+after it name that specialist, including "The writer could not do …" when its own try fails too.
+When a report or a review showed that the task list needs a fix, the log says the check once
+('Checked the task list after "Create the page": no change (CHF 0.03).', or the changes it made,
+each with its Undo on the Changes page, or "suggested 2 changes in the Inbox"; see Autonomy and
+budgets). **Details**
 adds the internal steps in words (the brief, memory, each tool call, each start and finish of a
 retry, the notifications sent) and the level filters; escalations are highlighted. Under it,
 **Show the raw events** adds each line's event type and the raw data the app records, for a bug
@@ -1020,6 +1024,21 @@ actions are free, everything else is approved by you. Some actions always need a
 level: deleting repositories or data, force-pushing to main, spending real money, sharing
 secrets, changing permissions, granting a new capability, sending money, entering passwords on
 third-party sites.
+
+**The agent keeps its task list right during a session.** When a specialist ends its report with
+lines "For the task list:" (this task is two jobs, a step is missing, a task must wait for
+another, two tasks are the same), or the critic notes a problem the task did not cause, the
+session checks its task list once before the next task (a small planning call, counted in the
+session's spend). From Standard up it fixes what the evidence shows, within the project's goal:
+it splits a task, adds a missing step, changes what a task waits for or drops a duplicate that
+never ran. Each change is one row on the Changes page with its Undo, and the session's one Update
+counts them ("Quote page: did 3 tasks; changed 2 tasks."). At Advisor and Assisted it asks first
+on one Inbox card: "Make these changes" (one Undo takes them all back) or "Keep the tasks". It
+also asks first for a task you added or changed yourself, for work for the deploy specialist or
+for you, and for any line that reads like an instruction (it is quoted on the card, never
+followed). It never touches a running or finished task or another project, and it never raises a
+budget or starts a session: a new task joins the running session only if it fits, else it waits
+for your next Start ("Left for your next Start: ...").
 
 Budgets exist per month, per project, per session, per task and per run. The runtime refuses a
 model call that would cross a cap; it never relies on the agent noticing. In Settings a money

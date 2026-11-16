@@ -470,6 +470,7 @@ Effort trades depth for speed and cost. The rule is the lowest effort that passe
   - 2 Standard: routine reversible actions free, everything else approved. Default.
   - 3 Trusted: also merges reviewed PRs and deploys to staging.
   - 4 Autopilot: everything except destructive, financial and credential actions.
+  - Amended 2026-11-16 (ADR 0119, the owner's decision D7): the agent's fixes of its own task list during a session (split, add a missing step, reorder, drop a duplicate that never ran) are free from 2 Standard up and asked first on one Inbox card at 0 and 1; a fence keeps them to this project's Draft and Ready tasks, and none raises a budget or starts a session.
 
 ### K. Interface
 

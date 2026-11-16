@@ -3,7 +3,7 @@ import { SimulatedClock } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import { openPostgres } from "../src/db/postgres.ts";
 import { MIGRATION_0001 } from "../src/migrations/0001-initial.ts";
-import { appliedVersions, migrate } from "../src/migrations/index.ts";
+import { appliedVersions, MIGRATIONS, migrate } from "../src/migrations/index.ts";
 import { createRepos } from "../src/repos/index.ts";
 
 /**
@@ -48,11 +48,11 @@ describe.skipIf(!PG)(
         const forward = await migrate(db, { clock });
         // Every shipped migration applies on a v1 database: 0002 (headroom), 0003 (sources),
         // 0004 (shared secrets), 0005 (change reasons), 0006 (merge records), 0007 (take out),
-        // 0008 (rebuild owed).
-        expect(forward.applied).toEqual([2, 3, 4, 5, 6, 7, 8]);
-        expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+        // 0008 (rebuild owed), 0009 (the change log's 'session' source).
+        expect(forward.applied).toEqual([2, 3, 4, 5, 6, 7, 8, 9]);
+        expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
         // Idempotent: ADD COLUMN IF NOT EXISTS makes a re-run of the statements harmless too.
-        expect(await migrate(db, { clock })).toEqual({ applied: [], version: 8 });
+        expect(await migrate(db, { clock })).toEqual({ applied: [], version: 9 });
 
         const repos = createRepos(db, clock);
         const run = await repos.run.mustGet("r1");
@@ -71,6 +71,77 @@ describe.skipIf(!PG)(
         expect(
           (await repos.session.patch("s1", { headroom_saved_tokens: 42 })).headroom_saved_tokens,
         ).toBe(42);
+      } finally {
+        await db.exec(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+        await db.close();
+      }
+    });
+
+    // d1109-selftasks-run, run C (ST-5, ADR 0119): v9 drops and re-adds the change log's source
+    // constraint with 'session'; every row of every source written before stays.
+    it("d1109-selftasks-run, run C: migrates a v8 change_log with a row of every source and accepts 'session' (ST-5)", async () => {
+      const schema = `fr_migrate_test_${randomBytes(4).toString("hex")}`;
+      const db = await openPostgres(PG as string, { schema });
+      try {
+        const clock = new SimulatedClock("2026-11-16T10:00:00.000Z");
+        const at = clock.nowIso();
+        const v8 = MIGRATIONS.filter((m) => m.version <= 8);
+        expect((await migrate(db, { clock, migrations: v8 })).version).toBe(8);
+        await expect(
+          db.query(
+            `INSERT INTO "change_log" ("id", "created_at", "updated_at", "source") VALUES (?, ?, ?, ?)`,
+            ["x0", at, at, "session"],
+          ),
+        ).rejects.toThrow();
+        const sources = ["ui", "chat", "voice", "email", "api", "palette"];
+        for (const [i, source] of sources.entries())
+          await db.query(
+            `INSERT INTO "change_log" ("id", "created_at", "updated_at", "human_id", "words_used", "commands", "undo_state", "source", "sentence") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              `c${i}`,
+              at,
+              at,
+              "h1",
+              `words ${source}`,
+              `[{"name":"task.update"}]`,
+              i % 2 ? "undone" : "undoable",
+              source,
+              `Renamed task ${i}.`,
+            ],
+          );
+        expect(await migrate(db, { clock })).toEqual({ applied: [9], version: 9 });
+        const repos = createRepos(db, clock);
+        for (const [i, source] of sources.entries())
+          expect(await repos.changeLog.mustGet(`c${i}`)).toMatchObject({
+            source,
+            words_used: `words ${source}`,
+            commands: [{ name: "task.update" }],
+            undo_state: i % 2 ? "undone" : "undoable",
+            sentence: `Renamed task ${i}.`,
+          });
+        const made = await repos.changeLog.record({
+          human_id: "h1",
+          agent_id: "a1",
+          words_used: "",
+          commands: [{ name: "task.split", params: {} }],
+          before: {},
+          after: {},
+          scope: "project",
+          project_id: null,
+          expires_at: null,
+          undo_state: "undoable",
+          source: "session",
+          sentence: 'Split "Style the page" into "Style the layout" and "Style the colours".',
+          author_human: null,
+          author_agent: "a1",
+        });
+        expect((await repos.changeLog.mustGet(made.id)).source).toBe("session");
+        await expect(
+          db.query(
+            `INSERT INTO "change_log" ("id", "created_at", "updated_at", "source") VALUES (?, ?, ?, ?)`,
+            ["x1", at, at, "model"],
+          ),
+        ).rejects.toThrow();
       } finally {
         await db.exec(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
         await db.close();

@@ -98,7 +98,13 @@ export const ANSWER_CARD_KEYS = {
    * `@forerunner/critic`, U-033). They take one of their options and nothing else, not even
    * the yes / no words of two-option approvals, which their readers do not read.
    */
-  optionOnly: ["githost:rebase_conflict", "merge:left_open", "critic:session_review"],
+  optionOnly: [
+    "githost:rebase_conflict",
+    "merge:left_open",
+    "critic:session_review",
+    // d1109-selftasks-run: the agent's suggested task changes (Make these changes, Keep the tasks).
+    "task_proposal",
+  ],
 } as const;
 
 /**

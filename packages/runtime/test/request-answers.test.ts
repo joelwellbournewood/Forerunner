@@ -26,6 +26,7 @@ import {
   planAnswer,
 } from "../src/session/plan-approval.ts";
 import { leftOpenAnswer } from "../src/session/pr-answers.ts";
+import { TASK_PROPOSAL_KEY } from "../src/session/task-proposal.ts";
 import {
   ANSWER_CARD_KEYS,
   acceptsAnswer,
@@ -54,6 +55,8 @@ describe("acceptsAnswer: what a card can act on (U-034)", () => {
       REBASE_CONFLICT_KEY,
       MERGE_LEFT_OPEN_KEY,
       SESSION_REVIEW_KEY,
+      // d1109-selftasks-run: the agent's suggested task changes (ADR 0119).
+      TASK_PROPOSAL_KEY,
     ]);
   });
 

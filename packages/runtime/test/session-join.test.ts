@@ -315,8 +315,9 @@ describe("d1109-starts-engine, run C: a running session keeps its promise and ta
     const r = await start();
     expect(answers.map((x) => x?.outcome)).toEqual(["joined", "no_room"]);
     expect(ran).toEqual(["Task A", "Task A part two"]);
+    // d1109-selftasks-run (D7): the promised task is named after the step it waits for.
     expect(r.summary).toMatch(
-      /Left for your next Start: "Step before B" \(about CHF 0\.\d\d\), "Task B" \(about CHF 0\.\d\d\)\./,
+      /Left for your next Start: "Step before B" \(about CHF 0\.\d\d\) and "Task B", which waits for it\./,
     );
   });
 

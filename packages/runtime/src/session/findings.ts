@@ -17,7 +17,7 @@ import type {
 import { plainReason } from "../daemon/task-words.ts";
 import { answerNote, blockedFindingsAnswer, signoffAnswer } from "../wiring/request-answers.ts";
 import type { PreparePort } from "./prepared-work.ts";
-import { noteAboutTask, prepareAnswer, recordStart } from "./resume-work.ts";
+import { answeredTaskIds, noteAboutTask, prepareAnswer, recordStart } from "./resume-work.ts";
 
 /**
  * A close blocked by open findings (spec B.4). The store refuses `in_review -> done` while a
@@ -234,6 +234,7 @@ async function syncInReviewCards(
             by: "person",
             agentId: deps.agentId,
             projectId: task.project_id,
+            taskIds: await answeredTaskIds(store, task),
             reason:
               answer === "rework"
                 ? `you asked to try "${task.title}" again`
@@ -703,6 +704,7 @@ export async function syncSignoffAnswers(deps: {
             by: "person",
             agentId: deps.agentId,
             projectId: task.project_id,
+            taskIds: await answeredTaskIds(store, task),
             reason:
               answer === "revise"
                 ? `you asked to try "${task.title}" again`

@@ -21,6 +21,7 @@ import {
   taskPause,
   taskReopen,
   taskResume,
+  taskSplit,
   taskTransition,
   taskUpdate,
 } from "./task.ts";
@@ -74,5 +75,6 @@ export function defaultRegistry(): CommandRegistry {
     .register(specialistPropose)
     .register(repoCreate)
     .register(repoTakeOver)
-    .register(projectJoin);
+    .register(projectJoin)
+    .register(taskSplit);
 }

@@ -3,10 +3,11 @@ import type { ChatMessage, ContentBlock, ModelRequest } from "../provider/types.
 /**
  * Which part of Forerunner sent a model request. The loop driver labels every call
  * (`ModelRequest.origin.label`): `intake <project id>`, `<specialist> on <task title>`,
- * `critic tier <n> on <subject>`, `conversation`; the system prompt and the tools are the
- * fallback for a request without a label.
+ * `critic tier <n> on <subject>`, `conversation`, `task-check <project id>` (d1109-selftasks-run:
+ * the session's check of its task list); the system prompt and the tools are the fallback for a
+ * request without a label.
  */
-export type BenchRole = "intake" | "specialist" | "critic" | "chat" | "unknown";
+export type BenchRole = "intake" | "specialist" | "critic" | "chat" | "task_check" | "unknown";
 
 export interface RoleGuess {
   role: BenchRole;
@@ -29,6 +30,8 @@ export function detectRole(req: ModelRequest): RoleGuess {
   )
     return { role: "intake" };
   if (label.startsWith("critic ") || tools.includes("submit_review")) return { role: "critic" };
+  if (label.startsWith("task-check ") || system.includes("## Keeping the task list right"))
+    return { role: "task_check" };
   const m = SPECIALIST_LABEL.exec(label);
   if (m) return { role: "specialist", specialist: m[1], task: m[2] };
   const first = firstUserText(req.messages);

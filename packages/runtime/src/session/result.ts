@@ -89,7 +89,19 @@ export interface ResultFacts {
    * not fit what the session promised (option C), still ready at its end: "Left for your next
    * Start: "D" (about CHF 0.50)."
    */
-  leftForNextStart?: (NamedTask & { estimateChfMicro: number })[];
+  leftForNextStart?: (NamedTask & {
+    estimateChfMicro: number;
+    /**
+     * d1109-selftasks-run (D7): the step it waits for, when a step the agent added before it did
+     * not fit and took it out of the promise ("and "Publish", which waits for it").
+     */
+    waitsFor?: string;
+  })[];
+  /**
+   * d1109-selftasks-run (ADR 0119): what the agent changed in its own task list during the
+   * session, in order ("split", "added", "dropped", "reworded", "reordered"), by title.
+   */
+  tasksChanged?: TaskChangeFact[];
   /** The session's cap, in CHF (the "this session's CHF 0.90 was used" line). */
   sessionCapChfMicro: number;
   /**
@@ -109,6 +121,82 @@ export interface ResultFacts {
    */
   checksPendingPrs?: number;
   unansweredPrs?: number;
+}
+
+/** One change the agent made to its own task list in a session (ADR 0119). */
+export interface TaskChangeFact {
+  kind: "split" | "added" | "dropped" | "reworded" | "reordered";
+  title: string;
+}
+
+/**
+ * S-7's "Left for your next Start" (d1109-starts-engine), with D7's case (d1109-selftasks-run): a
+ * promised task that waits for a step the agent added, which did not fit, is named after that
+ * step as the task "which waits for it", without an estimate of its own: 'Left for your next
+ * Start: "Check the links" (about CHF 0.20) and "Publish", which waits for it.'
+ */
+export function leftForNextStartLine(
+  next: readonly (NamedTask & { estimateChfMicro: number; waitsFor?: string })[],
+): string {
+  const steps = next.filter((t) => !t.waitsFor || !next.some((s) => s.title === t.waitsFor));
+  const parts = steps.slice(0, 3).map((t) => {
+    const after = next.filter((w) => w.waitsFor === t.title);
+    const est = `"${t.title}" (${aboutWords(formatChf(t.estimateChfMicro), t.estimateChfMicro)})`;
+    if (!after.length) return est;
+    const names = namesOf(after.map((w) => w.title));
+    return `${est} and ${names}, which ${after.length === 1 ? "waits" : "wait"} for it`;
+  });
+  const more = steps.length > 3 ? ` and ${steps.length - 3} more` : "";
+  return `Left for your next Start: ${parts.join(", ")}${more}.`;
+}
+
+/** A change's words in the result line: 'split "Style the page"', 'added "Check the links"'. */
+function changeWords(c: TaskChangeFact): string {
+  return `${c.kind} "${c.title}"`;
+}
+
+/**
+ * The session result's line when the agent changed its own tasks (ADR 0119, design §3.7):
+ * 'Changed 2 tasks: split "Style the page"; added "Check the links".', three named at most, then
+ * 'and N more'.
+ */
+export function tasksChangedLine(changes: readonly TaskChangeFact[]): string | null {
+  if (!changes.length) return null;
+  const named = changes.slice(0, 3).map(changeWords).join("; ");
+  const more = changes.length > 3 ? ` and ${changes.length - 3} more` : "";
+  return `Changed ${changes.length} ${plural(changes.length, "task", "tasks")}: ${named}${more}.`;
+}
+
+/** How a check ended, for its Details line. */
+export type TaskCheckEnd =
+  | { kind: "no_change" }
+  | { kind: "changed"; count: number }
+  | { kind: "suggested"; count: number }
+  | { kind: "unreadable" }
+  | { kind: "failed" };
+
+/**
+ * The Details line of one check (ADR 0119 point 3): 'Checked the task list after "Create the
+ * page": no change (CHF 0.03).'; 'Checked the task list: …' when it ran at the session's first
+ * boundary on notes kept from before.
+ */
+export function taskCheckedLine(
+  after: string | null,
+  end: TaskCheckEnd,
+  costChfMicro: number,
+): string {
+  const what =
+    end.kind === "no_change"
+      ? "no change"
+      : end.kind === "changed"
+        ? `changed ${end.count} ${plural(end.count, "task", "tasks")}`
+        : end.kind === "suggested"
+          ? `suggested ${end.count} ${plural(end.count, "change", "changes")} in the Inbox`
+          : end.kind === "unreadable"
+            ? "its reply could not be read, so nothing changed"
+            : "the call did not answer, so nothing changed";
+  const money = moneyWords(formatChf(costChfMicro), costChfMicro);
+  return `Checked the task list${after ? ` after "${after}"` : ""}: ${what} (${money}).`;
 }
 
 /** Merge outcomes that merge by themselves later (merge-in-app): not left for the person. */
@@ -260,6 +348,15 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
         : [],
   },
   {
+    // d1109-selftasks-run (ADR 0119): what the agent changed in its own task list.
+    name: "tasks changed",
+    line: 2,
+    build: (f) => {
+      const line = tasksChangedLine(f.tasksChanged ?? []);
+      return line ? [line] : [];
+    },
+  },
+  {
     // W15-59: a session whose only work the person cancelled says so, not only its cost.
     name: "cancelled by you",
     line: 2,
@@ -349,18 +446,7 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
       why.push(...after);
       // S-7: work that asked to join and did not fit the session's promise.
       const next = f.leftForNextStart ?? [];
-      if (next.length) {
-        const named = next
-          .slice(0, 3)
-          .map(
-            (t) =>
-              `"${t.title}" (${aboutWords(formatChf(t.estimateChfMicro), t.estimateChfMicro)})`,
-          )
-          .join(", ");
-        why.push(
-          `Left for your next Start: ${named}${next.length > 3 ? ` and ${next.length - 3} more` : ""}.`,
-        );
-      }
+      if (next.length) why.push(leftForNextStartLine(next));
       const fitting = f.leftOutForBudget.filter(
         (t) => !larger.includes(t) && !(t.reason === "after_large" && t.after),
       );
@@ -614,13 +700,32 @@ export function sessionUpdateLine(
   projectName: string | null,
   lines: readonly string[],
   needsYou: readonly string[],
+  /**
+   * d1109-selftasks-run (ADR 0119, design §3.8 "one line per session"): the agent's changes to
+   * its own tasks, counted in the one Update ('Quote page: did 3 tasks; changed 2 tasks.').
+   */
+  changed: readonly TaskChangeFact[] = [],
 ): string | null {
   const card = needsYou.length ? needsYouSentence(needsYou) : null;
+  const changedLine = tasksChangedLine(changed);
   const withoutCard = (l: string) =>
-    (card ? l.split(card).join(" ") : l).replace(/\s{2,}/g, " ").trim();
+    (card ? l.split(card).join(" ") : l)
+      .split(changedLine ?? "\u0000")
+      .join(" ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
   const head = lines.map(withoutCard).find(isNewsLine);
-  if (!head) return null;
-  const gist = cutGist(head, UPDATE_GIST_MAX);
+  const count = changed.length
+    ? `changed ${changed.length} ${plural(changed.length, "task", "tasks")}`
+    : null;
+  if (!head) return count && projectName ? `${projectName}: ${count}.` : count ? `${count}.` : null;
+  let gist = cutGist(head, UPDATE_GIST_MAX);
+  if (count) {
+    const did = /^Did (\d+) (tasks?)(?::[\s\S]*)?\.$/.exec(head.split(/(?<=\.)\s/)[0] ?? "");
+    gist = did
+      ? `Did ${did[1]} ${did[2]}; ${count}.`
+      : `${cutGist(head, UPDATE_GIST_MAX - 30)} ${count.charAt(0).toUpperCase()}${count.slice(1)}.`;
+  }
   return projectName ? `${projectName}: ${lowerFirstIfDid(gist)}` : gist;
 }
 

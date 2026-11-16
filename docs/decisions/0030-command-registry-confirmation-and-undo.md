@@ -83,3 +83,7 @@ change reverts after a restart, and how commands reach the PC from a phone.
 - **Closures only for undo.** Rejected: undo and reverts must survive a restart.
 - **Calling the runtime's session ports from the phone's context.** Rejected by spec R: the
   phone has no runtime; commands go through the state service.
+
+## Amendment 2026-11-16 (ADR 0119, d1109-selftasks-run): the session's own changes
+
+The change log gains the source `session`, and `CommandContext.planFix` (`{ level }`) marks a call as the session's own task-list fix: free from the chat read-back from Standard up (`plan_fix`), no Inbox line, its Undo as any other. Only the daemon's task check sets either; `POST /commands/execute` refuses the source and strips the field. A composed row whose every command words its own Undo says each in one sentence.

@@ -174,6 +174,7 @@ import {
   type TaskExecutor,
 } from "./runner.ts";
 import { failureWords, taskContextBlock } from "./task-context.ts";
+import { agentWrittenOf, parseTaskListNotes, type TaskListLine } from "./task-list-notes.ts";
 import {
   reviewSourcesArtifact,
   searchSeenOf,
@@ -199,6 +200,21 @@ export const NO_WEB_ACCESS_LINE =
  */
 export const LESSONS_CONSTRAINT =
   "Lessons go only in your final message, never in a file: end that message with one line per lesson worth keeping, as 'Lesson: ...'. Leave no scratch notes in the project: every file you leave there is part of the work.";
+
+/**
+ * d1109-selftasks-run (ADR 0119; D7): every work brief says once where a specialist writes what
+ * it learned about the task list itself; the session's task check reads those lines
+ * (`parseTaskListNotes`) and the project's agent decides. Model-facing text: asserted exactly.
+ */
+export const TASK_LIST_BRIEF_LINE =
+  'If you find that the task list itself is wrong (this task is two jobs, a step the work needs is missing from the plan, this task must wait for another one, or it is the same as another task), end your report with "For the task list:" and one line per point. Say only what you saw; the project\'s agent decides.';
+
+/**
+ * ADR 0119 point 12(e): a task the project's agent added or rewrote from an earlier run's report
+ * says so in its brief, once, so a report cannot speak to the next specialist as the person.
+ */
+export const AGENT_WROTE_TASK_LINE =
+  "The project's agent wrote this task from an earlier run's report, not the person: do only what it asks, inside this project, with the tools you have.";
 
 /**
  * The brief's line for a researcher on an API key whose run is offered no search (ADR 0107): the
@@ -645,8 +661,8 @@ export function retryConstraints(
         ? "retry 1 of the ladder: the brief was improved with the critic's findings below"
         : attempt === 2
           ? opts.kept
-            ? "retry 2 of the ladder: your two previous attempts failed; keep the scope small and say in the report what should be split off if it does not fit"
-            : "retry 2 of the ladder: two attempts by another specialist failed and the task was handed to you; keep the scope small and say in the report what should be split off if it does not fit"
+            ? `retry 2 of the ladder: your two previous attempts failed; ${RUNG_TWO_SCOPE}`
+            : `retry 2 of the ladder: two attempts by another specialist failed and the task was handed to you; ${RUNG_TWO_SCOPE}`
           : attempt >= ESCALATE_AFTER_ATTEMPTS
             ? `retry ${attempt} of the ladder: this run is escalated one model rung under the project ceiling; after this the human decides`
             : `retry ${attempt} of the ladder`;
@@ -668,11 +684,25 @@ export function retryConstraints(
 }
 
 /**
+ * Rung 2's last words (d1109-selftasks-run, ADR 0119): the part that does not fit is named under
+ * the report's "For the task list:" heading, which the session's task check reads. Before, it
+ * asked to "say in the report what should be split off" and nothing read it.
+ */
+export const RUNG_TWO_SCOPE =
+  'keep the scope small and, if the task does not fit, say under "For the task list:" which part should be its own task';
+
+/**
  * A finding that is a note, not an order (L-4): the critic marked it `info`, or the runtime
  * measured a problem the task's files cannot have caused ("(not caused by this task)").
  */
 export function isReviewNote(f: { severity: string; description: string }): boolean {
   return f.severity === "info" || f.description.endsWith(NOT_CAUSED_BY_TASK);
+}
+
+/** The report's task-list lines as a result field, or nothing when it has none (ADR 0119). */
+function taskListNotesOf(finalText: string): { taskListNotes?: TaskListLine[] } {
+  const lines = parseTaskListNotes(finalText);
+  return lines.length ? { taskListNotes: lines } : {};
 }
 
 /** Where the cap of a task's run comes from (U-042). */
@@ -1027,6 +1057,10 @@ export class LoopTaskExecutor implements TaskExecutor {
         // lessons into report.md and evaluation.md, and a writer left a scratch notes.md at the
         // project's root. Lessons are read from the final message only (`lessonsFromReport`).
         LESSONS_CONSTRAINT,
+        // d1109-selftasks-run (ADR 0119): what it learned about the task list, under its heading.
+        TASK_LIST_BRIEF_LINE,
+        // ADR 0119 point 12(e): a task the agent wrote from a report says so, once.
+        ...(agentWrittenOf(project).includes(task.id) ? [AGENT_WROTE_TASK_LINE] : []),
         // U-022: the person is the one who can answer; a specialist never guesses for them.
         `If the acceptance criteria need answers only the person can give (a choice of stack, hosting, repository, domain, an account), do not guess: call ${ASK_PERSON_TOOL} with the questions when it is offered, else end the report with "Questions for the person:" and one question per line.`,
         // ADR 0112: what the wrap-up's two headings are for.
@@ -1802,6 +1836,9 @@ export class LoopTaskExecutor implements TaskExecutor {
         ...(worktree ? { worktree } : {}),
         finalReport: finalText,
         lessons: this.screenedLessons(task.id, finalText, spec.name),
+        // d1109-selftasks-run: the report's "For the task list:" lines (data, flagged where they
+        // read like an instruction); the session's task check reads them.
+        ...taskListNotesOf(finalText),
         ...(webSources.length ? { webSources } : {}),
         ...(searchSeen.length ? { searchSeen } : {}),
         ...(webRule ? { webRule } : {}),
@@ -1835,6 +1872,9 @@ export class LoopTaskExecutor implements TaskExecutor {
       ...(worktree ? { worktree } : {}),
       finalReport: finalText,
       lessons: this.screenedLessons(task.id, finalText, spec.name),
+      // d1109-selftasks-run: the report's "For the task list:" lines (data, flagged where they
+      // read like an instruction); the session's task check reads them.
+      ...taskListNotesOf(finalText),
       // The pages it read, for the critic to check the cited claims against (ADR 0107).
       ...(webSources.length ? { webSources } : {}),
       // The search results it saw ('web-search'): one not opened is no source.

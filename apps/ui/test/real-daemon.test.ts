@@ -20322,3 +20322,349 @@ describe("d1109-onerepo-join, run C", () => {
     }
   }, 120_000);
 });
+
+describe("d1109-selftasks-run, run C", () => {
+  // ST-11 (ADR 0119 point 7; D7, the owner, 2026-11-09: "I want it to be able to fix its tasks.
+  // Like as part of a run", "the autonomy level deciding when it asks first"). The daemon as
+  // composed with the bench's stand-in: a specialist's report ends with lines "For the task
+  // list:", the session's task check (the stand-in's planning reply) suggests a split and a
+  // missing step, and at Assisted the agent asks first on ONE card. The card is read from
+  // GET /inbox and answered with its own options, before and after the daemon starts again on
+  // the same home; nothing the card does starts a session.
+  const SAYS =
+    '"Style the page" is two jobs, the layout and the colours.|nothing checks that the links work.';
+  const SPLIT_LINE =
+    'Split "Style the page" into "Style the page: layout" and "Style the page: colours".';
+  const ADD_LINE = 'Add "Check that the links work".';
+  const ASKS_LINE = 'Asks you first: "Style the page" is a task you added or changed yourself.';
+
+  async function open(home: string) {
+    const env = { FORERUNNER_HOME: home };
+    return composeWithRolePlayer(
+      { FORERUNNER_BENCH_TASK_LIST: "Create the page", FORERUNNER_BENCH_TASK_LIST_SAYS: SAYS },
+      { env, dirs: appDirs({ env }), stateUrl: `sqlite:${join(home, "state.sqlite")}` },
+    );
+  }
+  type Open = Awaited<ReturnType<typeof open>>;
+
+  /** A project at Assisted: "Create the page" to run, "Style the page" waiting for the person. */
+  async function quotePage(a: Open) {
+    const project = await a.client.createProject({
+      name: "Quote page",
+      goal: "A page that quotes prices",
+      autonomyLevel: 1,
+    });
+    const create = await a.client.createTask(project.id, {
+      title: "Create the page in index.html",
+      outcome: "index.html shows the prices",
+      acceptanceCriteria: ["index.html exists"],
+      riskTier: 1,
+      specialist: "coder",
+    });
+    // "Style the page" waits for the person's task, so no session here runs it.
+    const logo = await a.client.createTask(project.id, {
+      title: "Send the logo",
+      outcome: "The logo is in the folder",
+      specialist: "person",
+    });
+    const style = await a.client.createTask(project.id, {
+      title: "Style the page",
+      outcome: "The page has its layout and colours",
+      acceptanceCriteria: ["the layout is a grid", "the colours match the logo"],
+      riskTier: 1,
+      specialist: "coder",
+      dependsOn: [logo.id],
+    });
+    return { project, create, logo, style };
+  }
+
+  /** The person starts a session and approves its plan (Assisted); it runs `taskId` and ends. */
+  async function runSession(a: Open, projectId: string, taskId: string): Promise<string> {
+    const humanId = (await a.client.me()).id;
+    const agentId = (await a.client.agents())[0]?.id ?? "";
+    const started = await a.client.startSession({ agentId, projectId });
+    await eventually(
+      async () => (await a.client.session(started.session?.id ?? "")).status !== "running",
+      "the session to plan",
+      async () =>
+        (await a.client.tasks(projectId)).map((t) => `${t.title}: ${t.status}`).join(", "),
+      30_000,
+    );
+    const plan = (await a.client.inbox(humanId)).requests.find(
+      (r) => r.projectId === projectId && r.kind === "approval" && r.status === "open",
+    );
+    await a.client.answerRequest(plan?.id ?? "", {
+      version: plan?.version ?? 0,
+      answer: "approve",
+    });
+    await eventually(
+      async () =>
+        (await a.client.tasks(projectId)).find((t) => t.id === taskId)?.status === "done" &&
+        (await a.client.sessions({ projectId })).every((s) => s.status !== "running"),
+      "the approved session to end",
+      async () =>
+        (await a.client.tasks(projectId)).map((t) => `${t.title}: ${t.status}`).join(", "),
+      30_000,
+    );
+    return (await a.client.sessions({ projectId }))[0]?.id ?? "";
+  }
+
+  const proposals = async (a: Open, projectId: string) =>
+    (await a.client.inbox((await a.client.me()).id)).requests.filter(
+      (r) =>
+        r.projectId === projectId &&
+        (r.changeCard as { key?: unknown } | null)?.key === "task_proposal",
+    );
+  const taskRows = async (a: Open, projectId: string) =>
+    (await a.client.tasks(projectId)).map((t) => [t.title, t.status]);
+
+  it("the card in the Inbox names the project, what showed it and each change; 'Make these changes' after a restart changes the tasks as one change with one Undo, and no session starts", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-selftasks-"));
+    const a = await open(home);
+    let w: Awaited<ReturnType<typeof quotePage>>;
+    let cardId = "";
+    let sessions = 0;
+    try {
+      w = await quotePage(a);
+      const sessionId = await runSession(a, w.project.id, w.create.id);
+      const [card, ...more] = await proposals(a, w.project.id);
+      expect(more).toEqual([]);
+      expect(card).toMatchObject({
+        kind: "decision",
+        sessionId,
+        status: "open",
+        blocking: false,
+        title: "Quote page: the agent suggests 2 changes to the tasks",
+        body: `The coder's report on "Create the page in index.html" says: "'Style the page' is two jobs, the layout and the colours". Nothing changes until you say yes.`,
+        details: [SPLIT_LINE, ADD_LINE, ASKS_LINE],
+        options: ["Make these changes", "Keep the tasks"],
+        choices: [
+          {
+            label: "Make these changes",
+            explain: "Changes the tasks as listed; one Undo takes them back.",
+            tone: "primary",
+            confirm: null,
+            input: null,
+          },
+          {
+            label: "Keep the tasks",
+            explain: "Nothing changes.",
+            tone: "secondary",
+            confirm: null,
+            input: null,
+          },
+        ],
+        reply: "none",
+        outcome: null,
+      });
+      // The session's log says what the check did; the tasks are as they were.
+      expect((await a.client.sessionEvents(sessionId)).map((e) => e.text)).toContain(
+        'Checked the task list after "Create the page in index.html": suggested 2 changes in the Inbox (less than CHF 0.01).',
+      );
+      expect(await taskRows(a, w.project.id)).toEqual([
+        ["Create the page in index.html", "done"],
+        ["Send the logo", "needs_human"],
+        ["Style the page", "ready"],
+      ]);
+      cardId = card?.id ?? "";
+      sessions = (await a.client.sessions({ projectId: w.project.id })).length;
+    } finally {
+      await a.rt.close();
+    }
+
+    // The daemon starts again on the same home: the same card, answered with its first option.
+    const b = await open(home);
+    try {
+      const row = (await proposals(b, w.project.id)).find((r) => r.id === cardId);
+      expect(row?.status).toBe("open");
+      const before = (await b.client.changes({ projectId: w.project.id })).map((c) => c.id);
+      const answered = await b.client.answerRequest(cardId, {
+        version: row?.version ?? 0,
+        answer: row?.options[0],
+      });
+      expect(answered.status).toBe("answered");
+      expect(answered.outcome).toBe("Changed 2 tasks; your next Start runs them.");
+      const tasks = await b.client.tasks(w.project.id);
+      const byTitle = new Map(tasks.map((t) => [t.title, t]));
+      // In run order, as the Tasks tab lists them.
+      expect(tasks.map((t) => [t.title, t.status])).toEqual([
+        ["Create the page in index.html", "done"],
+        ["Check that the links work", "ready"],
+        ["Send the logo", "needs_human"],
+        ["Style the page: layout", "ready"],
+        ["Style the page: colours", "ready"],
+      ]);
+      // The task keeps its id as the first part; the second waits for it.
+      expect(byTitle.get("Style the page: layout")?.id).toBe(w.style.id);
+      expect(byTitle.get("Style the page: colours")?.dependsOn).toEqual([w.style.id]);
+      expect(byTitle.get("Check that the links work")?.dependsOn).toEqual([w.create.id]);
+      // One Changes row for the set, with one Undo.
+      const rows = (await b.client.changes({ projectId: w.project.id })).filter(
+        (c) => !before.includes(c.id),
+      );
+      expect(rows.map((r) => [r.undoable, r.undoState, r.source, r.wordsUsed])).toEqual([
+        [true, "undoable", "ui", "Make these changes"],
+      ]);
+      expect(rows[0]?.sentence).toBe(
+        'Split "Style the page" into "Style the page: layout" and "Style the page: colours". Added "Check that the links work" to Quote page, for the coder.',
+      );
+      // Nothing started a session.
+      const after = await b.client.sessions({ projectId: w.project.id });
+      expect(after.length).toBe(sessions);
+      expect(after.every((s) => s.status !== "running")).toBe(true);
+      // The one Undo takes the set back.
+      const undone = await b.client.undoChange(rows[0]?.id ?? "");
+      expect(undone.status).toBe("done");
+      // Each change's own Undo words, in one sentence (it read 'Undone: the task "Style the
+      // page"; the tasks of Quote page is back to one task; 3 tasks.').
+      expect(undone.sentence).toBe(
+        'Undone: "Style the page" is one task again; cancelled the task "Check that the links work" you created.',
+      );
+      expect(await taskRows(b, w.project.id)).toEqual([
+        ["Create the page in index.html", "done"],
+        ["Check that the links work", "cancelled"],
+        ["Send the logo", "needs_human"],
+        ["Style the page", "ready"],
+        ["Style the page: colours", "cancelled"],
+      ]);
+      expect((await b.client.tasks(w.project.id)).find((t) => t.id === w.style.id)).toMatchObject({
+        acceptanceCriteria: ["the layout is a grid", "the colours match the logo"],
+      });
+    } finally {
+      await b.rt.close();
+    }
+  }, 120_000);
+
+  it("'Keep the tasks' changes nothing; a newer suggestion replaces the older card; a change that no longer applies is left out and named", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-selftasks-keep-"));
+    const a = await open(home);
+    try {
+      const w = await quotePage(a);
+      await runSession(a, w.project.id, w.create.id);
+      const [first] = await proposals(a, w.project.id);
+      const changesBefore = (await a.client.changes({ projectId: w.project.id })).length;
+      const kept = await a.client.answerRequest(first?.id ?? "", {
+        version: first?.version ?? 0,
+        answer: first?.options[1],
+      });
+      expect(kept.outcome).toBe("Kept the tasks as they are; nothing changed.");
+      expect(await taskRows(a, w.project.id)).toEqual([
+        ["Create the page in index.html", "done"],
+        ["Send the logo", "needs_human"],
+        ["Style the page", "ready"],
+      ]);
+      expect((await a.client.changes({ projectId: w.project.id })).length).toBe(changesBefore);
+
+      // Two more sessions whose reports say the same: the second card replaces the first open one.
+      const footer = await a.client.createTask(w.project.id, {
+        title: "Create the page footer",
+        outcome: "index.html has a footer",
+        acceptanceCriteria: ["the footer names the shop"],
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await runSession(a, w.project.id, footer.id);
+      const second = (await proposals(a, w.project.id)).find((r) => r.status === "open");
+      expect(second?.details).toEqual([SPLIT_LINE, ADD_LINE, ASKS_LINE]);
+      const header = await a.client.createTask(w.project.id, {
+        title: "Create the page header",
+        outcome: "index.html has a header",
+        acceptanceCriteria: ["the header shows the logo"],
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await runSession(a, w.project.id, header.id);
+      const cards = await proposals(a, w.project.id);
+      const open3 = cards.filter((r) => r.status === "open");
+      expect(open3.length).toBe(1);
+      const third = open3[0];
+      expect(third?.id).not.toBe(second?.id);
+      expect(cards.find((r) => r.id === second?.id)).toMatchObject({
+        status: "withdrawn",
+        outcome: "A newer suggestion of the agent replaced this one.",
+      });
+
+      // "Style the page" is cancelled before the answer: its split no longer applies.
+      const style = (await a.client.tasks(w.project.id)).find((t) => t.id === w.style.id);
+      await a.client.transitionTask(w.style.id, {
+        version: style?.version ?? 0,
+        to: "cancelled",
+        reason: "not needed",
+      });
+      const sessions = (await a.client.sessions({ projectId: w.project.id })).length;
+      const applied = await a.client.answerRequest(third?.id ?? "", {
+        version: third?.version ?? 0,
+        answer: third?.options[0],
+      });
+      expect(applied.outcome).toBe(
+        `Changed 1 task; your next Start runs them. Left out: ${SPLIT_LINE.replace(/\.$/, "")}: "Style the page" is cancelled, so it is not split.`,
+      );
+      expect((await a.client.tasks(w.project.id)).map((t) => t.title)).toContain(
+        "Check that the links work",
+      );
+      const after = await a.client.sessions({ projectId: w.project.id });
+      expect(after.length).toBe(sessions);
+      expect(after.every((s) => s.status !== "running")).toBe(true);
+    } finally {
+      await a.rt.close();
+    }
+  }, 150_000);
+
+  it("POST /commands/execute cannot borrow a session's rules: the 'session' source is refused, and a planFix in the body changes nothing", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({
+        name: "Quote page",
+        goal: "A page that quotes prices",
+        autonomyLevel: 1,
+      });
+      const style = await client.createTask(project.id, {
+        title: "Style the page",
+        outcome: "The page has its layout and colours",
+        acceptanceCriteria: ["the layout is a grid", "the colours match the logo"],
+        specialist: "coder",
+      });
+      const split = {
+        name: "task.split",
+        params: {
+          task: style.id,
+          parts: [
+            { title: "Style the layout", acceptance_criteria: ["the layout is a grid"] },
+            { title: "Style the colours", acceptance_criteria: ["the colours match the logo"] },
+          ],
+          order: "in_turn",
+        },
+      };
+      await expect(
+        client.executeCommands({ commands: [split], source: "session" } as never),
+      ).rejects.toBeInstanceOf(ApiError);
+      // The person's split asks for a yes as it would without the field: a planFix sent by a
+      // client is not the session's (the daemon sets it only on its own task check).
+      const withFix = await client.executeCommands({
+        commands: [split],
+        projectId: project.id,
+        planFix: { level: 4 },
+      } as never);
+      expect(withFix).toMatchObject({
+        status: "pending",
+        decision: "needs_yes",
+        readback: 'Split "Style the page" into "Style the layout" and "Style the colours"?',
+      });
+      const changesBefore = (await client.changes({ projectId: project.id })).length;
+      await client.cancelCommand(withFix.pendingId ?? "");
+      const plain = await client.executeCommands({ commands: [split], projectId: project.id });
+      expect({ ...plain, pendingId: "", expiresAt: "" }).toEqual({
+        ...withFix,
+        pendingId: "",
+        expiresAt: "",
+      });
+      await client.cancelCommand(plain.pendingId ?? "");
+      expect(await client.changes({ projectId: project.id })).toHaveLength(changesBefore);
+      expect((await client.tasks(project.id)).map((t) => [t.title, t.status])).toEqual([
+        ["Style the page", "ready"],
+      ]);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+});

@@ -655,6 +655,15 @@ describe("d1109-chat-recall, run C: CR-9 the prompt and the turn's room", () => 
             req?.tools?.find((t) => t.name === "settings_set")?.description ?? "",
           )?.[0] ?? "",
         ),
+      ) +
+      // d1109-selftasks-run (ADR 0119): task_create's before and why, task_transition's
+      // duplicate_of (the agent's own fixes of its task list).
+      w.provider.countTokens(
+        JSON.stringify([
+          paramOf(req?.tools, "task_create", "before"),
+          paramOf(req?.tools, "task_create", "why"),
+          paramOf(req?.tools, "task_transition", "duplicate_of"),
+        ]),
       );
     const fixed = w.provider.countTokens(
       `${CHAT_RECALL_RULES}${JSON.stringify(req?.tools?.filter((t) => t.name.startsWith("recall")))}`,
@@ -671,6 +680,18 @@ describe("d1109-chat-recall, run C: CR-9 the prompt and the turn's room", () => 
     await w.store.close();
   });
 });
+
+/** One parameter's schema in a tool definition as sent, for a test that subtracts it. */
+function paramOf(
+  tools: readonly { name: string; input_schema?: unknown }[] | undefined,
+  tool: string,
+  param: string,
+): unknown {
+  const schema = tools?.find((t) => t.name === tool)?.input_schema as
+    | { properties?: Record<string, unknown> }
+    | undefined;
+  return schema?.properties?.[param] ?? null;
+}
 
 /** The base's 'what is left?' request in tokens (measured on d706e76, see the test). */
 const BASE_STATUS_TOKENS = 8511;

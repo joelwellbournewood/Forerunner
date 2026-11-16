@@ -144,3 +144,7 @@ The owner's decision D6 of 2026-11-09: only the person starts a session. Approve
 person's own start (`by: "person"`, recorded on the session's plan as `startedBy`): it runs at
 once, inside quiet hours too, as Start does. Nothing else an approval card leads to starts a
 session; work a later answer makes ready is prepared (ADR 0118).
+
+## Amendment 2026-11-16 (ADR 0119, d1109-selftasks-run): an approved plan can change during its session
+
+The owner's decision D7: the agent keeps its own task list right during a run. An approved plan's Draft and Ready tasks can be split, get a missing step, be reordered or lose a duplicate during the session, by the agent within the fence of ADR 0119, from Standard up; at Assisted it asks first on one card. The plan's approval is not asked again; a new task joins the session only if it fits after its promise.

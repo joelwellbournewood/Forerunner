@@ -15,7 +15,14 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { ToolExecutionContext, ToolResult, ToolSpec } from "../agent/tools.ts";
-import type { ActionClass } from "../enforcement/autonomy.ts";
+import type { ActionClass as AnyActionClass } from "../enforcement/autonomy.ts";
+
+/**
+ * The classes a tool of an extension can have: every action class but the agent's own task-list
+ * fixes (`plan_fix`, ADR 0119), which only the runtime's task check uses, never a tool.
+ */
+type ActionClass = Exclude<AnyActionClass, "plan_fix">;
+
 import { hostnameOf } from "../enforcement/hooks.ts";
 import type { SecretsPort } from "../enforcement/ports.ts";
 import type { ConnectorTransport, StdioTransport } from "./catalog.ts";

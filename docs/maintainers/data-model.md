@@ -308,7 +308,7 @@ Carries the common columns (see Invariants).
 | `expires_at` | timestamp | yes |  |  | When a temporary change reverts. |
 | `undo_state` | text (`undoable`, `undone`, `expired`, `irreversible`) | no | `"undoable"` |  | Undo state. |
 | `undone_at` | timestamp | yes |  |  | When undone. |
-| `source` | text (`ui`, `chat`, `voice`, `email`, `api`, `palette`) | no | `"ui"` |  | Channel the change came from. |
+| `source` | text (`ui`, `chat`, `voice`, `email`, `api`, `palette`, `session`) | no | `"ui"` |  | Channel the change came from. |
 | `sentence` | text | no | `""` |  | Plain sentence posted to the activity log. |
 
 Indexes:

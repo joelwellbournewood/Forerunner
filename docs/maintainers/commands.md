@@ -783,6 +783,34 @@ run C").
   it carries is queued for the task (before: the store's refusal dropped it); a note alone is
   kept as before.
 
+### The agent keeps its task list right (d1109-selftasks-run, [ADR 0119](../decisions/0119-the-agent-keeps-its-task-list-right.md))
+
+- **`task.split`** (`COMMAND_NAMES`, `chatTool: false` until chat's own task changes, C6, so
+  `toToolSpecs` leaves it out): a Draft or Ready task into two to four parts, `in_turn` or
+  `side_by_side`; the task keeps its id as the first part, every acceptance criterion goes into
+  one part (else '"X" ... The parts leave out a criterion of "X": "c". Nothing was split.'), the
+  budget left and the estimate are shared by criteria, the tasks that waited for it wait for
+  every part. Sentence 'Split "X" into "A" and "B".'; Undo 'Undone: "X" is one task again.',
+  refused once a part ran ('"P" has run since, so the split cannot be undone').
+- **`task.create` `before` and `why`**: a step added before named Draft or Ready tasks of the
+  same project ('Added "X" before "Y".'; a cycle is refused: '"X" cannot both wait for "Y" and
+  come before it. Nothing was added.'); its Undo takes it out of what they wait for first. (The
+  parameter is `before`, not `then`: Biome's noThenProperty refuses a `then` key.)
+- **`task.transition` `duplicate_of`**: a task that never ran is dropped as the same as another
+  of its project ('Dropped "X": same as "Y".', risk low), the tasks that waited for it now wait
+  for that one; refused for a task that ran or a cancelled or foreign "same".
+- **The `session` source** (`CHANGE_SOURCES`, migration 0009) and **`CommandContext.planFix`**
+  (`{ level }`): the session's own fixes. `decideAutonomy("plan_fix", level)` frees them from the
+  chat read-back from Standard up; with either, no Inbox line and no shared-with message is
+  written. Only the daemon's task check sets them (`POST /commands/execute` refuses the source
+  and strips `planFix`).
+- **A set's Undo** in one sentence: when every command of a composed row words its own Undo,
+  the executor joins them ('Undone: "Style the page" is one task again; cancelled the task
+  "Check the links" you created.'); else the card's "<what> is back to <old value>".
+
+Tests: `test/selftasks-run.test.ts` (ST-2, ST-3, ST-5), `test/registry.test.ts` (no
+`task_split` tool).
+
 ## How to change it
 
 **Add a command.** Write `src/commands/<area>.ts` exporting a `CommandDef`: a zod `params`

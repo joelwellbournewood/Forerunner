@@ -2865,3 +2865,18 @@ node apps/mobile/e2e/run.mjs
   or native picker. A queued upload is persisted in browser storage up to 2 MiB in total; a
   larger queued file is held in memory and lost if the app closes before it is sent.
   Upload progress is by phase, not by byte.
+
+## The agent's suggested task changes (d1109-selftasks-run, [ADR 0119](../decisions/0119-the-agent-keeps-its-task-list-right.md))
+
+At Advisor and Assisted the session's task check asks first on ONE Inbox card per project
+(`change_card.key` `task_proposal`): "Quote page: the agent suggests 2 changes to the tasks", its
+body quoting what showed it, each change under Details, "Make these changes" (Changes the tasks as
+listed; one Undo takes them back.) and "Keep the tasks" (Nothing changes.). The Inbox shows it
+with the generic card component; no screen changed. The fake daemon (`apps/ui/test/fake-daemon.ts`)
+answers it as the daemon's `syncTaskProposals` does: "Make these changes" makes the card's changes
+as one `ui` Changes row with one Undo (a split of a task no longer Draft or Ready is left out and
+named) and "Keep the tasks" changes nothing; nothing starts a session. Tests:
+`apps/ui/test/selftasks.test.tsx` (the Inbox on the fake) and the real-daemon describe
+"d1109-selftasks-run, run C". The Changes page shows the session's own rows (source `session`) as
+"In the app" until chat's task changes (C6) give them their words.
+

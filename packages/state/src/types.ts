@@ -108,7 +108,15 @@ export const CHANGE_SCOPES = ["session", "project", "global"] as const;
 export type ChangeScope = (typeof CHANGE_SCOPES)[number];
 export const UNDO_STATES = ["undoable", "undone", "expired", "irreversible"] as const;
 export type UndoState = (typeof UNDO_STATES)[number];
-export const CHANGE_SOURCES = ["ui", "chat", "voice", "email", "api", "palette"] as const;
+export const CHANGE_SOURCES = [
+  "ui",
+  "chat",
+  "voice",
+  "email",
+  "api",
+  "palette",
+  "session",
+] as const;
 export type ChangeSource = (typeof CHANGE_SOURCES)[number];
 
 export const DEVICE_KINDS = ["desktop", "phone", "runner", "web"] as const;

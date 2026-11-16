@@ -1,0 +1,559 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { type CommandContext, CommandExecutor, defaultRegistry } from "@forerunner/commands";
+import { join, type SimulatedClock } from "@forerunner/platform";
+import { openStore, type StateStore, type TaskRow } from "@forerunner/state";
+import { afterEach, describe, expect, it } from "vitest";
+import { LoopAgentDriver } from "../src/agent/loop.ts";
+import { requestWords } from "../src/daemon/request-words.ts";
+import { describeEvent } from "../src/daemon/views.ts";
+import { EnforcementHooks } from "../src/enforcement/hooks.ts";
+import { KillSwitch } from "../src/enforcement/killswitch.ts";
+import { TokenIssuer } from "../src/enforcement/token.ts";
+import { LiveSessions } from "../src/session/live-sessions.ts";
+import {
+  type SessionResult,
+  SessionRunner,
+  StaticPlanner,
+  type TaskExecutor,
+} from "../src/session/runner.ts";
+import {
+  type CheckSpecialist,
+  callsOf,
+  type TaskCheckRunnerPort,
+} from "../src/session/task-check.ts";
+import { keptNotesOf, parseTaskListNotes } from "../src/session/task-list-notes.ts";
+import {
+  fileTaskProposal,
+  syncTaskProposals,
+  TASK_PROPOSAL_KEY,
+} from "../src/session/task-proposal.ts";
+import { StateLedger } from "../src/wiring/state-ports.ts";
+import { seedWorld } from "./context-helpers.ts";
+import { flatPricing, harness, removeHomes, ScriptedProvider } from "./helpers.ts";
+
+/**
+ * d1109-selftasks-run, run C (ST-9, ST-10; ADR 0119; D7, the owner, 2026-11-09: "if I say set
+ * this up and I approve a plan and then it adds a bunch of tasks, I want it to be able to fix its
+ * tasks. Like as part of a run, it should be able to do things like that."; option C: "the
+ * session keeps its promise and spare budget isn't wasted"). A session with a scripted executor
+ * whose reports carry "For the task list:" lines, the real task check (the loop driver, the hooks
+ * and the ledger, a scripted planning model) and the real command registry: what the person sees
+ * is read back (the session's lines, the Changes rows, the tasks, the Update, the result).
+ */
+const usd = (n: number) => Math.round(n * 1_000_000);
+const grant = { allowedTools: ["echo"], allowedPaths: [], allowedDomains: [], grantedSecrets: [] };
+const SPECIALISTS: CheckSpecialist[] = [
+  { name: "coder", tools: ["cc:Read", "cc:Edit", "cc:Write", "cc:Bash"] },
+  { name: "researcher", tools: ["cc:Read", "cc:Write", "cc:WebFetch", "cc:WebSearch"] },
+];
+const REPORT =
+  'Made index.html.\nFor the task list: "Style the page" is two jobs, the layout and the colours; nothing checks that the links work.';
+const FIX = JSON.stringify({
+  changes: [
+    {
+      kind: "split",
+      task: "Style the page",
+      parts: [
+        { title: "Style the layout", acceptanceCriteria: ["a", "b"] },
+        { title: "Style the colours", acceptanceCriteria: ["c"] },
+      ],
+      order: "in_turn",
+      why: "The coder said it is two jobs.",
+    },
+    {
+      kind: "add",
+      title: "Check the links",
+      outcome: "Every link on the page opens",
+      acceptanceCriteria: ["no link answers 404"],
+      specialist: "coder",
+      after: ["Create the page"],
+      before: ["Publish"],
+      why: "Nothing checks that the links work.",
+    },
+  ],
+  flagged: [],
+  why: "Two fixes from the report.",
+});
+const NO_CHANGE = JSON.stringify({ changes: [], flagged: [], why: "Nothing is wrong." });
+
+interface Script {
+  cost: number;
+  report?: string;
+  during?: () => Promise<void>;
+}
+
+const homes: string[] = [];
+const stores: StateStore[] = [];
+afterEach(async () => {
+  for (const s of stores.splice(0)) await s.close();
+  removeHomes(homes.splice(0));
+});
+
+async function world(opts: { level?: 0 | 1 | 2; settings?: Record<string, unknown> } = {}) {
+  const home = mkdtempSync(join(tmpdir(), "fr-tasklist-"));
+  homes.push(home);
+  const h = harness();
+  const clock = h.clock as SimulatedClock;
+  const dbPath = join(home, "state.db");
+  let store = await openStore({ url: `sqlite:${dbPath}`, clock });
+  stores.push(store);
+  const seeded = await seedWorld(store, opts.settings ?? {}, { session: false });
+  const p = await store.project.mustGet(seeded.project);
+  await store.project.update(p.id, p.version, {
+    name: "Quote page",
+    autonomy_level: opts.level ?? 2,
+  });
+  const scripts = new Map<string, Script>();
+  const ran: string[] = [];
+  const replies: string[] = [];
+  const live = new LiveSessions();
+  const executor: TaskExecutor = {
+    async execute({ task, budget, session }) {
+      ran.push(task.title);
+      const s = scripts.get(task.title) ?? { cost: 0.1 };
+      const cost = usd(s.cost);
+      const run = await store.run.insert({
+        task_id: task.id,
+        session_id: session.id,
+        specialist: "coder",
+        model: "fake-sonnet",
+        provider: "fake",
+        effort: "medium",
+        cost_usd_micro: cost,
+        duration_ms: 1000,
+        outcome: "completed",
+      });
+      budget.record(run.id, cost);
+      await s.during?.();
+      const notes = parseTaskListNotes(s.report ?? "Done.");
+      return {
+        outcome: "done",
+        summary: "done",
+        costUsdMicro: cost,
+        checksPassed: true,
+        runId: run.id,
+        changedFiles: ["a.txt"],
+        finalReport: s.report ?? "Done.",
+        ...(notes.length ? { taskListNotes: notes } : {}),
+      };
+    },
+  };
+  const commands = () => new CommandExecutor({ registry: defaultRegistry(), store, clock });
+  const ctxOf = (over: Partial<CommandContext>): CommandContext => ({
+    actor: { kind: "human", id: seeded.human },
+    humanId: seeded.human,
+    agentId: seeded.agent,
+    activeProjectId: seeded.project,
+    store,
+    clock,
+    ports: { chfPerUsd: async () => 1 },
+    source: "ui",
+    wordsUsed: "",
+    timezone: "UTC",
+    deviceId: null,
+    sessionId: null,
+    ...over,
+  });
+  const port = (): TaskCheckRunnerPort => ({
+    deps: {
+      store,
+      clock,
+      tokens: h.tokens,
+      driver: new LoopAgentDriver({
+        hooks: new EnforcementHooks({
+          ...h.deps,
+          ledger: new StateLedger(store, { chfPerUsd: () => 1 }),
+        }),
+        kill: h.kill,
+        clock,
+      }),
+      // The planning model's replies, one per call made, in order; then no change.
+      provider: () => {
+        const scripted = new ScriptedProvider([], clock);
+        return {
+          name: scripted.name,
+          listModels: () => scripted.listModels(),
+          countTokens: (t: string) => scripted.countTokens(t),
+          complete: (req) => scripted.complete(req),
+          stream: (req) => {
+            const next = replies.shift() ?? NO_CHANGE;
+            checkCalls.push(next);
+            return new ScriptedProvider([{ text: next }], clock).stream(req);
+          },
+        } as ScriptedProvider;
+      },
+      model: () => "fake-sonnet",
+      pricing: () => flatPricing,
+      billingSourceId: "bs-key",
+      rolePrompt: "You are the project manager.",
+      specialists: () => SPECIALISTS,
+    },
+    changes: {
+      async run(calls, ctx) {
+        const r = await commands().compose(
+          calls.map((c) => ({ name: c.name, params: c.params })),
+          ctxOf({
+            actor: { kind: "agent", id: seeded.agent },
+            source: "session",
+            sessionId: ctx.sessionId,
+            planFix: { level: ctx.level },
+          }),
+        );
+        return r.status === "done"
+          ? { status: "done", changeLogId: r.changeLogId, sentence: r.sentence }
+          : { status: "refused", reason: r.status === "refused" ? r.reason : r.status };
+      },
+    },
+    propose: (input) =>
+      fileTaskProposal(store, { ...input, callsOf: (f) => callsOf(store, input.project, f) }),
+  });
+  const checkCalls: string[] = [];
+  const runner = () =>
+    new SessionRunner({
+      store,
+      clock,
+      tokens: new TokenIssuer({ now: () => clock.now() }),
+      kill: new KillSwitch(),
+      // A task without a figure of its own (an added step) is priced at CHF 0.20.
+      planner: new StaticPlanner(200_000),
+      executor,
+      live,
+      chfPerUsd: () => 1,
+      taskCheck: port(),
+    });
+  const start = (budgetUsd: number, over: { autonomy?: 0 | 1 | 2; planApproved?: boolean } = {}) =>
+    runner().start({
+      agentId: seeded.agent,
+      projectId: seeded.project,
+      trigger: "manual",
+      by: "person",
+      budgetCapUsdMicro: usd(budgetUsd),
+      grant,
+      ...(over.autonomy !== undefined ? { autonomy: over.autonomy } : {}),
+      ...(over.planApproved ? { planApproved: true } : {}),
+    });
+  const add = (title: string, estimate: number, over: Partial<TaskRow> = {}) =>
+    store.task.insert({
+      project_id: seeded.project,
+      title,
+      outcome: `${title} is done`,
+      acceptance_criteria: ["it works"],
+      risk_tier: 0,
+      status: "ready",
+      priority: 5,
+      specialist: "coder",
+      est_cost_usd_micro: usd(estimate),
+      reason: "planned",
+      author_agent: seeded.agent,
+      ...over,
+    });
+  /** The plan "Create the page" -> "Style the page" -> "Publish", all promised. */
+  const plan = async (estimates = { create: 0.3, style: 0.6, publish: 0.2 }) => {
+    const create = await add("Create the page", estimates.create, { priority: 9 });
+    const style = await add("Style the page", estimates.style, {
+      depends_on: [create.id],
+      acceptance_criteria: ["a", "b", "c"],
+    });
+    const publish = await add("Publish", estimates.publish, { depends_on: [style.id] });
+    return { create, style, publish };
+  };
+  const lines = async (r: SessionResult) =>
+    (await store.event.list(r.sessionId)).map((e) => ({
+      type: e.type,
+      line: describeEvent(e.type, e.payload as Record<string, unknown>, 1),
+    }));
+  /** A restart: the store closed and opened again on the same file. */
+  const restart = async () => {
+    await store.close();
+    stores.splice(stores.indexOf(store), 1);
+    store = await openStore({ url: `sqlite:${dbPath}`, clock });
+    stores.push(store);
+  };
+  return {
+    get store() {
+      return store;
+    },
+    clock,
+    seeded,
+    scripts,
+    ran,
+    replies,
+    checkCalls,
+    start,
+    add,
+    plan,
+    lines,
+    restart,
+    commands,
+    ctxOf,
+    live,
+  };
+}
+
+describe("d1109-selftasks-run, run C: the agent keeps its task list right during a run (ST-9)", () => {
+  it("at Standard: one check after the report, two change lines with Undo, the split's parts run within its estimate and the step before Publish runs when the room covers it", async () => {
+    const w = await world();
+    await w.plan();
+    w.scripts.set("Create the page", { cost: 0.3, report: REPORT });
+    w.scripts.set("Style the page", { cost: 0.4 });
+    w.scripts.set("Style the layout", { cost: 0.4 });
+    w.scripts.set("Style the colours", { cost: 0.2 });
+    w.scripts.set("Check the links", { cost: 0.1 });
+    w.scripts.set("Publish", { cost: 0.2 });
+    w.replies.push(FIX);
+    const r = await w.start(3);
+    expect(w.checkCalls.length).toBe(1);
+    const seen = await w.lines(r);
+    const changes = seen.filter((l) => l.type === "change").map((l) => l.line);
+    expect(changes).toEqual([
+      'Split "Style the page" into "Style the layout" and "Style the colours".',
+      'Added "Check the links" before "Publish".',
+    ]);
+    // Each change is one Changes row of the session's own, with its Undo.
+    const rows = (await w.store.changeLog.forProject(w.seeded.project)).filter(
+      (c) => c.source === "session",
+    );
+    expect(rows.map((c) => [c.sentence, c.undo_state])).toEqual(
+      expect.arrayContaining([
+        ['Split "Style the page" into "Style the layout" and "Style the colours".', "undoable"],
+        ['Added "Check the links" before "Publish".', "undoable"],
+      ]),
+    );
+    expect(rows.length).toBe(2);
+    // No Inbox line per change: the session's one Update counts them.
+    const inbox = await w.store.message.inbox({ humanId: w.seeded.human });
+    expect(inbox.map((m) => m.body)).toEqual(["Quote page: did 5 tasks; changed 2 tasks."]);
+    // The tasks as they are now, and what each waited for.
+    const tasks = await w.store.task.forProject(w.seeded.project);
+    const byTitle = new Map(tasks.map((t) => [t.title, t]));
+    expect([...byTitle.keys()].sort()).toEqual(
+      [
+        "Check the links",
+        "Create the page",
+        "Publish",
+        "Style the colours",
+        "Style the layout",
+      ].sort(),
+    );
+    expect(byTitle.get("Style the colours")?.depends_on).toEqual([
+      byTitle.get("Style the layout")?.id,
+    ]);
+    expect(byTitle.get("Publish")?.depends_on.sort()).toEqual(
+      [
+        byTitle.get("Style the layout")?.id,
+        byTitle.get("Style the colours")?.id,
+        byTitle.get("Check the links")?.id,
+      ].sort(),
+    );
+    expect(w.ran.slice(0, 1)).toEqual(["Create the page"]);
+    expect(w.ran.at(-1)).toBe("Publish");
+    expect(new Set(w.ran)).toEqual(
+      new Set([
+        "Create the page",
+        "Style the layout",
+        "Style the colours",
+        "Check the links",
+        "Publish",
+      ]),
+    );
+    expect(r.summary).toContain(
+      'Changed 2 tasks: split "Style the page"; added "Check the links".',
+    );
+    // The check is one booked Run row of the session.
+    const runs = await w.store.run.list({ session_id: r.sessionId } as never);
+    expect(runs.filter((x) => x.specialist === "task-check").length).toBe(1);
+    // A Details line says what the check did, in CHF.
+    expect(seen.find((l) => l.type === "session.task_checked")?.line).toMatch(
+      /^Checked the task list after "Create the page": changed 2 tasks \((CHF \d+\.\d\d|less than CHF 0\.01)\)\.$/,
+    );
+  });
+
+  it("a split and a step added before the task it splits, in one check: both are made, the step before the first part (the bench walk found the step refused)", async () => {
+    const w = await world();
+    await w.plan();
+    w.scripts.set("Create the page", { cost: 0.3, report: REPORT });
+    w.replies.push(
+      JSON.stringify({
+        changes: [
+          JSON.parse(FIX).changes[0],
+          { ...JSON.parse(FIX).changes[1], before: ["Style the page"] },
+        ],
+        flagged: [],
+        why: "Two fixes from the report.",
+      }),
+    );
+    const r = await w.start(3);
+    const changes = (await w.lines(r)).filter((l) => l.type === "change").map((l) => l.line);
+    expect(changes).toEqual([
+      'Split "Style the page" into "Style the layout" and "Style the colours".',
+      'Added "Check the links" before "Style the layout".',
+    ]);
+    const byTitle = new Map(
+      (await w.store.task.forProject(w.seeded.project)).map((t) => [t.title, t]),
+    );
+    expect(byTitle.get("Style the layout")?.depends_on).toContain(
+      byTitle.get("Check the links")?.id,
+    );
+  });
+
+  it("with a work budget that keeps the promise but has no room for the step, both it and Publish wait for the next Start, named once; no session starts, also with the hands-off setting on", async () => {
+    const w = await world({ settings: { start_by_itself: true } });
+    await w.plan();
+    w.scripts.set("Create the page", { cost: 0.3, report: REPORT });
+    w.scripts.set("Style the layout", { cost: 0.4 });
+    w.scripts.set("Style the colours", { cost: 0.2 });
+    w.replies.push(FIX);
+    // Work budget = 80% of 1.5 = 1.2: the promise (1.1) fits; the step (0.2) does not.
+    const r = await w.start(1.5);
+    expect(w.checkCalls.length).toBe(1);
+    expect(w.ran).toEqual(["Create the page", "Style the layout", "Style the colours"]);
+    expect(r.summary.split("Left for your next Start").length).toBe(2);
+    expect(r.summary).toContain(
+      'Left for your next Start: "Check the links" (about CHF 0.20) and "Publish", which waits for it.',
+    );
+    expect((await w.store.session.forProject(w.seeded.project)).length).toBe(1);
+  });
+
+  it("a check whose cap does not fit the room after the promise is not made, and its notes are kept on the project", async () => {
+    const w = await world();
+    await w.plan();
+    w.scripts.set("Create the page", { cost: 0.3, report: REPORT });
+    w.scripts.set("Style the page", { cost: 0.6 });
+    w.scripts.set("Publish", { cost: 0.2 });
+    // Work budget = 80% of 1.375 = 1.1: exactly the promise, no room left for the check.
+    const r = await w.start(1.375);
+    expect(w.checkCalls.length).toBe(0);
+    expect(w.ran).toEqual(["Create the page", "Style the page", "Publish"]);
+    const kept = keptNotesOf(await w.store.project.mustGet(w.seeded.project));
+    expect(kept.map((n) => [n.taskTitle, n.lines.map((l) => l.text)])).toEqual([
+      [
+        "Create the page",
+        [
+          '"Style the page" is two jobs, the layout and the colours; nothing checks that the links work.',
+        ],
+      ],
+    ]);
+    expect(r.summary).not.toContain("Changed");
+  });
+
+  it("reports with no heading make zero checks; five with it make at most three, and the rest are kept", async () => {
+    const quiet = await world();
+    await quiet.plan();
+    await quiet.start(3);
+    expect(quiet.checkCalls.length).toBe(0);
+
+    const w = await world();
+    const titles = ["T1", "T2", "T3", "T4", "T5"];
+    for (const [i, t] of titles.entries()) {
+      await w.add(t, 0.1, { priority: 9 - i });
+      w.scripts.set(t, {
+        cost: 0.1,
+        report: `Done.\nFor the task list: note ${i + 1} about the plan.`,
+      });
+    }
+    await w.start(3);
+    expect(w.checkCalls.length).toBe(3);
+    const kept = keptNotesOf(await w.store.project.mustGet(w.seeded.project));
+    expect(kept.map((n) => n.taskTitle)).toEqual(["T4", "T5"]);
+  });
+
+  it("none runs after the wrap-up line: the notes are kept", async () => {
+    const w = await world();
+    await w.plan();
+    // The first task spends past the 80% line of a CHF 1.00 session: no new work after it.
+    w.scripts.set("Create the page", { cost: 0.85, report: REPORT });
+    await w.start(1);
+    expect(w.checkCalls.length).toBe(0);
+    expect(keptNotesOf(await w.store.project.mustGet(w.seeded.project)).length).toBe(1);
+  });
+
+  it("at Assisted the same report files one suggestion card, changes nothing, the session goes on, and the tasks approved on the card while it runs join by the admit rule", async () => {
+    const w = await world({ level: 1 });
+    const create = await w.add("Create the page", 0.3, { priority: 9 });
+    await w.add("Write the README", 0.1, { priority: 8 });
+    const style = await w.add("Style the page", 0.6, { acceptance_criteria: ["a", "b", "c"] });
+    await w.add("Publish", 0.2, { depends_on: [style.id] });
+    expect(create.status).toBe("ready");
+    w.replies.push(FIX);
+    w.scripts.set("Create the page", { cost: 0.3, report: REPORT });
+    w.scripts.set("Write the README", {
+      cost: 0.3,
+      // While the session runs, the person answers the card with the option the Inbox shows.
+      during: async () => {
+        const card = (await w.store.humanRequest.list({ status: "open" } as never)).find(
+          (r) => (r.change_card as { key?: string }).key === TASK_PROPOSAL_KEY,
+        );
+        if (!card) throw new Error("no suggestion card");
+        const option = requestWords(card, { projectName: "Quote page" }).choices[0]?.label;
+        expect(option).toBe("Make these changes");
+        await w.store.humanRequest.answer(card.id, card.version, option as never, w.seeded.human);
+        await syncTaskProposals({
+          store: w.store,
+          clock: w.clock,
+          humanId: w.seeded.human,
+          check: async () => null,
+          apply: async (calls) => {
+            const r = await w.commands().compose(
+              calls.map((c) => ({ name: c.name, params: c.params })),
+              w.ctxOf({ wordsUsed: "Make these changes" }),
+              { confirmation: { kind: "tap", by: { kind: "human", id: w.seeded.human } } },
+            );
+            return r.status === "done" ? { changeLogId: r.changeLogId } : { refused: r.status };
+          },
+          admit: async (projectId, ids) => {
+            const handle = w.live.forProject(projectId);
+            if (!handle) return false;
+            await handle.admit(ids, "person");
+            return true;
+          },
+        });
+      },
+    });
+    const r = await w.start(3, { autonomy: 1, planApproved: true });
+    expect(w.checkCalls.length).toBe(1);
+    // The approved split's new part and the added step ran in the session that was running.
+    expect(w.ran).toEqual(
+      expect.arrayContaining([
+        "Create the page",
+        "Write the README",
+        "Style the layout",
+        "Style the colours",
+        "Check the links",
+      ]),
+    );
+    const cards = (
+      await w.store.humanRequest.list({ project_id: w.seeded.project } as never)
+    ).filter((x) => (x.change_card as { key?: string }).key === TASK_PROPOSAL_KEY);
+    expect(cards.length).toBe(1);
+    expect(r.status).toBe("completed");
+    // Nothing the agent made alone: the one row is the person's, with one Undo.
+    const rows = await w.store.changeLog.forProject(w.seeded.project);
+    expect(rows.filter((c) => c.source === "session")).toEqual([]);
+    expect(rows.map((c) => [c.source, c.undo_state])).toEqual([["ui", "undoable"]]);
+  });
+});
+
+describe("d1109-selftasks-run, run C: notes kept across a restart (ST-10)", () => {
+  it("notes left after the third check are on the project after a restart, are checked once at the next session's first boundary, and not again", async () => {
+    const w = await world();
+    for (const [i, t] of ["T1", "T2", "T3", "T4"].entries()) {
+      await w.add(t, 0.1, { priority: 9 - i });
+      w.scripts.set(t, { cost: 0.1, report: `Done.\nFor the task list: note ${i + 1}.` });
+    }
+    await w.start(3);
+    expect(w.checkCalls.length).toBe(3);
+    expect(
+      keptNotesOf(await w.store.project.mustGet(w.seeded.project)).map((n) => n.taskTitle),
+    ).toEqual(["T4"]);
+    await w.restart();
+    expect(keptNotesOf(await w.store.project.mustGet(w.seeded.project)).length).toBe(1);
+    await w.add("T5", 0.1);
+    await w.start(3);
+    expect(w.checkCalls.length).toBe(4);
+    expect(keptNotesOf(await w.store.project.mustGet(w.seeded.project))).toEqual([]);
+    await w.add("T6", 0.1);
+    await w.start(3);
+    expect(w.checkCalls.length).toBe(4);
+  });
+});
