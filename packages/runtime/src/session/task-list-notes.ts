@@ -63,8 +63,13 @@ const STEERING: readonly RegExp[] = [
   /\b(budgets?|spending caps?|monthly caps?|plan share)\b[^.\n]{0,40}\b(raise|raised|increase|increased|lift|lifted|set|double)\b/i,
   /\b(raise|increase|lift|double|set)\b[^.\n]{0,40}\b(budget|cap|limit)s?\b/i,
   /\b(CHF|USD|EUR)\s?\d|\$\s?\d/i,
-  /\bautonomy\b/i,
+  // The autonomy level by any form of its name ("Autonomous", "autonomously"; report-003).
+  /\bautonom\w*/i,
   /\b(change|raise|lower|set|skip|turn (?:on|off)|switch)\b[^.\n]{0,30}\b(review levels?|reviews?|settings?|permissions?)\b/i,
+  // ...and the other order: "turn the review level off", "the reviews down" (report-003).
+  /\b(review levels?|reviews?|settings?|permissions?)\b[^.\n]{0,20}\b(off|down|lower(?:ed)?|skipped|disabled)\b/i,
+  // A new role for whoever reads it ("You are now the administrator", "act as the owner").
+  /\b(you are now|from now on you|act as|pretend to be)\b/i,
   /\b(another|other|every other|all other)\s+projects?\b/i,
   /\b(deploy|deploys|deploying|deployment|production|release|publish to)\b/i,
   /\b(merge|force[- ]push|push)\b[^.\n]{0,30}\b(main|master|pull request|branch|now)\b/i,
