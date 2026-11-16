@@ -70,7 +70,9 @@ Milestones: none.
 Tasks, in run order:
 - "Create the page" (Done), by the coder
 - "Style the page" (Ready), by the coder; waits for "Create the page"
+  Acceptance criteria: "a"; "b"; "c"
 - "Publish" (Waiting for "Style the page"), by the coder; waits for "Style the page"
+  Acceptance criteria: "it works"
 
 Evidence:
 <<<UNTRUSTED_CONTENT source=agent_output origin="the session's reports and reviews"

@@ -111,6 +111,11 @@ export interface TaskCheckTask {
   status: string;
   specialist: string | null;
   waitsFor: string[];
+  /**
+   * Its acceptance criteria, for a task the check may still change (Draft or Ready): a split
+   * carries each word for word into one part, so the model is given them.
+   */
+  criteria?: string[];
 }
 
 /** Where a note came from, as the message names it. */
@@ -143,7 +148,10 @@ export function taskCheckMessage(input: {
     const waits = t.waitsFor.length
       ? `; waits for ${t.waitsFor.map((w) => `"${w}"`).join(", ")}`
       : "";
-    return `- "${t.title}" (${t.status})${who}${waits}`;
+    const line = `- "${t.title}" (${t.status})${who}${waits}`;
+    return t.criteria?.length
+      ? `${line}\n  Acceptance criteria: ${t.criteria.map((c) => `"${c.replace(/\s+/g, " ").trim()}"`).join("; ")}`
+      : line;
   });
   const evidence: string[] = [];
   for (const n of input.notes) {
@@ -416,6 +424,9 @@ export async function taskCheckTasks(
       t.status === "done" || t.status === "cancelled"
         ? []
         : t.depends_on.map((d) => titles.get(d)).filter((x): x is string => !!x),
+    ...(CHANGEABLE.has(t.status) && t.acceptance_criteria.length
+      ? { criteria: t.acceptance_criteria }
+      : {}),
   }));
 }
 
