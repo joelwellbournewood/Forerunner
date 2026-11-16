@@ -389,7 +389,10 @@ describe("the intake through the daemon: live replies become plan cards, a bad r
       // d1116-budget-all (BA-6): the card's stored words name no figure; its rows and its total
       // are the daemon's (the Start dialog's figures, each with its review). Before: "(~CHF x)"
       // after the plan and after each first-session task, the person's at "~CHF 0.00".
-      expect(card.why).toContain(`a first-session plan of ${items.length} task(s).`);
+      expect(card.why).toContain(
+        `a first-session plan of ${items.length} ${items.length === 1 ? "task" : "tasks"}.`,
+      );
+      expect(card.why).not.toContain("plan of 1 task(s)");
       expect(card.why).not.toContain("CHF");
       const first = card.steps.find((s) => s.startsWith("First session: ")) ?? "";
       expect(first).not.toContain("CHF");

@@ -290,7 +290,7 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       // d1116-budget-all (BA-6): the card's stored words name no figure; its rows and total are
       // the daemon's, the Start dialog's figures with each task's review. Before: "(~CHF 0.12)"
       // after the plan and "1. Scaffold the repository (~CHF 0.10)".
-      expect(row.why).toContain("a first-session plan of 2 task(s). Approve");
+      expect(row.why).toContain("a first-session plan of 2 tasks. Approve");
       expect(row.why).not.toContain("CHF");
       const firstLine = row.steps.find((st) => st.startsWith("First session:")) ?? "";
       expect(firstLine).toContain("1. Scaffold the repository");

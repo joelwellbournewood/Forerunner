@@ -1473,8 +1473,8 @@ export class IntakeService {
       kind: "approval",
       why: cut(
         planOnly
-          ? `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} new task(s) and a first-session plan of ${n.firstSessionTasks} task(s). Approve to add them to the project; nothing is written until then.`
-          : `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s) and a first-session plan of ${n.firstSessionTasks} task(s). Approve to write the plan and the docs${
+          ? `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} new task(s) and a first-session plan of ${tasksWords(n.firstSessionTasks)}. Approve to add them to the project; nothing is written until then.`
+          : `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s) and a first-session plan of ${tasksWords(n.firstSessionTasks)}. Approve to write the plan and the docs${
               repo ? ` (the docs as a pull request on ${repo.owner}/${repo.name})` : ""
             }; nothing is written until then.`,
         4000,
@@ -2752,4 +2752,9 @@ function withBoundedEstimates(p: IntakeProposal): IntakeProposal {
 
 function estimateOf(p: IntakeProposal): number {
   return p.firstSession.items.reduce((s, i) => s + i.estimateUsdMicro, 0);
+}
+
+/** C4b-left-2 (design section 5, rule 6): "1 task", "3 tasks", never "task(s)". */
+function tasksWords(n: number): string {
+  return `${n} ${n === 1 ? "task" : "tasks"}`;
 }

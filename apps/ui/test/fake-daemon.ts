@@ -2168,8 +2168,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         sessionId: null,
         kind: "approval",
         why: planOnly
-          ? `Intake for "${project.name}": 1 milestone(s), 1 new task(s) and a first-session plan of 1 task(s). Approve to add them to the project; nothing is written until then.`
-          : `Intake for "${project.name}": 1 milestone(s), 1 task(s), 0 doc(s) and a first-session plan of 1 task(s). Approve to write the plan and the docs; nothing is written until then.`,
+          ? `Intake for "${project.name}": 1 milestone(s), 1 new task(s) and a first-session plan of 1 task. Approve to add them to the project; nothing is written until then.`
+          : `Intake for "${project.name}": 1 milestone(s), 1 task(s), 0 doc(s) and a first-session plan of 1 task. Approve to write the plan and the docs; nothing is written until then.`,
         steps: [],
         options: ["Approve and start", "Change the plan", "Reject"],
         blocking: true,
