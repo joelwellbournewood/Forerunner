@@ -369,6 +369,34 @@ describe("d1109-selftasks-run, run C: the agent keeps its task list right during
     );
   });
 
+  it("a split and a step added before the task it splits, in one check: both are made, the step before the first part (the bench walk found the step refused)", async () => {
+    const w = await world();
+    await w.plan();
+    w.scripts.set("Create the page", { cost: 0.3, report: REPORT });
+    w.replies.push(
+      JSON.stringify({
+        changes: [
+          JSON.parse(FIX).changes[0],
+          { ...JSON.parse(FIX).changes[1], before: ["Style the page"] },
+        ],
+        flagged: [],
+        why: "Two fixes from the report.",
+      }),
+    );
+    const r = await w.start(3);
+    const changes = (await w.lines(r)).filter((l) => l.type === "change").map((l) => l.line);
+    expect(changes).toEqual([
+      'Split "Style the page" into "Style the layout" and "Style the colours".',
+      'Added "Check the links" before "Style the layout".',
+    ]);
+    const byTitle = new Map(
+      (await w.store.task.forProject(w.seeded.project)).map((t) => [t.title, t]),
+    );
+    expect(byTitle.get("Style the layout")?.depends_on).toContain(
+      byTitle.get("Check the links")?.id,
+    );
+  });
+
   it("with a work budget that keeps the promise but has no room for the step, both it and Publish wait for the next Start, named once; no session starts, also with the hands-off setting on", async () => {
     const w = await world({ settings: { start_by_itself: true } });
     await w.plan();

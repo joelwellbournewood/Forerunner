@@ -1119,11 +1119,16 @@ export async function applyTaskChanges(
     return { applied: [], refused: [], proposed: true };
   const applied: AppliedChange[] = [];
   const refused: RefusedChange[] = [];
-  for (const fenced of fence.changes) {
+  // Every change's calls are worked out on the tasks as the fence saw them, before any is made:
+  // a split renames its task, and a later change of the same set that names it by its title
+  // (a step before it) found no such task (the bench walk of 2026-11-16).
+  const planned: CommandCallLike[][] = [];
+  for (const fenced of fence.changes) planned.push(await callsOf(store, project, fenced));
+  for (const [i, fenced] of fence.changes.entries()) {
     const before = new Set(
       (await store.task.forProject(project.id, {}, { limit: 10_000 })).map((t) => t.id),
     );
-    const calls = await callsOf(store, project, fenced);
+    const calls = planned[i] as CommandCallLike[];
     const r = await port.run(calls, {
       projectId: project.id,
       sessionId: input.sessionId,
