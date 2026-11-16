@@ -85,6 +85,18 @@
    "severity": "decision",
    "from": "d1109-chat-depth",
    "text": "In a project with a failed task's card listed in full, every chat change (task_create and the rest) waits for a Yes (d1109-chat-guard's read-back after records), even when nothing in the card reads like instructions (bench: 'Add \"Write the FAQ page\" to Quote Page?'). By design; the owner sees it in LC-C13, then decide whether an unflagged card should keep that rule."
+  },
+  {
+   "id": "C3L-15",
+   "severity": "minor, tests",
+   "from": "ci-307-fix review",
+   "text": "The 'once' / 'no second one' / 'nothing more' checks tick right after 'task done' while that session may still be active; a start made by mistake at those ticks is queued (scheduler.pendingFor), not started, and with startServices false nothing drains it until a later tick, so the count right after can miss it (continuation.test.ts about :281-284, :465-472, :585-586; start-by-itself.test.ts about :197-199, :310-311). Strengthen without loosening: await settleSessions(rt) before the 'nothing more' ticks and before the count, and expect(rt.scheduler.pendingFor(rt.agent.id)).toBeUndefined()."
+  },
+  {
+   "id": "C3L-16",
+   "severity": "minor, CI",
+   "from": "ci-307-fix review",
+   "text": "Windows: other composed tests close while a session's tail may still run and then remove the home with plain rmSync, or compose again on the same home (stop-by.test.ts:288-289 after POST /shutdown; capabilities-wiring.test.ts:373-378; budget-pause.test.ts:461 and :1381; oversized-task.test.ts:218 and :451). They passed on Windows CI so far; give each the same settleSessions and removeHomes (packages/runtime/test/helpers.ts, ba9874a) where a session can still run."
   }
  ]
 }
