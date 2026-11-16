@@ -7419,6 +7419,16 @@ Only the person starts a session; everything else prepares work. The pieces:
   runs at your next Start.".
 - **Git host events** are audited `waits_start` and start nothing (`GitHostWatcher` has no start
   port).
+- **Edits before a run** (S-8): at the claim the queue item takes the claimed row's title and
+  its set specialist (`let item` in the claim loop) before `chooseSpecialist` and the start line.
+- **Leftovers of run C step 2** (in this area): a pause's progress counts what it said
+  (`pauseSaid`: its report, "Where I stopped:" and "Left to do:" items) besides the files and the
+  list's length (`madeProgress`, C2-left-3); a no-progress pause reads "Paused again without
+  getting further" with "Its card in the Inbox asks what to do differently." (C2-left-1); the
+  Start check names a task that waits on the person's card when nothing is ready
+  (`StartBlockedFacts.needsYou`, C2-left-2); a no-progress card stays out of every automatic
+  start, after a restart too (C2-left-4, `start-by-itself.test.ts`); run ids come from the
+  store's `monotonicId` (`runIdAt`, C2-left-5).
 
 Tests: `scheduler-monthly.test.ts` (S-1), `session-join.test.ts` (promise and admission),
 `continuation.test.ts` (composed, file database: once at the reset, quiet hours, Cancel, Stop all,

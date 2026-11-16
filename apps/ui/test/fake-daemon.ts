@@ -2915,6 +2915,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ...(credentialWait.startable ? { startable: true } : {}),
         ...(credentialWait.kept ? { kept: true } : {}),
       };
+    // C2-left-2, as the daemon: nothing is ready because a task waits on the person's card.
+    if (view.blocked?.sentence === "Nothing can run: no task is ready.") {
+      const held = state.tasks.find(
+        (t) =>
+          t.projectId === id &&
+          t.status === "needs_human" &&
+          state.requests.some((r) => r.taskId === t.id && r.status === "open"),
+      );
+      if (held)
+        view.blocked = {
+          kind: "nothing_runnable",
+          sentence: `Nothing can run: "${held.title}" needs your answer.`,
+          action: { kind: "link", label: "Open it", to: "/inbox" },
+        };
+    }
     return c.json(view);
   });
   app.get("/projects/:id/runs", (c) => {

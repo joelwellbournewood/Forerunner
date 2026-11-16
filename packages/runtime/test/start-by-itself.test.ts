@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { QueryLike } from "../src/agent/sdk.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { fileBudgetStopCard } from "../src/session/budget-card.ts";
 import { startPendingOf } from "../src/session/prepared-work.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
@@ -192,6 +193,69 @@ describe("d1109-starts-engine S-5: the project's 'When work is ready'", () => {
     await w.rt.scheduler.tick();
     expect(await sessionsOf(w.rt, project.id)).toHaveLength(1);
   }, 60_000);
+
+  // C2-left-4 (run C step 2's leftover): a pause that got no further waits for the person's answer.
+  // With the budget wake now preparing work, it stays out of every automatic start (the hands-off
+  // setting, a raised limit), also after a restart, until the person answers its card.
+  it("a task whose pause got no further stays out of every automatic start, after a restart too, until the person answers its card", async () => {
+    const clock = new SimulatedClock(START);
+    const w1 = await compose({ clock });
+    const { project, task } = await draftTask(w1.rt);
+    await w1.rt.store.project.patch(project.id, { budget_usd_micro: 1_000_000 });
+    await w1.rt.store.task.patch(task.id, { status: "needs_human", reason: "paused" });
+    await turnOn(w1, project.id);
+    const paused = await w1.rt.store.task.mustGet(task.id);
+    await fileBudgetStopCard({
+      store: w1.rt.store,
+      task: paused,
+      session: null,
+      humanId: w1.rt.human.id,
+      agentId: w1.rt.agent.id,
+      runId: null,
+      stop: {
+        capUsdMicro: 1_000_000,
+        spentUsdMicro: 1_000_000,
+        source: "project",
+        specialist: "coder",
+      },
+      handoff: { stopped: "Half.", leftToDo: ["The rest"], stoppedBy: "budget" },
+      now: clock.nowIso(),
+      noProgress: true,
+    });
+    // The person raises the project's budget in Settings: the limit has room now.
+    const raised = await w1.call<{ status: string; pendingId?: string }>(
+      "POST",
+      "/commands/execute",
+      {
+        commands: [
+          { name: "budget.set", params: { scope: "project", amountChf: 5, project: project.id } },
+        ],
+        source: "ui",
+        confirm: "tap",
+      },
+    );
+    expect(raised.json.status, JSON.stringify(raised.json)).toBe("done");
+    await w1.rt.scheduler.tick();
+    await w1.rt.scheduler.tick();
+    expect(await sessionsOf(w1.rt, project.id)).toEqual([]);
+    expect((await w1.rt.store.task.mustGet(task.id)).status).toBe("needs_human");
+    const cards = await w1.rt.store.humanRequest.list({
+      task_id: task.id,
+      status: "open",
+    } as never);
+    expect(cards.map((r) => (r.change_card as { question?: unknown }).question)).toEqual([true]);
+    await w1.rt.close();
+    open.splice(open.indexOf(w1.rt), 1);
+    const w2 = await compose({ home: w1.home, clock });
+    clock.set(Date.parse("2026-10-31T12:00:00Z"));
+    await w2.rt.scheduler.tick();
+    await w2.rt.scheduler.tick();
+    expect(await sessionsOf(w2.rt, project.id)).toEqual([]);
+    expect((await w2.rt.store.task.mustGet(task.id)).status).toBe("needs_human");
+    expect(
+      await w2.rt.store.humanRequest.list({ task_id: task.id, status: "open" } as never),
+    ).toHaveLength(1);
+  }, 90_000);
 
   it("on, in quiet hours: the start is held and kept on the project across a restart, then starts once after them", async () => {
     const clock = new SimulatedClock(START);

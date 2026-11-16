@@ -360,8 +360,14 @@ export function StartSessionDialog({
   // sentence names it with its one link (startBlocked); nothing is said twice (wave 2 handoff:
   // three statements of one blocker, one pointing to the Tasks tab).
   const planBlocks = intake === "pending" || intake === "drafting" || intake === "waiting";
+  // C2-left-2: a task that waits on the person's card is named with Open it (the Inbox): no
+  // "Give your agent work first" beside it.
   const noReadyTask =
-    data !== null && data.ready === 0 && blocked?.kind === "nothing_runnable" && !planBlocks;
+    data !== null &&
+    data.ready === 0 &&
+    blocked?.kind === "nothing_runnable" &&
+    !planBlocks &&
+    blocked.action?.to !== "/inbox";
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

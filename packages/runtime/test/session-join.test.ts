@@ -342,6 +342,31 @@ describe("d1109-starts-engine, run C: a running session keeps its promise and ta
     expect(ran).toEqual(["Task A", "Task C"]);
   });
 
+  // S-8 (ADR 0118): edits apply before a task starts. Before, the plan's queue item kept the title
+  // and specialist it was planned with, so a task renamed or handed to another specialist while
+  // it waited started under its old name, by the old specialist.
+  it("S-8: an edit made while a task waited applies at its claim: it starts under its new title, by its new specialist", async () => {
+    await add("Write the intro", 0.1);
+    const outro = await add("Write the outro", 0.1);
+    scripts.set("Write the intro", {
+      cost: 0.1,
+      during: async () => {
+        await store.task.patch(outro.id, { title: "Write the closing", specialist: "writer" });
+      },
+    });
+    const r = await start();
+    expect(
+      (await events(r, "task.started")).map((p) => [
+        (p as { title?: unknown }).title,
+        (p as { specialist?: unknown }).specialist,
+      ]),
+    ).toEqual([
+      ["Write the intro", "coder"],
+      ["Write the closing", "writer"],
+    ]);
+    expect(ran).toEqual(["Write the intro", "Write the closing"]);
+  });
+
   it("S-7: a task readmitted after a wait inside the session runs in the same session", async () => {
     await add("Task A", 0.5, { priority: 9 });
     const b = await add("Task B", 0.5, { priority: 8 });

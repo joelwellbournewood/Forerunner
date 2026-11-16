@@ -81,10 +81,13 @@ schedules wrote their fired key before their start left the line; a start carrie
    reads say that answers and task changes start nothing (asserted word for word).
 8. **CI results and pull request comments** reach the agent's inbox and are audited as
    `waits_start`; they start nothing, with the setting on or off.
-9. **Edits apply before a task starts**: a prepared task's wording, criteria and notes are read
-   at its claim (the claim answers the row as it is then), so an edit made while it waited is
-   what its brief says. Reading the plan's specialist and estimate again at the claim (S-8) is
-   not done yet: the area's report names it.
+9. **Edits apply before a task starts, never during its run** (S-8): at the claim the runner
+   takes the claimed row's title and the specialist the person set over the plan's, before the
+   specialist is chosen and the start line is said; its wording, criteria and notes are read
+   there too. An edit of a running task is refused ('"X" is running now: it is not changed
+   mid-run; your note goes into its next attempt.') and the note it carries is kept. The
+   estimate the session promised stays as planned (re-pricing it at the claim is left: the
+   area's report names it).
 
 ## Consequences
 

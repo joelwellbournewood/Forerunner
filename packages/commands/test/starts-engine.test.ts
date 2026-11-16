@@ -60,6 +60,36 @@ describe("d1109-starts-engine S-5: 'When work is ready' (start_by_itself)", () =
   });
 });
 
+describe("d1109-starts-engine S-8: edits apply before a task starts, never during its run", () => {
+  // Before: the store refused the edit of a running task and the note it carried was dropped.
+  it("an edit of a running task is refused in one sentence, and the note it carries goes into its next attempt", async () => {
+    const w = await world();
+    const task = await w.store.task.insert({
+      project_id: w.game.id,
+      title: "Build the level editor",
+      outcome: "an editor",
+      acceptance_criteria: ["works"],
+      risk_tier: 0,
+      status: "in_progress",
+      priority: 5,
+      reason: "running",
+    });
+    const r = await w.executor.execute({
+      name: "task.update",
+      params: { task: task.id, title: "Build the map editor", note: "Use the tile grid." },
+      ctx: w.ctx({ source: "ui" }),
+    });
+    expect(r.status).toBe("refused");
+    expect(r.status === "refused" ? r.reason : "").toBe(
+      '"Build the level editor" is running now: it is not changed mid-run; your note goes into its next attempt.',
+    );
+    expect((await w.store.task.mustGet(task.id)).title).toBe("Build the level editor");
+    expect((await w.store.queue.pending(w.game.id)).map((q) => q.text)).toEqual([
+      'About "Build the level editor": Use the tile grid.',
+    ]);
+  });
+});
+
 describe("d1109-starts-engine S-11: a start in chat is the person's, read back", () => {
   it("'run it now' and the German are a start; a task change is not", async () => {
     const parser = new IntentParser(defaultRegistry());

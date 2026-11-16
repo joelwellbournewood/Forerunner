@@ -8,16 +8,15 @@ import {
   usdToChfMicro,
 } from "@forerunner/billing";
 import { NOT_CAUSED_BY_TASK, saidByName } from "@forerunner/critic";
+import { type Clock, errorMessage, ForerunnerError, join, log, redact } from "@forerunner/platform";
 import {
-  type Clock,
-  errorMessage,
-  ForerunnerError,
-  join,
-  log,
-  newId,
-  redact,
-} from "@forerunner/platform";
-import type { JsonObject, JsonValue, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
+  type JsonObject,
+  type JsonValue,
+  monotonicId,
+  type ProjectRow,
+  type StateStore,
+  type TaskRow,
+} from "@forerunner/state";
 import { z } from "zod";
 import { withClaudeCodeTools } from "../agent/cc-tools.ts";
 import {
@@ -732,6 +731,16 @@ interface RunBillingChoice {
   billing: RunBilling | undefined;
 }
 
+/**
+ * C2-left-5 (run C3): a run's id, from the store's monotonic ids, so two runs of one task made in
+ * the same millisecond (a simulated clock that does not move) sort in the order they were made by
+ * `(created_at, id)`, as every row the store makes does. Before, the platform's random `newId`
+ * let the task's context read the older run as "the last run".
+ */
+export function runIdAt(nowMs: number): string {
+  return monotonicId(nowMs);
+}
+
 export class LoopTaskExecutor implements TaskExecutor {
   private readonly logger = log("executor");
 
@@ -1050,7 +1059,7 @@ export class LoopTaskExecutor implements TaskExecutor {
     // at sonnet therefore never escalates a retry to opus, whichever composition built this.
     const tier = this.tierOf(task, settings.tier, project);
     const worktree = await this.deps.worktreeFor?.(task);
-    const runId = newId(clock.now());
+    const runId = runIdAt(clock.now());
 
     // Billing (ADR 0044): the source for this task, then the driver that goes with it. The
     // specialist's tools are re-read in that driver's form (the registry's `cc:` names as

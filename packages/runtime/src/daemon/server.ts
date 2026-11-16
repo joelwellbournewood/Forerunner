@@ -1449,6 +1449,25 @@ export function createDaemonApp(
           ? intake.state
           : null,
       planWait: intake?.wait ?? null,
+      // C2-left-2: with nothing ready, a task that waits on the person's open card.
+      needsYou:
+        r.ready === 0
+          ? await (async () => {
+              const held = await rt.store.task.forProject(
+                projectId,
+                { status: ["needs_human"] },
+                { limit: 50 },
+              );
+              for (const t of held) {
+                const open = await rt.store.humanRequest.list(
+                  { task_id: t.id, status: "open" } as never,
+                  { limit: 1 },
+                );
+                if (open.length > 0) return t.title;
+              }
+              return null;
+            })().catch(() => null)
+          : null,
       // R-startcred: only asked while tasks would run (the pick is read-only); a task larger
       // than the work budget runs too (D4).
       credentialWait:

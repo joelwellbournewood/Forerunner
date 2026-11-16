@@ -381,6 +381,8 @@ export function budgetPauseDetail(source: unknown): string {
  */
 export function budgetPauseLabelOf(card: unknown): string {
   const c = (card ?? {}) as Record<string, unknown>;
+  // C2-left-1 (run C3): a pause that got no further reads as its card does, wherever it stopped.
+  if (c.no_progress === true) return "Paused again without getting further";
   if (c.stopped_by === "wrap_up" && c.review_waits !== true)
     switch (c.source) {
       case "session":
@@ -399,8 +401,7 @@ export function budgetPauseLabelOf(card: unknown): string {
 /** The line under a paused task's label (`budgetPauseDetail`), from its whole card (OP-4). */
 export function budgetPauseDetailOf(card: unknown): string {
   const c = (card ?? {}) as Record<string, unknown>;
-  if (c.no_progress === true)
-    return "It paused again without getting further: answer its card in the Inbox.";
+  if (c.no_progress === true) return "Its card in the Inbox asks what to do differently.";
   return budgetPauseDetail(c.source);
 }
 

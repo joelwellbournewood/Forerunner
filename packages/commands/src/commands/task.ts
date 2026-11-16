@@ -1497,6 +1497,17 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
         details: { taskId: task.id, reason: "unchanged" },
       });
     }
+    // S-8 (ADR 0118): edits apply before a task starts and never during its run (a change mid-run
+    // would mix two briefs): the fields stay as they are, and the note it carries is kept for the
+    // task's next attempt. Before, the refusal dropped the note.
+    if (fields.length > 0 && RUNNING.includes(task.status)) {
+      const kept = await queueNote(ctx, task, params.note);
+      throw new ForerunnerError(
+        "validation",
+        `${quote(task.title)} is running now: it is not changed mid-run${kept ? "; your note goes into its next attempt" : ""}.`,
+        { details: { taskId: task.id, reason: "running", ...(kept ? { noteId: kept } : {}) } },
+      );
+    }
     const words = await editWords(ctx, patch);
     const updated = fields.length
       ? await ctx.store.task.edit(

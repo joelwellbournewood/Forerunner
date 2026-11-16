@@ -83,6 +83,7 @@ import {
   keptOf,
   limitWords,
   madeProgress,
+  pauseSaid,
   REVIEW_PAUSED_EVENT,
   type RunHandoff,
   reviewPausedWords,
@@ -2179,7 +2180,7 @@ export class SessionRunner {
             if (liveHandle) liveHandle.closing = true;
             break;
           }
-          const item = queue.shift() as PlanItem;
+          let item = queue.shift() as PlanItem;
           if (budget.noNewWork) {
             skipped.push(item.taskId);
             continue;
@@ -2289,6 +2290,16 @@ export class SessionRunner {
           heldClaims.add(item.taskId);
           inFlight = { taskId: item.taskId, spentAtStart: budget.snapshot().sessionSpentUsdMicro };
           let task = claim.task;
+          // S-8 (ADR 0118): edits apply before a task starts: the claimed row's title and the
+          // specialist the person set replace the plan's before the specialist is chosen and the
+          // start line is said (the estimate the plan was promised with stays).
+          item = {
+            ...item,
+            title: task.title,
+            ...(task.specialist && task.specialist !== item.specialist
+              ? { specialist: task.specialist }
+              : {}),
+          };
           if (task.status === "claimed")
             task = await store.task.transition(
               task.id,
@@ -4156,10 +4167,20 @@ export class SessionRunner {
         .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
       const last = earlier.find((r) => keptOf(r.artifacts));
       const lastKept = last ? keptOf(last.artifacts) : null;
+      // C2-left-3: what the run said (its report and handoff) counts too.
+      const thisRun = result.runId ? await store.run.get(result.runId) : undefined;
       progress = madeProgress(
-        { hash, leftToDo: result.handoff?.leftToDo.length ?? 0 },
+        {
+          hash,
+          leftToDo: result.handoff?.leftToDo.length ?? 0,
+          said: pauseSaid(thisRun?.artifacts, result.handoff ?? null),
+        },
         last && lastKept
-          ? { hash: lastKept.hash, leftToDo: handoffOf(last.artifacts)?.leftToDo.length ?? 0 }
+          ? {
+              hash: lastKept.hash,
+              leftToDo: handoffOf(last.artifacts)?.leftToDo.length ?? 0,
+              said: pauseSaid(last.artifacts, handoffOf(last.artifacts)),
+            }
           : null,
       );
       if (this.deps.keptWorkCheck && isCodeChange(files)) {

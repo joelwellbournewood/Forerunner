@@ -18825,6 +18825,48 @@ describe("d1109-starts-engine, run C", () => {
       60_000,
     );
 
+  // C2-left-2 (run C step 2's leftover): with only a pause that got no further waiting, the Start
+  // dialog said "Nothing can run: no task is ready." and "Give your agent work first" instead of
+  // naming the card that waits on the person (design §3.6: 'Nothing can run: "Step 3" needs your
+  // answer [Open it]').
+  it("C2-left-2: with only a paused task whose card asks, the start check names it and opens the Inbox", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Shop", goal: "A shop" });
+      const shop = await readyTask(rt, client, project.id, "Build the shop", 0.05);
+      await rt.store.task.patch(shop.id, { status: "needs_human", reason: "paused" });
+      await fileBudgetStopCard({
+        store: rt.store,
+        task: await rt.store.task.mustGet(shop.id),
+        session: null,
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        runId: null,
+        stop: {
+          capUsdMicro: 500_000,
+          spentUsdMicro: 500_000,
+          source: "project",
+          specialist: "coder",
+        },
+        handoff: { stopped: "Half.", leftToDo: ["The rest"], stoppedBy: "budget" },
+        now: rt.clock.nowIso(),
+        noProgress: true,
+      });
+      const check = await client.startCheck(project.id);
+      expect(check.blocked).toEqual({
+        kind: "nothing_runnable",
+        sentence: 'Nothing can run: "Build the shop" needs your answer.',
+        action: { kind: "link", label: "Open it", to: "/inbox" },
+      });
+      // Its row says what its card says (C2-left-1).
+      const row = (await client.tasks(project.id)).find((t) => t.id === shop.id);
+      expect(row?.display?.label).toBe("Paused again without getting further");
+      expect(row?.display?.detail).toBe("Its card in the Inbox asks what to do differently.");
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
   it("S-6: GET /projects/:id/start-check promises what the work budget holds: a follower it does not hold is in laterBeyond, not later", async () => {
     const { rt, client } = await composeWithRolePlayer({});
     try {

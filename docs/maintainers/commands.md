@@ -712,6 +712,10 @@ among them.
   Never in your quiet hours or while sessions are stopped").
 - **Ports** (`CommandPorts`): `prepareWork(req)` (the line, or null), `previewWork(req)` and
   `startWaits(projectId)`, all wired by compose.
+- **`task.update` of a running task** (S-8) is refused before the store is asked ('"X" is
+  running now: it is not changed mid-run; your note goes into its next attempt.') and the note
+  it carries is queued for the task (before: the store's refusal dropped it); a note alone is
+  kept as before.
 
 ## How to change it
 
