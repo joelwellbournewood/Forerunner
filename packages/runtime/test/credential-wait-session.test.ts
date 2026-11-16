@@ -293,7 +293,7 @@ describe("under 'Wait' only the tasks whose first choice rests wait (U-078)", ()
       .filter((e) => e.audience !== "detail")
       .map((e) => e.text);
     expect(lines.filter((l) => /waits until 15:00/.test(l))).toEqual([
-      'Your Claude subscription reached its usage limit; "Write the changelog" waits until 15:00 (your subscription\'s limit) and starts by itself.',
+      'Your Claude subscription reached its usage limit; "Write the changelog" waits until 15:00 (your subscription\'s limit); then your session goes on.',
     ]);
     expect(lines.some((l) => l.includes('started "Write the release notes"'))).toBe(false);
     expect(lines.some((l) => l.includes('started "Compare hosting offers"'))).toBe(true);
@@ -346,7 +346,7 @@ describe("a review that meets a credential's usage limit waits for it (U-078)", 
     expect(critic.map((r) => r.outcome)).toEqual(["usage_limit"]);
     // The session ends on the wait's one sentence (15:40 UTC is 16:40 in Zurich).
     expect(result.summary.split("\n")[0]).toBe(
-      "Waits until 16:40 (your API key's limit) and starts by itself.",
+      "Waits until 16:40 (your API key's limit); then your session goes on.",
     );
     const lines = (
       await json<{ text: string; audience?: string }[]>(
@@ -355,7 +355,7 @@ describe("a review that meets a credential's usage limit waits for it (U-078)", 
     ).filter((e) => e.audience !== "detail");
     const said = lines.map((e) => e.text);
     expect(said).toContain(
-      'Your API key reached its usage limit; "Write note A" waits until 16:40 (your API key\'s limit) and starts by itself.',
+      'Your API key reached its usage limit; "Write note A" waits until 16:40 (your API key\'s limit); then your session goes on.',
     );
     expect(said.join(" | ")).not.toMatch(/did not run|could not be reviewed|sent .* back|failed/);
     // No card: a limit is nothing the person must do (before: the review-failed card).
@@ -364,7 +364,7 @@ describe("a review that meets a credential's usage limit waits for it (U-078)", 
     // The Tasks tab says what it waits for.
     const rows = await json<TaskView[]>(first.req(`/projects/${project.id}/tasks`));
     expect(rows.map((t) => [t.display?.label, t.display?.detail])).toEqual([
-      ["Waits until 16:40, your API key's limit", "It starts by itself then."],
+      ["Waits until 16:40, your API key's limit", "Then your session goes on."],
     ]);
 
     // Quit and start again: the wait is kept. Before the reset nothing runs.

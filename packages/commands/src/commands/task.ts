@@ -38,7 +38,7 @@ import {
 } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard, formatChfShort } from "../change-card.ts";
-import type { CommandContext, CommandDef } from "../types.ts";
+import type { CommandContext, CommandDef, CommandOutcome } from "../types.ts";
 import { asObject, authorOf, quote, resolveProject } from "./shared.ts";
 
 /*
@@ -535,11 +535,11 @@ export function moveAsk(
     return RUNNING.includes(from)
       ? `Stop ${t}? Its run stops now and it is paused; the session goes on with the rest.`
       : `Pause ${t}? No session runs it until you press Resume.`;
-  if (to === "ready" && from === "draft") return `Make ${t} ready? A session will pick it up.`;
+  if (to === "ready" && from === "draft") return `Make ${t} ready?`;
   if (to === "ready" && from === "failed") return `Try ${t} again? It is ready again.`;
   if (to === "ready" && from === "cancelled") return `Reopen ${t}? It is ready again.`;
-  if (to === "ready" && from === "done") return `Redo ${t}? The next session works on it again.`;
-  if (to === "ready") return `Resume ${t}? It is ready again; the next session can run it.`;
+  if (to === "ready" && from === "done") return `Redo ${t}?`;
+  if (to === "ready") return `Resume ${t}? It is ready again.`;
   return `Mark ${t} ${statusWords(to)}?`;
 }
 
@@ -578,11 +578,11 @@ export function moveSentence(
     s = RUNNING.includes(from)
       ? `Stopped ${t}: its run ended and it is paused until you press Resume.`
       : `Paused ${t}: no session runs it until you press Resume.`;
-  else if (to === "ready" && from === "draft") s = `${t} is ready: a session will pick it up.`;
+  else if (to === "ready" && from === "draft") s = `${t} is ready.`;
   else if (to === "ready" && from === "failed") s = `${t} is ready to try again.`;
   else if (to === "ready" && from === "cancelled") s = `Reopened ${t}: it is ready again.`;
   else if (to === "ready" && (from === "done" || extra.redo))
-    s = `Reopened ${t} to redo it${extra.fromMain ? " from main" : ""}: the next session works on it again.`;
+    s = `Reopened ${t} to redo it${extra.fromMain ? " from main" : ""}.`;
   else if (to === "ready") s = `${t} is ready again.`;
   else s = `${t} is ${statusWords(to)} now.`;
   if (extra.withdrawn)
@@ -885,7 +885,7 @@ async function resolveDependencies(
 export const taskCreate: CommandDef<TaskCreateParams> = {
   name: "task.create",
   description:
-    "Add a task to a project, ready for the next session unless a draft is asked for: title, outcome, acceptance criteria, priority (low, medium or high; medium when not said), the tasks it waits for (titles), its review level (1 light review, the default; 2 full review: needs Docker; 3 full review and the person's sign-off) and who does it (a specialist, or 'person' for a question only the person can answer).",
+    "Add a task to a project, ready unless a draft is asked for (it joins the running session if it fits, else waits for the person's next Start): title, outcome, acceptance criteria, priority (low, medium or high; medium when not said), the tasks it waits for (titles), its review level (1 light review, the default; 2 full review: needs Docker; 3 full review and the person's sign-off) and who does it (a specialist, or 'person' for a question only the person can answer).",
   params: createParams,
   risk: "low",
   scope: "project",
@@ -939,12 +939,14 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
           : `created by ${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`,
       ...authorOf(ctx),
     });
-    return {
+    const created: CommandOutcome = {
       before: { task_id: null, project_id: project.id },
       after: { task_id: task.id, project_id: project.id, status: task.status, title: task.title },
       sentence: createSentence(params, project.name),
       projectId: project.id,
     };
+    // S-9: a task made ready (Make this a task too, ADR 0093) is prepared and its line says so.
+    return task.status === "ready" ? withNextLine(ctx, created, task) : created;
   },
   // U-061: the undo cancels the task, which only works while it can still be cancelled.
   async undoBlocked(params, _before, after, ctx) {
@@ -1012,7 +1014,7 @@ export function transitionUndoable(from: TaskStatus, to: TaskStatus): boolean {
 export const taskTransition: CommandDef<TaskTransitionParams> = {
   name: "task.transition",
   description:
-    "Move a task along its workflow: ready (make ready, try again), needs_human (pause), cancelled; agents also use in_progress, in_review, done and failed. Prefer task.pause, task.resume and task.reopen for those moves.",
+    "Move a task along its workflow: ready (make ready, try again; it joins the running session if it fits, else waits for the person's next Start), needs_human (pause), cancelled; agents also use in_progress, in_review, done and failed. Prefer task.pause, task.resume and task.reopen for those moves.",
   params: transitionParams,
   risk: (params) => (params.to === "cancelled" || params.to === "done" ? "medium" : "low"),
   maxRisk: "medium",
@@ -1057,7 +1059,7 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
     const task = await findTask(params, ctx);
     // The task may have moved on between the read-back and the yes (C-38).
     assertMove(task, params.to);
-    return personMove(ctx, task, params.to, {
+    const moved = await personMove(ctx, task, params.to, {
       reason:
         params.reason ||
         params.note?.trim() ||
@@ -1066,6 +1068,7 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
           : `${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`),
       note: params.note,
     });
+    return params.to === "ready" ? withNextLine(ctx, moved, task) : moved;
   },
   undoBlocked: (_params, before, after, ctx) => moveUndoBlocked(before, after, ctx),
   undoSentence: (_params, before, after) => undoMoveSentence(before, after),
@@ -1117,7 +1120,7 @@ export type TaskResumeParams = z.infer<typeof resumeParams>;
 export const taskResume: CommandDef<TaskResumeParams> = {
   name: "task.resume",
   description:
-    "Resume a paused task, or let a task that waits for the person's answers go ahead without them: it is ready again and the next session can run it. Its open Inbox cards are withdrawn.",
+    "Resume a paused task, or let a task that waits for the person's answers go ahead without them: it is ready again and joins the running session if it fits, else waits for the person's next Start. Its open Inbox cards are withdrawn.",
   params: resumeParams,
   risk: "low",
   askFromChat: true,
@@ -1138,13 +1141,14 @@ export const taskResume: CommandDef<TaskResumeParams> = {
     const task = await findTask(params, ctx);
     assertFrom(task, ["needs_human"], "paused or waiting for your answers");
     assertSomeoneElse(task, params.without_answers);
-    return personMove(ctx, task, "ready", {
+    const moved = await personMove(ctx, task, "ready", {
       reason: params.without_answers
         ? "Go ahead without the answers: asked by you"
         : "Resumed by you",
       note: params.note,
       withoutAnswers: params.without_answers,
     });
+    return withNextLine(ctx, moved, task);
   },
   undoBlocked: (_params, before, after, ctx) => moveUndoBlocked(before, after, ctx),
   undoSentence: (_params, before, after) => undoMoveSentence(before, after),
@@ -1176,7 +1180,7 @@ export type TaskReopenParams = z.infer<typeof reopenParams>;
 export const taskReopen: CommandDef<TaskReopenParams> = {
   name: "task.reopen",
   description:
-    "Reopen a cancelled task (Reopen), or a done task to redo it (Redo): it is ready again and the next session runs it; the person's note says what to fix and goes into its brief.",
+    "Reopen a cancelled task (Reopen), or a done task to redo it (Redo): it is ready again and joins the running session if it fits, else waits for the person's next Start; the person's note says what to fix and goes into its brief.",
   params: reopenParams,
   risk: "low",
   askFromChat: true,
@@ -1217,7 +1221,7 @@ export const taskReopen: CommandDef<TaskReopenParams> = {
       if (back === "restored") moved.sentence += " Its work so far is back.";
       if (back === "conflict") moved.sentence += ` ${UNDO_CONFLICT_WORDS}`;
     }
-    return moved;
+    return withNextLine(ctx, moved, task);
   },
   undoBlocked: (_params, before, after, ctx) => moveUndoBlocked(before, after, ctx),
   undoSentence: (_params, before, after) => {
@@ -1317,8 +1321,54 @@ async function moveCard(
     projectId: project.id,
     projectName: project.name,
     usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-    ask: moveAsk(task, task.status, to),
+    ask: await withPreview(ctx, moveAsk(task, task.status, to), task, to),
   });
+}
+
+/**
+ * d1109-starts-engine (S-9, ADR 0118 amending 0102 point 2): a move that makes a task ready
+ * prepares it (it joins the project's running session if it fits, else it waits for the
+ * person's next Start) and its line says so, after the move's own sentence.
+ */
+async function withNextLine(
+  ctx: CommandContext,
+  outcome: CommandOutcome,
+  task: Pick<TaskRow, "id" | "project_id">,
+): Promise<CommandOutcome> {
+  if (!ctx.ports.prepareWork) return outcome;
+  const line = await ctx.ports
+    .prepareWork({
+      projectId: task.project_id,
+      taskIds: [task.id],
+      by: ctx.actor.kind === "agent" ? "agent" : "person",
+    })
+    .catch(() => null);
+  return line ? { ...outcome, sentence: `${outcome.sentence} ${afterMove(line)}` } : outcome;
+}
+
+/**
+ * The prepared line after a move's own sentence, which already says the task is ready: "It runs
+ * at your next Start.", not "... is ready again. Ready: it runs at your next Start.".
+ */
+function afterMove(line: string): string {
+  return line.replace(/^Ready: (\S)/, (_m, c: string) => c.toUpperCase());
+}
+
+/** The read-back of such a move with what would happen next, read-only (S-9). */
+async function withPreview(
+  ctx: CommandContext,
+  ask: string,
+  task: Pick<TaskRow, "project_id">,
+  to: TaskStatus,
+): Promise<string> {
+  if (to !== "ready" || !ctx.ports.previewWork) return ask;
+  const line = await ctx.ports
+    .previewWork({
+      projectId: task.project_id,
+      by: ctx.actor.kind === "agent" ? "agent" : "person",
+    })
+    .catch(() => null);
+  return line ? `${ask} ${afterMove(line)}` : ask;
 }
 
 // --- task.update -----------------------------------------------------------------------------
@@ -1446,6 +1496,17 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
       throw new ForerunnerError("validation", `Nothing to change on ${quote(task.title)}.`, {
         details: { taskId: task.id, reason: "unchanged" },
       });
+    }
+    // S-8 (ADR 0118): edits apply before a task starts and never during its run (a change mid-run
+    // would mix two briefs): the fields stay as they are, and the note it carries is kept for the
+    // task's next attempt. Before, the refusal dropped the note.
+    if (fields.length > 0 && RUNNING.includes(task.status)) {
+      const kept = await queueNote(ctx, task, params.note);
+      throw new ForerunnerError(
+        "validation",
+        `${quote(task.title)} is running now: it is not changed mid-run${kept ? "; your note goes into its next attempt" : ""}.`,
+        { details: { taskId: task.id, reason: "running", ...(kept ? { noteId: kept } : {}) } },
+      );
     }
     const words = await editWords(ctx, patch);
     const updated = fields.length

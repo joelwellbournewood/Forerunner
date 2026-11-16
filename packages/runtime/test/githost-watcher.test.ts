@@ -28,15 +28,17 @@ import {
 import { Scheduler, type StartRequest } from "../src/session/triggers.ts";
 
 /**
- * CI results and PR comments start sessions (spec E.1; ADR 0075). The watcher runs against the
+ * CI results and PR comments reach the agent's inbox and wait for the person's next Start (spec
+ * E.1; ADR 0075 as amended by ADR 0118, d1109-starts-engine S-4: they start no session). The
+ * watcher runs against the
  * testenv fake git host through the real GitHub adapter, on a SimulatedClock, over an
  * in-memory store holding the agent's task with its PR. The agent's token is `someone`'s;
  * `reviewer` is a human on the repository. Covers: the baseline poll fires nothing; a failed
  * check fires `ci` once with the check's name and conclusion; a green head fires `ci` once; a
  * comment fires `pr_comment` once and the next session's brief quotes it as data; the agent's
  * own comment does not fire; a review fires; a restart keeps the cursor (file store); quiet
- * hours defer; an instruction in a comment is flagged, reported and never followed; the
- * one-active-session rule queues and a refused start is audited, not thrown; a closed PR is
+ * hours defer; an instruction in a comment is flagged, reported and never followed; no firing
+ * reaches the scheduler, idle or busy (S-4); a closed PR is
  * read once; the poll runs on the clock. And: the human's comment under the token's own login
  * (a human's PAT) fires while the agent's marked one does not; a PR the baseline could not
  * read never fires its history; a comment cannot leave its quoted excerpt; a review line
@@ -59,6 +61,7 @@ let human: HumanRow;
 let agent: AgentRow;
 let project: ProjectRow;
 let task: TaskRow;
+/** What the watcher's polls fired (each waits for the person's Start; none starts a session). */
 let started: StartRequest[];
 let flagged: { report: InjectionReport; origin: string }[];
 
@@ -187,22 +190,32 @@ afterEach(async () => {
 });
 
 function watcher(over: Partial<GitHostWatcherDeps> = {}): GitHostWatcher {
-  return new GitHostWatcher({
+  const w = new GitHostWatcher({
     store,
     clock,
     host: agentGh,
     agentIds: [agent.id],
     humanId: human.id,
-    start: async (req) => {
-      started.push(req);
-      return { id: `start-${started.length}`, result: "started" };
-    },
     onInjection: (report, origin) => {
       flagged.push({ report, origin });
     },
     pollMs: 30_000,
     ...over,
   });
+  // Every poll (asked for or on the clock) records what it fired.
+  const poll = w.pollOnce.bind(w);
+  w.pollOnce = async () => {
+    const r = await poll();
+    for (const f of r.fired)
+      started.push({
+        agentId: f.agentId,
+        ...(f.projectId ? { projectId: f.projectId } : {}),
+        trigger: f.trigger,
+        reason: f.reason,
+      });
+    return r;
+  };
+  return w;
 }
 
 /** A watcher whose baseline poll already ran (nothing on the PR yet). */
@@ -266,7 +279,7 @@ describe("GitHostWatcher against the fake git host", () => {
         reason: `${OWNER}/app#${prNumber} check "unit-tests" failure`,
       },
     ]);
-    expect(r.fired[0]).toMatchObject({ outcome: "started", keys: [`check:${pending}`] });
+    expect(r.fired[0]).toMatchObject({ outcome: "waits_start", keys: [`check:${pending}`] });
     // The next poll and the one after: the same check run never fires again.
     expect((await w.pollOnce()).fired).toEqual([]);
     expect((await w.pollOnce()).fired).toEqual([]);
@@ -274,9 +287,9 @@ describe("GitHostWatcher against the fake git host", () => {
     const rows = await audits();
     expect(rows).toHaveLength(1);
     expect(rows[0]?.input_summary).toContain("ci: someone/app");
-    expect(JSON.parse(rows[0]?.result_summary ?? "{}")).toMatchObject({
-      outcome: "started",
-      startId: "start-1",
+    expect(JSON.parse(rows[0]?.result_summary ?? "{}")).toEqual({
+      outcome: "waits_start",
+      keys: [`check:${pending}`],
       flagged: false,
     });
     const msgs = await inbox();
@@ -652,7 +665,9 @@ describe("GitHostWatcher against the fake git host", () => {
     expect(r.fired).toHaveLength(1);
   });
 
-  it("one active session: a second trigger queues behind the running one, a refusal is audited, not thrown", async () => {
+  it("S-4: no firing reaches the scheduler, idle or with a session running; each waits for the person's Start", async () => {
+    // d1109-starts-engine S-4 (ADR 0118 amending 0075). Before run C a CI result started a
+    // session through the scheduler (outcome "started") and a second one queued behind it.
     let release: () => void = () => undefined;
     const scheduler = new Scheduler({
       clock,
@@ -661,29 +676,25 @@ describe("GitHostWatcher against the fake git host", () => {
           release = resolve;
         }),
     });
-    const w = await primed({ start: (req) => scheduler.requestStart(req) });
+    const w = await primed();
     await check("build", "failure");
-    expect((await w.pollOnce()).fired[0]?.outcome).toBe("started");
+    expect((await w.pollOnce()).fired.map((f) => f.outcome)).toEqual(["waits_start"]);
+    expect(scheduler.log).toEqual([]);
+    // The person starts a session; a comment that lands while it runs neither queues nor joins.
+    await scheduler.requestStart({ agentId: agent.id, trigger: "manual", reason: "Start" });
     expect(scheduler.isActive(agent.id)).toBe(true);
     await reviewerGh.commentOnPullRequest(REPO, prNumber, "while you were busy");
-    const queued = await w.pollOnce();
-    expect(queued.fired[0]).toMatchObject({ trigger: "pr_comment", outcome: "queued" });
-    expect(scheduler.pendingFor(agent.id)?.trigger).toBe("pr_comment");
+    const busy = await w.pollOnce();
+    expect(busy.fired[0]).toMatchObject({ trigger: "pr_comment", outcome: "waits_start" });
+    expect(scheduler.pendingFor(agent.id)).toBeUndefined();
+    expect(scheduler.log.map((e) => e.req.trigger)).toEqual(["manual"]);
     release();
-
-    // A start that refuses (claim conflict) is logged and audited; the poll does not throw.
-    const refusing = await primed({
-      start: async () => {
-        throw new Error("claim_conflict: a session is active");
-      },
-    });
-    await check("lint", "failure");
-    const r = await refusing.pollOnce();
-    expect(r.fired[0]).toMatchObject({ outcome: "error" });
-    expect(r.fired[0]?.error).toContain("claim_conflict");
     const rows = await audits();
-    const last = rows.find((x) => JSON.parse(x.result_summary).outcome === "error");
-    expect(last?.allowed).toBe(false);
+    expect(rows.map((x) => JSON.parse(x.result_summary).outcome)).toEqual([
+      "waits_start",
+      "waits_start",
+    ]);
+    expect(rows.every((x) => x.allowed)).toBe(true);
   });
 
   it("a closed PR is read once and then never again", async () => {

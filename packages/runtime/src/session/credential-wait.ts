@@ -1,6 +1,7 @@
 import type { BillingSourceKind } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
-import type { HumanRequestRow, StateStore } from "@forerunner/state";
+import type { HumanRequestRow, HumanRow, StateStore } from "@forerunner/state";
+import { quietHoursEndAt, resolvePrefs } from "../notifications/prefs.ts";
 
 /**
  * Work that waits for a Claude credential (U-078, ADR 0100 amended 2026-11-03, the owner's
@@ -10,13 +11,14 @@ import type { HumanRequestRow, StateStore } from "@forerunner/state";
  *
  * - **At a limit.** The credential rests until its reset; the task is no failure: it goes back
  *   to ready without counting a try, and the session ends with one sentence ("Waits until 15:40
- *   (your subscription's limit) and starts by itself."), its row says the same, and a session of
- *   the project starts by itself at the reset (`limits.waiting` on the source, after a restart
- *   too).
+ *   (your subscription's limit); then your session goes on."), its row says the same, and the
+ *   person's session goes on once at the reset (`limits.waiting[].kept` on the source, after a
+ *   restart too; S-10, ADR 0118). Work outside a session the person started waits for their
+ *   next Start ("; then it runs at your next Start.").
  * - **Refused.** Anthropic refused the key or the sign-in (a 401 or 403): the credential is
  *   marked (`limits.refusedAt`), one card names it, the router skips it, and work no other
- *   credential may take waits for a new one ("Waits for a new API key: save one in Settings."),
- *   which starts it by itself once saved.
+ *   credential may take waits for a new one ("Waits for a new API key: save one in Settings."):
+ *   the person's session goes on once one is saved; other work waits for their next Start.
  */
 
 /** Why the work waits. */
@@ -171,19 +173,59 @@ function validZone(timezone: string | undefined): string {
 }
 
 /**
+ * What comes after a wait (d1109-starts-engine S-10, S-12; ADR 0118): the person's own session
+ * goes on by itself when it waits for its credential (`goesOn`: a continuation or a person start
+ * is kept), else the work waits for the person's next Start (a stop's end only prepares it).
+ */
+export function afterWaitClause(goesOn: boolean | undefined): string {
+  return goesOn ? "then your session goes on" : "then it runs at your next Start";
+}
+
+/**
+ * S-10 (ADR 0118): when the person's waiting session goes on, if their quiet hours hold it past
+ * the stop's end (a continuation starts with nobody pressing anything, so quiet hours hold it):
+ * the end of the quiet hours, as an ISO time; undefined when it goes on at the stop's end. Every
+ * sentence that says when it goes on names this later time (`goesOnAt`).
+ */
+export function continuationGoesOnAt(
+  human: Pick<HumanRow, "timezone" | "email" | "notify_prefs"> | null | undefined,
+  until: string | null | undefined,
+): string | undefined {
+  if (!human || !until) return undefined;
+  const at = Date.parse(until);
+  if (!Number.isFinite(at)) return undefined;
+  const prefs = resolvePrefs(human);
+  return quietHoursEndAt(prefs.quiet_hours, prefs.timezone, at) ?? undefined;
+}
+
+/** `continuationGoesOnAt` as the words' option: `{ goesOnAt }`, or nothing when not later. */
+export function goesOnAtWords(
+  human: Pick<HumanRow, "timezone" | "email" | "notify_prefs"> | null | undefined,
+  until: string | null | undefined,
+): { goesOnAt?: string } {
+  const at = continuationGoesOnAt(human, until);
+  return at ? { goesOnAt: at } : {};
+}
+
+/**
  * The wait as one sentence (the session result, the log, the Overview): "Waits until 15:40 (your
- * subscription's limit) and starts by itself." or "Waits for a new API key: save one in
- * Settings." With `title`, the task is named: '"Write the notes" waits until ...'.
+ * subscription's limit); then your session goes on." (the person's session waits to go on, S-10)
+ * or "...; then it runs at your next Start.", or "Waits for a new API key: save one in
+ * Settings." With `title`, the task is named: '"Write the notes" waits until ...'. With
+ * `goesOnAt` (the end of the person's quiet hours, later than the reset) the time is that one:
+ * "Waits until 07:00 (after your quiet hours); then your session goes on.".
  */
 export function waitSentence(
   wait: CredentialWait,
-  opts: { timezone?: string; nowMs: number; title?: string },
+  opts: { timezone?: string; nowMs: number; title?: string; goesOn?: boolean; goesOnAt?: string },
 ): string {
   const who = opts.title ? `"${opts.title}" waits` : "Waits";
   if (wait.reason === "refused")
-    return `${who} for ${newCredential(wait.kind)}: save one in Settings.`;
+    return `${who} for ${newCredential(wait.kind)}: save one in Settings${opts.goesOn ? `; ${afterWaitClause(true)}` : ""}.`;
+  if (opts.goesOn && opts.goesOnAt)
+    return `${who} until ${clockTime(opts.goesOnAt, opts.timezone, opts.nowMs)} (after your quiet hours); ${afterWaitClause(true)}.`;
   const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
-  return `${who} until ${at} (${limitOf(wait.kind)}) and starts by itself.`;
+  return `${who} until ${at} (${limitOf(wait.kind)}); ${afterWaitClause(opts.goesOn)}.`;
 }
 
 /**
@@ -202,6 +244,19 @@ export function startKeepsWaitSentence(
 }
 
 const PRESS_START_THEN = "Press Start and the work starts then.";
+
+/**
+ * S-10 (ADR 0118): a Start the person pressed while the credential was out, kept for its reset,
+ * as the project's status says it: "Starts at 15:40 (your subscription's limit)". Null for a
+ * refusal or a reset not known.
+ */
+export function keptStartLine(
+  wait: CredentialWait,
+  opts: { timezone?: string; nowMs: number },
+): string | null {
+  if (wait.reason !== "limit" || !wait.until) return null;
+  return `Starts at ${clockTime(wait.until, opts.timezone, opts.nowMs)} (${limitOf(wait.kind)})`;
+}
 
 /**
  * W15-66: the wait where none is recorded (the credential chooser's runs-on line on New task,
@@ -226,9 +281,9 @@ export function waitThenStartSentence(
  * until you save a new API key in Settings." Before: "Nothing can run yet. Waits until ...".
  */
 export function nothingRunsYetSentence(waitText: string): string {
-  const until = /^Waits (until .+) and starts by itself\.$/.exec(waitText.trim());
-  if (until) return `Nothing can run ${until[1]}; it starts by itself then.`;
-  const saved = /^Waits for (.+): save one in Settings\.$/.exec(waitText.trim());
+  const until = /^Waits (until .+?); (then .+)\.$/.exec(waitText.trim());
+  if (until) return `Nothing can run ${until[1]}; ${until[2]}.`;
+  const saved = /^Waits for (.+?): save one in Settings(?:; .+)?\.$/.exec(waitText.trim());
   if (saved) return `Nothing can run until you save ${saved[1]} in Settings.`;
   return `Nothing can run yet. ${waitText}`;
 }
@@ -236,16 +291,18 @@ export function nothingRunsYetSentence(waitText: string): string {
 /**
  * W15-67: the wait in a few words after "Ready: 1 task; ", from the Start check's sentence
  * (`startKeepsWaitSentence`, `waitSentence`, both untitled): "nothing runs until 09:30 (your API
- * key's limit)", "it starts by itself at 09:30 (your API key's limit)", "nothing runs until you
+ * key's limit)", "your session goes on at 09:30 (your API key's limit)", "nothing runs until you
  * save a new API key".
  */
 export function waitHeadWords(waitText: string): string {
   const t = waitText.trim();
   const start = /^Nothing can run (until .+?)\. Press Start/.exec(t);
   if (start) return `nothing runs ${start[1]}`;
-  const kept = /^Waits until (.+) and starts by itself\.$/.exec(t);
-  if (kept) return `it starts by itself at ${kept[1]}`;
-  const saved = /^Waits for (.+): save one in Settings\.$/.exec(t);
+  const goesOn = /^Waits until (.+); then your session goes on\.$/.exec(t);
+  if (goesOn) return `your session goes on at ${goesOn[1]}`;
+  const kept = /^Waits (until .+); then it runs at your next Start\.$/.exec(t);
+  if (kept) return `nothing runs ${kept[1]}`;
+  const saved = /^Waits for (.+?): save one in Settings(?:; .+)?\.$/.exec(t);
   if (saved) return `nothing runs until you save ${saved[1]}`;
   return "it waits for a Claude credential";
 }
@@ -268,20 +325,40 @@ export function refusedCredentialWords(kind: string | null | undefined): string 
  */
 export function waitRowWords(
   wait: CredentialWait,
-  opts: { timezone?: string; nowMs: number },
+  opts: {
+    timezone?: string;
+    nowMs: number;
+    goesOn?: boolean;
+    goesOnAt?: string;
+    /** S-10: a Start the person pressed is kept for the reset: the status says it starts then. */
+    startKept?: boolean;
+  },
 ): CredentialWaitWords {
   if (wait.reason === "refused")
     return {
       label: `Waits for ${newCredential(wait.kind)}`,
-      detail: "Save one in Settings; it starts by itself then.",
+      detail: `Save one in Settings; ${afterWaitClause(opts.goesOn)}.`,
       line: `Waiting for ${newCredential(wait.kind)}`,
       save: saveLink(wait.kind),
     };
+  // S-10: the person's waiting session goes on when their quiet hours end, later than the reset.
+  if (opts.goesOn && opts.goesOnAt) {
+    const later = clockTime(opts.goesOnAt, opts.timezone, opts.nowMs);
+    return {
+      label: `Waits until ${later}, after your quiet hours`,
+      detail: "Then your session goes on.",
+      line: `Waiting until ${later} (after your quiet hours)`,
+      save: null,
+    };
+  }
   const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
   return {
     label: `Waits until ${at}, ${limitOf(wait.kind)}`,
-    detail: "It starts by itself then.",
-    line: `Waiting until ${at} (${limitOf(wait.kind)})`,
+    detail: opts.goesOn ? "Then your session goes on." : "Then it runs at your next Start.",
+    // S-10: "Starts at 15:40 (your subscription's limit)" while the person's Start is kept.
+    line:
+      (opts.startKept ? keptStartLine(wait, opts) : null) ??
+      `Waiting until ${at} (${limitOf(wait.kind)})`,
     save: null,
   };
 }
@@ -351,7 +428,7 @@ export function stoppedRunSentence(
   stop: { reason: "limit" | "refused"; kind: BillingSourceKind | string },
   title: string,
   next: { continuesOn: BillingSourceKind | string } | { wait: CredentialWait },
-  opts: { timezone?: string; nowMs: number },
+  opts: { timezone?: string; nowMs: number; goesOn?: boolean },
 ): string {
   const head =
     stop.reason === "refused"

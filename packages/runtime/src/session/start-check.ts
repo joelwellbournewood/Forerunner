@@ -8,6 +8,7 @@ import {
   withinTaskBudget,
 } from "../estimates/model.ts";
 import { continuableTasks } from "./budget-card.ts";
+import { cutFollowers, followersOf } from "./promise.ts";
 import {
   cutPlanToBudget,
   DEFAULT_RESERVE_SHARE,
@@ -15,6 +16,8 @@ import {
   type PlanItem,
 } from "./runner.ts";
 import { needsContainerSandbox, type SandboxGate, type SandboxGateAnswer } from "./sandbox-gate.ts";
+
+export { cutFollowers, followersOf } from "./promise.ts";
 
 /** A ready task as the start check names it: what the planner would price it at. */
 export interface StartCheckTask {
@@ -104,6 +107,49 @@ export interface StartCheck {
    * `overBudget` with `no_room`). Also in `overBudget`, with the reason `oversized`.
    */
   oversized: StartCheckOversized | null;
+  /**
+   * d1109-starts-engine (S-6): the followers past what the work budget left after the runnable
+   * tasks holds, in run order (`later` is cut to it): they wait for a later Start.
+   */
+  laterBeyond: StartCheckTask[];
+}
+
+/**
+ * What a session started now promises (d1109-starts-engine S-6, ADR 0118; the owner's "the
+ * session keeps its promise"): the runnable tasks (cut as the runner cuts), the task larger than
+ * the work budget at its place with its planned room and the tasks after it (`after_large`, the
+ * session's own after it: they hold no room while it runs), then the followers that fit the work
+ * budget left. The Start dialog's sentence and the runner's `session.promised` read this one list.
+ */
+export interface StartPromise {
+  taskIds: string[];
+  /** What the promise is planned at: the runnable tasks, the larger task's room, the followers. */
+  estimateUsdMicro: number;
+  /** The tasks after the larger one, its own once it ended (they hold no room). */
+  afterLarge: string[];
+}
+
+/** The promise of a start check (`StartPromise`). */
+export function promiseOf(
+  check: Pick<StartCheck, "runnable" | "oversized" | "overBudget" | "later">,
+): StartPromise {
+  const afterLarge = check.overBudget
+    .filter((t) => t.reason === "after_large")
+    .map((t) => t.taskId);
+  const big = check.oversized;
+  return {
+    taskIds: [
+      ...check.runnable.map((t) => t.taskId),
+      ...(big ? [big.taskId] : []),
+      ...afterLarge,
+      ...check.later.map((t) => t.taskId),
+    ],
+    estimateUsdMicro:
+      check.runnable.reduce((s, t) => s + t.estimateUsdMicro, 0) +
+      (big?.roomUsdMicro ?? 0) +
+      check.later.reduce((s, t) => s + t.estimateUsdMicro, 0),
+    afterLarge,
+  };
 }
 
 /**
@@ -228,18 +274,17 @@ export async function startCheck(
     { limit: 10_000 },
   ))
     comes.add(t.id);
-  const later: StartCheckTask[] = [];
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const w of waiting) {
-      if (comes.has(w.task.id) || needsContainerSandbox(w.task)) continue;
-      if (w.waitsOn.every((d) => comes.has(d.id))) {
-        comes.add(w.task.id);
-        later.push({ taskId: w.task.id, title: w.task.title, estimateUsdMicro: price(w.task) });
-        changed = true;
-      }
-    }
-  }
+  const following: StartCheckTask[] = followersOf(waiting, comes, needsContainerSandbox).map(
+    (t) => ({ taskId: t.id, title: t.title, estimateUsdMicro: price(t) }),
+  );
+  // S-6: the followers the work budget left after the runnable tasks (and the larger task's
+  // room) holds are the promise's; the rest wait for a later Start.
+  // With a task larger than the work budget the followers come after it (OP-0's comesAfter):
+  // the session's own after it, holding no room while it runs, so they are not cut.
+  const promisedFirst = runs.reduce((sum, i) => sum + i.estimateUsdMicro, 0);
+  const { taken: later, beyond: laterBeyond } = big
+    ? { taken: following, beyond: [] as StartCheckTask[] }
+    : cutFollowers(following, Math.max(0, workBudgetUsdMicro - promisedFirst));
   // D4 (OP-0): the larger task gets what the tasks before it in the plan's order leave (the
   // cut's room); the tasks after it, ready now or ready later, run only if it leaves budget.
   let oversized: StartCheckOversized | null = null;
@@ -256,7 +301,7 @@ export async function startCheck(
         ...(cut.leftOutForBudget ?? [])
           .filter((l) => l.reason === "after_large")
           .map((l) => l.title),
-        ...later.map((l) => l.title),
+        ...following.map((l) => l.title),
       ],
       ...(kept && kept.usdMicro > 0 ? { spentUsdMicro: kept.usdMicro } : {}),
     };
@@ -279,6 +324,7 @@ export async function startCheck(
       waitsOn: w.waitsOn,
     })),
     later,
+    laterBeyond,
     waitingForSandbox: sandboxWait,
   };
 }

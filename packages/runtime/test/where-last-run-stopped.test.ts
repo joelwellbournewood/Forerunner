@@ -223,7 +223,9 @@ describe("the session result's line of a paused task (budget-resume)", () => {
         },
       ]),
     ).toEqual([
-      '"Write the guide" paused at the project\'s budget of CHF 0.01: it goes on by itself once you raise that budget.', // W14-6: a project's budget never resets
+      // W14-6: a project's budget never resets; d1109-starts-engine (S-3): a raise makes it ready
+      // for the person's next Start, it starts nothing by itself.
+      '"Write the guide" paused at the project\'s budget of CHF 0.01: it is ready again once you raise that budget, for your next Start.',
     ]);
     expect(
       pausedSentences([
@@ -231,7 +233,7 @@ describe("the session result's line of a paused task (budget-resume)", () => {
         { id: "t2", title: "Write the notes", limit: "this month's cap of CHF 0.10", waits: true },
       ]),
     ).toEqual([
-      '"Write the guide" and "Write the notes" paused at a limit: they go on by themselves once it is raised or resets.',
+      '"Write the guide" and "Write the notes" paused at a limit: they are ready again once it is raised or resets.',
     ]);
     // One of each: their cards say which can continue.
     expect(

@@ -60,6 +60,10 @@ export function startNotice(
       return ahead > 0
         ? `Deferred: it is quiet hours, and ${before} This one starts after them, once the quiet hours end.`
         : "Deferred: it is quiet hours. The session starts when they end.";
+    // d1109-starts-engine S-10: the Start is kept for the credential's reset (the daemon's
+    // sentence names the time; this is only for an answer without one).
+    case "kept":
+      return "Kept: the session starts when the Claude credential is back.";
     default:
       return "Started: the session works until nothing more can run, the budget is used, or you stop it.";
   }
@@ -160,7 +164,11 @@ export function planSentence(check: StartCheckView): string | null {
     check.later.length === 0
       ? `${head}${now}`
       : `${head}${now}${now ? ", then" : " and"} continues with up to ${check.later.length} more as they become ready (${about(check.later)})`;
-  return `${runs}.`;
+  // d1109-starts-engine S-6 (ADR 0118): what its work budget does not hold is not promised.
+  const beyond = check.laterBeyond?.length ?? 0;
+  const wait =
+    beyond === 0 ? "" : `; ${beyond} more ${beyond === 1 ? "waits" : "wait"} for a later Start`;
+  return `${runs}${wait}.`;
 }
 
 /**
@@ -313,6 +321,7 @@ export function StartSessionDialog({
   const [notice, setNotice] = useState<string | null>(null);
   const [startedId, setStartedId] = useState<string | null>(null);
   const [checkTick, setCheckTick] = useState(0);
+  const [cancelled, setCancelled] = useState<string | null>(null);
   // What a session would do, with the budget typed so far (the project's default while empty).
   const typedChf = budgetTouched && budget.trim() ? chfToMicro(budget.replace(",", ".")) : null;
   const budgetUsdMicro =
@@ -336,6 +345,7 @@ export function StartSessionDialog({
       setBudgetTouched(false);
       setNote("");
       setError(null);
+      setCancelled(null);
     }
   }, [open]);
   const intake = useIntakeStatus(projectId, { enabled: open }).data?.state ?? null;
@@ -354,8 +364,14 @@ export function StartSessionDialog({
   // sentence names it with its one link (startBlocked); nothing is said twice (wave 2 handoff:
   // three statements of one blocker, one pointing to the Tasks tab).
   const planBlocks = intake === "pending" || intake === "drafting" || intake === "waiting";
+  // C2-left-2: a task that waits on the person's card is named with Open it (the Inbox): no
+  // "Give your agent work first" beside it.
   const noReadyTask =
-    data !== null && data.ready === 0 && blocked?.kind === "nothing_runnable" && !planBlocks;
+    data !== null &&
+    data.ready === 0 &&
+    blocked?.kind === "nothing_runnable" &&
+    !planBlocks &&
+    blocked.action?.to !== "/inbox";
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -376,7 +392,12 @@ export function StartSessionDialog({
       });
       setNote("");
       // The person stays where they were (design §3.6); the session can be opened from here.
-      setNotice(startNotice(started.result, started.ahead, { planning }));
+      // S-10: a Start kept for the credential's reset says when it starts, in the daemon's words.
+      setNotice(
+        started.result === "kept" && started.sentence
+          ? started.sentence
+          : startNotice(started.result, started.ahead, { planning }),
+      );
       setStartedId(started.session?.id ?? null);
       setCheckTick((n) => n + 1);
     } catch (err) {
@@ -408,6 +429,11 @@ export function StartSessionDialog({
                 {plan}
               </p>
             ) : null}
+            {cancelled ? (
+              <p className="text-sm" data-testid="start-session-wait-cancelled">
+                {cancelled}
+              </p>
+            ) : null}
             {blocked ? (
               <div
                 role="note"
@@ -417,6 +443,24 @@ export function StartSessionDialog({
                 <p className="font-medium" data-testid="start-session-blocked">
                   {blocked.sentence}
                 </p>
+                {/* d1109-starts-engine S-10: the person's session waits to go on by itself;
+                    Cancel drops that, and its tasks wait for the next Start. */}
+                {blocked.kept ? (
+                  <Button
+                    onClick={() =>
+                      void client
+                        .cancelContinuation(projectId)
+                        .then((r) => {
+                          setCancelled(r.sentence);
+                          setCheckTick((t) => t + 1);
+                        })
+                        .catch((e: unknown) => setError(describeError(e)))
+                    }
+                    data-testid="start-session-cancel-wait"
+                  >
+                    Cancel the wait
+                  </Button>
+                ) : null}
                 {blocked.action ? (
                   blocked.action.kind === "resume" ? (
                     <Button onClick={() => void resume()} data-testid="start-session-unblock">
@@ -537,6 +581,13 @@ export function StartSessionDialog({
               : "Start: works until nothing more can run, the budget is used, or you stop it."}
           </p>
         )}
+        {/* d1109-starts-engine S-7 (ADR 0118, option C): what the person makes ready while the
+            session runs joins it only if its work budget has room; nothing else starts one. */}
+        {notice || blocked ? null : (
+          <p className="text-xs text-neutral-500" data-testid="start-session-join">
+            Work you make ready while it runs joins it if its budget has room.
+          </p>
+        )}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>{notice ? "Close" : "Cancel"}</Button>
           {/* After a start the dialog says what happened, with Open the session and Close: no
@@ -549,7 +600,8 @@ export function StartSessionDialog({
               disabled={busy || !identity || stops || !!problem}
               data-testid="confirm-start-session"
             >
-              {busy ? "Starting…" : "Start"}
+              {/* S-10: while the credential is out, a Start is kept for its reset: "Start at 15:40". */}
+              {busy ? "Starting…" : (blocked?.startable && blocked.startLabel) || "Start"}
             </Button>
           )}
         </div>

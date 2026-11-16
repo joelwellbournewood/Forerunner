@@ -43,7 +43,17 @@ export interface StartBlockedFacts {
      * ("Nothing can run until 15:40 (...). Press Start and the work starts then.") and Start stays on.
      */
     startable?: boolean;
+    /** S-10: the person's session (or a Start they pressed) is kept on the wait: Cancel drops it. */
+    kept?: boolean;
+    /** S-10, with `startable`: the Start button's words ("Start at 15:40"). */
+    startLabel?: string;
   } | null;
+  /**
+   * C2-left-2 (run C3): with no task ready, the title of a task of the project that waits on the
+   * person's card (a pause that got no further, a question): the sentence names it with Open it
+   * (design §3.6: 'Nothing can run: "Step 3" needs your answer [Open it]'). Null or absent: none.
+   */
+  needsYou?: string | null;
 }
 
 /**
@@ -85,6 +95,10 @@ export function startBlocked(r: StartCheck, f: StartBlockedFacts): StartCheckVie
         ? { kind: "link", label: f.credentialWait.save.label, to: f.credentialWait.save.to }
         : null,
       ...(f.credentialWait.startable ? { startable: true } : {}),
+      ...(f.credentialWait.kept ? { kept: true } : {}),
+      ...(f.credentialWait.startable && f.credentialWait.startLabel
+        ? { startLabel: f.credentialWait.startLabel }
+        : {}),
     };
   if (blocked?.kind !== "nothing_runnable" || r.ready !== 0) return blocked;
   if (f.plan === "pending")
@@ -166,6 +180,13 @@ function firstBlocker(r: StartCheck, f: StartBlockedFacts): StartCheckView["bloc
       kind: "nothing_runnable",
       sentence: `Nothing can run: "${docker.title}" is waiting for Docker.`,
       action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
+    };
+  // C2-left-2: nothing is ready because a task waits on the person's card: name it.
+  if (r.ready === 0 && f.needsYou)
+    return {
+      kind: "nothing_runnable",
+      sentence: `Nothing can run: "${f.needsYou}" needs your answer.`,
+      action: { kind: "link", label: "Open it", to: "/inbox" },
     };
   // D4 (d1109-oversize-start): a task larger than the work budget is no blocker any more: the
   // session takes it with the whole work budget (`runsWork`), and the Start check's `oversized`

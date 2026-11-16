@@ -365,9 +365,13 @@ describe("w15-words, wave 15 run B", () => {
       expect(waitThenStartSentence(refused, words)).toBe(
         "Waits for a new API key: save one in Settings.",
       );
-      // Where a wait is recorded (a session met it), the old sentence is true and stays.
+      // Where a wait is recorded (a session met it), the sentence says what happens at the reset
+      // (d1109-starts-engine S-10): the person's session goes on, other work waits for a Start.
       expect(waitSentence(resting, words)).toBe(
-        "Waits until 09:30 (your API key's limit) and starts by itself.",
+        "Waits until 09:30 (your API key's limit); then it runs at your next Start.",
+      );
+      expect(waitSentence(resting, { ...words, goesOn: true })).toBe(
+        "Waits until 09:30 (your API key's limit); then your session goes on.",
       );
     });
 
@@ -379,7 +383,10 @@ describe("w15-words, wave 15 run B", () => {
 
     it("W15-78: the Start check's refusal has a subject; the run label names what was refused", () => {
       expect(nothingRunsYetSentence(waitSentence(resting, words))).toBe(
-        "Nothing can run until 09:30 (your API key's limit); it starts by itself then.",
+        "Nothing can run until 09:30 (your API key's limit); then it runs at your next Start.",
+      );
+      expect(nothingRunsYetSentence(waitSentence(resting, { ...words, goesOn: true }))).toBe(
+        "Nothing can run until 09:30 (your API key's limit); then your session goes on.",
       );
       expect(nothingRunsYetSentence(waitSentence(refused, words))).toBe(
         "Nothing can run until you save a new API key in Settings.",
@@ -398,7 +405,7 @@ describe("w15-words, wave 15 run B", () => {
         } as never,
       );
       expect(blocked?.sentence).toBe(
-        "Nothing can run until 09:30 (your API key's limit); it starts by itself then.",
+        "Nothing can run until 09:30 (your API key's limit); then it runs at your next Start.",
       );
       expect(runOutcomeWords("credential_refused", "api_key")).toBe(
         "Stopped: Anthropic refused your API key",
@@ -436,7 +443,14 @@ describe("w15-words, wave 15 run B", () => {
       });
       expect(ready({ text: waitSentence(resting, words), save: null })).toEqual({
         kind: "ready",
-        text: "Ready: 1 task; it starts by itself at 09:30 (your API key's limit)",
+        text: "Ready: 1 task; nothing runs until 09:30 (your API key's limit)",
+        action: null,
+      });
+      expect(
+        ready({ text: waitSentence(resting, { ...words, goesOn: true }), save: null }),
+      ).toEqual({
+        kind: "ready",
+        text: "Ready: 1 task; your session goes on at 09:30 (your API key's limit)",
         action: null,
       });
       expect(

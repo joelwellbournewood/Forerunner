@@ -126,7 +126,7 @@ describe("steering by chat (design §3.9)", () => {
     expect(paused.reason).toBe("Paused by you");
     const back = await say("resume the license task");
     expect(back.pendingConfirmation?.readback).toBe(
-      'Resume "Add a LICENSE file"? It is ready again; the next session can run it.',
+      'Resume "Add a LICENSE file"? It is ready again. It runs at your next Start.',
     );
     await say("yes");
     expect((await rt.store.task.mustGet(license.id)).status).toBe("ready");

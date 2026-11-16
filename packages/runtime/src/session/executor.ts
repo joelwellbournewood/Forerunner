@@ -8,16 +8,15 @@ import {
   usdToChfMicro,
 } from "@forerunner/billing";
 import { NOT_CAUSED_BY_TASK, saidByName } from "@forerunner/critic";
+import { type Clock, errorMessage, ForerunnerError, join, log, redact } from "@forerunner/platform";
 import {
-  type Clock,
-  errorMessage,
-  ForerunnerError,
-  join,
-  log,
-  newId,
-  redact,
-} from "@forerunner/platform";
-import type { JsonObject, JsonValue, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
+  type JsonObject,
+  type JsonValue,
+  monotonicId,
+  type ProjectRow,
+  type StateStore,
+  type TaskRow,
+} from "@forerunner/state";
 import { z } from "zod";
 import { withClaudeCodeTools } from "../agent/cc-tools.ts";
 import {
@@ -150,6 +149,7 @@ import { needsOf } from "./credential-choice.ts";
 import {
   type CredentialWait,
   credentialWaitOf,
+  goesOnAtWords,
   stoppedRunSentence,
   waitSentence,
 } from "./credential-wait.ts";
@@ -732,6 +732,16 @@ interface RunBillingChoice {
   billing: RunBilling | undefined;
 }
 
+/**
+ * C2-left-5 (run C3): a run's id, from the store's monotonic ids, so two runs of one task made in
+ * the same millisecond (a simulated clock that does not move) sort in the order they were made by
+ * `(created_at, id)`, as every row the store makes does. Before, the platform's random `newId`
+ * let the task's context read the older run as "the last run".
+ */
+export function runIdAt(nowMs: number): string {
+  return monotonicId(nowMs);
+}
+
 export class LoopTaskExecutor implements TaskExecutor {
   private readonly logger = log("executor");
 
@@ -1050,7 +1060,7 @@ export class LoopTaskExecutor implements TaskExecutor {
     // at sonnet therefore never escalates a retry to opus, whichever composition built this.
     const tier = this.tierOf(task, settings.tier, project);
     const worktree = await this.deps.worktreeFor?.(task);
-    const runId = newId(clock.now());
+    const runId = runIdAt(clock.now());
 
     // Billing (ADR 0044): the source for this task, then the driver that goes with it. The
     // specialist's tools are re-read in that driver's form (the registry's `cc:` names as
@@ -1728,7 +1738,9 @@ export class LoopTaskExecutor implements TaskExecutor {
               } satisfies CredentialWait,
             };
       if (next.wait) await this.noteWait(ctx, next.wait);
-      const words = await this.waitWords(ctx);
+      // S-10: the person's own session goes on after the wait (at the end of their quiet hours
+      // when those hold it past the reset); other work waits for a Start.
+      const words = await this.waitWords(ctx, next.wait);
       const summary = stoppedRunSentence(
         { reason: credentialStop, kind: source?.kind ?? "api_key" },
         task.title,
@@ -1985,7 +1997,12 @@ export class LoopTaskExecutor implements TaskExecutor {
       await this.noteWait(ctx, wait);
       throw new ForerunnerError(
         "unavailable",
-        waitSentence(wait, { ...(await this.waitWords(ctx)), title: ctx.task.title }),
+        waitSentence(wait, {
+          // S-10: a session the person started goes on after the wait; other work waits for
+          // the person's next Start.
+          ...(await this.waitWords(ctx, wait)),
+          title: ctx.task.title,
+        }),
         { details: { wait: wait as unknown as JsonValue } },
       );
     }
@@ -2169,8 +2186,9 @@ export class LoopTaskExecutor implements TaskExecutor {
   ): Promise<void> {
     const projectId = ctx.task.project_id;
     if (!projectId || !wait.sourceId || !this.deps.billing?.noteWait) return;
+    // S-10: the session the wait belongs to, so the person's own session can go on with it.
     await this.deps.billing
-      .noteWait(wait.sourceId, projectId, ctx.session.agent_id)
+      .noteWait(wait.sourceId, projectId, ctx.session.agent_id, ctx.session.id)
       .catch((e: unknown) =>
         this.logger.warn("the wait for a credential was not kept", { error: errorMessage(e) }),
       );
@@ -2179,13 +2197,18 @@ export class LoopTaskExecutor implements TaskExecutor {
   /** The person's time zone and now, for the wait's reset time in their words (U-078). */
   private async waitWords(
     ctx: Parameters<TaskExecutor["execute"]>[0],
-  ): Promise<{ timezone?: string; nowMs: number }> {
+    wait?: CredentialWait,
+  ): Promise<{ timezone?: string; nowMs: number; goesOn: boolean; goesOnAt?: string }> {
     const human = await this.deps.store.human
       .get(ctx.token.claims.ownerHumanId)
       .catch(() => undefined);
+    // S-10: the person's session goes on after the wait, when their quiet hours end if later.
+    const goesOn = personsSession(ctx.session.plan);
     return {
       ...(human?.timezone ? { timezone: human.timezone } : {}),
       nowMs: this.deps.clock.now(),
+      goesOn,
+      ...(goesOn && wait?.reason === "limit" ? goesOnAtWords(human, wait.until) : {}),
     };
   }
 
@@ -2492,4 +2515,14 @@ function withModeEffort(
 ): Record<Mode, ModeDefault> {
   const table = defaults ?? MODE_DEFAULTS;
   return { ...table, [mode]: { ...table[mode], effort } };
+}
+
+/**
+ * Whether a session is the person's own (S-10): started by the person, or going on with one of
+ * theirs; its work goes on by itself after a credential wait inside it.
+ */
+function personsSession(plan: unknown): boolean {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return false;
+  const by = ((plan as { startedBy?: { by?: unknown } }).startedBy ?? {}).by;
+  return by === "person" || by === "continuation";
 }

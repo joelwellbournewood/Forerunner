@@ -83,6 +83,7 @@ import {
   keptOf,
   limitWords,
   madeProgress,
+  pauseSaid,
   REVIEW_PAUSED_EVENT,
   type RunHandoff,
   reviewPausedWords,
@@ -95,6 +96,7 @@ import {
   CREDENTIAL_WAIT_STOP,
   type CredentialWait,
   clockTime,
+  goesOnAtWords,
   stoppedRunSentence,
   waitSentence,
 } from "./credential-wait.ts";
@@ -105,6 +107,7 @@ import {
 } from "./findings.ts";
 import { describeRejectedLessons, type RejectedLesson, screenLessons } from "./lessons.ts";
 import { type HeardDelivery, type HeardLine, heardLineOf } from "./live-chat.ts";
+import type { AdmitHandle, AdmitOutcome, LiveSessions } from "./live-sessions.ts";
 import {
   firstSessionPlan,
   isFirstSessionItem,
@@ -128,6 +131,7 @@ import {
   planIdOf,
   planKeyOf,
 } from "./plan-approval.ts";
+import { cutFollowers, followersOf } from "./promise.ts";
 import { namesOf } from "./recovery.ts";
 import {
   closeFinishedWork,
@@ -164,7 +168,19 @@ import {
   stopLimitWords,
   taskReasonForStop,
 } from "./stop-words.ts";
+import { type StartBy, startByOf } from "./triggers.ts";
 import type { WebSource } from "./web-sources.ts";
+
+/**
+ * Who asked for a session, kept on its plan (`plan.startedBy`, d1109-starts-engine S-1): who, and
+ * for a session that goes on with an earlier one (S-10) that session and its start time in the
+ * person's zone, which the Sessions list says ("goes on with your session of 14:05").
+ */
+export interface SessionStartedBy {
+  by: StartBy;
+  continues?: string;
+  continuesAt?: string;
+}
 
 /**
  * One working period of a principal agent (spec E). Code owns the skeleton: checklist, plan
@@ -187,6 +203,15 @@ export type SessionTriggerKind =
  * (spec J.2): the session and the item ids consumed and skipped, never the text.
  */
 export const QUEUE_CONSUMED_AUDIT_TOOL = "queue.consumed";
+
+/** S-6: the session's promise at its start (`{ taskIds, estimateUsdMicro, afterLarge? }`). */
+export const PROMISED_EVENT = "session.promised";
+/** S-7: work prepared outside the session joined it (`{ taskId, title, estimateUsdMicro, by }`). */
+export const JOINED_EVENT = "session.joined";
+/** S-7: work that asked to join and did not fit, at the session's end (`{ tasks }`). */
+export const LEFT_FOR_NEXT_START_EVENT = "session.left_for_next_start";
+/** S-10: the session goes on with the person's earlier one (`{ continues, at }`). */
+export const CONTINUES_EVENT = "session.continues";
 
 /** Store errors that mean one queue item moved since the brief was built; the rest propagate. */
 const QUEUE_SKIP_CODES: ReadonlySet<string> = new Set([
@@ -530,6 +555,23 @@ export interface SessionStartOptions {
   agentId: string;
   projectId?: string;
   trigger: SessionTriggerKind;
+  /**
+   * Who asked for the session (d1109-starts-engine S-1, ADR 0118): written on `session.started`
+   * and on the row's plan (`plan.startedBy`), which the Sessions list words. Absent: read from
+   * the trigger (`startByOf`).
+   */
+  by?: StartBy;
+  /**
+   * The session this one goes on with (S-10): a continuation after a credential wait, or the
+   * person's Continue of an ended session. Kept on `plan.startedBy` with that session's start
+   * time in the person's zone (`continuesAt`).
+   */
+  continues?: string;
+  /**
+   * S-10: a schedule the person set (the monthly handover test of a project they turned it on
+   * for): its session goes on after a credential wait like the person's own.
+   */
+  personSchedule?: boolean;
   budgetCapUsdMicro: number;
   stepCap?: number;
   wallClockMs?: number;
@@ -677,6 +719,23 @@ export interface SessionRunnerDeps {
   kill: KillSwitch;
   planner: Planner;
   executor: TaskExecutor;
+  /**
+   * d1109-starts-engine (S-10, ADR 0118): keeps the continuation of a person's session that ended
+   * to wait for its Claude credential on the project's wait (billing-pick's `keepContinuation`);
+   * false when nothing waits. Absent: no session goes on by itself.
+   */
+  continuation?: {
+    keep(
+      projectId: string,
+      kept: { continues: string; budgetUsdMicro: number; at: string },
+    ): Promise<boolean>;
+  };
+  /**
+   * d1109-starts-engine (S-7, ADR 0118): the registry of running sessions. A session of a project
+   * registers its admit handle here, so work prepared outside it joins only if it fits what the
+   * session promised (option C). Absent: nothing joins from outside (a one-shot, a test).
+   */
+  live?: LiveSessions;
   /** Peer agents to hand off to; default: other principal agents on the project's humans. */
   peersOf?: (agentId: string, projectId: string | undefined) => Promise<string[]>;
   /** Called after every `task.finished` event; failures are logged, never fatal. */
@@ -1006,11 +1065,34 @@ export class SessionRunner {
       );
     }
 
+    // S-1: who asked is on the row from its first write, and on every plan written after.
+    const by = startByOf(opts);
+    const continued = opts.continues
+      ? await store.session.get(opts.continues).catch(() => undefined)
+      : undefined;
+    const startedBy: SessionStartedBy | undefined = by
+      ? {
+          by,
+          ...(opts.continues ? { continues: opts.continues } : {}),
+          ...(continued?.started_at
+            ? {
+                continuesAt: clockTime(
+                  continued.started_at,
+                  (await store.human.get(agent.owner_human_id).catch(() => undefined))?.timezone ??
+                    undefined,
+                  clock.now(),
+                ),
+              }
+            : {}),
+        }
+      : undefined;
     let session = await store.session.insert({
       agent_id: agent.id,
       project_id: project?.id ?? null,
       trigger: opts.trigger,
-      plan: {},
+      plan: (startedBy ? { startedBy } : {}) as never,
+      // A row born with a plan says why (spec B.5): who asked for the session.
+      ...(startedBy ? { reason: "who asked for the session" } : {}),
       budget_cap_usd_micro: opts.budgetCapUsdMicro,
       step_cap: stepCap,
       spent_usd_micro: 0,
@@ -1028,8 +1110,17 @@ export class SessionRunner {
       await store.event.append(session.id, type, payload as never, cost);
       opts.onEvent?.(type, payload);
     };
+    // S-10: the person's session going on after its credential wait says so first, as its log's
+    // first line ("Goes on with your session of 14:05."), before the budget line.
+    if (startedBy?.by === "continuation")
+      await emit(CONTINUES_EVENT, {
+        continues: opts.continues ?? null,
+        at: startedBy.continuesAt ?? null,
+      });
     await emit("session.started", {
       trigger: opts.trigger,
+      ...(startedBy ? { by: startedBy.by } : {}),
+      ...(opts.continues ? { continues: opts.continues } : {}),
       budgetCapUsdMicro: opts.budgetCapUsdMicro,
       stepCap,
       autonomy,
@@ -1129,6 +1220,27 @@ export class SessionRunner {
     /** A task of this session waits for a Claude credential: the session ends saying so. */
     let waitedForCredential = false;
     let plan: SessionPlan | null = null;
+    /**
+     * d1109-starts-engine (S-6, S-7): what this session promised at its start (its own tasks,
+     * `own`, each with the estimate it was promised at) and the work that joined it since
+     * (`joined`); `asked` holds the newcomers that asked to join and did not fit ("Left for your
+     * next Start"). A newcomer joins only when its estimate fits the work budget left after the
+     * remaining estimates of the session's own tasks and of what joined.
+     */
+    let promise: { taskIds: string[]; estimateUsdMicro: number; afterLarge?: string[] } | null =
+      null;
+    /** S-10: the earlier session's promise this one goes on with, when it continues one. */
+    let continuedPromise: string[] | null = null;
+    const own = new Set<string>();
+    const ownEstimate = new Map<string, number>();
+    const joined = new Map<string, number>();
+    const asked = new Map<string, { title: string; estimateUsdMicro: number }>();
+    /** Promised tasks a step added before them took out of the promise (D7). */
+    const leftPromise = new Set<string>();
+    /** The run in flight and what the session had spent when it began (its remaining estimate). */
+    let inFlight: { taskId: string; spentAtStart: number } | null = null;
+    let liveHandle: AdmitHandle | null = null;
+    let unregisterLive: () => void = () => undefined;
     let brief: StateBrief | null = null;
     let stopReason = "completed";
     /** The amount of the outer limit a task's pause ended the session at (ADR 0112), if any. */
@@ -1361,6 +1473,19 @@ export class SessionRunner {
               a.id.localeCompare(b.id),
           );
       }
+      // S-10: a session that goes on with an earlier one (a continuation, the person's Continue)
+      // promises the rest of that one's promise: its start plans only those tasks; work made
+      // ready since joins by the room rule (S-7).
+      if (opts.continues) {
+        const earlier = await store.session.get(opts.continues).catch(() => undefined);
+        const promised = (earlier?.plan as { promise?: { taskIds?: unknown } } | undefined)?.promise
+          ?.taskIds;
+        if (Array.isArray(promised)) {
+          continuedPromise = promised.filter((id): id is string => typeof id === "string");
+          const keep = new Set(continuedPromise);
+          readyTasks = readyTasks.filter((t) => keep.has(t.id));
+        }
+      }
       // U-079: a full-review task runs only in the container sandbox; while it is not ready
       // the task waits (left out of the plan, its attempt count unchanged) and the session
       // goes on with the others. The gate re-checks Docker before every plan.
@@ -1399,6 +1524,64 @@ export class SessionRunner {
       // What cannot run is named, never silent (U-040): the ready tasks that wait on a task not
       // done (a cancelled or failed one waits for good) and the items left out for budget.
       waiting = project ? await store.task.waitingTasks(project.id) : [];
+      // d1109-starts-engine (S-6, ADR 0118; the owner: "the session keeps its promise"): what this
+      // start promises, as the Start dialog's check computes it (`promiseOf`): the plan's items
+      // (the larger task with its room), the tasks after it, then the followers that fit the
+      // work budget left after them, in run order. A session that goes on with an earlier one
+      // (S-10, a Continue) promises the rest of that one's promise instead.
+      if (project) {
+        const inFlight = await store.task.forProject(
+          project.id,
+          { status: ["claimed", "in_progress", "in_review"] },
+          { limit: 1_000 },
+        );
+        const afterLarge = (plan.leftOutForBudget ?? [])
+          .filter((l) => l.reason === "after_large")
+          .map((l) => l.taskId);
+        const first = new Set([...plan.items.map((i) => i.taskId), ...afterLarge]);
+        const comes = new Set([...first, ...inFlight.map((t) => t.id)]);
+        const priced: { taskId: string; title: string; estimateUsdMicro: number }[] = [];
+        for (const t of followersOf(
+          waiting.map((w) => ({ ...w, task: w.task })),
+          comes,
+          needsContainerSandbox,
+        ))
+          priced.push({ taskId: t.id, title: t.title, estimateUsdMicro: await this.priceNow(t) });
+        const planned = plan.items.reduce((sum, i) => sum + i.estimateUsdMicro, 0);
+        const { taken } = cutFollowers(priced, Math.max(0, workBudgetUsdMicro - planned));
+        for (const i of plan.items) ownEstimate.set(i.taskId, i.estimateUsdMicro);
+        for (const l of plan.leftOutForBudget ?? [])
+          if (l.reason === "after_large") ownEstimate.set(l.taskId, l.estimateUsdMicro);
+        for (const f of taken) ownEstimate.set(f.taskId, f.estimateUsdMicro);
+        promise = {
+          taskIds: [...first, ...taken.map((f) => f.taskId)],
+          estimateUsdMicro: planned + taken.reduce((sum, f) => sum + f.estimateUsdMicro, 0),
+          ...(afterLarge.length ? { afterLarge } : {}),
+        };
+        // S-10: the rest of the earlier session's promise, still open now.
+        if (continuedPromise) {
+          const open = new Set(
+            (
+              await store.task.forProject(
+                project.id,
+                { status: ["ready", "claimed", "in_progress", "needs_human", "draft"] },
+                { limit: 1_000 },
+              )
+            ).map((t) => t.id),
+          );
+          const rest = continuedPromise.filter((id) => open.has(id));
+          for (const id of rest)
+            if (!ownEstimate.has(id)) {
+              const row = await store.task.get(id);
+              if (row) ownEstimate.set(id, await this.priceNow(row));
+            }
+          promise = {
+            taskIds: rest,
+            estimateUsdMicro: rest.reduce((sum, id) => sum + (ownEstimate.get(id) ?? 0), 0),
+          };
+        }
+        for (const id of promise.taskIds) own.add(id);
+      }
       // B.5: the plan is a versioned change to the session with the agent as author and the
       // planner's summary as the reason. The row is read fresh here because its status may have
       // moved while the planner worked: the daemon's pause port marks a running row `paused` at
@@ -1410,7 +1593,7 @@ export class SessionRunner {
       session = await store.session.setPlan(
         beforePlan.id,
         beforePlan.version,
-        plan as never,
+        { ...plan, startedBy, ...(promise ? { promise } : {}) } as never,
         planReason(plan),
         { agentId: agent.id },
       );
@@ -1464,6 +1647,13 @@ export class SessionRunner {
             }
           : {}),
       });
+      // S-6: the promise is said once, as the Start dialog said it (its tasks and figure).
+      if (promise && promise.taskIds.length > 0)
+        await emit(PROMISED_EVENT, {
+          taskIds: promise.taskIds,
+          estimateUsdMicro: promise.estimateUsdMicro,
+          ...(promise.afterLarge ? { afterLarge: promise.afterLarge } : {}),
+        });
       if (waitingForSandbox.length && sandboxAnswer) {
         await emit("session.sandbox_waiting", {
           state: sandboxAnswer.state,
@@ -1604,6 +1794,129 @@ export class SessionRunner {
         const notAgain = new Set<string>();
         /** At levels 0 and 1 only what the person approved runs (its retries included). */
         const onlyThese = autonomy < 2 ? new Set(approvalItems.map((i) => i.taskId)) : null;
+        /** What the session's own tasks and the joined work still need of the work budget. */
+        const stillNeeded = async (): Promise<number> => {
+          if (!project) return 0;
+          const ids = [...own, ...joined.keys()];
+          if (ids.length === 0) return 0;
+          const rows = await store.task.forProject(
+            project.id,
+            { status: ["ready", "claimed", "in_progress"] },
+            { limit: 1_000 },
+          );
+          const open = new Set(rows.map((r) => r.id));
+          const spentNow = budget.snapshot().sessionSpentUsdMicro;
+          let sum = 0;
+          for (const id of new Set(ids)) {
+            // A task paused, cancelled, done or waiting on the person gives its room back; one
+            // this session will not take again holds none.
+            if (!open.has(id) || notAgain.has(id)) continue;
+            const est = joined.get(id) ?? ownEstimate.get(id) ?? 0;
+            sum +=
+              inFlight?.taskId === id ? Math.max(0, est - (spentNow - inFlight.spentAtStart)) : est;
+          }
+          return sum;
+        };
+        /** What the work budget has left for a newcomer now. */
+        const roomForNewcomers = async (): Promise<number> =>
+          workBudgetUsdMicro - budget.snapshot().sessionSpentUsdMicro - (await stillNeeded());
+        /** The session takes no new work (Stop after this task, the wrap-up, its last look). */
+        const takesNothingNew = async (): Promise<boolean> =>
+          (liveHandle?.closing ?? false) ||
+          budget.noNewWork ||
+          controller.signal.aborted ||
+          (await store.session.get(session.id))?.status === "paused";
+        /** Remaining room each promised task split into parts still offers its parts (D7). */
+        const partRoom = new Map<string, number>();
+        if (project && this.deps.live) {
+          const handle: AdmitHandle = {
+            sessionId: session.id,
+            agentId: agent.id,
+            projectId: project.id,
+            closing: false,
+            admit: async (taskIds, by, context) => {
+              const out = new Map<string, AdmitOutcome>();
+              const rows = await Promise.all(taskIds.map((id) => store.task.get(id)));
+              const prices = new Map<string, number>();
+              for (const row of rows) if (row) prices.set(row.id, await this.priceNow(row));
+              // Decided after the reads, so a look that closed meanwhile is seen (the race).
+              const stopping = await takesNothingNew();
+              let room = await roomForNewcomers();
+              for (const row of rows) {
+                if (!row) continue;
+                const est = prices.get(row.id) ?? 0;
+                if (stopping) {
+                  notAgain.add(row.id);
+                  out.set(row.id, "stopping");
+                  continue;
+                }
+                if (own.has(row.id) || joined.has(row.id)) {
+                  notAgain.delete(row.id);
+                  out.set(row.id, "joined");
+                  continue;
+                }
+                // D7: a part of a promised task is the session's own within that task's room.
+                const whole = context?.partOf;
+                if (whole && own.has(whole)) {
+                  const left = partRoom.get(whole) ?? ownEstimate.get(whole) ?? 0;
+                  if (est <= left) {
+                    partRoom.set(whole, left - est);
+                    own.add(row.id);
+                    ownEstimate.set(row.id, est);
+                    if (onlyThese && by !== "agent") onlyThese.add(row.id);
+                    out.set(row.id, "joined");
+                    continue;
+                  }
+                }
+                // A task larger than the whole work budget never joins (D4: it runs in its turn
+                // at the next Start).
+                if (est > workBudgetUsdMicro || est > room) {
+                  asked.set(row.id, { title: row.title, estimateUsdMicro: est });
+                  out.set(row.id, "no_room");
+                  // D7: a step added before a promised task that does not fit takes that task
+                  // out of the promise with it; both wait for the next Start.
+                  const next = context?.before;
+                  if (next && own.has(next)) {
+                    own.delete(next);
+                    leftPromise.add(next);
+                    notAgain.add(next);
+                    notAgain.add(row.id);
+                    const nextRow = await store.task.get(next);
+                    if (nextRow)
+                      asked.set(next, {
+                        title: nextRow.title,
+                        estimateUsdMicro: ownEstimate.get(next) ?? 0,
+                      });
+                  }
+                  continue;
+                }
+                room -= est;
+                joined.set(row.id, est);
+                notAgain.delete(row.id);
+                asked.delete(row.id);
+                // At levels 0 and 1 the person's own preparation joins the approved work; the
+                // agent's does not (it is asked first, D7).
+                if (onlyThese && by !== "agent") onlyThese.add(row.id);
+                out.set(row.id, "joined");
+                await emit(JOINED_EVENT, {
+                  taskId: row.id,
+                  title: row.title,
+                  estimateUsdMicro: est,
+                  by,
+                });
+              }
+              return out;
+            },
+            readmit: (taskIds) => {
+              for (const id of taskIds) {
+                own.add(id);
+                notAgain.delete(id);
+              }
+            },
+          };
+          liveHandle = handle;
+          unregisterLive = this.deps.live.register(handle);
+        }
         /**
          * D4 (d1109-oversize-pause, OP-0; the owner's answer 5 of 2026-11-09): a task larger than
          * the work budget runs at its place in the plan's order, so it is taken at its turn with
@@ -1657,7 +1970,7 @@ export class SessionRunner {
           session = await store.session.setPlan(
             fresh.id,
             fresh.version,
-            plan as never,
+            { ...plan, startedBy, ...(promise ? { promise } : {}) } as never,
             `took "${item.title}", larger than this session's work budget, with what is left`,
             { agentId: agent.id },
           );
@@ -1720,6 +2033,36 @@ export class SessionRunner {
             }
           }
           if (ready.length === 0) return [];
+          // S-7 (option C): the session's own tasks and the work that joined come first; a ready
+          // task that is neither is a newcomer, taken in priority order only while its estimate
+          // fits what the work budget has left after them (it then joins). Before, every ready
+          // task that fit the room left was taken, so a Redo could take the room the promise's
+          // followers needed.
+          if (promise) {
+            const newcomers = ready.filter((t) => !own.has(t.id) && !joined.has(t.id));
+            if (newcomers.length > 0) {
+              let room = await roomForNewcomers();
+              const take = new Set<string>();
+              for (const t of newcomers) {
+                const est = await this.priceNow(t);
+                if (est <= workBudgetUsdMicro && est <= room) {
+                  room -= est;
+                  take.add(t.id);
+                  joined.set(t.id, est);
+                  asked.delete(t.id);
+                  await emit(JOINED_EVENT, {
+                    taskId: t.id,
+                    title: t.title,
+                    estimateUsdMicro: est,
+                    by: "system",
+                  });
+                } else if (!asked.has(t.id))
+                  asked.set(t.id, { title: t.title, estimateUsdMicro: est });
+              }
+              ready = ready.filter((t) => own.has(t.id) || joined.has(t.id) || take.has(t.id));
+              if (ready.length === 0) return [];
+            }
+          }
           for (const t of ready) knownTasks.set(t.id, t);
           const planned = await this.deps.planner.plan({
             brief,
@@ -1806,7 +2149,7 @@ export class SessionRunner {
           session = await store.session.setPlan(
             fresh.id,
             fresh.version,
-            plan as never,
+            { ...plan, startedBy, ...(promise ? { promise } : {}) } as never,
             `took ${cut.items.length} more task${cut.items.length === 1 ? "" : "s"} as ${
               cut.items.length === 1 ? "it" : "they"
             } became ready`,
@@ -1826,16 +2169,27 @@ export class SessionRunner {
             // "Stop after this task" (the pause port marks the row `paused`): nothing more.
             if ((await store.session.get(session.id))?.status === "paused") break;
             if (!budget.noNewWork) {
+              // S-7: the last look closes the session to newcomers first, so work prepared
+              // between an empty look and the session's end never hears "joins".
+              if (liveHandle) liveHandle.closing = true;
               const more = await replan();
               if (more.length > 0) {
+                if (liveHandle) liveHandle.closing = false;
                 queue.push(...more);
                 continue;
               }
             }
+            if (liveHandle) liveHandle.closing = true;
             break;
           }
-          const item = queue.shift() as PlanItem;
+          let item = queue.shift() as PlanItem;
           if (budget.noNewWork) {
+            skipped.push(item.taskId);
+            continue;
+          }
+          // S-7 (D7): a promised task a step added before it took out of the promise waits for
+          // the next Start with that step.
+          if (leftPromise.has(item.taskId)) {
             skipped.push(item.taskId);
             continue;
           }
@@ -1936,7 +2290,18 @@ export class SessionRunner {
             continue;
           }
           heldClaims.add(item.taskId);
+          inFlight = { taskId: item.taskId, spentAtStart: budget.snapshot().sessionSpentUsdMicro };
           let task = claim.task;
+          // S-8 (ADR 0118): edits apply before a task starts: the claimed row's title and the
+          // specialist the person set replace the plan's before the specialist is chosen and the
+          // start line is said (the estimate the plan was promised with stays).
+          item = {
+            ...item,
+            title: task.title,
+            ...(task.specialist && task.specialist !== item.specialist
+              ? { specialist: task.specialist }
+              : {}),
+          };
           if (task.status === "claimed")
             task = await store.task.transition(
               task.id,
@@ -2463,6 +2828,10 @@ export class SessionRunner {
                 // W15-27: the work waits only for its review; it is reviewed without a run.
                 await this.keepForReview(now, result, runItem.specialist);
                 const owner = await store.human.get(agent.owner_human_id).catch(() => undefined);
+                const personsOwn =
+                  startedBy?.by === "person" ||
+                  startedBy?.by === "continuation" ||
+                  opts.personSchedule === true;
                 await emit(BILLING_FALLBACK_EVENT, {
                   taskId: task.id,
                   title: task.title,
@@ -2474,6 +2843,12 @@ export class SessionRunner {
                     {
                       ...(owner?.timezone ? { timezone: owner.timezone } : {}),
                       nowMs: clock.now(),
+                      // S-10: the person's own session goes on after the wait, when their
+                      // quiet hours end if they hold it past the reset.
+                      goesOn: personsOwn,
+                      ...(personsOwn && wait.reason === "limit"
+                        ? goesOnAtWords(owner, wait.until)
+                        : {}),
                     },
                   ),
                 });
@@ -2913,8 +3288,36 @@ export class SessionRunner {
         });
       } else await emit("session.error", { code, message: errorMessage(e) });
     } finally {
+      if (liveHandle) liveHandle.closing = true;
+      unregisterLive();
       await releaseAll(personStop ? taskReasonForStop(personStop) : `session ${stopReason}`);
       unregister();
+    }
+
+    // S-10 (ADR 0118; the owner, 2026-11-09: "A session the person started keeps going by itself
+    // until its work is done, including after a credential wait inside it"): a session the
+    // person started (or a continuation of one, or a schedule the person set) that ended to wait
+    // for its Claude credential keeps its continuation on the wait, with the rest of its budget,
+    // once; never one the person stopped (Stop after this task, Stop now) or that was wrapping
+    // up when it ended to wait, and none with nothing of its budget left.
+    let goesOn = false;
+    if (waitedForCredential && credentialWait && project && this.deps.continuation) {
+      const who = startedBy?.by;
+      const persons = who === "person" || who === "continuation" || opts.personSchedule === true;
+      const row = await store.session.get(session.id).catch(() => undefined);
+      const stopping = row?.status === "paused" || personStop !== null || budget.noNewWork;
+      const left =
+        opts.budgetCapUsdMicro - (row?.spent_usd_micro ?? budget.snapshot().sessionSpentUsdMicro);
+      if (persons && !stopping && left > 0)
+        goesOn = await this.deps.continuation
+          .keep(project.id, { continues: session.id, budgetUsdMicro: left, at: clock.nowIso() })
+          .catch((e: unknown) => {
+            this.logger.warn("the continuation of a session was not kept", {
+              sessionId: session.id,
+              error: errorMessage(e),
+            });
+            return false;
+          });
     }
 
     // 4. Session end: summary, project summary cache, handoff to peers, notify human.
@@ -3128,6 +3531,9 @@ export class SessionRunner {
       ...(credentialWait
         ? {
             credentialWait: waitSentence(credentialWait, {
+              goesOn,
+              // S-10: the continuation goes on when the person's quiet hours end, if later.
+              ...(goesOn ? goesOnAtWords(waitOwner, credentialWait.until) : {}),
               ...(waitOwner?.timezone ? { timezone: waitOwner.timezone } : {}),
               nowMs: clock.now(),
             }),
@@ -3135,6 +3541,17 @@ export class SessionRunner {
         : {}),
       spentChfMicro: spentChf,
     };
+    const leftForNext = [...asked]
+      .filter(([id]) => endState.readyNow.some((r) => r.id === id) && !completed.includes(id))
+      .map(([id, t]) => ({ id, ...t }));
+    if (leftForNext.length)
+      await emit(LEFT_FOR_NEXT_START_EVENT, {
+        tasks: leftForNext.map((t) => ({
+          taskId: t.id,
+          title: t.title,
+          estimateUsdMicro: t.estimateUsdMicro,
+        })),
+      });
     const resultFacts = {
       outcome,
       inReview: inReviewNow.map(named),
@@ -3148,6 +3565,16 @@ export class SessionRunner {
           ...(i.reason ? { reason: i.reason } : {}),
           ...(i.reason === "after_large" && i.after ? { after: i.after } : {}),
         })),
+      // S-7: work that asked to join and did not fit, still ready now (not run here).
+      ...(leftForNext.length
+        ? {
+            leftForNextStart: leftForNext.map((t) => ({
+              id: t.id,
+              title: t.title,
+              estimateChfMicro: usdToChfMicro(Math.max(0, Math.round(t.estimateUsdMicro)), rate),
+            })),
+          }
+        : {}),
       sessionCapChfMicro: usdToChfMicro(opts.budgetCapUsdMicro, rate),
       ...(plan?.workBudgetUsdMicro !== undefined
         ? { workBudgetChfMicro: usdToChfMicro(plan.workBudgetUsdMicro, rate) }
@@ -3749,10 +4176,20 @@ export class SessionRunner {
         .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
       const last = earlier.find((r) => keptOf(r.artifacts));
       const lastKept = last ? keptOf(last.artifacts) : null;
+      // C2-left-3: what the run said (its report and handoff) counts too.
+      const thisRun = result.runId ? await store.run.get(result.runId) : undefined;
       progress = madeProgress(
-        { hash, leftToDo: result.handoff?.leftToDo.length ?? 0 },
+        {
+          hash,
+          leftToDo: result.handoff?.leftToDo.length ?? 0,
+          said: pauseSaid(thisRun?.artifacts, result.handoff ?? null),
+        },
         last && lastKept
-          ? { hash: lastKept.hash, leftToDo: handoffOf(last.artifacts)?.leftToDo.length ?? 0 }
+          ? {
+              hash: lastKept.hash,
+              leftToDo: handoffOf(last.artifacts)?.leftToDo.length ?? 0,
+              said: pauseSaid(last.artifacts, handoffOf(last.artifacts)),
+            }
           : null,
       );
       if (this.deps.keptWorkCheck && isCodeChange(files)) {
@@ -3846,6 +4283,20 @@ export class SessionRunner {
   private async verdictCardKind(requestId: string): Promise<{ card?: string }> {
     const row = await this.deps.store.humanRequest.get(requestId).catch(() => undefined);
     return row ? { card: cardKindOf(row) } : {};
+  }
+
+  /**
+   * A task priced as the planner prices it now (S-6, S-7): its whole estimate (the learned one,
+   * its own, its budget, the default), less what its paused runs kept, within its own budget.
+   */
+  private async priceNow(task: TaskRow): Promise<number> {
+    const whole =
+      this.deps.planner.wholeEstimateOf?.(task) ??
+      (task.est_cost_usd_micro || task.budget_usd_micro || 500_000);
+    return withinTaskBudget(
+      estimateLeftUsdMicro(whole, await keptWorkFor(this.deps.store, task)).usdMicro,
+      task,
+    );
   }
 
   /**

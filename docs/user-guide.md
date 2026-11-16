@@ -891,18 +891,28 @@ The cards you meet most:
   new plan adds to the first. **Reject** writes nothing; the project page then says "You
   rejected the plan. Nothing was written." with **Draft a new plan**.
 - **A task that failed**: after its tries (the critic sent it back each time) or when its run
-  failed ("Claude did not answer"), one card, never one per try. **Try again** starts a session
-  that tries again; type a note first if you know what to change, and the next attempt reads it.
+  failed ("Claude did not answer"), one card, never one per try. **Try again** makes it ready to
+  try again; type a note first if you know what to change, and the next attempt reads it.
   **Mark done anyway** closes it although nothing passed review (asked once; the task then reads
   "Done: accepted without review") and the tasks after it can run. **Cancel task** drops it and
   says which tasks after it will be stuck.
 - **The critic's sign-off** on a task that needs your review: **Accept the work**, **Send it
-  back** (a session reworks it with the critic's findings), **Cancel task**.
+  back** (it is ready again and the next run reworks it with the critic's findings), **Cancel
+  task**.
 - **Questions** for you or from a specialist: see "When Forerunner needs you" below.
 
-Answering resumes work: every answer that makes a task runnable starts a session of its project,
-or queues one behind the session that runs. Answered decisions go to the decision log and are not
-asked again unless something changes. If an answer cannot be taken (the card changed on another
+Answering never starts a session: only you do (Start, Approve and start, Continue, Use API key,
+"run it now" in chat after you said yes, a schedule you set). An answer that makes a task ready
+joins the session that is running if that session's budget has room for it; otherwise it waits
+for your next Start, and the card's Done line says which ("Trying "Write the FAQ" again: it runs
+at your next Start."). The option itself says so before you press it, as things stand when you
+look: "Tries again with your note, if any; it joins the running session if it fits." while a
+session of the project runs, "...; it runs at your next Start." when none does, and "...; a
+session starts for it by itself." with the setting below on. If you want work you make ready to start by itself, turn on **When work is
+ready: Start a session by itself** for the project in Settings (it asks you once; never in your
+quiet hours or while sessions are stopped, and never for work the agent made ready itself). CI
+results and pull request comments never start a session; the next session you start reads them.
+Answered decisions go to the decision log and are not asked again unless something changes. If an answer cannot be taken (the card changed on another
 device), the card stays and says "Choose one of: …" with its options.
 
 ## When Forerunner needs you
@@ -925,11 +935,11 @@ specialist may write (backticks, stars).
 Type your answers and click **Send answers**; leave a question blank if you have no answer yet.
 Your answers are written to the project's decision record (`docs/decisions/0001-…` in the
 project's workspace folder) and the decision log. A task planned for you is then
-done, and if a task was waiting on it, a session starts and works on that task (the card's Done
-line says so); a task a specialist was working on goes back to ready, a session starts, and its
-next run gets your answers. On a specialist's questions, **Go ahead without** lets the specialist decide
-and say in its report what it assumed; the task goes on in a session, also when you press it while
-another task runs. The specialist is not let ask you the same again: if the work cannot be done
+done, and a task that was waiting on it is ready: it runs at your next Start, or joins the
+session that is running if it fits (the card's Done line says which); a task a specialist was
+working on goes back to ready and its next run gets your answers. On a specialist's questions,
+**Go ahead without** lets the specialist decide and say in its report what it assumed; the task is
+ready again in the same way. The specialist is not let ask you the same again: if the work cannot be done
 at all without your answer (a file that is missing), you get one card that says why in its own
 words, where you can answer or cancel the task, without a second **Go ahead without**. A task
 planned for you has no specialist to decide in your place, so its card has no Go ahead without:
@@ -980,8 +990,8 @@ you can undo it. A task goes to the other credential only when the first cannot 
   **straight to the API**, which is where promotional API credits apply (they do not apply to
   use through Claude Code, so Forerunner never sends an API key there);
 - whether it can be used now, and why not: this month's allowance is reached, its monthly cap
-  is reached, it rests after a usage limit (until the time shown; waiting work starts by itself
-  then), Anthropic refused it (**Refused**: save a new one under Accounts and keys), or no key
+  is reached, it rests after a usage limit (until the time shown; your session that waits for it
+  goes on then), Anthropic refused it (**Refused**: save a new one under Accounts and keys), or no key
   is saved;
 - what it has spent this month: the subscription as a share of its allowance, an API key in CHF.
 
@@ -994,9 +1004,15 @@ hour when it gives none), and the session log says so in one sentence. For tasks
   Ready without counting as a failed attempt, and so does every other task whose first choice
   is that credential; the session goes on with the tasks whose first choice can serve (a
   research task on your API key, say) and ends with "Waits until 15:40 (your subscription's
-  limit) and starts by itself.". Each waiting task's row reads "Waits until 15:40, your
-  subscription's limit", and at that time a session of the project starts by itself, also
-  after Forerunner was closed and opened again. The session log names a task as started only
+  limit); then your session goes on.". Each waiting task's row reads "Waits until 15:40, your
+  subscription's limit", and at that time your session goes on by itself, once, with the rest of
+  its budget (its first line: "Goes on with your session of 14:05."), also after Forerunner was
+  closed and opened again. Your quiet hours hold it until they end, and then every line names
+  their end instead of the reset ("Waits until 17:00 (after your quiet hours); then your session
+  goes on."); **Cancel** on the Start dialog
+  or Stop all drops it, and then its tasks run at your next Start. A session you stopped does not
+  go on, and work you did not start a session for waits for your next Start ("; then it runs at
+  your next Start."). The session log names a task as started only
   once its run really starts, with the specialist that runs it.
 - **Use the other one**: the task goes on at once, in the same session, on your other
   credential ("continues on your API key now"). This moves work from your plan's limits onto
@@ -1015,25 +1031,31 @@ it, and neither does the plan of a new project: its page says "Planning waits fo
 key: save one in Settings." instead of "Planning failed", with no Try again. Save a new key
 with **Save a new key** on the card or on the project page (the setup assistant, open on its
 Claude step: "Anthropic refused the saved API key. Paste a new one below."): the card
-closes, the mark goes, and the waiting work starts by itself: the tasks run, and the plan is
-drafted and waits in the Inbox for your approval. At a usage limit a plan waits the same way
+closes, the mark goes, your session that waited for it goes on by itself (other waiting work
+runs at your next Start), and the plan is drafted and waits in the Inbox for your approval. At a usage limit a plan waits the same way
 ("Planning waits until 15:40 (your subscription's limit) and starts by itself.") and is
 drafted at that time. Home and the project page say what a project waits for ("Waiting for a
 new API key: 2 tasks"), and so does the Start dialog ("Nothing can run until you save a new API
 key in Settings.", with **Save a new key**) instead of what a session would run.
 Opening the Start dialog changes nothing: when your credential rests until a reset and no
 session has met that yet, the dialog says "Nothing can run until 15:40 (your API key's limit).
-Press Start and the work starts then." and **Start** stays on; press it (or **Continue where it
-stopped**) and the work starts by itself at 15:40 (then the dialog says "Nothing can run until
-15:40 (your API key's limit); it starts by itself then."). Only looking starts nothing. The
+Press Start and the work starts then." and the button reads **Start at 15:40**; press it (or
+**Continue where it stopped**) and your Start is kept: no session runs now, the dialog says "A
+session of Quote page starts at 15:40.", the project's line reads "Starts at 15:40 (your API key's
+limit): 1 task", and at 15:40 the session starts once, as yours (your quiet hours do not hold
+it: you chose that time), also after Forerunner was closed and opened again. Then the dialog
+says "Nothing can run until 15:40 (your API key's limit); then your session goes on." with
+**Cancel the wait**, and a second Start says "A session of Quote page starts at 15:40.". A start
+you ask for in chat during such a wait runs a session that meets the wait instead, and your
+session then goes on at the reset. Only looking starts nothing. The
 project's line says it too: "Ready: 1 task; nothing runs until 15:40 (your API key's limit)"
 with **Continue**, and where New task, the plan card or Settings say where a specialist runs,
 they say "Waits until 15:40 (your API key's limit). Press Start and the work starts then."
 (creating a task keeps no wait, so nothing starts by itself until you press Start). A task's
 run that Anthropic refused reads "Stopped: Anthropic refused your API key" (or "your
 subscription sign-in") in its drawer. If
-you add a Claude subscription instead of a new key, the work that waited starts by itself on the
-subscription when your order lets it go there (with no order chosen, tasks use the
+you add a Claude subscription instead of a new key, your session that waited goes on by itself on
+the subscription when your order lets it go there (with no order chosen, tasks use the
 subscription first), with no restart, and once no work waits on the refused key its card closes
 ("Closed: it no longer needs you."; it comes back if work needs that key again); under **Wait** a first choice that rests or was refused still holds its
 work. A session you start while a new project's plan is being drafted waits for the planning to

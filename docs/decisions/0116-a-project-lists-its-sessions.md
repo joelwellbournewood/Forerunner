@@ -110,3 +110,11 @@ newest 100 raw rows with the stored result, and:
 - **Offset paging**: rejected; a session starting between two pages would shift and repeat rows.
 - **Keying "started by itself" on the trigger alone**: rejected; it would be untrue for an
   answer's start or a Continue, which carry the trigger `message`.
+
+## Amendment 2026-11-16 (ADR 0118, d1109-starts-engine): point 14's words for the new starts
+
+`startedByWords` reads `plan.startedBy` as the start's engine writes it: `hands_off` is "started
+by itself when work was ready", `continuation` is "goes on with your session of 14:05" (its
+`continuesAt`, else "goes on with your earlier session"); `person` says nothing, except "started
+from your phone" for a phone's start; `schedule` is "started on its schedule". A session's first
+log line for a continuation is "Goes on with your session of 14:05.".

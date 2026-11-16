@@ -116,3 +116,11 @@ written by anyone with access to the repository).
   no `ci` trigger until the watcher uses a status read (the base branch's `listCommitStatuses`,
   J.9, once both are merged).
 - A PR reopened after it was seen closed is not watched again.
+
+## Amendment 2026-11-16 (ADR 0118, d1109-starts-engine S-4): CI results and comments start nothing
+
+The owner, 2026-11-09 (answer 9): CI results and pull request comments start no session, with
+"Start a session by itself" on or off. The watcher keeps its cursor, dedupe, quiet-hours deferral,
+injection scan and inbox message as before; each firing is one `githost.trigger` audit row with
+outcome `waits_start`, and the watcher has no start port any more. The next session the person
+starts reads the messages in its brief.

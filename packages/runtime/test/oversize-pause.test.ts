@@ -21,7 +21,7 @@ import {
   wakeBudgetWaits,
 } from "../src/session/budget-card.ts";
 import { keptOf, pauseSentence } from "../src/session/budget-pause.ts";
-import type { RunSandboxPort } from "../src/session/executor.ts";
+import { type RunSandboxPort, runIdAt } from "../src/session/executor.ts";
 import { pausedSentences } from "../src/session/result.ts";
 import {
   type BudgetStop,
@@ -56,6 +56,8 @@ interface Step {
   cost?: number;
   /** A hard stop at the limit (no wrap-up heard): its Run row reads `budget_exceeded`. */
   hard?: boolean;
+  /** C2-left-3: a run whose work is its report (a researcher's findings): no file changed. */
+  report?: string;
 }
 
 describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2 to OP-8)", () => {
@@ -103,6 +105,7 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
       });
       if (step.content !== undefined)
         await writeFile(join(worktree, "index.js"), step.content, "utf8");
+      const changedFiles = step.report !== undefined ? [] : ["index.js"];
       if (step.outcome === "done")
         return {
           outcome: "done",
@@ -118,7 +121,12 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
         leftToDo: step.left ?? ["Finish checkout in index.js"],
         stoppedBy: step.hard ? ("budget" as const) : ("wrap_up" as const),
       };
-      await store.run.patch(run.id, { artifacts: [{ handoff }] as never });
+      await store.run.patch(run.id, {
+        artifacts: [
+          ...(step.report !== undefined ? [{ report: step.report }] : []),
+          { handoff },
+        ] as never,
+      });
       const result: TaskExecutionResult = {
         outcome: "paused",
         summary: "paused",
@@ -126,7 +134,7 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
         checksPassed: false,
         runId: run.id,
         worktree,
-        changedFiles: ["index.js"],
+        changedFiles,
         handoff,
         budgetStop: {
           capUsdMicro: usd(0.5),
@@ -327,13 +335,48 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
       '"Build the shop" paused again without getting further: answer its card in the Inbox.',
     );
     expect(`${r.summary} ${JSON.stringify(words)}`).not.toMatch(/by itself/);
+    // C2-left-1: the Tasks row and the Overview's Next say what the card says (before: "Paused
+    // before the session's budget ran out" beside a card titled "paused again without getting
+    // further"), and the drawer says what the card asks.
+    expect(budgetPauseLabelOf(card?.change_card)).toBe("Paused again without getting further");
     expect(budgetPauseDetailOf(card?.change_card)).toBe(
-      "It paused again without getting further: answer its card in the Inbox.",
+      "Its card in the Inbox asks what to do differently.",
     );
     // The next Start does not take it (OP-0's continue next time leaves a no-progress pause).
     steps.push({ outcome: "done" });
     await start();
     expect(await workRuns(shop.id)).toHaveLength(2);
+  }, 60_000);
+
+  // C2-left-3 (run C step 2's leftover): the work of a researcher is its report. Before, only the
+  // changed files and the length of "Left to do" counted, so a run that wrote more findings into
+  // its report, with no file and a list of the same length, was "no progress" and stopped for the
+  // person instead of going on.
+  it("C2-left-3: a research task that wrote more of its report between two pauses goes on; one that wrote nothing new still asks", async () => {
+    const notes = await add("Research the market");
+    steps.push(
+      { outcome: "paused", report: "Findings: two competitors.", left: ["Price the third"] },
+      {
+        outcome: "paused",
+        report: "Findings: two competitors; the third sells at CHF 9.",
+        left: ["Write the summary"],
+      },
+      { outcome: "done" },
+    );
+    await start();
+    expect(await workRuns(notes.id)).toHaveLength(3);
+    expect(await cardOf(notes.id)).toBeUndefined();
+    expect((await store.task.mustGet(notes.id)).status).not.toBe("needs_human");
+
+    const same = await add("Research the suppliers");
+    steps.push(
+      { outcome: "paused", report: "Findings: one supplier.", left: ["Find a second"] },
+      { outcome: "paused", report: "Findings: one supplier.", left: ["Find a second"] },
+      { outcome: "done" },
+    );
+    await start();
+    expect(await workRuns(same.id)).toHaveLength(2);
+    expect((await cardOf(same.id))?.change_card).toMatchObject({ no_progress: true });
   }, 60_000);
 
   it("OP-3, OP-4: Continue with a note on the question: the note reaches the next brief, with 'try another way'", async () => {
@@ -477,7 +520,7 @@ describe("d1109-oversize-pause, run C: Continue's floor, the question at an oute
       agentId: w.agent,
       limitNow: async () => usd(5),
       roomFor: async () => true,
-      start: start as never,
+      prepare: start as never,
     });
     expect(woke).toBe(0);
     expect(starts).toEqual([]);
@@ -518,7 +561,7 @@ describe("d1109-oversize-pause, run C: Continue's floor, the question at an oute
       agentId: w.agent,
       limitNow: async () => usd(5),
       roomFor: async () => true,
-      start: start as never,
+      prepare: start as never,
     });
     expect(
       await store.humanRequest.list({ task_id: task.id, status: "open" } as never),
@@ -761,5 +804,16 @@ describe("d1109-oversize-pause, run C: the pause's words agree (L3-left-1 to -3,
         0.8,
       ),
     ).toBe('The coder goes on with "Build the shop" from where it stopped.');
+  });
+});
+
+describe("C2-left-5 (run C step 2's leftover): run ids sort in the order the runs were made", () => {
+  // Before: the executor took run ids from the platform's random newId, so two runs of one task in
+  // one millisecond (a SimulatedClock that does not move) sorted at random by (created_at, id).
+  it("ids made in one millisecond are strictly increasing", () => {
+    const at = Date.parse("2026-11-10T07:00:00Z");
+    const ids = Array.from({ length: 200 }, () => runIdAt(at));
+    expect([...ids].sort()).toEqual(ids);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

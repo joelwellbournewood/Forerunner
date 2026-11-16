@@ -249,11 +249,21 @@ describe("session commands over the scheduler", () => {
       isQuietHours: () => true,
     });
     const quietPorts = sessionCommandPorts({ scheduler: quiet, kill, store });
-    const night = await quietPorts.startSession?.({
+    // d1109-starts-engine (S-1): the registry's session.start is the person's own start and runs
+    // inside quiet hours; a deferred start is one nobody pressed (a schedule).
+    await quietPorts.startSession?.({
+      agentId: "carol",
+      trigger: "manual",
+      reason: "pressed at night",
+    });
+    expect(quiet.log.find((e) => e.req.agentId === "carol")?.result).toBe("started");
+    const deferred = await quiet.requestStart({
       agentId: "bob",
       trigger: "schedule",
+      by: "schedule",
       reason: "night",
     });
+    const night = { sessionId: undefined, startId: deferred.id, outcome: deferred.result };
     expect(night).toEqual({
       sessionId: undefined,
       startId: quiet.pendingStart("bob")?.id,
@@ -273,6 +283,9 @@ describe("session commands over the scheduler", () => {
 
   it("through the registry: session.start while a session runs is queued, and its undo does not kill the running session", async () => {
     const w = await storeWorld();
+    // d1109-starts-engine S-11: a start said in chat is read back first; these are the
+    // palette's press (source ui), which acts at once as before.
+    w.turn = { ...w.turn, source: "ui" };
     const { store, clock } = w;
     const scheduler = new Scheduler({
       clock,
@@ -309,6 +322,9 @@ describe("session commands over the scheduler", () => {
   it("Changes offers no Undo for a session.start whose session ended, and says why, before anyone tries it (later #36, U-061)", async () => {
     // Before: the row offered Undo after its session ended, and the click then said it could not.
     const w = await storeWorld();
+    // d1109-starts-engine S-11: a start said in chat is read back first; these are the
+    // palette's press (source ui), which acts at once as before.
+    w.turn = { ...w.turn, source: "ui" };
     const { store, clock } = w;
     const kill = new KillSwitch(new TokenIssuer({ now: () => clock.now() }));
     const sched = sessionScheduler(w);
@@ -340,6 +356,9 @@ describe("session commands over the scheduler", () => {
 
   it("the undo of a session.start whose session ended is a no-op with a clear message: nothing stopped, the kill switch open, the change row irreversible; a running start is stopped as that session only", async () => {
     const w = await storeWorld();
+    // d1109-starts-engine S-11: a start said in chat is read back first; these are the
+    // palette's press (source ui), which acts at once as before.
+    w.turn = { ...w.turn, source: "ui" };
     const { store, clock } = w;
     const kill = new KillSwitch(new TokenIssuer({ now: () => clock.now() }));
     const stops: { scope: unknown; reason: string }[] = [];
@@ -460,6 +479,9 @@ describe("session commands over the scheduler", () => {
 
   it("the undo is tied to the start it undoes: an earlier start whose session ended is the no-op while a later start of the agent runs; the later start's undo stops its session only, never a cloud session of the agent; a queued start that ran is stopped under its own identity", async () => {
     const w = await storeWorld();
+    // d1109-starts-engine S-11: a start said in chat is read back first; these are the
+    // palette's press (source ui), which acts at once as before.
+    w.turn = { ...w.turn, source: "ui" };
     const { store, clock } = w;
     const kill = new KillSwitch(new TokenIssuer({ now: () => clock.now() }));
     const stops: { scope: unknown; reason: string }[] = [];
@@ -585,6 +607,9 @@ describe("session commands over the scheduler", () => {
 
   it("a phone's session.start is a remote row the PC picks up: the watcher records the start's identity in the row's result, so the undo stops the remote-started session only, an ended one is refused, a row the PC is picking up is refused without being marked, and a row without an identity or one the PC never ran is refused as such", async () => {
     const w = await storeWorld();
+    // d1109-starts-engine S-11: a start said in chat is read back first; these are the
+    // palette's press (source ui), which acts at once as before.
+    w.turn = { ...w.turn, source: "ui" };
     const { store, clock } = w;
     const phone = await store.device.register({
       owner_human_id: w.humanId,
@@ -631,9 +656,11 @@ describe("session commands over the scheduler", () => {
       humanId: w.humanId,
     });
     // The daemon's execute route with the phone's device id (`POST /commands/execute`).
+    // d1109-starts-engine S-11: the phone's Start press (source ui); a start typed on the phone is
+    // read back first, as in the chat.
     const phoneTurn: CommandTurn = {
       ...w.turn,
-      source: "phone",
+      source: "ui",
       deviceId: phone.id,
       wordsUsed: "start a session on sample",
     };

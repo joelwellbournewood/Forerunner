@@ -45,8 +45,12 @@ describe("w15-chat, wave 15", () => {
     expect(lines).toContain(
       "- speed_quality_offset (per project): Shifts every mode's default effort one step per project: -1 speed, 0 balanced, +1 quality. Value: integer from -1 to 1.",
     );
+    // d1109-starts-engine S-5: the project's "When work is ready" key, last of the keys.
+    expect(lines.at(-1)).toBe(
+      "- start_by_itself (per project): When work is ready: false (the default) waits for the person's Start; true starts a session by itself when work the person made ready can run, never in quiet hours or while sessions are stopped, never for the agent's own tasks. Only the person sets it. Value: true | false.",
+    );
     // Every key has its line.
-    expect(lines.filter((l) => l.startsWith("- "))).toHaveLength(21);
+    expect(lines.filter((l) => l.startsWith("- "))).toHaveLength(22);
     // What the model's tool schema says of `value` (before: `{}`).
     const schema = z.toJSONSchema(settingsSet.params) as {
       properties: Record<string, { description?: string }>;

@@ -619,7 +619,7 @@ task's pick meets now (`waitSentence` and `saveLink`), and `startBlocked`'s `cre
 turns it into "Nothing can run until you save a new API key in Settings." (W15-78,
 `nothingRunsYetSentence` from the wait's own sentence; a kept wait: "Nothing can run until 15:40
 (your API key's limit); it starts by itself then."; before: "Nothing can run yet. Waits ...") with the save
-link (`nothing_runnable`, asked by the Start check only). The check only reads (TR-2, leftovers7-tailrun: before, it kept the wait on its source with `noteWait`, so opening the Start dialog or the stopped bar's Continue made the work start by itself at the reset although the person only looked): a wait a Start or a session already kept on its source (`limits.waiting` names the project) says "... and starts by itself." with Start off; a resting credential's wait nobody kept says what Start does instead ("Nothing can run until 15:40 (your API key's limit). Press Start and the work starts then.", `startKeepsWaitSentence`; W15-65: "it runs then" had no thing for "it") with `blocked.startable: true`, so the dialog keeps Start on and the stopped bar's Continue starts it; `POST /sessions` does not refuse on it, so that start meets the wait and keeps it (the executor's `noteWait`) and the work starts at the reset; a refused credential's wait keeps Start off (saving a key is the step). Tests: `real-daemon.test.ts` "leftovers7-tailrun, wave 13" (TR-2), R-runsonrefused: the chooser's line says the same wait for a refused or resting credential, `blockedKinds` (W15-66: in the Start form, `waitThenStartSentence`, "Waits until 15:40 (your API key's limit). Press Start and the work starts then.", since creating a task keeps no wait; before: "... and starts by itself."; test `real-daemon.test.ts` "w15-words, wave 15 run B"), R-inboxperf: `chooser.batch()` reads the credentials once per GET /inbox); tests
+link (`nothing_runnable`, asked by the Start check only). The check only reads (TR-2, leftovers7-tailrun: before, it kept the wait on its source with `noteWait`, so opening the Start dialog or the stopped bar's Continue made the work start by itself at the reset although the person only looked): a wait a Start or a session already kept on its source (`limits.waiting` names the project) says "... and starts by itself." with Start off; a resting credential's wait nobody kept says what Start does instead ("Nothing can run until 15:40 (your API key's limit). Press Start and the work starts then.", `startKeepsWaitSentence`; W15-65: "it runs then" had no thing for "it") with `blocked.startable: true`, so the dialog keeps Start on ("Start at 15:40", `startLabel`) and the stopped bar's Continue starts it; `POST /sessions` does not refuse on it: since ADR 0118 point 10 it keeps the person's Start for the reset (`continuations.keepStart`, answer `kept`) and the work starts at the reset, once, by the person (before, a session ran only to meet the wait and keep it); a refused credential's wait keeps Start off (saving a key is the step). Tests: `real-daemon.test.ts` "leftovers7-tailrun, wave 13" (TR-2), R-runsonrefused: the chooser's line says the same wait for a refused or resting credential, `blockedKinds` (W15-66: in the Start form, `waitThenStartSentence`, "Waits until 15:40 (your API key's limit). Press Start and the work starts then.", since creating a task keeps no wait; before: "... and starts by itself."; test `real-daemon.test.ts` "w15-words, wave 15 run B"), R-inboxperf: `chooser.batch()` reads the credentials once per GET /inbox); tests
 `credential-limits.test.ts` "credential waits: the Start check, another credential, a failed
 start, a planning call". (5) The words: the session result's first builder
 (`RESULT_LINE_BUILDERS` in `session/result.ts`, `LastSessionOutcome.credentialWait`: "Waits
@@ -1539,7 +1539,9 @@ re-makes a call answered after its session ended is started by the answer itself
 (`syncLateApprovals`, below under "Local daemon").
 
 **CI results and PR comments (spec E.1; [ADR 0075](../decisions/0075-githost-triggers-polling-and-dedupe.md); `src/session/githost-watcher.ts`).**
-`GitHostWatcher` is the producer of the `ci` and `pr_comment` triggers. Every `pollMs`
+Since run C (ADR 0118, amending 0075) a firing starts no session: it is audited `waits_start`
+and its messages wait in the agent's inbox for the person's next Start; the rest of this
+paragraph is unchanged. `GitHostWatcher` is the producer of the `ci` and `pr_comment` triggers. Every `pollMs`
 (`FORERUNNER_GITHOST_POLL_MS`, `DEFAULT_GITHOST_POLL_MS` = 60 000) on the `Clock` it lists
 the PRs the task rows give the install's agents (`watchedPullRequests`: a task in any status
 but `draft` / `cancelled` with a `pr_url`, whose `owner_agent_id`, else `claimed_by`, else
@@ -3192,7 +3194,9 @@ waits on you" while 4 tasks waited on it).
   accepted without review" (ADR 0102 decision 2); the sign-off's Accept the work records "you
   accepted the work at sign-off". Reasons no longer carry the request id (design §5 rule 3; the
   `critic.signoff` audit row ties them).
-- **Answering resumes work** (`session/resume-work.ts`): Try again (with the person's optional
+- **Answering resumes work** (`session/resume-work.ts`; since run C, ADR 0118, an answer prepares
+  work and starts nothing: see "Who starts a session" below; what follows is the earlier
+  design): Try again (with the person's optional
   note, `{ choice, note }`, queued as a note naming the task for its next brief), Send it back and
   Mark done anyway start a session of the project through the scheduler, or queue one behind the
   running session, when a task of the project can run (`readyTasks`); nothing runnable starts
@@ -7371,6 +7375,90 @@ no store, git host or file system, so the UI's fake daemon imports it).
   default branch's marker names this project, or a docs pull request of this project updated
   since the take-over, or the one the run opened, is merged: refused; open: refused; GitHub
   unreadable: refused).
+
+### Who starts a session (d1109-starts-engine, [ADR 0118](../decisions/0118-who-starts-a-session.md))
+
+Only the person starts a session; everything else prepares work. The pieces:
+
+- **`StartRequest.by`** (`session/triggers.ts`): `person`, `schedule`, `hands_off`,
+  `continuation`; `startByOf(req)` reads it, else the trigger (`manual`/`remote` are the
+  person's, `schedule` a schedule's). `Scheduler` holds every start that is not the person's in
+  quiet hours (`isQuietHours`, compose's cached `quietHours` reader, refreshed before every tick,
+  every such start and every sentence naming the window's end; `RuntimeApp.quietHours`), and
+  writes a schedule's fired key only when its start leaves the line (`markFired`). The runner
+  records `plan.startedBy` (`{ by, continues?, continuesAt? }`, reason "who asked for the
+  session") and `plan.promise`.
+- **`prepareWork`** (`session/prepared-work.ts`, `PrepareDeps`, `PreparePort`): the work an
+  action made runnable joins the project's live session (`LiveSessions.forProject(...).admit`) if
+  it fits, else waits (`waits_start`), or waits for the person's continuation
+  (`waits_continuation`), or, with `start_by_itself` on and `by` not `agent`, starts a
+  `hands_off` session (kept on `summary_cache.start_pending` when it cannot start now;
+  `sweepStartPending` asks again; a hands-off start that begins drops it). `preparedLine`,
+  `preparedClause` and `preparedExplain` are the only words; `previewWork` is the read-only
+  sibling for a read-back. An Inbox option that prepares work (Try again, Send it back, the
+  cannot-run card's Try again, the rebuild and rebase cards' Redo) says what pressing it does,
+  read when the card is shown: `preparedContextOf` (the same steps as `prepareWork`: the
+  project's live or asked-for session, the person's waiting session, `start_by_itself` with Stop
+  all and quiet hours, another project's session) feeds `RequestWordsContext` through
+  `requestViews(store, rows, rt.preparedContext)` on GET /inbox, the answer route's card and the
+  chat's read-back of a card. Every answer path (`resume-work.ts`'s `prepareAnswer` +
+  `recordStart`: budget-card, intake, person-questions, cannot-run-card, findings, pr-answers,
+  late-approval) calls it with `by: "person"`; the budget wake and a credential's wake for
+  non-person work with `by: "system"`. `resumeWork` is gone.
+- **The promise** (`session/promise.ts`, `session/live-sessions.ts`): `promiseOf` and
+  `cutFollowers` split the followers by the work budget left after the runnable tasks (the Start
+  check's `later`/`laterBeyond`); a live session registers an `AdmitHandle` (`admit(taskIds, by,
+  { partOf, before })`, `readmit`, `closing`); a newcomer is admitted when the work budget less
+  the spend and the remaining own and joined estimates holds its estimate; events
+  `session.promised`, `session.joined`, `session.left_for_next_start` ("Left for your next
+  Start: …") and `session.continues`.
+- **The continuation** (`wiring/billing-pick.ts`: `limits.waiting[].kept`, `keepContinuation`,
+  `keepStartAtReset`, `dropKeptStart`, `keptContinuationOf`, `keptStartOf`): the runner keeps one
+  when a person's session (or continuation, or a schedule the person set) ends to wait for its
+  credential with budget left and no stop pending; `credentialWaits.wake` starts it once
+  (`budget_reset`, `by: "continuation"`, the rest of its budget), held by quiet hours, dropped by
+  `continuations.cancel` (`POST /projects/:id/continuation/cancel`), `dropAll` (Stop all) and the
+  project's removal; `continuations.waiting` says "Your session of 10:00 goes on by itself at
+  15:00." and POST /sessions refuses a second wait with it (`claim_conflict`). `POST /sessions`
+  with `continues` goes on with an ended session's budget left. The words of a wait
+  (`credential-wait.ts`, `afterWaitClause(goesOn)`): "; then your session goes on." or "; then it
+  runs at your next Start."; when the person's quiet hours hold a continuation past the reset,
+  every sentence names their end (`continuationGoesOnAt`/`goesOnAtWords` over
+  `notifications/prefs.ts`'s `quietHoursEndAt`: the runner's end sentence and the review's stop
+  line, the executor's `waitWords`, `waitRowWords`'s `goesOnAt` for the rows and the status,
+  compose's `goesOnAtOf` for the Start check): "Waits until 17:00 (after your quiet hours); then
+  your session goes on.".
+- **The kept Start** ("Start at 15:40", ADR 0118 point 10): `POST /sessions` with the work's
+  credential resting, nothing kept and no session of the project running or waiting calls
+  `continuations.keepStart` (`noteWait`, then `keepStartAtReset` with the budget, `continues` and
+  the note) and answers `{ result: "kept", sentence }` ("A session of Quote page starts at
+  15:40."); no session runs. The wake starts it once by `person` (not held by quiet hours; the
+  note goes into the request). `billing.waits.now` gives `startLabel` ("Start at 15:40") while
+  Start is pressable (`StartCheckView.blocked.startLabel`) and `startsAt` ("Starts at 15:40 (your
+  subscription's limit)", `keptStartLine`) while one is kept; the project's status line reads
+  "Starts at 15:40 (...): 1 task" (`project-status.ts`) and the rows' `line` the same. Chat's
+  `session.start` is not kept this way (ADR 0118 known gap).
+- **Git host events** are audited `waits_start` and start nothing (`GitHostWatcher` has no start
+  port).
+- **Edits before a run** (S-8): at the claim the queue item takes the claimed row's title and
+  its set specialist (`let item` in the claim loop) before `chooseSpecialist` and the start line.
+- **Leftovers of run C step 2** (in this area): a pause's progress counts what it said
+  (`pauseSaid`: its report, "Where I stopped:" and "Left to do:" items) besides the files and the
+  list's length (`madeProgress`, C2-left-3); a no-progress pause reads "Paused again without
+  getting further" with "Its card in the Inbox asks what to do differently." (C2-left-1); the
+  Start check names a task that waits on the person's card when nothing is ready
+  (`StartBlockedFacts.needsYou`, C2-left-2); a no-progress card stays out of every automatic
+  start, after a restart too (C2-left-4, `start-by-itself.test.ts`); run ids come from the
+  store's `monotonicId` (`runIdAt`, C2-left-5).
+
+Tests: `scheduler-monthly.test.ts` (S-1), `session-join.test.ts` (promise and admission),
+`continuation.test.ts` (composed, file database: once at the reset, quiet hours, quiet hours set
+before the session naming their end in the summary, rows, log and Start check, the kept Start
+across a restart, Cancel, Stop all, none after Stop after this task, none for a system schedule,
+two restarts), `starts-words.test.ts` (the explain's steps and `preparedContextOf`),
+`start-by-itself.test.ts` (composed: off, on after a yes, quiet hours across a restart),
+`githost-watcher.test.ts`/`githost-wiring.test.ts` (no firing reaches the scheduler), and the UI
+real-daemon cases under "d1109-starts-engine, run C" and "credential-limits" (S-6, S-10 routes).
 
 ## How to change it
 

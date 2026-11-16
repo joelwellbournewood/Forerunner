@@ -189,7 +189,6 @@ async function chainWorld(opts: { level: 2 | 3; mode?: MergeMode }) {
     host: github,
     agentIds: [w.alice],
     humanId: w.human,
-    start: async () => ({ id: "s", result: "started" }),
     retryMerges: () => merge.retryWaiting(),
     onPullRequestState: (pr, info) => dependents.pullRequestState(pr, info),
     repositoryProjects: async () => [{ projectId: w.project, repo: REPO }],
@@ -637,13 +636,15 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect((await m.pr(b.id)).merged).toBe(false);
     const answered = await m.w.store.humanRequest.mustGet(row.id);
     const [after] = await requestViews(m.w.store, [answered]);
-    expect(after?.outcome).toBe("Redone: the task is ready again and a session runs it.");
+    // S-2 (d1109-starts-engine): no session is running and this one-shot has no prepare port,
+    // so the Done line promises no session.
+    expect(after?.outcome).toBe("Redone: the task is ready again.");
   });
 
   it("the rebuilt card's Redo also does the task again from main: one new commit of the task's own on main, not the old commit with the new one on top (fix-up of R-rebuildcard)", async () => {
     const { m, b, prB, row, view } = await rebuiltWithout();
     const redo = view.choices?.find((c) => c.label === "Redo");
-    expect(redo?.explain).toBe("The task is done again from main; a session starts for it.");
+    expect(redo?.explain).toBe("The task is done again from main; it runs at your next Start.");
     const oldHead = (await m.pr(b.id)).head.sha;
     expect((await answerCard(m, row, redo?.label ?? "")).redone).toBe(1);
     const ready = await m.w.store.task.mustGet(b.id);
@@ -676,13 +677,13 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     if (!view || !rows[0]) throw new Error("no rebuild card");
     expect(view.title).toBe(`"Fix the page" could not be rebuilt without pull request #${prA}`);
     const redo = view.choices?.find((c) => c.label === "Redo");
-    expect(redo?.explain).toBe("The task is done again from main; a session starts for it.");
+    expect(redo?.explain).toBe("The task is done again from main; it runs at your next Start.");
     const answered = await answerCard(m, rows[0], redo?.label ?? "");
     expect(answered.redone).toBe(1);
     // The stand-in executor names its run by the attempt: the redo is the next one.
     const ready = await m.w.store.task.mustGet(b.id);
     await m.w.store.task.patch(b.id, { attempt: ready.attempt + 1 });
-    // The session the Redo starts.
+    // The person's next Start runs it (the Redo only prepared it, ADR 0118).
     await m.session();
     const after = await m.w.store.task.mustGet(b.id);
     // Before: the run resumed the open pull request's branch, rebuilt it again, hit the same
@@ -1042,7 +1043,7 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect(await m.hostGit("show", "main:README.md")).toBe("# two");
   });
 
-  it("the conflict notice's Redo does the task again from main, as its line says: the session it starts ends with the same pull request merging cleanly, no second card, and the person's Merge merges it (R-conflict fix-up)", async () => {
+  it("the conflict notice's Redo does the task again from main, as its line says: the session the person starts next ends with the same pull request merging cleanly, no second card, and the person's Merge merges it (R-conflict fix-up)", async () => {
     const m = await chainWorld({ level: 2 });
     m.writes.set("Write the page", { "index.html": "<h1>one</h1>\n" });
     m.writes.set("Write the other page", { "index.html": "<h1>two</h1>\n" });
@@ -1057,13 +1058,13 @@ describe("dependent branches stay true, composed (ADR 0111)", { timeout: 240_000
     expect(view.title).toBe(`"Write the other page" conflicts with main`);
     // The answer the Inbox sends: the card's own option.
     const redo = view.choices?.find((c) => c.label === "Redo");
-    expect(redo?.explain).toBe("The task is done again from main; a session starts for it.");
+    expect(redo?.explain).toBe("The task is done again from main; it runs at your next Start.");
     expect((await answerCard(m, rows[0], redo?.label ?? "")).redone).toBe(1);
     // The stand-in executor names its run by the attempt: the redo is the next one.
     const ready = await m.w.store.task.mustGet(b.id);
     expect(ready.status).toBe("ready");
     await m.w.store.task.patch(b.id, { attempt: ready.attempt + 1 });
-    // The session the Redo starts.
+    // The person's next Start runs it (the Redo only prepared it, ADR 0118).
     await m.session();
     const after = await m.w.store.task.mustGet(b.id);
     // Before: the run resumed the open pull request's branch, its rebase onto main conflicted in
@@ -1960,8 +1961,10 @@ describe("w15-merge, wave 15: the Tasks tab's Redo on a task with a conflict not
     };
     // Before: 'Reopened "Write the other page" to redo it: the next session works on it again.'
     // with nothing about the card it closed, and the change did not record the card.
+    // d1109-starts-engine S-9: the move promises no session; the daemon's prepare port adds what
+    // becomes of it (this one-shot has none).
     expect(moved.sentence).toBe(
-      'Reopened "Write the other page" to redo it from main: the next session works on it again. Its card in the Inbox was withdrawn.',
+      'Reopened "Write the other page" to redo it from main. Its card in the Inbox was withdrawn.',
     );
     expect(moved.after.withdrawn_requests).toEqual([notice?.id]);
     expect(await openCards(m, b.id)).toEqual([]);
@@ -2462,7 +2465,6 @@ describe("w15-tail, wave 15 run B: the words a conflict notice keeps, across a r
       host: m.github,
       agentIds: [w.alice],
       humanId: w.human,
-      start: async () => ({ id: "s", result: "started" }),
       retryMerges: () => merge.retryWaiting(),
       onPullRequestState: (pr, info) => dependents.pullRequestState(pr, info),
       repositoryProjects: async () => [{ projectId: w.project, repo: REPO }],

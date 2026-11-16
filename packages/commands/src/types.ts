@@ -375,6 +375,25 @@ export interface CommandPorts {
    * a Forerunner project that is not on this computer. Absent: the command is refused.
    */
   repositoryTakeOver?: RepositoryTakeOverPort;
+  /**
+   * d1109-starts-engine (S-9, ADR 0118): a command that made a task ready prepares it after its
+   * transaction: it joins the project's running session if it fits, else it waits for the
+   * person's next Start (or the project's "Start a session by itself" starts one). Answers the
+   * one line that says what happens next, or null. Absent: nothing is prepared or said.
+   */
+  prepareWork?(req: {
+    projectId: string;
+    taskIds: string[];
+    by: "person" | "agent";
+  }): Promise<string | null>;
+  /** The same line, read-only, for chat's read-back of such a move (nothing joins or starts). */
+  previewWork?(req: { projectId: string; by: "person" | "agent" }): Promise<string | null>;
+  /**
+   * S-10: one wait per project: the sentence that says when the person's session waiting for its
+   * Claude credential goes on ("Your session of 14:05 goes on by itself at 15:40."), or null.
+   * `session.start` answers it and starts nothing.
+   */
+  startWaits?(projectId: string): Promise<string | null>;
 }
 
 /** What `repo.take_over` takes, read from GitHub at the press (never from the model). */

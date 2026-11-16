@@ -784,6 +784,7 @@ export class RemoteCommandWatcher {
       agentId: this.deps.agentId,
       projectId: params.projectId,
       trigger: "remote",
+      by: "person",
       reason: params.reason ?? `remote start from device ${row.device_id}`,
       ...(params.budgetUsdMicro ? { budgetUsdMicro: params.budgetUsdMicro } : {}),
     });

@@ -153,7 +153,7 @@ export function settingsView(input: SettingsViewInput): Row[] {
       label: "When my first choice runs out mid-session",
       value: prefOf(h, "mid_session_limit") === "use_other" ? "use_other" : "wait",
       description:
-        "Tasks only: wait for its reset and start by themselves, or go on at once on your other Claude credential (which may cost money). Chat, planning and reviews always use the next one",
+        "Tasks only: wait for its reset, then your session goes on, or go on at once on your other Claude credential (which may cost money). Chat, planning and reviews always use the next one",
       risk: "medium",
     }),
     human({
@@ -272,6 +272,15 @@ export function settingsView(input: SettingsViewInput): Row[] {
           label: "Monthly handover test",
           value: withRunChf(p.settings.handover ?? null, 5, rate),
           description: `Once a month a fresh agent makes a set change on ${p.name} from the repository and docs alone; where it gets stuck becomes a docs task. Off until you turn it on`,
+          risk: "medium",
+        }),
+        // d1109-starts-engine (S-5, ADR 0118): "When work is ready", off (Wait for my Start)
+        // unless the person turns it on; through `settings.set start_by_itself`, a yes to turn on.
+        project({
+          key: "project.start_by_itself",
+          label: "When work is ready",
+          value: p.settings.start_by_itself === true,
+          description: `Wait for my Start (the default), or Start a session by itself when work you made ready on ${p.name} can run; never in your quiet hours or while sessions are stopped`,
           risk: "medium",
         }),
         // Opus fast mode (spec D.20, ADR 0057): the effect and the surcharge both ways, from

@@ -2317,29 +2317,35 @@ describe("w15-merge, wave 15", { timeout: 120_000 }, () => {
       "Its branch conflicts with main in README.md, and the agent could not resolve it.",
     );
     expect(view?.choices?.map((c) => [c.label, c.explain])).toEqual([
-      ["I resolved it", `A session checks your resolution and updates #${pr.number}.`],
+      // d1109-starts-engine (S-9): an answer prepares the task and says what happens next.
+      [
+        "I resolved it",
+        `Checks your resolution and updates #${pr.number}; it runs at your next Start.`,
+      ],
       [
         "Drop the branch and retry from scratch",
-        "The task is done again from main; a session starts for it.",
+        "The task is done again from main; it runs at your next Start.",
       ],
       ["Cancel the task", "Cancels the task; nothing more runs for it."],
     ]);
     await w.store.close();
   });
 
-  it("'I resolved it' and 'Drop the branch and retry from scratch' each start one session and say so on the card's Done line; Cancel starts none (W15-06)", async () => {
+  // d1109-starts-engine (S-2, ADR 0118): each prepares the task (the next Start runs it) and says
+  // so on the card's Done line; Cancel prepares nothing.
+  it("'I resolved it' and 'Drop the branch and retry from scratch' each prepare the task and say so on the card's Done line; Cancel prepares nothing (W15-06)", async () => {
     for (const [index, label, outcome, done] of [
       [
         0,
         "I resolved it",
         "resolved",
-        '"Edit the readme" goes on with your resolution: a session started.',
+        '"Edit the readme" goes on with your resolution: it runs at your next Start.',
       ],
       [
         1,
         "Drop the branch and retry from scratch",
         "dropped",
-        '"Edit the readme" is done again from main: a session started.',
+        '"Edit the readme" is done again from main: it runs at your next Start.',
       ],
       [2, "Cancel the task", "cancelled", '"Edit the readme" was cancelled.'],
     ] as const) {
@@ -2360,16 +2366,16 @@ describe("w15-merge, wave 15", { timeout: 120_000 }, () => {
         clock: w.clock,
         humanId: w.human,
         agentId: w.session.agent_id,
-        start: async (req) => {
+        prepare: async (req) => {
           starts.push(req);
-          return { id: "e1", result: "started" };
+          return { outcome: "waits_start", line: "Ready: it runs at your next Start." };
         },
       });
       const row = await w.store.humanRequest.mustGet(card.id);
       expect(row.change_card, label).toMatchObject({ outcome });
       expect(starts, label).toHaveLength(outcome === "cancelled" ? 0 : 1);
       if (outcome !== "cancelled")
-        expect((row.change_card as { start?: string }).start, label).toBe("started");
+        expect((row.change_card as { start?: string }).start, label).toBe("waits_start");
       const [view] = await requestViews(w.store, [row]);
       // Before: the bare echo, 'You answered "I resolved it".'
       expect(view?.outcome, label).toBe(done);

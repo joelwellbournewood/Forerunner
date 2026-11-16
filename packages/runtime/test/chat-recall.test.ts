@@ -629,7 +629,10 @@ describe("d1109-chat-recall, run C: CR-9 the prompt and the turn's room", () => 
     // The base is the request without this area: measured with this test's world (the same seed,
     // prompt 1.2.2, four read tools) on d706e76, 7aa7add with d1109-onerepo-link merged (C2's merge
     // step: its repo_take_over tool and project_create's longer definition add 199 tokens to every
-    // turn's tools; 7aa7add itself measures 8156 with this seed).
+    // turn's tools; 7aa7add itself measures 8156 with this seed), and with d1109-starts-engine
+    // (run C3: session_start's read-back, the four task moves' "joins the running session if it
+    // fits, else waits for the person's next Start" and settings_set's start_by_itself line add
+    // 156 tokens; b5fb66f measures 9310 for the whole request with this seed, this area 9466).
     const fixed = w.provider.countTokens(
       `${CHAT_RECALL_RULES}${JSON.stringify(req?.tools?.filter((t) => t.name.startsWith("recall")))}`,
     );
@@ -640,7 +643,7 @@ describe("d1109-chat-recall, run C: CR-9 the prompt and the turn's room", () => 
 });
 
 /** The base's 'what is left?' request in tokens (measured on d706e76, see the test). */
-const BASE_STATUS_TOKENS = 8355;
+const BASE_STATUS_TOKENS = 8511;
 
 /** One chat turn whose model makes these calls, then answers: the tool results it received. */
 async function lookups(

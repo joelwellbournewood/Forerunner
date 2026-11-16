@@ -484,13 +484,36 @@ export function keptOf(artifacts: unknown): RunKept | null {
 /**
  * OP-4 (the owner's "such that the work can be continued in the next run": continued, not
  * repeated): whether a pause got further than the last paused run of its task. It did when the
- * fingerprint of its kept work differs from that run's, or its "Left to do" list is shorter; a
- * first pause (no earlier paused run with a fingerprint) counts as progress.
+ * fingerprint of its kept work differs from that run's, or its "Left to do" list is shorter, or
+ * (C2-left-3, run C3) what it said changed: its report, its "Where I stopped:" or its "Left to
+ * do:" items (`said`, `pauseSaid`): a researcher's work is its report, and a run that wrote no
+ * file but more findings got further. A first pause (no earlier paused run with a fingerprint)
+ * counts as progress.
  */
 export function madeProgress(
-  now: { hash: string; leftToDo: number },
-  before: { hash: string; leftToDo: number } | null,
+  now: { hash: string; leftToDo: number; said?: string },
+  before: { hash: string; leftToDo: number; said?: string } | null,
 ): boolean {
   if (!before) return true;
+  if (now.said !== undefined && before.said !== undefined && now.said !== before.said) return true;
   return now.hash !== before.hash || now.leftToDo < before.leftToDo;
+}
+
+/**
+ * What a paused run said, as one text for `madeProgress` (C2-left-3): its report (the run row's
+ * `{ report }` artifact) and its handoff's "Where I stopped:" and "Left to do:" items, trimmed;
+ * the words are compared, never shown or given to a model.
+ */
+export function pauseSaid(artifacts: unknown, handoff: RunHandoff | null): string {
+  let report = "";
+  if (Array.isArray(artifacts))
+    for (const a of artifacts)
+      if (a && typeof a === "object" && !Array.isArray(a)) {
+        const r = (a as { report?: unknown }).report;
+        if (typeof r === "string") report = r.trim();
+      }
+  return [report, handoff?.stopped.trim() ?? "", ...(handoff?.leftToDo ?? []).map((t) => t.trim())]
+    .join("\n")
+    .replace(/\s+/g, " ")
+    .trim();
 }

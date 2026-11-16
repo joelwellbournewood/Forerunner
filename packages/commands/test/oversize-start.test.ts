@@ -47,11 +47,27 @@ describe("d1109-oversize-start, run C: the chat's start warns of a task larger t
     await w.store.close();
   });
 
-  it("a start below the costly line is not read back, so its warning comes with what happened", async () => {
+  // d1109-starts-engine S-11 (ADR 0118): a start said in chat is read back at any budget, so its
+  // warning is in the question; one from the palette (a press) acts at once and says it after.
+  it("a start below the costly line is read back in chat with its warning; from the palette the warning comes with what happened", async () => {
     const w = await world();
     w.ports.startWarning = async () => WARNING;
+    const asked = await w.executor.execute({
+      name: "session.start",
+      params: { budgetChf: 1 },
+      ctx: w.ctx(),
+    });
+    expect(asked).toMatchObject({
+      status: "pending",
+      readback: `Start a session on PharmaWatch (up to CHF 1)? ${WARNING}`,
+    });
+    expect(w.ports.starts).toHaveLength(0);
     const r = done(
-      await w.executor.execute({ name: "session.start", params: { budgetChf: 1 }, ctx: w.ctx() }),
+      await w.executor.execute({
+        name: "session.start",
+        params: { budgetChf: 1 },
+        ctx: w.ctx({ source: "ui" }),
+      }),
     );
     expect(r.sentence).toBe(`Started a session on PharmaWatch (up to CHF 1). ${WARNING}`);
     expect(w.ports.starts).toHaveLength(1);
@@ -64,7 +80,11 @@ describe("d1109-oversize-start, run C: the chat's start warns of a task larger t
     const card = await w.executor.plan({ name: "session.start", params: {} }, w.ctx());
     expect(card.ask).toBe("Start a session on PharmaWatch (up to CHF 5)?");
     const r = done(
-      await w.executor.execute({ name: "session.start", params: { budgetChf: 1 }, ctx: w.ctx() }),
+      await w.executor.execute({
+        name: "session.start",
+        params: { budgetChf: 1 },
+        ctx: w.ctx({ source: "ui" }),
+      }),
     );
     expect(r.sentence).toBe("Started a session on PharmaWatch (up to CHF 1).");
     await w.store.close();

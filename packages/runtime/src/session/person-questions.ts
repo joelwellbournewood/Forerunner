@@ -20,8 +20,8 @@ import {
   personQuestionsAnswerFor,
 } from "../wiring/request-answers.ts";
 import { answerApplied, markAnswer } from "./answer-mark.ts";
-import { recordStart, resumeWork } from "./resume-work.ts";
-import type { StartRequest } from "./triggers.ts";
+import type { PreparePort } from "./prepared-work.ts";
+import { prepareAnswer, recordStart } from "./resume-work.ts";
 
 /**
  * What the person chose when they went on without answering (the commands' `WITHOUT_ANSWERS_NOTE`,
@@ -921,10 +921,11 @@ export interface PersonQuestionsSyncDeps {
   /** `<projects>/<id>/workspace`: where the decision doc is written. */
   workspaceDir: (projectId: string) => string;
   /**
-   * Asks for a session of the project once questions asked during work are answered, so the
-   * task's next run gets them (the daemon's scheduler; absent in a one-shot).
+   * Answering prepares work (d1109-starts-engine S-2, ADR 0118): the work the answer made
+   * runnable joins the project's running session if it fits, else it waits for the person's next
+   * Start; the daemon's `prepareWork`, absent in a one-shot.
    */
-  start?: (req: StartRequest) => Promise<unknown>;
+  prepare?: PreparePort;
 }
 
 export interface PersonQuestionsSyncResult {
@@ -1075,7 +1076,8 @@ async function applyAnswers(
           await recordStart(
             store,
             row.id,
-            await resumeWork(store, deps.start, {
+            await prepareAnswer(deps.prepare, {
+              by: "person",
               agentId: deps.agentId,
               projectId: task.project_id,
               reason: `you chose to go ahead without answering "${task.title}"`,
@@ -1181,7 +1183,8 @@ async function applyAnswers(
         await recordStart(
           store,
           row.id,
-          await resumeWork(store, deps.start, {
+          await prepareAnswer(deps.prepare, {
+            by: "person",
             agentId: deps.agentId,
             projectId: task.project_id,
             reason: `your answers to "${task.title}"`,

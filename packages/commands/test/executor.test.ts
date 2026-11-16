@@ -487,7 +487,8 @@ describe("CommandExecutor", () => {
         { name: "project.switch", params: { project: w.game.id } },
         { name: "session.start", params: { budgetChf: 1 } },
       ],
-      w.ctx(),
+      // The palette's two commands (a press): a start said in chat is read back first (S-11).
+      w.ctx({ source: "ui" }),
     );
     expect(r.status).toBe("refused");
     expect((r as { reason: string }).reason).toMatch(/scheduler down/);

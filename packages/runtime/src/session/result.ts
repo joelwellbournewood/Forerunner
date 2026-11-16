@@ -84,6 +84,12 @@ export interface ResultFacts {
     reason?: "after_others" | "after_large" | "no_room";
     after?: string;
   })[];
+  /**
+   * d1109-starts-engine (S-7): work made ready while the session ran that asked to join and did
+   * not fit what the session promised (option C), still ready at its end: "Left for your next
+   * Start: "D" (about CHF 0.50)."
+   */
+  leftForNextStart?: (NamedTask & { estimateChfMicro: number })[];
   /** The session's cap, in CHF (the "this session's CHF 0.90 was used" line). */
   sessionCapChfMicro: number;
   /**
@@ -341,6 +347,20 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
           behind.set(t.after, [...(behind.get(t.after) ?? []), t.title]);
       const after = [...behind].map(([big, titles]) => waitsForNextSessionSentence(titles, big));
       why.push(...after);
+      // S-7: work that asked to join and did not fit the session's promise.
+      const next = f.leftForNextStart ?? [];
+      if (next.length) {
+        const named = next
+          .slice(0, 3)
+          .map(
+            (t) =>
+              `"${t.title}" (${aboutWords(formatChf(t.estimateChfMicro), t.estimateChfMicro)})`,
+          )
+          .join(", ");
+        why.push(
+          `Left for your next Start: ${named}${next.length > 3 ? ` and ${next.length - 3} more` : ""}.`,
+        );
+      }
       const fitting = f.leftOutForBudget.filter(
         (t) => !larger.includes(t) && !(t.reason === "after_large" && t.after),
       );
@@ -445,9 +465,11 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
  * subscription's share also reset.
  */
 function goesOnByItself(limit: string): string {
+  // d1109-starts-engine (S-3, S-12; ADR 0118 amending 0112): a raised or reset limit makes it
+  // ready again; it runs at the next Start (nothing starts by itself).
   return /^the project's budget\b/.test(limit)
-    ? "it goes on by itself once you raise that budget."
-    : "it goes on by itself once that limit is raised or resets.";
+    ? "it is ready again once you raise that budget, for your next Start."
+    : "it is ready again once that limit is raised or resets, for your next Start.";
 }
 
 /**
@@ -507,7 +529,7 @@ export function pausedSentences(paused: readonly PausedTask[], told?: ToldByCard
   }
   const names = namesOf(titlesOf(shown));
   if (waiting === shown.length)
-    return [`${names} paused at a limit: they go on by themselves once it is raised or resets.`];
+    return [`${names} paused at a limit: they are ready again once it is raised or resets.`];
   if (waiting > 0) return [`${names} paused at a budget: see their cards in the Inbox.`];
   return [`${names} paused at a budget: continue or cancel them in the Inbox.`];
 }

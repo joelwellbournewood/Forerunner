@@ -101,6 +101,7 @@ import {
   type CommandSourceBody,
   type ConsolidationProposalView,
   type ConsolidationRunView,
+  type ContinuationCancelView,
   type ConversationView,
   CreateProjectBody,
   CreateTaskBody,
@@ -1448,6 +1449,25 @@ export function createDaemonApp(
           ? intake.state
           : null,
       planWait: intake?.wait ?? null,
+      // C2-left-2: with nothing ready, a task that waits on the person's open card.
+      needsYou:
+        r.ready === 0
+          ? await (async () => {
+              const held = await rt.store.task.forProject(
+                projectId,
+                { status: ["needs_human"] },
+                { limit: 50 },
+              );
+              for (const t of held) {
+                const open = await rt.store.humanRequest.list(
+                  { task_id: t.id, status: "open" } as never,
+                  { limit: 1 },
+                );
+                if (open.length > 0) return t.title;
+              }
+              return null;
+            })().catch(() => null)
+          : null,
       // R-startcred: only asked while tasks would run (the pick is read-only); a task larger
       // than the work budget runs too (D4).
       credentialWait:
@@ -1486,6 +1506,7 @@ export function createDaemonApp(
       // left out of the work that fits, in the daemon's one sentence (`oversize-words.ts`).
       overBudget: overBudgetView(r, rate),
       later: r.later.map(named),
+      laterBeyond: r.laterBeyond.map(named),
       blocked,
       busy,
       planning,
@@ -1604,8 +1625,49 @@ export function createDaemonApp(
   // The start dialog opens the session it started (U-003): a started run is waited for until its
   // `session.started` (its row exists then), its end, or SESSION_START_WAIT_MS. A run that fails
   // before its session begins (the kill switch, no model credential) answers that error.
+  // d1109-starts-engine (S-10, ADR 0118): Cancel on the person's session that waits to go on
+  // after its Claude credential (or a Start kept for the reset): nothing starts at the reset; the
+  // tasks wait for the next Start.
+  app.post("/projects/:id/continuation/cancel", async (c) => {
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    const cancelled = await rt.continuations.cancel(project.id);
+    const view: ContinuationCancelView = {
+      cancelled,
+      sentence: cancelled
+        ? "Cancelled: nothing goes on by itself; its tasks run at your next Start."
+        : "Nothing waits to go on for this project.",
+    };
+    rt.events.emit("project", { id: project.id });
+    return c.json(view);
+  });
+
   app.post("/sessions", async (c) => {
     const body = await parse(c, StartSessionBody);
+    // S-10: a session's Continue goes on with the ended session: the rest of its promise and of
+    // its budget (its cap less its booked spend), never more; refused when nothing is left.
+    if (body.continues) {
+      const earlier = await rt.store.session.mustGet(body.continues);
+      const left = earlier.budget_cap_usd_micro - earlier.spent_usd_micro;
+      if (left <= 0)
+        throw new ForerunnerError(
+          "validation",
+          "That session used its whole budget: start a new one to go on.",
+          { details: { cause: "nothing_left", sessionId: earlier.id } },
+        );
+      body.projectId ??= earlier.project_id ?? undefined;
+      body.budgetUsdMicro = left;
+    }
+    // S-10: one wait per project: while the person's session waits to go on (or a Start was kept
+    // for the reset), a Start keeps nothing new and starts nothing; it says when it goes on. The
+    // wake runs first, so a stop that has ended goes on now.
+    if (body.projectId) {
+      if (await rt.continuations.waiting(body.projectId)) await rt.billing.waits.wake();
+      const waits = await rt.continuations.waiting(body.projectId);
+      if (waits)
+        throw new ForerunnerError("claim_conflict", waits, {
+          details: { cause: "continuation_waits", projectId: body.projectId },
+        });
+    }
     // W15B-02: a removed project (its creation undone) starts nothing: refused at once in one
     // sentence, before the scheduler is asked, so no session row is made (`startSession`
     // refuses any other start of it too).
@@ -1639,6 +1701,29 @@ export function createDaemonApp(
         throw new ForerunnerError("validation", blocked.sentence, {
           details: { blocked },
         });
+      // S-10 (ADR 0118), "Start at 15:40": the Claude credential the work needs is out (its usage
+      // limit) and nothing is kept for the project, so the person's Start is kept for the reset:
+      // no session runs now (it would only meet the wait), and at the reset it starts once, by the
+      // person (quiet hours do not hold it: they chose that time), also after a restart.
+      if (
+        (check.runnable.length > 0 || check.oversized) &&
+        !rt.kill.isFrozen({ agentId: rt.agent.id })
+      ) {
+        const kept = await rt.continuations.keepStart(body.projectId, body.agentId, {
+          ...(body.budgetUsdMicro ? { budgetUsdMicro: body.budgetUsdMicro } : {}),
+          ...(body.continues ? { continues: body.continues } : {}),
+          ...(body.note?.trim() ? { note: body.note.trim() } : {}),
+        });
+        if (kept) {
+          const view: StartSessionView = {
+            result: "kept",
+            startId: "",
+            session: null,
+            sentence: kept,
+          };
+          return c.json(view, 202);
+        }
+      }
     }
     let begun: () => void = () => undefined;
     const sessionBegun = new Promise<"begun">((resolve) => {
@@ -1655,6 +1740,10 @@ export function createDaemonApp(
         agentId: body.agentId,
         projectId: body.projectId,
         trigger: body.trigger,
+        // S-1: the person pressed Start (the app, the palette, the phone): it runs inside quiet
+        // hours too, and the session's plan says who asked.
+        by: "person",
+        ...(body.continues ? { continues: body.continues } : {}),
         reason: body.reason ?? "started from the app",
         ...(body.note?.trim() ? { note: body.note.trim() } : {}),
         ...(body.budgetUsdMicro ? { budgetUsdMicro: body.budgetUsdMicro } : {}),
@@ -1869,6 +1958,8 @@ export function createDaemonApp(
     const report = await rt.kill.stop(body.scope, body.reason ?? STOP_ALL_REASON, {
       by: "stop_all",
     });
+    // S-10 (ADR 0118): Stop all drops every session kept to go on after its credential wait.
+    await rt.continuations.dropAll().catch(() => undefined);
     const killActive = rt.kill.isFrozen({ agentId: rt.agent.id });
     // The sessions it ended go with the request, so Continue where it stopped starts those
     // again after a restart too (later #60).
@@ -1949,7 +2040,8 @@ export function createDaemonApp(
     );
     const names = new Map<string, string>();
     // U-073: every card names its task beside its project; design §3.8: what waits on it now.
-    const reqViews = await requestViews(rt.store, [...requests, ...answered]);
+    // S-9: an option that prepares work says what pressing it does now.
+    const reqViews = await requestViews(rt.store, [...requests, ...answered], rt.preparedContext);
     // U-078, C-68: an open plan card's tasks as this install would run them now (who does each,
     // where it runs and why), so the card says it before the person approves. One chooser batch
     // per request: the credentials and settings are read once, not per task (R-inboxperf).
@@ -2045,7 +2137,11 @@ export function createDaemonApp(
     rt.events.emit("inbox", {});
     // Design §3.8: the answer comes back as the card now, with the line of what happens next
     // (the sync above applied it), which the Inbox shows in the card's place.
-    const [view] = await requestViews(rt.store, [await rt.store.humanRequest.mustGet(r.id)]);
+    const [view] = await requestViews(
+      rt.store,
+      [await rt.store.humanRequest.mustGet(r.id)],
+      rt.preparedContext,
+    );
     return c.json(view ?? requestView(r, null));
   });
 

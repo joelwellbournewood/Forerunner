@@ -1,6 +1,12 @@
 import type { HumanRequestRow, JsonObject } from "@forerunner/state";
 import { moneyWords } from "../session/money-words.ts";
 import {
+  isPreparedOutcome,
+  type PreparedContext,
+  preparedClause,
+  preparedExplain,
+} from "../session/prepared-work.ts";
+import {
   ANSWER_CARD_KEYS,
   blockedFindingsAnswer,
   budgetStopAnswer,
@@ -115,6 +121,19 @@ export interface RequestWordsContext {
    * nothing; absent when not read (worded as before).
    */
   heldWork?: boolean;
+  /**
+   * d1109-starts-engine (S-9): a session runs now, of the card's project or of another one, read
+   * when the card is shown; an option that prepares work says what happens next by it.
+   */
+  running?: PreparedContext["running"];
+  /** The card's project starts a session by itself when work is ready (S-5). */
+  startsByItself?: boolean;
+  /** The person's own session waits to go on for this project (S-10). */
+  continuationWaits?: boolean;
+  /** Stop all is on: the hands-off setting starts nothing (S-5). */
+  stopped?: boolean;
+  /** The person's quiet hours hold a start they did not press now (S-1). */
+  quiet?: boolean;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -311,6 +330,17 @@ function changeCardOutcome(card: JsonObject, answer: unknown): string | null {
   return null;
 }
 
+/**
+ * A hooks approval answered after its session ended (ADR 0088 amended by 0118): its yes made the
+ * task ready, prepared like every answer (S-2): "Allowed: it runs at your next Start.".
+ */
+function lateApprovalOutcome(card: JsonObject): string | null {
+  if (!/^.+:[0-9a-f]{64}$/.test(str(card.key) ?? "")) return null;
+  if (!isPreparedOutcome(card.start) && card.start_by !== "hands_off") return null;
+  const next = preparedClause(card.start, card.start_by);
+  return next ? `Allowed: ${next}.` : null;
+}
+
 /** The answer as the person gave it: the option's words, never JSON. */
 export function answerWords(answer: unknown): string | null {
   if (typeof answer === "string") return answer.trim() || null;
@@ -324,8 +354,15 @@ export function answerWords(answer: unknown): string | null {
   return null;
 }
 
-/** "a session started" / "it runs after the current session" for a recorded start. */
-function startWords(start: unknown): string | null {
+/**
+ * What became of the work an answer made runnable, as the clause its Done line ends with
+ * (d1109-starts-engine S-2, S-12): prepared work ("it runs at your next Start", "it joins the
+ * session that is running"), a session the hands-off setting started (`start_by`), or, for the
+ * person's own start (Approve and start, Continue) and the cards answered before run C, the
+ * start's outcome ("a session started").
+ */
+function startWords(start: unknown, by?: unknown): string | null {
+  if (isPreparedOutcome(start) || by === "hands_off") return preparedClause(start, by);
   if (start === "started") return "a session started";
   if (start === "queued") return "it runs after the current session";
   if (start === "deferred") return "it runs after quiet hours";
@@ -363,9 +400,10 @@ function retryCard(
     if (what === "revise")
       choices.push({
         label: verdict ? "Send it back" : "Try again",
+        // S-9 (ADR 0118): an answer prepares the work; it says what happens next, true now.
         explain: verdict
-          ? "Starts a session that reworks it with the critic's findings."
-          : "Starts a session that tries again; add a note if you know what to change.",
+          ? `Reworks it with the critic's findings; ${preparedExplain(ctx)}.`
+          : `Tries again with your note, if any; ${preparedExplain(ctx)}.`,
         tone: "primary",
         confirm: null,
         input: "note",
@@ -407,15 +445,23 @@ const toneRank = (t: RequestChoiceWords["tone"]) =>
 
 function retryOutcome(card: JsonObject, ctx: RequestWordsContext, verdict: boolean): string | null {
   const task = q(ctx.taskTitle ?? "the task");
-  const started = startWords(card.start);
+  const started = startWords(card.start, card.start_by);
   switch (card.outcome) {
     case "revise":
     case "rework":
       return `Trying ${task} again${started ? `: ${started}` : ": the next session runs it"}.`;
-    case "accept":
+    case "accept": {
+      // S-2: what comes after it is prepared, not started ("; what comes after it runs at your
+      // next Start"); a card answered before run C kept its start's words.
+      const after = started
+        ? isPreparedOutcome(card.start) || card.start_by === "hands_off"
+          ? `; what comes after it ${started.replace(/^it /, "")}.`
+          : `. What comes after it runs now: ${started}.`
+        : ".";
       return verdict
-        ? `${task} is done.${started ? ` What comes after it runs now: ${started}.` : ""}`
-        : `${task} is done: accepted without review.${started ? ` What comes after it runs now: ${started}.` : ""}`;
+        ? `${task} is done${after}`
+        : `${task} is done: accepted without review${after}`;
+    }
     case "cancel":
       return `${task} was cancelled.`;
     case "task_moved_on":
@@ -482,18 +528,24 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
 
 function questionsOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
   const task = q(ctx.taskTitle ?? str(card.task_title) ?? "the task");
-  const started = startWords(card.start);
+  const started = startWords(card.start, card.start_by);
   const outcome = str(card.outcome);
   if (outcome === "cancelled") return `${task} was cancelled.`;
   if (outcome === "task_moved_on")
     return `Your answers came after ${task} had finished. They are kept in the decision record.`;
+  // S-2: a done task's prepared work is what waits on it ("what waits on it runs at your next
+  // Start"), never the done task itself.
+  const after =
+    ctx.taskStatus === "done" && started && isPreparedOutcome(card.start)
+      ? started.replace(/^it /, "what waits on it ")
+      : started;
   if (outcome === "without")
     return ctx.taskStatus === "done"
-      ? `${task} is done without your answers${started ? `; ${started}` : ""}.`
+      ? `${task} is done without your answers${after ? `; ${after}` : ""}.`
       : `${task} goes on without your answers${started ? `: ${started}` : ""}.`;
   if (outcome === "answered") {
     if (ctx.taskStatus === "done")
-      return `Answers saved in the decision record; ${task} is done${started ? `; ${started}` : ""}.`;
+      return `Answers saved in the decision record; ${task} is done${after ? `; ${after}` : ""}.`;
     return `Answers sent: ${task} goes on with them${started ? `; ${started}` : ""}.`;
   }
   return null;
@@ -614,7 +666,7 @@ function workWaitsOnPerson(card: JsonObject): boolean {
 }
 
 function intakeOutcome(card: JsonObject): string | null {
-  const started = startWords(card.start);
+  const started = startWords(card.start, card.start_by);
   if (card.outcome === "approved") {
     const n = Array.isArray(card.task_ids) ? card.task_ids.length : null;
     // W15-61: one task is "it" ("1 task written; working on it"; live: "working on them").
@@ -747,7 +799,7 @@ function budgetCard(
                 ? "Raise it there; this card then asks how to go on."
                 : card.source === "plan"
                   ? null
-                  : "Raise it there; the task goes on by itself.",
+                  : "Raise it there; the task is ready again then.",
             },
           ]
         : [],
@@ -918,19 +970,20 @@ function resetDay(iso: unknown): string | null {
 }
 
 /**
- * How a task paused at a limit no bigger budget lifts goes on (budget-resume): by itself once
- * the person raised the limit in Settings or it reset (`wakeBudgetWaits`; room alone never wakes
- * it). Null for a limit Continue lifts.
+ * How a task paused at a limit no bigger budget lifts goes on (budget-resume, amended by
+ * d1109-starts-engine S-3, ADR 0118): it is ready again once the person raised the limit in
+ * Settings or it reset (`wakeBudgetWaits`; room alone never wakes it), and runs at the next Start
+ * (a raised or reset limit starts nothing by itself). Null for a limit Continue lifts.
  */
 function goesOnWords(card: JsonObject): string | null {
   const day = resetDay(card.resets_at);
   switch (card.source) {
     case "month":
-      return `It goes on by itself once you raise the monthly cap in Settings${day ? `, or on ${day}` : ""}.`;
+      return `Ready again once you raise the monthly cap in Settings${day ? `, or on ${day}` : ""}; it runs at your next Start.`;
     case "project":
-      return "It goes on by itself once you raise the project's budget in Settings.";
+      return "Ready again once you raise the project's budget in Settings; it runs at your next Start.";
     case "plan":
-      return `It goes on by itself when your subscription's share resets${day ? ` on ${day}` : ""}, or once you raise the share in Settings.`;
+      return `Ready again when your subscription's share resets${day ? ` on ${day}` : ""}, or once you raise the share.`;
     default:
       return null;
   }
@@ -960,7 +1013,7 @@ function cancelPausedExplain(waiting: readonly string[], heldWork?: boolean): st
 
 function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
   const task = q(ctx.taskTitle ?? str(card.task_title) ?? "the task");
-  const started = startWords(card.start);
+  const started = startWords(card.start, card.start_by);
   switch (card.outcome) {
     case "continue": {
       // d1109-oversize-pause (OP-4): Continue on the question at an outer limit adds no money
@@ -970,8 +1023,9 @@ function budgetOutcome(card: JsonObject, ctx: RequestWordsContext): string | nul
       const more = chfAt(card.continued_usd_micro, card.chf_per_usd);
       return `Gave ${task}${more ? ` ${more}` : ""} more${started ? `: ${started}` : ": the next session continues it"}.`;
     }
+    // S-3 (ADR 0118 amending 0112): a raised or reset limit makes it ready; it starts nothing.
     case "went_on":
-      return `${task} goes on: its limit has room again.`;
+      return `${task} is ready again: its limit has room; ${started ?? "it runs at your next Start"}.`;
     // d1109-oversize-pause (OP-4): the question for the same pause replaced it once its outer
     // limit had room (the fixup's walk: before, "Closed: it no longer needs you." beside the card
     // that asks).
@@ -1031,8 +1085,7 @@ function cannotRunCard(
     if (what === "retry")
       choices.push({
         label: option,
-        explain:
-          "Starts a session that tries again; first fix what stopped it (Edit changes who does it).",
+        explain: `Tries again; fix what stopped it first, with Edit; ${preparedExplain(ctx)}.`,
         tone: "primary",
         confirm: null,
         input: null,
@@ -1064,7 +1117,7 @@ function cannotRunCard(
 
 function cannotRunOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
   const task = q(ctx.taskTitle ?? str(card.task_title) ?? "the task");
-  const started = startWords(card.start);
+  const started = startWords(card.start, card.start_by);
   switch (card.outcome) {
     case "retry":
       return `Trying ${task} again${started ? `: ${started}` : ": the next session runs it"}.`;
@@ -1217,7 +1270,7 @@ function mergeLeftOpenCard(
           /^merge$/i.test(label)
           ? `Merges ${prOfCard(card).replace(/^pull request /, "")} as it is now, as Merge on the Overview does.`
           : /^redo$/i.test(label)
-            ? "The task is done again from main; a session starts for it."
+            ? `The task is done again from main; ${preparedExplain(ctx)}.`
             : null,
     tone: i === 0 ? "primary" : "secondary",
     confirm: null,
@@ -1246,7 +1299,12 @@ function mergeLeftOpenOutcome(card: JsonObject): string | null {
       : typeof card.merge_result === "string" && card.merge_result
         ? card.merge_result
         : `Merging ${pr}.`;
-  if (card.outcome === "redone") return "Redone: the task is ready again and a session runs it.";
+  // S-2: the Redo prepared the task; its card says what became of it, and a card answered
+  // before run C (no `start`) only that the task is ready again.
+  if (card.outcome === "redone") {
+    const next = startWords(card.start, card.start_by);
+    return next ? `Redone: the task is ready again; ${next}.` : "Redone: the task is ready again.";
+  }
   return null;
 }
 
@@ -1269,7 +1327,7 @@ function refusedCredentialCard(card: JsonObject, ctx: RequestWordsContext = {}):
       ? `Save a new one in Settings. Until then your tasks go on with ${goesOn === "api_key" ? "your API key" : "your plan credits"}, which costs money.`
       : goesOn === "subscription"
         ? "Save a new one in Settings. Until then your tasks go on with your Claude subscription."
-        : "Save a new one in Settings. The work that needs it waits and starts by itself then.";
+        : "Save a new one in Settings. The work that needs it waits until then.";
   return {
     title:
       str(card.title) ??
@@ -1494,9 +1552,9 @@ function rebaseConflictCard(
       label,
       explain:
         what === "resolved"
-          ? `A session checks your resolution and ${pr ? `updates ${pr}` : "opens the pull request"}.`
+          ? `Checks your resolution and ${pr ? `updates ${pr}` : "opens the pull request"}; ${preparedExplain(ctx)}.`
           : what === "drop"
-            ? `The task is done again from ${base}; a session starts for it.`
+            ? `The task is done again from ${base}; ${preparedExplain(ctx)}.`
             : what === "cancel"
               ? "Cancels the task; nothing more runs for it."
               : null,
@@ -1523,7 +1581,7 @@ function rebaseConflictCard(
 function rebaseConflictOutcome(card: JsonObject, ctx: RequestWordsContext): string | null {
   const task = q(ctx.taskTitle ?? str(card.task_title) ?? "The task");
   const base = str(card.base) ?? "main";
-  const started = startWords(card.start) ?? "the next session runs it";
+  const started = startWords(card.start, card.start_by) ?? "the next session runs it";
   if (card.outcome === "resolved") return `${task} goes on with your resolution: ${started}.`;
   if (card.outcome === "dropped") return `${task} is done again from ${base}: ${started}.`;
   if (card.outcome === "cancelled") return `${task} was cancelled.`;
@@ -1618,7 +1676,7 @@ export function requestWords(
     }
   } else {
     words = genericCard(r);
-    outcome = changeCardOutcome(card, r.answer);
+    outcome = changeCardOutcome(card, r.answer) ?? lateApprovalOutcome(card);
   }
   if (r.status !== "open") {
     const given = answerWords(r.answer);

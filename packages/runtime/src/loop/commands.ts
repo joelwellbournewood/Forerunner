@@ -792,6 +792,9 @@ export function sessionCommandPorts(deps: {
           agentId: req.agentId,
           projectId: req.projectId,
           trigger: req.trigger,
+          // S-1: the registry's session.start is the person's own start (chat and voice only
+          // after their yes, the palette, the phone): it runs inside quiet hours too.
+          by: "person",
           reason: req.reason,
           ...(req.budgetUsdMicro ? { budgetUsdMicro: req.budgetUsdMicro } : {}),
         } as StartRequest);

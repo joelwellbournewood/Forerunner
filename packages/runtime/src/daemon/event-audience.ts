@@ -35,6 +35,18 @@ export const TOOK_LARGER_EVENT = "session.took_larger";
  */
 export const TASK_CONTINUES_EVENT = "session.task_continues";
 
+/**
+ * d1109-starts-engine (S-7, S-10; ADR 0118): work made ready while the session ran joined it
+ * ('Took "Fix the footer", made ready while it ran (about CHF 0.30).'); work that asked and did
+ * not fit, at the end ('Left for your next Start: "D" (about CHF 0.50).'); and a session that
+ * goes on with the person's earlier one ('Goes on with your session of 14:05.'). The promise
+ * at the start (`session.promised`) is a detail line.
+ */
+export const JOINED_EVENT_TYPE = "session.joined";
+export const LEFT_FOR_NEXT_START_EVENT_TYPE = "session.left_for_next_start";
+export const CONTINUES_EVENT_TYPE = "session.continues";
+export const PROMISED_EVENT_TYPE = "session.promised";
+
 /** The types a person reads by default; every other type is a detail. */
 export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "session.started",
@@ -47,6 +59,9 @@ export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "session.sandbox_waiting",
   TOOK_LARGER_EVENT,
   TASK_CONTINUES_EVENT,
+  JOINED_EVENT_TYPE,
+  LEFT_FOR_NEXT_START_EVENT_TYPE,
+  CONTINUES_EVENT_TYPE,
   "task.started",
   "task.files",
   "task.finished",

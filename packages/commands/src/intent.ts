@@ -952,7 +952,16 @@ export class IntentParser {
       /^(?:starte|start)\s+(?:eine\s+|die\s+)?(?:session|sitzung)(?:\s+(?:f[üu]r|an|zu)\s+(?:dem\s+|der\s+)?(.+?))?$/i.exec(
         rest,
       ) ??
-      /^(?:session|sitzung)\s+starten$/i.exec(rest);
+      /^(?:session|sitzung)\s+starten$/i.exec(rest) ??
+      // d1109-starts-engine (S-11, ADR 0118; the owner's "run it now"): the person saying when
+      // the work runs; read back for their yes like every start said in chat. "don't run it
+      // yet", "I'll run it later" and a task's text ("add a task: run the tests") match none.
+      // ("please run it" is "run it" once `clean` drops the "please"; "go ahead and run it" is
+      // two clauses here and reaches the chat model, whose session_start is read back too.)
+      /^(?:run|start)\s+(?:it|them|this|that|the\s+tasks?)$/i.exec(rest) ??
+      /^let'?s\s+run\s+(?:it|them|this|that)$/i.exec(rest) ??
+      /^(?:starte|starten)\s+(?:es|sie)$/i.exec(rest) ??
+      /^(?:jetzt\s+)?ausf[üu]hren$/i.exec(rest);
     if (!m) return null;
     const pid = this.projectIdFor(m[1], ctx, current);
     if (typeof pid !== "string" && pid !== null) return { question: pid };

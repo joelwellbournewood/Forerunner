@@ -174,7 +174,7 @@ describe("every setting is visible in Settings (U-060)", () => {
       "When my first choice runs out mid-session",
     );
     expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent(
-      "Wait for its reset; the tasks start by themselves",
+      "Wait for its reset; then your session goes on",
     );
     // The row says what it covers: tasks only, and that the other one may cost money.
     expect(row).toHaveTextContent("Chat, planning and reviews always use the next one");

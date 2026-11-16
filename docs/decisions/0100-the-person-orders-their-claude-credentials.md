@@ -355,3 +355,24 @@ the retry ladder counted it as a failed try, and nothing reviewed the task at th
    the setup assistant no longer asks for a restart. Once no work waits on the refused key, its
    card ("The work that needs it waits and starts by itself then.") is withdrawn ("Closed: it no
    longer needs you."); a later wait on that key files it again. The key stays marked refused.
+
+## Amendment 2026-11-16 (ADR 0118, d1109-starts-engine S-10): only the person's session goes on by itself
+
+The owner's decision D6 of 2026-11-09: "A session the person started keeps going by itself until
+its work is done, including after a credential wait inside it". A wait no longer starts a session
+for whatever work waited:
+
+1. A session the person started (or its continuation, or a schedule the person set) that ends to
+   wait keeps one continuation on the source's wait entry (`limits.waiting[].kept`: who, the
+   session it continues, the rest of its budget, when). The wake makes it once (`by:
+   "continuation"`, trigger `budget_reset`), held by quiet hours, dropped by Cancel, Stop all and
+   the project's removal; none for a session the person stopped, one that was wrapping up, or one
+   with no budget left. One wait per project.
+2. Every other wait prepares its work when the credential can serve again: it joins a running
+   session if it fits, else it waits for the next Start (or the hands-off setting starts one).
+3. The words: "Waits until 15:40 (your subscription's limit); then your session goes on." for the
+   person's session, "; then it runs at your next Start." for other work; a refused credential's
+   "Waits for a new API key: save one in Settings; then your session goes on." only for the
+   person's session; the row's detail "Then your session goes on." or "Then it runs at your next
+   Start."; the waiting sentence names the later of the reset and the end of quiet hours ("Your
+   session of 14:05 goes on by itself at 17:00.").

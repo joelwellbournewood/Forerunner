@@ -82,7 +82,17 @@ credential Anthropic refused carries `limits.refusedAt` (with `refusedKey`, a fi
 refused credential, never its value, and `refusedWhy`); a probe reports
 `BillingSourceStatus.refused` while it stands and the router skips the source with code
 `refused`. `limits.waiting` lists the projects whose work waits for the source (its reset, or a
-new credential); the runtime starts their sessions when it serves again. `RouteContext.waitOnRest`
+new credential). Since run C (ADR 0118, amending 0100) an entry may carry `kept` (`{ by:
+"continuation" | "person", continues?, budgetUsdMicro?, at, note? }`, the runtime's `KeptStart`): the
+person's own session that waits to go on, or a Start the person pressed while the credential was
+out; the runtime's wake starts only those, once, and prepares the other entries' work for the
+person's next Start. `noteWait(sourceId, projectId, agentId, sessionId?, kept?)` keeps it, and
+`takeReady` answers the entries with their `kept` and `sourceId`; `keepContinuation`,
+`keepStartAtReset`, `dropKeptStart`, `keptContinuationOf` and `keptStartOf`
+(`packages/runtime/src/wiring/billing-pick.ts`) read and write it with the limits' version
+check. `keepStartAtReset` needs the project's entry on the source first: the runtime's
+`continuations.keepStart` (a Start pressed while the credential rests, "Start at 15:40") calls
+`noteWait` and then it; the entry's `note` is the Start dialog's note, passed to the start. `RouteContext.waitOnRest`
 ("When my first choice runs out mid-session: Wait", task runs only): a resting source that
 ranks ahead of every source that could serve makes `pick` throw `unavailable` with
 `details.waitFor` ({ sourceId, kind, until, reason }) instead of moving on; a refused source

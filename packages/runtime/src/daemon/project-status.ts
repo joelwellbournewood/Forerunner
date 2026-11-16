@@ -81,6 +81,11 @@ export interface ProjectStatusInput {
     text: string;
     save: { label: string; to: string } | null;
     startable?: boolean;
+    /**
+     * d1109-starts-engine S-10: a Start the person pressed while the credential was out is kept
+     * for its reset: "Starts at 15:40 (your subscription's limit)", the line's head.
+     */
+    startsAt?: string;
   } | null;
   /**
    * Whether a Claude credential is in force now (the intake can call the model); null when not
@@ -332,6 +337,8 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
     // the wait (`startable`); a refusal links to where a new one is saved; a kept wait starts
     // by itself. Before: "Ready to continue: 1 task ready" said nothing of the wait.
     const wait = input.credentialWaitNow;
+    // S-10: the person's Start is kept for the reset: the line says when it starts.
+    if (wait?.startsAt) return { kind: "ready", text: `${wait.startsAt}: ${n}`, action: null };
     if (wait)
       return {
         kind: "ready",

@@ -11,6 +11,7 @@ import { type ActionClass, ALWAYS_HUMAN } from "../enforcement/autonomy.ts";
 import { isYes } from "../wiring/state-ports.ts";
 import { answerApplied, markAnswer } from "./answer-mark.ts";
 import { unappliedAnswers } from "./findings.ts";
+import type { PreparePort } from "./prepared-work.ts";
 import type { StartOutcome, StartRequest } from "./triggers.ts";
 
 /**
@@ -113,7 +114,14 @@ export type LateStartPort = (req: StartRequest) => Promise<{ id: string; result:
 export interface LateApprovalSyncDeps extends Omit<LateApprovalDeps, "store"> {
   /** The scan (`unappliedAnswers`) pages the whole inbox: the full store. */
   store: StateStore;
-  start: LateStartPort;
+  /** The cloud runner's start (its inbox trigger, a known gap of ADR 0118); unused on the PC. */
+  start?: LateStartPort;
+  /**
+   * d1109-starts-engine (S-2, ADR 0118 amending 0088): a late approval prepares its task: it
+   * joins the project's running session if it fits, else the next session consumes the answer.
+   * When set, no session is asked for.
+   */
+  prepare?: PreparePort;
 }
 
 export interface LateApprovalSyncResult {
@@ -374,6 +382,24 @@ export async function syncLateApprovals(
         continue;
       }
       if (claim.kind !== "start") continue;
+      if (deps.prepare) {
+        const prepared = await deps.prepare({
+          agentId: deps.agentId,
+          projectId: row.project_id,
+          taskIds: [claim.task.id],
+          reason: `approval answered (request ${row.id})`,
+          by: "person",
+        });
+        const outcome = prepared?.outcome ?? "waits_start";
+        await markAnswer(deps.store, deps.clock, claim.claimed, outcome, {
+          start: outcome,
+          ...(prepared?.startedBy ? { start_by: prepared.startedBy } : {}),
+        });
+        await auditLate(deps, row, true, { outcome });
+        out.started++;
+        continue;
+      }
+      if (!deps.start) continue;
       let entry: { id: string; result: StartOutcome };
       try {
         entry = await deps.start(lateStartRequest(deps.agentId, row));

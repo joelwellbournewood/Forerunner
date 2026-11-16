@@ -580,6 +580,8 @@ export interface FakeDaemonState {
       save: { label: string; to: string } | null;
       /** leftovers7-tailrun TR-2: no Start kept the wait yet: `text` is the whole sentence, Start stays on. */
       startable?: boolean;
+      /** d1109-starts-engine S-10: the person's session waits to go on: Cancel drops it. */
+      kept?: boolean;
     }
   >;
   /**
@@ -1022,6 +1024,22 @@ function fakeStartCheck(
       changed = true;
     }
   }
+  // S-6, as the daemon's `cutFollowers`: without a larger task, the work budget left after the
+  // tasks ready now holds the followers in order; the first that does not fit and those after it
+  // wait for a later Start.
+  const laterBeyond: StartCheckView["laterBeyond"] = [];
+  if (!larger) {
+    let room = work - total;
+    const taken = [];
+    for (const l of later) {
+      if (laterBeyond.length > 0 || l.estimate.usdMicro > room) laterBeyond.push(l);
+      else {
+        taken.push(l);
+        room -= l.estimate.usdMicro;
+      }
+    }
+    later.splice(0, later.length, ...taken);
+  }
   // D4 (OP-0): the larger task gets what the tasks before it in the plan's order leave; the
   // tasks after it (ready now or later) run only if it leaves budget.
   const chf = (m: { chfMicro: number }) => ({ chfMicro: m.chfMicro, text: formatChf(m.chfMicro) });
@@ -1112,6 +1130,7 @@ function fakeStartCheck(
     overBudget: overBudgetView,
     waiting,
     later,
+    laterBeyond,
     blocked,
     oversized,
     monthLeft: money(FAKE_MONTH_LEFT_USD_MICRO),
@@ -1299,6 +1318,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.requests.filter((r) => r.status === "open" && r.blocking).length;
   /** Every open card waits on the person (design §3.8): the Inbox's and the header's count. */
   const needsYouCount = () => state.requests.filter((r) => r.status === "open").length;
+  /** The reset's time in a credential wait's sentence ("... until 09:30 (...)"), or null. */
+  const fakeResetAt = (text: string): string | null => /until (\d\d:\d\d)/.exec(text)?.[1] ?? null;
+  /**
+   * d1109-starts-engine S-9, as the daemon's `preparedContextOf`: what an open card's options that
+   * prepare work meet now (a session of the project running, another one, the hands-off setting).
+   */
+  const preparedOfFake = (projectId: string) => {
+    const live = state.sessions.filter((s) => s.status === "running" || s.status === "planned");
+    const running = live.some((s) => s.projectId === projectId)
+      ? ("this_project" as const)
+      : live.length
+        ? ("other" as const)
+        : null;
+    const byItself = state.settingValues[`start_by_itself:${projectId}`] === true;
+    return { running, ...(byItself ? { startsByItself: true } : {}) };
+  };
   /**
    * A request as the daemon's `requestView` words it (design §3.8, `daemon/request-words.ts`):
    * the card's title, body, choices with their consequence lines, the reply it takes, and once
@@ -1341,6 +1376,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         (r.changeCard as { key?: unknown } | null)?.key === "task:budget_stop"
           ? { heldWork: !!state.taskMeta.heldWork?.has(task.id) }
           : {}),
+        // d1109-starts-engine S-9: as the daemon's `preparedContextOf`, an open card's options
+        // that prepare work say what pressing them does now (a session of the project running,
+        // another one running, "Start a session by itself" on).
+        ...(r.status === "open" && r.projectId ? preparedOfFake(r.projectId) : {}),
       },
     );
     return { ...r, ...words };
@@ -2894,7 +2933,27 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           ? { kind: "link", label: credentialWait.save.label, to: credentialWait.save.to }
           : null,
         ...(credentialWait.startable ? { startable: true } : {}),
+        ...(credentialWait.kept ? { kept: true } : {}),
+        // d1109-starts-engine S-10, as the daemon: a Start now is kept for the reset.
+        ...(credentialWait.startable && fakeResetAt(credentialWait.text)
+          ? { startLabel: `Start at ${fakeResetAt(credentialWait.text)}` }
+          : {}),
       };
+    // C2-left-2, as the daemon: nothing is ready because a task waits on the person's card.
+    if (view.blocked?.sentence === "Nothing can run: no task is ready.") {
+      const held = state.tasks.find(
+        (t) =>
+          t.projectId === id &&
+          t.status === "needs_human" &&
+          state.requests.some((r) => r.taskId === t.id && r.status === "open"),
+      );
+      if (held)
+        view.blocked = {
+          kind: "nothing_runnable",
+          sentence: `Nothing can run: "${held.title}" needs your answer.`,
+          action: { kind: "link", label: "Open it", to: "/inbox" },
+        };
+    }
     return c.json(view);
   });
   app.get("/projects/:id/runs", (c) => {
@@ -3009,6 +3068,25 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!s) return errorBody(c, 404, "not_found", "no such session");
     return c.json({ sessionId: id, projectId: s.projectId, tasks: state.sessionTasks[id] ?? [] });
   });
+  // d1109-starts-engine (S-10), as the daemon: Cancel on a session that waits to go on after its
+  // Claude credential (a wait marked `kept`): the wait stays, its kept start goes, and the tasks
+  // wait for the next Start ("; then it runs at your next Start.").
+  app.post("/projects/:id/continuation/cancel", (c) => {
+    const project = state.projects.find((p) => p.id === c.req.param("id"));
+    if (!project) return errorBody(c, 404, "not_found", "no such project");
+    const wait = state.credentialWaitNow[project.id];
+    if (!wait?.kept)
+      return c.json({ cancelled: false, sentence: "Nothing waits to go on for this project." });
+    state.credentialWaitNow[project.id] = {
+      text: wait.text.replace("; then your session goes on.", "; then it runs at your next Start."),
+      save: wait.save,
+    };
+    return c.json({
+      cancelled: true,
+      sentence: "Cancelled: nothing goes on by itself; its tasks run at your next Start.",
+    });
+  });
+
   app.post("/sessions", async (c) => {
     const parsed = StartSessionBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
@@ -3018,6 +3096,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const agent = AGENTS.find((a) => a.id === parsed.data.agentId);
     if (!agent) return errorBody(c, 404, "not_found", "no such agent");
+    // d1109-starts-engine (S-10), as the daemon: Continue goes on with the ended session, with the
+    // rest of its budget (its cap less its spend), and is refused in words when none is left.
+    if (parsed.data.continues) {
+      const earlier = state.sessions.find((x) => x.id === parsed.data.continues);
+      if (!earlier) return errorBody(c, 404, "not_found", "no such session");
+      const left = earlier.budgetCap.usdMicro - earlier.spent.usdMicro;
+      if (left <= 0)
+        return errorBody(
+          c,
+          409,
+          "validation",
+          "That session used its whole budget: start a new one to go on.",
+        );
+      parsed.data.projectId ??= earlier.projectId ?? undefined;
+      parsed.data.budgetUsdMicro = left;
+    }
     // W15B-02, as the daemon: a removed project (its creation undone) starts nothing, refused in
     // one sentence with its name before the removal (the daemon keeps it in the settings; the
     // fake's card has only "<name> (removed)").
@@ -3031,6 +3125,29 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         "conflict",
         `The project "${removed.name.replace(/ \(removed(?: \d+)?\)$/, "")}" was removed, so nothing of it runs.`,
       );
+    // d1109-starts-engine S-10, as the daemon: while a credential's reset no Start kept yet holds
+    // the work, the Start is kept for the reset: no session now, its sentence says when, and the
+    // wait reads as the person's kept Start (Cancel the wait drops it).
+    const resting = parsed.data.projectId ? state.credentialWaitNow[parsed.data.projectId] : null;
+    const at = resting?.startable ? fakeResetAt(resting.text) : null;
+    if (parsed.data.projectId && resting && at) {
+      const project = state.projects.find((p) => p.id === parsed.data.projectId);
+      const limit = /\(([^)]+)\)/.exec(resting.text)?.[1] ?? "its limit";
+      state.credentialWaitNow[parsed.data.projectId] = {
+        text: `Waits until ${at} (${limit}); then your session goes on.`,
+        save: null,
+        kept: true,
+      };
+      return c.json(
+        StartSessionView.parse({
+          result: "kept",
+          startId: "",
+          session: null,
+          sentence: `A session of ${project?.name ?? "the project"} starts at ${at}.`,
+        }),
+        202,
+      );
+    }
     // As the daemon (later #38): nothing a session could run is refused with the start check's
     // sentence, whoever asks (the Start dialog, Continue where it stopped, the phone).
     if (parsed.data.projectId) {
@@ -3385,9 +3502,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       else if (task && read?.kind === "without") task.status = "ready";
       else if (task && read?.kind === "answers")
         task.status = personCard.on_answer === "ready" ? "ready" : "done";
-      // As the daemon's resumeWork: an answer that leaves a task of the project runnable (the
-      // task itself back at ready, or what waited on the person's task now done) starts a
-      // session; nothing runnable, no start.
+      // As the daemon's prepareAnswer (d1109-starts-engine S-2, ADR 0118): an answer that leaves
+      // a task of the project runnable (the task itself back at ready, or what waited on the
+      // person's task now done) prepares it: with no session running here it waits for the
+      // person's next Start; nothing runnable, nothing said.
       const byId = new Map(state.tasks.map((t) => [t.id, t]));
       const runnable = state.tasks.some(
         (t) =>
@@ -3400,12 +3518,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         applied_at: new Date().toISOString(),
         outcome:
           read?.kind === "cancel" ? "cancelled" : read?.kind === "without" ? "without" : "answered",
-        ...(read?.kind !== "cancel" && runnable ? { start: "started" } : {}),
+        ...(read?.kind !== "cancel" && runnable ? { start: "waits_start" } : {}),
       };
     }
     // As the daemon's `syncSignoffAnswers` (design §3.8): Try again / Send it back sends the task
-    // back to ready and a session starts; Mark done anyway closes it "accepted without review";
-    // Cancel task cancels it.
+    // back to ready, prepared for the person's next Start (S-2); Mark done anyway closes it
+    // "accepted without review"; Cancel task cancels it.
     const signCard = r.changeCard as { key?: unknown; reason?: unknown } | null;
     if (signCard?.key === "critic:signoff") {
       const task = state.tasks.find((t) => t.id === r.taskId);
@@ -3423,11 +3541,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         task.status = "cancelled";
         task.reason = "you cancelled it in the Inbox";
       }
+      // As the daemon: what the answer made runnable is prepared; Mark done anyway says so only
+      // when work that waited on the task can run now.
+      const byId = new Map(state.tasks.map((t) => [t.id, t]));
+      const runnable = state.tasks.some(
+        (t) =>
+          t.projectId === r.projectId &&
+          t.status === "ready" &&
+          t.dependsOn.every((d) => byId.get(d)?.status === "done"),
+      );
       r.changeCard = {
         ...signCard,
         applied_at: new Date().toISOString(),
         outcome: read,
-        ...(read !== "cancel" ? { start: "started" } : {}),
+        ...(read === "revise" || (read === "accept" && runnable) ? { start: "waits_start" } : {}),
       };
     }
     // As the daemon's `syncBudgetStopAnswers` (budget-resume, ADR 0112 amended): Continue (CHF
@@ -3479,7 +3606,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       };
     }
     // As the daemon's `syncCannotRunAnswers` (live walk 4): Try again puts the task back to
-    // ready and a session tries again; Cancel task cancels it.
+    // ready for the person's next Start (S-2); Cancel task cancels it.
     const cannotRun = r.changeCard as { key?: unknown } | null;
     if (cannotRun?.key === "task:cannot_run") {
       const task = state.tasks.find((t) => t.id === r.taskId);
@@ -3498,7 +3625,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ...cannotRun,
         applied_at: new Date().toISOString(),
         outcome: moved ? "task_moved_on" : read,
-        ...(!moved && read === "retry" ? { start: "started" } : {}),
+        ...(!moved && read === "retry" ? { start: "waits_start" } : {}),
       };
     }
     if (r.kind === "capability_grant") {
@@ -5400,6 +5527,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     code_commands: "medium",
     // 'sites': medium, as SETTING_SPECS.web_access (widening asks a yes; narrowing acts at once).
     web_access: "medium",
+    // d1109-starts-engine S-5: medium, as SETTING_SPECS.start_by_itself (turning on asks a yes).
+    start_by_itself: "medium",
   };
   /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
   const settingSlot = (key: string, projectId: string | null) =>
@@ -5415,8 +5544,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     after_review: mergeModeEffect("after_review"),
   };
   /** The yes/no keys (`z.boolean()` in SETTING_SPECS): "on" or "off", off until set (W15B-16). */
-  const BOOLEAN_KEYS = new Set(["small_project_mode", "voice_alerts", "status_pull_request"]);
+  const BOOLEAN_KEYS = new Set([
+    "small_project_mode",
+    "voice_alerts",
+    "status_pull_request",
+    "start_by_itself",
+  ]);
   const PROJECT_KEYS = new Set([
+    "start_by_itself",
     "small_project_mode",
     "status_pull_request",
     "merge_mode",

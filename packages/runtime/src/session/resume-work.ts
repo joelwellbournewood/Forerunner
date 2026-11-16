@@ -1,25 +1,32 @@
 import { errorMessage, log } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject, StateStore } from "@forerunner/state";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
+import type { PreparePort, PrepareRequest, PrepareResult } from "./prepared-work.ts";
 import type { StartRequest } from "./triggers.ts";
 
 /**
- * Answering resumes work (design §3.8): every Inbox answer that makes a task of a project
- * runnable starts a session of that project, or queues one behind the session that runs, the
- * same way for every card. The daemon's scheduler is the `start`; a one-shot (the CLI, the
- * cloud runner) passes none and nothing starts.
+ * Answering prepares work (d1109-starts-engine S-2, ADR 0118; before: "answering resumes
+ * work", design §3.8). An Inbox answer that makes a task runnable no longer starts a session: it
+ * prepares the work (`prepareWork`, `prepared-work.ts`), which joins the running session if it
+ * fits, else waits for the person's next Start. Only the person's own starts use the scheduler
+ * here: Approve and start on the plan from a brief, Continue on a budget card (`startForPerson`).
+ * A one-shot (the CLI, the cloud runner) passes no port and nothing happens.
  */
 export type StartPort = (req: StartRequest) => Promise<unknown>;
 
-/** What became of the start an answer asked for (`change_card.start`), for the "Done" line. */
+/**
+ * What became of a person's start an answer asked for (`change_card.start`, the "Done" line):
+ * the old start outcomes, kept for the cards answered before run C too.
+ */
 export type ResumeOutcome = "started" | "queued" | "deferred" | "failed" | "nothing_to_run";
 
 /**
- * Start (or queue) a session of the project when one of its tasks can run now (ready, with
- * every task it waits for done). Nothing runnable: no start, so no empty session is made.
- * Never throws: a start that fails is logged and reported as `failed`.
+ * The person's own start from an answer (Approve and start, Continue): a session of the project
+ * starts (or waits behind the one that runs), by the person (S-1), when one of its tasks can
+ * run now. Nothing runnable: no start, so no empty session is made. Never throws: a start that
+ * fails is logged and reported as `failed`.
  */
-export async function resumeWork(
+export async function startForPerson(
   store: StateStore,
   start: StartPort | undefined,
   req: {
@@ -43,6 +50,7 @@ export async function resumeWork(
       agentId: req.agentId,
       projectId: req.projectId,
       trigger: "message",
+      by: "person",
       reason: req.reason,
       ...(req.budgetUsdMicro && req.budgetUsdMicro > 0
         ? { budgetUsdMicro: req.budgetUsdMicro }
@@ -51,12 +59,24 @@ export async function resumeWork(
     const result = (entry as { result?: unknown } | null)?.result;
     return result === "queued" || result === "deferred" ? result : "started";
   } catch (e) {
-    log("resume-work").warn("session after an answer not started", {
+    log("resume-work").warn("the session you asked for did not start", {
       projectId: req.projectId,
       error: errorMessage(e),
     });
     return "failed";
   }
+}
+
+/**
+ * Prepare the work an answer made runnable (S-2) through the daemon's port; null without one
+ * (a one-shot) or without a project.
+ */
+export async function prepareAnswer(
+  prepare: PreparePort | undefined,
+  req: PrepareRequest,
+): Promise<PrepareResult | null> {
+  if (!prepare || !req.projectId) return null;
+  return prepare(req);
 }
 
 /**
@@ -71,16 +91,26 @@ export function noteAboutTask(task: { id: string; title: string }, note: string)
   return `About ${named}: ${note.trim()}`;
 }
 
-/** Record what became of the start on the answered card (`change_card.start`). */
+/**
+ * Record what became of the work an answer made runnable on the answered card
+ * (`change_card.start`, and `start_by` when the hands-off setting started a session): a person's
+ * start's outcome, or prepared work's (S-2), for its "Done" line.
+ */
 export async function recordStart(
   store: StateStore,
   requestId: string,
-  outcome: ResumeOutcome | null,
+  outcome: ResumeOutcome | PrepareResult | null,
 ): Promise<void> {
   if (!outcome) return;
   const row: HumanRequestRow | undefined = await store.humanRequest.get(requestId);
   if (!row) return;
+  const start = typeof outcome === "string" ? outcome : outcome.outcome;
+  const by = typeof outcome === "string" ? undefined : outcome.startedBy;
   await store.humanRequest.patch(row.id, {
-    change_card: { ...((row.change_card ?? {}) as JsonObject), start: outcome },
+    change_card: {
+      ...((row.change_card ?? {}) as JsonObject),
+      start,
+      ...(by ? { start_by: by } : {}),
+    },
   });
 }

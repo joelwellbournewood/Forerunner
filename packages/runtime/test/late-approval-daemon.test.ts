@@ -152,7 +152,9 @@ describe("a hooks approval answered after its session ended, on the desktop daem
     await rt?.close();
   });
 
-  it("the inbox's yes puts the task back to ready and starts one message session for it; a second sync starts nothing", async () => {
+  // d1109-starts-engine (S-2, ADR 0118 amending 0088): a late approval prepares its task; the
+  // person's next Start consumes the answer.
+  it("the inbox's yes puts the task back to ready and starts nothing; the next Start runs it with the answer; a second sync starts nothing", async () => {
     const projectId = await project(rt, "Approve");
     const { task, session, request } = await pausedTask(rt, projectId, clock);
     expect(await rt.store.session.active(rt.agent.id)).toEqual([]);
@@ -163,13 +165,19 @@ describe("a hooks approval answered after its session ended, on the desktop daem
     expect(answered.status).toBe(200);
     // The route's `syncApprovals` acted before answering: the task is ready, the start made.
     expect(card(await rt.store.humanRequest.mustGet(request.id))).toMatchObject({
-      outcome: "started",
+      outcome: "waits_start",
       tool: "delete_repo",
     });
     expect(typeof card(await rt.store.humanRequest.mustGet(request.id)).applied_at).toBe("string");
+    expect(await rt.store.session.list({ project_id: projectId })).toHaveLength(1);
+    const started = await req("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agentId: rt.agent.id, projectId, trigger: "manual" }),
+    });
+    expect(started.status).toBe(202);
     const follow = await waitFor(async () =>
       (await rt.store.session.list({ project_id: projectId }, { orderBy: "created_at" })).find(
-        (s) => s.trigger === "message" && s.status === "completed",
+        (s) => s.id !== session.id && s.status === "completed",
       ),
     );
     expect(follow.id).not.toBe(session.id);

@@ -30,9 +30,10 @@ export function usableNow(s: BillingOrderSourceView): string {
       return "Not now: this month's allowance is reached";
     case "monthly_cap":
       return "Not now: its monthly cap is reached";
-    // U-078: the work that waits for it starts by itself at the reset.
+    // U-078; d1109-starts-engine S-10 (ADR 0118): a session the person started that waits for it
+    // goes on at the reset; other work waits for their next Start.
     case "resting":
-      return `Resting until ${formatClock(s.restingUntil)} (its usage limit); waiting work starts by itself then`;
+      return `Resting until ${formatClock(s.restingUntil)} (its usage limit); your session that waits for it goes on then`;
     // U-078: Anthropic refused it; a new one saved under Accounts and keys starts the work.
     case "refused":
       return s.kind === "subscription"

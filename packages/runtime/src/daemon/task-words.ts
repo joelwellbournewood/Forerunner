@@ -354,19 +354,21 @@ export function budgetPauseLabel(source: unknown): string {
 /**
  * What a paused task's row says next (budget-resume, design §2 "status · one line"): its card
  * offers Continue or Cancel; at a limit no bigger budget lifts (the month's cap, the project's
- * budget, the subscription's share) it goes on by itself once that limit is raised in Settings
- * or resets (`wakeBudgetWaits`; room alone never wakes it, the review of budget-resume).
+ * budget, the subscription's share) it is ready again once that limit is raised in Settings or
+ * resets (`wakeBudgetWaits`; room alone never wakes it), and runs at the person's next Start.
  */
 export function budgetPauseDetail(source: unknown): string {
   // W14-6 (polish-words): a project's budget never resets; only raising it lets the task on.
+  // d1109-starts-engine (S-3, S-12; ADR 0118 amending 0112): a raise or a reset makes it ready
+  // for the person's next Start; nothing starts by itself.
   if (source === "project")
-    return "It goes on by itself once you raise the project's budget; cancel it in the Inbox.";
+    return "Ready again once you raise the project's budget, for your next Start; or cancel it.";
   // d1109-oversize-pause (OP-0, "continue next time"): a pause at a session's budget or at its
   // specialist's limit per run is taken by the next Start in its turn (`continuesAtStart`).
   if (source === "session" || source === "session_budget" || source === "specialist_limit")
     return "Your next Start goes on with it, or Continue in the Inbox.";
   return source === "month" || source === "plan"
-    ? "It goes on by itself once that limit is raised or resets; cancel it in the Inbox."
+    ? "Ready again once that limit is raised or resets, for your next Start; or cancel it."
     : "Continue or cancel in the Inbox.";
 }
 
@@ -379,6 +381,8 @@ export function budgetPauseDetail(source: unknown): string {
  */
 export function budgetPauseLabelOf(card: unknown): string {
   const c = (card ?? {}) as Record<string, unknown>;
+  // C2-left-1 (run C3): a pause that got no further reads as its card does, wherever it stopped.
+  if (c.no_progress === true) return "Paused again without getting further";
   if (c.stopped_by === "wrap_up" && c.review_waits !== true)
     switch (c.source) {
       case "session":
@@ -397,8 +401,7 @@ export function budgetPauseLabelOf(card: unknown): string {
 /** The line under a paused task's label (`budgetPauseDetail`), from its whole card (OP-4). */
 export function budgetPauseDetailOf(card: unknown): string {
   const c = (card ?? {}) as Record<string, unknown>;
-  if (c.no_progress === true)
-    return "It paused again without getting further: answer its card in the Inbox.";
+  if (c.no_progress === true) return "Its card in the Inbox asks what to do differently.";
   return budgetPauseDetail(c.source);
 }
 
@@ -813,8 +816,9 @@ export function taskDisplay(task: TaskRow, ctx: TaskDisplayContext): TaskDisplay
             : "Full review needs Docker, not running on this computer. Set it up, or edit to a light review.",
           blocker: { kind: "docker", taskId: null, requestId: null, title: null },
         });
-      // U-078: no Claude credential that may run it can now; it starts by itself at the
-      // credential's reset, or once a new key is saved (never "Failed: no billing source").
+      // U-078: no Claude credential that may run it can now; at the credential's reset, or once
+      // a new key is saved, the person's session goes on, else it runs at the next Start (S-10;
+      // never "Failed: no billing source").
       // Only a task that waited says so (the leftovers of wave 7): under "Wait" a task whose
       // first choice can serve runs, so the project's wait is not every ready task's.
       if (ctx.credentialWait && task.reason === CREDENTIAL_WAIT_REASON)
