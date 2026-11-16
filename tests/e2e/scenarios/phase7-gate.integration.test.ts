@@ -246,7 +246,9 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
       // the agent, so the task carries no author_human; J's authority is the chat turn itself.
       author_human: null,
     });
-    expect(task.reason).toContain(`created by agent ${w.alice.agent.id} via chat`);
+    // d1109-selftasks-chat (SC-12): the row says the agent made it, in words, with no id and no
+    // channel (it read "created by agent <id> via chat").
+    expect(task.reason).toBe("Added by the agent");
     // The change log row with the words used; the conversation's events; the tool's audit row.
     const log = await w.changeLog();
     expect(log).toHaveLength(1);
