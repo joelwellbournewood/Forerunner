@@ -530,7 +530,10 @@ and at every width, never inside the collapsed menu. It replaces the header's ru
 (`RunningChip`, 'Alice is working on ...', which named the agent, not the project) and its
 **Stop all (N running)** button. The store's `running` list comes from `GET /running` at start
 and from every `run.changed` frame on `/events` (and the poll), so a task, a review, a wrap-up
-or a stop asked for change the words without a reload. **Stop ▾** opens a menu headed by the
+or a stop asked for change the words without a reload; a frame whose entries or their
+`nextProject` changed (a start that waits behind a session, or left that line) also re-reads the
+project cards, so the waiting project's line says 'Starts after the session on "Quote page"'
+without a reload (the daemon also sends that project's `project.changed`). **Stop ▾** opens a menu headed by the
 words (and, for the critic's monthly check, `explain`: what it is for, in the form of the
 credential it runs on) with **Stop after this task** (`POST /sessions/:id/pause`), **Stop now**
 (`POST /sessions/:id/stop`, asked once) and **Stop all** (`POST /kill {scope:"all"}`, asked once:

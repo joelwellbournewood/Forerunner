@@ -419,6 +419,53 @@ describe("d1109-run-visible: Home, the Overview, the project's line and Talk (V-
     );
   });
 
+  // The review of d1109-run-visible (blocking 4): a Start pressed on Beacon while Atlas's session
+  // runs waits behind it; the bar's frame changes only its nextProject ('· then Beacon'), and
+  // Beacon's own line kept saying it waits for your Start until a reload.
+  it("the project's line follows a start that waits behind another session, without a reload", async () => {
+    const harness = createHarness();
+    const s = running(harness);
+    renderApp("/projects/proj_beacon", harness, liveEvents(harness));
+    const header = await screen.findByTestId("project-header");
+    await waitFor(() =>
+      expect(within(header).getByTestId("project-status")).not.toHaveTextContent(/^Starts after/),
+    );
+    harness.daemon.state.startsWait.proj_beacon = { kind: "queued", behind: "Atlas" };
+    const atlas: RunningView = {
+      key: s.id,
+      sessionId: s.id,
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      state: "working",
+      what: 'the coder works on "Add the search box"',
+      text: 'Atlas · the coder works on "Add the search box" · then Beacon',
+      since: s.startedAt,
+      stop: ["after", "now", "all"],
+      cancel: false,
+      nextProject: "Beacon",
+      explain: null,
+    };
+    await act(async () => {
+      for (const l of harness.daemon.state.listeners) l("run.changed", [atlas]);
+    });
+    await waitFor(() =>
+      expect(within(header).getByTestId("project-status")).toHaveTextContent(
+        /^Starts after the session on "Atlas"$/,
+      ),
+    );
+    // The waiting start is dropped: the frame drops '· then Beacon', and the line follows again.
+    delete harness.daemon.state.startsWait.proj_beacon;
+    await act(async () => {
+      for (const l of harness.daemon.state.listeners)
+        l("run.changed", [
+          { ...atlas, text: 'Atlas · the coder works on "Add the search box"', nextProject: null },
+        ]);
+    });
+    await waitFor(() =>
+      expect(within(header).getByTestId("project-status")).not.toHaveTextContent(/^Starts after/),
+    );
+  });
+
   it("Talk's first line says what runs, with the same Stop", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

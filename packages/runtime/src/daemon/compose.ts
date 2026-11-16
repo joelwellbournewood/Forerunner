@@ -4157,16 +4157,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // returned as it is (the poke rides beside it): an async wrapper added a step to every
     // start, the scheduler's internal ones too, and changed the order a start and the job
     // before it finished in (sync-gate.test.ts's consolidation read "queued").
+    // A start that waits (queued behind a session, held by the quiet hours) or is dropped also
+    // changes its own project's line ('Starts after the session on "Quote page"'): the project
+    // event tells the screens to read it again (the review of d1109-run-visible: it read
+    // "Ready: ..." until a reload, since a queued start changes no session).
+    const projectMoved = (projectId: string | null | undefined) => {
+      if (projectId && !closed) events.emit("project", { id: projectId });
+    };
     const requestStartOf = scheduler.requestStart.bind(scheduler);
     scheduler.requestStart = (...args) => {
       const started = requestStartOf(...args);
-      started.then(poke, poke);
+      started.then((entry) => {
+        poke();
+        if (entry.result === "queued" || entry.result === "deferred")
+          projectMoved(entry.req.projectId);
+      }, poke);
       return started;
     };
     const cancelPendingOf = scheduler.cancelPending.bind(scheduler);
     scheduler.cancelPending = (...args) => {
       const dropped = cancelPendingOf(...args);
       poke();
+      projectMoved(dropped?.projectId);
       return dropped;
     };
     pokeRunIndicator = poke;

@@ -144,12 +144,18 @@ export function AppProvider({
             } else if (event.event === "run.changed") {
               // d1109-run-visible (V-2): what runs now, in the daemon's words; the bar, Home,
               // the Overview and Talk follow it without a reload. A session that began or ended
-              // also moves the project cards (their status sentence).
-              const before = new Set(store.getState().running.map((r) => r.key));
+              // also moves the project cards (their status sentence), and so does a start that
+              // waits behind a session or leaves that line (its ' · then Garden site': Garden
+              // site's line says 'Starts after the session on "Quote page"'; the review of
+              // d1109-run-visible: it read 'Ready: ...' until a reload).
+              const shape = (list: readonly { key: string; nextProject: string | null }[]) =>
+                list
+                  .map((r) => `${r.key}>${r.nextProject ?? ""}`)
+                  .sort()
+                  .join("|");
+              const before = shape(store.getState().running);
               store.dispatch({ type: "running", running: event.data });
-              const after = new Set(event.data.map((r) => r.key));
-              if (before.size !== after.size || [...after].some((k) => !before.has(k)))
-                liveProjects.refresh();
+              if (shape(event.data) !== before) liveProjects.refresh();
             } else if (event.event === "project.changed") {
               void client
                 .project(event.data.id)

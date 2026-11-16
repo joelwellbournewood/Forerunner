@@ -20987,7 +20987,26 @@ describe("d1109-run-visible, run C", () => {
 
   it("GET /running and /health.running say what a session does now, in the daemon's words, from its first task to its end", async () => {
     const { rt, client, gated } = await compose();
+    // The project frames the screens hear on /events (the review of d1109-run-visible, blocking
+    // 4: a start queued behind another session sent none, so its project's line stayed stale).
+    const events = new AbortController();
+    const changed: string[] = [];
     try {
+      const res = await client.raw({
+        method: "GET",
+        path: "/events",
+        accept: "text/event-stream",
+        signal: events.signal,
+      });
+      void (async () => {
+        try {
+          for await (const f of readSseStream(res))
+            if (f.event === "project.changed")
+              changed.push((JSON.parse(f.data) as { id: string }).id);
+        } catch {
+          // closed at the end of the test
+        }
+      })();
       expect(await client.running()).toEqual([]);
       expect((await client.health()).running).toBeNull();
       const project = await client.createProject({ name: "Quote page", goal: "Quotes" });
@@ -21030,19 +21049,35 @@ describe("d1109-run-visible, run C", () => {
         waiting: false,
       });
       // The person presses Start on Garden site: it waits behind this session and is named.
+      const heardBefore = changed.filter((id) => id === garden.id).length;
       const queued = await client.startSession({ agentId, projectId: garden.id });
       expect(queued.result).toBe("queued");
       expect(await texts()).toEqual([
         'Quote page · the coder works on "Write A" · then Garden site',
       ]);
-      // V-3: Garden site's own line says when it starts.
+      // V-3: Garden site's own line says when it starts, and the screens hear that it changed.
       expect((await client.project(garden.id)).statusLine).toEqual({
         kind: "paused",
         text: 'Starts after the session on "Quote page"',
         action: null,
       });
+      await eventually(
+        async () => changed.filter((id) => id === garden.id).length > heardBefore,
+        "a project.changed frame for Garden site once its start waits (10 s)",
+        async () => JSON.stringify(changed),
+        10_000,
+      );
+      const heardQueued = changed.filter((id) => id === garden.id).length;
       rt.scheduler.cancelPending(agentId, "test cleanup", queued.startId);
       expect(await texts()).toEqual(['Quote page · the coder works on "Write A"']);
+      // ... and again once that start is dropped (its line no longer says it starts after).
+      await eventually(
+        async () => changed.filter((id) => id === garden.id).length > heardQueued,
+        "a project.changed frame for Garden site once its waiting start is dropped (10 s)",
+        async () => JSON.stringify(changed),
+        10_000,
+      );
+      expect((await client.project(garden.id)).statusLine?.text ?? "").not.toMatch(/^Starts after/);
       // The run ends; the critic checks it.
       gated.release("work");
       await eventually(
@@ -21084,6 +21119,7 @@ describe("d1109-run-visible, run C", () => {
       await eventually(async () => (await client.running()).length === 0, "none", seen, 10_000);
       expect((await client.health()).running).toBeNull();
     } finally {
+      events.abort();
       gated.stopGating();
       await settleSessions(rt);
       await rt.close();
