@@ -306,9 +306,13 @@ export function pauseSentence(
   capUsdMicro: number,
   chfOf: (usdMicro: number) => string,
   totalUsdMicro: number = spentUsdMicro,
+  roomUsdMicro = 0,
 ): string {
   // W14-6: a spend under a centime reads "less than CHF 0.01".
   const chf = (usd: number) => moneyWords(chfOf(usd), usd);
+  // d1116-budget-all (BA-4): what the run kept of its task's budget for the review that follows
+  // it, said only when it kept some.
+  const room = roomUsdMicro > 0 ? roomUsdMicro : 0;
   if (handoff.stoppedBy === "wrap_up") {
     const n = handoff.leftToDo.length;
     const spent =
@@ -317,13 +321,14 @@ export function pauseSentence(
         : `it spent ${chf(spentUsdMicro)}`;
     return `The run paused before ${what} ran out: ${spent} and listed ${
       n === 1 ? "one thing" : `${n} things`
-    } left to do.`;
+    } left to do${room ? `; ${chf(room)} is kept for its review` : ""}.`;
   }
+  const at = room ? `${what}, less the ${chf(room)} kept for its review` : what;
   // The hooks stop a run before a call that would go over its cap: "after spending CHF 0.00"
   // read as a contradiction on the bench (the stop came before anything was spent).
   return spentUsdMicro < capUsdMicro
-    ? `The run stopped at ${what}: it spent ${chf(spentUsdMicro)}, and its next step would have gone over.`
-    : `The run stopped at ${what}, after spending ${chf(spentUsdMicro)}.`;
+    ? `The run stopped at ${at}: it spent ${chf(spentUsdMicro)}, and its next step would have gone over.`
+    : `The run stopped at ${at}, after spending ${chf(spentUsdMicro)}.`;
 }
 
 /**
@@ -332,17 +337,25 @@ export function pauseSentence(
  * it said no line at all); "a reserve of CHF 0.01 is two calls" read oddly, so the save-only
  * line names what two steps may cost.
  */
-export function budgetLineWords(line: RunWrapUpLine, chfOf: (usdMicro: number) => string): string {
+export function budgetLineWords(
+  line: RunWrapUpLine,
+  chfOf: (usdMicro: number) => string,
+  roomUsdMicro = 0,
+): string {
   // P7-1, W14-6 (polish-words): no "save only" (a word of the code, not the person's), and an
   // amount under a centime reads "less than CHF 0.01", never "CHF 0.00".
   const chf = (usd: number) => moneyWords(chfOf(usd), usd);
+  // d1116-budget-all (BA-4): what the run keeps of its task's budget for its review, after the
+  // amount, only when it keeps some (no clause promises a room the code does not keep).
+  const kept =
+    roomUsdMicro > 0 ? ` (${chf(roomUsdMicro)} of the task's budget is kept for its review)` : "";
   if (line.saveOnly && line.firstCallUsdMicro > line.capUsdMicro)
     return chf(line.firstCallUsdMicro) === "less than CHF 0.01"
       ? "This run may spend less than its first step may cost (both are under CHF 0.01): it pauses at its budget before that step."
-      : `This run may spend ${chf(line.capUsdMicro)}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): it pauses at its budget before that step.`;
+      : `This run may spend ${chf(line.capUsdMicro)}${kept}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): it pauses at its budget before that step.`;
   return line.saveOnly
-    ? `This run may spend ${chf(line.capUsdMicro)}, too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}): it pauses at its budget and keeps its work.`
-    : `This run may spend ${chf(line.capUsdMicro)}: before a step that could take it past ${chf(line.lineUsdMicro)} it is told to wrap up, keeping a reserve of ${chf(line.reserveUsdMicro)} to finish.`;
+    ? `This run may spend ${chf(line.capUsdMicro)}${kept}, too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}): it pauses at its budget and keeps its work.`
+    : `This run may spend ${chf(line.capUsdMicro)}${kept}: before a step that could take it past ${chf(line.lineUsdMicro)} it is told to wrap up, keeping a reserve of ${chf(line.reserveUsdMicro)} to finish.`;
 }
 
 /**

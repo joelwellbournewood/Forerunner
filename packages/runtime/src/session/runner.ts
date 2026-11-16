@@ -276,6 +276,14 @@ export interface PlanItem {
    * `estimateUsdMicro` being that room (what the session review measures it against).
    */
   wholeEstimateUsdMicro?: number;
+  /**
+   * d1116-budget-all (BA-4): the room the task's review needs in its own budget, set before each
+   * work run of a task with a budget of its own: the review part of its estimate (`R`,
+   * `Planner.reviewPartOf`) plus one critic call's worst case (`W`,
+   * `CriticPort.reviewCallUsdMicro`). The executor keeps it out of the run's cap when the budget
+   * left can hold it (`workRunCapOf`). Absent: nothing kept.
+   */
+  reviewRoomUsdMicro?: number;
 }
 
 /**
@@ -340,6 +348,11 @@ export interface Planner {
    * price the task alike. Absent: the task's own figure.
    */
   wholeEstimateOf?(task: TaskRow): number | undefined;
+  /**
+   * d1116-budget-all: the review part of the task's whole estimate (`EstimateResult.reviewUsdMicro`),
+   * what a work run keeps room for beside one critic call's worst case. Absent: none.
+   */
+  reviewPartOf?(task: TaskRow): number | undefined;
 }
 
 export interface TaskExecutionResult {
@@ -461,6 +474,8 @@ export interface PausedWork {
   /** The task's whole estimate at the pause, and what is left of it after its kept work. */
   estimateUsdMicro: number;
   estimateLeftUsdMicro: number;
+  /** d1116-budget-all (BA-5): the estimate left before the task's budget caps it. */
+  estimateLeftUncappedUsdMicro: number;
 }
 
 /** Where a run paused at a budget, in micro-USD (`TaskExecutionResult.budgetStop`). */
@@ -477,6 +492,11 @@ export interface BudgetStop {
   specialist: string;
   /** `wrap_up`: it heard the wrap-up and listed work left; `budget`: a budget refused a call. */
   stoppedBy?: RunHandoff["stoppedBy"];
+  /**
+   * d1116-budget-all (BA-4): at the task's budget, what the run kept of it for its review (its
+   * card says it beside what was spent). Absent: nothing kept.
+   */
+  roomUsdMicro?: number;
 }
 
 export interface TaskExecutor {
@@ -2506,7 +2526,13 @@ export class SessionRunner {
               });
               return null;
             });
-          const runItem: PlanItem = chosen ? { ...item, specialist: chosen } : item;
+          const chosenItem: PlanItem = chosen ? { ...item, specialist: chosen } : item;
+          // d1116-budget-all (BA-4): the room its review needs in its own budget (R + W), for the
+          // executor to keep out of the run's cap when the budget can hold it (a copy: the plan's
+          // item is not changed).
+          const reviewRoom = await this.reviewRoomOf(task, chosenItem);
+          const runItem: PlanItem =
+            reviewRoom > 0 ? { ...chosenItem, reviewRoomUsdMicro: reviewRoom } : chosenItem;
           const before = startedWith.get(task.id);
           const again = before !== undefined;
           // Who ran it last, in this session or an earlier one: another specialist taking over
@@ -3074,6 +3100,14 @@ export class SessionRunner {
                   reviewWaits: true,
                   now: clock.nowIso(),
                   chfPerUsd: rate,
+                  // d1116-budget-all (BA-5): one Continue gives the review what its calls need.
+                  ...(source === "task_budget"
+                    ? {
+                        needsUsdMicro: await this.needsAtTaskBudget(waiting, runItem, 0, {
+                          refusedUsdMicro: refusal.estimateUsdMicro ?? null,
+                        }),
+                      }
+                    : {}),
                 });
               } catch (e) {
                 this.logger.warn("card of the paused review not filed", {
@@ -3356,6 +3390,17 @@ export class SessionRunner {
                         estimateUsdMicro: pause.estimateUsdMicro,
                         estimateLeftUsdMicro: pause.estimateLeftUsdMicro,
                         runSpentUsdMicro: Math.max(0, result.costUsdMicro),
+                      }
+                    : {}),
+                  // d1116-budget-all (BA-5): at its own budget, what one Continue must add so
+                  // the work's estimate left and its review's first call fit.
+                  ...(pause && result.budgetStop.source === "task_budget"
+                    ? {
+                        needsUsdMicro: await this.needsAtTaskBudget(
+                          waiting,
+                          runItem,
+                          pause.estimateLeftUncappedUsdMicro,
+                        ),
                       }
                     : {}),
                 });
@@ -4458,12 +4503,11 @@ export class SessionRunner {
       (fresh.est_cost_usd_micro > 0
         ? fresh.est_cost_usd_micro
         : (item.wholeEstimateUsdMicro ?? item.estimateUsdMicro));
-    const left = {
-      usdMicro: withinTaskBudget(
-        estimateLeftUsdMicro(estimateUsdMicro, await keptWorkFor(store, fresh)).usdMicro,
-        fresh,
-      ),
-    };
+    const uncapped = estimateLeftUsdMicro(
+      estimateUsdMicro,
+      await keptWorkFor(store, fresh),
+    ).usdMicro;
+    const left = { usdMicro: withinTaskBudget(uncapped, fresh) };
     return {
       progress,
       ...(checks
@@ -4476,7 +4520,57 @@ export class SessionRunner {
         : {}),
       estimateUsdMicro,
       estimateLeftUsdMicro: left.usdMicro,
+      // d1116-budget-all (BA-5): before the budget caps it, what Continue's needs count from.
+      estimateLeftUncappedUsdMicro: uncapped,
     };
+  }
+
+  /**
+   * d1116-budget-all (BA-5): what a task paused at its own budget needs beyond what is left of it,
+   * so one Continue lets it finish and be reviewed: its estimate left (`workUsdMicro`, uncapped;
+   * it holds the review part) plus one critic call's worst case, less what is left. For a review
+   * that waits, `review` gives the review part and the refused call's estimate: the review part
+   * plus the larger of that call and one call's worst case, less what is left. Never below 0.
+   */
+  private async needsAtTaskBudget(
+    task: TaskRow,
+    item: PlanItem,
+    workUsdMicro: number,
+    review?: { refusedUsdMicro: number | null },
+  ): Promise<number> {
+    const fresh = (await this.deps.store.task.get(task.id).catch(() => undefined)) ?? task;
+    const left = Math.max(0, fresh.budget_usd_micro - fresh.actual_cost_usd_micro);
+    const worst =
+      (await this.deps.critic?.reviewCallUsdMicro?.(fresh, item.specialist).catch(() => null))
+        ?.worstUsdMicro ?? 0;
+    const needs = review
+      ? (this.deps.planner.reviewPartOf?.(fresh) ?? 0) +
+        Math.max(review.refusedUsdMicro ?? 0, worst)
+      : workUsdMicro + worst;
+    return Math.max(0, Math.round(needs - left));
+  }
+
+  /**
+   * d1116-budget-all (BA-4): the room a task's review needs in its own budget: the review part of
+   * its estimate (`R`) plus one critic call's worst case at its review tier (`W`, what the hooks
+   * admit a call on), so a reading review's calls pass the precheck. 0 for a task without a
+   * budget of its own (its review is the session's), or without a critic that prices its call.
+   */
+  private async reviewRoomOf(task: TaskRow, item: PlanItem): Promise<number> {
+    if (!(task.budget_usd_micro > 0)) return 0;
+    const critic = this.deps.critic;
+    if (!critic?.reviewCallUsdMicro) return 0;
+    try {
+      const price = await critic.reviewCallUsdMicro(task, item.specialist);
+      const review = this.deps.planner.reviewPartOf?.(task) ?? 0;
+      return Math.max(0, Math.round(review + price.worstUsdMicro));
+    } catch (e) {
+      this.logger.warn("the review's room was not priced", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+      return 0;
+    }
   }
 
   /**
@@ -5244,6 +5338,19 @@ export class StaticPlanner implements Planner {
           acceptance_criteria: t.acceptance_criteria,
         }).usdMicro
       : t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro;
+  }
+  /** d1116-budget-all: the review part of `wholeEstimateOf` (0 without an estimate port). */
+  reviewPartOf(t: TaskRow): number {
+    return this.estimates
+      ? (this.estimates.estimate({
+          specialist: t.specialist,
+          risk_tier: t.risk_tier,
+          est_cost_usd_micro: t.est_cost_usd_micro,
+          budget_usd_micro: t.budget_usd_micro,
+          outcome: t.outcome,
+          acceptance_criteria: t.acceptance_criteria,
+        }).reviewUsdMicro ?? 0)
+      : 0;
   }
   async plan(ctx: PlannerContext): Promise<SessionPlan> {
     const free = ctx.readyTasks.filter(

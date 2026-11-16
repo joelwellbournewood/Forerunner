@@ -322,11 +322,13 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
       leftToDo: ["write the last section", "check the links"],
       stoppedBy: "wrap_up",
     });
-    // The session's log names the run's budget line, the wrap-up and the pause.
+    // The session's log names the run's budget line, the wrap-up and the pause. d1116-budget-all
+    // (BA-4): the run keeps room in its task's budget for its review and says so (before: 'This
+    // run may spend CHF 0.24: before a step that could take it past CHF 0.19 ...').
     const said = lines(r.events);
     expect(
       said.some((l) =>
-        /^This run may spend CHF [\d.]+: before a step that could take it past CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/.test(
+        /^This run may spend CHF 0\.20 \(CHF 0\.04 of the task's budget is kept for its review\): before a step that could take it past CHF [\d.]+ it is told to wrap up, keeping a reserve of CHF [\d.]+ to finish\.$/.test(
           l,
         ),
       ),
@@ -335,7 +337,7 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     // CHF 0.04)" was not what was left, since the call that would pass the line brings it).
     expect(
       said.some((l) =>
-        /^Told the coder to wrap up: it spent CHF [\d.]+ of CHF 0\.24, and its next step could take it past CHF 0\.19\.$/.test(
+        /^Told the coder to wrap up: it spent CHF [\d.]+ of CHF 0\.20, and its next step could take it past CHF 0\.16\.$/.test(
           l,
         ),
       ),
@@ -344,7 +346,7 @@ describe("a budget stop is a clean pause (budget-stop, ADR 0112)", () => {
     expect(said.join(" | ")).not.toMatch(/a fifth of this task's budget is left/);
     expect(
       said.some((l) =>
-        /^"Guide pages" paused before its budget of CHF 0\.24 ran out: it spent CHF [\d.]+ and listed 2 things left to do\.$/.test(
+        /^"Guide pages" paused before its budget of CHF 0\.24 ran out: it spent CHF [\d.]+ and listed 2 things left to do; CHF 0\.04 is kept for its review\.$/.test(
           l,
         ),
       ),
@@ -1796,11 +1798,12 @@ describe("l3-handoff-checks, run L3", () => {
       // The session's line, as the person reads it on the session page.
       const said = lines(r.events).find((l) => l.includes("paused before its budget")) ?? "";
       const m =
-        /paused before its budget of (CHF \d+\.\d\d) ran out: it spent (CHF \d+\.\d\d) and listed 2 things left to do\./.exec(
+        // d1116-budget-all (BA-4): and what it kept for its review.
+        /paused before its budget of (CHF \d+\.\d\d) ran out: it spent (CHF \d+\.\d\d) and listed 2 things left to do; (CHF \d+\.\d\d) is kept for its review\./.exec(
           said,
         );
       expect(m, said).not.toBeNull();
-      const [, cap, spent] = m as RegExpExecArray;
+      const [, cap, spent, kept] = m as RegExpExecArray;
       const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
         (q) => q.taskId === r.taskId && q.status === "open",
       );
@@ -1809,8 +1812,10 @@ describe("l3-handoff-checks, run L3", () => {
       // d1109-oversize-pause (OP-7): its spend passed its estimate (the learned estimate of a
       // small coder task, as the Start dialog prices it), so the same sentence says so (before:
       // 'It spent CHF 0.12 of its budget of CHF 0.15.').
+      // d1116-budget-all (BA-4): and what it kept for its review (before: 'It spent CHF 0.12 of
+      // its budget of CHF 0.15, more than its estimate of CHF 0.06.').
       expect(card?.body).toBe(
-        `It spent ${spent} of its budget of ${cap}, more than its estimate of CHF 0.06.`,
+        `It spent ${spent} of its budget of ${cap}, more than its estimate of CHF 0.06. ${kept} of the budget is kept for its review.`,
       );
       // Before: 'Done: I opened six MDN pages and listed the five that mention hint. The sixth,
       // the showPopover page, doesn't mention it. Two pages define hint:…; left: Open the
@@ -1871,6 +1876,8 @@ describe("l3-handoff-checks, run L3", () => {
       expect(String(n?.body)).toMatch(
         // d1109-oversize-pause (OP-7): the card's body, with its spend past its estimate (before:
         // 'It spent CHF 0.12 of its budget of CHF 0.15. Answer it in the Inbox.').
+        // d1116-budget-all (BA-4): the card's first sentence whole; its sentence on what is kept
+        // for its review has no room left and is left out, never cut.
         /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d, more than its estimate of CHF 0\.06\. Answer it in the Inbox\.$/,
       );
     });

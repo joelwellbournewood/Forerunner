@@ -164,7 +164,8 @@ function world(replies: ScriptedReply[]) {
     return g;
   };
   const standIn = messagesApiStandIn({ model, clock });
-  const open = async (home: string) => {
+  /** `services`: the daemon's services run (the scheduler a Continue starts its session on). */
+  const open = async (home: string, opts: { services?: boolean } = {}) => {
     const rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
       dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
@@ -179,7 +180,7 @@ function world(replies: ScriptedReply[]) {
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.1.0-test",
       sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
-      startServices: false,
+      startServices: opts.services === true,
     });
     const { app, token } = createDaemonApp(rt);
     const req = (path: string, init: RequestInit = {}) =>
@@ -272,10 +273,12 @@ async function addTask(
   return String(task.id);
 }
 
-/** The task's cards in the Inbox, as the Inbox reads them. */
+/** The task's open cards in the Inbox, as the Inbox reads them. */
 async function cardsOf(w: Opened, taskId: string): Promise<Json[]> {
   const inbox = await w.json("/inbox");
-  return ((inbox.requests as Json[]) ?? []).filter((r) => r.taskId === taskId);
+  return ((inbox.requests as Json[]) ?? []).filter(
+    (r) => r.taskId === taskId && r.status === "open",
+  );
 }
 
 /** The session's log lines. */
@@ -626,6 +629,128 @@ describe("d1116-budget-all", () => {
         (c) => c.agentId === o.rt.criticAgent.id && c.taskId === taskId,
       );
       expect(criticTokens.map((c) => c.budgetUsdMicro)).toEqual([session.budget_cap_usd_micro]);
+    } finally {
+      await settleSessions(o.rt);
+      await o.rt.close();
+    }
+  }, 120_000);
+
+  it("BA-4: a fix after a send-back keeps room in its task's budget for its review, and its start line says so; the task never passes its budget", async () => {
+    const TITLE = "Write the club history page";
+    const w = world([...sendsBackOnce(TITLE), ...codes(TITLE, "history.html")]);
+    const o = await w.open(home());
+    try {
+      const { projectId, taskId } = await projectWithTask(o, TITLE, {
+        budgetUsdMicro: 2_000_000,
+        file: "history.html",
+      });
+      const sessionId = await start(o, projectId);
+      await ended(o, sessionId);
+      await settleSessions(o.rt);
+      const task = await o.rt.store.task.mustGet(taskId);
+      expect(task.status).toBe("done");
+      const kept = (await linesOf(o, sessionId)).filter((l) =>
+        /^This run may spend CHF \d+\.\d\d \(CHF \d+\.\d\d of the task's budget is kept for its review\): /.test(
+          l,
+        ),
+      );
+      // Both work runs (the first and the fix after the send-back) kept room for the review.
+      expect(kept).toHaveLength(2);
+      expect(task.actual_cost_usd_micro).toBeLessThanOrEqual(2_000_000);
+      expect(task.actual_cost_usd_micro).toBe(
+        (await o.rt.store.costLedger.sum({ taskId })).usd_micro,
+      );
+    } finally {
+      await settleSessions(o.rt);
+      await o.rt.close();
+    }
+  }, 120_000);
+
+  it("BA-5, BA-3: a review that waits at its task's budget gets what it needs from one Continue: a reading review of two calls runs in the next session without the specialist, also after a restart, and no second card comes", async () => {
+    const TITLE = "Write the footer";
+    const isFooterReview = (r: ModelRequest) => isCritic(r) && text(r).includes(TITLE);
+    const w = world([
+      // A reading review: it lists the folder, then gives its verdict.
+      toolReply("list_dir", { path: "." }, "Reading the folder.", {
+        when: (r: ModelRequest) => isFooterReview(r) && firstCall(r),
+        times: Number.POSITIVE_INFINITY,
+      }),
+      submitReply(
+        {},
+        {
+          when: (r: ModelRequest) =>
+            isFooterReview(r) && !firstCall(r) && !text(r).includes("Review recorded"),
+          times: Number.POSITIVE_INFINITY,
+        },
+      ),
+      ...codes(TITLE, "footer.html", [
+        { input_tokens: 1_000, output_tokens: 300 },
+        { input_tokens: 1_000, output_tokens: 300 },
+      ]),
+    ]);
+    const h = home();
+    let o = await w.open(h);
+    try {
+      const { projectId, taskId } = await projectWithTask(o, TITLE, {
+        budgetUsdMicro: 75_000,
+        file: "footer.html",
+      });
+      const first = await start(o, projectId);
+      await ended(o, first);
+      await settleSessions(o.rt);
+      expect((await o.rt.store.task.mustGet(taskId)).status).toBe("needs_human");
+      const [card] = await cardsOf(o, taskId);
+      expect(card?.body).toBe("The work is done; its review waits for room in the budget.");
+      // The card stores what the review needs beyond the 65,000 left: the review part and one
+      // call's worst case.
+      const stored = (await o.rt.store.humanRequest.mustGet(String(card?.id))).change_card as Json;
+      const task = await o.rt.store.task.mustGet(taskId);
+      const price = await o.rt.critic?.reviewCallUsdMicro?.(task, "coder");
+      const review =
+        o.rt.estimates.estimate({
+          specialist: "coder",
+          risk_tier: 1,
+          outcome: task.outcome,
+          acceptance_criteria: task.acceptance_criteria,
+        }).reviewUsdMicro ?? 0;
+      expect(stored.needs_usd_micro).toBe(review + (price?.worstUsdMicro ?? 0) - 65_000);
+      // Composed again between the pause and Continue (with its services: Continue is the
+      // person's start, on the daemon's scheduler).
+      await o.rt.close();
+      o = await w.open(h, { services: true });
+      const [again] = await cardsOf(o, taskId);
+      const coderBefore = w.seen.filter(isCoderOn(TITLE)).length;
+      const answered = await o.req(`/requests/${String(again?.id)}/answer`, {
+        method: "POST",
+        body: JSON.stringify({
+          version: again?.version,
+          answer: ((again?.options as string[] | undefined) ?? [])[0],
+        }),
+      });
+      expect(answered.status).toBe(200);
+      const done = await waitFor(
+        async () => {
+          const t = await o.rt.store.task.mustGet(taskId);
+          return t.status === "done" ? t : undefined;
+        },
+        async () => {
+          const t = await o.rt.store.task.mustGet(taskId);
+          return `the footer to be done (${t.status}: ${t.reason})`;
+        },
+      );
+      await settleSessions(o.rt);
+      // Only the critic ran: no coder request after the pause, one coder run in all.
+      expect(w.seen.filter(isCoderOn(TITLE)).length).toBe(coderBefore);
+      expect(
+        (await o.rt.store.run.forTask(taskId)).filter((r) => r.specialist !== "critic"),
+      ).toHaveLength(1);
+      // The review read the folder, then gave its verdict: two calls, both admitted.
+      expect(w.seen.filter(isFooterReview).length).toBeGreaterThanOrEqual(2);
+      expect(await cardsOf(o, taskId)).toEqual([]);
+      expect(done.actual_cost_usd_micro).toBeLessThanOrEqual(done.budget_usd_micro);
+      expect(done.actual_cost_usd_micro).toBe(
+        (await o.rt.store.costLedger.sum({ taskId })).usd_micro,
+      );
     } finally {
       await settleSessions(o.rt);
       await o.rt.close();
