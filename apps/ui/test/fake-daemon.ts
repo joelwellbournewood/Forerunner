@@ -1491,6 +1491,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.holdSessions = body.hold === true;
     return c.json({ ok: true });
   });
+  // d1109-chat-depth: what the next chat turn does beyond its reply (its steps, a hold until
+  // Stop, its depth, footer and offer), for a browser test.
+  app.post("/__test/next-chat-turn", async (c) => {
+    state.nextChatTurn = (await c.req.json()) as FakeDaemonState["nextChatTurn"];
+    return c.json({ ok: true });
+  });
   app.post("/__test/fail", async (c) => {
     const body = (await c.req.json()) as {
       routes: Record<string, { status: number; code: string; message: string }>;
