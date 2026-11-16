@@ -874,6 +874,15 @@ export const EventView = z.object({
    * `detail` lines (the brief, memory, peers, each tool step, notifications) are under Details.
    */
   audience: z.enum(["person", "detail"]),
+  /**
+   * d1109-selftasks-chat (SC-6; the owner's D7: "each change shown with one Undo"): on a change
+   * line, the change log row it names, whether its Undo works now (`undoable`), else why not in
+   * words (`undoBlocked`), and whether it was undone. Read when the log is read.
+   */
+  changeId: z.string().optional(),
+  undoable: z.boolean().optional(),
+  undoBlocked: z.string().nullable().optional(),
+  undone: z.boolean().optional(),
 });
 export type EventView = z.infer<typeof EventView>;
 
@@ -2828,6 +2837,11 @@ export const ChangeLogView = z.object({
   /** Who asked: the person's name (`humanId`), else the agent's (`agentId`). */
   humanName: z.string().nullable().optional(),
   agentName: z.string().nullable().optional(),
+  /**
+   * d1109-selftasks-chat (SC-7): the project's agent made the change (its own fix of the task
+   * list, in a session or from chat): the row names the agent, never the person.
+   */
+  byAgent: z.boolean().optional(),
 });
 export type ChangeLogView = z.infer<typeof ChangeLogView>;
 

@@ -49,6 +49,8 @@ export async function changeRowViews(
         projectRemoved: project?.removed === true,
         humanName: row.human_id ? ((await humanOf(row.human_id))?.name ?? null) : null,
         agentName: row.agent_id ? ((await agentOf(row.agent_id))?.name ?? null) : null,
+        // d1109-selftasks-chat (SC-7): the agent's own change, said as the agent's.
+        byAgent: !!row.author_agent && !row.author_human,
       };
     }),
   );

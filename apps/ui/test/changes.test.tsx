@@ -127,3 +127,33 @@ describe("Change log", () => {
     expect(await screen.findByTestId("route-missing")).toHaveTextContent("GET /changes");
   });
 });
+
+describe("d1109-selftasks-chat, run C: Changes says the agent made it (SC-7)", () => {
+  it("a row made in a session reads 'In a session' and the agent's name, with its Undo; chat rows stay 'Chat'", async () => {
+    const harness = createHarness();
+    const first = harness.daemon.state.changes[0];
+    if (!first) throw new Error("no change fixture");
+    harness.daemon.state.changes.unshift({
+      ...first,
+      id: "chg_agent",
+      source: "session",
+      wordsUsed: "",
+      sentence: 'Added "Check the links" before "Publish the page".',
+      undoState: "undoable",
+      expiresAt: null,
+      byAgent: true,
+      agentName: "Alice",
+      humanName: "Robin",
+    });
+    renderApp("/changes", harness);
+    const rows = await screen.findAllByTestId("change");
+    const row = rows.find((r) => r.getAttribute("data-change-id") === "chg_agent");
+    if (!row) throw new Error("no agent row");
+    expect(within(row).getByTestId("change-source")).toHaveTextContent("In a session");
+    expect(row).toHaveTextContent("Alice");
+    expect(row).not.toHaveTextContent("Robin");
+    expect(within(row).getByTestId("change-undo")).toBeInTheDocument();
+    const voice = rows.find((r) => r.getAttribute("data-source") === "voice");
+    expect(voice && within(voice).getByTestId("change-source")).toHaveTextContent("Voice");
+  });
+});

@@ -1993,6 +1993,30 @@ export function createDaemonApp(
     return { ...view, summary, waitBlock };
   };
 
+  /**
+   * d1109-selftasks-chat (SC-6): a change line of a session's log names its change log row and
+   * whether its Undo works now, read when the log is read (after a restart too); the Undo is
+   * POST /changes/:id/undo, as on Changes.
+   */
+  const withUndo = async (views: EventView[]): Promise<EventView[]> =>
+    Promise.all(
+      views.map(async (v) => {
+        const id = (v.payload as { changeLogId?: unknown } | null)?.changeLogId;
+        if (v.type !== "change" || typeof id !== "string") return v;
+        const row = await rt.store.changeLog.get(id).catch(() => undefined);
+        if (!row) return v;
+        const now = rt.clock.nowIso();
+        const open = row.undo_state === "undoable" && (!row.expires_at || row.expires_at > now);
+        const blocked = open ? await rt.commands.undoBlocked(row) : null;
+        return {
+          ...v,
+          changeId: row.id,
+          undoable: open && !blocked,
+          undoBlocked: blocked,
+          undone: row.undo_state === "undone",
+        };
+      }),
+    );
   app.get("/sessions/:id/events", async (c) => {
     const id = c.req.param("id");
     const afterSeq = intQuery(c, "afterSeq", 0, Number.MAX_SAFE_INTEGER);
@@ -2000,7 +2024,7 @@ export function createDaemonApp(
     if (!accept.includes("text/event-stream")) {
       const rows = await rt.store.event.list(id, afterSeq, 2000);
       // Lines name their task (design §5): an older line takes it from its task's start line.
-      return c.json(eventViews(rows, chf()));
+      return c.json(await withUndo(eventViews(rows, chf())));
     }
     return streamSSE(c, async (stream) => {
       let seq = afterSeq;
@@ -2013,7 +2037,7 @@ export function createDaemonApp(
           seq = e.seq;
           await stream.writeSSE({
             event: "session.event",
-            data: JSON.stringify(eventView(e, chf())),
+            data: JSON.stringify((await withUndo([eventView(e, chf())]))[0]),
             id: String(e.seq),
           });
         }
