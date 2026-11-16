@@ -42,7 +42,12 @@ import {
   startHttpFixture,
   testCatalog,
 } from "./extensions-helpers.ts";
-import { flatPricing, ScriptedProvider } from "./helpers.ts";
+import {
+  AcceptingCriticProvider,
+  flatPricing,
+  ScriptedProvider,
+  settleSessions,
+} from "./helpers.ts";
 import { buildRelease, FakeReleaseServer, testKey } from "./update-helpers.ts";
 
 /**
@@ -141,7 +146,11 @@ describe("daemon wiring", () => {
       clock,
       stateUrl: "sqlite::memory:",
       vault: new MemoryVault({ fake_token: FAKE_TOKEN_VALUE }),
-      provider: new ScriptedProvider([{ text: "Hello from the fake agent." }], clock),
+      // d1116-budget-all (BA-7): the critic accepts, so a task closes and is learned from at its
+      // close (the live sample is taken there, after its review).
+      provider: new AcceptingCriticProvider(
+        new ScriptedProvider([{ text: "Hello from the fake agent." }], clock),
+      ),
       gitHost,
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
@@ -524,16 +533,18 @@ describe("daemon wiring", () => {
     expect(started.status).toBe(202);
     const startedBody = (await started.json()) as { result?: string; session?: { id?: string } };
     expect(startedBody.result).toBe("started");
-    // Wait for the task to finish its run. The run calls git five times; on Windows CI each
-    // call takes far longer than here, and the old 2 s wait ran out before the run returned
-    // (CI run 41355752207; reproduced here with a git that sleeps 0.4 s per call).
+    // Wait for the task to close. The run calls git five times; on Windows CI each call takes
+    // far longer than here, and the old 2 s wait ran out before the run returned (CI run
+    // 41355752207; reproduced here with a git that sleeps 0.4 s per call). d1116-budget-all
+    // (BA-7): the live sample is taken at the task's close, after its review, so the wait is
+    // for the close, not the run's return (at "in_review" no sample is taken yet).
     let status = "";
     for (let i = 0; i < 1200; i++) {
       status = (await rt.store.task.mustGet(str(task.id))).status;
-      if (status !== "ready" && status !== "claimed" && status !== "in_progress") break;
+      if (["done", "failed", "cancelled", "needs_human"].includes(status)) break;
       await new Promise((r) => setTimeout(r, 25));
     }
-    expect(status, "the task's run returned").not.toMatch(/^(ready|claimed|in_progress)$/);
+    expect(status, "the task closed").toBe("done");
     const res = await req("/costs/estimates");
     expect(res.status).toBe(200);
     const view = EstimateAccuracyViewSchema.parse(await res.json());
@@ -548,6 +559,9 @@ describe("daemon wiring", () => {
     expect((await post(`/sessions/${sessionId}/stop`, {})).status).toBe(200);
     for (let i = 0; i < 1200 && (await rt.store.session.active(rt.agent.id)).length > 0; i++)
       await new Promise((r) => setTimeout(r, 25));
+    // d1116-budget-all: the reviewed task's session writes its end (its review, the status doc)
+    // after its row is no longer active; the next start waits for that, not a queue.
+    await settleSessions(rt);
     expect(await rt.store.session.active(rt.agent.id)).toEqual([]);
 
     // 'cost' (L-22): the next task of the kind is measured against its own estimate, never the
@@ -572,12 +586,10 @@ describe("daemon wiring", () => {
     let secondStatus = "";
     for (let i = 0; i < 1200; i++) {
       secondStatus = (await rt.store.task.mustGet(str(second.id))).status;
-      if (!/^(ready|claimed|in_progress)$/.test(secondStatus)) break;
+      if (["done", "failed", "cancelled", "needs_human"].includes(secondStatus)) break;
       await new Promise((r) => setTimeout(r, 25));
     }
-    expect(secondStatus, "the second task's run returned").not.toMatch(
-      /^(ready|claimed|in_progress)$/,
-    );
+    expect(secondStatus, "the second task closed").toBe("done");
     expect((await post(`/sessions/${str(againBody.session?.id)}/stop`, {})).status).toBe(200);
     for (let i = 0; i < 1200 && (await rt.store.session.active(rt.agent.id)).length > 0; i++)
       await new Promise((r) => setTimeout(r, 25));

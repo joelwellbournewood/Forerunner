@@ -327,7 +327,7 @@ describe("d1109-oversize-pause", () => {
     const check = await checkOf(w, projectId);
     const over = check.oversized as Json;
     expect(String(over.sentence)).toMatch(
-      /^"Build the shop in shop\.md" needs about CHF 6\.40, more than this session's work budget of CHF 1\.28: after "Write the intro in intro\.md" it works with about CHF [\d.]+, keeps its work, and asks you to continue\.$/,
+      /^"Build the shop in shop\.md" needs about CHF 6\.42, more than this session's work budget of CHF 1\.28: after "Write the intro in intro\.md" it works with about CHF [\d.]+, keeps its work, and asks you to continue\.$/,
     );
     expect(over.afterSentence).toBe(
       '"Write the notes in notes.md" comes after it: it runs if "Build the shop in shop.md" leaves budget, else in your next session.',
@@ -457,7 +457,7 @@ describe("d1109-oversize-pause: the next Start continues it", () => {
     const over = check.oversized as Json;
     // It is planned at what is left of its estimate (OS-1), and it spent before.
     expect(over.taskId).toBe(shop);
-    expect(Number((over.estimate as Json).usdMicro)).toBe(8_000_000 - spentBefore);
+    expect(Number((over.estimate as Json).usdMicro)).toBe(8_030_000 - spentBefore);
     expect(String(over.sentence)).toContain("spent so far");
 
     const second = await runSession(w, projectId);

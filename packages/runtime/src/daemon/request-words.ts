@@ -741,8 +741,17 @@ function budgetCard(
     spend && past && spend.startsWith("It spent ")
       ? spend.replace(/\.$/, `, more than its estimate of ${past.estimate}.`)
       : spend;
+  // d1116-budget-all (BA-4): what the run kept of its task's budget for its review, the one
+  // clause the first sentence gains, after its estimate when it passed it ('It spent CHF 0.56 of
+  // its budget of CHF 0.80, keeping CHF 0.10 for its review.').
+  const room =
+    spendPast && card.source === "task_budget"
+      ? chfAt(card.room_usd_micro, card.chf_per_usd)
+      : null;
+  const spendKept =
+    spendPast && room ? spendPast.replace(/\.$/, `, keeping ${room} for its review.`) : spendPast;
   const first = withChecksClause(
-    spendPast ?? (lists.length ? null : pausedWorkSentence(card, ctx.heldWork)),
+    spendKept ?? (lists.length ? null : pausedWorkSentence(card, ctx.heldWork)),
     card,
   );
   const second = stuck

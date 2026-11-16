@@ -40,7 +40,7 @@ import {
 } from "@forerunner/platform";
 import type { JsonObject, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
-import type { LoopAgentDriver, RunPricing } from "../agent/loop.ts";
+import type { LoopAgentDriver, RunEvent, RunPricing } from "../agent/loop.ts";
 import type { ToolSpec } from "../agent/tools.ts";
 import type { ContextManager } from "../context/manager.ts";
 import { fileTools } from "../daemon/tools.ts";
@@ -70,6 +70,7 @@ import {
   type PromotionReviewOutcome,
   type PromotionReviewRequest,
   type RetryRung,
+  type ReviewCallPrice,
   type ReviewDecision,
   type ReviewFindingSummary,
   type SessionReviewOutcome,
@@ -394,6 +395,22 @@ export class CriticLoop implements CriticPort {
     return this.deps.criticAgentId;
   }
 
+  /**
+   * d1116-budget-all: one call's price of this task's review before it runs, at the tier the
+   * review will use (its risk tier, never below its specialist's registry floor) under its
+   * project's settings (`CriticService.reviewCallUsdMicro`).
+   */
+  async reviewCallUsdMicro(task: TaskRow, specialist?: string): Promise<ReviewCallPrice> {
+    const name = specialist || task.specialist;
+    // Never below the light review (`reviewTierOf`), so a model review.
+    const tier = reviewTierOf(task.risk_tier, reviewFloorOf(name, this.deps.specialistFloor)) as
+      | 1
+      | 2
+      | 3;
+    const project = await this.deps.store.project.get(task.project_id);
+    return this.service.reviewCallUsdMicro(tier, project?.settings ?? null);
+  }
+
   async reviewTask(req: TaskReviewRequest): Promise<TaskReviewOutcome> {
     const { store } = this.deps;
     const { task, session, result } = req;
@@ -694,6 +711,8 @@ export class CriticLoop implements CriticPort {
         {
           sessionToken: req.token,
           budget: req.budget,
+          // d1116-budget-all: the review stops at what is left of the task's own budget.
+          ...(req.budgetUsdMicro !== undefined ? { budgetUsdMicro: req.budgetUsdMicro } : {}),
           projectSettings: settings,
           checks,
           cwd: worktree,
@@ -703,10 +722,14 @@ export class CriticLoop implements CriticPort {
           ...(root && readTools.length ? { project: { root, tools: readTools } } : {}),
           // L3-run-10: the review started once its first model call is under way (the
           // limits allowed it); a review refused before that call never says it started.
-          ...(req.onStarted
+          // d1116-budget-all: each call's cost reaches the task as the call ends (a call a stop
+          // cut off, `CUT_OFF_STOP_REASON`, is booked and counts too).
+          ...(req.onStarted || req.onCost
             ? {
-                onEvent: (ev: { type: string }) => {
+                onEvent: (ev: RunEvent) => {
                   if (ev.type === "model_call_start") req.onStarted?.();
+                  else if (ev.type === "model_call_end" && ev.costUsdMicro > 0)
+                    req.onCost?.(ev.costUsdMicro);
                 },
               }
             : {}),

@@ -99,6 +99,7 @@ import {
   OPEN_ON_A_CLOSED_PROJECT,
   sessionsBeforeJoinSentence,
 } from "@forerunner/runtime/daemon/join-words";
+import { reviewPartUsdMicro } from "@forerunner/runtime/estimates/model";
 import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
 import {
   type Elsewhere,
@@ -960,12 +961,27 @@ const FAKE_MONTH_LEFT_USD_MICRO = 150_000_000;
 
 /**
  * A task's price as the daemon's planner gives it: its estimate, else its budget, else the
- * planner's 500 000, never more than what is left of its own budget (`withinTaskBudget`).
+ * planner's 500 000, plus its review part as the runtime's estimate adds it (d1116-budget-all,
+ * BA-10: `reviewPartUsdMicro`), never more than what is left of its own budget, the budget less
+ * its one figure (`withinTaskBudget`).
  */
 function fakePrice(t: TaskView): number {
-  const estimate = t.estimate.usdMicro || t.budget.usdMicro || 500_000;
+  const work = t.estimate.usdMicro || t.budget.usdMicro || 500_000;
+  const estimate =
+    work +
+    reviewPartUsdMicro({
+      specialist: t.specialist,
+      risk_tier: t.riskTier,
+      outcome: t.outcome,
+      acceptance_criteria: t.acceptanceCriteria,
+    });
   if (!(t.budget.usdMicro > 0)) return estimate;
-  return Math.min(estimate, Math.max(0, t.budget.usdMicro - t.actual.usdMicro));
+  return Math.min(estimate, Math.max(0, t.budget.usdMicro - fakeTotal(t)));
+}
+
+/** d1116-budget-all (BA-10): a task's one figure, its work, reviews and fixes (as the ledger). */
+function fakeTotal(t: Pick<TaskView, "actual" | "spent">): number {
+  return Math.max(t.actual.usdMicro, t.spent?.usdMicro ?? 0);
 }
 
 /**
@@ -3899,13 +3915,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           more = budgetCard.continue_usd_micro;
           budget = session
             ? task.budget.usdMicro
-            : Math.max(task.budget.usdMicro, task.actual.usdMicro) + more;
+            : Math.max(task.budget.usdMicro, fakeTotal(task)) + more;
         } else {
           more = Number(budgetCard.raise_to_usd_micro) || 0;
           budget = session ? task.budget.usdMicro : Math.max(task.budget.usdMicro, more);
         }
         task.budget = money(budget);
-        task.cap = money(Math.max(0, budget - task.actual.usdMicro));
+        // BA-10: what is left is the budget less the task's one figure.
+        task.cap = money(Math.max(0, budget - fakeTotal(task)));
         if (!session) task.capSource = "task_budget";
         task.status = "ready";
         task.reason = `you gave it CHF ${(money(more).chfMicro / 1e6).toFixed(2)} more in the Inbox: it continues from where it stopped`;

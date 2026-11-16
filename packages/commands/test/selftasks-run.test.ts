@@ -457,3 +457,66 @@ describe("d1109-selftasks-run, run C: a step before a task and a dropped duplica
     await w.store.close();
   });
 });
+
+/**
+ * d1116-budget-all, run C (BA-11): the owner's "yes it should count critics reviews, and fixes."
+ * A split shares what is left of the task's budget after its work and its reviews: no new
+ * mechanism, the task's figure holds both (BA-1).
+ */
+describe("d1116-budget-all, run C: task.split after a review", () => {
+  it("a task of budget 1_000_000 whose figure is 200_000 (work 150_000 and its review 50_000) splits into parts whose shares add up to 800_000; the kept part's budget is its figure plus its share", async () => {
+    const w = await world();
+    const s = await runningSession(w);
+    const style = await seed(w, "Style the page", {
+      acceptance_criteria: ["a", "b", "c"],
+      budget_usd_micro: 1_000_000,
+      est_cost_usd_micro: 600_000,
+      specialist: "coder",
+    });
+    // Its first run and the critic's review, booked to it as BA-1 books them.
+    for (const [specialist, usd] of [
+      ["coder", 150_000],
+      ["critic", 50_000],
+    ] as const) {
+      await w.store.costLedger.record({
+        human_id: w.human.id,
+        project_id: w.pharma.id,
+        session_id: s.id,
+        task_id: style.id,
+        kind: "api",
+        usd_micro: usd,
+        chf_micro: Math.round(usd * RATE),
+        rate_chf_per_usd: RATE,
+        model: "fake-sonnet",
+        specialist,
+      });
+      await w.store.task.addCost(style.id, usd);
+    }
+    expect((await w.store.task.mustGet(style.id)).actual_cost_usd_micro).toBe(200_000);
+    done(
+      await w.executor.execute({
+        name: "task.split",
+        params: {
+          task: "Style the page",
+          parts: [
+            { title: "Style the layout", acceptance_criteria: ["a", "b"] },
+            { title: "Style the colours", acceptance_criteria: ["c"] },
+          ],
+          order: "in_turn",
+        },
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    const first = await w.store.task.mustGet(style.id);
+    const colours = (await w.store.task.forProject(w.pharma.id)).find(
+      (t) => t.title === "Style the colours",
+    ) as TaskRow;
+    // The figure stays on the kept part, never reset; the shares are what is left after it.
+    expect(first.actual_cost_usd_micro).toBe(200_000);
+    expect(colours.actual_cost_usd_micro).toBe(0);
+    const firstShare = first.budget_usd_micro - first.actual_cost_usd_micro;
+    expect(firstShare + colours.budget_usd_micro).toBe(800_000);
+    expect(first.budget_usd_micro).toBe(200_000 + firstShare);
+    await w.store.close();
+  });
+});

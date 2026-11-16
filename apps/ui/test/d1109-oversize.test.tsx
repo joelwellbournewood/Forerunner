@@ -30,14 +30,15 @@ describe("d1109-oversize-start, run C: the Start dialog warns and starts a task 
     const harness = createHarness();
     const big = readyTask(harness);
     big.title = "Build the shop";
-    // CHF 6.00 at the fixtures' rate: more than the default session's work budget (CHF 4.00).
+    // CHF 6.00 at the fixtures' rate, CHF 6.07 with its review part (d1116-budget-all, BA-10):
+    // more than the default session's work budget (CHF 4.00).
     big.estimate = money(7_500_000);
     const { user, dialog } = await openDialog(harness);
     expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
       /^This session works on "Build the shop" until its work budget is used\.$/,
     );
     expect(within(dialog).getByTestId("start-session-oversized")).toHaveTextContent(
-      /^"Build the shop" needs about CHF 6\.00, more than this session's work budget of CHF 4\.00: it works until that budget is used, keeps its work, and asks you to continue\.$/,
+      /^"Build the shop" needs about CHF 6\.07, more than this session's work budget of CHF 4\.00: it works until that budget is used, keeps its work, and asks you to continue\.$/,
     );
     expect(within(dialog).queryByTestId("start-session-cannot-run")).toBeNull();
     expect(dialog).not.toHaveTextContent(
@@ -79,17 +80,17 @@ describe("d1109-oversize-start, run C: the Start dialog warns and starts a task 
       ...big,
       id: "task_a",
       title: "A",
-      // CHF 0.12.
+      // CHF 0.12, CHF 0.19 with its review part (d1116-budget-all, BA-10).
       estimate: money(150_000),
       priority: "high",
     });
     const { dialog } = await openDialog(harness);
     expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
-      /^This session runs "A" \(about CHF 0\.12\), then works on "Build the shop" with what is left\.$/,
+      /^This session runs "A" \(about CHF 0\.19\), then works on "Build the shop" with what is left\.$/,
     );
-    // CHF 4.00 less 0.12: about CHF 3.88 for the larger task.
+    // CHF 4.00 less 0.19: about CHF 3.81 for the larger task (before: 0.12 and 3.88).
     expect(within(dialog).getByTestId("start-session-oversized")).toHaveTextContent(
-      /^"Build the shop" needs about CHF 6\.00, more than this session's work budget of CHF 4\.00: after "A" it works with about CHF 3\.88, keeps its work, and asks you to continue\.$/,
+      /^"Build the shop" needs about CHF 6\.07, more than this session's work budget of CHF 4\.00: after "A" it works with about CHF 3\.81, keeps its work, and asks you to continue\.$/,
     );
     expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled();
   });
@@ -110,7 +111,7 @@ describe("d1109-oversize-start, run C: the Start dialog warns and starts a task 
     const { dialog } = await openDialog(harness);
     const note = await within(dialog).findByTestId("start-session-oversized-note");
     expect(within(note).getByTestId("start-session-oversized")).toHaveTextContent(
-      /^"Build the shop" needs about CHF 6\.00/,
+      /^"Build the shop" needs about CHF 6\.07/,
     );
     // d1109-oversize-pause (OP-0): it comes after the first (before: 'one task that large runs a
     // session, so it waits for the next one.').
@@ -288,7 +289,7 @@ describe("d1109-oversize-pause, run C: the Start dialog and chat say the plan's 
     );
     const note = within(dialog).getByTestId("start-session-oversized-note");
     expect(within(note).getByTestId("start-session-oversized")).toHaveTextContent(
-      /^"Build the shop" needs about CHF 6\.00, more than this session's work budget of CHF 4\.00: it works until that budget is used, keeps its work, and asks you to continue\.$/,
+      /^"Build the shop" needs about CHF 6\.07, more than this session's work budget of CHF 4\.00: it works until that budget is used, keeps its work, and asks you to continue\.$/,
     );
     expect(within(note).getByTestId("start-session-comes-after")).toHaveTextContent(
       /^"Write the notes" comes after it: it runs if "Build the shop" leaves budget, else in your next session\.$/,

@@ -150,3 +150,9 @@ I thought we talked about this." No special ordering.
 
 Who starts the next session follows ADR 0118 (d1109-starts-engine, C3), which keeps the larger
 task at its place, the `after_large` tasks after it and the no-progress guard.
+
+## Amendment 2026-11-16 ('d1116-budget-all', ADR 0112's amendment of that date)
+
+The estimate and what is left of it include the task's review part; the kept work it is set
+against stays its work runs only (`keptWorkFor`), so a task resuming from kept work still plans
+its review.

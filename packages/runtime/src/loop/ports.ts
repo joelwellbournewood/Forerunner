@@ -67,6 +67,29 @@ export interface TaskReviewRequest {
    * call never calls it, so no line says a review started that never ran.
    */
   onStarted?: () => void;
+  /**
+   * d1116-budget-all (the owner's "yes it should count critics reviews, and fixes."): called
+   * with each model call's cost as the call ends, a call a stop cut off included, so the runner
+   * adds the review to the task's own figure (`task.addCost`) as it adds the work's calls. The
+   * review's total (`TaskReviewOutcome.costUsdMicro`) is never added again.
+   */
+  onCost?: (usdMicro: number) => void;
+  /**
+   * d1116-budget-all: the review's cap when the task has a budget of its own: what is left of it
+   * (its budget less its figure, read when the review starts). The critic's run never spends more
+   * than the smaller of this and the session token's budget; absent, the session token's.
+   */
+  budgetUsdMicro?: number;
+}
+
+/** One critic call's price before a review runs (d1116-budget-all, `reviewCallUsdMicro`). */
+export interface ReviewCallPrice {
+  /** One call's worst case at the task's review tier, model and output cap. */
+  worstUsdMicro: number;
+  /** The review's output cap alone: below it the review is not started. */
+  floorUsdMicro: number;
+  /** The review runs at effort max. */
+  maxEffort: boolean;
 }
 
 export interface TaskReviewOutcome {
@@ -176,6 +199,13 @@ export interface CriticPort {
    * without it leaves every proposal pending.
    */
   reviewPromotion?(req: PromotionReviewRequest): Promise<PromotionReviewOutcome>;
+  /**
+   * d1116-budget-all: what one call of this task's review may cost before it runs, at its review
+   * tier (never below its specialist's floor) under its project's settings. A work run keeps room
+   * for it in the task's budget, and no review starts below its floor. Optional: without it a
+   * task keeps no room and every review is started.
+   */
+  reviewCallUsdMicro?(task: TaskRow, specialist?: string): Promise<ReviewCallPrice>;
 }
 
 // ---------------------------------------------------------------------------------------

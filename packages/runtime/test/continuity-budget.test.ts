@@ -210,11 +210,17 @@ describe("a task stopped at its budget asks the person once, in CHF (live walk 2
     expect(answered.status).toBe(200);
     const raised = await rt.store.task.mustGet(taskId);
     // The amount the button named is added to what the budget covered (its budget, or what it
-    // spent when that is more).
-    const more = continueUsdMicro(before, {
-      capUsdMicro: before.budget_usd_micro,
-      source: "task_budget",
-    });
+    // spent when that is more). d1116-budget-all (BA-5): at least what the card says the task
+    // needs beyond what is left (its work's estimate left and one review call's worst case), so
+    // one Continue is enough for its review too.
+    const stored = (await rt.store.humanRequest.mustGet(String(card.id))).change_card as Json;
+    expect(typeof stored.needs_usd_micro).toBe("number");
+    const more = continueUsdMicro(
+      before,
+      { capUsdMicro: before.budget_usd_micro, source: "task_budget" },
+      0.8,
+      { needsUsdMicro: stored.needs_usd_micro as number },
+    );
     expect(raised.budget_usd_micro).toBe(
       Math.max(before.budget_usd_micro, before.actual_cost_usd_micro) + more,
     );

@@ -887,3 +887,193 @@ describe("l3-money-engine, run L3", () => {
     }
   });
 });
+
+/**
+ * d1116-budget-all, run C (BA-8; the owner's "yes it should count critics reviews, and fixes."):
+ * a plan whose estimates hold each task's review (marked `counts: "all"` by the runner) is set
+ * against what its planned tasks cost, work, reviews and fixes as one figure; spend no plan item
+ * estimates (the task check, a lesson review: no task of the plan) is named apart and never
+ * counted in an overrun. A plan without the mark reads as written.
+ */
+describe("d1116-budget-all, run C", () => {
+  async function booked(
+    w: Awaited<ReturnType<typeof world>>,
+    rows: readonly (readonly [string | null, string, number])[],
+    rate: number,
+  ) {
+    for (const [taskId, specialist, usd] of rows) {
+      if (taskId)
+        await w.store.run.insert({
+          task_id: taskId,
+          session_id: w.ids.session,
+          specialist,
+          model: "fake-sonnet",
+          provider: "fake",
+          effort: "medium",
+          cost_usd_micro: usd,
+          duration_ms: 60_000,
+          outcome: "completed",
+        });
+      await w.store.costLedger.record({
+        human_id: w.ids.human,
+        session_id: w.ids.session,
+        task_id: taskId,
+        kind: "api",
+        usd_micro: usd,
+        chf_micro: Math.round(usd * rate),
+        rate_chf_per_usd: rate,
+        model: "fake-sonnet",
+      });
+    }
+  }
+  const plan = (taskId: string, title: string, estimate: number, counts?: "all") => ({
+    items: [{ taskId, title, estimateUsdMicro: estimate }],
+    estimateUsdMicro: estimate,
+    summary: "",
+    ...(counts ? { counts } : {}),
+  });
+
+  it("a marked plan: the planned tasks' whole cost against the estimate, the session's own checks apart and outside the overrun", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "done", title: "A" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: plan(a.id, a.title, 240_000, "all"),
+        summary: "Done: 1.",
+        status: "completed",
+      });
+      await booked(
+        w,
+        [
+          [a.id, "coder", 150_000],
+          [a.id, "critic", 100_000],
+          // The task check: booked to no task.
+          [null, "task-check", 30_000],
+        ],
+        0.8,
+      );
+      const data = await loadSessionReviewData(w.store, w.ids.session);
+      const checks = sessionChecks(data);
+      expect(checks.findings.map((f) => f.description).join(" | ")).not.toMatch(/estimate/);
+      expect(checks.metrics).toMatchObject({
+        counts: "all",
+        tasksUsdMicro: 250_000,
+        otherUsdMicro: 30_000,
+      });
+      const out = await reviewSession({
+        store: w.store,
+        sessionId: w.ids.session,
+        criticAgentId: w.ids.critic,
+      });
+      expect(out.summary).toContain(
+        "(the planned tasks CHF 0.20 against an estimate of CHF 0.19, the session's own checks CHF 0.02)",
+      );
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a marked plan over its estimate: one figure, with the tries", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "done", title: "A" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: plan(a.id, a.title, 50_000, "all"),
+        summary: "Done: 1.",
+        status: "completed",
+      });
+      await booked(
+        w,
+        [
+          [a.id, "coder", 120_000],
+          [a.id, "critic", 50_000],
+        ],
+        1,
+      );
+      const checks = sessionChecks(await loadSessionReviewData(w.store, w.ids.session));
+      expect(checks.findings.map((f) => f.description)).toContainEqual(
+        "Planned tasks cost CHF 0.17, over their estimate of CHF 0.05 by 240%",
+      );
+      // Nothing else spent: the summary sets the cost against the estimate in one figure.
+      const out = await reviewSession({
+        store: w.store,
+        sessionId: w.ids.session,
+        criticAgentId: w.ids.critic,
+      });
+      expect(out.summary).toContain("cost CHF 0.17 against an estimate of CHF 0.05;");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a marked plan of a session with no ledger row: its planned tasks' runs, as the session's counter is the actual figure", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "done", title: "A" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: plan(a.id, a.title, 240_000, "all"),
+        summary: "Done: 1.",
+        status: "completed",
+        spent_usd_micro: 200_000,
+      });
+      for (const [specialist, usd] of [
+        ["coder", 120_000],
+        ["critic", 50_000],
+      ] as const)
+        await w.store.run.insert({
+          task_id: a.id,
+          session_id: w.ids.session,
+          specialist,
+          model: "fake-sonnet",
+          provider: "fake",
+          effort: "medium",
+          cost_usd_micro: usd,
+          duration_ms: 60_000,
+          outcome: "completed",
+        });
+      const checks = sessionChecks(await loadSessionReviewData(w.store, w.ids.session));
+      expect(checks.metrics).toMatchObject({
+        counts: "all",
+        tasksUsdMicro: 170_000,
+        otherUsdMicro: 30_000,
+      });
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("an unmarked plan (written before) reads as written: the work against the estimate, the reviews apart", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "done", title: "A" });
+      await w.store.session.patch(w.ids.session, {
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
+        plan: plan(a.id, a.title, 50_000),
+        summary: "Done: 1.",
+        status: "completed",
+      });
+      await booked(
+        w,
+        [
+          [a.id, "coder", 120_000],
+          [a.id, "critic", 50_000],
+        ],
+        1,
+      );
+      const checks = sessionChecks(await loadSessionReviewData(w.store, w.ids.session));
+      expect(checks.metrics.counts).toBeUndefined();
+      expect(checks.findings.map((f) => f.description)).toContainEqual(
+        "Session work cost CHF 0.12 exceeded its estimate CHF 0.05 by 140% (the reviews, CHF 0.05 more, are not in the estimate)",
+      );
+    } finally {
+      await w.close();
+    }
+  });
+});

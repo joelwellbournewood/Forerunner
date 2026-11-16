@@ -387,7 +387,10 @@ describe("critic in the loop", () => {
     const w = await loopWorld({
       replies: [escalate(), escalate(), escalate(), escalate(), closingReply()],
     });
-    const task = await w.addTask("Migrate the schema");
+    // d1116-budget-all: the stand-in executor spends USD 0.30 a run and never stops at a cap;
+    // with reviews counted (and capped) at the task's budget, four tries and four reviews need a
+    // budget that holds them (the ladder, not the budget, is what this case is about).
+    const task = await w.addTask("Migrate the schema", { budget_usd_micro: 5_000_000 });
     const runner = w.runner(doneExecutor(w));
     // The whole ladder runs in one session (design §4.3): one Start, the person hears once.
     const r1 = await w.start(runner);

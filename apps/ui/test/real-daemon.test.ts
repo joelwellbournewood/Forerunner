@@ -32,7 +32,7 @@ import {
 } from "@forerunner/runtime/daemon/compose";
 import { createProjectRecord } from "@forerunner/runtime/daemon/create-project";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
-import { planEstimateUsdMicro } from "@forerunner/runtime/estimates/model";
+import { planEstimateUsdMicro, reviewPartUsdMicro } from "@forerunner/runtime/estimates/model";
 import { handoverAgentId } from "@forerunner/runtime/jobs/handover";
 import { projectWorkspaceDir } from "@forerunner/runtime/loop/docs";
 import { fileLeftOpenRequest, headMovedSentence } from "@forerunner/runtime/loop/merge";
@@ -74,7 +74,7 @@ import { streamChat } from "../src/api/chat-stream.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { readSseStream } from "../src/api/sse.ts";
-import { formatChf, formatMoney } from "../src/lib/money.ts";
+import { chfToMicro, formatMoney } from "../src/lib/money.ts";
 import { currentFromLog, taskStepsFromLog } from "../src/lib/session-steps.ts";
 import {
   actionExplain,
@@ -4659,7 +4659,9 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     });
     // Earlier runs spent the whole budget (setup, not under test): the next run stops before it
     // calls the model, as the live walk's run did "after spending $0.00". Its estimate is USD
-    // 0.10 (CHF 0.08), more than its budget: Continue adds at least that.
+    // 0.10 (CHF 0.08), more than its budget: Continue adds at least that. d1116-budget-all
+    // (BA-5): and what its review needs (its review part and one review call's worst case), so
+    // one Continue is enough for the work and its review: CHF 0.12 (before: CHF 0.08).
     await rt.store.task.patch(created.id, {
       actual_cost_usd_micro: 12_500,
       est_cost_usd_micro: 100_000,
@@ -4682,8 +4684,8 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     expect(card?.body).toBe("It stopped before it wrote anything.");
     expect(card?.choices?.map((c) => [c.label, c.explain, c.tone])).toEqual([
       [
-        "Continue (CHF 0.08 more)",
-        "Adds CHF 0.08 to its budget and starts a session that goes on from where it stopped.",
+        "Continue (CHF 0.12 more)",
+        "Adds CHF 0.12 to its budget and starts a session that goes on from where it stopped.",
         "primary",
       ],
       ["Cancel task", "Drops it.", "danger"],
@@ -4706,10 +4708,10 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     // The click sends the button's words; the budget is raised and a session runs the task.
     const answered = await client.answerRequest(card?.id ?? "", {
       version: card?.version ?? 0,
-      answer: "Continue (CHF 0.08 more)",
+      answer: "Continue (CHF 0.12 more)",
     });
     expect(answered.outcome).toMatch(
-      /^Gave "Contact page" CHF 0\.08 more: (a session started|it runs after the current session)\.$/,
+      /^Gave "Contact page" CHF 0\.12 more: (a session started|it runs after the current session)\.$/,
     );
     await eventually(
       async () =>
@@ -4722,8 +4724,8 @@ describe("the UI client against the real daemon: a task that stops waits on one 
       20_000,
     );
     const done = (await client.tasks(project.id)).find((t) => t.id === created.id);
-    // What it had spent (USD 0.0125) plus USD 0.10.
-    expect(done?.budget.usdMicro).toBe(112_500);
+    // What it had spent (USD 0.0125) plus USD 0.15, CHF 0.12 (BA-5; before: plus USD 0.10).
+    expect(done?.budget.usdMicro).toBe(162_500);
     expect(await cardsOf()).toEqual([]);
     // Nothing left running for the next case.
     await allEnded();
@@ -10657,9 +10659,6 @@ describe("the UI client against the real daemon: the plan card's figure is the S
       const guess = new Map(view.firstSession.items.map((i) => [i.key, i.estimateUsdMicro]));
       const shown = card.planTasks.filter((t) => t.specialist !== null && guess.has(t.key ?? ""));
       expect(shown.length).toBeGreaterThan(0);
-      // The card's figure is no longer the plan's own guess (before: always the guess).
-      for (const t of shown)
-        expect(t.estimateUsdMicro, t.title).toBeLessThan(guess.get(t.key ?? "") ?? 0);
 
       await client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
       const tasks = await rt.store.task.list({ project_id: project.id } as never, { limit: 50 });
@@ -10670,6 +10669,20 @@ describe("the UI client against the real daemon: the plan card's figure is the S
         // which is what the card showed.
         expect(row.est_cost_usd_micro, t.title).toBe(guess.get(t.key ?? ""));
         expect(planEstimateUsdMicro(rt.estimates, row), t.title).toBe(t.estimateUsdMicro);
+        // The card's work part is no longer the plan's own guess (before: always the guess).
+        // d1116-budget-all (BA-6): the figure holds the task's review part too, so its work part
+        // (the figure less that part) is what was learned, below the guess.
+        const review =
+          rt.estimates.estimate({
+            specialist: row.specialist,
+            risk_tier: row.risk_tier,
+            est_cost_usd_micro: row.est_cost_usd_micro,
+            outcome: row.outcome,
+            acceptance_criteria: row.acceptance_criteria,
+          }).reviewUsdMicro ?? 0;
+        expect((t.estimateUsdMicro ?? 0) - review, t.title).toBeLessThan(
+          guess.get(t.key ?? "") ?? 0,
+        );
       }
       // Nothing is left running for the next case.
       for (const s of await client.sessions({ projectId: project.id }))
@@ -12880,7 +12893,10 @@ describe("w15-run, wave 15", () => {
   const heardWrapUp = (r: ModelRequest) =>
     JSON.stringify(r.messages.at(-1) ?? "").includes(WRAP_UP_MARK);
 
-  it("W15-14: a researcher at Budget 0.15 that hears the wrap-up and lists only 'Nothing for the acceptance criteria.' and an optional extra is Done and reviewed, with no budget card", async () => {
+  // d1116-budget-all (BA-4): each work run keeps room in its task's budget for its review (CHF
+  // 0.04 here), so the budget that leaves the run the CHF 0.15 this scenario needs is CHF 0.19
+  // (before: Budget 0.15, whose run now stops at CHF 0.11 before the wrap-up).
+  it("W15-14: a researcher at Budget 0.19 that hears the wrap-up and lists only 'Nothing for the acceptance criteria.' and an optional extra is Done and reviewed, with no budget card", async () => {
     const report = [
       'I wrote `popover-hint.md` with three MDN pages that mention `popover="hint"`.',
       "",
@@ -12921,7 +12937,7 @@ describe("w15-run, wave 15", () => {
         priority: "medium",
         status: "ready",
         dependsOn: [],
-        budgetUsdMicro: 187_500,
+        budgetUsdMicro: 237_500,
         specialist: "researcher",
         riskTier: 1,
       });
@@ -13040,18 +13056,19 @@ describe("w15-run, wave 15", () => {
       );
       const done = await row();
       expect(done?.status).toBe("done");
-      // No double count: the task's actual is its work run's total.
+      // No double count (d1116-budget-all: the owner's "yes it should count critics reviews,
+      // and fixes."): the task's actual is the sum of all its Run rows, its work and its
+      // reviews, each counted once.
       const runs = await rt.store.run.forTask(taskId);
-      const work = runs.filter((r) => r.specialist !== "critic");
       const reviews = runs.filter((r) => r.specialist === "critic");
       expect(reviews.length).toBeGreaterThan(0);
-      expect(done?.actual.usdMicro).toBe(work.reduce((s, r) => s + r.cost_usd_micro, 0));
+      expect(done?.actual.usdMicro).toBe(runs.reduce((s, r) => s + r.cost_usd_micro, 0));
       // The row, the drawer and Costs > By task show one figure, reviews included.
       const costs = await client.costs({ projectId: project.id });
       const byTask = JSON.stringify(costs);
       const ledger = await rt.store.costLedger.sum({ taskId });
       expect(done?.spent?.usdMicro).toBe(ledger.usd_micro);
-      expect(done?.spent?.usdMicro ?? 0).toBeGreaterThan(done?.actual.usdMicro ?? 0);
+      expect(done?.actual.usdMicro).toBe(done?.spent?.usdMicro);
       expect((await client.task(taskId)).task.spent?.usdMicro).toBe(ledger.usd_micro);
       expect(byTask).toContain(taskId);
     } finally {
@@ -15361,14 +15378,16 @@ describe("d1109-oversize-start, run C", () => {
       // Before: blocked "Nothing can run within this budget: ..." and Start off.
       expect(check.blocked).toBeNull();
       expect(check.runnable).toEqual([]);
+      // d1116-budget-all (BA-6): its price holds its review part, USD 0.03 for a light review
+      // (before: 8_000_000, CHF 6.40).
       expect(check.oversized).toEqual({
         taskId: big.id,
         title: "Build the shop",
-        estimate: { usdMicro: 8_000_000, chfMicro: 6_400_000 },
+        estimate: { usdMicro: 8_030_000, chfMicro: 6_424_000 },
         room: { usdMicro: 1_600_000, chfMicro: 1_280_000 },
         after: false,
         sentence:
-          '"Build the shop" needs about CHF 6.40, more than this session\'s work budget of CHF 1.28: it works until that budget is used, keeps its work, and asks you to continue.',
+          '"Build the shop" needs about CHF 6.42, more than this session\'s work budget of CHF 1.28: it works until that budget is used, keeps its work, and asks you to continue.',
         // d1109-oversize-pause (OP-0): nothing comes after it.
         comesAfter: [],
         afterSentence: null,
@@ -15426,13 +15445,14 @@ describe("d1109-oversize-start, run C", () => {
         "Write the intro",
         "Write the about page",
       ]);
-      // USD 1.60 less 0.40: USD 1.20, CHF 0.96.
-      expect(check.oversized?.room).toEqual({ usdMicro: 1_200_000, chfMicro: 960_000 });
+      // USD 1.60 less 0.46 (each task USD 0.20 and its review part USD 0.03, d1116-budget-all
+      // BA-6; before: less 0.40, CHF 0.96): USD 1.14, CHF 0.91.
+      expect(check.oversized?.room).toEqual({ usdMicro: 1_140_000, chfMicro: 912_000 });
       // d1109-oversize-pause (OP-0): the tasks before it by name, and the second larger task
       // after it (before: "after the other tasks", and "one_large" with 'one task that large
       // runs a session, so it waits for the next one.').
       expect(check.oversized?.sentence).toBe(
-        '"Build the shop" needs about CHF 6.40, more than this session\'s work budget of CHF 1.28: after "Write the intro" and "Write the about page" it works with about CHF 0.96, keeps its work, and asks you to continue.',
+        '"Build the shop" needs about CHF 6.42, more than this session\'s work budget of CHF 1.28: after "Write the intro" and "Write the about page" it works with about CHF 0.91, keeps its work, and asks you to continue.',
       );
       const second = check.overBudget.find((t) => t.title === "Big two");
       expect(second?.why).toBe("after_large");
@@ -16801,10 +16821,13 @@ describe("l3-money-engine, run L3", () => {
       const said = (type: string) => lines.filter(([t]) => t === type).map(([, text]) => text);
       const planned = chfIn(said("session.planned")[0] ?? "");
       expect(planned).not.toBeNull();
+      // d1116-budget-all (BA-8): the plan's estimate holds the review, so the planned task's
+      // whole cost (both tries and their reviews) is set against it, the session's own checks
+      // apart (before: 'the work cost CHF x against an estimate of CHF y, and the reviews ...').
       expect(said("critic.session_review_metrics")).toEqual([
         expect.stringMatching(
           new RegExp(
-            `^Session review measured: 1 of 1 planned task done; the work cost (CHF \\d+\\.\\d{2}|less than CHF 0\\.01) against an estimate of CHF ${(planned ?? "").replace(".", "\\.")}, and the reviews `,
+            `^Session review measured: 1 of 1 planned task done; the planned tasks cost (CHF \\d+\\.\\d{2}|less than CHF 0\\.01) against an estimate of CHF ${(planned ?? "").replace(".", "\\.")}(, and the session's own checks (CHF \\d+\\.\\d{2}|less than CHF 0\\.01))?\\.$`,
           ),
         ),
       ]);
@@ -17007,7 +17030,10 @@ describe("l3-money-screens, run L3", () => {
     );
   }
 
-  it("L3-run-3: while the second run works after a review, the row's budget line names what is left for the work, the figure of that run's 'This run may spend' line, and says reviews are not counted", async () => {
+  // d1116-budget-all (BA-9): the owner's "yes it should count critics reviews, and fixes." The
+  // row's one figure is what the budget counts (before: 'CHF 0.11 of CHF 0.20 budget left;
+  // reviews are not counted' under a cost with the review in it).
+  it("L3-run-3: while the second run works after a review, the row's spent, actual and the ledger agree and its budget line is 'of CHF 0.20 budget'; that run's 'This run may spend' stays within what is left", async () => {
     const w = await world([...critic, ...coder], "cap");
     // The coder's calls 0 and 1 are the first run; call 2 is the second run's first.
     const hold = holdCoder(w.fake, [2]);
@@ -17042,17 +17068,25 @@ describe("l3-money-screens, run L3", () => {
       if (!row) throw new Error("no row");
       expect(row.status).toBe("in_progress");
       expect(row.capSource).toBe("task_budget");
-      // The cost on the row has the critic's review in it; the budget counts the work only.
-      expect(row.spent?.usdMicro ?? 0).toBeGreaterThan(row.actual.usdMicro);
-      expect(formatMoney(row.spent ?? row.actual)).not.toBe(formatMoney(row.actual));
+      // One figure: the cost on the row has the critic's review in it, and so has what the
+      // budget counts, as the ledger books it.
+      const ledger = await rt.store.costLedger.sum({ taskId });
+      expect(row.spent?.usdMicro).toBe(row.actual.usdMicro);
+      expect(row.actual.usdMicro).toBe(ledger.usd_micro);
+      expect((await rt.store.run.forTask(taskId)).some((r) => r.specialist === "critic")).toBe(
+        true,
+      );
       // What the row says under that cost (TaskCap's words, as TasksTab renders them).
       const words = taskCapWords(row, row.specialist);
-      expect(words?.text).toBe(
-        `${may} of ${formatMoney(row.budget)} budget left; reviews are not counted`,
+      expect(words?.text).toBe(`of ${formatMoney(row.budget)} budget`);
+      expect(words?.title).toBe(
+        "Its work, the critic's reviews and any fixes all count. The task pauses at this budget and keeps its work.",
       );
-      expect(formatMoney(row.cap)).toBe(may);
-      // Before: "of CHF 0.20 budget" under the cost, which left the budget less the cost.
-      expect(formatChf(row.budget.chfMicro - (row.spent ?? row.actual).chfMicro)).not.toBe(may);
+      // What is left is the budget less that figure; the second run may spend at most that.
+      expect(row.cap.usdMicro).toBe(row.budget.usdMicro - row.actual.usdMicro);
+      expect(chfToMicro(may.replace("CHF ", "")) ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+        row.cap.chfMicro + 5_000,
+      );
       hold.openAll();
       await untilEnded(client, sessionId);
       const done = (await client.tasks(project.id)).find((t) => t.id === taskId);
@@ -18700,7 +18734,8 @@ describe("d1109-oversize-pause, run C", () => {
       expect(check.blocked).toBeNull();
       expect(check.runnable.map((t) => t.title)).toEqual(["Write the intro"]);
       expect(check.oversized?.sentence).toMatch(
-        /^"Build the shop" needs about CHF 6\.40, more than this session's work budget of CHF 1\.28: after "Write the intro" it works with about CHF 1\.2\d, keeps its work, and asks you to continue\.$/,
+        // d1116-budget-all (BA-6): with its review part (before: CHF 6.40).
+        /^"Build the shop" needs about CHF 6\.42, more than this session's work budget of CHF 1\.28: after "Write the intro" it works with about CHF 1\.2\d, keeps its work, and asks you to continue\.$/,
       );
       expect(check.oversized?.comesAfter).toEqual(["Write the notes"]);
       expect(check.oversized?.afterSentence).toBe(
@@ -20663,6 +20698,167 @@ describe("d1109-selftasks-run, run C", () => {
       expect((await client.tasks(project.id)).map((t) => [t.title, t.status])).toEqual([
         ["Style the page", "ready"],
       ]);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+});
+
+/**
+ * d1116-budget-all, run C (BA-9): a task's budget counts one figure, its work, the critic's reviews
+ * and any fixes. A task Make one project moved keeps the ledger rows of its earlier runs on the
+ * project it came from; its row, its drawer and Costs > By task still read its whole figure, while
+ * the Costs total stays the project's own (OJ-07 names the closed project's spend apart).
+ */
+describe("d1116-budget-all, run C", () => {
+  const onHome = (host: MemoryGitHost) => {
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-budget-all-"));
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    return {
+      compose: () =>
+        composeWithRolePlayer(
+          {},
+          {
+            gitHost: host,
+            tryIt: false,
+            env,
+            dirs: appDirs({ env }),
+            stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          },
+        ),
+    };
+  };
+
+  it("BA-9: a task Make one project moved keeps its whole figure: the row's spent equals its actual and its Costs > By task figure, while the Costs total stays the project's own; the same after the daemon starts again", async () => {
+    const host = new MemoryGitHost("alice");
+    await host.createRepo({ owner: "o", name: "site", private: true });
+    const { compose } = onHome(host);
+    let { rt, client } = await compose();
+    try {
+      const site = await rt.store.project.insert({
+        name: "Site",
+        goal: "A site",
+        repos: ["o/site"],
+      });
+      const kite = await rt.store.project.insert({
+        name: "Kite club",
+        goal: "Kites",
+        repos: ["https://github.com/O/site.git"],
+      });
+      // Kite club's task: its first run and the critic's review, booked to Kite club.
+      const task = await rt.store.task.insert({
+        project_id: kite.id,
+        title: "Signup form",
+        status: "ready",
+        budget_usd_micro: 2_000_000,
+      });
+      const book = async (projectId: string, specialist: string, usd: number) => {
+        await rt.store.costLedger.record({
+          human_id: rt.human.id,
+          project_id: projectId,
+          task_id: task.id,
+          kind: "api",
+          usd_micro: usd,
+          chf_micro: Math.round(usd * 0.8),
+          rate_chf_per_usd: 0.8,
+          model: "claude-sonnet",
+          specialist,
+        });
+        await rt.store.task.addCost(task.id, usd);
+      };
+      await book(kite.id, "coder", 400_000);
+      await book(kite.id, "critic", 200_000);
+      // Site's own spend, on no task (planning).
+      await rt.store.costLedger.record({
+        human_id: rt.human.id,
+        project_id: site.id,
+        kind: "api",
+        usd_micro: 100_000,
+        chf_micro: 80_000,
+        rate_chf_per_usd: 0.8,
+        model: "claude-sonnet",
+      });
+      const joined = await client.executeCommands({
+        commands: [{ name: "project.join", params: { keep: site.id, close: [kite.id] } }],
+        wordsUsed: "Make one project (Overview)",
+        source: "ui",
+        projectId: site.id,
+        confirm: "tap",
+      });
+      expect(joined.status).toBe("done");
+      // The fix after it joined: a run and its review, booked to Site.
+      await book(site.id, "coder", 150_000);
+      await book(site.id, "critic", 50_000);
+      const check = async (c: DaemonClient) => {
+        const row = (await c.tasks(site.id)).find((t) => t.id === task.id);
+        if (!row) throw new Error("no row");
+        expect(row.actual.usdMicro).toBe(800_000);
+        expect(row.spent?.usdMicro).toBe(800_000);
+        expect(taskCapWords(row, row.specialist)?.text).toBe(
+          `of ${formatMoney(row.budget)} budget`,
+        );
+        // The drawer reads the same row.
+        expect((await c.task(task.id)).task.spent?.usdMicro).toBe(800_000);
+        const costs = await c.costs({ projectId: site.id });
+        expect(costs.byTask.find((b) => b.key === task.id)?.cost.usdMicro).toBe(800_000);
+        // The total stays Site's own ledger's; Kite club's spend is named apart (OJ-07).
+        expect(costs.totals.usdMicro).toBe(300_000);
+        expect(costs.joinedSpend?.map((j) => j.spent.usdMicro)).toEqual([600_000]);
+      };
+      await check(client);
+      await rt.close();
+      ({ rt, client } = await compose());
+      await check(client);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("BA-10: the real start check prices a task as the fake daemon does: its own estimate and its review part, within what is left of its budget", async () => {
+    const host = new MemoryGitHost("alice");
+    const { compose } = onHome(host);
+    const { rt, client } = await compose();
+    try {
+      const project = await rt.store.project.insert({ name: "Club", goal: "A club site" });
+      const footer = await rt.store.task.insert({
+        project_id: project.id,
+        title: "Add a footer line with the club's name to index.html",
+        outcome: "index.html ends with a footer line naming the club",
+        status: "ready",
+        specialist: "coder",
+        risk_tier: 1,
+        est_cost_usd_micro: 60_000,
+      });
+      const tight = await rt.store.task.insert({
+        project_id: project.id,
+        title: "Write the Elo tool with tests",
+        outcome: "elo.ts and its tests",
+        status: "ready",
+        specialist: "coder",
+        risk_tier: 1,
+        est_cost_usd_micro: 200_000,
+        budget_usd_micro: 250_000,
+      });
+      await rt.store.task.addCost(tight.id, 100_000);
+      const check = await client.startCheck(project.id);
+      const priced = (id: string) =>
+        [...check.runnable, ...check.overBudget].find((r) => r.taskId === id)?.estimate.usdMicro;
+      const review = reviewPartUsdMicro({
+        specialist: "coder",
+        risk_tier: 1,
+        outcome: footer.outcome,
+        acceptance_criteria: footer.acceptance_criteria,
+      });
+      expect(review).toBeGreaterThan(0);
+      expect(priced(footer.id)).toBe(60_000 + review);
+      expect(priced(tight.id)).toBe(150_000);
+      // The row the fake daemon's fixtures copy: spent equals actual; cap is the budget less it.
+      const row = (await client.tasks(project.id)).find((t) => t.id === tight.id);
+      expect(row?.actual.usdMicro).toBe(100_000);
+      expect(row?.spent?.usdMicro ?? row?.actual.usdMicro).toBe(100_000);
+      expect(row?.cap.usdMicro).toBe(150_000);
     } finally {
       await rt.close();
     }

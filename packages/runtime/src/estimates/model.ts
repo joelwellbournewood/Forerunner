@@ -9,23 +9,33 @@
  * defaults of the specialist (max_budget_usd, timeout_minutes) scaled by a documented share.
  * ADR 0019 records the constants.
  *
+ * d1116-budget-all (the owner's answer of 2026-11-16: "yes it should count critics reviews, and
+ * fixes."): an estimate is what the task should cost in all: its work (the fixes after a review
+ * are work runs, so the learned work ratio holds them) plus its review (`reviewUsdMicro`: the
+ * review tier's starting figure times the task's size, times a learned review ratio). The stored
+ * `est_cost_usd_micro` stays the work part.
+ *
  * Persistence: the samples are the finished `task` rows with their `run` rows and the
  * `cost_ledger`; the model is a deterministic fold over them, rebuilt with fromStore() at start
- * and extended with refresh() or, live, with observeTaskRuns() from the runner's task.finished
- * hook. Both feeds derive the sample the same way (sampleForTask) and leave out the same tasks,
- * read from their Run rows (tallyRun, isNoSample), so the state after a restart agrees with the
- * state learned live. There is no separate table: a rebuild from the store always
- * reproduces the same state, and toJSON()/fromJSON() exist for callers that want to cache it.
+ * and extended with refresh() or, live, with observeTaskRuns() from the runner's hook at a task's
+ * close. Both feeds derive the sample the same way (sampleForTask, a pure function of the task's
+ * final rows) and leave out the same tasks, read from their Run rows (tallyRun, isNoSample), so
+ * the state after a restart agrees with the state learned live. There is no separate table: a
+ * rebuild from the store always reproduces the same state, and toJSON()/fromJSON() exist for
+ * callers that want to cache it.
  *
- * The fold is incremental and bounded: a cursor (the newest finish time seen) plus an overlap
- * window. refresh() asks the store only for finished tasks updated at or after
- * `cursor - foldOverlapMs` and remembers the ids inside that window, so a task is never counted
- * twice however often refresh() runs, and neither the query nor the memory grows with the
- * install's history (ADR 0019, amendment).
+ * One sample per task (d1116-budget-all, BA-7): the model keeps its samples by task id. A task
+ * that closes again on the same row (done, Redo, done; failed, Try again, done; Reopen), or that
+ * a refresh reads again after a later patch moved its `updated_at`, replaces its sample, and its
+ * key is rebuilt by replaying its samples in time order (then task id), as the fold after a
+ * restart replays them. refresh() asks the store only for finished tasks updated at or after
+ * `cursor - foldOverlapMs`, so the query stays bounded; the samples kept grow by one small record
+ * per finished task (ADR 0019, amendment of 2026-11-16).
  */
 import { isFastModeVariant } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
 import type { RunRow, StateStore, TaskRow, TaskStatus } from "@forerunner/state";
+import { reviewTierOf } from "../loop/verification.ts";
 
 export interface EstimateInput {
   specialist: string | null;
@@ -62,11 +72,25 @@ export interface EstimateResult {
   /** Multipliers applied to the base figures (1 without data). */
   costRatio: number;
   wallRatio: number;
+  /**
+   * d1116-budget-all: the review part of `usdMicro` (its review tier's starting figure times the
+   * task's size, times the learned review ratio); 0 without review starts. `usdMicro` less it is
+   * the work part. Optional for ports written before; the model always sets it.
+   */
+  reviewUsdMicro?: number;
+  /** The learned review ratio (1 without review samples). */
+  reviewRatio?: number;
 }
 
 /** What the planner consumes; the orchestrator wires it into StaticPlanner and cutPlanToBudget. */
 export interface EstimatePort {
   estimate(task: EstimateInput): EstimateResult;
+  /**
+   * d1116-budget-all (BA-7): fold tasks closed since the last read (a task closed outside a
+   * session: the Inbox, chat, the merge watcher), before a Start dialog or a plan card prices.
+   * Optional; returns how many samples it added or changed.
+   */
+  refresh?(store: StateStore): Promise<number>;
 }
 
 /** Registry frontmatter the cold start uses (SpecialistDef.max_budget_usd, timeout_minutes). */
@@ -85,6 +109,13 @@ export interface EstimateSample {
   /** ISO timestamp of the observation. */
   at: string;
   taskId?: string;
+  /**
+   * d1116-budget-all: the review part. Its estimate is the review tier's starting figure times the
+   * task's size; its actual the task's critic Run rows' cost. Absent (or 0): no review sample (no
+   * review, or one ran in fast mode, stopped at a budget or was killed).
+   */
+  reviewEstimateUsdMicro?: number;
+  reviewActualUsdMicro?: number;
 }
 
 export interface EstimateKeyStats {
@@ -127,11 +158,22 @@ export interface EstimateModelOptions {
   /** Recent samples kept for the accuracy view. Default 200. */
   recentLimit?: number;
   /**
-   * Overlap window behind the cursor that refresh() re-reads and whose task ids it remembers
-   * (clock skew between writers of a shared store, and a task row finished in the store a
-   * little after its live observation). Default 15 minutes.
+   * Overlap window behind the cursor that refresh() re-reads (clock skew between writers of a
+   * shared store, and a task row finished in the store a little after its live observation).
+   * Default 15 minutes.
    */
   foldOverlapMs?: number;
+  /**
+   * d1116-budget-all: what one task's review costs to start with, by review tier
+   * (`REVIEW_STARTING_ESTIMATES_USD_MICRO` by default; with `startingEstimates: null` and none
+   * given, no review part). `null`: no review part.
+   */
+  reviewStartingEstimates?: Readonly<Record<number, number>> | null;
+  /**
+   * The registry's `risk_tier_floor` of a specialist (ADR 0104): a task's review is never below
+   * it, so its review part is priced at that tier (`reviewTierOf`).
+   */
+  reviewFloor?: (specialist: string) => number | undefined;
 }
 
 export const DEFAULT_ALPHA = 0.3;
@@ -165,6 +207,20 @@ export const STARTING_ESTIMATES_USD_MICRO: Readonly<Record<string, number>> = Ob
   researcher: 500_000,
   "science-evaluator": 300_000,
 });
+/**
+ * d1116-budget-all (the owner's "yes it should count critics reviews, and fixes."): what one task's
+ * review costs to start with, by review tier, in micro-USD; the learner corrects it per
+ * (specialist, kind) as it corrects the work. From the real critic's runs: 80 tier 1 reviews cost
+ * USD 2.01 (docs/status/COST.md), live check 3's tier 1 reviews USD 0.011 to 0.048, and the
+ * tier 2 and tier 3 runs of gates D.12 and D.15. Live check 4 (LC-C32) re-checks the tier 1 one.
+ */
+export const REVIEW_STARTING_ESTIMATES_USD_MICRO: Readonly<Record<number, number>> = Object.freeze({
+  1: 30_000,
+  2: 90_000,
+  3: 300_000,
+});
+/** A task planned for the person: no specialist runs, so no critic reviews it. */
+const PERSON_TASK_SPECIALIST = "person";
 /** The starting estimate of a specialist the table does not name: a typical task's work. */
 export const DEFAULT_STARTING_ESTIMATE_USD_MICRO = 60_000;
 /**
@@ -248,6 +304,24 @@ export function taskSizeFactor(task: {
     Math.min(SIZE_CASES_MAX, cases) +
     SIZE_PER_CRITERION * Math.max(0, criteria.length - SIZE_FREE_CRITERIA);
   return Math.round(clamp(size, 1, SIZE_FACTOR_MAX) * 100) / 100;
+}
+
+/**
+ * d1116-budget-all: the review part of a task's estimate before any learning: its review tier's
+ * starting figure (`reviewTierOf(risk_tier, floor)`, the critic's own rule: never below the light
+ * review nor the specialist's registry floor) times the task's size. Pure: the fake daemon prices
+ * with it as the model does with no review samples. A task for the person has none.
+ */
+export function reviewPartUsdMicro(
+  task: Pick<EstimateInput, "specialist" | "risk_tier" | "outcome" | "acceptance_criteria">,
+  floor = 0,
+  starts: Readonly<Record<number, number>> = REVIEW_STARTING_ESTIMATES_USD_MICRO,
+): number {
+  const specialist = task.specialist ?? "coder";
+  if (specialist.trim().toLowerCase() === PERSON_TASK_SPECIALIST) return 0;
+  const start = starts[reviewTierOf(task.risk_tier, floor)] ?? 0;
+  if (!(start > 0)) return 0;
+  return Math.round(start * taskSizeFactor({ ...task, specialist }));
 }
 
 /** The calibrated starting estimate of one task of `specialist`'s kind (coder when none). */
@@ -338,16 +412,17 @@ interface KeyState {
   /** Exponentially weighted mean of |ln ratio - prediction| (dispersion around the learned ratio). */
   resid: number;
   lastAt: string | null;
+  /** d1116-budget-all: review samples, and their exponentially weighted mean of ln ratio. */
+  reviewN: number;
+  reviewLog: number;
 }
 
 export interface EstimateModelSnapshot {
-  version: 2;
-  keys: KeyState[];
-  recent: EstimateSample[];
+  /** 3 (d1116-budget-all): the samples themselves, one per task; the keys are replayed from them. */
+  version: 3;
+  samples: EstimateSample[];
   /** Newest finish time seen, from the store or live. */
   cursor: string | null;
-  /** Task ids finished inside the overlap window behind the cursor, with their finish time. */
-  folded: { id: string; at: string }[];
 }
 
 /** The actual figures of a finished task, as the runner's task.finished hook knows them. */
@@ -356,6 +431,8 @@ export interface TaskActuals {
   wallMs: number;
   /** When the task finished (ISO); the sample time and the fold's bookkeeping key. */
   at: string;
+  /** d1116-budget-all: what its reviews cost, when they are a sample (`reviewSampleOf`). */
+  reviewUsdMicro?: number;
 }
 
 /** The task columns a sample needs; a TaskRow satisfies it (outcome and criteria: its size). */
@@ -388,8 +465,16 @@ export type SampleRunInput = Pick<
 export interface RunTally {
   /** The work runs' cost (the critic's reviews left out). */
   cost: number;
-  /** The critic's reviews' cost: paid from the session's review reserve, not the task's budget. */
+  /**
+   * The critic's reviews' cost (d1116-budget-all: in the task's figure and its budget; kept apart
+   * here because the estimate has a review part of its own).
+   */
   reviews: number;
+  /** The critic's finished Run rows, and whether one ran in fast mode, stopped at a budget or was killed. */
+  reviewRuns: number;
+  reviewFast: boolean;
+  reviewBudgetStop: boolean;
+  reviewKilled: boolean;
   wall: number;
   /** Finished work runs. */
   finished: number;
@@ -401,8 +486,8 @@ export interface RunTally {
   killed: boolean;
   completed: number;
   /**
-   * When the last finished work run ended (its row's last update, written at its end), "" with
-   * none: the sample's time in both feeds, so a restart does not move it.
+   * When the last finished run ended, its review's included (its row's last update, written at its
+   * end), "" with none: the sample's time in both feeds, so a restart does not move it.
    */
   endedAt: string;
 }
@@ -411,6 +496,10 @@ export function emptyRunTally(): RunTally {
   return {
     cost: 0,
     reviews: 0,
+    reviewRuns: 0,
+    reviewFast: false,
+    reviewBudgetStop: false,
+    reviewKilled: false,
     wall: 0,
     finished: 0,
     fast: false,
@@ -424,9 +513,14 @@ export function emptyRunTally(): RunTally {
 /** Add one Run row to a task's tally; a run still running (or never started) is left out. */
 export function tallyRun(acc: RunTally, r: SampleRunInput): RunTally {
   if (r.outcome === "running" || r.outcome === "") return acc;
-  // A review is paid from the session's review reserve, not the task's budget.
+  // A review: its cost is the review part's sample (d1116-budget-all), never the work's.
   if (r.specialist === CRITIC_RUN_SPECIALIST) {
     acc.reviews += r.cost_usd_micro;
+    acc.reviewRuns += 1;
+    if (isFastModeVariant(r.model)) acc.reviewFast = true;
+    if (BUDGET_STOP_RUN_OUTCOMES.includes(r.outcome)) acc.reviewBudgetStop = true;
+    if (r.outcome === KILLED_RUN_OUTCOME) acc.reviewKilled = true;
+    if (r.updated_at > acc.endedAt) acc.endedAt = r.updated_at;
     return acc;
   }
   // A fast-mode run (its Run row names the `<id>-fast` variant, spec D.20, ADR 0057) costs the
@@ -454,6 +548,16 @@ export function isNoSample(t: RunTally): boolean {
 }
 
 /**
+ * d1116-budget-all: what a task's reviews cost as a sample of the review part, or undefined: no
+ * review ran, or one of them ran in fast mode, stopped at a budget or was killed (what it spent
+ * says nothing of what a review costs).
+ */
+export function reviewSampleOf(t: RunTally): number | undefined {
+  if (t.reviewRuns === 0 || t.reviewFast || t.reviewBudgetStop || t.reviewKilled) return undefined;
+  return t.reviews > 0 ? t.reviews : undefined;
+}
+
+/**
  * What a task's work cost: the cost ledger's rows for the task (the truth for caps) less its
  * reviews, or, without ledger rows (a subscription's runs), its work runs' cost.
  */
@@ -461,12 +565,39 @@ export function workCostOf(t: RunTally, bookedUsdMicro: number | undefined): num
   return bookedUsdMicro === undefined ? t.cost : Math.max(0, bookedUsdMicro - t.reviews);
 }
 
+/** A sample's place in its key's replay: its time, then its task id (d1116-budget-all, BA-7). */
+function orderOf(s: EstimateSample, seq: number): string {
+  return `${s.at}\u0000${s.taskId ?? ""}\u0000${String(seq).padStart(12, "0")}`;
+}
+
+/** Whether two samples of one task say the same (a re-read that changed nothing). */
+function sameSample(a: EstimateSample, b: EstimateSample): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Whether a sample can teach the model anything (see `observe`). */
+function usableSample(sample: EstimateSample): boolean {
+  if (!sample.specialist || !sample.kind) return false;
+  if (!(sample.estimateUsdMicro > 0) || !(sample.estimateWallMs > 0)) return false;
+  return sample.actualUsdMicro > 0 || sample.actualWallMs > 0;
+}
+
 export class EstimateModel implements EstimatePort {
   private readonly keys = new Map<string, KeyState>();
-  private recent: EstimateSample[] = [];
+  /**
+   * d1116-budget-all (BA-7): every sample learned from, by task id (a sample with no task id under
+   * an id of its own), each with its place in its key's replay. A task's new sample replaces its
+   * old one and its key is rebuilt by replaying its samples in time order, so a task that closes
+   * twice, or that a refresh reads again, counts once, with its final rows.
+   */
+  private readonly samples = new Map<string, { sample: EstimateSample; order: string }>();
+  /** Sample ids by key, for the replay. */
+  private readonly byKey = new Map<string, Set<string>>();
+  /** The last sample replayed into each key (its order), to tell an in-order sample. */
+  private readonly lastOrder = new Map<string, string>();
+  private seq = 0;
+  private recentCache: EstimateSample[] | null = [];
   private cursor: string | null = null;
-  /** Task id -> finish time, kept for the overlap window behind the cursor only. */
-  private readonly folded = new Map<string, string>();
   private readonly foldOverlapMs: number;
   private readonly alpha: number;
   private readonly shrinkage: number;
@@ -483,6 +614,8 @@ export class EstimateModel implements EstimatePort {
   > &
     Pick<EstimateModelOptions, "defaults" | "kindOf">;
   private readonly startingEstimates: Readonly<Record<string, number>> | null;
+  private readonly reviewStarts: Readonly<Record<number, number>> | null;
+  private readonly reviewFloor: ((specialist: string) => number | undefined) | undefined;
 
   constructor(options: EstimateModelOptions = {}) {
     this.alpha = options.alpha ?? DEFAULT_ALPHA;
@@ -511,6 +644,15 @@ export class EstimateModel implements EstimatePort {
       options.startingEstimates === undefined
         ? STARTING_ESTIMATES_USD_MICRO
         : options.startingEstimates;
+    // d1116-budget-all: the review part's starting figures; the older cold start (no calibrated
+    // table) has none unless they are given.
+    this.reviewStarts =
+      options.reviewStartingEstimates !== undefined
+        ? options.reviewStartingEstimates
+        : this.startingEstimates === null
+          ? null
+          : REVIEW_STARTING_ESTIMATES_USD_MICRO;
+    this.reviewFloor = options.reviewFloor;
   }
 
   private keyOf(specialist: string, kind: string): string {
@@ -553,12 +695,22 @@ export class EstimateModel implements EstimatePort {
     };
   }
 
-  /** Feed one finished task. Samples with a non-positive estimate or no actual are ignored. */
-  observe(sample: EstimateSample): boolean {
-    if (!sample.specialist || !sample.kind) return false;
-    if (!(sample.estimateUsdMicro > 0) || !(sample.estimateWallMs > 0)) return false;
-    if (!(sample.actualUsdMicro > 0) && !(sample.actualWallMs > 0)) return false;
-    const key = this.keyOf(sample.specialist, sample.kind);
+  /**
+   * d1116-budget-all: the review part a task's estimate starts from (its review tier's figure
+   * times its size, `reviewPartUsdMicro`), before the learned review ratio; 0 without review
+   * starts.
+   */
+  reviewStartOf(task: EstimateInput, specialist: string): number {
+    if (!this.reviewStarts) return 0;
+    return reviewPartUsdMicro(
+      { ...task, specialist },
+      this.reviewFloor?.(specialist) ?? 0,
+      this.reviewStarts,
+    );
+  }
+
+  /** One sample into its key's running means (the replay's step). */
+  private apply(key: string, sample: EstimateSample): void {
     const s = this.keys.get(key) ?? {
       specialist: sample.specialist,
       kind: sample.kind,
@@ -568,6 +720,8 @@ export class EstimateModel implements EstimatePort {
       absErr: 0,
       resid: 0,
       lastAt: null,
+      reviewN: 0,
+      reviewLog: 0,
     };
     const costRatio = clamp(
       Math.max(sample.actualUsdMicro, 1) / sample.estimateUsdMicro,
@@ -595,20 +749,102 @@ export class EstimateModel implements EstimatePort {
     }
     s.n += 1;
     s.lastAt = sample.at;
+    // d1116-budget-all: the review part, learned as the work is, when the sample has one.
+    const reviewEst = sample.reviewEstimateUsdMicro ?? 0;
+    const reviewAct = sample.reviewActualUsdMicro ?? 0;
+    if (reviewEst > 0 && reviewAct > 0) {
+      const lr = Math.log(clamp(reviewAct / reviewEst, SAMPLE_RATIO_MIN, SAMPLE_RATIO_MAX));
+      s.reviewLog = s.reviewN === 0 ? lr : s.reviewLog + this.alpha * (lr - s.reviewLog);
+      s.reviewN += 1;
+    }
     this.keys.set(key, s);
-    this.recent.push({ ...sample });
-    if (this.recent.length > this.opts.recentLimit)
-      this.recent.splice(0, this.recent.length - this.opts.recentLimit);
+  }
+
+  /** Replay a key's samples in time order (then task id) from nothing. */
+  private rebuild(key: string): void {
+    this.keys.delete(key);
+    this.lastOrder.delete(key);
+    const ids = this.byKey.get(key);
+    if (!ids || ids.size === 0) {
+      this.byKey.delete(key);
+      return;
+    }
+    const kept = [...ids]
+      .map((id) => this.samples.get(id))
+      .filter((x): x is { sample: EstimateSample; order: string } => !!x)
+      .sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0));
+    for (const k of kept) this.apply(key, k.sample);
+    const last = kept.at(-1);
+    if (last) this.lastOrder.set(key, last.order);
+  }
+
+  /** Take a task's sample out (its final rows are no sample any more) and replay its key. */
+  private forget(taskId: string): boolean {
+    const old = this.samples.get(taskId);
+    if (!old) return false;
+    this.samples.delete(taskId);
+    const key = this.keyOf(old.sample.specialist, old.sample.kind);
+    this.byKey.get(key)?.delete(taskId);
+    this.rebuild(key);
+    this.recentCache = null;
     return true;
   }
 
-  private ratios(s: KeyState | undefined): { cost: number; wall: number; confidence: number } {
-    if (!s || s.n === 0) return { cost: 1, wall: 1, confidence: 0 };
+  /**
+   * Feed one finished task. Samples with a non-positive estimate or no actual are ignored (a
+   * task's earlier sample is then taken out: its final rows are what it teaches). A sample of a
+   * task seen before replaces that task's sample (d1116-budget-all, BA-7).
+   */
+  observe(sample: EstimateSample): boolean {
+    if (!usableSample(sample)) {
+      if (sample.taskId) this.forget(sample.taskId);
+      return false;
+    }
+    const id = sample.taskId ?? `\u0000sample-${this.seq + 1}`;
+    const old = this.samples.get(id);
+    this.seq += 1;
+    const entry = { sample: { ...sample }, order: orderOf(sample, this.seq) };
+    const key = this.keyOf(sample.specialist, sample.kind);
+    if (old) {
+      const oldKey = this.keyOf(old.sample.specialist, old.sample.kind);
+      this.byKey.get(oldKey)?.delete(id);
+      if (oldKey !== key) {
+        this.samples.delete(id);
+        this.rebuild(oldKey);
+      }
+    }
+    this.samples.set(id, entry);
+    let ids = this.byKey.get(key);
+    if (!ids) {
+      ids = new Set();
+      this.byKey.set(key, ids);
+    }
+    ids.add(id);
+    const last = this.lastOrder.get(key);
+    if (!old && (last === undefined || entry.order >= last)) {
+      this.apply(key, entry.sample);
+      this.lastOrder.set(key, entry.order);
+    } else {
+      this.rebuild(key);
+    }
+    this.recentCache = null;
+    return true;
+  }
+
+  private ratios(s: KeyState | undefined): {
+    cost: number;
+    wall: number;
+    confidence: number;
+    review: number;
+  } {
+    if (!s || s.n === 0) return { cost: 1, wall: 1, confidence: 0, review: 1 };
     const weight = s.n / (s.n + this.shrinkage);
+    const reviewWeight = s.reviewN / (s.reviewN + this.shrinkage);
     return {
       cost: clamp(Math.exp(s.costLog * weight), RATIO_MIN, RATIO_MAX),
       wall: clamp(Math.exp(s.wallLog * weight), RATIO_MIN, RATIO_MAX),
       confidence: Math.min(1, weight * Math.exp(-s.resid)),
+      review: s.reviewN > 0 ? clamp(Math.exp(s.reviewLog * reviewWeight), RATIO_MIN, RATIO_MAX) : 1,
     };
   }
 
@@ -626,7 +862,12 @@ export class EstimateModel implements EstimatePort {
     const baseWall = cold.wallMs;
     const s = this.keys.get(this.keyOf(specialist, kind));
     const raw = this.ratios(s);
-    const r = { cost: round4(raw.cost), wall: round4(raw.wall), confidence: raw.confidence };
+    const r = {
+      cost: round4(raw.cost),
+      wall: round4(raw.wall),
+      confidence: raw.confidence,
+      review: round4(raw.review),
+    };
     const samples = s?.n ?? 0;
     const basis: EstimateBasis =
       samples > 0
@@ -638,8 +879,12 @@ export class EstimateModel implements EstimatePort {
             : cold.fromRegistry
               ? "registry_default"
               : "fallback";
+    // d1116-budget-all: the work part as before, plus the review part.
+    const work = Math.max(1, Math.round(baseCost * r.cost));
+    const reviewBase = this.reviewStartOf(task, specialist);
+    const review = reviewBase > 0 ? Math.max(1, Math.round(reviewBase * r.review)) : 0;
     return {
-      usdMicro: Math.max(1, Math.round(baseCost * r.cost)),
+      usdMicro: work + review,
       wallMs: Math.max(1, Math.round(baseWall * r.wall)),
       confidence: round4(r.confidence),
       basis,
@@ -648,6 +893,8 @@ export class EstimateModel implements EstimatePort {
       kind,
       costRatio: r.cost,
       wallRatio: r.wall,
+      reviewUsdMicro: review,
+      reviewRatio: r.review,
     };
   }
 
@@ -669,8 +916,15 @@ export class EstimateModel implements EstimatePort {
       .sort((a, b) => a.specialist.localeCompare(b.specialist) || a.kind.localeCompare(b.kind));
   }
 
+  /** The newest samples (at most `recentLimit`), oldest first, for the accuracy view. */
   recentSamples(): EstimateSample[] {
-    return this.recent.map((s) => ({ ...s }));
+    if (this.recentCache === null) {
+      this.recentCache = [...this.samples.values()]
+        .sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0))
+        .slice(-this.opts.recentLimit)
+        .map((x) => x.sample);
+    }
+    return this.recentCache.map((s) => ({ ...s }));
   }
 
   /** Newest finish time seen (task `updated_at` from the store, or `at` of a live observation). */
@@ -680,11 +934,11 @@ export class EstimateModel implements EstimatePort {
 
   toJSON(): EstimateModelSnapshot {
     return {
-      version: 2,
-      keys: [...this.keys.values()].map((k) => ({ ...k })),
-      recent: this.recentSamples(),
+      version: 3,
+      samples: [...this.samples.values()]
+        .sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0))
+        .map((x) => ({ ...x.sample })),
       cursor: this.cursor,
-      folded: [...this.folded].map(([id, at]) => ({ id, at })),
     };
   }
 
@@ -692,39 +946,27 @@ export class EstimateModel implements EstimatePort {
     snapshot: EstimateModelSnapshot,
     options: EstimateModelOptions = {},
   ): EstimateModel {
-    if (snapshot.version !== 2) {
+    if (snapshot.version !== 3) {
       throw new ForerunnerError("validation", "unknown estimate model snapshot version", {
         details: { version: String(snapshot.version) },
       });
     }
     const m = new EstimateModel(options);
-    for (const k of snapshot.keys) m.keys.set(m.keyOf(k.specialist, k.kind), { ...k });
-    m.recent = snapshot.recent.map((s) => ({ ...s }));
+    for (const s of snapshot.samples) m.observe(s);
     m.cursor = snapshot.cursor;
-    for (const f of snapshot.folded) m.folded.set(f.id, f.at);
-    m.prune();
     return m;
   }
 
-  /** Remember a finished task inside the window and move the cursor forward. */
-  private remember(taskId: string, at: string): void {
-    this.folded.set(taskId, at);
+  private moveCursor(at: string): void {
     if (this.cursor === null || at > this.cursor) this.cursor = at;
-  }
-
-  /** Drop remembered ids older than the overlap window behind the cursor. */
-  private prune(): void {
-    if (this.cursor === null) return;
-    const floor = isoMinus(this.cursor, this.foldOverlapMs);
-    for (const [id, at] of this.folded) if (at < floor) this.folded.delete(id);
   }
 
   /**
    * Fold every finished task (done, failed, cancelled) with at least one finished work run:
    * actual cost from the cost ledger (the truth for caps) less its reviews (the critic's Run
-   * rows: the work's cost is what the task's budget caps, 'cost') or, without ledger rows, from
-   * the work runs; actual wall time from the work runs' durations; the estimate from the task
-   * row or the cold start. A task with a run that stopped at a budget (`paused`,
+   * rows: the review part has a sample of its own, `reviewSampleOf`) or, without ledger rows,
+   * from the work runs; actual wall time from the work runs' durations; the estimate from the
+   * task row or the cold start. A task with a run that stopped at a budget (`paused`,
    * `budget_exceeded`) is no sample ('cost', ADR 0112), nor is one whose work spent nothing (no
    * model call ran: a refused sandbox lease, an error on the first request).
    */
@@ -738,9 +980,11 @@ export class EstimateModel implements EstimatePort {
   }
 
   /**
-   * Fold tasks finished since the last refresh. The store returns only finished tasks updated
-   * at or after `cursor - foldOverlapMs`; ids remembered from that window are skipped, so a
-   * refresh never counts a task twice. Returns how many samples were added.
+   * Fold tasks finished since the last read. The store returns only finished tasks updated at or
+   * after `cursor - foldOverlapMs`; each one's sample is built from its final rows and replaces
+   * any sample the task had (d1116-budget-all, BA-7), so a task read again (a refresh inside the
+   * window, a later patch, a task closed again) counts once. Returns how many samples it added
+   * or changed.
    */
   async refresh(store: StateStore): Promise<number> {
     const since = this.cursor === null ? null : isoMinus(this.cursor, this.foldOverlapMs);
@@ -749,46 +993,57 @@ export class EstimateModel implements EstimatePort {
       `SELECT * FROM ${store.task.qt}${w.sql}${since === null ? "" : ' AND "updated_at" >= ?'} ORDER BY "updated_at" ASC, "id" ASC`,
       since === null ? w.params : [...w.params, since],
     );
-    const fresh = tasks.filter((t) => !this.folded.has(t.id));
-    if (fresh.length === 0) {
-      this.prune();
-      return 0;
-    }
+    if (tasks.length === 0) return 0;
     const byTask = new Map<string, RunTally>();
-    for (let i = 0; i < fresh.length; i += RUN_LIST_CHUNK) {
-      const ids = fresh.slice(i, i + RUN_LIST_CHUNK).map((t) => t.id);
+    for (let i = 0; i < tasks.length; i += RUN_LIST_CHUNK) {
+      const ids = tasks.slice(i, i + RUN_LIST_CHUNK).map((t) => t.id);
       for (const r of await store.run.list({ task_id: ids })) {
         if (!r.task_id) continue;
         byTask.set(r.task_id, tallyRun(byTask.get(r.task_id) ?? emptyRunTally(), r));
       }
     }
-    // A task's ledger rows are recorded after the task exists, so the oldest fresh task's
-    // creation (less the window, for skew) bounds the breakdown instead of the whole ledger.
-    let oldest = fresh[0]?.created_at ?? "";
-    for (const t of fresh) if (t.created_at < oldest) oldest = t.created_at;
+    // A task's ledger rows are recorded after the task exists, so the oldest task's creation
+    // (less the window, for skew) bounds the breakdown instead of the whole ledger.
+    let oldest = tasks[0]?.created_at ?? "";
+    for (const t of tasks) if (t.created_at < oldest) oldest = t.created_at;
     const ledger = new Map<string, number>();
     for (const b of await store.costLedger.breakdown("task_id", {
       from: isoMinus(oldest, this.foldOverlapMs),
     })) {
       if (b.key && b.entries > 0) ledger.set(b.key, b.usd_micro);
     }
-    let added = 0;
-    for (const t of fresh) {
-      this.remember(t.id, t.updated_at);
-      const runs = byTask.get(t.id);
-      if (!runs || isNoSample(runs)) continue;
-      const usdMicro = workCostOf(runs, ledger.get(t.id));
-      // Nothing spent: no model call ran, so it says nothing of what the work costs.
-      if (!(usdMicro > 0)) continue;
-      const sample = this.sampleForTask(t, {
-        usdMicro,
-        wallMs: runs.wall,
-        at: runs.endedAt || t.updated_at,
-      });
-      if (this.observe(sample)) added += 1;
+    let changed = 0;
+    for (const t of tasks) {
+      this.moveCursor(t.updated_at);
+      const sample = this.sampleOfRows(t, byTask.get(t.id), ledger.get(t.id));
+      const before = this.samples.get(t.id)?.sample;
+      if (!sample) {
+        if (this.forget(t.id)) changed += 1;
+        continue;
+      }
+      if (before && sameSample(before, sample)) continue;
+      if (this.observe(sample)) changed += 1;
     }
-    this.prune();
-    return added;
+    return changed;
+  }
+
+  /** A finished task's sample from its Run rows and its ledger sum, or null (`isNoSample`). */
+  private sampleOfRows(
+    task: EstimateTaskInput & Pick<TaskRow, "updated_at">,
+    runs: RunTally | undefined,
+    bookedUsdMicro: number | undefined,
+  ): EstimateSample | null {
+    if (!runs || isNoSample(runs)) return null;
+    const usdMicro = workCostOf(runs, bookedUsdMicro);
+    // Nothing spent: no model call ran, so it says nothing of what the work costs.
+    if (!(usdMicro > 0)) return null;
+    const reviews = reviewSampleOf(runs);
+    return this.sampleForTask(task, {
+      usdMicro,
+      wallMs: runs.wall,
+      at: runs.endedAt || task.updated_at,
+      ...(reviews !== undefined ? { reviewUsdMicro: reviews } : {}),
+    });
   }
 
   /**
@@ -796,7 +1051,8 @@ export class EstimateModel implements EstimatePort {
    * > 0, else the cold start times the task's size (W15-18: `estimate` prices it so, and the
    * learner learns per unit of size); the wall estimate is always the cold start. Never the
    * figure the planner already corrected: measuring against that feeds the correction back
-   * into itself.
+   * into itself. d1116-budget-all: its review part's estimate is its review tier's starting figure
+   * times its size, and its actual what its reviews cost (when they are a sample).
    */
   sampleForTask(task: EstimateTaskInput, actual: TaskActuals): EstimateSample {
     const specialist = task.specialist ?? this.opts.defaultSpecialist;
@@ -808,6 +1064,16 @@ export class EstimateModel implements EstimatePort {
     };
     const kind = this.opts.kindOf ? this.opts.kindOf(input) : kindOfTask(input);
     const cold = this.coldStart(specialist);
+    const reviewEstimate = this.reviewStartOf(
+      {
+        specialist,
+        risk_tier: task.risk_tier,
+        outcome: task.outcome ?? null,
+        acceptance_criteria: task.acceptance_criteria ?? null,
+      },
+      specialist,
+    );
+    const reviewActual = actual.reviewUsdMicro ?? 0;
     return {
       specialist,
       kind,
@@ -820,39 +1086,38 @@ export class EstimateModel implements EstimatePort {
       actualWallMs: actual.wallMs,
       at: actual.at,
       taskId: task.id,
+      ...(reviewEstimate > 0 && reviewActual > 0
+        ? { reviewEstimateUsdMicro: reviewEstimate, reviewActualUsdMicro: reviewActual }
+        : {}),
     };
   }
 
   /**
-   * Live feed for the runner's task.finished hook: the same sample the store fold would build,
-   * so the state learned live agrees with the state after a restart. The task is remembered so
-   * a refresh() inside the overlap window does not fold it again. Returns whether the sample
-   * was usable (see observe).
+   * Live feed for the runner's hook at a task's close: the same sample the store fold would
+   * build, so the state learned live agrees with the state after a restart. A task seen before
+   * has its sample replaced (BA-7). Returns whether the sample was usable (see observe).
    */
   observeTask(task: EstimateTaskInput, actual: TaskActuals): boolean {
     const ok = this.observe(this.sampleForTask(task, actual));
-    this.remember(task.id, actual.at);
-    this.prune();
+    this.moveCursor(actual.at);
     return ok;
   }
 
   /**
-   * The runner's task.finished hook, built as the fold builds it (review of 'cost'): the task's
-   * Run rows and cost-ledger rows are read, and
+   * The runner's hook at a task's close (d1116-budget-all, BA-7: once, when the task is done,
+   * failed after its tries or cancelled, after the verdict that closes it; before, at every
+   * task.finished, before its review and once per try), built as the fold builds it (review of
+   * 'cost'): the task's Run rows and cost-ledger rows are read, and
    * - a task the fold leaves out gives no sample live either (`isNoSample`): a work run that
    *   stopped at a budget, also one before the budget was raised or the task continued; a
    *   fast-mode run; no finished work run (a call that met a resting credential); or work that
-   *   spent nothing (no model call ran; it read as a tenth of the estimate). Before, the
-   *   live feed skipped only a call that itself paused, so a raised task was learned from until
-   *   the next restart, whose fold left it out;
-   * - the actual is the fold's: the work's cost so far (`workCostOf`) and its runs' wall time,
-   *   not the executor call's figures, whose wall time also counted the call's setup, so the
-   *   Performance screen's time ratio moved with a restart; and its time is when the last work
-   *   run ended (`at` only when no row says), not the hook's moment.
+   *   spent nothing (no model call ran; it read as a tenth of the estimate);
+   * - the actual is the fold's: the work's cost (`workCostOf`), its runs' wall time and its
+   *   reviews' cost (`reviewSampleOf`), not the executor call's figures; and its time is when its
+   *   last run ended (`at` only when no row says), not the hook's moment.
    * `callOutcome` is the executor call's outcome: a budget stop is no sample whatever its Run row
    * says, nor is a call a credential stopped (`usage_limit`: the task goes back to ready and
-   * runs again). A task tried more than once is a sample at each try, the last one with what the
-   * fold counts for it.
+   * runs again).
    */
   async observeTaskRuns(
     store: StateStore,
@@ -863,11 +1128,18 @@ export class EstimateModel implements EstimatePort {
     if (callOutcome !== undefined && NO_SAMPLE_CALL_OUTCOMES.includes(callOutcome)) return false;
     const tally = emptyRunTally();
     for (const r of await store.run.forTask(task.id)) tallyRun(tally, r);
-    if (isNoSample(tally)) return false;
     const booked = await store.costLedger.sum({ taskId: task.id });
-    const usdMicro = workCostOf(tally, booked.entries > 0 ? booked.usd_micro : undefined);
-    if (!(usdMicro > 0)) return false;
-    return this.observeTask(task, { usdMicro, wallMs: tally.wall, at: tally.endedAt || at });
+    const sample = this.sampleOfRows(
+      { ...task, updated_at: at },
+      tally,
+      booked.entries > 0 ? booked.usd_micro : undefined,
+    );
+    this.moveCursor(sample?.at ?? at);
+    if (!sample) {
+      this.forget(task.id);
+      return false;
+    }
+    return this.observe(sample);
   }
 }
 
@@ -880,9 +1152,11 @@ function round4(n: number): number {
 }
 
 /**
- * Convenience for the planner: the learned estimate for a task row, in micro-USD. A task that
- * resumes from the work its paused runs kept (`kept`, `keptWorkFor`) is priced at what is left
- * of its estimate (`estimateLeftUsdMicro`, D4); its own budget still caps it.
+ * Convenience for the planner: the learned estimate for a task row, in micro-USD, its review
+ * included (d1116-budget-all: the plan line, the Start dialog, the plan card, the planner and the
+ * pause card show this one figure). A task that resumes from the work its paused runs kept
+ * (`kept`, `keptWorkFor`) is priced at what is left of its estimate (`estimateLeftUsdMicro`, D4);
+ * its own budget still caps it.
  */
 export function planEstimateUsdMicro(
   port: EstimatePort,

@@ -439,26 +439,29 @@ describe("w15-words, wave 15 run B", () => {
       return dialog;
     };
 
-    it("CHF 0.04 with four tasks left out: one line, three named, then 'and 1 more'", async () => {
+    // d1116-budget-all (BA-10): each task's price holds its review part (CHF 0.07 for these
+    // tier-2 tasks), so the session that runs the first and leaves the rest out is CHF 0.20
+    // (before: CHF 0.04, each task CHF 0.02).
+    it("CHF 0.20 with four tasks left out: one line, three named, then 'and 1 more'", async () => {
       const harness = seed(["About page", "Contact page", "Menu", "Footer"], 25_000);
-      const dialog = await openWithBudget(harness, "0.04");
+      const dialog = await openWithBudget(harness, "0.20");
       await waitFor(() =>
         expect(within(dialog).getAllByTestId("start-session-over-budget")).toHaveLength(1),
       );
       expect(within(dialog).getByTestId("start-session-over-budget")).toHaveTextContent(
-        '"About page" (about CHF 0.02), "Contact page" (about CHF 0.02), "Menu" (about CHF 0.02) and 1 more may be left for next time: the tasks that run first take about CHF 0.02 of this session\'s work budget of CHF 0.03 (the budget less a fifth kept for reviews). Give the session a larger budget to be sure they run.',
+        '"About page" (about CHF 0.09), "Contact page" (about CHF 0.09), "Menu" (about CHF 0.09) and 1 more may be left for next time: the tasks that run first take about CHF 0.09 of this session\'s work budget of CHF 0.16 (the budget less a fifth kept for reviews). Give the session a larger budget to be sure they run.',
       );
       expect(within(dialog).queryByTestId("start-session-more")).toBeNull();
     });
 
-    it("CHF 0.04 with three tasks left out: one line names the three", async () => {
+    it("CHF 0.20 with three tasks left out: one line names the three", async () => {
       const harness = seed(["About page", "Contact page", "Menu"], 25_000);
-      const dialog = await openWithBudget(harness, "0.04");
+      const dialog = await openWithBudget(harness, "0.20");
       await waitFor(() =>
         expect(within(dialog).getAllByTestId("start-session-over-budget")).toHaveLength(1),
       );
       expect(within(dialog).getByTestId("start-session-over-budget")).toHaveTextContent(
-        /^"About page" \(about CHF 0\.02\), "Contact page" \(about CHF 0\.02\) and "Menu" \(about CHF 0\.02\) may be left for next time: /,
+        /^"About page" \(about CHF 0\.09\), "Contact page" \(about CHF 0\.09\) and "Menu" \(about CHF 0\.09\) may be left for next time: /,
       );
     });
 
@@ -470,7 +473,8 @@ describe("w15-words, wave 15 run B", () => {
       // line for each of three, '"About page" needs ...', then 'and 1 more').
       await waitFor(() =>
         expect(within(dialog).getByTestId("start-session-oversized")).toHaveTextContent(
-          /^"Decide the versioning scheme" needs about CHF 0\.08, more than this session's work budget of CHF 0\.03: /,
+          // d1116-budget-all (BA-10): with its review part (before: 0.08).
+          /^"Decide the versioning scheme" needs about CHF 0\.15, more than this session's work budget of CHF 0\.03: /,
         ),
       );
       expect(within(dialog).getByTestId("start-session-comes-after")).toHaveTextContent(

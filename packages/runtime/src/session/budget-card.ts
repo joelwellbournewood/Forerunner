@@ -71,15 +71,28 @@ export function continueUsdMicro(
   task: Pick<TaskRow, "est_cost_usd_micro">,
   stop: Pick<BudgetStop, "capUsdMicro" | "source">,
   rate: number = DEFAULT_CHF_PER_USD,
-  floor: { estimateLeftUsdMicro?: number | null; reserveShare?: number } = {},
+  floor: {
+    estimateLeftUsdMicro?: number | null;
+    reserveShare?: number;
+    /**
+     * d1116-budget-all (BA-5): at the task's own budget, what the task needs beyond what is left
+     * of it (the card's `needs_usd_micro`): its estimate left and one critic call's worst case for
+     * a work pause; the review part and its refused call's worst case for a review that waits.
+     * Continue gives the larger of it and the same amount again; absent, as before.
+     */
+    needsUsdMicro?: number | null;
+  } = {},
 ): number {
   const same = offersContinue(stop.source) ? Math.max(0, stop.capUsdMicro) : 0;
   const left = floor.estimateLeftUsdMicro;
   const reserve = floor.reserveShare ?? CONTINUE_RESERVE_SHARE;
+  const needs = floor.needsUsdMicro;
   const usd =
     stop.source === "session" && typeof left === "number" && left > 0
       ? Math.max(same, Math.ceil(left / (1 - reserve)))
-      : Math.max(same, Math.max(0, task.est_cost_usd_micro));
+      : stop.source === "task_budget" && typeof needs === "number"
+        ? Math.max(same, Math.max(0, Math.round(needs)))
+        : Math.max(same, Math.max(0, task.est_cost_usd_micro));
   const room = usdToChfMicro(usd, rate);
   const steps = Math.max(1, Math.ceil(room / CONTINUE_STEP_CHF_MICRO));
   return chfToUsdMicro(steps * CONTINUE_STEP_CHF_MICRO, rate);
@@ -204,6 +217,11 @@ export interface BudgetStopCardInput {
   estimateLeftUsdMicro?: number;
   /** L3-left-2: what the paused run itself spent (its card's figure at a limit per run). */
   runSpentUsdMicro?: number;
+  /**
+   * d1116-budget-all (BA-5): at the task's own budget, what it needs beyond what is left of it, so
+   * one Continue is enough (its work's estimate left and its review's calls). Never below 0.
+   */
+  needsUsdMicro?: number;
 }
 
 function keyOf(r: Pick<HumanRequestRow, "change_card">): string | undefined {
@@ -221,8 +239,15 @@ export async function fileBudgetStopCard(
   ).find((r) => keyOf(r) === BUDGET_STOP_KEY);
   if (open) return { request: open, reused: true };
   const rate = input.chfPerUsd ?? DEFAULT_CHF_PER_USD;
+  const needs =
+    stop.source === "task_budget" && typeof input.needsUsdMicro === "number"
+      ? Math.max(0, Math.round(input.needsUsdMicro))
+      : undefined;
   const more = offersContinue(stop.source)
-    ? continueUsdMicro(task, stop, rate, { estimateLeftUsdMicro: input.estimateLeftUsdMicro })
+    ? continueUsdMicro(task, stop, rate, {
+        estimateLeftUsdMicro: input.estimateLeftUsdMicro,
+        ...(needs !== undefined ? { needsUsdMicro: needs } : {}),
+      })
     : null;
   const title = budgetStopTitle(task, stop, rate);
   const left = cardHandoff(input.handoff);
@@ -272,6 +297,10 @@ export async function fileBudgetStopCard(
       ...(input.runSpentUsdMicro !== undefined
         ? { run_spent_usd_micro: input.runSpentUsdMicro }
         : {}),
+      // d1116-budget-all: what one Continue must add at the task's budget, and what the run kept
+      // of the budget for its review (the card's first sentence names it).
+      ...(needs !== undefined ? { needs_usd_micro: needs } : {}),
+      ...(stop.roomUsdMicro && stop.roomUsdMicro > 0 ? { room_usd_micro: stop.roomUsdMicro } : {}),
       ...(stop.source === "month" || stop.source === "plan"
         ? { resets_at: nextMonthStart(input.now ?? new Date(0).toISOString()) }
         : {}),

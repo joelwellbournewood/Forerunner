@@ -14,7 +14,6 @@ import {
   taskSizeFactor,
 } from "../src/estimates/model.ts";
 import { INTAKE_RUN_SPECIALIST } from "../src/models/ladder.ts";
-import { chfText } from "../src/money-words.ts";
 import type { StateBrief } from "../src/session/brief.ts";
 import {
   docSetWords,
@@ -48,8 +47,6 @@ const SCAFFOLD_BAND = Math.round(
     }) *
     PLAN_ESTIMATE_BOUND,
 );
-/** The plan card's words for an amount (the intake's own `approxChf`). */
-const approxChfOf = (micro: number) => chfText(micro);
 
 /**
  * PM intake (spec A.2): the brief becomes the doc set, the milestones, the tasks and a
@@ -290,10 +287,14 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
         expect.objectContaining({ key: "scaffold", estimateUsdMicro: SCAFFOLD_BAND }),
         expect.objectContaining({ key: "ci", estimateUsdMicro: coderBand }),
       ]);
-      expect(row.why).toContain(`(~${approxChfOf(SCAFFOLD_BAND + coderBand)})`);
-      expect(row.steps.find((st) => st.startsWith("First session:"))).toContain(
-        `1. Scaffold the repository (~${approxChfOf(SCAFFOLD_BAND)})`,
-      );
+      // d1116-budget-all (BA-6): the card's stored words name no figure; its rows and total are
+      // the daemon's, the Start dialog's figures with each task's review. Before: "(~CHF 0.12)"
+      // after the plan and "1. Scaffold the repository (~CHF 0.10)".
+      expect(row.why).toContain("a first-session plan of 2 task(s). Approve");
+      expect(row.why).not.toContain("CHF");
+      const firstLine = row.steps.find((st) => st.startsWith("First session:")) ?? "";
+      expect(firstLine).toContain("1. Scaffold the repository");
+      expect(firstLine).not.toContain("CHF");
       expect(Object.keys(prop.docs)).toContain("docs/decisions/0001-stack.md");
       expect(row.why).toContain("2 milestone(s)");
       expect(row.steps.some((s) => s.startsWith("Milestone: Foundations"))).toBe(true);

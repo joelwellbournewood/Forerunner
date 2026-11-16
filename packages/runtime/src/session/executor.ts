@@ -735,6 +735,32 @@ export function runCapOf(
   return { usdMicro: Math.max(0, specialistLimitUsdMicro), source: "specialist_limit" };
 }
 
+/**
+ * d1116-budget-all (BA-4; the owner's "yes it should count critics reviews, and fixes." and "wrap
+ * up in an organized and error free way such that the work can be continued in the next run"):
+ * the cap of a work run of a task with a budget of its own, a fix after a send-back included,
+ * keeps room in what is left of the budget for the review that follows it. `reviewRoomUsdMicro`
+ * is that room (R + W: the review part of the task's estimate and one critic call's worst case,
+ * set on the plan item by the runner). It is kept only when it is at most half of what is left:
+ * keeping more would leave the work less than its review, and then the work runs with all that
+ * is left (the owner's "it should get done anyway") and its review waits for Continue if it does
+ * not fit. A task without a budget of its own keeps its specialist's limit and no room (its
+ * review is the session's). `runCapOf` stays what is left of the budget (the Tasks row's cap).
+ */
+export function workRunCapOf(
+  task: Pick<TaskRow, "budget_usd_micro" | "actual_cost_usd_micro">,
+  specialistLimitUsdMicro: number,
+  reviewRoomUsdMicro = 0,
+): { capUsdMicro: number; roomUsdMicro: number; source: RunCapSource } {
+  const cap = runCapOf(task, specialistLimitUsdMicro);
+  if (cap.source !== "task_budget")
+    return { capUsdMicro: cap.usdMicro, roomUsdMicro: 0, source: cap.source };
+  const room = Math.max(0, Math.round(reviewRoomUsdMicro));
+  if (room > 0 && room * 2 <= cap.usdMicro)
+    return { capUsdMicro: cap.usdMicro - room, roomUsdMicro: room, source: cap.source };
+  return { capUsdMicro: cap.usdMicro, roomUsdMicro: 0, source: cap.source };
+}
+
 /** What either driver came back with, in the shape the Run row and the result need. */
 interface DriverOutcome {
   outcome: RunOutcome;
@@ -1009,9 +1035,14 @@ export class LoopTaskExecutor implements TaskExecutor {
       // Live walk 2 (B2): the stop says it in CHF and the runner files its card (Raise the
       // budget, Cancel task); before, the task waited with no card and dollar amounts. It is a
       // pause at its budget (ADR 0112): nothing ran, so nothing is reviewed or counted.
+      // d1116-budget-all: a task the critic sent back, whose work and reviews spent its
+      // budget, is told so: Continue gives it more for the changes the critic asked for.
+      const sentBack = task.attempt > 0 && (await store.finding.openFor(task.id)).length > 0;
       return {
         outcome: "paused",
-        summary: `Its budget of ${this.chfText(task.budget_usd_micro)} is spent (${this.chfText(task.actual_cost_usd_micro)} so far), so nothing ran.`,
+        summary: sentBack
+          ? `The critic sent it back, and its budget of ${this.chfText(task.budget_usd_micro)} is spent (${this.chfText(task.actual_cost_usd_micro)} so far): Continue in the Inbox gives it more for the changes the critic asked for.`
+          : `Its budget of ${this.chfText(task.budget_usd_micro)} is spent (${this.chfText(task.actual_cost_usd_micro)} so far), so nothing ran.`,
         costUsdMicro: 0,
         budgetStop: {
           capUsdMicro: task.budget_usd_micro,
@@ -1030,9 +1061,13 @@ export class LoopTaskExecutor implements TaskExecutor {
       token.claims.budgetUsdMicro,
       budget.workRemainingUsdMicro(),
     );
+    // d1116-budget-all (BA-4): a work run keeps room in its task's budget for its review, when
+    // the budget can hold it; the run's own cap is what is left less that room.
+    const work = workRunCapOf(task, defaultSpec.maxBudgetUsdMicro, item.reviewRoomUsdMicro ?? 0);
     // Where the run's cap comes from: its own (the task's budget, the specialist's limit), or
-    // the session's work budget when that is smaller.
-    const runCapSource = cap.usdMicro <= sessionLeftUsdMicro ? cap.source : "session";
+    // the session's work budget when that is smaller. Compared with the run's own cap, so a stop
+    // at a cap kept below the session's work budget reads as the task's.
+    const runCapSource = work.capUsdMicro <= sessionLeftUsdMicro ? cap.source : "session";
     const brief: DelegationBrief = validateBrief({
       goal: `${task.title}: ${task.outcome}`,
       contextLinks: [
@@ -1080,7 +1115,7 @@ export class LoopTaskExecutor implements TaskExecutor {
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
         : [outcomeCriterion(task.outcome)],
-      budgetUsdMicro: Math.max(1, Math.min(cap.usdMicro, sessionLeftUsdMicro)),
+      budgetUsdMicro: Math.max(1, Math.min(work.capUsdMicro, sessionLeftUsdMicro)),
       riskTier: task.risk_tier as 0 | 1 | 2 | 3,
       specialist: defaultSpec.name,
       timeoutMs,
@@ -1404,7 +1439,16 @@ export class LoopTaskExecutor implements TaskExecutor {
       // wrap-up are lines of the session's log.
       if (ev.type === "budget_line") {
         runLine = ev;
-        ctx.onStep({ kind: "note", text: budgetLineWords(ev, (n) => this.chfText(n)) });
+        ctx.onStep({
+          kind: "note",
+          // d1116-budget-all: the room kept for its review is said after the amount, only when
+          // the run's cap is its task's budget less that room.
+          text: budgetLineWords(
+            ev,
+            (n) => this.chfText(n),
+            runCapSource === "task_budget" ? work.roomUsdMicro : 0,
+          ),
+        });
       } else if (ev.type === "web_search") {
         // 'web-search': each search is a line of the log ("searched the web for ..."); a result
         // that reads like instructions is said there too, in plain words (the scan's rule names
@@ -1810,16 +1854,24 @@ export class LoopTaskExecutor implements TaskExecutor {
                 ? brief.budgetUsdMicro
                 : (result.error?.capUsdMicro ?? brief.budgetUsdMicro);
       const what = limitWords(source, capUsdMicro, (n) => this.chfText(n), spec.name);
+      // d1116-budget-all (BA-4): at the task's budget the run may spend its work cap (what is
+      // left less the room kept for its review), and the sentence names the room.
+      const roomKept = source === "task_budget" ? work.roomUsdMicro : 0;
       return {
         outcome: "paused",
         summary: pauseSentence(
           handoff,
           what,
           result.costUsdMicro,
-          source === "specialist_limit" || source === "task_budget" ? cap.usdMicro : capUsdMicro,
+          source === "specialist_limit"
+            ? cap.usdMicro
+            : source === "task_budget"
+              ? work.capUsdMicro
+              : capUsdMicro,
           (n) => this.chfText(n),
           // L3-left-1 (d1109-oversize-pause): the task's spend in all, as its card names it.
           task.actual_cost_usd_micro + result.costUsdMicro,
+          roomKept,
         ),
         costUsdMicro: result.costUsdMicro,
         budgetStop: {
@@ -1828,6 +1880,7 @@ export class LoopTaskExecutor implements TaskExecutor {
           source,
           specialist: spec.name,
           stoppedBy: handoff.stoppedBy,
+          ...(roomKept > 0 ? { roomUsdMicro: roomKept } : {}),
         },
         handoff,
         ...(result.error ? { errorCode: result.error.code } : {}),

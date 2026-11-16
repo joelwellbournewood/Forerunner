@@ -56,7 +56,8 @@ export interface PlanTasksDeps {
         | "est_cost_usd_micro"
         | "budget_usd_micro"
         | "actual_cost_usd_micro"
-      >,
+      > &
+        Partial<Pick<TaskRow, "outcome" | "acceptance_criteria">>,
     ): number;
   };
 }
@@ -152,6 +153,10 @@ export async function planTaskViews(
       est_cost_usd_micro: figure,
       budget_usd_micro: t.budgetUsdMicro,
       actual_cost_usd_micro: 0,
+      // d1116-budget-all: the review part grows with the task's size, as the Start dialog prices
+      // the row the plan writes (its outcome and criteria), so the two say one figure.
+      outcome: t.outcome,
+      acceptance_criteria: t.acceptanceCriteria,
     });
   };
   // D4: the note under a task larger than the project's session work budget (once per card).

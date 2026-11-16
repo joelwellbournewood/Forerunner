@@ -22,6 +22,7 @@ import { MIGRATION_0006 } from "../src/migrations/0006-merge-records.ts";
 import { MIGRATION_0007 } from "../src/migrations/0007-take-out.ts";
 import { MIGRATION_0008 } from "../src/migrations/0008-rebuild-owed.ts";
 import { MIGRATION_0009 } from "../src/migrations/0009-change-source-session.ts";
+import { MIGRATION_0010 } from "../src/migrations/0010-task-spent-all.ts";
 import {
   createTableSql,
   generateInitialMigration,
@@ -215,6 +216,7 @@ describe("migrations", () => {
     expect(MIGRATIONS[6]).toBe(MIGRATION_0007);
     expect(MIGRATIONS[7]).toBe(MIGRATION_0008);
     expect(MIGRATIONS[8]).toBe(MIGRATION_0009);
+    expect(MIGRATIONS[9]).toBe(MIGRATION_0010);
     expect(MIGRATIONS.map((m) => m.version)).toEqual(MIGRATIONS.map((_, i) => i + 1));
     // v1 is the generator's output for the v1 subset: the v2 columns, the v3 table
     // (source_candidate with its indexes) and the v3 enum value, the v4 column
@@ -293,10 +295,10 @@ describe("migrations", () => {
       expect(v1Columns).not.toContain("context_transforms");
 
       expect(await migrate(db, { clock })).toEqual({
-        applied: [2, 3, 4, 5, 6, 7, 8, 9],
-        version: 9,
+        applied: [2, 3, 4, 5, 6, 7, 8, 9, 10],
+        version: 10,
       });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
       const repos = createRepos(db, clock);
       const run = await repos.run.mustGet("r1");
@@ -345,7 +347,10 @@ describe("migrations", () => {
           ["src2", at, at, "github_repo", "acme/alpha", "acme/alpha"],
         ),
       ).rejects.toThrow();
-      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7, 8, 9], version: 9 });
+      expect(await migrate(db, { clock })).toEqual({
+        applied: [3, 4, 5, 6, 7, 8, 9, 10],
+        version: 10,
+      });
 
       const repos = createRepos(db, clock);
       const kept = await repos.source.mustGet("src1");
@@ -422,8 +427,11 @@ describe("migrations", () => {
         (await db.query(`SELECT name FROM sqlite_master WHERE name = 'secret_grant'`)).length,
       ).toBe(0);
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7, 8, 9], version: 9 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect(await migrate(db, { clock })).toEqual({
+        applied: [3, 4, 5, 6, 7, 8, 9, 10],
+        version: 10,
+      });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
       const repos = createRepos(db, clock);
       const device = await repos.device.mustGet("d1");
@@ -486,8 +494,11 @@ describe("migrations", () => {
         expect(v2Columns).not.toContain("reason");
       }
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7, 8, 9], version: 9 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect(await migrate(db, { clock })).toEqual({
+        applied: [3, 4, 5, 6, 7, 8, 9, 10],
+        version: 10,
+      });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
       const repos = createRepos(db, clock);
       const milestone = await repos.milestone.mustGet("m1");
@@ -563,8 +574,8 @@ describe("migrations", () => {
         (await db.query(`SELECT name FROM sqlite_master WHERE name = 'merge_record'`)).length,
       ).toBe(0);
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [6, 7, 8, 9], version: 9 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [6, 7, 8, 9, 10], version: 10 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
       const repos = createRepos(db, clock);
       expect((await repos.task.mustGet("t1")).pr_url).toBe("https://github.com/o/r/pull/4");
@@ -973,8 +984,8 @@ describe("d1109-selftasks-run, run C: the change log's 'session' source (ST-5)",
           ],
         );
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [9], version: 9 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [9, 10], version: 10 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
       const repos = createRepos(db, clock);
       for (const [i, source] of SOURCES_BEFORE.entries()) {
@@ -1026,6 +1037,77 @@ describe("d1109-selftasks-run, run C: the change log's 'session' source (ST-5)",
           ["x1", at, at, "model"],
         ),
       ).rejects.toThrow();
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+/**
+ * d1116-budget-all, run C (BA-2; the owner's answer of 2026-11-16: "yes it should count critics
+ * reviews, and fixes."): v10 sets each task's figure to the larger of itself and the cost ledger's
+ * sum for its task id, so a task written before, whose figure held its work only, counts its
+ * reviews too. Data only: the schema, `version` and `updated_at` are unchanged, and a second run
+ * changes nothing.
+ */
+describe("d1116-budget-all, run C: each task's figure counts its reviews (BA-2)", () => {
+  const ledgerRow = (db: SqliteDatabase, id: string, taskId: string, usd: number, at: string) =>
+    db.query(
+      `INSERT INTO "cost_ledger" ("id", "created_at", "updated_at", "human_id", "task_id", "kind", "usd_micro", "model", "occurred_at") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, at, at, "h1", taskId, "api", usd, "claude-sonnet-5-5", at],
+    );
+
+  it("is the tenth migration, data only", () => {
+    expect(MIGRATIONS[9]).toBe(MIGRATION_0010);
+    expect(MIGRATION_0010.version).toBe(10);
+    expect(MIGRATION_0010.name).toBe("task-spent-all");
+    for (const sql of [...MIGRATION_0010.up.sqlite, ...MIGRATION_0010.up.postgres])
+      expect(sql).toMatch(/^UPDATE "task" SET "actual_cost_usd_micro" = /);
+  });
+
+  it("migrates a v9 database: a task's figure takes its reviews from the ledger; one that has them, and one with no rows, stay; version and updated_at do not move; a second run changes nothing", async () => {
+    const db = await openSqlite(":memory:");
+    try {
+      const clock = new SimulatedClock("2026-11-16T10:00:00.000Z");
+      const at = clock.nowIso();
+      const v9 = MIGRATIONS.filter((m) => m.version <= 9);
+      expect((await migrate(db, { clock, migrations: v9 })).version).toBe(9);
+      await db.query(
+        `INSERT INTO "project" ("id", "created_at", "updated_at", "name") VALUES (?, ?, ?, ?)`,
+        ["p1", at, at, "Club site"],
+      );
+      const task = (id: string, actual: number, version: number) =>
+        db.query(
+          `INSERT INTO "task" ("id", "created_at", "updated_at", "version", "project_id", "title", "status", "actual_cost_usd_micro") VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, at, "2026-11-10T08:00:00.000Z", version, "p1", `Task ${id}`, "done", actual],
+        );
+      // A: its work (300_000) on the task, its work and its review (150_000) on the ledger.
+      await task("tA", 300_000, 4);
+      await ledgerRow(db, "l1", "tA", 300_000, at);
+      await ledgerRow(db, "l2", "tA", 150_000, at);
+      // B: its figure already the ledger's. C: no ledger rows (a subscription's runs).
+      await task("tB", 120_000, 2);
+      await ledgerRow(db, "l3", "tB", 120_000, at);
+      await task("tC", 70_000, 3);
+
+      expect(await migrate(db, { clock })).toEqual({ applied: [10], version: 10 });
+      const repos = createRepos(db, clock);
+      const read = async () =>
+        Promise.all(
+          ["tA", "tB", "tC"].map(async (id) => {
+            const t = await repos.task.mustGet(id);
+            return [t.actual_cost_usd_micro, t.version, t.updated_at];
+          }),
+        );
+      const after = await read();
+      expect(after).toEqual([
+        [450_000, 4, "2026-11-10T08:00:00.000Z"],
+        [120_000, 2, "2026-11-10T08:00:00.000Z"],
+        [70_000, 3, "2026-11-10T08:00:00.000Z"],
+      ]);
+      // Idempotent: the statements run again change nothing.
+      for (const sql of MIGRATION_0010.up.sqlite) await db.exec(sql);
+      expect(await read()).toEqual(after);
     } finally {
       await db.close();
     }

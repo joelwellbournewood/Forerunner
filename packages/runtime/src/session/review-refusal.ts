@@ -29,6 +29,11 @@ export type ReviewRefusal =
       /** What the review's run spent before it was refused. */
       spentUsdMicro: number;
       message: string;
+      /**
+       * d1116-budget-all: the refused call's worst case as the precheck counted it, or null (an
+       * outer cap's refusal, or a refusal of before); the card's `needs_usd_micro` reads it.
+       */
+      estimateUsdMicro?: number | null;
     }
   | {
       kind: "credential";
@@ -52,6 +57,7 @@ export function reviewRefusalOf(e: unknown): ReviewRefusal | null {
       level: str("level"),
       capUsdMicro: typeof d.capUsdMicro === "number" ? d.capUsdMicro : null,
       spentUsdMicro: typeof d.spentUsdMicro === "number" ? d.spentUsdMicro : 0,
+      estimateUsdMicro: typeof d.estimateUsdMicro === "number" ? d.estimateUsdMicro : null,
       message: e.message,
     };
   if (CREDENTIAL_REFUSAL_CODES.has(e.code))

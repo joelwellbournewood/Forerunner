@@ -298,6 +298,24 @@ export function createDaemonApp(
   const app = new Hono();
   const logger = log("daemon");
   const chf = () => rt.chfPerUsd();
+  /**
+   * d1116-budget-all (BA-7): fold tasks closed since the estimates last read the store (one
+   * sample per task, replaced when a task is read again), before a Start dialog or a plan card
+   * prices. A failure is logged; the figures then stay as they were.
+   */
+  const refreshEstimates = async () => {
+    try {
+      await rt.estimates.refresh(rt.store);
+    } catch (e) {
+      logger.warn("the estimates were not refreshed", { error: errorMessage(e) });
+    }
+  };
+  /** A card that holds a plan proposal (an intake's plan card), whose tasks the Inbox prices. */
+  const isRecordWithProposal = (card: unknown): boolean =>
+    !!card &&
+    typeof card === "object" &&
+    !!(card as { proposal?: unknown }).proposal &&
+    typeof (card as { proposal?: unknown }).proposal === "object";
   const chatReplyView = (
     r: Awaited<ReturnType<NonNullable<RuntimeApp["conversation"]>["chat"]>>,
   ): ChatReplyView => ({
@@ -1112,8 +1130,10 @@ export function createDaemonApp(
       live: (taskId: string) => rt.kill.hasTask(taskId),
     };
     // W15-20: what each task cost, its reviews included, as Costs > By task reads the ledger.
+    // d1116-budget-all (BA-9): every row of each task now in the project, whatever project the
+    // row names (a task Make one project moved keeps its earlier rows on the closed project).
     const booked = new Map(
-      (await rt.store.costLedger.breakdown("task_id", { projectId }).catch(() => []))
+      (await rt.store.costLedger.byTaskOf(projectId).catch(() => []))
         .filter((b) => b.key !== null && b.entries > 0)
         .map((b) => [b.key as string, b.usd_micro]),
     );
@@ -1502,6 +1522,9 @@ export function createDaemonApp(
 
   app.get("/projects/:id/start-check", async (c) => {
     const budget = intQuery(c, "budgetUsdMicro", 0, Number.MAX_SAFE_INTEGER);
+    // d1116-budget-all (BA-7): a task closed outside a session (the Inbox, chat, the merge
+    // watcher) is learned before the Start dialog prices, as the fold after a restart learns it.
+    await refreshEstimates();
     const r = await rt.startCheck(c.req.param("id"), budget > 0 ? budget : undefined);
     const rate = chf();
     const named = (t: { taskId: string; title: string; estimateUsdMicro: number }) => ({
@@ -2074,6 +2097,9 @@ export function createDaemonApp(
       batch ??= rt.chooser.batch();
       return batch(input);
     };
+    // d1116-budget-all (BA-7): an open plan card prices with what the Start dialog learns from.
+    if (requests.some((r) => r.status === "open" && isRecordWithProposal(r.change_card)))
+      await refreshEstimates();
     for (const [i, row] of requests.entries()) {
       // The figure each plan task shows is the one the Start dialog shows once it is written
       // (the learned estimate over the plan's guess; the leftovers of wave 7).

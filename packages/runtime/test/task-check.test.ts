@@ -686,3 +686,30 @@ describe("d1109-selftasks-run, run C: the fence (ST-8)", () => {
     expect(f.askFirst).toEqual([]);
   });
 });
+
+/**
+ * d1116-budget-all, run C (BA-11): the task check is the session's own spend, never a task's:
+ * its Run row names no task, and no task's figure (what its budget counts) moves.
+ */
+describe("d1116-budget-all, run C: the task check stays the session's spend", () => {
+  it("its Run row has no task, and no task's figure moves", async () => {
+    const w = await world();
+    const figures = async () =>
+      Promise.all(
+        Object.values(w.tasks).map(
+          async (t) => (await w.store.task.mustGet(t?.id ?? "")).actual_cost_usd_micro,
+        ),
+      );
+    const before = await figures();
+    const provider = new ScriptedProvider([{ text: NO_CHANGE }], w.h.clock);
+    expect((await check(w, provider)).status).toBe("checked");
+    const run = (await w.store.run.list({ session_id: w.session } as never)).find(
+      (x) => x.specialist === "task-check",
+    );
+    expect(run?.task_id).toBeNull();
+    expect(run?.cost_usd_micro).toBeGreaterThan(0);
+    const ledger = await w.store.costLedger.list({ session_id: w.session } as never);
+    expect(ledger.every((e) => e.task_id === null)).toBe(true);
+    expect(await figures()).toEqual(before);
+  });
+});

@@ -234,7 +234,9 @@ export const TASKS: TaskView[] = [
     dependsOn: [],
     budget: money(5_000_000),
     estimate: money(3_000_000),
+    // d1116-budget-all (BA-10): one figure, its work and its reviews, as the ledger books it.
     actual: money(2_750_000),
+    spent: money(2_750_000),
     cap: money(2_250_000),
     capSource: "task_budget",
     specialist: "coder",
@@ -261,6 +263,7 @@ export const TASKS: TaskView[] = [
     budget: money(6_000_000),
     estimate: money(4_000_000),
     actual: money(4_500_000),
+    spent: money(4_500_000),
     cap: money(1_500_000),
     capSource: "task_budget",
     specialist: "coder",

@@ -144,6 +144,32 @@ export const REVIEW_TOKENS_PER_CALL = 8192;
 export const MAX_EFFORT_TOKENS_CEILING = 24_000;
 
 /**
+ * d1116-budget-all: the input a review's call is priced with beside the critic's system prompt
+ * when a work run keeps room in its task's budget for the review that follows it
+ * (`CriticService.reviewCallUsdMicro`): the evidence of a typical task (its diff, the changed
+ * files, the checks' output, the criteria). Live check 4 (LC-C32) re-checks it from the real
+ * critic's first call.
+ */
+export const REVIEW_EVIDENCE_ALLOWANCE_TOKENS = 8_000;
+
+/** One critic call's price before the review runs (`CriticService.reviewCallUsdMicro`). */
+export interface ReviewCallPrice {
+  /**
+   * One call's worst case at the review's tier, with the model and the output cap the review
+   * will use, on the system prompt plus `REVIEW_EVIDENCE_ALLOWANCE_TOKENS` of input: what the
+   * hooks' precheck admits a call on, so room this size lets a call of a typical review pass.
+   */
+  worstUsdMicro: number;
+  /**
+   * The price of the review's output cap alone (`REVIEW_TOKENS_PER_CALL`, at every effort): a
+   * lower bound of its first call. Below it the review is not started.
+   */
+  floorUsdMicro: number;
+  /** The review runs at effort max (its first call's cap grows to `MAX_EFFORT_TOKENS_CEILING`). */
+  maxEffort: boolean;
+}
+
+/**
  * Run outcomes that only refuse further calls. After `submit_review` captured a verdict, the
  * call they refused was not needed, so the review is completed (the Run row keeps the run's
  * own outcome). A timeout, a kill or an error still name the review.
@@ -183,6 +209,10 @@ export function refusedReviewError(result: RunResult): ForerunnerError | null {
         ...(e?.level ? { level: e.level } : {}),
         ...(e?.source ? { source: e.source } : {}),
         ...(typeof e?.capUsdMicro === "number" ? { capUsdMicro: e.capUsdMicro } : {}),
+        // d1116-budget-all: the refused call's worst case, so the card can say what it needs.
+        ...(typeof e?.estimateUsdMicro === "number"
+          ? { estimateUsdMicro: e.estimateUsdMicro }
+          : {}),
         ...(e?.resetAt ? { resetAt: e.resetAt } : {}),
         ...(e?.sourceId ? { sourceId: e.sourceId } : {}),
       },
@@ -299,7 +329,7 @@ export const READING_REVIEW_TURNS = 12;
  */
 export const READING_REVIEW_TIMEOUT_MS = 180_000;
 
-const SYSTEM_SUFFIX =
+export const SYSTEM_SUFFIX =
   "\n\n## Returning the review\n\nCall the `submit_review` tool exactly once with the complete " +
   "review. Text outside the tool is kept only as a rationale.";
 
@@ -412,6 +442,33 @@ export class CriticService {
     ctx: Pick<ReviewContext, "projectSettings" | "ceiling" | "effortOffset" | "timeoutMs">,
   ): CriticModelPick {
     return this.pickFor(tier, mergeSettings(ctx), ctx.timeoutMs);
+  }
+
+  /**
+   * d1116-budget-all (the owner's "yes it should count critics reviews, and fixes."): what one
+   * call of a review at `tier` may cost before it runs, under the project's settings: its model
+   * (`pickFor`), its output cap (`maxTokensPerCall`, else `REVIEW_TOKENS_PER_CALL`; at effort max
+   * `MAX_EFFORT_TOKENS_CEILING`) and its system prompt plus `REVIEW_EVIDENCE_ALLOWANCE_TOKENS`,
+   * priced as the loop prices a call (`RunPricing.estimate`). A work run keeps room for its review
+   * with it, and the runner starts no review below `floorUsdMicro`. Reads no store and makes no
+   * call; fast mode is not priced (it is a choice made at the review).
+   */
+  reviewCallUsdMicro(
+    tier: Exclude<ReviewTier, 0>,
+    projectSettings: JsonObject | null,
+  ): ReviewCallPrice {
+    const pick = this.pickFor(tier, mergeSettings({ projectSettings }));
+    const pricing = this.deps.pricing(pick.model);
+    const provider = this.deps.providers.get(this.deps.providerName);
+    const system = provider.countTokens(`${this.deps.prompt.prompt}${SYSTEM_SUFFIX}`);
+    const out = this.deps.maxTokensPerCall ?? REVIEW_TOKENS_PER_CALL;
+    const maxEffort = pick.effort === "max";
+    const cap = maxEffort ? Math.max(out, MAX_EFFORT_TOKENS_CEILING) : out;
+    return {
+      worstUsdMicro: pricing.estimate(system + REVIEW_EVIDENCE_ALLOWANCE_TOKENS, cap),
+      floorUsdMicro: pricing.estimate(0, out),
+      maxEffort,
+    };
   }
 
   private pickFor(

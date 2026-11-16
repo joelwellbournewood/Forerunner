@@ -1,3 +1,4 @@
+import { reviewPartUsdMicro } from "@forerunner/runtime/estimates/model";
 import { CREDENTIAL_WAIT_REASON } from "@forerunner/runtime/session/credential-wait";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -1834,46 +1835,51 @@ describe("l3-money-screens, run L3", () => {
       .getAllByTestId("drawer-run")
       .find((r) => r.getAttribute("data-kind") === "work") as HTMLElement;
 
-  it("L3-run-3: after a review, a running task's budget line says what is left of it for the work and that reviews are not counted, never the bare budget beside the cost", async () => {
+  // d1116-budget-all (BA-9): the owner's "yes it should count critics reviews, and fixes." The
+  // budget counts the task's one figure, its reviews included (before: 'CHF 0.11 of CHF 0.20
+  // budget left; reviews are not counted' under a cost of CHF 0.13, and the tooltip 'Runs of
+  // this task stop when the work's spend reaches this budget. The critic's reviews are not
+  // counted in it.').
+  it("L3-run-3: after a review, a running task's budget line goes with the one figure above it, reviews included", async () => {
     const harness = createHarness();
-    // Budget CHF 0.20; the work CHF 0.09; the work and a review CHF 0.13; left CHF 0.11.
+    // Budget CHF 0.20; the work and a review CHF 0.13; left CHF 0.07.
     addTask(harness, "t_sent_back", "Write the Swiss pairing tool with tests", {
       status: "in_progress",
       specialist: "coder",
       budget: money(250_000),
-      actual: money(112_500),
+      actual: money(162_500),
       spent: money(162_500),
-      cap: money(137_500),
+      cap: money(87_500),
       capSource: "task_budget",
     });
-    // The reviews took the cost past the budget while the work is still under it.
+    // The reviews took the cost to the budget: used up.
     addTask(harness, "t_past", "Write the Elo tool with tests", {
       status: "in_progress",
       specialist: "coder",
       budget: money(250_000),
-      actual: money(225_000),
-      spent: money(300_000),
-      cap: money(25_000),
+      actual: money(250_000),
+      spent: money(250_000),
+      cap: money(0),
       capSource: "task_budget",
     });
     renderApp("/projects/proj_atlas/tasks", harness);
     const row = await rowOf("t_sent_back");
     expect(row).toHaveTextContent(chf(162_500));
     const cap = within(row).getByTestId("task-cap");
-    expect(cap).toHaveTextContent(
-      `${chf(137_500)} of ${chf(250_000)} budget left; reviews are not counted`,
-    );
-    expect(cap.textContent).not.toMatch(/^of CHF/);
+    expect(cap.textContent).toBe(`of ${chf(250_000)} budget`);
     expect(cap).toHaveAttribute(
       "title",
-      "Runs of this task stop when the work's spend reaches this budget. The critic's reviews are not counted in it.",
+      "Its work, the critic's reviews and any fixes all count. The task pauses at this budget and keeps its work.",
     );
     const past = await rowOf("t_past");
-    expect(past).toHaveTextContent(chf(300_000));
-    expect(within(past).getByTestId("task-cap").textContent).not.toMatch(/^of CHF/);
-    expect(within(past).getByTestId("task-cap")).toHaveTextContent(
-      `${chf(25_000)} of ${chf(250_000)} budget left; reviews are not counted`,
-    );
+    expect(past).toHaveTextContent(chf(250_000));
+    expect(within(past).getByTestId("task-cap").textContent).toBe(`${chf(250_000)} budget used up`);
+    expect(
+      screen
+        .getAllByTestId("task-cap")
+        .map((c) => c.textContent)
+        .join(" "),
+    ).not.toMatch(/reviews are not counted/);
   });
 
   it("L3-run-3: before any review the cost is what the budget counts, so the line stays 'of CHF 0.20 budget'; at the budget it says it is used up", async () => {
@@ -1892,7 +1898,7 @@ describe("l3-money-screens, run L3", () => {
       specialist: "coder",
       budget: money(250_000),
       actual: money(250_000),
-      spent: money(300_000),
+      spent: money(250_000),
       cap: money(0),
       capSource: "task_budget",
     });
@@ -1901,7 +1907,8 @@ describe("l3-money-screens, run L3", () => {
       /^of CHF 0\.20 budget$/,
     );
     const used = within(await rowOf("t_used")).getByTestId("task-cap");
-    expect(used).toHaveTextContent(/^CHF 0\.20 budget used up; reviews are not counted$/);
+    // d1116-budget-all (BA-9): before, '...; reviews are not counted'.
+    expect(used).toHaveTextContent(/^CHF 0\.20 budget used up$/);
     expect(used.textContent).not.toContain("CHF 0.00");
   });
 
@@ -1977,5 +1984,200 @@ describe("l3-money-screens, run L3", () => {
     run.cost = money(75_000);
     for (const l of harness.daemon.state.listeners) l("project.changed", { id: "proj_atlas" });
     await waitFor(() => expect(workRunIn(drawer)).toHaveTextContent(`Running · ${chf(75_000)}`));
+  });
+});
+
+/**
+ * d1116-budget-all, run C (BA-9): the owner's "yes it should count critics reviews, and fixes."
+ * A task's budget counts one figure, its work, the critic's reviews and any fixes; the row, the
+ * drawer and the hints say so, and never that the reviews are not counted.
+ */
+describe("d1116-budget-all, run C", () => {
+  const chf = (usdMicro: number) => formatChf(money(usdMicro).chfMicro);
+  const TITLE =
+    "Its work, the critic's reviews and any fixes all count. The task pauses at this budget and keeps its work.";
+  const HINT =
+    "Its work, the critic's reviews and any fixes count. Empty: each run stops at its specialist's limit.";
+
+  it("the line is 'of CHF 0.20 budget' below the budget, 'CHF 0.20 budget used up' at cap 0 or at the budget, never CHF 0.00; the specialist's limit reads as before", async () => {
+    const harness = createHarness();
+    const budgeted = {
+      status: "in_progress",
+      specialist: "coder",
+      budget: money(250_000),
+    } as const;
+    // CHF 0.13 of CHF 0.20, after a review.
+    addTask(harness, "t_below", "Write the Swiss pairing tool with tests", {
+      ...budgeted,
+      actual: money(162_500),
+      spent: money(162_500),
+      cap: money(87_500),
+      capSource: "task_budget",
+    });
+    // Nothing left to start a run, though the figure reads a centime under the budget.
+    addTask(harness, "t_cap0", "Write the Elo tool with tests", {
+      ...budgeted,
+      actual: money(249_000),
+      spent: money(249_000),
+      cap: money(0),
+      capSource: "task_budget",
+    });
+    // A late booking took it past its budget (the hooks check a call's worst case before it).
+    addTask(harness, "t_over", "Write the rating chart", {
+      ...budgeted,
+      actual: money(262_500),
+      spent: money(262_500),
+      cap: money(0),
+      capSource: "task_budget",
+    });
+    addTask(harness, "t_limit", "Write the README", {
+      status: "ready",
+      specialist: "coder",
+      budget: money(0),
+      actual: money(0),
+      spent: money(0),
+      cap: money(3_000_000),
+      capSource: "specialist_limit",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const below = within(await rowOf("t_below")).getByTestId("task-cap");
+    expect(below.textContent).toBe("of CHF 0.20 budget");
+    expect(below).toHaveAttribute("title", TITLE);
+    for (const id of ["t_cap0", "t_over"]) {
+      const cap = within(await rowOf(id)).getByTestId("task-cap");
+      expect(cap.textContent).toBe("CHF 0.20 budget used up");
+      expect(cap).toHaveAttribute("title", TITLE);
+    }
+    expect(within(await rowOf("t_limit")).getByTestId("task-cap").textContent).toBe(
+      "each run stops at CHF 2.40 (the coder's limit)",
+    );
+    const all = screen.getAllByTestId("task-cap").map((c) => c.textContent ?? "");
+    expect(all.join(" | ")).not.toMatch(/reviews are not counted|CHF 0\.00/);
+  });
+
+  it("the drawer's header says the one figure of its budget; New task and Edit say what the budget counts", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    // Ready again after a send-back (its figure holds its first run and the review): Edit is offered.
+    addTask(harness, "t_drawer", "Write the Swiss pairing tool with tests", {
+      status: "ready",
+      specialist: "coder",
+      budget: money(250_000),
+      actual: money(162_500),
+      spent: money(162_500),
+      cap: money(87_500),
+      capSource: "task_budget",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await user.click(within(await rowOf("t_drawer")).getByTestId("task-title"));
+    const drawer = await screen.findByTestId("task-drawer");
+    await waitFor(() =>
+      expect(drawer).toHaveTextContent(`· spent ${chf(162_500)} of ${chf(250_000)} budget`),
+    );
+    await user.click(await within(drawer).findByTestId("drawer-action-edit"));
+    const form = await within(drawer).findByTestId("edit-task-form");
+    expect(form).toHaveTextContent(HINT);
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+    await user.click(screen.getByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    expect(dialog).toHaveTextContent(HINT);
+    expect(`${drawer.textContent} ${dialog.textContent}`).not.toMatch(/reviews are not counted/);
+  });
+
+  it("BA-10: the fake daemon is in step with the real one: budgeted rows carry spent equal to actual, the start check prices a task with its review part within what is left of its budget, and Continue leaves the budget less the total", async () => {
+    const harness = createHarness();
+    const rows = await harness.client.tasks("proj_atlas");
+    const budgeted = rows.filter((t) => t.budget.usdMicro > 0);
+    expect(budgeted.length).toBeGreaterThan(0);
+    for (const t of budgeted) {
+      expect(t.spent?.usdMicro).toBe(t.actual.usdMicro);
+      expect(t.cap.usdMicro).toBe(t.budget.usdMicro - t.actual.usdMicro);
+    }
+    const extra = {
+      status: "ready",
+      specialist: "coder",
+      dependsOn: [] as string[],
+      priority: "high" as const,
+    };
+    addTask(harness, "t_whole", "Add a footer line with the club's name to index.html", {
+      ...extra,
+      estimate: money(60_000),
+      budget: money(0),
+      actual: money(0),
+      spent: money(0),
+      cap: money(3_000_000),
+      capSource: "specialist_limit",
+    });
+    addTask(harness, "t_tight", "Write the Elo tool with tests", {
+      ...extra,
+      estimate: money(200_000),
+      budget: money(250_000),
+      actual: money(100_000),
+      spent: money(100_000),
+      cap: money(150_000),
+      capSource: "task_budget",
+    });
+    const check = await harness.client.startCheck("proj_atlas");
+    const priced = (id: string) =>
+      [...check.runnable, ...check.overBudget].find((r) => r.taskId === id)?.estimate.usdMicro;
+    const whole = harness.daemon.state.tasks.find((t) => t.id === "t_whole");
+    if (!whole) throw new Error("no t_whole");
+    // As the runtime's estimate: the work part (the task's own estimate) and its review part.
+    const review = reviewPartUsdMicro({
+      specialist: "coder",
+      risk_tier: whole.riskTier,
+      outcome: whole.outcome,
+      acceptance_criteria: whole.acceptanceCriteria,
+    });
+    expect(review).toBeGreaterThan(0);
+    expect(priced("t_whole")).toBe(60_000 + review);
+    // Never more than what is left of its budget (the budget less its one figure).
+    expect(priced("t_tight")).toBe(150_000);
+    // Continue at its budget: the budget grows by what the button names from the total, and
+    // the cap is the budget less the total.
+    const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+    if (!t3) throw new Error("no task_3");
+    t3.status = "needs_human";
+    t3.budget = money(500_000);
+    t3.actual = money(520_000);
+    t3.spent = money(520_000);
+    t3.capSource = "task_budget";
+    harness.daemon.state.requests.unshift({
+      id: "req_ba10",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: "task_3",
+      taskTitle: t3.title,
+      sessionId: "sess_1",
+      kind: "approval",
+      why: `"${t3.title}" paused at its budget of CHF 0.40.`,
+      steps: [],
+      options: ["Continue (CHF 0.40 more)", "Cancel task"],
+      blocking: true,
+      risk: "medium",
+      changeCard: {
+        key: "task:budget_stop",
+        task_id: "task_3",
+        source: "task_budget",
+        cap_usd_micro: 500_000,
+        spent_usd_micro: 520_000,
+        continue_usd_micro: 500_000,
+        chf_per_usd: 0.8,
+        applied_at: null,
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-11-16T06:18:00.000Z",
+      version: 1,
+    } as never);
+    await harness.client.answerRequest("req_ba10", {
+      version: 1,
+      answer: "Continue (CHF 0.40 more)",
+    } as never);
+    const after = (await harness.client.tasks("proj_atlas")).find((t) => t.id === "task_3");
+    expect(after?.budget.usdMicro).toBe(1_020_000);
+    expect(after?.cap.usdMicro).toBe(500_000);
+    if (!after) throw new Error("no task_3 row");
+    expect(after.spent?.usdMicro).toBe(after.actual.usdMicro);
   });
 });

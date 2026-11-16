@@ -704,3 +704,59 @@ describe("agent loop: the stop reason and the thinking request", () => {
     expect(provider.calls.map((c) => c.request.max_tokens)).toEqual([1024, 4096]);
   });
 });
+
+/**
+ * d1116-budget-all, run C (BA-3): a first call refused at its run's cap returns the precheck's
+ * estimate with the error, so a review refused that way can say what it needs on its card.
+ */
+describe("d1116-budget-all, run C: a refused call's estimate reaches the run's error (BA-3)", () => {
+  it("a first call refused at its run cap returns RunResult.error.estimateUsdMicro equal to the precheck's estimate", async () => {
+    const h = harness();
+    const provider = new ScriptedProvider([{ text: "never sent" }], h.clock);
+    const events: RunEvent[] = [];
+    const res = await driver(h).run({
+      token: issue(h, { budgetUsdMicro: 500 }),
+      budget: budget("sess-1", 5_000_000, h.clock),
+      provider,
+      model: "fake-haiku",
+      billingSourceId: "bs",
+      system: "s",
+      messages: [{ role: "user", content: "one call" }],
+      tools: registry(),
+      pricing: flatPricing,
+      maxTokensPerCall: 1_000,
+      timeoutMs: 60_000,
+      phase: "review",
+      onEvent: (e) => events.push(e),
+    });
+    expect(res.outcome).toBe("budget_exceeded");
+    expect(res.modelCalls).toBe(0);
+    expect(res.error?.level).toBe("run");
+    expect(res.error?.capUsdMicro).toBe(500);
+    expect(events.some((e) => e.type === "model_call_start")).toBe(false);
+    expect(provider.calls).toHaveLength(0);
+    // The same request under a cap that holds it: its first call's estimate is the one refused.
+    const allowed: RunEvent[] = [];
+    await driver(h).run({
+      token: issue(h, { budgetUsdMicro: 5_000_000 }),
+      budget: budget("sess-2", 5_000_000, h.clock),
+      provider,
+      model: "fake-haiku",
+      billingSourceId: "bs",
+      system: "s",
+      messages: [{ role: "user", content: "one call" }],
+      tools: registry(),
+      pricing: flatPricing,
+      maxTokensPerCall: 1_000,
+      timeoutMs: 60_000,
+      phase: "review",
+      onEvent: (e) => allowed.push(e),
+    });
+    const first = allowed.find((e) => e.type === "model_call_start");
+    expect(first?.type === "model_call_start" ? first.estimateUsdMicro : -1).toBe(
+      res.error?.estimateUsdMicro,
+    );
+    // flatPricing: one micro-USD a token, so the estimate is the input plus the 1,000 output.
+    expect(res.error?.estimateUsdMicro).toBeGreaterThan(1_000);
+  });
+});

@@ -174,7 +174,13 @@ describe("person-level session log (design §3.7)", () => {
       replies: [sentBack(), sentBack(), sentBack(), sentBack(), closingReply()],
     });
     try {
-      const task = await w.addTask("Style the page in styles.css", { specialist: "designer" });
+      // d1116-budget-all: the stand-in executor spends USD 0.30 a run and never stops at a cap;
+      // with reviews counted at the task's budget, four tries and their reviews need a budget
+      // that holds them (the log of the tries, not the budget, is what this case reads).
+      const task = await w.addTask("Style the page in styles.css", {
+        specialist: "designer",
+        budget_usd_micro: 5_000_000,
+      });
       const done = doneExecutor(w);
       let attempt = 0;
       const result = await w.start(
