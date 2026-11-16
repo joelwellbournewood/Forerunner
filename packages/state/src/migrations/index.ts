@@ -11,6 +11,7 @@ import { MIGRATION_0006 } from "./0006-merge-records.ts";
 import { MIGRATION_0007 } from "./0007-take-out.ts";
 import { MIGRATION_0008 } from "./0008-rebuild-owed.ts";
 import { MIGRATION_0009 } from "./0009-change-source-session.ts";
+import { MIGRATION_0010 } from "./0010-task-spent-all.ts";
 import { createTableSql } from "./generate.ts";
 import type { Migration } from "./types.ts";
 
@@ -33,6 +34,7 @@ export {
   MIGRATION_0007,
   MIGRATION_0008,
   MIGRATION_0009,
+  MIGRATION_0010,
 };
 
 const logger = log("state:migrations");
@@ -48,6 +50,7 @@ export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_0007,
   MIGRATION_0008,
   MIGRATION_0009,
+  MIGRATION_0010,
 ];
 
 const MIGRATIONS_TABLE = "schema_migrations";

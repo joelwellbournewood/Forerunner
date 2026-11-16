@@ -4564,6 +4564,30 @@ export class SessionRunner {
       );
       return started;
     };
+    // d1116-budget-all (the owner's "yes it should count critics reviews, and fixes."): each
+    // of the review's model calls is added to the task's own figure as it ends, as each of the
+    // work's calls is (W15-21, `recordStep`), one after the other; every branch below waits for
+    // them, so the verdict, a refusal's pause and a failure's card all read the whole figure.
+    // Booking never moves the task's version (`task.addCost`), and the review's total
+    // (`outcome.costUsdMicro`) or a refusal's `spentUsdMicro` is never added again.
+    let booked: Promise<void> = Promise.resolve();
+    const taskId = request.task.id;
+    const store = this.deps.store;
+    const bookReview = (usdMicro: number) => {
+      const cost = Math.max(0, Math.round(usdMicro));
+      if (cost <= 0) return;
+      booked = booked
+        .then(() => store.task.addCost(taskId, cost))
+        .then(
+          () => {},
+          (e: unknown) =>
+            this.logger.warn("a review call's cost was not added to its task", {
+              taskId,
+              usdMicro: cost,
+              error: errorMessage(e),
+            }),
+        );
+    };
     let outcome: TaskReviewOutcome;
     try {
       outcome = await critic.reviewTask({
@@ -4571,8 +4595,10 @@ export class SessionRunner {
         onStarted: () => {
           void sayStarted();
         },
+        onCost: bookReview,
       });
     } catch (e) {
+      await booked;
       await started;
       // A limit or a credential refused the review before its verdict: the caller pauses the
       // task or lets it wait (no verdict, no failed try).
@@ -4581,6 +4607,9 @@ export class SessionRunner {
       // The caller files the card and reports it (U-045).
       return { failed: true, error: errorMessage(e) };
     }
+    await booked;
+    // The row after the verdict, with every review call booked on it.
+    outcome = { ...outcome, task: (await store.task.get(taskId)) ?? outcome.task };
     await sayStarted();
     // A run that said it could not do the work: the verdict's line quotes it, so the session log
     // tells the attempt in one line (design §5, "Log line").

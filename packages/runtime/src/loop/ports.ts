@@ -67,6 +67,13 @@ export interface TaskReviewRequest {
    * call never calls it, so no line says a review started that never ran.
    */
   onStarted?: () => void;
+  /**
+   * d1116-budget-all (the owner's "yes it should count critics reviews, and fixes."): called
+   * with each model call's cost as the call ends, a call a stop cut off included, so the runner
+   * adds the review to the task's own figure (`task.addCost`) as it adds the work's calls. The
+   * review's total (`TaskReviewOutcome.costUsdMicro`) is never added again.
+   */
+  onCost?: (usdMicro: number) => void;
 }
 
 export interface TaskReviewOutcome {

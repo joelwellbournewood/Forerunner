@@ -40,7 +40,7 @@ import {
 } from "@forerunner/platform";
 import type { JsonObject, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
-import type { LoopAgentDriver, RunPricing } from "../agent/loop.ts";
+import type { LoopAgentDriver, RunEvent, RunPricing } from "../agent/loop.ts";
 import type { ToolSpec } from "../agent/tools.ts";
 import type { ContextManager } from "../context/manager.ts";
 import { fileTools } from "../daemon/tools.ts";
@@ -703,10 +703,14 @@ export class CriticLoop implements CriticPort {
           ...(root && readTools.length ? { project: { root, tools: readTools } } : {}),
           // L3-run-10: the review started once its first model call is under way (the
           // limits allowed it); a review refused before that call never says it started.
-          ...(req.onStarted
+          // d1116-budget-all: each call's cost reaches the task as the call ends (a call a stop
+          // cut off, `CUT_OFF_STOP_REASON`, is booked and counts too).
+          ...(req.onStarted || req.onCost
             ? {
-                onEvent: (ev: { type: string }) => {
+                onEvent: (ev: RunEvent) => {
                   if (ev.type === "model_call_start") req.onStarted?.();
+                  else if (ev.type === "model_call_end" && ev.costUsdMicro > 0)
+                    req.onCost?.(ev.costUsdMicro);
                 },
               }
             : {}),

@@ -13040,18 +13040,19 @@ describe("w15-run, wave 15", () => {
       );
       const done = await row();
       expect(done?.status).toBe("done");
-      // No double count: the task's actual is its work run's total.
+      // No double count (d1116-budget-all: the owner's "yes it should count critics reviews,
+      // and fixes."): the task's actual is the sum of all its Run rows, its work and its
+      // reviews, each counted once.
       const runs = await rt.store.run.forTask(taskId);
-      const work = runs.filter((r) => r.specialist !== "critic");
       const reviews = runs.filter((r) => r.specialist === "critic");
       expect(reviews.length).toBeGreaterThan(0);
-      expect(done?.actual.usdMicro).toBe(work.reduce((s, r) => s + r.cost_usd_micro, 0));
+      expect(done?.actual.usdMicro).toBe(runs.reduce((s, r) => s + r.cost_usd_micro, 0));
       // The row, the drawer and Costs > By task show one figure, reviews included.
       const costs = await client.costs({ projectId: project.id });
       const byTask = JSON.stringify(costs);
       const ledger = await rt.store.costLedger.sum({ taskId });
       expect(done?.spent?.usdMicro).toBe(ledger.usd_micro);
-      expect(done?.spent?.usdMicro ?? 0).toBeGreaterThan(done?.actual.usdMicro ?? 0);
+      expect(done?.actual.usdMicro).toBe(done?.spent?.usdMicro);
       expect((await client.task(taskId)).task.spent?.usdMicro).toBe(ledger.usd_micro);
       expect(byTask).toContain(taskId);
     } finally {
