@@ -44,6 +44,7 @@ import { createSecretStoreRoutes } from "../secrets/store-routes.ts";
 import { CODE_COMMANDS_DEFAULT } from "../session/billing.ts";
 import { grantForStart, recordWait } from "../session/credential-ask.ts";
 import { needsOf } from "../session/credential-choice.ts";
+import { sessionSwitches, switchSpend } from "../session/credential-switch.ts";
 import { CREDENTIAL_WAIT_STOP } from "../session/credential-wait.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { isPersonTask } from "../session/person-questions.ts";
@@ -175,6 +176,7 @@ import type { RuntimeApp } from "./compose.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
 import { createCredentialPolicyRoutes } from "./credential-policy-routes.ts";
+import { resultSwitchLine, sessionSwitchLine } from "./credential-policy-view.ts";
 import { planCredentialLine, startCredential } from "./credential-start.ts";
 import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
@@ -2041,6 +2043,31 @@ export function createDaemonApp(
       budgetLeft,
     };
   };
+  /**
+   * C5-left-1, CS-6 (d1109-cred-screens): the session page's line of a session that moved to
+   * another credential, from its log's first switch and the ledger: under the spend while it
+   * works ('On your API key since 14:20 (your subscription's limit): CHF 0.42 so far.'), its
+   * result line once it ended ('Your API key took over at 14:20 (...): CHF 0.42 of CHF 0.62.');
+   * null for a session that never moved.
+   */
+  const switchLineOf = async (s: SessionRow, spentChfMicro: number): Promise<string | null> => {
+    const { first } = await sessionSwitches(rt.store, s.id);
+    if (!first) return null;
+    const onIt = await switchSpend(rt.store, s.id, first);
+    const tz = (await rt.store.human.get(rt.human.id).catch(() => undefined))?.timezone;
+    const opts = { ...(tz ? { timezone: tz } : {}), nowMs: rt.clock.now() };
+    const from = { kind: first.from, reason: first.stop };
+    return s.ended_at
+      ? resultSwitchLine(
+          first.to,
+          from,
+          first.at,
+          formatChf(onIt.chfMicro),
+          formatChf(spentChfMicro),
+          opts,
+        )
+      : sessionSwitchLine(first.to, from, first.at, formatChf(onIt.chfMicro), opts);
+  };
   const liveSessionView = async (s: SessionRow) => {
     const name = (await rt.store.agent.get(s.agent_id))?.name ?? s.agent_id;
     // d1109-run-visible: the newest task event only (the run indicator's read), not the whole log.
@@ -2073,7 +2100,8 @@ export function createDaemonApp(
       s.ended_at ?? s.created_at,
       view.summary,
     ).catch(() => view.summary);
-    return { ...view, summary, waitBlock };
+    const switchLine = await switchLineOf(s, view.spent.chfMicro).catch(() => null);
+    return { ...view, summary, waitBlock, switchLine };
   };
 
   app.get("/sessions/:id/events", async (c) => {

@@ -243,6 +243,19 @@ export function credentialStopOfRun(run: {
 }
 
 /**
+ * C5-left-1 (CE-11): whether the task's last worker run (before `currentRunId`) was stopped by
+ * its Claude credential, so the run that follows goes on "from where it stopped".
+ */
+export async function lastRunCredentialStopped(
+  store: StateStore,
+  taskId: string,
+  currentRunId?: string,
+): Promise<boolean> {
+  const previous = (await workerRuns(store, taskId)).find((r) => r.id !== currentRunId);
+  return !!previous && credentialStopOfRun(previous) !== null;
+}
+
+/**
  * OP-3: the project's checks on the kept work when the last run stopped (`RunKept.checks`), for
  * the run that continues it: 'When it stopped, the project's checks on its work passed: build,
  * test.', or 'When it stopped, the project's checks on its work: test failed.' with the end of

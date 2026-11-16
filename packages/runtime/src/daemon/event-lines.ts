@@ -579,6 +579,11 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
     // U-078 (ADR 0100): a credential met its usage limit; the sentence says what took over.
     case "billing.fallback":
       return s("sentence") || "A Claude credential reached its usage limit; the next one is used.";
+    // C5-left-1 (CE-11): a run went to another credential, and the first choice served again.
+    case "billing.switch":
+      return s("sentence") || "The work goes on with another Claude credential.";
+    case "billing.back":
+      return s("sentence") || "Your first choice can work again; the next tasks use it.";
     case "peers.feed": {
       const peers = list(p, "peers").filter((x): x is Payload => !!x && typeof x === "object");
       if (peers.length === 0) return "No other agent works on this project right now.";

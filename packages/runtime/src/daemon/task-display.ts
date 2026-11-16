@@ -1,4 +1,9 @@
-import { type BillingSource, type BillingSourceKind, nextMonthStartIso } from "@forerunner/billing";
+import {
+  type BillingSource,
+  type BillingSourceKind,
+  formatChf,
+  nextMonthStartIso,
+} from "@forerunner/billing";
 import { isAbsolute } from "@forerunner/platform";
 import type {
   EventRow,
@@ -21,6 +26,7 @@ import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
 import { planUsageOf, waitingOf } from "../wiring/billing-pick.ts";
 import type { TaskCheck, TaskDetailView, TaskReviewEvidence, TaskView } from "./api-types.ts";
+import { drawerRunLine } from "./credential-policy-view.ts";
 import { verdictWords } from "./event-lines.ts";
 import {
   findingAsk,
@@ -593,8 +599,22 @@ export async function taskDetail(
         r.id,
         (await store.billingSource.get(r.billing_source_id).catch(() => undefined))?.kind ?? null,
       );
+  // C5-left-1, CS-6 (d1109-cred-screens): a run the policy moved to another credential says so
+  // ('On your API key after your subscription's limit · CHF 0.43'), from its Run row's
+  // `switchedFrom` and the kind of the source it ran on.
+  const switchedRuns = runRows.filter((r) => switchedFromOf(r.artifacts) !== null);
+  const sourceKinds = new Map<string, string>();
+  if (switchedRuns.length)
+    for (const src of await store.billingSource.list({} as never, { limit: 100 }).catch(() => []))
+      sourceKinds.set(src.id, src.kind);
   const runs = runRows.map((r) => {
     const got = reports.get(r.id);
+    const from = switchedFromOf(r.artifacts);
+    const to = r.billing_source_id ? sourceKinds.get(r.billing_source_id) : undefined;
+    const switchLine =
+      from && to
+        ? drawerRunLine(to, from, formatChf(money(r.cost_usd_micro, chfPerUsd).chfMicro))
+        : null;
     const work = isWorkRun(r);
     const stoppedReview = !work && STOPPED_OUTCOMES.has(r.outcome);
     const web = runWebSources(r.artifacts);
@@ -615,6 +635,7 @@ export async function taskDetail(
       files: got?.files ?? [],
       sessionId: r.session_id,
       ...(web.length ? { webSources: web } : {}),
+      ...(switchLine ? { switchLine } : {}),
     };
   });
   const latest = await store.review.latestForTask(task.id);
@@ -639,4 +660,21 @@ export async function taskDetail(
     question: plainReason(r.why.split(/\r?\n/)[0] ?? r.why, 160),
   }));
   return { task: view, waitsOn, waitedOnBy, runs, review, cards };
+}
+
+/** C5-left-1 (CE-11): the stopped credential a Run row's `switchedFrom` artifact names. */
+export function switchedFromOf(
+  artifacts: unknown,
+): { kind: string; reason: "limit" | "refused" | "share" | "key_month" } | null {
+  for (const a of Array.isArray(artifacts) ? artifacts : []) {
+    const sw = (a as { switchedFrom?: { kind?: unknown; stop?: unknown } } | null)?.switchedFrom;
+    if (!sw || typeof sw.kind !== "string") continue;
+    const stop = sw.stop;
+    return {
+      kind: sw.kind,
+      reason:
+        stop === "refused" || stop === "share" || stop === "key_month" ? stop : ("limit" as const),
+    };
+  }
+  return null;
 }

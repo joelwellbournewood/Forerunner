@@ -9,6 +9,7 @@ import {
   type CredentialPolicy,
   credentialPolicyOf,
   DEFAULT_ROUTING_POLICY,
+  grantOf,
   monthWindow,
   type RouteSkip,
   type RoutingPolicy,
@@ -24,6 +25,7 @@ import { restUntil } from "../provider/usage-limit.ts";
 import {
   type CredentialAbilities,
   type PlanUsage,
+  type RunSwitch,
   TASK_NEEDS,
   type TaskBillingPick,
   type TaskBillingPort,
@@ -739,6 +741,32 @@ export class RouterTaskBilling implements TaskBillingPort {
     const status = await this.probe.status(source);
     if (!status.available) return null;
     return stopOf(source, status, this.opts.clock.now(), this.policy.planShareCap);
+  }
+
+  /**
+   * C5-left-1 (CE-11): the switch `pick` makes: the person's first choice is stopped now and the
+   * pick went to another kind (by the policy's 'next', or the person's yes for this stop: a
+   * grant on the stopped source). Null when the pick is the first choice or the first serves.
+   */
+  async switchOf(pick: TaskBillingPick): Promise<RunSwitch | null> {
+    const first = await this.firstChoiceStop();
+    if (!first || first.kind === pick.source.kind || !first.stopKey) return null;
+    const row = await this.opts.store.billingSource.get(first.sourceId).catch(() => null);
+    const grant = grantOf((row?.limits as JsonObject | undefined)?.grant);
+    const reason = first.reason === "needs" ? (first.stop ?? "limit") : first.reason;
+    return {
+      from: first.kind,
+      fromSourceId: first.sourceId,
+      to: pick.source.kind,
+      toSourceId: pick.source.id,
+      stop: reason === "refused" || reason === "share" || reason === "key_month" ? reason : "limit",
+      until: first.until ?? null,
+      stopKey: first.stopKey,
+      by:
+        grant && grant.stopKey === first.stopKey && grant.to === pick.source.kind
+          ? "grant"
+          : "policy",
+    };
   }
 
   /**

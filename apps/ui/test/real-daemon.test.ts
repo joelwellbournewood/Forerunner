@@ -8314,10 +8314,19 @@ describe("the UI client against the real daemon: a Claude credential at its limi
       await addTask(client, project.id, "Write the note");
       const sessionId = await runToEnd(client, project.id);
       expect((await client.tasks(project.id)).map((t) => t.status)).toEqual(["done"]);
-      const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
-      expect(lines).toContain(
-        'Your Claude subscription reached its usage limit; "Write the note" continues on your API key now.',
+      // C5-left-1 (d1109-cred-screens, CE-11): the switch's line, once, from the run that goes
+      // on (before: 'Your Claude subscription reached its usage limit; "Write the note"
+      // continues on your API key now.').
+      const events = await client.sessionEvents(sessionId);
+      const switched = events
+        .filter((e) => e.audience !== "detail")
+        .map((e) => e.text)
+        .filter((l) => l.includes("goes on with your API key"));
+      expect(switched).toHaveLength(1);
+      expect(switched[0]).toMatch(
+        /^"Write the note" goes on with your API key from where it stopped: your subscription is at its limit until \d\d:\d\d\.$/,
       );
+      expect(events.some((e) => e.text.includes("continues on your API key now"))).toBe(false);
     } finally {
       await rt.close();
     }
@@ -22336,10 +22345,40 @@ describe("d1109-cred-screens, run C", () => {
       expect(card?.outcome).toBe(
         "Your API key does the work until 11:40; your session goes on now.",
       );
+      // C5-left-1 (C5's review: before, the log said only 'The session started with a budget
+      // of CHF 5.00.'): the session that went on says the work ran on the key and why, once.
+      const later = (await first.rt.store.session.forProject(project.id, { limit: 10 })).filter(
+        (s) => s.id !== sessionId,
+      );
+      const lines: string[] = [];
+      for (const s of later)
+        for (const e of await client.sessionEvents(s.id))
+          if (e.type === "billing.switch" && e.audience !== "detail") lines.push(e.text);
+      expect(lines).toEqual([
+        '"Style the page" goes on with your API key from where it stopped: your subscription is at its limit until 11:40, and you said yes.',
+      ]);
+      // CS-6: the session that went on says so under its spend, and the drawer's run on the key.
+      await settleSessions(first.rt);
+      const went = await client.session(later[0]?.id ?? "");
+      expect(went.switchLine).toMatch(
+        /^Your API key took over at \d\d:\d\d \(your subscription's limit\): (CHF \d+\.\d\d|less than CHF 0\.01) of (CHF \d+\.\d\d|less than CHF 0\.01)\.$/,
+      );
+      const styleId = (await client.tasks(project.id)).find(
+        (t) => t.title === "Style the page",
+      )?.id;
+      const runLines = (await client.task(styleId ?? "")).runs
+        .map((r) => r.switchLine)
+        .filter(Boolean);
+      expect(runLines.length).toBeGreaterThan(0);
+      for (const l of runLines)
+        expect(l).toMatch(
+          /^On your API key after your subscription's limit · (CHF \d+\.\d\d|less than CHF 0\.01)$/,
+        );
+      expect((await client.session(sessionId)).switchLine).toBeNull();
       const source = (
         await first.rt.store.billingSource.list({ human_id: first.rt.human.id }, { limit: 10 })
       ).find((r) => r.kind === "subscription");
-      expect((source?.limits as { grant?: { by?: string } }).grant?.by).toBe("start");
+      expect((source?.limits as { grant?: { by?: string } } | undefined)?.grant?.by).toBe("start");
     } finally {
       await settleSessions(first.rt);
       await first.rt.close();

@@ -297,6 +297,8 @@ export function fakeTaskDetail(
     files?: string[];
     /** The pages a research run read (ADR 0107), as the daemon reads them from the Run row. */
     webSources?: { url: string; title: string | null; refused: string | null }[];
+    /** C5-left-1, CS-6: a run the policy moved to another credential (the daemon's words). */
+    switchLine?: string;
     /** Why a review stopped before its verdict, as the daemon words it (`reviewStopWords`). */
     stoppedBecause?: string;
   }[],
@@ -348,6 +350,7 @@ export function fakeTaskDetail(
         files: review ? [] : (r.files ?? ["index.html"]),
         ...(r.sessionId ? { sessionId: r.sessionId } : {}),
         ...(r.webSources?.length ? { webSources: r.webSources } : {}),
+        ...(r.switchLine ? { switchLine: r.switchLine } : {}),
       };
     }),
     review:

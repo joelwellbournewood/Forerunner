@@ -512,6 +512,16 @@ export function SessionPage() {
               label="Spent of this session's budget"
               testId="session-spend"
             />
+            {/* C5-left-1, CS-6: the session moved to another credential: since when, why and
+                what it spent on it (the daemon's words, from the ledger). */}
+            {session.switchLine ? (
+              <p
+                className="text-xs text-neutral-600 dark:text-neutral-400"
+                data-testid="session-switch-line"
+              >
+                {session.switchLine}
+              </p>
+            ) : null}
           </div>
         </div>
         {pullRequests.length > 0 ? (

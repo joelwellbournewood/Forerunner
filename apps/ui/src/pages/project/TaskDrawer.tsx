@@ -359,6 +359,16 @@ function RunEntry({ run: r, task, live }: { run: DrawerRun; task: TaskView; live
           </>
         ) : null}
       </div>
+      {/* C5-left-1, CS-6: a run the policy moved to another credential says on which, why
+          and what it spent. */}
+      {r.switchLine ? (
+        <p
+          className="mt-1 text-xs text-neutral-600 dark:text-neutral-400"
+          data-testid="drawer-run-switch"
+        >
+          {r.switchLine}
+        </p>
+      ) : null}
       {live && r.sessionId ? <LiveSteps sessionId={r.sessionId} taskId={task.id} /> : null}
       {r.report ? <RichText text={r.report} className="mt-1" /> : null}
       {r.fullReport ? (

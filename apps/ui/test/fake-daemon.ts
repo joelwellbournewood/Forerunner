@@ -547,6 +547,8 @@ export interface FakeDaemonState {
     files?: string[];
     webSources?: { url: string; title: string | null; refused: string | null }[];
     stoppedBecause?: string;
+    /** C5-left-1, CS-6: a run the policy moved to another credential (the daemon's words). */
+    switchLine?: string;
   })[];
   /**
    * What the critic's last review of a task ran and tried (ADR 0104), by task id; a done task

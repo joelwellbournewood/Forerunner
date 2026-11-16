@@ -610,6 +610,12 @@ export const TaskDetailView = z.object({
           }),
         )
         .optional(),
+      /**
+       * C5-left-1, CS-6 (d1109-cred-screens): a run the policy moved to another credential than
+       * the stopped first choice: 'On your API key after your subscription's limit · CHF 0.43'.
+       * Absent for any other run, and from an older daemon.
+       */
+      switchLine: z.string().optional(),
     }),
   ),
   /** The critic's last review in words, null when none. */
@@ -761,6 +767,14 @@ export const SessionView = z.object({
    * with `continues` and what is left of its budget). Null when it did not end so, or once a later
    * session of its project began. Absent from an older daemon.
    */
+  /**
+   * C5-left-1, CS-6 (d1109-cred-screens): a session that moved to another credential than the
+   * stopped first choice, from its log's first switch and the ledger: 'On your API key since
+   * 14:20 (your subscription's limit): CHF 0.42 so far.' while it works, 'Your API key took over
+   * at 14:20 (your subscription's limit): CHF 0.42 of CHF 0.62.' once it ended; null when it
+   * never moved. Absent from an older daemon.
+   */
+  switchLine: z.string().nullable().optional(),
   waitBlock: z
     .object({
       state: z.enum(["goes_on", "starts_again", "stopped"]),

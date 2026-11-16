@@ -27,8 +27,11 @@ import {
   stoppedNowLine,
   useApiKeyExplain,
 } from "../src/daemon/credential-policy-view.ts";
+import { eventAudience } from "../src/daemon/event-audience.ts";
 import { projectStatusLine } from "../src/daemon/project-status.ts";
+import { describeEvent } from "../src/daemon/views.ts";
 import { waitRowWords } from "../src/session/credential-wait.ts";
+import { backLogLine, switchRunLine } from "../src/session/credential-words.ts";
 
 /**
  * d1109-cred-screens (run C, C6; ADR 0120 amended 2026-11-16): every screen sentence of "which
@@ -366,5 +369,44 @@ describe("d1109-cred-screens, run C (CS-5): every stop and the question in rows 
       to: "/settings#plan-allowance",
     });
     expect(waiting.text).not.toContain("0 of 2 done");
+  });
+});
+
+describe("d1109-cred-screens, run C (C5-left-1): the switch's session log lines", () => {
+  const sw = { from: "subscription", to: "api_key", stop: "limit", by: "policy" } as const;
+  it("the run that goes on, a task that starts on the key, the person's yes and the back line", () => {
+    expect(switchRunLine("Style the page", sw, "15:40", true)).toBe(
+      '"Style the page" goes on with your API key from where it stopped: your subscription is at its limit until 15:40.',
+    );
+    expect(switchRunLine("Write the copy", sw, "15:40", false)).toBe(
+      '"Write the copy" runs on your API key: your subscription is at its limit until 15:40.',
+    );
+    expect(switchRunLine("Style the page", { ...sw, by: "grant" }, "15:40", true)).toBe(
+      '"Style the page" goes on with your API key from where it stopped: your subscription is at its limit until 15:40, and you said yes.',
+    );
+    expect(switchRunLine("Style the page", { ...sw, stop: "refused" }, null, true)).toBe(
+      '"Style the page" goes on with your API key from where it stopped: Anthropic refused your Claude sign-in.',
+    );
+    expect(
+      switchRunLine(
+        "Style the page",
+        { from: "api_key", to: "subscription", stop: "key_month", by: "policy" },
+        "Tue 1 Dec",
+        false,
+      ),
+    ).toBe(
+      '"Style the page" runs on your Claude subscription: your API key is at its monthly cap until Tue 1 Dec.',
+    );
+  });
+
+  it("the log shows the first switch of a stop to the person and a later task's as a detail", () => {
+    const payload = { sentence: switchRunLine("A", sw, "15:40", true) };
+    expect(describeEvent("billing.switch", payload, 1)).toBe(payload.sentence);
+    expect(eventAudience("billing.switch", payload)).toBe("person");
+    expect(eventAudience("billing.switch", { ...payload, repeat: true })).toBe("detail");
+    expect(describeEvent("billing.back", { sentence: backLogLine("subscription") }, 1)).toBe(
+      "Your Claude subscription can work again; the next tasks use it.",
+    );
+    expect(eventAudience("billing.back", {})).toBe("person");
   });
 });

@@ -259,6 +259,31 @@ export function switchLogLine(
   return `"${title}" goes on with ${yourCredential(to)} from where it stopped: ${shortStopped(wait, until)}.`;
 }
 
+/**
+ * C5-left-1 (CE-11): the session log's line of a run that went to another credential: the run
+ * that goes on with a task its credential stopped reads `switchLogLine`; a task that starts on
+ * it reads '"B" runs on your API key: your subscription is at its limit until 15:40.'. After the
+ * person's yes for this stop (the ask card, the Start dialog's Use API key) the line says so:
+ * '..., and you said yes.' (C5's review: before, the log never said why the work ran on the key).
+ */
+export function switchRunLine(
+  title: string,
+  sw: {
+    to: BillingSourceKind | string;
+    from: BillingSourceKind;
+    stop: "limit" | "refused" | "share" | "key_month";
+    by: "policy" | "grant";
+  },
+  until: string | null,
+  continues: boolean,
+): string {
+  const wait = { reason: sw.stop, kind: sw.from } as const;
+  const line = continues
+    ? switchLogLine(title, sw.to, wait, until)
+    : `"${title}" runs on ${yourCredential(sw.to)}: ${shortStopped(wait, until)}.`;
+  return sw.by === "grant" ? `${line.slice(0, -1)}, and you said yes.` : line;
+}
+
 /** The line when the first choice serves again in a session that moved (once per stop). */
 export function backLogLine(kind: BillingSourceKind | string): string {
   return `${capital(yourCredential(kind))} can work again; the next tasks use it.`;
