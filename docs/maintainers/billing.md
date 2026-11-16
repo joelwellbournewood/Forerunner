@@ -283,9 +283,10 @@ session, task, run and month caps as the ledger says, and the plan level is chec
 ### A longer chat answer's budget (d1109-chat-depth, ADR 0091 amended)
 
 A chat answer that thinks longer (`packages/runtime/src/conversation/agent.ts`) runs within its
-own `SessionBudget`: min(the person's `chat_ask_above` at the day's rate, its "at most", the
-outer room) when it goes ahead without asking, min(the "at most" its ask line named, the room)
-after a yes. "At most" is twice the estimate rounded up to the centime; the estimate is the
+own `SessionBudget`: min(the person's `chat_ask_above` at the day's rate, the outer room) when it
+goes ahead without asking (fixup-d1109-chat-depth: before, also twice the median, so cheap past
+answers made a pass wrap up early), min(the "at most" its ask line or Think it through's press
+named, the room) after a yes. "At most" is twice the estimate rounded up to the centime; the estimate is the
 median cost of the last 20 answers on that rung and model, else five worst cases of the pass's
 first call; the floor is three worst cases (below it nothing runs). The outer room is
 `CapChecker.room` over the month cap and the project's budget (the smaller names the cap line).

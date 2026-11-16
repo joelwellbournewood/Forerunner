@@ -212,3 +212,26 @@ warn/ask first. Model: whatever is appropriate."
   that (`ConversationDeps.chatRoom` reads both). Should longer answers count only against the
   monthly cap? The answer changes one place: drop the project's budget from the compose's
   `chatRoom`.
+
+## Amendment 2026-11-16: a record in the facts asks, it does not refuse (fixup-d1109-chat-depth)
+
+The review of d1109-chat-depth walked U-094 in a project whose task had failed: the question
+"why does "<that task>" keep failing and what should I change?" never got the stronger model's
+ask line. The task's retry card is listed in full while it blocks and quotes the coder's words, so
+the facts carried a record (`recordsRead`) and the gate refused every hand-over ("Not now: this
+turn already read records."). The owner asked for "more effort or a better model, selectively",
+and a failure is the stronger rung's first use.
+
+- **The rule now.** A record in the facts (a card listed in full in words Forerunner did not write)
+  refuses only a pass that would go ahead without the person's yes. A pass that asks first (any
+  switch of model, an estimate above the person's amount, a credential that is not their first)
+  asks: an ask spends nothing and the yes is the person's, so a record still never starts a
+  spend by itself. The facts' `thinking_longer` says "asks the person first" on such a turn.
+- **Unchanged.** A lookup or a command before the hand-over, a "quick" line, a spoken turn, and
+  anything the injection scan flags this turn (the facts, the history, a tool result) refuse every
+  hand-over, the stronger one too, with no ask. The model can never pick the best rung, whatever a
+  record's words say.
+- **Also settled in the fixup.** A pass that goes ahead without asking is held at the person's
+  amount within the outer room (as decided above; the build had also capped it at twice the
+  median). A typed "yes" after a newer ask line answers that line, not an older read-back card
+  still waiting. Think it through is never offered under a turn whose command tools ran.

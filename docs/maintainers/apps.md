@@ -391,7 +391,10 @@ the store's `live` keeps the turn's id, step, start and depth. The agent's bubbl
 **Stop** (title "Stops this answer. Changes it already made stay, each with Undo.",
 `POST /chat/turns/:id/stop`), and a longer answer also has **Answer now**. A reload, or the other
 surface, shows the same from the view's `answering` (the person's line with the waiting line and
-Stop), and `conversation.changed` re-reads a conversation the store shows. Under an answer:
+Stop), and `conversation.changed` re-reads a conversation the store shows. Stop is a button of its
+own (`type="button"`): Enter in the input while an answer is made neither stops it nor drops the
+line typed meanwhile (fixup-d1109-chat-depth; before, Stop was the form's submit button). The
+seconds tick from the UI clock (`useNow(systemClock)`). Under an answer:
 its footer ("Thought it through with Sonnet · 34 s · CHF 0.06", "You stopped this answer: CHF 0.02
 spent."), the offer line with **Go ahead** (sends "Go ahead." with `offer`) or **Think it
 through** with its consequence line (sends "Think it through." with `depth: "longer"` and
@@ -402,7 +405,10 @@ again**. A reply that is its changes' sentences joined shows them once (L3-left-
 `chat-depth.test.tsx`, `e2e/chat.spec.ts` (the waiting line and Stop). Settings, Basics: "Chat asks
 first" (`human.chat_ask_above`: "before a stronger model or an answer over CHF 0.10", the line
 "Below that it thinks longer when it helps, on the same model.", any amount with a point or a
-comma, 0 taken; `settings-basics.test.tsx`).
+comma, 0 taken; `settings-basics.test.tsx`). The change dialog reads a description with one
+period, whether or not it ends with one. Settings, Advanced, Models names the longer answers'
+mode "Alice · chat, thorough answers" (`MODE_LABELS.chat_thorough`; before, its raw key;
+`settings-models.test.tsx`).
 
 **Model text** (`components/RichText.tsx`; design §3.7, §3.9, §5 rule 6). Text a model wrote is
 rendered through `RichText`: a chat reply (the streamed one too), the session log lines that end

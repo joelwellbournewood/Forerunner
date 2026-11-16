@@ -639,8 +639,10 @@ switch models and do an expensive task, it should warn/ask first"), global, in
 before every longer answer; a stronger model always asks whatever the amount. Medium risk with
 `narrowingActsAtOnce`: a lower amount (or 0) acts at once with its Undo, a higher one is read
 back. A negative amount is refused in one sentence ("The amount is in CHF, 0 or more: 0 makes
-chat ask before every longer answer."), at most CHF 100. Its words: `chatAskAboveWords` ("asks
-first above CHF 0.10", "asks before every longer answer"). It is appended last to
+chat ask before every longer answer."), at most CHF 100. Its words: `chatAskAboveWords` ("CHF
+0.10", "CHF 0.00, so chat asks before every longer answer"), after its label ("Set the amount
+above which chat asks first from CHF 0.10 to CHF 0.05. Undo."; fixup-d1109-chat-depth: before,
+"asks first above CHF 0.10", so the sentence said "asks first" twice). It is appended last to
 `SETTING_SPECS` (run C's order: start_by_itself, chat_ask_above, credential_policy), so
 `settings_set`'s definition gains its line last. `model-settings.ts` names the `chat_thorough`
 mode "chat's thorough answers". Tests: `commands.test.ts` and `w15-chat.test.ts` ("d1109-chat-depth,

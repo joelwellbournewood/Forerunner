@@ -422,7 +422,10 @@ them as you left them; an open file or task stays on its own tab.
   under an answer. The bubble says what it is doing and for how long, and a longer answer ends
   with one line of its model, time and cost ("Thought it through with Sonnet · 34 s · CHF 0.06").
   **Stopping an answer.** While Chat answers, **Send** becomes **Stop**: the answer ends, what it
-  already changed stays with its Undo, and the line under it says what it cost. A reload shows
+  already changed stays with its Undo, and the line under it says what it cost. Only **Stop**
+  stops it: pressing Enter while you type your next line meanwhile keeps the answer going and
+  your line in the box. When an answer says it changed something that did not change, the
+  bubble says "Checking what changed…" and the untrue words go away. A reload shows
   the same line and Stop; a line Forerunner closed on before answering says so, with **Ask
   again**.
 

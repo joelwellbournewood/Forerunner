@@ -4408,12 +4408,19 @@ if it will switch models and do an expensive task, it should warn/ask first."
   quick turn so the fast request's tools and system are the same bytes whatever the gate says.
   A spoken ask gets `VOICE_THOROUGH_NOTICE` and no model call.
 - *The gate* (answer_thoroughly's execute), in order, each refused with `notNowResult(reason)`:
-  a spoken turn; a "quick" line; a turn that read a record (`turn.recordsRead`, d1109-chat-guard's
-  flag, a card listed in full included) or made any lookup or command first; the outer room
-  below the pass's floor (`ConversationDeps.chatRoom`: the month cap and the project's budget as
-  the caps checker reads them, the binding one names the cap line); no rung above the quick
-  pass. What passes follows the ask rule; a refusal that is no cap offers Think it through with
-  `closerLookWords`.
+  a spoken turn; a "quick" line; a turn that made any lookup or command first, or that was shown
+  something the injection scan flags (the facts, the history, a tool result: the turn's
+  `injection`); a record in the facts (`turn.recordsRead`, d1109-chat-guard's flag: a card listed
+  in full that quotes words Forerunner did not write) when the pass would go ahead without the
+  person's yes; the outer room below the pass's floor (`ConversationDeps.chatRoom`: the month cap
+  and the project's budget as the caps checker reads them, the binding one names the cap line); no
+  rung above the quick pass. What passes follows the ask rule; a refusal that is no cap offers
+  Think it through with `closerLookWords`. fixup-d1109-chat-depth: a record in the facts refuses
+  only a pass that would go ahead; one that asks first (a stronger model, an amount above the
+  person's) asks, since an ask spends nothing and the yes is the person's. Before, every hand-over
+  was refused for it, and a failed task's retry card (listed in full while it blocks, quoting the
+  coder's words) kept "why does X keep failing?" from ever offering the stronger model (U-094).
+  The facts' `thinking_longer` then says "asks the person first".
 - *The ask rule* (`asksFirst`): a switch of model, an estimate (or the floor) above the person's
   amount (`chat_ask_above`, CHF 0.10 unset, 0 asks always; read from `notify_prefs`), or a chat
   credential that is not the person's first (`ConversationDeps.chatCredential`; the compose reads
@@ -4423,9 +4430,13 @@ if it will switch models and do an expensive task, it should warn/ask first."
   ahead (`POST /chat` with `offer`), or "yes" / "go ahead" typed as the next line, runs it once on
   that question; any other line drops it; a press on an older answer gets `OFFER_GONE_REPLY`. A Go
   ahead after a restart, a price or a model change that no longer covers the floor asks again with
-  the new figures.
-- *Money.* A pass that goes ahead without asking is budgeted at min(the person's amount, its "at
-  most", the outer room); one after a yes at min(the line's "at most", the room). "At most" is
+  the new figures. A typed "yes" or "no" after a newer ask line answers that line, never an older
+  read-back card still waiting (`askAfterCard`; the card keeps its own Yes and No, and a stop said
+  while a session runs still cancels it).
+- *Money.* A pass that goes ahead without asking is budgeted at min(the person's amount, the outer
+  room) (fixup-d1109-chat-depth: before, also at most twice the median, so cheap past answers made
+  a pass wrap up early); one after a yes, Think it through's press included, at min(the line's "at
+  most", the room). "At most" is
   twice the estimate rounded up to the centime (`atMostOf`), never below the floor. The floor is
   three worst cases of the pass's first call (`PASS_FLOOR_CALLS`, the loop's own estimate: input
   as sent plus the whole cap); below it nothing runs. The estimate is the median of the last 20
@@ -4440,7 +4451,9 @@ if it will switch models and do an expensive task, it should warn/ask first."
   system part and has the quick pass's tools without `answer_thoroughly`, the same token
   restrictions and no fetch tool. Text the quick pass streamed before the hand-over is dropped
   (the hand-over step carries `reset`). The claim guard runs after the last pass with that pass's
-  calls left.
+  calls left; when it catches a claim it sends `CHECKING_STEP` ("Checking what changed…") with
+  `reset`, so the live bubble drops the false claim while it checks (L3-left-9; a spoken turn has
+  said it already), and a Stop during its nudge leaves the true line with the stopped footer.
 - *Turns in flight* (`src/conversation/chat-turns.ts`, `ChatTurns`): one entry per turn from its
   line to its reply (step, since, depth, the controller, Answer now); the daemon's registry
   (`ConversationDeps.turns`, its `startedAt` the daemon's start) or the agent's own. Every run of
@@ -4452,7 +4465,7 @@ if it will switch models and do an expensive task, it should warn/ask first."
   that is older than the daemon's start is "Forerunner closed before answering this.".
 - *The row* (`chat.reply`): `depth`, `passes [{depth, model, effort, durationMs, costUsdMicro}]`,
   `why`, `offer`, `capLine`, `closer` (Think it through's figures under a quick typed model
-  answer), `footer` (`footerWords`: "Thought it through with Sonnet · 34 s · CHF 0.06"), `stopped`,
+  answer whose turn ran no command: never under a command's sentence), `footer` (`footerWords`: "Thought it through with Sonnet · 34 s · CHF 0.06"), `stopped`,
   `ttftMs: null` for a longer answer; `readTranscript` reads them back. Performance measures a
   longer answer as "Chat, thorough answers" on its total time (`eventSample`).
 - *The facts* gain `thinking_longer` in `# Now` (volatile): "goes ahead up to CHF 0.10 on this
@@ -4466,7 +4479,11 @@ card listed in full, the first-credential rule, the cap line, the byte-identical
 Go ahead after composing again, no daily sum, the wrap-up heard once and the ledger, the
 medians, the failed reply, caching with the prompt-cache stand-in, the exact role prompt),
 `chat-depth-words.test.ts`, `conversation.test.ts` (the timeout reply), `real-daemon.test.ts`
-"d1109-chat-depth, run C".
+"d1109-chat-depth, run C" (the claim guard's reset frame, no Think it through under a change);
+the fixup's `chat-depth.test.ts` blocks "a failed task's card listed in full", "the claim guard's
+step resets the live text", "Think it through never under a change", the yes after a newer ask
+line, Stop after a change, the CHF 1.00 amount, the pass budget whatever the medians and Answer
+now; `budget.test.ts` `SessionBudget.wrapUpNow`.
 
 **The history leaves out a quoted record's words (L3-left-6).** An earlier reply whose own words
 the injection scan flags (a reply that quoted a report, a card or a recall hit) is sent in the
