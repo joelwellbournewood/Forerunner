@@ -276,15 +276,23 @@ export async function runViews(deps: RunIndicatorDeps): Promise<RunningView[]> {
   return views;
 }
 
-/** `/health.running`: the indicator's first entry, a running session before a waiting one. */
+/**
+ * `/health.running`: the indicator's first entry for the desktop's tray and window title: a
+ * project's running session, else the critic's monthly check (marked `check`: the title names it,
+ * not "Forerunner — Forerunner is working"), else a session that only waits to go on.
+ */
 export function runningHealth(views: readonly RunningView[]): RunningHealth | null {
-  const first = views.find((v) => v.state !== "waiting") ?? views[0];
+  const first =
+    views.find((v) => v.state !== "waiting" && v.state !== "calibrating") ??
+    views.find((v) => v.state === "calibrating") ??
+    views[0];
   if (!first) return null;
   return {
     projectName: first.projectName,
     what: first.what,
     text: first.text,
     waiting: first.state === "waiting",
+    ...(first.state === "calibrating" ? { check: true } : {}),
   };
 }
 

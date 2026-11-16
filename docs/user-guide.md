@@ -1447,7 +1447,8 @@ project runs.
 
 On the desktop the tray says the same: its first line (and its tooltip) is what runs now, the
 icon gets a blue dot while a session runs, and the window's title reads "Forerunner — Quote page
-is working". A session that only waits to go on shows its words there but no dot.
+is working" ("Forerunner — the critic's monthly check" while only that runs). A session that only
+waits to go on shows its words there but no dot.
 
 ## Kill switch
 

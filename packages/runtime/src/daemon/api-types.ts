@@ -2015,13 +2015,15 @@ export type SyncHealth = z.infer<typeof SyncHealth>;
  * tray's tooltip and first item, the window's title): the first entry of `GET /running`, with its
  * words split as the tray says them ('Quote page: the coder works on "A"'). `waiting` marks a
  * person's session that only waits to go on (the title and the tray icon stay as when nothing
- * runs). Null when nothing runs or waits.
+ * runs). `check` marks the critic's monthly check (on no project: the window title names it).
+ * Null when nothing runs or waits.
  */
 export const RunningHealth = z.object({
   projectName: z.string(),
   what: z.string(),
   text: z.string(),
   waiting: z.boolean(),
+  check: z.boolean().optional(),
 });
 export type RunningHealth = z.infer<typeof RunningHealth>;
 

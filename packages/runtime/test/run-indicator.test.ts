@@ -1,6 +1,7 @@
 import { SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { RunningView } from "../src/daemon/api-types.ts";
 import {
   CALIBRATION_WHAT,
   calibrationExplain,
@@ -9,6 +10,7 @@ import {
   RUN_TEXT_MAX,
   resultAfterWait,
   runFoldsOf,
+  runningHealth,
   runText,
   runViews,
   runWhat,
@@ -499,6 +501,63 @@ describe("runViews (V-1)", () => {
     await keepWait({ by: "continuation", continues: next.id, at: clock.nowIso() }, since);
     expect(await resultAfterWait(store, quote, since, PROMISE)).toBe(AFTER);
     expect(ended.id).not.toBe(next.id);
+  });
+});
+
+/**
+ * `/health.running` (the desktop's tray and window title): a project's running session first,
+ * then the critic's monthly check (marked `check`, so the title names it instead of
+ * "Forerunner — Forerunner is working"), then a session that only waits.
+ */
+describe("runningHealth (V-7)", () => {
+  const view = (over: Partial<RunningView>): RunningView => ({
+    key: "k",
+    sessionId: "s",
+    projectId: "p",
+    projectName: "Quote page",
+    state: "working",
+    what: 'the coder works on "A"',
+    text: 'Quote page · the coder works on "A"',
+    since: null,
+    stop: ["after", "now", "all"],
+    cancel: false,
+    nextProject: null,
+    explain: null,
+    ...over,
+  });
+  const check = view({
+    key: "c",
+    projectId: null,
+    projectName: "Forerunner",
+    state: "calibrating",
+    what: CALIBRATION_WHAT,
+    text: `Forerunner · ${CALIBRATION_WHAT}`,
+  });
+  const waits = view({
+    key: "w",
+    state: "waiting",
+    what: "waiting until 15:40, then it goes on",
+    text: "Quote page · waiting until 15:40, then it goes on",
+  });
+  it("names a project's running session before the monthly check and a waiting session", () => {
+    expect(runningHealth([check, waits, view({})])).toEqual({
+      projectName: "Quote page",
+      what: 'the coder works on "A"',
+      text: 'Quote page · the coder works on "A"',
+      waiting: false,
+    });
+  });
+  it("marks the monthly check, before a session that only waits", () => {
+    expect(runningHealth([waits, check])).toEqual({
+      projectName: "Forerunner",
+      what: CALIBRATION_WHAT,
+      text: `Forerunner · ${CALIBRATION_WHAT}`,
+      waiting: false,
+      check: true,
+    });
+    expect(runningHealth([waits])).toMatchObject({ waiting: true });
+    expect(runningHealth([waits])).not.toHaveProperty("check");
+    expect(runningHealth([])).toBeNull();
   });
 });
 

@@ -1652,7 +1652,9 @@ U-096; disabled, never clickable): `/health.running`'s words ("Quote page: the c
 "A"", or "No session runs"), the same line first in the tooltip; while a person's session only
 waits to go on it reads "Quote page: waiting until 15:40, then it goes on" and the title and the
 icon stay as when nothing runs. While a session runs the main window's title is "Forerunner —
-Quote page is working" (`state::window_title`, `windows::set_main_title`) and the tray icon gets
+Quote page is working" (`state::window_title`, `windows::set_main_title`; a project's session
+before the critic's monthly check, which `/health.running.check` marks and the title names:
+"Forerunner — the critic's monthly check") and the tray icon gets
 a blue dot at its lower right (V-8: `tray::with_running_dot` draws it over the app's own icon
 once, no new asset; `state::icon_dot` picks the icon on each refresh). Then Open Forerunner;
 **Stop all sessions** (confirm dialog "Stop every running session now? No session starts until

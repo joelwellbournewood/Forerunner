@@ -168,13 +168,15 @@ pub struct Health {
 }
 
 /// `/health.running` (d1109-run-visible, `RunningHealth` in api-types.ts): the run indicator's
-/// first entry. `waiting` marks a person's session that only waits to go on.
+/// first entry. `waiting` marks a person's session that only waits to go on; `check` the
+/// critic's monthly check (it belongs to no project: the window title names the check).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RunningHealth {
     pub project_name: String,
     pub what: String,
     pub text: String,
     pub waiting: bool,
+    pub check: bool,
 }
 
 fn running_of(v: &Value) -> Option<RunningHealth> {
@@ -185,11 +187,13 @@ fn running_of(v: &Value) -> Option<RunningHealth> {
     if project_name.is_empty() || what.is_empty() {
         return None;
     }
+    let flag = |k: &str| r.get(k).and_then(Value::as_bool).unwrap_or(false);
     Some(RunningHealth {
         project_name,
         what,
         text: s("text"),
-        waiting: r.get("waiting").and_then(Value::as_bool).unwrap_or(false),
+        waiting: flag("waiting"),
+        check: flag("check"),
     })
 }
 
@@ -640,8 +644,15 @@ mod tests {
                 what: "the coder works on \"A\"".into(),
                 text: "Quote page · the coder works on \"A\"".into(),
                 waiting: false,
+                check: false,
             })
         );
+        // The critic's monthly check is marked (the window title names it).
+        let check = parse_health(
+            r#"{"ok":true,"version":"0.1.0","running":{"projectName":"Forerunner","what":"the critic's monthly check on known examples","text":"","waiting":false,"check":true}}"#,
+        )
+        .unwrap();
+        assert!(check.running.is_some_and(|r| r.check));
         let old = parse_health(r#"{"ok":true,"version":"0.1.0","activeSessions":0}"#).unwrap();
         assert_eq!(old.running, None);
         let none = parse_health(r#"{"ok":true,"version":"0.1.0","running":null}"#).unwrap();

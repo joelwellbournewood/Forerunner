@@ -307,10 +307,14 @@ pub fn running_words(status: &DaemonStatus) -> Option<String> {
 }
 
 /// d1109-run-visible (V-7): the main window's title: 'Forerunner — Quote page is working' while a
-/// session runs, 'Forerunner' otherwise (a session that only waits to go on does not change it,
+/// session runs, 'Forerunner — the critic's monthly check' while only that runs (it belongs to
+/// no project), 'Forerunner' otherwise (a session that only waits to go on does not change it,
 /// as the UI's tab title).
 pub fn window_title(status: &DaemonStatus) -> String {
     match status.running.as_ref() {
+        Some(r) if status.reachable && !r.waiting && r.check => {
+            "Forerunner — the critic's monthly check".to_string()
+        }
         Some(r) if status.reachable && !r.waiting => {
             format!("Forerunner — {} is working", r.project_name)
         }
@@ -791,7 +795,32 @@ mod tests {
             },
             text: String::new(),
             waiting,
+            check: false,
         }
+    }
+
+    /// The critic's monthly check (no project): the title names the check, not "Forerunner —
+    /// Forerunner is working"; the tray says it in the daemon's words and the icon has the dot.
+    #[test]
+    fn the_critics_monthly_check_is_named_by_the_title() {
+        let mut s = reachable();
+        s.status.active_sessions = 0;
+        s.status.running = Some(crate::daemon::RunningHealth {
+            project_name: "Forerunner".into(),
+            what: "the critic's monthly check on known examples".into(),
+            text: String::new(),
+            waiting: false,
+            check: true,
+        });
+        assert_eq!(
+            window_title(&s.status),
+            "Forerunner — the critic's monthly check"
+        );
+        assert_eq!(
+            tray_view(&s).running_text,
+            "Forerunner: the critic's monthly check on known examples"
+        );
+        assert!(icon_dot(&s.status));
     }
 
     /// d1109-run-visible V-7 (D8, the owner: "very visually clear no matter where the person
