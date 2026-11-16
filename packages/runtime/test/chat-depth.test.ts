@@ -1,7 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
-import { join } from "@forerunner/platform";
+import { join, resolve } from "@forerunner/platform/paths";
 import { openStore, type StateStore } from "@forerunner/state";
 import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
 import { afterAll, describe, expect, it } from "vitest";

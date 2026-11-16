@@ -292,7 +292,9 @@ describe("local daemon", () => {
     expect(ev.headers.get("content-type")).toContain("text/event-stream");
     ac.abort();
 
-    // Chat stream frames: token frames carry {text}, the last frame is the full reply.
+    // Chat stream frames: a turn frame {turnId, startedAt} first (d1109-chat-depth, ADR 0025
+    // amended 2026-11-16), step frames {text, at} where a step is taken, token frames {text},
+    // and the last frame is the full reply.
     const res = await req("/chat/stream", {
       method: "POST",
       body: JSON.stringify({ text: "hello", humanId: rt.human.id, agentId: rt.agent.id }),
@@ -314,8 +316,11 @@ describe("local daemon", () => {
       });
     expect(frames.at(-1)?.event).toBe("reply");
     expect(typeof frames.at(-1)?.data.reply).toBe("string");
-    for (const f of frames.slice(0, -1)) {
-      expect(f.event).toBe("token");
+    expect(frames[0]?.event).toBe("turn");
+    expect(typeof frames[0]?.data.turnId).toBe("string");
+    expect(typeof frames[0]?.data.startedAt).toBe("string");
+    for (const f of frames.slice(1, -1)) {
+      expect(["token", "step"]).toContain(f.event);
       expect(typeof f.data.text).toBe("string");
     }
 
