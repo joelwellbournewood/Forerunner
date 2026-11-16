@@ -32,7 +32,7 @@ import {
 } from "@forerunner/runtime/daemon/compose";
 import { createProjectRecord } from "@forerunner/runtime/daemon/create-project";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
-import { planEstimateUsdMicro } from "@forerunner/runtime/estimates/model";
+import { planEstimateUsdMicro, reviewPartUsdMicro } from "@forerunner/runtime/estimates/model";
 import { handoverAgentId } from "@forerunner/runtime/jobs/handover";
 import { projectWorkspaceDir } from "@forerunner/runtime/loop/docs";
 import { fileLeftOpenRequest, headMovedSentence } from "@forerunner/runtime/loop/merge";
@@ -20791,6 +20791,54 @@ describe("d1116-budget-all, run C", () => {
       await rt.close();
       ({ rt, client } = await compose());
       await check(client);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("BA-10: the real start check prices a task as the fake daemon does: its own estimate and its review part, within what is left of its budget", async () => {
+    const host = new MemoryGitHost("alice");
+    const { compose } = onHome(host);
+    const { rt, client } = await compose();
+    try {
+      const project = await rt.store.project.insert({ name: "Club", goal: "A club site" });
+      const footer = await rt.store.task.insert({
+        project_id: project.id,
+        title: "Add a footer line with the club's name to index.html",
+        outcome: "index.html ends with a footer line naming the club",
+        status: "ready",
+        specialist: "coder",
+        risk_tier: 1,
+        est_cost_usd_micro: 60_000,
+      });
+      const tight = await rt.store.task.insert({
+        project_id: project.id,
+        title: "Write the Elo tool with tests",
+        outcome: "elo.ts and its tests",
+        status: "ready",
+        specialist: "coder",
+        risk_tier: 1,
+        est_cost_usd_micro: 200_000,
+        budget_usd_micro: 250_000,
+      });
+      await rt.store.task.addCost(tight.id, 100_000);
+      const check = await client.startCheck(project.id);
+      const priced = (id: string) =>
+        [...check.runnable, ...check.overBudget].find((r) => r.taskId === id)?.estimate.usdMicro;
+      const review = reviewPartUsdMicro({
+        specialist: "coder",
+        risk_tier: 1,
+        outcome: footer.outcome,
+        acceptance_criteria: footer.acceptance_criteria,
+      });
+      expect(review).toBeGreaterThan(0);
+      expect(priced(footer.id)).toBe(60_000 + review);
+      expect(priced(tight.id)).toBe(150_000);
+      // The row the fake daemon's fixtures copy: spent equals actual; cap is the budget less it.
+      const row = (await client.tasks(project.id)).find((t) => t.id === tight.id);
+      expect(row?.actual.usdMicro).toBe(100_000);
+      expect(row?.spent?.usdMicro ?? row?.actual.usdMicro).toBe(100_000);
+      expect(row?.cap.usdMicro).toBe(150_000);
     } finally {
       await rt.close();
     }

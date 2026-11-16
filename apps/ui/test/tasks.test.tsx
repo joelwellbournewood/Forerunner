@@ -1,3 +1,4 @@
+import { reviewPartUsdMicro } from "@forerunner/runtime/estimates/model";
 import { CREDENTIAL_WAIT_REASON } from "@forerunner/runtime/session/credential-wait";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -2081,5 +2082,102 @@ describe("d1116-budget-all, run C", () => {
     const dialog = await screen.findByTestId("new-task-dialog");
     expect(dialog).toHaveTextContent(HINT);
     expect(`${drawer.textContent} ${dialog.textContent}`).not.toMatch(/reviews are not counted/);
+  });
+
+  it("BA-10: the fake daemon is in step with the real one: budgeted rows carry spent equal to actual, the start check prices a task with its review part within what is left of its budget, and Continue leaves the budget less the total", async () => {
+    const harness = createHarness();
+    const rows = await harness.client.tasks("proj_atlas");
+    const budgeted = rows.filter((t) => t.budget.usdMicro > 0);
+    expect(budgeted.length).toBeGreaterThan(0);
+    for (const t of budgeted) {
+      expect(t.spent?.usdMicro).toBe(t.actual.usdMicro);
+      expect(t.cap.usdMicro).toBe(t.budget.usdMicro - t.actual.usdMicro);
+    }
+    const extra = {
+      status: "ready",
+      specialist: "coder",
+      dependsOn: [],
+      priority: "high",
+    } as const;
+    addTask(harness, "t_whole", "Add a footer line with the club's name to index.html", {
+      ...extra,
+      estimate: money(60_000),
+      budget: money(0),
+      actual: money(0),
+      spent: money(0),
+      cap: money(3_000_000),
+      capSource: "specialist_limit",
+    });
+    addTask(harness, "t_tight", "Write the Elo tool with tests", {
+      ...extra,
+      estimate: money(200_000),
+      budget: money(250_000),
+      actual: money(100_000),
+      spent: money(100_000),
+      cap: money(150_000),
+      capSource: "task_budget",
+    });
+    const check = await harness.client.startCheck("proj_atlas");
+    const priced = (id: string) =>
+      [...check.runnable, ...check.overBudget].find((r) => r.taskId === id)?.estimate.usdMicro;
+    const whole = harness.daemon.state.tasks.find((t) => t.id === "t_whole");
+    if (!whole) throw new Error("no t_whole");
+    // As the runtime's estimate: the work part (the task's own estimate) and its review part.
+    const review = reviewPartUsdMicro({
+      specialist: "coder",
+      risk_tier: whole.riskTier,
+      outcome: whole.outcome,
+      acceptance_criteria: whole.acceptanceCriteria,
+    });
+    expect(review).toBeGreaterThan(0);
+    expect(priced("t_whole")).toBe(60_000 + review);
+    // Never more than what is left of its budget (the budget less its one figure).
+    expect(priced("t_tight")).toBe(150_000);
+    // Continue at its budget: the budget grows by what the button names from the total, and
+    // the cap is the budget less the total.
+    const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+    if (!t3) throw new Error("no task_3");
+    t3.status = "needs_human";
+    t3.budget = money(500_000);
+    t3.actual = money(520_000);
+    t3.spent = money(520_000);
+    t3.capSource = "task_budget";
+    harness.daemon.state.requests.unshift({
+      id: "req_ba10",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: "task_3",
+      taskTitle: t3.title,
+      sessionId: "sess_1",
+      kind: "approval",
+      why: `"${t3.title}" paused at its budget of CHF 0.40.`,
+      steps: [],
+      options: ["Continue (CHF 0.40 more)", "Cancel task"],
+      blocking: true,
+      risk: "medium",
+      changeCard: {
+        key: "task:budget_stop",
+        task_id: "task_3",
+        source: "task_budget",
+        cap_usd_micro: 500_000,
+        spent_usd_micro: 520_000,
+        continue_usd_micro: 500_000,
+        chf_per_usd: 0.8,
+        applied_at: null,
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-11-16T06:18:00.000Z",
+      version: 1,
+    } as never);
+    await harness.client.answerRequest("req_ba10", {
+      version: 1,
+      answer: "Continue (CHF 0.40 more)",
+    } as never);
+    const after = (await harness.client.tasks("proj_atlas")).find((t) => t.id === "task_3");
+    expect(after?.budget.usdMicro).toBe(1_020_000);
+    expect(after?.cap.usdMicro).toBe(500_000);
+    if (!after) throw new Error("no task_3 row");
+    expect(after.spent?.usdMicro).toBe(after.actual.usdMicro);
   });
 });

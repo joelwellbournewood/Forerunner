@@ -267,8 +267,9 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
     });
     const { dialog } = await openDialog(harness);
     // Before: "... and continues with up to 1 more as they become ready (about CHF 0.40)."
+    // d1116-budget-all (BA-10): the price holds the task's review part (CHF 0.07 for this tier-2 task); before: 0.80 and 0.40.
     expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
-      /^This session runs "Decide the versioning scheme" \(about CHF 0\.80\) and 1 more \(about CHF 0\.40\)\.$/,
+      /^This session runs "Decide the versioning scheme" \(about CHF 0\.87\) and 1 more \(about CHF 0\.47\)\.$/,
     );
     expect(dialog).not.toHaveTextContent("as they become ready");
   });
@@ -289,7 +290,8 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
     });
     const { dialog } = await openDialog(harness);
     expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
-      /^This session runs "Decide the versioning scheme" \(about CHF 0\.80\); 1 more waits for a later Start\.$/,
+      // d1116-budget-all (BA-10): with its review part (before: 0.80).
+      /^This session runs "Decide the versioning scheme" \(about CHF 0\.87\); 1 more waits for a later Start\.$/,
     );
     expect(within(dialog).getByTestId("start-session-join")).toHaveTextContent(
       "Work you make ready while it runs joins it if its budget has room.",
@@ -335,7 +337,8 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
     // session a larger budget, or the tasks smaller ones, with Start off.
     expect(within(dialog).queryByTestId("start-session-cannot-run")).toBeNull();
     expect(await within(dialog).findByTestId("start-session-oversized")).toHaveTextContent(
-      '"Decide the versioning scheme" needs about CHF 8.00, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
+      // d1116-budget-all (BA-10): with its review part (before: 8.00).
+      '"Decide the versioning scheme" needs about CHF 8.07, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
     );
     // d1109-oversize-pause (OP-0): the second comes after the first, said once in the note
     // (before: 'one task that large runs a session, so it waits for the next one.').
@@ -349,8 +352,9 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
   it("'the tasks that run first' sums only the tasks ordered before the one left out", async () => {
     const harness = createHarness();
     const ready = readyTask(harness);
-    // Work budget CHF 4.00: "Decide" (2.40) runs, "About page" (2.40) does not fit after it,
-    // "Contact page" (0.80, after it in the order) fits and runs.
+    // Work budget CHF 4.00: "Decide" (2.47) runs, "About page" (2.47) does not fit after it,
+    // "Contact page" (0.80, its own budget, after it in the order) fits and runs. d1116-budget-all
+    // (BA-10): each price holds its review part (before: 2.40).
     ready.estimate = money(3_000_000);
     harness.daemon.state.tasks.push(
       { ...ready, id: "task_about", title: "About page", priority: "low" },
@@ -367,7 +371,7 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
     const left = await within(dialog).findByTestId("start-session-over-budget");
     // Before: "take about CHF 3.20", which added "Contact page", run after it.
     expect(left).toHaveTextContent(
-      '"About page" (about CHF 2.40) may be left for next time: the tasks that run first take about CHF 2.40 of this session\'s work budget of CHF 4.00',
+      '"About page" (about CHF 2.47) may be left for next time: the tasks that run first take about CHF 2.47 of this session\'s work budget of CHF 4.00',
     );
   });
 

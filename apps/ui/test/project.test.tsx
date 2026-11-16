@@ -440,8 +440,9 @@ describe("Project page", () => {
     const tasks = harness.daemon.state.tasks;
     const ready = tasks.find((t) => t.id === "task_3");
     if (!ready) throw new Error("fixture changed");
-    // The default session's work budget is CHF 4.00. Two tasks of about CHF 2.40 each: the
-    // first runs, the second does not fit after it although it is smaller than the budget.
+    // The default session's work budget is CHF 4.00. Two tasks of about CHF 2.47 each (their
+    // review part included, d1116-budget-all; before: 2.40): the first runs, the second does not
+    // fit after it although it is smaller than the budget.
     ready.estimate = money(3_000_000);
     tasks.push({
       ...ready,
@@ -465,14 +466,14 @@ describe("Project page", () => {
     const dialog = await screen.findByTestId("start-session-dialog");
     // later #48: "Contact page" is ready now ("and 1 more"), not one that becomes ready.
     expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
-      'This session runs "Decide the versioning scheme" (about CHF 2.40) and 1 more (about CHF 0.80).',
+      'This session runs "Decide the versioning scheme" (about CHF 2.47) and 1 more (about CHF 0.80).',
     );
     const left = within(dialog).getByTestId("start-session-over-budget");
     // C-45: only "Decide" runs before "About page"; "Contact page" runs after it.
     expect(left).toHaveTextContent(
-      '"About page" (about CHF 2.40) may be left for next time: the tasks that run first take about CHF 2.40 of this session\'s work budget of CHF 4.00 (the budget less a fifth kept for reviews). Give the session a larger budget to be sure it runs.',
+      '"About page" (about CHF 2.47) may be left for next time: the tasks that run first take about CHF 2.47 of this session\'s work budget of CHF 4.00 (the budget less a fifth kept for reviews). Give the session a larger budget to be sure it runs.',
     );
-    // Not the old sentence, which said 2.40 is more than 4.00.
+    // Not the old sentence, which said 2.40 (now 2.47) is more than 4.00.
     expect(left).not.toHaveTextContent("more than this session's work budget");
   });
 
@@ -508,7 +509,8 @@ describe("Project page", () => {
       'This session works on "Decide the versioning scheme" until its work budget is used.',
     );
     expect(within(warning).getByTestId("start-session-oversized")).toHaveTextContent(
-      '"Decide the versioning scheme" needs about CHF 8.00, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
+      // d1116-budget-all (BA-10): with its review part (before: 8.00).
+      '"Decide the versioning scheme" needs about CHF 8.07, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
     );
     expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled();
     // later #69: the state in words, not "(cancelled)".
@@ -527,7 +529,7 @@ describe("Project page", () => {
     );
     expect(within(dialog).queryByTestId("start-session-cannot-run")).toBeNull();
     expect(within(dialog).getByTestId("start-session-plan")).toHaveTextContent(
-      'This session runs "Decide the versioning scheme" (about CHF 8.00).',
+      'This session runs "Decide the versioning scheme" (about CHF 8.07).',
     );
     const blockers = within(dialog).getByTestId("start-session-blockers");
     expect(blockers).toHaveTextContent(

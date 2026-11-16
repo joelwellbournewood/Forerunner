@@ -194,11 +194,12 @@ describe("d1109-oversize-start, run C: the Start check's larger task", () => {
     expect(view.blocked).toBeNull();
     expect(view.oversized).toMatchObject({
       title: "Build the shop",
-      estimate: { chfMicro: 6_000_000 },
+      // d1116-budget-all (BA-10): with its review part (before: 6_000_000).
+      estimate: { chfMicro: 6_072_000 },
       room: { chfMicro: 4_000_000 },
       after: false,
       sentence:
-        '"Build the shop" needs about CHF 6.00, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
+        '"Build the shop" needs about CHF 6.07, more than this session\'s work budget of CHF 4.00: it works until that budget is used, keeps its work, and asks you to continue.',
     });
     // d1109-oversize-pause (OP-0): the second larger task comes after the first (before:
     // "one_large", 'one task that large runs a session, so it waits for the next one.').
