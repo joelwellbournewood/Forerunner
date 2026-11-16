@@ -7,7 +7,7 @@ import {
   log,
   shortToken,
 } from "@forerunner/platform";
-import { isYes } from "@forerunner/runtime";
+import { decideAutonomy, isYes } from "@forerunner/runtime";
 import type { ChangeLogRow, DeviceRow, JsonValue, StateStore } from "@forerunner/state";
 import {
   buildCard,
@@ -216,6 +216,14 @@ function stopsAtOnceAfterRecords(step: Step): boolean {
  */
 const CHANGES_NOTHING: ReadonlySet<string> = new Set(["summary.speak"]);
 
+/**
+ * d1109-selftasks-run (ADR 0119): the context is the agent's own task-list fix (set only by the
+ * runtime) at a level whose autonomy frees `plan_fix` (Standard, Trusted, Autopilot).
+ */
+function freesPlanFix(ctx: CommandContext): boolean {
+  return !!ctx.planFix && decideAutonomy("plan_fix", { level: ctx.planFix.level }) === "allow";
+}
+
 /** What still acts at once in a turn that read a record: a read, or a stop of the running work. */
 function actsAtOnceAfterRecords(step: Step): boolean {
   return CHANGES_NOTHING.has(step.def.name) || stopsAtOnceAfterRecords(step);
@@ -345,9 +353,13 @@ export class CommandExecutor {
       limitChange: steps.some((s) => s.def.limit === true),
     });
     // Design §3.9: a change to a task said in words is read back once before it happens.
+    // d1109-selftasks-run (ADR 0119): except the agent's own fix of its task list at a level that
+    // frees it (Standard and up: "the agent changes its own tasks without asking"), which acts at
+    // once with its Undo; a turn that read a record still reads it back (the rule below).
     if (
       decision === "act" &&
       (ctx.source === "chat" || ctx.source === "voice") &&
+      !freesPlanFix(ctx) &&
       steps.some((s) => s.def.askFromChat === true || s.askedAs === true)
     )
       return "needs_yes";
@@ -756,7 +768,12 @@ export class CommandExecutor {
       // when its window ends), is news and goes to the person's Inbox.
       const theirOwn =
         ctx.actor.kind === "human" && ctx.actor.id === ctx.humanId && meta.kind !== "revert";
-      if (!theirOwn)
+      // d1109-selftasks-run (ADR 0119, design §3.8 "What becomes an Update: one line per
+      // session"): the agent's own fixes of its task list are told by the session that made them
+      // (its log line, its one Update) or by chat's reply, never one Inbox line per change.
+      const toldElsewhere =
+        meta.kind !== "revert" && (ctx.source === "session" || ctx.planFix !== undefined);
+      if (!theirOwn && !toldElsewhere)
         await this.store.message.send({
           from_agent_id: ctx.agentId,
           to_human_id: ctx.humanId,
@@ -766,7 +783,7 @@ export class CommandExecutor {
           requires_ack: false,
           ...author,
         });
-      if (!meta.projectId) return;
+      if (!meta.projectId || toldElsewhere) return;
       const others = await this.sharedWith(ctx, meta.projectId);
       if (others.length === 0) return;
       const human = await this.store.human.get(ctx.humanId);

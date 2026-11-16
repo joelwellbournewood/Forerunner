@@ -2,6 +2,7 @@ import type { PricingTable } from "@forerunner/billing";
 import type { Clock } from "@forerunner/platform";
 import type {
   ActionClass,
+  AutonomyLevel,
   ContentSource,
   EffortLevel,
   ProviderCapabilities,
@@ -478,6 +479,16 @@ export interface CommandContext {
    * tools build each call's context, so a lookup earlier in the turn counts.
    */
   recordsRead?: boolean;
+  /**
+   * d1109-selftasks-run (ADR 0119): the change is the agent's own fix of its task list (the task
+   * check of a session, chat's "fix the tasks"), at the project's autonomy level. Set only by the
+   * runtime, never from a request body or a tool's input (params are validated by each command's
+   * schema; the context is built in code). At a level that frees `plan_fix` (Standard and up),
+   * a change said in words acts at once without its read-back and posts no Inbox line (the
+   * session's one Update tells it); a turn that read a record still reads it back (`recordsRead`
+   * wins), and every risk rule holds as before.
+   */
+  planFix?: { level: AutonomyLevel };
 }
 
 export interface CommandOutcome {
@@ -521,6 +532,12 @@ export interface CommandDef<P = unknown> {
   askFromChat?: boolean;
   /** The highest risk a dynamic risk can reach; the tool spec and the command table use it. */
   maxRisk?: Risk;
+  /**
+   * d1109-selftasks-run: false keeps the command out of the chat model's tools (`toToolSpecs`):
+   * `task.split` is the session's task check's until d1109-selftasks-chat gives chat its own
+   * `task_split` tool. Absent: every command is a tool.
+   */
+  chatTool?: boolean;
   scope: CommandScope | ((params: P) => CommandScope);
   reversible: boolean;
   /** One line stored in the command table: how the change is undone. */

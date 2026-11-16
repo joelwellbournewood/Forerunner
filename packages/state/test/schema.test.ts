@@ -21,6 +21,7 @@ import { MIGRATION_0005 } from "../src/migrations/0005-change-reasons.ts";
 import { MIGRATION_0006 } from "../src/migrations/0006-merge-records.ts";
 import { MIGRATION_0007 } from "../src/migrations/0007-take-out.ts";
 import { MIGRATION_0008 } from "../src/migrations/0008-rebuild-owed.ts";
+import { MIGRATION_0009 } from "../src/migrations/0009-change-source-session.ts";
 import {
   createTableSql,
   generateInitialMigration,
@@ -213,13 +214,14 @@ describe("migrations", () => {
     expect(MIGRATIONS[5]).toBe(MIGRATION_0006);
     expect(MIGRATIONS[6]).toBe(MIGRATION_0007);
     expect(MIGRATIONS[7]).toBe(MIGRATION_0008);
+    expect(MIGRATIONS[8]).toBe(MIGRATION_0009);
     expect(MIGRATIONS.map((m) => m.version)).toEqual(MIGRATIONS.map((_, i) => i + 1));
     // v1 is the generator's output for the v1 subset: the v2 columns, the v3 table
     // (source_candidate with its indexes) and the v3 enum value, the v4 column
     // (device.wrap_public_key), the v4 table (secret_grant with its indexes), the v5
     // columns (milestone.reason, session.reason; task.reason, which v1 had, stays) and the
     // v6 table (merge_record with its indexes, whose v7 take-out and v8 rebuild-owed columns go
-    // with it) are the only differences.
+    // with it) and the v9 source value (change_log's 'session') are the only differences.
     const addedInV5: Record<string, RegExp> = { milestone: /"reason"/, session: /"reason"/ };
     const generated = generateInitialMigration();
     const strip = (stmts: string[]) =>
@@ -238,7 +240,8 @@ describe("migrations", () => {
             )
             .join("\n")
             .replace(/,\n {2}PRIMARY KEY/g, ",\n  PRIMARY KEY")
-            .replace("'github_user', 'github_repo', 'gitlab'", "'github_user', 'gitlab'");
+            .replace("'github_user', 'github_repo', 'gitlab'", "'github_user', 'gitlab'")
+            .replace("'api', 'palette', 'session'", "'api', 'palette'");
         });
     expect(strip(generated.sqlite)).toEqual(MIGRATION_0001.up.sqlite);
     expect(strip(generated.postgres)).toEqual(MIGRATION_0001.up.postgres);
@@ -289,8 +292,11 @@ describe("migrations", () => {
       );
       expect(v1Columns).not.toContain("context_transforms");
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [2, 3, 4, 5, 6, 7, 8], version: 8 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(await migrate(db, { clock })).toEqual({
+        applied: [2, 3, 4, 5, 6, 7, 8, 9],
+        version: 9,
+      });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
       const repos = createRepos(db, clock);
       const run = await repos.run.mustGet("r1");
@@ -339,7 +345,7 @@ describe("migrations", () => {
           ["src2", at, at, "github_repo", "acme/alpha", "acme/alpha"],
         ),
       ).rejects.toThrow();
-      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7, 8], version: 8 });
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7, 8, 9], version: 9 });
 
       const repos = createRepos(db, clock);
       const kept = await repos.source.mustGet("src1");
@@ -416,8 +422,8 @@ describe("migrations", () => {
         (await db.query(`SELECT name FROM sqlite_master WHERE name = 'secret_grant'`)).length,
       ).toBe(0);
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7, 8], version: 8 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7, 8, 9], version: 9 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
       const repos = createRepos(db, clock);
       const device = await repos.device.mustGet("d1");
@@ -480,8 +486,8 @@ describe("migrations", () => {
         expect(v2Columns).not.toContain("reason");
       }
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7, 8], version: 8 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5, 6, 7, 8, 9], version: 9 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
       const repos = createRepos(db, clock);
       const milestone = await repos.milestone.mustGet("m1");
@@ -557,8 +563,8 @@ describe("migrations", () => {
         (await db.query(`SELECT name FROM sqlite_master WHERE name = 'merge_record'`)).length,
       ).toBe(0);
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [6, 7, 8], version: 8 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [6, 7, 8, 9], version: 9 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
       const repos = createRepos(db, clock);
       expect((await repos.task.mustGet("t1")).pr_url).toBe("https://github.com/o/r/pull/4");
@@ -912,5 +918,116 @@ describe("monotonic ids", () => {
     const later = monotonicId(1_700_000_000_000 + 60_000);
     expect(later > (ids[ids.length - 1] as string)).toBe(true);
     expect(monotonicId(1)).toMatch(/^[0-9a-f]{8}-/); // time never runs backwards: reuses the last ms
+  });
+});
+
+/**
+ * d1109-selftasks-run, run C (ST-5, ADR 0119): the change log gains the source 'session' (a change
+ * the project's agent made during a session: the owner's "each change shown with one Undo").
+ * SQLite cannot alter a CHECK constraint, so v9 rebuilds `change_log` as v3 rebuilt `source`;
+ * every row of every source written before survives with its id, its words and its undo state.
+ */
+describe("d1109-selftasks-run, run C: the change log's 'session' source (ST-5)", () => {
+  const SOURCES_BEFORE = ["ui", "chat", "voice", "email", "api", "palette"] as const;
+
+  it("is the ninth migration and the schema declares the source", () => {
+    expect(MIGRATIONS[8]).toBe(MIGRATION_0009);
+    expect(MIGRATION_0009.version).toBe(9);
+    const sql = generateSchemaSql("sqlite").find((s) => s.includes('"change_log" ('));
+    expect(sql).toContain(`'palette', 'session'`);
+  });
+
+  it("migrates a v8 database forward on SQLite: every change_log row of every source survives the rebuild and 'session' is accepted", async () => {
+    const db = await openSqlite(":memory:");
+    try {
+      const clock = new SimulatedClock("2026-11-16T10:00:00.000Z");
+      const at = clock.nowIso();
+      const v8 = MIGRATIONS.filter((m) => m.version <= 8);
+      expect((await migrate(db, { clock, migrations: v8 })).version).toBe(8);
+      // Before: the v8 constraint refuses the new source.
+      await expect(
+        db.query(
+          `INSERT INTO "change_log" ("id", "created_at", "updated_at", "source") VALUES (?, ?, ?, ?)`,
+          ["x0", at, at, "session"],
+        ),
+      ).rejects.toThrow();
+      for (const [i, source] of SOURCES_BEFORE.entries())
+        await db.query(
+          `INSERT INTO "change_log" ("id", "created_at", "updated_at", "author_human", "version", "human_id", "words_used", "commands", "before", "after", "scope", "project_id", "undo_state", "source", "sentence") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            `c${i}`,
+            at,
+            at,
+            "h1",
+            i + 1,
+            "h1",
+            `words ${source}`,
+            `[{"name":"task.update","params":{"task":"t${i}"}}]`,
+            `{"title":"old ${i}"}`,
+            `{"title":"new ${i}"}`,
+            "project",
+            "p1",
+            i % 2 ? "undone" : "undoable",
+            source,
+            `Renamed task ${i}.`,
+          ],
+        );
+
+      expect(await migrate(db, { clock })).toEqual({ applied: [9], version: 9 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+      const repos = createRepos(db, clock);
+      for (const [i, source] of SOURCES_BEFORE.entries()) {
+        const row = await repos.changeLog.mustGet(`c${i}`);
+        expect(row).toMatchObject({
+          source,
+          version: i + 1,
+          human_id: "h1",
+          words_used: `words ${source}`,
+          commands: [{ name: "task.update", params: { task: `t${i}` } }],
+          before: { title: `old ${i}` },
+          after: { title: `new ${i}` },
+          undo_state: i % 2 ? "undone" : "undoable",
+          sentence: `Renamed task ${i}.`,
+          project_id: "p1",
+        });
+      }
+      const made = await repos.changeLog.record({
+        human_id: "h1",
+        agent_id: "a1",
+        words_used: "",
+        commands: [{ name: "task.split", params: { task: "t9" } }],
+        before: {},
+        after: {},
+        scope: "project",
+        project_id: "p1",
+        expires_at: null,
+        undo_state: "undoable",
+        source: "session",
+        sentence: 'Split "Style the page" into "Style the layout" and "Style the colours".',
+        author_human: null,
+        author_agent: "a1",
+      });
+      expect((await repos.changeLog.mustGet(made.id)).source).toBe("session");
+      // The indexes are back on the rebuilt table.
+      const indexes = (await db.query<{ name: string }>(`PRAGMA index_list("change_log")`)).map(
+        (r) => r.name,
+      );
+      expect(indexes).toEqual(
+        expect.arrayContaining([
+          "change_log_undo_state_expires_at_idx",
+          "change_log_project_id_idx",
+        ]),
+      );
+      // A source outside the list is still refused.
+      await expect(
+        db.query(
+          `INSERT INTO "change_log" ("id", "created_at", "updated_at", "source") VALUES (?, ?, ?, ?)`,
+          ["x1", at, at, "model"],
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await db.close();
+    }
   });
 });

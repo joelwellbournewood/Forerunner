@@ -178,47 +178,51 @@ export interface ToolOutcome {
  * change log). A pending confirmation is reported back as text for the agent to read out.
  */
 export function toToolSpecs(registry: CommandRegistry, binding: ToolBinding): ToolSpec[] {
-  return registry.list().map((def) => {
-    const spec: ToolSpec<unknown> = {
-      name: toolNameFor(def.name),
-      description: def.description,
-      schema: def.params,
-      actionClass: actionClassFor(def),
-      risk: staticRisk(def),
-      async execute(input: unknown, tool: ToolExecutionContext): Promise<ToolResult> {
-        const ctx = await binding.ctxFor(tool, def.name);
-        const out = await binding.execute({ name: def.name, params: input, ctx });
-        switch (out.status) {
-          case "done":
-          case "partial":
-            return {
-              content: out.sentence ?? "done",
-              ...(out.untrusted ? { untrusted: out.untrusted } : {}),
-            };
-          case "pending":
-            // What the person is asked, in their words (the card's one-line read-back), never
-            // the pending card's id: the model repeated ids to the person (live walk 2 #10,
-            // "request 01a19958"; phase E). The runtime tracks the card itself.
-            return {
-              content: `Needs confirmation. The person is asked: ${
-                out.readback ?? (out.card ? renderChangeCard(out.card, { voice: true }) : "")
-              }`.trim(),
-              // d1109-onerepo-link: a read-back quoting a repository's text goes as data.
-              ...(out.card?.untrusted ? { untrusted: out.card.untrusted } : {}),
-            };
-          case "cancelled":
-            return { content: "Cancelled; nothing was changed." };
-          default:
-            return {
-              content: `Refused: ${out.reason ?? "not allowed"}`,
-              isError: true,
-              // d1109-onerepo-link: a refusal that quotes a repository's text (a marker's name)
-              // reaches the model inside the data envelope, scanned (ADR 0114).
-              ...(out.untrusted ? { untrusted: out.untrusted } : {}),
-            };
-        }
-      },
-    };
-    return spec as ToolSpec;
-  });
+  // d1109-selftasks-run: a command marked `chatTool: false` is no tool of the chat's model.
+  return registry
+    .list()
+    .filter((def) => def.chatTool !== false)
+    .map((def) => {
+      const spec: ToolSpec<unknown> = {
+        name: toolNameFor(def.name),
+        description: def.description,
+        schema: def.params,
+        actionClass: actionClassFor(def),
+        risk: staticRisk(def),
+        async execute(input: unknown, tool: ToolExecutionContext): Promise<ToolResult> {
+          const ctx = await binding.ctxFor(tool, def.name);
+          const out = await binding.execute({ name: def.name, params: input, ctx });
+          switch (out.status) {
+            case "done":
+            case "partial":
+              return {
+                content: out.sentence ?? "done",
+                ...(out.untrusted ? { untrusted: out.untrusted } : {}),
+              };
+            case "pending":
+              // What the person is asked, in their words (the card's one-line read-back), never
+              // the pending card's id: the model repeated ids to the person (live walk 2 #10,
+              // "request 01a19958"; phase E). The runtime tracks the card itself.
+              return {
+                content: `Needs confirmation. The person is asked: ${
+                  out.readback ?? (out.card ? renderChangeCard(out.card, { voice: true }) : "")
+                }`.trim(),
+                // d1109-onerepo-link: a read-back quoting a repository's text goes as data.
+                ...(out.card?.untrusted ? { untrusted: out.card.untrusted } : {}),
+              };
+            case "cancelled":
+              return { content: "Cancelled; nothing was changed." };
+            default:
+              return {
+                content: `Refused: ${out.reason ?? "not allowed"}`,
+                isError: true,
+                // d1109-onerepo-link: a refusal that quotes a repository's text (a marker's name)
+                // reaches the model inside the data envelope, scanned (ADR 0114).
+                ...(out.untrusted ? { untrusted: out.untrusted } : {}),
+              };
+          }
+        },
+      };
+      return spec as ToolSpec;
+    });
 }
