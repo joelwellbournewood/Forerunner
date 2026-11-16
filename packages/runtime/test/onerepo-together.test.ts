@@ -185,8 +185,9 @@ describe("d1109-onerepo-link, run C: two Forerunners on one repository (OR-15)",
       );
       // C2-left-13: a together project never writes docs, so a doc it does not have is not
       // "not written yet": the row says who writes it, with no missing mark.
+      const bCall = b.call;
       const missingB = async () =>
-        ((await b.call("GET", `/projects/${kiteId}/docs`)).body as unknown as Json[]).filter(
+        ((await bCall("GET", `/projects/${kiteId}/docs`)).body as unknown as Json[]).filter(
           (d) => d.exists === false,
         );
       expect((await missingB()).length).toBeGreaterThan(0);
