@@ -27,6 +27,8 @@ import {
   stoppedNowLine,
   useApiKeyExplain,
 } from "../src/daemon/credential-policy-view.ts";
+import { projectStatusLine } from "../src/daemon/project-status.ts";
+import { waitRowWords } from "../src/session/credential-wait.ts";
 
 /**
  * d1109-cred-screens (run C, C6; ADR 0120 amended 2026-11-16): every screen sentence of "which
@@ -278,5 +280,91 @@ describe("credential-policy-view (CS-6, CS-9): the switch and the spend by crede
     expect(costByCredentialWords("subscription", "CHF 2.10", 0.12)).toBe(
       "Your Claude subscription: CHF 2.10 (estimate, 12% of its allowance)",
     );
+  });
+});
+
+describe("d1109-cred-screens, run C (CS-5): every stop and the question in rows and the project status", () => {
+  const base = { sourceId: "s1", kind: "subscription" as const };
+  it("rows: the share with Change the allowance, a key's monthly cap, the ask with Answer, each with the after-the-wait clause", () => {
+    const share = waitRowWords(
+      { ...base, reason: "share", until: "2026-12-01T00:00:00Z" },
+      { ...opts, goesOn: false },
+    );
+    expect(share).toEqual({
+      label: "Waits until Tue 1 Dec (your subscription's share)",
+      detail: "Then it runs at your next Start.",
+      line: "Waiting until Tue 1 Dec (your subscription's share)",
+      save: { label: "Change the allowance", to: "/settings#plan-allowance" },
+    });
+    const month = waitRowWords(
+      { sourceId: "k1", kind: "api_key", reason: "key_month", until: "2026-12-01T00:00:00Z" },
+      { ...opts, goesOn: true },
+    );
+    expect(month.label).toBe("Waits until Tue 1 Dec (your API key's monthly cap)");
+    expect(month.detail).toBe("Then your session goes on.");
+    const ask = waitRowWords(
+      { ...base, reason: "limit", until: limit.until, ask: true },
+      { ...opts, askCardId: "req_1" },
+    );
+    expect(ask).toEqual({
+      label: "Waits for your answer: use your API key?",
+      detail: "Answer the card in the Inbox.",
+      line: "Waiting for you: use your API key?",
+      save: { label: "Answer", to: "/inbox#card-req_1" },
+      ask: true,
+    });
+    // The limit keeps its form, now as the design writes it.
+    expect(
+      waitRowWords({ ...base, reason: "limit", until: limit.until }, { ...opts, goesOn: true })
+        .label,
+    ).toBe("Waits until 15:40 (your subscription's limit)");
+  });
+
+  it("the project status: the ask first with Answer; the share with Change the allowance; never '0 of 2 done'", () => {
+    const tasks = [
+      { id: "t1", title: "A", status: "ready" },
+      { id: "t2", title: "B", status: "ready" },
+    ] as never;
+    const ask = waitRowWords(
+      { ...base, reason: "limit", until: limit.until, ask: true },
+      { ...opts, askCardId: "req_1" },
+    );
+    const displays = new Map([
+      ["t1", { key: "waiting", label: ask.label }],
+      ["t2", { key: "waiting", label: ask.label }],
+    ]);
+    const asking = projectStatusLine({
+      tasks,
+      displays: displays as never,
+      cards: [],
+      plan: "none",
+      credentialWait: ask,
+      // A session working elsewhere is no reason to hide what needs the person.
+      working: { sessionId: "s", taskTitle: "C" },
+    } as never);
+    expect(asking.text).toBe("Waiting for you: use your API key?");
+    expect(asking.action).toEqual({ kind: "link", label: "Answer", to: "/inbox#card-req_1" });
+    const share = waitRowWords(
+      { ...base, reason: "share", until: "2026-12-01T00:00:00Z" },
+      { ...opts, goesOn: false },
+    );
+    const shareDisplays = new Map([
+      ["t1", { key: "waiting", label: share.label }],
+      ["t2", { key: "waiting", label: share.label }],
+    ]);
+    const waiting = projectStatusLine({
+      tasks,
+      displays: shareDisplays as never,
+      cards: [],
+      plan: "none",
+      credentialWait: share,
+    } as never);
+    expect(waiting.text).toBe("Waiting until Tue 1 Dec (your subscription's share): 2 tasks");
+    expect(waiting.action).toEqual({
+      kind: "link",
+      label: "Change the allowance",
+      to: "/settings#plan-allowance",
+    });
+    expect(waiting.text).not.toContain("0 of 2 done");
   });
 });

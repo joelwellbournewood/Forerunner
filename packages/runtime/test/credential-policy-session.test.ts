@@ -125,7 +125,7 @@ describe("d1109-cred-engine, run C: every call follows the policy in a session (
         Array(2).fill(
           policy === "subscription_then_ask"
             ? "Waits for your answer: use your API key?"
-            : "Waits until 15:00, your subscription's limit",
+            : "Waits until 15:00 (your subscription's limit)",
         ),
       );
       if (policy === "subscription_then_ask") {

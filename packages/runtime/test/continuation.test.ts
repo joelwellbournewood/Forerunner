@@ -354,7 +354,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
       `/projects/${project.id}/tasks`,
     );
     expect(rows.json.find((t) => t.id === task.id)?.display).toMatchObject({
-      label: "Waits until 17:00, after your quiet hours",
+      label: "Waits until 17:00 (after your quiet hours)",
       detail: "Then your session goes on.",
     });
     const log = (await w.rt.store.event.list(first.id))

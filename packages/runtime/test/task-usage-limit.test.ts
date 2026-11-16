@@ -189,7 +189,7 @@ describe("a task run that meets the subscription's usage limit, under 'Wait' (U-
     );
     // The row says the same.
     const rows = await req<TaskView[]>(`/projects/${project.id}/tasks`);
-    expect(rows[0]?.display?.label).toBe("Waits until 15:00, your subscription's limit");
+    expect(rows[0]?.display?.label).toBe("Waits until 15:00 (your subscription's limit)");
     // The subscription rests until the reset Claude Code reported, on its row and in the audit.
     const sub = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
       (s) => s.kind === "subscription",

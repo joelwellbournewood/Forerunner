@@ -799,12 +799,18 @@ function budgetCard(
           ? more
             ? `Starts a session of ${more}; your note goes into its next brief.`
             : "Starts a session that goes on from where it stopped; your note goes into its next brief."
-          : !more
-            ? "Gives it more and starts a session that goes on from where it stopped."
-            : session
-              ? // d1109-oversize-pause (OP-0): the next Start takes it in its turn without Continue.
-                `Starts a session now with ${more}; without it, your next Start takes it in its turn.`
-              : `Adds ${more} to its budget and starts a session that goes on from where it stopped.`,
+          : // C4b-left-6 (d1109-cred-screens): the work is done and only its review waits: the
+            // next session runs only the review (before: "goes on from where it stopped").
+            card.review_waits === true && !session
+            ? more
+              ? `Adds ${more} to its budget and starts a session that runs only its review.`
+              : "Gives it more and starts a session that runs only its review."
+            : !more
+              ? "Gives it more and starts a session that goes on from where it stopped."
+              : session
+                ? // d1109-oversize-pause (OP-0): the next Start takes it in its turn without Continue.
+                  `Starts a session now with ${more}; without it, your next Start takes it in its turn.`
+                : `Adds ${more} to its budget and starts a session that goes on from where it stopped.`,
         tone: "primary",
         confirm: null,
         // OP-4: after a pause that got no further, Continue asks what to do differently.

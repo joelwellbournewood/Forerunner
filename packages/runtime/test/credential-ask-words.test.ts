@@ -63,8 +63,8 @@ describe("d1109-cred-engine, run C: the ask form only while its card is open", (
     ]);
     const rows = (await req<TaskView[]>(`/projects/${project.id}/tasks`)).body;
     expect(rows.map((r) => r.display?.label)).toEqual([
-      "Waits until 15:00, your API key's limit",
-      "Waits until 15:00, your API key's limit",
+      "Waits until 15:00 (your API key's limit)",
+      "Waits until 15:00 (your API key's limit)",
     ]);
     await settleSessions(rt);
     await rt.close();
@@ -104,8 +104,8 @@ describe("d1109-cred-engine, run C: the ask form only while its card is open", (
     expect(lines.filter((l) => l.includes("your answer"))).toEqual([]);
     const rows = (await req<TaskView[]>(`/projects/${project.id}/tasks`)).body;
     expect(rows.map((r) => r.display?.label)).toEqual([
-      "Waits until 15:00, your subscription's limit",
-      "Waits until 15:00, your subscription's limit",
+      "Waits until 15:00 (your subscription's limit)",
+      "Waits until 15:00 (your subscription's limit)",
     ]);
     expect(world.keyCalls()).toHaveLength(0);
     await settleSessions(rt);

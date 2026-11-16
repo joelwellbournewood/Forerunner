@@ -43,7 +43,7 @@ export interface FakeTaskMeta {
   notLive: Set<string>;
   /**
    * Projects whose work waits for a Claude credential (U-078), with the row's words as the
-   * daemon's `credentialWaitRow` gives them ("Waits until 16:40, your API key's limit"). A test
+   * daemon's `credentialWaitRow` gives them ("Waits until 16:40 (your API key's limit)"). A test
    * sets them; the daemon reads them from the billing sources' `limits.waiting`.
    */
   credentialWaits: Map<

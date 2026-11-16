@@ -541,6 +541,18 @@ describe("d1116-budget-all", () => {
         expect.stringMatching(/^Continue \(CHF \d+\.\d{2} more\)$/),
         "Cancel task",
       ]);
+      // C4b-left-6 (d1109-cred-screens): Continue says the next session runs only its review, and
+      // the row says what the card says (before: "... goes on from where it stopped." and only
+      // "Paused at its budget").
+      const choices = (cards[0]?.choices ?? []) as { explain?: string }[];
+      expect(choices[0]?.explain).toMatch(
+        /^Adds CHF \d+\.\d{2} to its budget and starts a session that runs only its review\.$/,
+      );
+      const rows = (await o.json(`/projects/${projectId}/tasks`)) as unknown as Json[];
+      const row = rows.find((t) => t.id === taskId) as { display?: { detail?: string } };
+      expect(row?.display?.detail).toBe(
+        "The work is done; its review waits for room in the budget.",
+      );
       // The session went on: the next task ran and was reviewed.
       expect(s.status).toBe("completed");
       const next = await o.rt.store.task.mustGet(header);

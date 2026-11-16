@@ -448,8 +448,8 @@ describe("a key at its usage limit (U-078)", () => {
     );
     const rows = await json<TaskView[]>(first.req(`/projects/${project.id}/tasks`));
     expect(rows.map((t) => [t.display?.label, t.display?.detail])).toEqual([
-      ["Waits until 16:40, your API key's limit", "Then your session goes on."],
-      ["Waits until 16:40, your API key's limit", "Then your session goes on."],
+      ["Waits until 16:40 (your API key's limit)", "Then your session goes on."],
+      ["Waits until 16:40 (your API key's limit)", "Then your session goes on."],
     ]);
     const order = await json<BillingOrderView>(first.req("/settings/billing-order"));
     expect(order.sources[0]?.blocked).toBe("resting");

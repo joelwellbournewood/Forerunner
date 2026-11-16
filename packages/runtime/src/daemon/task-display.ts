@@ -1,4 +1,4 @@
-import type { BillingSourceKind } from "@forerunner/billing";
+import { type BillingSource, type BillingSourceKind, nextMonthStartIso } from "@forerunner/billing";
 import { isAbsolute } from "@forerunner/platform";
 import type {
   EventRow,
@@ -19,7 +19,7 @@ import {
 } from "../session/credential-wait.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
-import { waitingOf } from "../wiring/billing-pick.ts";
+import { planUsageOf, waitingOf } from "../wiring/billing-pick.ts";
 import type { TaskCheck, TaskDetailView, TaskReviewEvidence, TaskView } from "./api-types.ts";
 import { verdictWords } from "./event-lines.ts";
 import {
@@ -189,7 +189,11 @@ export async function credentialWaitRow(
         ? limits.restingUntil
         : null;
     const refused = typeof limits.refusedAt === "string";
-    if (!until && !refused) continue;
+    // d1109-cred-screens (CS-5): the subscription's share and a key's monthly cap are stops too
+    // (ADR 0120): until the month's start, read as the router reads them.
+    const monthStop =
+      !until && !refused ? await monthStopOf(store, row as never, now).catch(() => null) : null;
+    if (!until && !refused && !monthStop) continue;
     const human = await store.human.get(row.human_id).catch(() => undefined);
     // d1109-cred-engine CE-7: under 'ask' while the one card for this stop is open, the row says
     // the work waits for the person's answer.
@@ -208,10 +212,10 @@ export async function credentialWaitRow(
         : undefined;
     return waitRowWords(
       {
-        reason: refused ? "refused" : "limit",
+        reason: refused ? "refused" : (monthStop?.reason ?? "limit"),
         sourceId: row.id,
         kind: row.kind as BillingSourceKind,
-        until,
+        until: until ?? monthStop?.until ?? null,
         ...(askOpen ? { ask: true } : {}),
       },
       {
@@ -221,9 +225,32 @@ export async function credentialWaitRow(
         goesOn: !!entry.kept,
         ...(goesOnAt ? { goesOnAt } : {}),
         ...(entry.kept?.by === "person" ? { startKept: true } : {}),
+        // CS-5: the row's Answer opens the one ask card.
+        ...(askOpen && typeof asking?.requestId === "string"
+          ? { askCardId: asking.requestId }
+          : {}),
       },
     );
   }
+  return null;
+}
+
+/**
+ * d1109-cred-screens (CS-5): a month's stop of a source now, as the router reads it (`stopOf`):
+ * the subscription at the share Forerunner may use, or a key at a monthly cap it was given; until
+ * the next month's start (UTC). Null otherwise.
+ */
+async function monthStopOf(
+  store: StateStore,
+  row: BillingSource,
+  nowMs: number,
+): Promise<{ reason: "share" | "key_month"; until: string } | null> {
+  const usage = await planUsageOf(store, store.clock, row);
+  if (row.kind === "subscription" && usage.share !== null && usage.share >= usage.cap)
+    return { reason: "share", until: nextMonthStartIso(nowMs) };
+  const cap = (row.limits as { monthlyUsdMicro?: unknown }).monthlyUsdMicro;
+  if (typeof cap === "number" && usage.monthUsdMicro >= cap)
+    return { reason: "key_month", until: nextMonthStartIso(nowMs) };
   return null;
 }
 

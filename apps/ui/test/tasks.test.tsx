@@ -214,13 +214,13 @@ describe("Tasks tab (design §3.5)", () => {
     // task says it waits).
     addTask(harness, "t_wait", "Write note A", { reason: CREDENTIAL_WAIT_REASON });
     harness.daemon.state.taskMeta.credentialWaits.set("proj_atlas", {
-      label: "Waits until 16:40, your API key's limit",
+      label: "Waits until 16:40 (your API key's limit)",
       detail: "Then your session goes on.",
     });
     renderApp("/projects/proj_atlas/tasks?task=t_wait", harness);
     const row = await rowOf("t_wait");
     expect(within(row).getByTestId("task-status")).toHaveTextContent(
-      "Waits until 16:40, your API key's limit",
+      "Waits until 16:40 (your API key's limit)",
     );
     // The drawer says what comes next.
     const drawer = await screen.findByTestId("task-drawer");

@@ -8175,8 +8175,8 @@ describe("the UI client against the real daemon: a Claude credential at its limi
       );
       const tasks = await client.tasks(project.id);
       expect(tasks.map((t) => [t.status, t.display?.label])).toEqual([
-        ["ready", "Waits until 11:40, your subscription's limit"],
-        ["ready", "Waits until 11:40, your subscription's limit"],
+        ["ready", "Waits until 11:40 (your subscription's limit)"],
+        ["ready", "Waits until 11:40 (your subscription's limit)"],
       ]);
       // 'Wait': nothing moved onto the API key.
       expect(workCalls(onKey)).toHaveLength(0);
