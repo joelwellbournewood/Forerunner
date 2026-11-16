@@ -1,0 +1,276 @@
+{
+ "area": "d1116-budget-all",
+ "branch": "fix/d1116-budget-all",
+ "head_sha": "b9c1503b0335533700758097ae904b0303a82360",
+ "commits": [
+  {
+   "sha": "9168251",
+   "subject": "budget: a task's figure counts its reviews, old tasks too (U-042, BA-1, BA-2)"
+  },
+  {
+   "sha": "65f7ed7",
+   "subject": "budget: a task's review stops at what is left of its budget (U-042, BA-3)"
+  },
+  {
+   "sha": "1303798",
+   "subject": "estimates: an estimate holds the task's review; one sample per task (U-042, BA-6, BA-7)"
+  },
+  {
+   "sha": "e3f13c0",
+   "subject": "budget: a fix keeps room for its review; one Continue is enough (U-042, BA-4, BA-5)"
+  },
+  {
+   "sha": "1abbda7",
+   "subject": "session-review: a plan that holds the reviews is set against its tasks' whole cost (U-042, BA-8)"
+  },
+  {
+   "sha": "16c56b4",
+   "subject": "budget: a paused task's card names the room in its first sentence (U-042, BA-4)"
+  },
+  {
+   "sha": "db706cb",
+   "subject": "tasks: the row, the drawer and Costs show one figure against the budget (U-042, BA-9)"
+  },
+  {
+   "sha": "6d26ea7",
+   "subject": "fake-daemon: prices and Continue in step with the real daemon (U-042, BA-10)"
+  },
+  {
+   "sha": "c10f09f",
+   "subject": "budget: what counts and what stays out, asserted (U-042, BA-11)"
+  },
+  {
+   "sha": "2463927",
+   "subject": "docs: a task's budget counts its work, its reviews and its fixes (U-042, BA-13)"
+  },
+  {
+   "sha": "718eb97",
+   "subject": "tasks: drop an import the L3-run-3 case no longer uses (U-042, BA-9)"
+  },
+  {
+   "sha": "90bed34",
+   "subject": "fake-daemon: type the BA-10 case's task fields as the TaskView wants (U-042, BA-10)"
+  },
+  {
+   "sha": "b9c1503",
+   "subject": "real-daemon: re-baseline the cases whose figures hold the review now (U-042, BA-4, BA-5, BA-6)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "BA-1/BA-2: a task's own figure (actual_cost_usd_micro), which its budget, cards and Continue read, held only the work; the critic's review calls were booked in the ledger and the session but never on the task. Tasks written before had the same gap.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/task-budget-all.test.ts 'BA-1: a task the critic sends back once ...', 'BA-1: a review Stop now cuts off ...', 'BA-2: a task written before ...'; packages/state/test/schema.test.ts 'd1116-budget-all, run C' (v9 to v10); apps/ui/test/real-daemon.test.ts 'W15-20, W15-21' (changed for the design)",
+   "how": "TaskReviewRequest.onCost: the critic port forwards each model_call_end cost, including a call Stop now cut off, and the runner adds it with task.addCost in a chain it awaits in every branch. Every ledger row carries the task id, and the figure equals costLedger.sum({taskId}). Migration 0010 (data only, MAX/GREATEST) raises older figures to their ledger sum.",
+   "check_in_the_app": "Give a task Budget 2.00 and have the critic send it back once. Open Tasks: the cost on the row, the cost in the drawer ('spent CHF x of CHF 2.00 budget') and Costs > By task show the same figure, reviews included."
+  },
+  {
+   "problem": "BA-3: a task's review was capped only by the session's token, so a review could take the task past its budget. A run-level refusal read as the session's budget, and the refused call's estimate never reached the card.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/task-budget-all.test.ts 'BA-3: a review its task's budget cannot pay a first call for is not started ...' and 'BA-3: a review is capped at what is left of its task's budget ...'; packages/runtime/test/loop.test.ts and packages/critic/test/refused-review.test.ts 'd1116-budget-all, run C'; packages/critic/test/review-price.test.ts (new)",
+   "how": "The runner passes the task's budget less its figure as TaskReviewRequest.budgetUsdMicro, and the critic token takes the smaller amount. reviewStopSource maps a run-level refusal to task_budget. A review whose remaining budget is below one critic call's floor (CriticPort.reviewCallUsdMicro().floorUsdMicro) does not start: the task pauses cleanly with its work kept, and Continue runs only the review, after a restart too. RunResult.error and ReviewRefusal now carry estimateUsdMicro.",
+   "check_in_the_app": "Give a footer task Budget 0.07 and start a session. The Inbox shows '... paused at its budget of CHF 0.07' with 'The work is done; its review waits for room in the budget.' Press Continue: the next session's log shows only the critic reviewing it ('its work was done in an earlier session'), and the task becomes Done."
+  },
+  {
+   "problem": "BA-4: a work run, including a fix after a send-back, could spend the whole task budget, so its review always had to wait for Continue.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/task-budget-all.test.ts 'BA-4: a fix after a send-back keeps room ...'; packages/runtime/test/task-budget-room.test.ts (runCapOf/workRunCapOf/budgetLineWords/pauseSentence/card body)",
+   "how": "workRunCapOf keeps R + W out of the work cap when that is at most half of what is left. R is the review part (PlanItem.reviewRoomUsdMicro, set by the runner through planner.reviewPartOf); W is one critic call's worst case (CriticPort.reviewCallUsdMicro). runCapSource follows the work cap. The start line, the pause sentence and the card name the room only when one is kept: 'This run may spend CHF 0.20 (CHF 0.04 of the task's budget is kept for its review): ...', '; CHF 0.04 is kept for its review', 'It spent CHF 0.56 of its budget of CHF 0.80, keeping CHF 0.10 for its review.'. A sent-back task whose budget is spent gets the decided sentence.",
+   "check_in_the_app": "Give a task Budget 2.00 and start a session. Session page > Details: each run of it says 'This run may spend CHF 1.89 (CHF 0.10 of the task's budget is kept for its review): ...'."
+  },
+  {
+   "problem": "BA-5: Continue on a waiting review added only 'the same amount again', which could be too little for a review of two calls, so a second card came.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/task-budget-all.test.ts 'BA-5, BA-3: a review that waits at its task's budget gets what it needs from one Continue ...' (restart, two-call reading review); packages/runtime/test/continuity-budget.test.ts (changed for the design)",
+   "how": "A task_budget card stores needs_usd_micro. For a work pause this is the estimate left plus W, beyond what is left. For a waiting review it is R plus the refused call's worst case, beyond what is left. continueUsdMicro gives the larger of this and the same amount again. The button still names exactly what it adds.",
+   "check_in_the_app": "On the footer card above, press Continue once: no second card comes and the task is Done."
+  },
+  {
+   "problem": "BA-6/BA-7: every estimate covered only the work, so the plan line, the Start dialog and the plan card priced a task below what its budget counts. The learner could also count one task several times (once per try).",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/estimates.test.ts 'd1116-budget-all' (review part, learned review ratio, one sample per task); packages/runtime/test/wiring.test.ts accuracy-view case",
+   "how": "estimate() returns the work part plus a review part: REVIEW_STARTING_ESTIMATES_USD_MICRO by tier, times size, times a learned review ratio. Samples are kept by task id and replayed in time order (snapshot v3). onTaskFinished runs at the task's close. The daemon refreshes the estimates before the start check and before pricing a plan card.",
+   "check_in_the_app": "Open the Start dialog for a project with a light-review coder task: its 'about CHF x' is a couple of centimes higher than before (its review). The plan card shows the same figure."
+  },
+  {
+   "problem": "BA-8: the session review compared only the work's cost with the estimate. Once estimates hold the review, that double-counted the review in the gap and missed what a fix cost.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/critic/test/session-review.test.ts 'd1116-budget-all, run C' (3 cases plus the no-ledger case); packages/runtime/test/task-budget-room.test.ts 'BA-8: the session review's line ...'",
+   "how": "The runner marks the plans it writes with counts:'all' (PLAN_COUNTS_ALL). For a marked plan, loadSessionReviewData sums the ledger rows of the planned tasks (or their runs when the session has no ledger row). The metrics carry counts, tasksUsdMicro and otherUsdMicro. The finding reads 'Planned tasks cost CHF 0.17, over their estimate of CHF 0.05 by 240%'. The summary and the log line name the session's own checks separately. Unmarked older plans read as before.",
+   "check_in_the_app": "After a session, open Session page > Details: 'Session review measured: 1 of 2 planned tasks done; the planned tasks cost CHF 0.07 against an estimate of CHF 0.11.'"
+  },
+  {
+   "problem": "BA-9: the Tasks row said the opposite of the owner's answer ('CHF 0.11 of CHF 0.20 budget left; reviews are not counted'), and its tooltip said reviews were not counted. Row and Costs read the ledger by project, so a task moved by Make one project showed less than its figure.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "apps/ui/test/tasks.test.tsx 'd1116-budget-all, run C' (2 cases); apps/ui/test/real-daemon.test.ts 'd1116-budget-all, run C' BA-9 (moved task: spent 200000, expected 800000); packages/state/test/suite.ts 'byTaskOf ...'",
+   "how": "taskCapWords reads 'of CHF 0.20 budget' while the cost is below the budget, and 'CHF 0.20 budget used up' at cap 0 or once the figure reaches the budget. The tooltip is 'Its work, the critic's reviews and any fixes all count. The task pauses at this budget and keeps its work.' The new costLedger.byTaskOf(projectId,{from,to}) feeds TaskView.spent and Costs > By task, while the totals stay the project's own. The drawer header now reads '· spent CHF 0.13 of CHF 0.20 budget', and the New task and Edit hints say what the budget counts.",
+   "check_in_the_app": "Tasks tab: a budgeted task reads 'CHF 0.06' over 'of CHF 2.00 budget'; hover for the new tooltip. Open the drawer: '... · spent CHF 0.06 of CHF 2.00 budget'. New task or Edit, Budget field: the new hint. After Make one project, the moved task keeps its whole figure on its row and under Costs > By task."
+  },
+  {
+   "problem": "BA-10: the fake daemon behind the UI tests priced only the work, and its budgeted fixtures had no spent figure, so jsdom screens differed from the app.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "apps/ui/test/tasks.test.tsx 'BA-10: the fake daemon is in step ...' (expected 60000 to be 90000)",
+   "how": "fakePrice adds the runtime's reviewPartUsdMicro, capped at the budget less the task's figure (fakeTotal). Continue raises the budget from that figure and sets cap = budget less the figure. The task_1 and task_2 fixtures carry spent = actual. A real-daemon case checks that the real start check prices the same way.",
+   "check_in_the_app": "Not visible in the app; it keeps the UI tests in step with the real daemon."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "BA-12 (cut line): the Start dialog does not yet warn when a task's budget cannot hold both its work and its review. Planned: StartCheck.reviewMayWait[] and one line per task, worded exactly: '\"Add a footer line with the club's name to index.html\": its budget of CHF 0.10 may leave too little for its review, which then waits for Continue.'",
+   "why": "Cut line. I used the time for the never-cut items, the docs, the bench walk and the full validation. The behaviour it would warn about works: a too-small budget gets its work done, its review waits with one card, and one Continue finishes it (BA-3/BA-5, walked on the bench at CHF 0.07). This goes to the leftovers with the wording above: add StartCheck.reviewMayWait in start-check.ts (whole estimate + W against what is left), the API type, the fake daemon mirror, the dialog line, oversized-task.test.ts and d1109-oversize.test.tsx."
+  },
+  {
+   "problem": "Bench walk BEFORE, on the base code 136d4f6",
+   "why": "The auto-mode classifier denied putting the base code into the worktree ('git checkout 136d4f6 -- packages apps'), and only one bench may run. The before state is shown instead by earlier walks of the same TaskCap code: /tmp/frbench/fix-l3-money-screens/steps/23-after-tasks-after.png (row 'CHF 0.43 of CHF 0.60 budget left; reviews are not counted') and /tmp/frbench/fix-d1109-starts-engine/steps/13-after-retry-tasks.png ('CHF 0.23 of CHF 0.24 budget left; reviews are not counted'), plus the failing-before tests listed per item. The AFTER walk was done."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, paths, typecheck, unit tests, docs:check, docs:links, secret scan)",
+   "result": "green: 524 test files, 5653 passed, 7 skipped; secret-scan clean (2192 files). Run at 90bed34; the last commit b9c1503 changes only apps/ui/test/real-daemon.test.ts, for which biome and the apps/ui tsc were re-run clean."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (66 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "green: 5 files passed, 6 skipped; 30 passed, 81 skipped (Postgres cases skip without FORERUNNER_TEST_PG)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "green: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "green at b9c1503: 95 files, 1243 passed (the first run at 90bed34 found 6 real-daemon cases whose figures had moved; re-baselined in b9c1503)"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts (local copy, git-excluded, not committed)",
+   "result": "36 passed (1.2m)"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "empty"
+  },
+  {
+   "command": "bench walk AFTER: node scripts/bench/start.mjs --name fix-d1116-budget-all --daemon-port 48860 --ui-port 2460 --provider bench-api --api-key ok --fresh --env FORERUNNER_BENCH_CRITIC_REJECT=Swiss; walk script /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk-budget-all.cjs (labels 'after' with footer Budget 0.10, 'after2' with footer Budget 0.07)",
+   "result": "Swiss task, Budget 2.00: row, drawer and Costs all show the same figure (actual = spent = By task, CHF 0.06). Every work run's start line names the room ('This run may spend CHF 1.89 (CHF 0.10 of the task's budget is kept for its review)'). The stand-in critic sent it back 4 times despite FORERUNNER_BENCH_CRITIC_REJECT_TIMES=1 (a stand-in setting, see new_problems), so it ended on the 'failed 4 times' card. Footer at Budget 0.10: work cap CHF 0.10, no room kept (R + W is more than half of what is left); the review fit and it was Done. Footer at Budget 0.07: the review was refused before it started, 'The work is done; its review waits for room in the budget.', Continue (CHF 0.07 more, needs_usd_micro 38796), then a review-only pass and Done, with no second card. First calls from the model-call log (Sonnet 5.5): coder Swiss USD 0.00531, critic Swiss USD 0.00893, coder footer USD 0.00247, critic footer USD 0.00266. Watch JSON: /tmp/frbench/fix-d1116-budget-all/steps/after-budget-all.json and after2-budget-all.json. No usage-inflating env was used. Bench stopped; its home and browser profile were deleted, steps kept."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-l3-money-screens/steps/23-after-tasks-after.png",
+   "/tmp/frbench/fix-l3-money-screens/steps/24-after-drawer-after.png",
+   "/tmp/frbench/fix-d1109-starts-engine/steps/13-after-retry-tasks.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-d1116-budget-all/steps/08-after2-02-tasks-after-session.png",
+   "/tmp/frbench/fix-d1116-budget-all/steps/09-after2-03-drawer-swiss.png",
+   "/tmp/frbench/fix-d1116-budget-all/steps/10-after2-04-costs.png",
+   "/tmp/frbench/fix-d1116-budget-all/steps/11-after2-05-session.png",
+   "/tmp/frbench/fix-d1116-budget-all/steps/12-after2-06-inbox.png",
+   "/tmp/frbench/fix-d1116-budget-all/steps/13-after2-07-tasks-after-continue.png",
+   "/tmp/frbench/fix-d1116-budget-all/steps/14-after2-08-inbox-after-continue.png",
+   "/tmp/frbench/fix-d1116-budget-all/steps/02-after-02-tasks-after-session.png",
+   "/tmp/frbench/fix-d1116-budget-all/steps/05-after-05-session.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'W15-20, W15-21: ...'",
+   "why": "BA-1: actual now equals spent equals the ledger and the sum of all Run rows (before: actual was the work only)."
+  },
+  {
+   "test": "packages/runtime/test/estimates.test.ts (workOf helper cases, kept-work figures, whole = USD 6.03, snapshot version, refresh window case)",
+   "why": "BA-6/BA-7: an estimate is work + review part; snapshot v3; samples are kept by task id."
+  },
+  {
+   "test": "packages/runtime/test/budget-pause.test.ts (estimate CHF 0.03 -> 0.06; 'Guide pages' start line, wrap-up and pause sentence; L3-research-2 card body and notification)",
+   "why": "BA-6 review part in the estimate. BA-4: the start line names the room (CHF 0.20 kept 0.04, before CHF 0.24), the wrap-up is at CHF 0.20/0.16 (before 0.24/0.19), the pause sentence adds '; CHF 0.04 is kept for its review', and the card body reads '..., more than its estimate of CHF 0.06, keeping CHF x for its review.'"
+  },
+  {
+   "test": "packages/runtime/test/oversized-task.test.ts",
+   "why": "BA-6: CHF 6.40 -> 6.42; 8,000,000 -> 8,030,000."
+  },
+  {
+   "test": "packages/runtime/test/intake.test.ts, intake-live.test.ts",
+   "why": "BA-6: the intake card's stored words name no figure (the daemon's rows and total are the only figures)."
+  },
+  {
+   "test": "packages/runtime/test/loop-critic.test.ts, session-log-person.test.ts",
+   "why": "The stand-in executor ignores caps; the task budget is raised to 5,000,000 so it holds four tries now that reviews count."
+  },
+  {
+   "test": "packages/runtime/test/wiring.test.ts accuracy view",
+   "why": "BA-7: the task is learned at its close, so the case waits for the close and uses an accepting critic."
+  },
+  {
+   "test": "packages/runtime/test/continuity-budget.test.ts 'Continue gives it the amount it named more ...'",
+   "why": "BA-5: Continue adds at least the card's needs_usd_micro."
+  },
+  {
+   "test": "packages/runtime/test/session-keeps-going.test.ts L3-run-2 and apps/ui/test/real-daemon.test.ts L3-run-2",
+   "why": "BA-8: the metrics line names the planned tasks' cost, no longer the work's and the reviews'."
+  },
+  {
+   "test": "apps/ui/test/tasks.test.tsx L3-run-3 (two cases) and apps/ui/test/real-daemon.test.ts L3-run-3",
+   "why": "BA-9: 'of CHF 0.20 budget' / 'CHF 0.20 budget used up' with the new tooltip, and spent = actual = ledger (before: 'CHF 0.11 of CHF 0.20 budget left; reviews are not counted')."
+  },
+  {
+   "test": "apps/ui/test/polish-screens.test.tsx, project.test.tsx, d1109-oversize.test.tsx, contracts.test.ts, w15-words.test.tsx W15-38",
+   "why": "BA-10: the fake daemon's prices hold the review part (CHF 0.07 for the tier-2 fixture task, CHF 0.02 for tier 1): 0.80/0.40 -> 0.87/0.47, 8.00 -> 8.07, 2.40 -> 2.47, 6.00 -> 6.07, 'A' 0.12 -> 0.19, room 3.88 -> 3.81, 6_000_000 -> 6_072_000; W15-38's session that leaves tasks out is now CHF 0.20 (each task CHF 0.09; before CHF 0.04 and 0.02), 0.08 -> 0.15."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'a task paused at its budget: one card in CHF ...'",
+   "why": "BA-5: Continue (CHF 0.12 more), before CHF 0.08; budget after it 162_500, before 112_500."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'after three samples of a kind at half the guess ...'",
+   "why": "BA-6: the card's figure holds the review part, so its work part (figure less review part) is the one compared with the guess, after the rows are written."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts W15-14",
+   "why": "BA-4: the run keeps CHF 0.04 for its review, so the scenario needs Budget 0.19 (before 0.15) to leave the run the CHF 0.15 it needs to hear the wrap-up."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts d1109-oversize-start (two cases) and d1109-oversize-pause OP-0",
+   "why": "BA-6: each price holds a light review part of USD 0.03 (CHF 6.40 -> 6.42, 8_000_000 -> 8_030_000, room USD 1.20 -> 1.14 / CHF 0.96 -> 0.91)."
+  }
+ ],
+ "new_problems": [
+  "The bench-api stand-in critic sent the Swiss task back 4 times although the daemon was restarted with --env FORERUNNER_BENCH_CRITIC_REJECT_TIMES=1 (/tmp/frbench/fix-d1116-budget-all/steps/after2-budget-all.json: 'Needs your decision: tried 4 times'). Either restart-daemon.mjs --env does not reach the role player, or REJECT_TIMES is not read on the bench-api path. This affects bench walks only, not the product.",
+  "The paused card's Continue explanation reads 'starts a session that goes on from where it stopped' even when the work is done and only the review waits (/tmp/frbench/fix-d1116-budget-all/steps/12-after2-06-inbox.png). A wording polish for d1109-oversize-pause's card words, which this area must not touch apart from the room clause.",
+  "Bench-only caveat (spec): FORERUNNER_BENCH_USAGE and FORERUNNER_BENCH_CRITIC_USAGE add input tokens after the precheck, so a run they inflate can pass its work cap. The real-daemon W15-14 world showed the same with its injected 145k-token usage: 'stopped at its budget of CHF 0.15, less the CHF 0.04 kept for its review, after spending CHF 0.12' (the work cap was CHF 0.11). The task's own budget was not passed. The evidence that no budget is passed comes from the composed tests (task-budget-all.test.ts)."
+ ],
+ "notes_for_other_areas": [
+  "RunResult.error.estimateUsdMicro (agent/loop.ts) and ReviewRefusal.estimateUsdMicro: the refused call's estimate, stored on the card.",
+  "CriticPort.reviewCallUsdMicro(task, specialist?) -> {worstUsdMicro, floorUsdMicro, maxEffort} (loop/ports.ts), built on CriticService.reviewCallUsdMicro(tier, projectSettings) and REVIEW_EVIDENCE_ALLOWANCE_TOKENS = 8,000 (critic.ts).",
+  "TaskReviewRequest.onCost and .budgetUsdMicro (append-only): every critic call is booked on the task; the review is capped at the task's budget less its figure.",
+  "PlanItem.reviewRoomUsdMicro and Planner.reviewPartOf?(task) (runner.ts); workRunCapOf(task, specialistLimit, reviewRoom) -> {capUsdMicro, roomUsdMicro, source} (executor.ts); BudgetStop.roomUsdMicro; PausedWork.estimateLeftUncappedUsdMicro.",
+  "Budget card change_card fields: needs_usd_micro (what one Continue must add at the task's budget) and room_usd_micro (what the run kept for its review); continueUsdMicro(task, stop, rate, {needsUsdMicro}).",
+  "EstimateResult.reviewUsdMicro / reviewRatio; exported reviewPartUsdMicro(task, floor?, starts?) and REVIEW_STARTING_ESTIMATES_USD_MICRO {1: 30_000, 2: 90_000, 3: 300_000} (estimates/model.ts): the one place for the owner to tune the review part. EstimateModelOptions.reviewFloor; estimate snapshot version 3; samples kept by task id; onTaskFinished fires at the task's close; the daemon calls refreshEstimates() before GET /projects/:id/start-check and before pricing a plan card.",
+  "PLAN_COUNTS_ALL = 'all' on plans the runner writes (plan.counts); critic planCountsAll(plan); SessionMetrics.counts / tasksUsdMicro / otherUsdMicro; SessionReviewData.countsAll / plannedTasksUsdMicro.",
+  "costLedger.byTaskOf(projectId, {from, to}) (state, append-only): each task now in the project with every ledger row booked to it; used by TaskView.spent and Costs > By task.",
+  "UI exports: TASK_BUDGET_TITLE (TasksTab.tsx) and TASK_BUDGET_HINT (NewTaskDialog.tsx).",
+  "Migration 0010 'task-spent-all' (data only). The next migration number is 0011.",
+  "Suggested CHANGELOG / UPDATE-LOG line (the session lead's files, not edited): 'A task's budget now counts its whole cost: its work, the critic's reviews and any fixes (the owner's answer of 2026-11-16). Each run keeps room for its review, one Continue is enough when a review waits, estimates include the review, and the Tasks row, drawer and Costs show one figure (\"of CHF 0.20 budget\").'",
+  "Live check 4 (LC-C32) input: on the real critic, measure the first review call's real worst case and cost against reviewCallUsdMicro (Sonnet 5.5 worst case about USD 0.10 by the decision), and which branch a Budget 0.10 footer task takes. On the stand-in it took the done branch (no room kept, review fit); at Budget 0.07 the review waited and one Continue finished it."
+ ]
+}

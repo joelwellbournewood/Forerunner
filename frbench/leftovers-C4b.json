@@ -1,0 +1,41 @@
+{
+ "why": "Run C sub-run C4b's leftovers that no later run C area owns. Triage them with live check 4's findings, /tmp/frbench/leftovers-L3.json, leftovers-C2.json, leftovers-C3.json, leftovers-C4.json and leftovers-C4b-design.json (the next leftovers run). Sources: /tmp/frbench/runC-C4b-fix-d1116-budget-all.json and -review-d1116-budget-all.json (no fix-up: the review passed; not_done, new_problems, non_blocking, notes_for_other_areas) and runC-C4b-merge.json problems_left.",
+ "base": "c4583eb095c04e2c9ef1d10d451208cc546463e9",
+ "items": [
+  {
+   "id": "C4bL-1",
+   "severity": "decision",
+   "from": "d1116-budget-all",
+   "text": "Validation rule 3 ('the fake is updated in the same commit') broke commit by commit on fix/d1116-budget-all: 1303798 and db706cb changed routes before the fake daemon and real-daemon cases (6d26ea7, b9c1503); the real-daemon suite was red in between. The merged head is consistent. Accepted (session lead decision (C4b-merge)); the merge commit stays (history is pushed and not rewritten)."
+  },
+  {
+   "id": "C4bL-2",
+   "severity": "minor, bench",
+   "from": "d1116-budget-all",
+   "text": "Bench-only caveat: FORERUNNER_BENCH_USAGE and FORERUNNER_BENCH_CRITIC_USAGE add input tokens after the precheck, so a run they inflate can pass its work cap (real-daemon W15-14: 'after spending CHF 0.12' against a CHF 0.11 work cap). The task's own budget held. LC-C32 records whether a real run ever passes its work cap."
+  },
+  {
+   "id": "C4bL-3",
+   "severity": "minor, tests",
+   "from": "d1116-budget-all",
+   "text": "wiring.test.ts now waits up to 30 s for the task's close, which includes the review, instead of the run's return. A slow Windows runner has a review's git and critic work inside that window: watch it on CI; widen with a reason if it flakes."
+  },
+  {
+   "id": "C4bL-4",
+   "severity": "decision",
+   "from": "d1116-budget-all",
+   "text": "The BEFORE bench walk on the base 136d4f6 was not made (the auto-mode classifier denied checking the base code into the worktree, and one bench at a time). The before state comes from earlier walks of the same code: /tmp/frbench/fix-l3-money-screens/steps/23-after-tasks-after.png, 24-after-drawer-after.png and /tmp/frbench/fix-d1109-starts-engine/steps/13-after-retry-tasks.png, plus each item's failing test. Accepted."
+  },
+  {
+   "id": "C4bL-5",
+   "severity": "decision",
+   "from": "d1116-budget-all",
+   "text": "Continue at a tiny budget adds much more than the budget, because one Continue must give what the task needs (the estimate left plus W, less what is left): CHF 0.004 gave 'Continue (CHF 0.07 more)', CHF 0.008 gave CHF 0.10. By the spec (BA-5, one Continue is enough) and the button names the amount. LC-C32 records how it reads to a person."
+  }
+ ],
+ "for_session_lead": {
+  "changelog_update_log_line": "A task's budget now counts its whole cost: its work, the critic's reviews and any fixes (the owner's answer of 2026-11-16). Each run keeps room for its review, one Continue is enough when a review waits, estimates include the review, and the Tasks row, drawer and Costs show one figure (\"of CHF 0.20 budget\").",
+  "owner_tunable": "REVIEW_STARTING_ESTIMATES_USD_MICRO {1: 30_000, 2: 90_000, 3: 300_000} in packages/runtime/src/estimates/model.ts is the one place to tune the review part of an estimate; REVIEW_EVIDENCE_ALLOWANCE_TOKENS = 8,000 in packages/critic/src/critic.ts sets W.",
+  "next_migration": "0011"
+ }
+}

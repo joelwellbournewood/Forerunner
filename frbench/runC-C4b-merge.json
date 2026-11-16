@@ -1,0 +1,99 @@
+{
+ "merged": [
+  "fix/d1116-budget-all (head b9c1503, 13 commits) into claude/nifty-knuth-f9udt0 with merge commit c4583eb, signed"
+ ],
+ "head_sha": "c4583eb095c04e2c9ef1d10d451208cc546463e9",
+ "pushed": true,
+ "conflicts_resolved": [
+  "None. The branch's merge base was 136d4f6, the tip of claude/nifty-knuth-f9udt0, so the merge was clean (66 files, +3793/-433). git grep -n '^<<<<<<< ' found nothing."
+ ],
+ "integration_fixes": [
+  "None needed. Every suite passed on the merge commit with no change. The area did not touch apps/desktop, so the cargo checks were not run."
+ ],
+ "validation": [
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok"
+  },
+  {
+   "command": "pnpm lint",
+   "result": "exit 0: 1791 files, 42 warnings and 1 info, the same count as the base"
+  },
+  {
+   "command": "pnpm lint:paths",
+   "result": "check-paths: ok (1556 files)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "exit 0 (root, apps/desktop, apps/approvals-web, apps/ui)"
+  },
+  {
+   "command": "pnpm test (unit)",
+   "result": "exit 0: 524 files, 5653 passed, 7 skipped"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (66 files)"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "link-check: ok (212 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "secret-scan: clean (2192 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 81 skipped (the Postgres cases skip without FORERUNNER_TEST_PG)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "pnpm --filter @forerunner/live test",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "PASS: 81 cases (58 hostile, 23 controls), 81 passed, 0 failed, 0 controls flagged"
+  },
+  {
+   "command": "FORCE_COLOR=1 HOME=<empty dir> pnpm test",
+   "result": "exit 0: 524 files, 5653 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty dir> pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 95 files, 1243 passed. The C4 d1109-selftasks-run real-daemon case the reviewer called flaky passed in this run."
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts (local copy, git-excluded, not committed)",
+   "result": "36 passed (1.1m)"
+  },
+  {
+   "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+   "result": "not run: the area changed no file under apps/desktop"
+  },
+  {
+   "command": "signature check over origin/claude/nifty-knuth-f9udt0..HEAD (14 commits)",
+   "result": "no unsigned commit"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "136d4f6..c4583eb pushed on the first try; the remote ref equals HEAD"
+  }
+ ],
+ "smoke": "The bench smoke (merge-w24, daemon 48890, UI 2490, --fresh, provider bench) passed 25/25 with 0 findings and 0 recorded problems. Plan card: 2 tasks, then Approve and start. Session 1 completed with 2/2 tasks done. The files were written with index.html linking styles.css and script.js. The chat named a task. Model calls: intake 1, specialist 9, critic 6, chat 1. The journey script did not need a change. Result: /tmp/frbench/merge-w24/steps/smoke-result.json. The bench was stopped, its home and browser profile were deleted, and steps/ and the logs were kept.",
+ "problems_left": [
+  "Nothing is broken on the merged head here. These items were carried over from the area's report and review and still need someone to act on them.",
+  "BA-12 was cut: the Start dialog does not yet warn when a task's budget cannot hold both its work and its review. It goes to the leftovers with this wording: '\"<title>\": its budget of CHF 0.10 may leave too little for its review, which then waits for Continue.' Planned via StartCheck.reviewMayWait.",
+  "BA-7's composed restart cases (a) to (d) and BA-3's composed effort-max case are not built and are not listed in not_done. Only model-level coverage exists (estimates.test.ts, review-price.test.ts, wiring.test.ts).",
+  "Possible flake from C4: apps/ui/test/real-daemon.test.ts d1109-selftasks-run 'the card in the Inbox names the project ... after a restart'. The ShiftedClock restarts at the second compose, so the created_at order is decided by milliseconds. It passed in this merge's run, but the reviewer saw it fail 3 of 6 on the branch and 1 of 3 on the base, so it may fail on CI.",
+  "Bench stand-in only: on the bench-api path the critic ignores FORERUNNER_BENCH_CRITIC_REJECT_TIMES. testenv/src/bench/role-player.ts:347-353 keys send-backs by req.origin?.runId, which is absent there.",
+  "Wording polish: on a card where only the review waits, Continue's explanation still reads 'starts a session that goes on from where it stopped'. A task paused because its review waits shows only 'Paused at its budget' on its row and drawer.",
+  "Validation rule 3 broke between commits on the branch: the fake daemon and real-daemon cases came after the route changes in 1303798 and db706cb. The merged head is consistent.",
+  "Stale bench journey checks, not from this area: budget.cjs's tiny-task log line, and resume.cjs's 'Paused at its budget' and 'Done: ...; left:' (the words changed in C2 cd9bece).",
+  "CI on Windows and Linux and the Desktop app workflow for c4583eb have not been checked yet. Nothing was pushed until the local run was green."
+ ]
+}

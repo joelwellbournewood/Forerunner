@@ -1,0 +1,79 @@
+{
+ "verdict": "pass",
+ "acceptance_walk": "I ran the bench \"review-d1116-budget-all\" (daemon 48870, UI 2470) from my worktree at b9c1503.\n\nWalk 1: provider bench-api with an ok key, FORERUNNER_BENCH_CRITIC_REJECT=Swiss and REJECT_TIMES=1. Script: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/review-ba-walk.cjs. Result: /tmp/frbench/review-d1116-budget-all/steps/w2-walk.json; the screenshots are copied to /tmp/frbench/review-d1116-budget-all/keep/steps-w2/.\n- In the New task dialog I created three coder tasks with a light review: \"Write the Swiss pairing tool in swiss.html\" (Budget 2.00), \"Add a footer line with the club's name to index.html\" (Budget 0.07) and \"Write the rules page in rules.html\" (no budget). The hint reads \"Its work, the critic's reviews and any fixes count. Empty: each run stops at its specialist's limit.\" (03-w2-01-new-task-dialog.png).\n- The Tasks rows read \"CHF 0.00 / of CHF 2.00 budget\", \"of CHF 0.07 budget\" and \"each run stops at CHF 2.40 (the coder's limit)\" (04).\n- The Start dialog read 'This session runs \"Write the Swiss pairing tool in swiss.html\" (about CHF 0.06) and 2 more (about CHF 0.11).' (05). Each figure includes the review part. Start was pressed in the UI.\n- Polling during the session showed the Swiss task's actual equal to spent, growing across its reviews: 8,940 while in review, 21,721 after the first review, up to 80,538.\n- Session log:\n  - Every Swiss work run said \"This run may spend CHF 1.89 (CHF 0.11 of the task's budget is kept for its review): ...\", including the fixes after send-backs (CHF 1.87 and 1.86).\n  - The footer said \"This run may spend CHF 0.07, too little to wrap up ...\" and kept no room, since R + W is more than half of what was left. It then logged '\"Add a footer line ...\" paused before its review: its own budget of CHF 0.07 has no room for it.'\n  - The rules task ran next, was reviewed and was accepted, so the session went on.\n  - \"Session review measured: 1 of 3 planned tasks done; the planned tasks cost CHF 0.08 against an estimate of CHF 0.17.\"\n- Row, drawer and Costs show one figure:\n  - Swiss: row \"CHF 0.06 of CHF 2.00 budget\"; drawer \"spent CHF 0.06 of CHF 2.00 budget\" (07-w2-05-drawer-swiss.png); Costs > By task CHF 0.06 (09). The API gives actual = spent = byTask = 80,538.\n  - Footer: 6,135 everywhere; its drawer shows \"Paused at its budget · spent less than CHF 0.01 of CHF 0.07 budget\" (08).\n- Inbox card (11): title '\"Add a footer line with the club's name to index.html\" paused at its budget of CHF 0.07', body \"The work is done; its review waits for room in the budget.\", buttons Continue (CHF 0.07 more) and Cancel task. needs_usd_micro was 55,670.\n- I restarted the daemon with restart-daemon.mjs. The card and the figures were unchanged (12-w2-10-inbox-after-restart.png).\n- I pressed Continue in the Inbox once. The next session logged \"The critic reviews ... its work was done in an earlier session\", the critic accepted, and the task was Done. No coder request was made in that session and no second card came (13, 15, 16).\n- The footer's figure became 18,311 (work plus review), the same on the row and under By task.\n- The stand-in critic sent Swiss back 4 times despite REJECT_TIMES=1. This is a stand-in issue, see non_blocking.\n\nWalk 2: bench restarted fresh, provider bench, FORERUNNER_BENCH_LONG=\"Write the\".\n- Budget journey (scripts/bench/journeys/budget.cjs, label bj; /tmp/frbench/review-d1116-budget-all/steps/bj-budget.json, 04-bj-inbox.txt):\n  - Guide at CHF 0.08: \"This run may spend CHF 0.04 (CHF 0.04 of the task's budget is kept for its review): ...\", then \"paused before its budget of CHF 0.08 ran out: it spent CHF 0.03 and listed 2 things left to do; CHF 0.04 is kept for its review.\", and a card whose first sentence is \"It spent CHF 0.03 of its budget of CHF 0.08, keeping CHF 0.04 for its review.\"\n  - Its single FAIL (\"tiny task's log line\") also fails in every earlier budget walk since W15.\n- Resume journey (resume.cjs, label rs): pressing Continue resumed the guide from \"## Where the last run stopped\", it was reviewed once, and every task of the chain ended Done. Its two FAILs check card and label words that C2 (cd9bece) changed; they are not from this branch.\n- Intake journey (intake.cjs --watch): 13/13. The plan card lines read CHF 0.23 + CHF 0.13 = \"About CHF 0.36\". The session after Approve and start said \"It promised 2 tasks, about CHF 0.36\", started each task \"(about CHF 0.23)\" and \"(about CHF 0.13)\", and its review measured against CHF 0.36. The plan card, the plan and the session review use the same figures.\n\nEverything I looked at on screen follows design §5: CHF only, no ids, no raw states, one sentence each.\n\nThe bench is stopped; its home and browser profile are deleted, and steps/ and keep/ are kept. The base-check worktree is removed.",
+ "blocking": [],
+ "claims_checked": [
+  {
+   "claim": "BA-1/BA-2: the task's figure counts every review call (a cut-off call included) and equals the ledger; migration 0010 raises older tasks",
+   "holds": true,
+   "note": "task-budget-all.test.ts fails 8 of 9 cases against base sources with assertion errors, e.g. 'expected 8478 to be 15444' and 'expected [] to deeply equal [10]'. schema.test.ts' v10 cases fail on base. On the bench, actual = spent = Costs > By task (80,538 and 18,311), and the figure grew while the task was being reviewed. I reviewed the migration SQL (MAX / GREATEST, data only). Its Postgres case exists but skips here (no FORERUNNER_TEST_PG); CI runs it."
+  },
+  {
+   "claim": "BA-3: the review is capped at what is left of the task's budget; below one call's floor it does not start; the task pauses cleanly and Continue runs only the review, also after a restart",
+   "holds": true,
+   "note": "Walked at Budget 0.07, with a daemon restart between the pause and Continue: one card, one Continue, a review-only pass, Done. The rules task in the same session still ran. The BA-3 composed tests fail on base."
+  },
+  {
+   "claim": "BA-4: a work run (fixes included) keeps R + W when it is at most half of what is left; the start line, the pause sentence and the card name the room only when it is kept",
+   "holds": true,
+   "note": "Seen on the bench: the Swiss start lines ('CHF 0.11 / CHF 0.10 ... kept for its review'), the footer with no clause, and the guide's pause sentence and card sentence. The token budget is the work cap (executor.ts: child token budgetUsdMicro = brief.budgetUsdMicro = work.capUsdMicro). task-budget-room.test.ts fails on base."
+  },
+  {
+   "claim": "BA-5: one Continue is enough (needs_usd_micro)",
+   "holds": true,
+   "note": "Bench: Continue (CHF 0.07 more) with needs 55,670, then no second card. continuity-budget and task-budget-all BA-5 pass, and fail on base."
+  },
+  {
+   "claim": "BA-6/BA-7: estimates include the review part; one sample per task; refresh before the Start dialog and plan card",
+   "holds": true,
+   "note": "The figures agree on the bench: plan card, plan line and session review. estimates.test.ts d1116 cases fail on base. The composed restart cases (a) to (d) named in BA-7's acceptance are not built and not in not_done; see non_blocking."
+  },
+  {
+   "claim": "BA-8: the session review sets the planned tasks' whole cost against a plan marked counts 'all'",
+   "holds": true,
+   "note": "Bench line: 'Session review measured: 1 of 3 planned tasks done; the planned tasks cost CHF 0.08 against an estimate of CHF 0.17.' The session-review.test.ts d1116 cases fail on base."
+  },
+  {
+   "claim": "BA-9: row, drawer and Costs show one figure; 'reviews are not counted' is gone; a task Make one project moved keeps its whole figure",
+   "holds": true,
+   "note": "Screenshots match. The tasks.test.tsx d1116 cases and the real-daemon BA-9 case ('expected 200000 to be 800000') fail on base. The before state is shown in /tmp/frbench/fix-l3-money-screens/steps/23-after-tasks-after.txt ('CHF 0.43 of CHF 0.60 budget left; reviews are not counted')."
+  },
+  {
+   "claim": "BA-10: the fake daemon prices and Continue are in step with the real daemon",
+   "holds": true,
+   "note": "The BA-10 jsdom case and the real-daemon case pass, and both fail on base. The fake and its real-daemon case changed together in 6d26ea7, but the route change itself is in 1303798; see non_blocking."
+  },
+  {
+   "claim": "No test weakened",
+   "holds": true,
+   "note": "I read every removed or changed assertion. Figure re-baselines keep their intent. W15-14's budget went 0.15 to 0.19 so its scenario still holds. In the L3-run-3 real-daemon case, the exact formatMoney(row.cap) === may became may ≤ cap + CHF 0.005, because the run's cap is now cap less the room; exactness moved to cap = budget − actual and spent = actual = ledger. The estimates 'folded set stays bounded' case now checks 'a task read again counts once'. The wiring wait is now for the task's close: 30 s real time, message 'the task closed'."
+  },
+  {
+   "claim": "Validation: pnpm check parts, unit, integration, e2e, UI vitest, Playwright green",
+   "holds": true,
+   "note": "Re-run here:\n- unit: 524 files, 5653 passed\n- integration: 30 passed, 81 skipped\n- e2e: 25 passed\n- Playwright (local config): 36 passed\n- lint: 42 warnings, the same as base\n- typecheck, check-paths, docs-check --base, link-check, secret-scan: ok\n- UI vitest: 1242 of 1243. The one failure is C4's d1109-selftasks-run real-daemon case. It is order- and timing-dependent and failed on base too (1 of 3 full-file runs there, 3 of 6 on the branch); see non_blocking."
+  },
+  {
+   "claim": "not_done: BA-12 Start dialog warning cut, with its exact wording for the leftovers",
+   "holds": true,
+   "note": "The spec allows the cut ('If cut, it goes to the leftovers with this wording'). Confirmed on the bench: the Start dialog says nothing about the CHF 0.07 footer's review."
+  },
+  {
+   "claim": "new_problems: the stand-in critic ignored REJECT_TIMES on bench-api",
+   "holds": true,
+   "note": "Reproduced (sent back 4 times). Root cause: testenv/src/bench/role-player.ts:347-353 counts send-backs by req.origin?.runId. That is absent on the Messages API path, so it is always 'no-run-id', which is always already seen, so every review of a matching title is rejected."
+  }
+ ],
+ "non_blocking": [
+  "Flaky test from an earlier sub-run, not from this branch: apps/ui/test/real-daemon.test.ts:20525 (d1109-selftasks-run, run C, \"the card in the Inbox names the project ... after a restart ...\").\n- It passes alone and fails in full-file runs: 3 of 6 on the branch, 1 of 3 on base at 136d4f6.\n- Why: composeWithRolePlayer uses a ShiftedClock fixed at 2026-03-05T08:00, which starts again from that time at the second compose. runOrder ranks by priority, then created_at. So whether 'Check that the links work', created after the restart, sorts before 'Send the logo', created before it, depends on a few milliseconds.\n- It will likely fail on CI sometimes. Its owner (C4) or the session lead should give the second compose a later clock, or assert the order from the stored created_at.",
+  "Validation rule 3 ('the fake is updated in the same commit') is broken commit by commit:\n- 1303798 changed what GET /projects/:id/start-check and the plan card price (the review part, refreshEstimates) without a real-daemon case or a fake change. These came in 6d26ea7.\n- db706cb changed TaskView.spent and Costs > By task with a real-daemon case but no fake change.\n- By the fixer's own report, the real-daemon suite was red from 1303798 until b9c1503 (6 cases).\n- The head is consistent. The session lead may want to squash-merge or accept it.",
+  "BA-7's acceptance asks for composed restart cases with settleSessions and removeHomes: (a) done, Redo, done; (b) failed, Try again, done; (c) merge watcher 20 minutes later; (d) cancelled in the Inbox, each live equal to the fold with the same Start dialog figures. None is built, and none is in not_done. Coverage exists only at model level (estimates.test.ts 'BA-7: one sample per task', the existing live-versus-fold case at :700, and wiring.test.ts). The composed effort-max case in BA-3's acceptance is also missing; only the price function is tested (review-price.test.ts).",
+  "A task paused because its review waits, with almost nothing spent, reads 'Paused at its budget · less than CHF 0.01 of CHF 0.07 budget' on the row and in the drawer. Only the Inbox card says why ('The work is done; its review waits for room in the budget.'). The drawer could quote the card's sentence (polish).",
+  "The fixer's new_problem is confirmed on screen: the Continue explanation on a review-waits card reads 'Adds CHF 0.07 to its budget and starts a session that goes on from where it stopped.' even though only the review is left (d1109-oversize-pause's words).",
+  "Continue at a tiny budget now adds much more than the budget, because needs = the whole estimate left plus W, less what is left. Examples: CHF 0.004 gave Continue (CHF 0.07 more); CHF 0.008 gave CHF 0.10. This is by the spec and the button names the amount, but it is worth one line in live check 4 (LC-C32).",
+  "Bench journeys with stale checks, not from this branch: budget.cjs 'the tiny task's log line says it pauses and keeps its work' (fails in every walk since W15); resume.cjs 'Paused at its budget' and 'Done: ...; left:' (words changed by C2's cd9bece). They should be updated to today's words.",
+  "The intake card line this branch edited still carries '(s)': 'a first-session plan of N task(s)' (intake.ts:1471-1475). This predates the branch.",
+  "The real-daemon W15-14 world shows a work run spending past its work cap ('after spending CHF 0.12' against a CHF 0.11 work cap). The cause is usage injected after the precheck, the bench-only caveat the fixer named. The task's own budget held.",
+  "wiring.test.ts now waits up to 30 s for the task's close, which includes the review, instead of the run's return. That is still at least 10 s with a message ('the task closed'), but a slow Windows runner now has a review's extra git and critic work inside that window."
+ ]
+}

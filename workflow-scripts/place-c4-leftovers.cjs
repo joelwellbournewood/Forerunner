@@ -89,7 +89,7 @@ const adds = {
     "C4 adds (d1109-selftasks-run's review): the real planning model's reply passes the strict JSON shape first time; each split part carries every criterion; the Details line costs about CHF 0.03 to 0.05; at Assisted the card's body quotes the report once; a plan task only made to wait for an added step has no 'The project's agent wrote this task' line in its brief (C4-left-1); note whether the check's line belongs in the session log (C4L-15) and how often a person-written task gets a card at Standard instead of a fix (the owner's answer 7).",
 };
 const l = p.live_check_4;
-const own = / C4 adds(?:(?! C\d\w? adds)[^])*/;
+const own = / C4 adds(?:(?! C\d\w?(?: leftovers)? adds)[^])*/;
 for (const s of l.steps) {
   s.step = s.step.replace(own, "");
   if (adds[s.id]) s.step = `${s.step} ${adds[s.id]}`;
