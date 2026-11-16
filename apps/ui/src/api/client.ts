@@ -142,6 +142,8 @@ import {
   type RunnerUnlockAnswerView,
   RunnerUnlockAnswerView as RunnerUnlockAnswerViewSchema,
   type RunnerUnlockWrapBody,
+  type RunningView,
+  RunningView as RunningViewSchema,
   type RunView,
   RunView as RunViewSchema,
   type ScanResultView,
@@ -355,6 +357,7 @@ export type {
   ReviewView,
   RevokeDeviceView,
   RollbackResult,
+  RunningView,
   RunView,
   SandboxStatusView,
   ScanResultView,
@@ -418,6 +421,8 @@ export type KillResult = z.infer<typeof KillResult>;
 export const ProjectList = z.array(ProjectCardSchema);
 export const TaskList = z.array(TaskViewSchema);
 export const RunList = z.array(RunViewSchema);
+/** d1109-run-visible: `GET /running`, the run indicator's list. */
+export const RunningList = z.array(RunningViewSchema);
 export const DecisionList = z.array(DecisionViewSchema);
 export const SessionList = z.array(SessionViewSchema);
 export const EventList = z.array(EventViewSchema);
@@ -563,6 +568,11 @@ export interface DaemonClient {
   raw(options: RawRequestOptions): Promise<Response>;
 
   health(signal?: AbortSignal): Promise<HealthView>;
+  /**
+   * d1109-run-visible (V-1): `GET /running`, what runs now in the daemon's words (the header's
+   * bar, Home, the Overview, Talk); [] when nothing runs or waits.
+   */
+  running(signal?: AbortSignal): Promise<RunningView[]>;
   me(signal?: AbortSignal): Promise<HumanView>;
   agents(signal?: AbortSignal): Promise<AgentView[]>;
   /**
@@ -1072,6 +1082,7 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     url,
     raw,
     health: (signal) => get(routePath("health"), HealthViewSchema, undefined, signal),
+    running: (signal) => get(routePath("running"), RunningList, undefined, signal),
     me: (signal) => get(routePath("me"), HumanViewSchema, undefined, signal),
     agents: (signal) => get(routePath("agents"), AgentList, undefined, signal),
     renameAgent: (id, name) =>

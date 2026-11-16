@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { resetDaemon } from "./helpers.ts";
+import { daemonUrl, holdSessions, resetDaemon } from "./helpers.ts";
 
 test.beforeEach(async ({ request }) => resetDaemon(request));
 
@@ -48,3 +48,34 @@ test("the navigation collapses under 768px behind a menu button", async ({ page 
   await page.getByTestId("main-nav").getByText("Inbox").click();
   await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
 });
+
+// d1109-run-visible (V-2, D8): while a session runs, the run indicator's bar is directly under
+// the header on every page and at every width, outside the menu that collapses on a narrow
+// window; the tab's title says it runs. Before: a small chip at the header's end and a red
+// 'Stop all (1 running)' at the other.
+for (const width of [1280, 375])
+  test(`a running session shows under the header at ${width} px on Home, the Inbox and Settings`, async ({
+    page,
+    request,
+  }) => {
+    await holdSessions(request, true);
+    try {
+      await request.post(`${daemonUrl()}/sessions`, {
+        headers: { Authorization: `Bearer ${process.env.FORERUNNER_UI_FAKE_TOKEN ?? ""}` },
+        data: { agentId: "agent_alice", projectId: "proj_atlas" },
+      });
+      await page.setViewportSize({ width, height: 800 });
+      for (const route of ["/", "/inbox", "/settings"]) {
+        await page.goto(route);
+        const bar = page.getByTestId("run-indicator-bar");
+        await expect(bar).toBeVisible();
+        await expect(bar.getByTestId("run-text")).toContainText("Atlas · ");
+        await expect(bar.getByTestId("run-stop")).toBeVisible();
+        await expect(page.getByTestId("running-chip")).toHaveCount(0);
+        await expect(page).toHaveTitle("● Atlas · Forerunner");
+        if (width < 768) await expect(page.getByTestId("main-nav")).toBeHidden();
+      }
+    } finally {
+      await holdSessions(request, false);
+    }
+  });

@@ -43,8 +43,10 @@ import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
 import { createSecretStoreRoutes } from "../secrets/store-routes.ts";
 import { CODE_COMMANDS_DEFAULT } from "../session/billing.ts";
 import { needsOf } from "../session/credential-choice.ts";
+import { CREDENTIAL_WAIT_STOP } from "../session/credential-wait.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { isPersonTask } from "../session/person-questions.ts";
+import { startPendingOf } from "../session/prepared-work.ts";
 import {
   applyProjectPlan,
   describeMilestoneChange,
@@ -61,6 +63,7 @@ import {
   taskReasonForStop,
 } from "../session/stop-words.ts";
 import type { StartRequest } from "../session/triggers.ts";
+import { startByOf } from "../session/triggers.ts";
 import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
 import { createPlanAllowanceRoutes } from "../setup/plan-allowance-routes.ts";
 import { createSetupRoutes } from "../setup/routes.ts";
@@ -82,6 +85,7 @@ import {
   voiceStatusView,
   voiceTurnView,
 } from "../voice/views.ts";
+import { keptContinuationOf, keptStartOf } from "../wiring/billing-pick.ts";
 import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
 import { assertAnswerAccepted, isChatOnlyCard, NOT_AN_OPTION } from "../wiring/request-answers.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
@@ -132,6 +136,8 @@ import {
   PinLessonBody,
   type PlanProjectView,
   RenameAgentBody,
+  type RunningView,
+  type SessionView,
   SetTaskDependenciesBody,
   SpeakBody,
   type SpeakStartedView,
@@ -169,9 +175,16 @@ import { buildModelSettingsView } from "./model-settings-view.ts";
 import { overBudgetView, oversizedView } from "./oversize-view.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
 import { planTaskViews } from "./plan-tasks.ts";
+import type { StartsWait } from "./project-status.ts";
 import { projectRepository } from "./pull-requests.ts";
 import { createQueueRoutes } from "./queue-routes.ts";
 import type { RestartRequestFile } from "./restart.ts";
+import {
+  CANCEL_WAIT_EXPLAIN,
+  RUN_CHANGED_EVENT,
+  resultAfterWait,
+  runningHealth,
+} from "./run-indicator.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
 import { createSandboxRoutes } from "./sandbox-routes.ts";
 import {
@@ -193,6 +206,7 @@ import {
   taskDetail,
   taskDisplay,
 } from "./task-display.ts";
+import { shortTitle } from "./task-words.ts";
 import {
   agentView,
   commandDefView,
@@ -574,6 +588,9 @@ export function createDaemonApp(
   app.get("/health", async (c) => {
     const active = await rt.store.session.active(rt.agent.id);
     const extensions = await rt.extensions.list();
+    // d1109-run-visible (V-1, V-7): what runs now, in the run indicator's words, for the shells
+    // that read only health (the tray, the window title); a plan being drafted is no session.
+    const running = await rt.running.views().catch(() => []);
     const view: HealthView = {
       ok: true,
       version: rt.appVersion,
@@ -582,7 +599,8 @@ export function createDaemonApp(
       platform: osFacts().platform,
       stateUrl: (rt.config?.stateUrl ?? "sqlite").replace(/\/\/[^@]*@/, "//[REDACTED]@"),
       vaultBackend: rt.vault.backend,
-      activeSessions: active.filter((s) => s.summary !== "conversation").length,
+      activeSessions: active.filter((s) => s.summary !== "conversation" && !isIntakeSession(s))
+        .length,
       killActive: rt.kill.isFrozen({ agentId: rt.agent.id }),
       sandbox: sandboxHealth(
         rt.sandbox.readiness.current() ?? (await rt.sandbox.readiness.ensureChecked()),
@@ -592,9 +610,14 @@ export function createDaemonApp(
         pending: extensions.filter((e) => e.status === "pending_approval").length,
       },
       sync: syncHealth(rt.schemaSync.status()),
+      running: runningHealth(running),
     };
     return c.json(view);
   });
+
+  // d1109-run-visible (V-1): the run indicator, what runs now in the daemon's words (the header's
+  // bar, Home, the Overview, Talk, the phone later); `run.changed` on /events carries the same.
+  app.get("/running", async (c) => c.json(await rt.running.views()));
 
   // Module sub-apps behind the same bearer check: the Extensions panel (spec K.6, L.5), the
   // updates screen (spec M) and the model watch (spec D). Each keeps its own error mapping.
@@ -895,6 +918,44 @@ export function createDaemonApp(
       return null;
     }
   };
+  /**
+   * d1109-run-visible (V-3): what waits to start for a project, for its status sentence: the
+   * person's session kept to go on after its credential wait (the wait's own words), a Start kept
+   * for the reset, a person start waiting behind another project's session, a hands-off start
+   * the quiet hours hold. Read only (d1109-starts-engine's accessors).
+   */
+  const startsWaitOf = async (projectId: string): Promise<StartsWait | null> => {
+    const now = () => rt.billing.waits.now(projectId).catch(() => null);
+    if (await keptContinuationOf(rt.store, projectId)) {
+      const wait = await now();
+      const text = wait?.text ?? "";
+      const until = /^Waits (until .+); then your session goes on\.$/.exec(text);
+      if (until) return { kind: "continuation", head: `Waiting ${until[1]}` };
+      const saved = /^Waits for (.+?): save one in Settings/.exec(text);
+      if (saved)
+        return { kind: "continuation", head: `Waiting for ${saved[1]}`, save: wait?.save ?? null };
+      return { kind: "continuation", head: "Waiting for Claude" };
+    }
+    if (await keptStartOf(rt.store, projectId)) {
+      const wait = await now();
+      return { kind: "kept_start", head: wait?.startsAt ?? "Starts once Claude is back" };
+    }
+    const pending = rt.scheduler.pendingStarts(rt.agent.id);
+    const active = rt.scheduler.activeStart(rt.agent.id)?.req.projectId;
+    if (
+      active &&
+      active !== projectId &&
+      pending.some((e) => e.req.projectId === projectId && startByOf(e.req) === "person")
+    ) {
+      const behind = (await rt.store.project.get(active).catch(() => undefined))?.name;
+      if (behind) return { kind: "queued", behind };
+    }
+    const held = pending.some((e) => e.req.projectId === projectId && e.result === "deferred");
+    const project = await rt.store.project.get(projectId).catch(() => undefined);
+    if (held || (startPendingOf(project) && rt.quietHours.isQuiet(rt.clock.now())))
+      return { kind: "held" };
+    return null;
+  };
   const projectCardOf = (
     id: string,
     plan?: { state: "drafting" | "pending" | null; error: string | null },
@@ -927,6 +988,8 @@ export function createDaemonApp(
       repositoryElsewhere: (project) => rt.repositoryUse.overviewOf(project),
       // OJ-01 (d1109-onerepo-join): other projects here on the same repository or folder.
       sharesRepositoryWith: (project) => sharesRepositoryWith(rt.joinDeps, project),
+      // d1109-run-visible (V-3): what waits to start, said with when.
+      startsWait: startsWaitOf,
     });
   app.get("/projects", async (c) => {
     const rows = await rt.store.project.active({ limit: 100 });
@@ -1837,11 +1900,70 @@ export function createDaemonApp(
     c.json(await liveSessionView(await rt.store.session.mustGet(c.req.param("id")))),
   );
   /** The live view's session: the row, the agent's name and the task in flight. */
+  /**
+   * d1109-run-visible (V-5): what comes next for a session that ended to wait for its Claude
+   * credential, in one block with its one button; null for any other session, or once a later
+   * session of its project began (that one went on with the work).
+   */
+  const waitBlockOf = async (s: SessionRow): Promise<SessionView["waitBlock"]> => {
+    const handoff = (s.handoff ?? {}) as { stop_reason?: unknown };
+    if (handoff.stop_reason !== CREDENTIAL_WAIT_STOP || !s.project_id || !s.ended_at) return null;
+    const projectId = s.project_id;
+    const later = await rt.store.session.forProject(projectId, { limit: 20 });
+    if (
+      later.some((r) => r.id !== s.id && r.created_at > (s.ended_at ?? "") && !isIntakeSession(r))
+    )
+      return null;
+    const left = runOrder(await rt.store.task.readyTasks(projectId, { limit: 200 }));
+    const names = left.length
+      ? `"${shortTitle(left[0]?.title ?? "", 40)}"${left.length > 1 ? ` and ${left.length - 1} more` : ""}`
+      : null;
+    const budgetLeft = money(Math.max(0, s.budget_cap_usd_micro - s.spent_usd_micro), chf());
+    const wait = await rt.billing.waits.now(projectId).catch(() => null);
+    const text = wait?.text ?? "";
+    const until = /until (.+?) \((.+?)\)/.exec(text);
+    const continuation = await keptContinuationOf(rt.store, projectId);
+    if (continuation?.kept.continues === s.id && names) {
+      const head = until ? `Waiting until ${until[1]} (${until[2]})` : "Waiting for Claude";
+      return {
+        state: "goes_on",
+        text: `${head}, then it goes on with ${names}.`,
+        action: "cancel",
+        explain: CANCEL_WAIT_EXPLAIN,
+        projectId,
+        budgetLeft,
+      };
+    }
+    if ((await keptStartOf(rt.store, projectId)) && names) {
+      const at = /^Starts at (.+?) \(/.exec(wait?.startsAt ?? "")?.[1];
+      return {
+        state: "starts_again",
+        text: at ? `Starts again at ${at} with ${names}.` : `Starts again with ${names}.`,
+        action: "cancel",
+        explain: CANCEL_WAIT_EXPLAIN,
+        projectId,
+        budgetLeft,
+      };
+    }
+    if (!names || budgetLeft.usdMicro <= 0) return null;
+    const why = until
+      ? `Stopped to wait for ${until[2]} until ${until[1]}`
+      : "Stopped to wait for Claude";
+    return {
+      state: "stopped",
+      text: `${why}: ${names} ${left.length > 1 ? "wait" : "waits"}.`,
+      action: "continue",
+      explain: `Opens Start with the rest of this session and the ${formatChf(budgetLeft.chfMicro)} left of its budget.`,
+      projectId,
+      budgetLeft,
+    };
+  };
   const liveSessionView = async (s: SessionRow) => {
     const name = (await rt.store.agent.get(s.agent_id))?.name ?? s.agent_id;
-    const last = (await rt.store.event.list(s.id, 0, 10_000))
-      .filter((e) => e.type === "task.started" || e.type === "task.finished")
-      .at(-1);
+    // d1109-run-visible: the newest task event only (the run indicator's read), not the whole log.
+    const [last] = await rt.store.event.ofTypes(s.id, ["task.started", "task.finished"], {
+      limit: 1,
+    });
     const current =
       last?.type === "task.started" &&
       !["completed", "stopped", "failed", "killed"].includes(s.status)
@@ -1854,10 +1976,21 @@ export function createDaemonApp(
     // L-21: "Ended: 1 task needs you" only while that task still waits on the person.
     // d1109-sessions: its one figure (the ledger's sum, read now), and a planning call's words.
     const spend = (await sessionSpends(rt.store, [s.id])).get(s.id);
-    return sessionView(s, name, chf(), current, await stillBlocked(rt.store, s.handoff), {
+    const view = sessionView(s, name, chf(), current, await stillBlocked(rt.store, s.handoff), {
       ...(spend ? { spend } : {}),
       ...(isIntakeSession(s) ? { planning: await planningFactsOf(rt.store, s) } : {}),
     });
+    const waitBlock = await waitBlockOf(s).catch(() => null);
+    // C3-left-8: the stored result's promise follows what is kept now: after Cancel nothing says
+    // the session goes on ("Waits until 02:23 (...); then your session goes on." read on), as
+    // the Overview's Last result and the Inbox's Update line read it (`resultAfterWait`).
+    const summary = await resultAfterWait(
+      rt.store,
+      s.project_id,
+      s.ended_at ?? s.created_at,
+      view.summary,
+    ).catch(() => view.summary);
+    return { ...view, summary, waitBlock };
   };
 
   app.get("/sessions/:id/events", async (c) => {
@@ -1936,6 +2069,9 @@ export function createDaemonApp(
   // it changed nothing and it held the agent's one session for good.
   app.post("/sessions/:id/stop", async (c) => {
     const s = await rt.store.session.mustGet(c.req.param("id"));
+    // d1109-run-visible: Stop now on the critic's monthly check stops its run (it ends its row).
+    if (await rt.running.stopCalibration(s.id))
+      return c.json(await liveSessionView(await rt.store.session.mustGet(s.id)));
     const live = rt.kill.activeCount({ sessionId: s.id }) > 0;
     if (live)
       await rt.kill.stop({ sessionId: s.id }, STOP_NOW_REASON, { freeze: false, by: "you" });
@@ -2145,7 +2281,11 @@ export function createDaemonApp(
           m.from_agent_id,
           (await rt.store.agent.get(m.from_agent_id))?.name ?? m.from_agent_id,
         );
-      msgViews.push(messageView(m, names.get(m.from_agent_id) ?? m.from_agent_id));
+      // C3-left-8: a session's Update line that promised it goes on says what is true now.
+      const body = await resultAfterWait(rt.store, m.project_id, m.created_at, m.body).catch(
+        () => m.body,
+      );
+      msgViews.push(messageView({ ...m, body }, names.get(m.from_agent_id) ?? m.from_agent_id));
     }
     return c.json({
       requests: reqViews,
@@ -3240,6 +3380,12 @@ export function createDaemonApp(
       // `/speak/:id/events`; a stream that declared `?speech=play` counts as one.
       const onSpeak = (p: SpeakStartedView) =>
         void stream.writeSSE({ event: "speak.started", data: JSON.stringify(p) });
+      // d1109-run-visible (V-1): what runs now changed (a task began, its review, a stop asked
+      // for, a start queued, a wait kept or cancelled): the run indicator's whole list.
+      const onRun = (views: RunningView[]) =>
+        void stream
+          .writeSSE({ event: "run.changed", data: JSON.stringify(views) })
+          .catch(() => undefined);
       // d1109-chat-depth: a chat turn started, took a step or ended: the conversation's screens
       // re-read it (the answering line after a reload, the reply on the other surface).
       const offConversation =
@@ -3267,6 +3413,7 @@ export function createDaemonApp(
       rt.events.on("notification", onNotification);
       rt.events.on(DESKTOP_INDICATOR_EVENT, onDesktopIndicator);
       rt.events.on("speak", onSpeak);
+      rt.events.on(RUN_CHANGED_EVENT, onRun);
       try {
         await onInbox();
         await streamUntilClosed(stream, 15_000, async () => {
@@ -3286,6 +3433,7 @@ export function createDaemonApp(
         rt.events.off("notification", onNotification);
         rt.events.off(DESKTOP_INDICATOR_EVENT, onDesktopIndicator);
         rt.events.off("speak", onSpeak);
+        rt.events.off(RUN_CHANGED_EVENT, onRun);
         offConversation();
         detachShell();
         detachPlayer();

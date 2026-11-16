@@ -174,8 +174,10 @@ describe("d1109-sessions, run C: the Sessions tab (SL-7)", () => {
     const tab = await screen.findByTestId("sessions-tab");
     expect(await within(tab).findByTestId("sessions-heading")).toHaveTextContent(/^4 sessions$/);
     const live = within(tab).getByTestId("session-row-working");
+    // d1109-run-visible: the run indicator's words, as the header's bar says them (it read
+    // 'Working on "Write the pipeline brief" (2 of 4 done)').
     expect(within(live).getByTestId("session-row-gist")).toHaveTextContent(
-      /^Working on "Write the pipeline brief" \(\d+ of \d+ done\)$/,
+      /^Atlas · the writer works on "Write the pipeline brief"$/,
     );
     expect(within(live).getByTestId("session-row-line")).toHaveTextContent(
       /^\d\d:\d\d · 3 min · CHF 0\.40 so far on your API key$/,
@@ -374,7 +376,9 @@ describe("d1109-sessions, run C: the Sessions tab (SL-7)", () => {
     const tab = await screen.findByTestId("sessions-tab");
     const gist = () =>
       within(within(tab).getByTestId("session-row-working")).getByTestId("session-row-gist");
-    await waitFor(() => expect(gist()).toHaveTextContent('Working on "Write the pipeline brief"'));
+    await waitFor(() =>
+      expect(gist()).toHaveTextContent('Atlas · the writer works on "Write the pipeline brief"'),
+    );
     // The session moves to the next task; the daemon says so on its frames.
     s.currentTask = { id: "task_1", title: "Index the documentation pages", specialist: "coder" };
     await act(async () => {
@@ -384,7 +388,10 @@ describe("d1109-sessions, run C: the Sessions tab (SL-7)", () => {
       }
     });
     await waitFor(
-      () => expect(gist()).toHaveTextContent('Working on "Index the documentation pages"'),
+      () =>
+        expect(gist()).toHaveTextContent(
+          'Atlas · the coder works on "Index the documentation pages"',
+        ),
       { timeout: 10_000 },
     );
   }, 15_000);

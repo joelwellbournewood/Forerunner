@@ -31,24 +31,29 @@ const running = (h: ReturnType<typeof createHarness>, extra: Partial<SessionView
 };
 
 describe("the header while a session runs (design §3.1)", () => {
-  it("a chip says who works on what for how long, and opens the session", async () => {
+  // d1109-run-visible: the run indicator's bar under the header replaced the chip ('Alice is
+  // working on "Add the search box" · 3 min'); it says what runs in the daemon's words.
+  it("the run indicator says what works on what for how long, and opens the session", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/", harness, { pollIntervalMs: 40 });
     await screen.findAllByTestId("project-card");
-    expect(screen.queryByTestId("running-chip")).toBeNull();
+    expect(screen.queryByTestId("run-indicator-bar")).toBeNull();
     running(harness);
-    const chip = await screen.findByTestId("running-chip");
-    expect(chip).toHaveTextContent('Alice is working on "Add the search box" · 3 min');
-    await user.click(chip);
+    const bar = await screen.findByTestId("run-indicator-bar");
+    expect(within(bar).getByTestId("run-text")).toHaveTextContent(
+      'Atlas · the coder works on "Add the search box"',
+    );
+    expect(within(bar).getByTestId("run-elapsed")).toHaveTextContent("3 min");
+    await user.click(within(bar).getByTestId("run-open"));
     expect(await screen.findByTestId("session-header")).toBeInTheDocument();
   });
 
-  it("the chip goes when the session ends, without a reload", async () => {
+  it("the run indicator goes when the session ends, without a reload", async () => {
     const harness = createHarness();
     const s = running(harness);
     renderApp("/", harness, { pollIntervalMs: 40 });
-    await screen.findByTestId("running-chip");
+    await screen.findByTestId("run-indicator-bar");
     s.status = "completed";
     s.endedAt = new Date().toISOString();
     // The poll no longer lists it; the next card read says nothing works on the project.
@@ -57,7 +62,7 @@ describe("the header while a session runs (design §3.1)", () => {
       id: "req_new",
       status: "open",
     });
-    await waitFor(() => expect(screen.queryByTestId("running-chip")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("run-indicator-bar")).toBeNull());
   });
 
   it("Continue where it stopped allows sessions and starts again only the projects Stop all stopped (later #60)", async () => {
@@ -71,6 +76,11 @@ describe("the header while a session runs (design §3.1)", () => {
     if (!beaconTask) throw new Error("fixture changed");
     beaconTask.status = "ready";
     renderApp("/", harness, { pollIntervalMs: 40 });
+    // d1109-run-visible: Stop all is in the run indicator's Stop menu (the bar's; Home's
+    // Working now shows the same element).
+    await user.click(
+      within(await screen.findByTestId("run-indicator-bar")).getByTestId("run-stop"),
+    );
     await user.click(await screen.findByTestId("kill-switch"));
     await user.click(await screen.findByTestId("kill-confirm-stop"));
     const bar = await screen.findByTestId("kill-banner");
@@ -171,6 +181,11 @@ describe("leftovers7-tailrun, wave 13: Continue keeps a credential wait (TR-2)",
       startable: true,
     };
     renderApp("/", harness, { pollIntervalMs: 40 });
+    // d1109-run-visible: Stop all is in the run indicator's Stop menu (the bar's; Home's
+    // Working now shows the same element).
+    await user.click(
+      within(await screen.findByTestId("run-indicator-bar")).getByTestId("run-stop"),
+    );
     await user.click(await screen.findByTestId("kill-switch"));
     await user.click(await screen.findByTestId("kill-confirm-stop"));
     const bar = await screen.findByTestId("kill-banner");

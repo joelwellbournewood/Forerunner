@@ -155,9 +155,12 @@ describe("Shell", () => {
     expect(screen.queryByTestId("kill-switch")).toBeNull();
     const running = { ...harness.daemon.state.sessions[0], id: "sess_live", status: "running" };
     harness.daemon.state.sessions.push(running as (typeof harness.daemon.state.sessions)[0]);
-    await waitFor(() =>
-      expect(screen.getByTestId("kill-switch")).toHaveTextContent("Stop all (1 running)"),
+    // d1109-run-visible: Stop all is in the run indicator's Stop menu, under the header (it
+    // was a red 'Stop all (1 running)' at the header's end).
+    await user.click(
+      within(await screen.findByTestId("run-indicator-bar")).getByTestId("run-stop"),
     );
+    expect(screen.getByTestId("kill-switch")).toHaveTextContent(/^Stop all/);
     await user.click(screen.getByTestId("kill-switch"));
     // It asks once, with what it does; nothing is sent before the confirmation.
     expect(await screen.findByTestId("kill-confirm")).toHaveTextContent(

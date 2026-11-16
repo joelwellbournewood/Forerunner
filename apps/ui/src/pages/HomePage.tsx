@@ -4,7 +4,7 @@ import type { HumanRequestView, ProjectCard as ProjectCardView } from "../api/cl
 import { ProjectStatus } from "../components/ProjectState.tsx";
 import { Button, buttonClassName, EmptyState, Loading } from "../components/ui.tsx";
 import { useAsync } from "../lib/use-async.ts";
-import { elapsedWords, useNow } from "../shell/ShellBars.tsx";
+import { RunIndicator, useRunning } from "../shell/RunIndicator.tsx";
 import { useShell } from "../shell/ShellContext.ts";
 import { useClient, useUiState } from "../store/context.tsx";
 import { StartSessionDialog } from "./project/StartSessionDialog.tsx";
@@ -31,7 +31,7 @@ export function HomePage() {
         Home
       </h1>
       <NeedsYou />
-      <WorkingNow projects={projects} />
+      <WorkingNow />
       <div>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">Projects</h2>
@@ -185,41 +185,17 @@ function NeedsYou() {
   );
 }
 
-/** Design §3.2 "Working now": who works on what, for how long, with Open. */
-function WorkingNow({ projects }: { projects: ProjectCardView[] }) {
-  const now = useNow();
-  const working = projects.filter((p) => p.working);
-  if (working.length === 0) return null;
+/**
+ * Design §3.2 "Working now", as the run indicator says it (d1109-run-visible V-3): the same words
+ * and Stop as the bar under the header, in its block form; nothing when nothing runs or waits.
+ */
+function WorkingNow() {
+  const running = useRunning();
+  if (running.length === 0) return null;
   return (
     <div data-testid="working-now">
       <h2 className="mb-2 text-lg font-semibold">Working now</h2>
-      <ul className="space-y-1">
-        {working.map((p) => {
-          const w = p.working;
-          if (!w) return null;
-          const elapsed = elapsedWords(w.since, now);
-          return (
-            <li
-              key={p.id}
-              className="flex flex-wrap items-center gap-2 rounded border border-blue-200 bg-blue-50/50 px-3 py-2 text-sm dark:border-blue-900 dark:bg-blue-950/30"
-              data-testid="working-row"
-            >
-              <span className="flex-1">
-                {w.agentName ?? "Your agent"} is working on{" "}
-                {w.taskTitle ? `"${w.taskTitle}"` : "the next task"} in {p.name}
-                {elapsed ? ` · ${elapsed}` : ""}
-              </span>
-              <Link
-                to={`/sessions/${encodeURIComponent(w.sessionId)}`}
-                className={buttonClassName("secondary")}
-                data-testid="working-open"
-              >
-                Open
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+      <RunIndicator form="block" />
     </div>
   );
 }

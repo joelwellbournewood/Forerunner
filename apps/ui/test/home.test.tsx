@@ -51,7 +51,8 @@ describe("Home", () => {
     const cards = await screen.findAllByTestId("project-card");
     const beacon = within(cards[1] as HTMLElement);
     expect(beacon.getByTestId("project-status")).toHaveTextContent(
-      "Ready to continue: 1 task ready",
+      // d1109-run-visible (V-3): it read "Ready to continue: 1 task ready".
+      "Ready: 1 task waits for your Start",
     );
     const cont = beacon.getByTestId("project-status-action");
     expect(cont).toHaveTextContent("Continue");
@@ -74,11 +75,13 @@ describe("Home", () => {
       currentTask: { id: "task_4", title: draft.title, specialist: "coder" },
     });
     const working = await screen.findByTestId("working-now");
-    expect(working).toHaveTextContent(`Alice is working on "${draft.title}" in Beacon`);
-    expect(within(working).getByTestId("working-open")).toHaveAttribute(
-      "href",
-      "/sessions/sess_live",
+    // d1109-run-visible (V-3): the run indicator's words and Stop, the bar's own (it read
+    // 'Alice is working on "X" in Beacon' with Open).
+    expect(within(working).getByTestId("run-text")).toHaveTextContent(
+      `Beacon · the coder works on "${draft.title}"`,
     );
+    expect(within(working).getByTestId("run-open")).toHaveAttribute("href", "/sessions/sess_live");
+    expect(within(working).getByTestId("run-stop")).toBeInTheDocument();
     // The project's row says it too, and offers no second Start.
     await waitFor(() =>
       expect(

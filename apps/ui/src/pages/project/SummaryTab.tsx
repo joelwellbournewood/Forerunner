@@ -16,7 +16,7 @@ import { ReadAloud } from "../../components/ReadAloud.tsx";
 import { Button, buttonClassName, ErrorBanner, Loading } from "../../components/ui.tsx";
 import { relativeTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
-import { elapsedWords, useNow } from "../../shell/ShellBars.tsx";
+import { RunIndicator, useRunning } from "../../shell/RunIndicator.tsx";
 import { refreshProjects, useClient, useUiState, useUiStore } from "../../store/context.tsx";
 import { commandForSetting, SettingChangeDialog } from "../SettingsPage.tsx";
 import { DecisionsSection } from "./DecisionsSection.tsx";
@@ -55,7 +55,7 @@ export function SummaryTab({ projectId, project }: { projectId: string; project?
   return (
     <div className="space-y-6" data-testid="summary-tab">
       <ProjectCards projectId={projectId} />
-      {project?.working ? <WorkingNow project={project} /> : null}
+      <WorkingNow projectId={projectId} />
       <SummaryCard projectId={projectId} project={project} />
       <RepositoryElsewhere projectId={projectId} project={project} />
       <SharedRepository projectId={projectId} project={project} />
@@ -111,31 +111,21 @@ function ProjectCards({ projectId }: { projectId: string }) {
   );
 }
 
-/** Design §3.4 "Working now": the task in flight, for how long, and Open. */
-function WorkingNow({ project }: { project: ProjectCard }) {
-  const now = useNow();
-  const w = project.working;
-  if (!w) return null;
-  const elapsed = elapsedWords(w.since, now);
+/**
+ * Design §3.4 "Working now", as the run indicator says it (d1109-run-visible V-3): this project's
+ * entries in the bar's words, with the same Stop (or Cancel for a session that waits to go on).
+ */
+function WorkingNow({ projectId }: { projectId: string }) {
+  const running = useRunning(projectId);
+  if (running.length === 0) return null;
   return (
     <section data-testid="overview-working" aria-labelledby="overview-working-title">
       <h2 id="overview-working-title" className="font-semibold">
         Working now
       </h2>
-      <p className="mt-1 flex flex-wrap items-center gap-2 text-sm">
-        <span>
-          {w.agentName ?? "Your agent"} is working on{" "}
-          {w.taskTitle ? `"${w.taskTitle}"` : "the next task"}
-          {elapsed ? ` · ${elapsed}` : ""}
-        </span>
-        <Link
-          to={`/sessions/${encodeURIComponent(w.sessionId)}`}
-          className={buttonClassName("secondary")}
-          data-testid="overview-working-open"
-        >
-          Open
-        </Link>
-      </p>
+      <div className="mt-1">
+        <RunIndicator form="block" projectId={projectId} />
+      </div>
     </section>
   );
 }

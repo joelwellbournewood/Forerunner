@@ -130,6 +130,30 @@ schedules wrote their fired key before their start left the line; a start carrie
    within its own cap. The owner kept it monthly and on (answer 6); quiet hours hold it like every
    schedule, and the running-session indicator shows it with words saying what it does
    (d1109-run-visible, sub-run C5).
+12. **D8, what runs now is visible everywhere (appended 2026-11-16, d1109-run-visible, sub-run
+   C5).** The owner, 2026-11-09: "it should at least be very clear to a user when a run is
+   ongoing. That should also be very visually clear no matter where the person is." One run state
+   in the daemon's words (`daemon/run-indicator.ts`, `GET /running`, the `run.changed` event,
+   `/health.running`): 'Quote page · the coder works on "Style the page"', '... · the critic
+   checks "X"', '... · picks the next task', '... · wraps up "X" at its budget', '... · stops
+   after "X"', "· then Garden site" for a person's start that waits behind it, and the critic's
+   monthly check (point 11) as "Forerunner · the critic's monthly check on known examples" with
+   one sentence of what it is for in the credential it runs on, stoppable with Stop now and Stop
+   all. It is shown as one element under the header on every page and at every width (with Stop
+   after this task, Stop now and Stop all), as Home's and the Overview's Working now, as Talk's
+   first line, in the Sessions list's working row, in the tray (its first item, its tooltip, a dot
+   on its icon) and in the window's title. **A person's session waiting to go on** after a
+   credential wait (point 5, the continuation) is shown too, with **Cancel**: "Quote page ·
+   waiting until 15:40, then it goes on" (after a refusal "waiting for a new API key, then it
+   goes on"; when quiet hours end later, their end), and Cancel drops the continuation ("Nothing
+   starts when Claude is back; its tasks wait for your Start."); a Start kept for the reset (point
+   10) reads "Starts at 15:40" with Cancel on the project's line and on the page of the session
+   that ended to wait. The project's line says what waits to start ("Starts after your quiet
+   hours", 'Starts after the session on "Quote page"', "Ready: 3 tasks wait for your Start"), and
+   an Inbox answer that readied work for the next Start offers Start beside its Done line while no
+   session of that project runs. A waiting session leaves the window's title and the tray's dot
+   as when nothing runs: they mean a session runs now. Every sentence is at most 80 characters,
+   names no id and no raw state; the phone shows the same words later from `GET /running`.
 
 ## Consequences
 

@@ -121,10 +121,13 @@ import {
   type PlanState,
   progressOf,
   projectStatusLine,
+  type StartsWait,
   sinceLines,
   workingOn,
 } from "./project-status.ts";
 import { type RequestWordsContext, requestWords } from "./request-words.ts";
+import { resultAfterWait } from "./run-indicator.ts";
+import { startOfferOf } from "./run-words.ts";
 import {
   outcomeOfHandoff,
   type PlanningFacts,
@@ -198,6 +201,12 @@ export interface ProjectCardFacts {
   repositoryElsewhere?: (project: ProjectRow) => Promise<ProjectCard["repositoryElsewhere"]>;
   /** OJ-01 (d1109-onerepo-join): the projects here on the same link (`sharesRepositoryWith`). */
   sharesRepositoryWith?: (project: ProjectRow) => Promise<ProjectCard["sharesRepositoryWith"]>;
+  /**
+   * d1109-run-visible (V-3): what waits to start for the project (the person's session going on,
+   * a kept Start, a held hands-off start, a person start behind another session); its status
+   * sentence says it.
+   */
+  startsWait?: (projectId: string) => Promise<StartsWait | null>;
 }
 
 export async function projectCard(
@@ -264,6 +273,8 @@ export async function projectCard(
     working,
     folder,
     joinedInto: joined ? { text: joined.text, projectId: joined.projectId } : null,
+    startsWait:
+      !working && facts?.startsWait ? await facts.startsWait(p.id).catch(() => null) : null,
   });
   return {
     id: p.id,
@@ -408,8 +419,26 @@ export async function projectSummary(
   };
   const spend = await store.costLedger.sum({ projectId: p.id });
   const next = s.next_steps ?? [];
+  // C3-left-8: the last result's "then your session goes on" follows what is kept now (after
+  // Cancel: "then it runs at your next Start."), here and in Read aloud, as on its session page.
+  const lastSummary = s.last_session
+    ? await resultAfterWait(
+        store,
+        p.id,
+        s.last_session.ended_at ?? null,
+        s.last_session.summary,
+      ).catch(() => s.last_session?.summary ?? "")
+    : "";
+  const shownCache =
+    s.last_session && lastSummary !== s.last_session.summary
+      ? { ...s, last_session: { ...s.last_session, summary: lastSummary } }
+      : s;
   // One text for the screen's "Read aloud" and for the `summary.speak` command (spec A.6).
-  const spoken = spokenProjectSummary(p, spend.usd_micro, chfPerUsd);
+  const spoken = spokenProjectSummary(
+    { ...p, summary_cache: shownCache as typeof p.summary_cache },
+    spend.usd_micro,
+    chfPerUsd,
+  );
   // Design §3.4 "Next", computed when shown (§5 rule 4): the open tasks in run order, each
   // with its status in words, at most three, then "and N more".
   const tasks = await store.task.list({ project_id: p.id } as never, { limit: 2000 });
@@ -450,7 +479,7 @@ export async function projectSummary(
     : undefined;
   const lastText = s.last_session
     ? resultTextNow(
-        s.last_session.summary,
+        lastSummary,
         s.last_session.outcome ?? outcomeOfHandoff(lastRow?.handoff),
         lastRow ? spentOf(lastSpend, lastRow, chfPerUsd).chfMicro : 0,
       )
@@ -462,7 +491,7 @@ export async function projectSummary(
       ? {
           id: s.last_session.id,
           endedAt: s.last_session.ended_at,
-          summary: lastRow ? lastText : s.last_session.summary,
+          summary: lastRow ? lastText : lastSummary,
           stopReason: s.last_session.stop_reason,
           changedFiles,
           ...(since.length ? { since } : {}),
@@ -919,6 +948,8 @@ export function requestView(
     details: words.details,
     ...(words.lists?.length ? { lists: words.lists } : {}),
     outcome: words.outcome,
+    // d1109-run-visible (V-6): the Done line's Start.
+    ...(startOfferOf(r.change_card, r.status, r.project_id) ? { startOffer: true } : {}),
     answeredAt: r.answered_at ?? null,
     followUp: words.followUp ?? null,
   };

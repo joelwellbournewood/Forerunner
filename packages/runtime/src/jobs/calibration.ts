@@ -183,6 +183,12 @@ export interface CalibrationJobDeps {
    * scheduler's monthly kind fires on. Default UTC.
    */
   timezone?: () => Promise<string> | string;
+  /**
+   * Called when the run's session row is made and when it is ended (d1109-run-visible: the run
+   * indicator's `run.changed` frame shows the monthly check while it runs and takes it away when
+   * it ends; the job emits on no bus of its own). Default: nothing.
+   */
+  onRowChanged?: (sessionId: string) => void;
 }
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -301,6 +307,7 @@ export class CalibrationJob {
       runner: "pc",
       author_agent: runAs,
     });
+    this.rowChanged(session.id);
     const sessionToken = tokens.issue({
       runId: `calibration-${session.id}`,
       sessionId: session.id,
@@ -502,6 +509,16 @@ export class CalibrationJob {
         sessionId,
         error: errorMessage(e),
       });
+    }
+    this.rowChanged(sessionId);
+  }
+
+  /** `onRowChanged`, never failing the run (it only asks the indicator to read again). */
+  private rowChanged(sessionId: string): void {
+    try {
+      this.deps.onRowChanged?.(sessionId);
+    } catch (e) {
+      this.logger.warn("the run indicator was not told", { error: errorMessage(e) });
     }
   }
 

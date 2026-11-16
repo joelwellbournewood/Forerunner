@@ -329,6 +329,17 @@ fn leave(app: &AppHandle, url: &url::Url, action: LeaveAction, via: Via) {
     }
 }
 
+/// d1109-run-visible (V-7): the main window's title ('Forerunner — Quote page is working' while
+/// a session runs, `state::window_title`), set on every refresh of the tray; no window, no-op.
+pub fn set_main_title(app: &AppHandle, title: &str) {
+    if let Some(w) = app.get_webview_window(MAIN)
+        && w.title().ok().as_deref() != Some(title)
+        && let Err(e) = w.set_title(title)
+    {
+        log::warn!("window title update failed: {e}");
+    }
+}
+
 /// Show, un-minimise and focus the main window. Without one (not attached yet, or halted)
 /// this attaches to or starts the daemon. During Quit it does neither (U-062).
 pub fn show_main(app: &AppHandle) {

@@ -693,8 +693,9 @@ describe("the project header (design §2, §3.4)", () => {
     );
     // Overview's Working now says the same and opens it.
     await userEvent.setup().click(screen.getByTestId("tab-summary"));
+    // d1109-run-visible (V-3): in the run indicator's words, with its Stop.
     expect(await screen.findByTestId("overview-working")).toHaveTextContent(
-      'Alice is working on "Decide the versioning scheme"',
+      'Atlas · the coder works on "Decide the versioning scheme"',
     );
   });
 

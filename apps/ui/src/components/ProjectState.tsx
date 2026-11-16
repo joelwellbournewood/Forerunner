@@ -1,3 +1,4 @@
+import { CANCEL_WAIT_EXPLAIN } from "@forerunner/runtime/daemon/run-wait-words";
 import { useState } from "react";
 import { Link } from "react-router";
 import { describeError, type ProjectCard } from "../api/client.ts";
@@ -61,6 +62,53 @@ function RetryPlanButton({
   );
 }
 
+/** What Cancel on a wait that goes on by itself does (d1109-run-visible V-3), said with it. */
+export const CANCEL_WAIT_LINE_EXPLAIN = CANCEL_WAIT_EXPLAIN;
+
+/**
+ * Cancel on the line of a project whose session waits to go on, or whose Start is kept for the
+ * reset (d1109-run-visible V-3): `POST /projects/:id/continuation/cancel`, then the card and the
+ * run indicator read again, so the line says what waits now ("Ready: 2 tasks wait for your
+ * Start").
+ */
+function CancelWaitButton({ projectId, testId }: { projectId: string; testId: string }) {
+  const client = useClient();
+  const store = useUiStore();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cancel = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await client.cancelContinuation(projectId);
+      store.dispatch({ type: "project.upsert", project: await client.project(projectId) });
+      store.dispatch({ type: "running", running: await client.running().catch(() => []) });
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Button
+        onClick={() => void cancel()}
+        disabled={busy}
+        title={CANCEL_WAIT_LINE_EXPLAIN}
+        data-testid={testId}
+      >
+        Cancel
+      </Button>
+      {error ? (
+        <span className="text-sm text-red-700 dark:text-red-300" data-testid={`${testId}-error`}>
+          {error}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 /**
  * A project's state in one sentence (design §2 "Project status"): the line the project header,
  * its Overview and its row on Home show, with the one button it offers ("Answer", "Open
@@ -107,6 +155,8 @@ export function ProjectStatus({
         </Button>
       ) : action?.kind === "retry" ? (
         <RetryPlanButton projectId={project.id} label={action.label} testId={`${testId}-action`} />
+      ) : action?.kind === "cancel" ? (
+        <CancelWaitButton projectId={project.id} testId={`${testId}-action`} />
       ) : action?.kind === "link" && action.to ? (
         <Link
           to={action.to}

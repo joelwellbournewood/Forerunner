@@ -110,6 +110,7 @@ import {
 } from "../extensions/mcp.ts";
 import { ExtensionRegistry } from "../extensions/registry.ts";
 import {
+  CALIBRATION_AGENT_ID,
   CalibrationJob,
   calibrationSettingsOf,
   HandoverJob,
@@ -387,7 +388,7 @@ import {
   webSearchListsResolver,
 } from "../wiring/web-ports.ts";
 import { WebSearchMarks } from "../wiring/web-search.ts";
-import type { SpeakStartedView } from "./api-types.ts";
+import type { RunningView, SpeakStartedView } from "./api-types.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord, scaffoldProjectDocs } from "./create-project.ts";
 import { PLACEHOLDER_HUMAN_NAME } from "./human-name.ts";
@@ -402,6 +403,15 @@ import { oversizedWarning } from "./oversize-view.ts";
 import { ProjectPullRequests } from "./pull-requests.ts";
 import { changeNotAppliedWords } from "./request-words.ts";
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
+import {
+  isCalibrationSession,
+  RUN_CHANGED_EVENT,
+  type RunIndicatorDeps,
+  type RunWait,
+  runFoldsOf,
+  runViews,
+  type WaitingContinuation,
+} from "./run-indicator.ts";
 import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
 import { busyHere, startBlocked as startBlockedReason } from "./start-blocked.ts";
@@ -879,6 +889,18 @@ export interface RuntimeApp {
    * when a card is shown, so an option that prepares work says what pressing it does.
    */
   preparedContext(projectId: string): Promise<PreparedContext>;
+  /**
+   * d1109-run-visible (V-1): the run indicator. `views` is `GET /running` (what runs now, in the
+   * daemon's words); `poke` asks for a fresh `run.changed` frame (debounced to one a second, sent
+   * only when the list changed); `close` stops it with the daemon.
+   */
+  running: {
+    views(): Promise<RunningView[]>;
+    poke(): void;
+    /** Stop now on the critic's monthly check (its session row): true when it was running. */
+    stopCalibration(sessionId: string): Promise<boolean>;
+    close(): void;
+  };
   conversation: ConversationAgent | null;
   gitHost: GitHost;
   human: { id: string; name: string; timezone: string };
@@ -3513,6 +3535,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // under a budget from the human's settings; the handover runs ONE session of a fresh agent
   // on the flagged project, planned over the seeded task alone and without a memory port
   // (`runSession` below is that session: the same ports, grant and gate as any other).
+  // d1109-run-visible: the run indicator's poke, set once the indicator is composed below (the
+  // monthly check's row is made and ended out of the session runner, so it pokes by itself).
+  let pokeRunIndicator: () => void = () => undefined;
   const calibrationJob = new CalibrationJob({
     store,
     clock,
@@ -3529,7 +3554,29 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     settings: async () => calibrationSettingsOf((await store.human.mustGet(human.id)).notify_prefs),
     // The once-a-month check is the human's local month, as the schedule's (ADR 0060).
     timezone: async () => (await store.human.mustGet(human.id)).timezone,
+    // Its row made and ended: the bar shows it while it runs and takes it away after.
+    onRowChanged: () => pokeRunIndicator(),
   });
+  // d1109-run-visible (V-1): the critic's monthly check shows on the run indicator with Stop now
+  // and Stop all, so its run can be stopped: Stop all through the kill switch, Stop now through
+  // `running.stopCalibration` (the job itself is unchanged; it ends its row when stopped).
+  let calibrationRun: AbortController | null = null;
+  const runCalibration = async () => {
+    const controller = new AbortController();
+    calibrationRun = controller;
+    const off = kill.register({
+      agentId: criticAgent.id,
+      sessionId: CALIBRATION_AGENT_ID,
+      controller,
+      label: "the critic's monthly check",
+    });
+    try {
+      return await calibrationJob.run({ signal: controller.signal });
+    } finally {
+      off();
+      if (calibrationRun === controller) calibrationRun = null;
+    }
+  };
   const handoverJob = new HandoverJob({
     store,
     // The fresh agent's memory is checked where private rows live (the index, ADR 0083).
@@ -3615,7 +3662,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     if (isModelWatchRequest(req)) return modelWatch.run();
     if (isModelWatchReminderRequest(req)) return modelWatch.fileDueReminders();
     if (isMemoryConsolidationRequest(req)) return memory.propose();
-    if (isCalibrationRequest(req)) return calibrationJob.run();
+    if (isCalibrationRequest(req)) return runCalibration();
     await refuseRemovedProject(req.projectId);
     if (isHandoverRequest(req)) return handoverJob.run(req.projectId as string);
     // S-10: a kept continuation or person start that starts now leaves the wait, so it is made
@@ -4072,6 +4119,149 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       return continuations.waiting(projectId);
     },
   };
+  // d1109-run-visible (V-1, ADR 0118 point 12): the run indicator. Its words are the daemon's
+  // (`run-indicator.ts`): the running sessions from their logs (only the events after the last
+  // read), the critic's monthly check, the person's starts waiting behind another project's
+  // session, and the person's sessions kept to go on after a credential wait. `run.changed` is
+  // emitted on the events stream when the list changes, at most once a second, after every
+  // session event, project change and start the scheduler queued or dropped.
+  const runFolds = runFoldsOf(store);
+  const runIndicatorDeps: RunIndicatorDeps = {
+    store,
+    criticAgentId: criticAgent.id,
+    folds: runFolds,
+    pendingPersonStarts: () =>
+      scheduler
+        .pendingStarts(agent.id)
+        .filter((e) => startByOf(e.req) === "person")
+        .map((e) => ({ agentId: e.req.agentId, projectId: e.req.projectId })),
+    waitingContinuations: async () => {
+      await quietHours.refresh();
+      const nowMs = clock.now();
+      const out: WaitingContinuation[] = [];
+      for (const row of await store.billingSource.list({}, { limit: 100 })) {
+        const limits = row.limits as Record<string, unknown>;
+        for (const w of waitingOf(limits)) {
+          if (w.kept?.by !== "continuation" || out.some((o) => o.projectId === w.projectId))
+            continue;
+          let wait: RunWait = { kind: "other" };
+          if (typeof limits.refusedAt === "string")
+            wait = {
+              kind: "refused",
+              what: row.kind === "subscription" ? "a new Claude sign-in" : "a new API key",
+            };
+          else {
+            const until = restingUntilOf({ limits: limits as never }, nowMs);
+            if (until) {
+              const ends = quietHours.endsAt(Date.parse(until));
+              wait = ends
+                ? { kind: "quiet", at: clockTime(ends, human.timezone, nowMs) }
+                : { kind: "limit", at: clockTime(until, human.timezone, nowMs) };
+            }
+          }
+          out.push({
+            projectId: w.projectId,
+            sessionId: w.kept.continues ?? w.sessionId ?? null,
+            since: w.kept.at || w.since || null,
+            wait,
+          });
+        }
+      }
+      return out;
+    },
+    calibration: async (sessionId) => {
+      const h = await store.human.get(human.id).catch(() => undefined);
+      const budget = calibrationSettingsOf(h?.notify_prefs).budgetUsdMicro;
+      // The credential its calls run on: the one its booked calls used, else the loop's source.
+      const paid = (await store.costLedger.sumsBySessionAndSource([sessionId]).catch(() => []))
+        .filter((r) => r.sourceKind)
+        .sort((a, b) => b.entries - a.entries)[0]?.sourceKind;
+      const kind =
+        paid ?? (await store.billingSource.get(billingSourceId).catch(() => undefined))?.kind;
+      return {
+        budgetChfMicro: Math.round(budget * chfPerUsd()),
+        onPlan: kind === "subscription",
+      };
+    },
+  };
+  const running: RuntimeApp["running"] = (() => {
+    let last = "[]";
+    let lastAt = Number.NEGATIVE_INFINITY;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let closed = false;
+    const views = () => runViews(runIndicatorDeps);
+    const emitNow = async () => {
+      timer = null;
+      if (closed) return;
+      lastAt = clock.monotonic();
+      const now = await views().catch((e: unknown) => {
+        logger.warn("the run indicator was not read", { error: errorMessage(e) });
+        return null;
+      });
+      if (!now || closed) return;
+      const said = JSON.stringify(now);
+      if (said === last) return;
+      last = said;
+      events.emit(RUN_CHANGED_EVENT, now);
+    };
+    const poke = () => {
+      if (timer || closed) return;
+      timer = setTimeout(
+        () => void emitNow(),
+        Math.max(0, Math.min(1000, lastAt + 1000 - clock.monotonic())),
+      );
+      timer.unref?.();
+    };
+    events.on("session", poke);
+    events.on("project", poke);
+    // A start the scheduler queued (a person's Start behind another project's session) or
+    // dropped moves the indicator's ' · then Garden site'. The scheduler's own promise is
+    // returned as it is (the poke rides beside it): an async wrapper added a step to every
+    // start, the scheduler's internal ones too, and changed the order a start and the job
+    // before it finished in (sync-gate.test.ts's consolidation read "queued").
+    // A start that waits (queued behind a session, held by the quiet hours) or is dropped also
+    // changes its own project's line ('Starts after the session on "Quote page"'): the project
+    // event tells the screens to read it again (the review of d1109-run-visible: it read
+    // "Ready: ..." until a reload, since a queued start changes no session).
+    const projectMoved = (projectId: string | null | undefined) => {
+      if (projectId && !closed) events.emit("project", { id: projectId });
+    };
+    const requestStartOf = scheduler.requestStart.bind(scheduler);
+    scheduler.requestStart = (...args) => {
+      const started = requestStartOf(...args);
+      started.then((entry) => {
+        poke();
+        if (entry.result === "queued" || entry.result === "deferred")
+          projectMoved(entry.req.projectId);
+      }, poke);
+      return started;
+    };
+    const cancelPendingOf = scheduler.cancelPending.bind(scheduler);
+    scheduler.cancelPending = (...args) => {
+      const dropped = cancelPendingOf(...args);
+      poke();
+      projectMoved(dropped?.projectId);
+      return dropped;
+    };
+    pokeRunIndicator = poke;
+    return {
+      views,
+      poke,
+      stopCalibration: async (sessionId) => {
+        const row = await store.session.get(sessionId).catch(() => undefined);
+        if (!row || !calibrationRun || !isCalibrationSession(row, criticAgent.id)) return false;
+        calibrationRun.abort(new ForerunnerError("killed", "stopped by you"));
+        return true;
+      },
+      close: () => {
+        closed = true;
+        if (timer) clearTimeout(timer);
+        timer = null;
+        events.off("session", poke);
+        events.off("project", poke);
+      },
+    };
+  })();
   // d1109-onerepo-join (ADR 0117 amended): what Make one project reads, for its routes and for
   // `project.join`'s port: the one index of links, and when a kept session of a project goes on
   // (read only: a join waits for it, d1109-starts-engine's accessors).
@@ -5540,6 +5730,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     quietHours,
     continuations,
     preparedContext,
+    running,
     conversation,
     gitHost,
     human: { id: human.id, name: human.name, timezone: human.timezone },
@@ -5666,6 +5857,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         logger.warn("browser sessions did not close cleanly", { error: errorMessage(e) });
       });
       presence?.stop();
+      running.close();
       scheduler.stop();
       stopNotifier();
       killWatcher.stop();

@@ -162,6 +162,39 @@ pub struct Health {
     pub platform: String,
     pub kill_active: bool,
     pub active_sessions: u64,
+    /// d1109-run-visible (V-7): what runs now in the daemon's words (`/health.running`); None
+    /// when nothing runs or waits, and from an older daemon.
+    pub running: Option<RunningHealth>,
+}
+
+/// `/health.running` (d1109-run-visible, `RunningHealth` in api-types.ts): the run indicator's
+/// first entry. `waiting` marks a person's session that only waits to go on; `check` the
+/// critic's monthly check (it belongs to no project: the window title names the check).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunningHealth {
+    pub project_name: String,
+    pub what: String,
+    pub text: String,
+    pub waiting: bool,
+    pub check: bool,
+}
+
+fn running_of(v: &Value) -> Option<RunningHealth> {
+    let r = v.get("running")?;
+    let s = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let project_name = s("projectName");
+    let what = s("what");
+    if project_name.is_empty() || what.is_empty() {
+        return None;
+    }
+    let flag = |k: &str| r.get(k).and_then(Value::as_bool).unwrap_or(false);
+    Some(RunningHealth {
+        project_name,
+        what,
+        text: s("text"),
+        waiting: flag("waiting"),
+        check: flag("check"),
+    })
 }
 
 pub fn parse_health(text: &str) -> Result<Health, String> {
@@ -187,6 +220,7 @@ pub fn parse_health(text: &str) -> Result<Health, String> {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         active_sessions: v.get("activeSessions").and_then(Value::as_u64).unwrap_or(0),
+        running: running_of(&v),
     })
 }
 
@@ -593,6 +627,36 @@ mod tests {
         } else {
             assert_eq!(pid_alive(std::process::id()), None);
         }
+    }
+
+    /// d1109-run-visible (V-7): `/health.running` is read for the tray and the title; an older
+    /// daemon without it reads as nothing running.
+    #[test]
+    fn health_reads_what_runs_now() {
+        let h = parse_health(
+            r#"{"ok":true,"version":"0.1.0","activeSessions":1,"running":{"projectName":"Quote page","what":"the coder works on \"A\"","text":"Quote page · the coder works on \"A\"","waiting":false}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            h.running,
+            Some(RunningHealth {
+                project_name: "Quote page".into(),
+                what: "the coder works on \"A\"".into(),
+                text: "Quote page · the coder works on \"A\"".into(),
+                waiting: false,
+                check: false,
+            })
+        );
+        // The critic's monthly check is marked (the window title names it).
+        let check = parse_health(
+            r#"{"ok":true,"version":"0.1.0","running":{"projectName":"Forerunner","what":"the critic's monthly check on known examples","text":"","waiting":false,"check":true}}"#,
+        )
+        .unwrap();
+        assert!(check.running.is_some_and(|r| r.check));
+        let old = parse_health(r#"{"ok":true,"version":"0.1.0","activeSessions":0}"#).unwrap();
+        assert_eq!(old.running, None);
+        let none = parse_health(r#"{"ok":true,"version":"0.1.0","running":null}"#).unwrap();
+        assert_eq!(none.running, None);
     }
 
     #[test]

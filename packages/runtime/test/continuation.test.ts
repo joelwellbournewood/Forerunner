@@ -426,7 +426,8 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     expect(await sessionsOf(w1.rt, project.id)).toEqual([]);
     expect(calls).toEqual([]);
     const card = await w1.get<{ statusLine?: { text?: string } }>(`/projects/${project.id}`);
-    expect(card.json.statusLine?.text).toBe("Starts at 15:00 (your subscription's limit): 1 task");
+    // d1109-run-visible (V-3): the kept Start is said with Cancel, without ": 1 task".
+    expect(card.json.statusLine?.text).toBe("Starts at 15:00 (your subscription's limit)");
     expect(
       (
         await w1.get<{ blocked: Record<string, unknown> | null }>(

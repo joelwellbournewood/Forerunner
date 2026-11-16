@@ -20,7 +20,7 @@ import {
   type MoneyLike,
 } from "../../lib/money.ts";
 import { useAsync } from "../../lib/use-async.ts";
-import { useClient, useIdentity } from "../../store/context.tsx";
+import { useClient, useIdentity, useUiState } from "../../store/context.tsx";
 import { useIntakeStatus } from "./IntakeBanner.tsx";
 
 /**
@@ -304,15 +304,29 @@ export function StartSessionDialog({
   onClose,
   projectId,
   reference,
+  continues,
 }: {
   open: boolean;
   onClose: () => void;
   projectId: string;
   /** A Money pair that carries the day's rate for the CHF budget input. */
   reference: MoneyLike;
+  /**
+   * C3-left-7 (d1109-run-visible): Continue on a session that ended to wait: the Start goes on
+   * with that session (POST /sessions with `continues`), its budget what is left of the session's.
+   */
+  continues?: { sessionId: string; budget: MoneyLike & { chfMicro: number } };
 }) {
   const client = useClient();
   const identity = useIdentity();
+  // C3-left-7: a person start that waits behind another project's session names it ("Starts
+  // after the session on "Quote page""), from the run indicator's list.
+  const runningElsewhere = useUiState(
+    (st) =>
+      st.running.find(
+        (r) => r.state !== "waiting" && r.projectId !== null && r.projectId !== projectId,
+      )?.projectName ?? null,
+  );
   const [budget, setBudget] = useState("");
   const [budgetTouched, setBudgetTouched] = useState(false);
   const [note, setNote] = useState("");
@@ -335,8 +349,13 @@ export function StartSessionDialog({
   // The real default, filled in once it is known (design §3.6: "CHF 5.00", never a hidden one).
   useEffect(() => {
     if (open && data && !budgetTouched && !budget)
-      setBudget(formatAmount(data.sessionBudget.chfMicro).replace(/'/g, ""));
-  }, [open, data, budgetTouched, budget]);
+      setBudget(
+        formatAmount(continues ? continues.budget.chfMicro : data.sessionBudget.chfMicro).replace(
+          /'/g,
+          "",
+        ),
+      );
+  }, [open, data, budgetTouched, budget, continues]);
   useEffect(() => {
     if (!open) {
       setNotice(null);
@@ -389,6 +408,8 @@ export function StartSessionDialog({
         budgetUsdMicro:
           budgetTouched && chf !== null && chf > 0 ? chfMicroToUsdMicro(chf, reference) : undefined,
         note: note.trim() || undefined,
+        // C3-left-7: Continue goes on with the session that waited (its promise and its budget).
+        ...(continues ? { continues: continues.sessionId } : {}),
       });
       setNote("");
       // The person stays where they were (design §3.6); the session can be opened from here.
@@ -510,7 +531,11 @@ export function StartSessionDialog({
             ) : null}
             <Field
               label="Session budget (CHF)"
-              hint={`The project's default is filled in. The session stops when it is used; a fifth is kept for reviews.${
+              hint={`${
+                continues
+                  ? "What is left of that session's budget is filled in: it goes on with that, never more."
+                  : "The project's default is filled in."
+              } The session stops when it is used; a fifth is kept for reviews.${
                 data?.monthLeft ? ` Left this month: ${chfWords(data.monthLeft.chfMicro)}.` : ""
               }`}
             >
@@ -577,7 +602,9 @@ export function StartSessionDialog({
         {notice ? null : (
           <p className="text-xs text-neutral-500" data-testid="start-session-explain">
             {data?.busy && !blocked && !planning
-              ? "Starts after the current session; then works until nothing more can run, the budget is used, or you stop it."
+              ? runningElsewhere
+                ? `Starts after the session on "${runningElsewhere}"; then works until nothing more can run, the budget is used, or you stop it.`
+                : "Starts after the current session; then works until nothing more can run, the budget is used, or you stop it."
               : "Start: works until nothing more can run, the budget is used, or you stop it."}
           </p>
         )}

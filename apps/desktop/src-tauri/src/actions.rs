@@ -376,6 +376,7 @@ pub async fn attached(app: &AppHandle, file: DaemonFile, health: Health) {
         s.status.version = health.version.clone();
         s.status.kill_active = health.kill_active;
         s.status.active_sessions = health.active_sessions;
+        s.status.running = health.running.clone();
         s.status.last_error = None;
         s.status.failures = 0;
         s.restart.healthy_since = Some(Instant::now());
@@ -626,15 +627,28 @@ fn current_client(app: &AppHandle) -> Option<DaemonClient> {
     lock(&shared(app)).client.clone()
 }
 
-/// Tray: "Kill switch: stop everything" (spec S.8). Confirms, then `POST /kill {scope: "all"}`.
+/// The tray's Stop all question (d1109-run-visible V-7; design §3.1's words, asked once).
+pub const STOP_ALL_QUESTION: &str =
+    "Stop every running session now? No session starts until you allow it again.";
+
+/// What the tray says after Stop all: how many sessions it stopped, in words (no "(s)").
+pub fn stopped_words(stopped: Option<u64>) -> String {
+    match stopped {
+        Some(1) => "1 session stopped. Allow sessions again from the tray or the app.".into(),
+        Some(n) => format!("{n} sessions stopped. Allow sessions again from the tray or the app."),
+        None => "Sessions are stopped. Allow sessions again from the tray or the app.".into(),
+    }
+}
+
+/// Tray: "Stop all sessions" (spec S.8). Confirms, then `POST /kill {scope: "all"}`.
 pub fn kill_switch(app: AppHandle) {
     let app2 = app.clone();
     app.dialog()
-        .message("Stop every running session for every agent, revoke their run tokens and freeze claims?\n\nResume from the tray or the UI when you are ready.")
-        .title("Forerunner kill switch")
+        .message(STOP_ALL_QUESTION)
+        .title("Stop all sessions")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
-            "Stop everything".into(),
+            "Stop all sessions".into(),
             "Cancel".into(),
         ))
         .show(move |confirmed| {
@@ -658,19 +672,14 @@ pub fn kill_switch(app: AppHandle) {
                         tray::refresh(&app2);
                         notify(
                             &app2,
-                            "Forerunner: kill switch active",
-                            &match stopped {
-                                Some(n) => format!("{n} session(s) stopped. Resume from the tray."),
-                                None => "Everything stopped. Resume from the tray.".into(),
-                            },
+                            "Forerunner: sessions are stopped",
+                            &stopped_words(stopped),
                         );
                     }
-                    Ok((status, v)) => fail_dialog(
-                        &app2,
-                        "Kill switch failed",
-                        &error_message(status, &v),
-                    ),
-                    Err(e) => fail_dialog(&app2, "Kill switch failed", &e),
+                    Ok((status, v)) => {
+                        fail_dialog(&app2, "Stop all did not work", &error_message(status, &v))
+                    }
+                    Err(e) => fail_dialog(&app2, "Stop all did not work", &e),
                 }
             });
         });

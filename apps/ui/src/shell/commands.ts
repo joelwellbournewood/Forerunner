@@ -154,7 +154,8 @@ export function buildCommands(ctx: CommandContext): Command[] {
   // As the header (design §3.1, later #59): Stop all only while something runs, and it asks
   // first; while sessions are stopped, Allow sessions again. Never a stop that acts at once
   // from a list where a mistyped Enter picks it.
-  const running = state.projects.filter((p) => p.working).length;
+  // d1109-run-visible: what runs now is the run indicator's list (its entries Stop all stops).
+  const running = state.running.filter((r) => r.stop.includes("all")).length;
   if (state.killActive && ctx.allowSessions) {
     commands.push({
       id: "action.allowSessions",
