@@ -481,12 +481,12 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     schema: z.enum(["wait", "use_other"]),
     narrows: (to) => to !== "use_other",
     description:
-      "When the first Claude credential reaches its usage limit during a session: wait (its tasks wait for the reset and start by themselves) or use_other (they go on at once on the next one, which may cost money). Task runs only; chat, planning and reviews always use the next one.",
+      "When the first Claude credential reaches its usage limit during a session: wait (its tasks wait for the reset, then the person's session goes on) or use_other (they go on at once on the next one, which may cost money). Task runs only; chat, planning and reviews always use the next one.",
     display: (value) => (value === "use_other" ? "use the other one" : "wait"),
     effect: (value) =>
       value === "use_other"
         ? "a task whose first credential runs out goes on at once on the next one, which may cost money"
-        : "a task whose first credential runs out waits for its reset and starts by itself",
+        : "a task whose first credential runs out waits for its reset, then your session goes on",
   },
   // U-078 (the owner's decision of 2026-11-02, the credential chooser): a code task that needs
   // commands stays on the first credential in the person's order (the default; on a Claude

@@ -115,7 +115,8 @@ export const NOTIFY_CHANNELS = [
  * (the default) or go on at once on the other credential, which moves plan-limit work onto money.
  */
 export const MID_SESSION_LIMITS = [
-  { value: "wait", label: "Wait for its reset; the tasks start by themselves" },
+  // d1109-starts-engine S-10 (ADR 0118): only the person's session goes on at the reset.
+  { value: "wait", label: "Wait for its reset; then your session goes on" },
   { value: "use_other", label: "Use the other one at once (may cost money)" },
 ] as const;
 
