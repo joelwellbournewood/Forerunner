@@ -380,6 +380,12 @@ export interface RunResult {
     /** A budget refusal's `details.level` and `details.capUsdMicro` (ADR 0112). */
     level?: string;
     capUsdMicro?: number;
+    /**
+     * A budget refusal's `details.estimateUsdMicro`: the refused call's worst case, as the
+     * precheck counted it (d1116-budget-all: a review refused at the task's budget says on its
+     * card what it needs). Append-only; the SDK driver does not set it.
+     */
+    estimateUsdMicro?: number;
     resetAt?: string;
     sourceId?: string;
   };
@@ -1108,6 +1114,9 @@ export class LoopAgentDriver {
         // A budget refusal's level and cap (ADR 0112): the pause names the limit that stopped it.
         ...(typeof details.level === "string" ? { level: details.level } : {}),
         ...(typeof details.capUsdMicro === "number" ? { capUsdMicro: details.capUsdMicro } : {}),
+        ...(typeof details.estimateUsdMicro === "number"
+          ? { estimateUsdMicro: details.estimateUsdMicro }
+          : {}),
         ...(typeof details.resetAt === "string" ? { resetAt: details.resetAt } : {}),
         ...(typeof details.sourceId === "string" ? { sourceId: details.sourceId } : {}),
       };

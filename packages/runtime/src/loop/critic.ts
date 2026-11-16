@@ -70,6 +70,7 @@ import {
   type PromotionReviewOutcome,
   type PromotionReviewRequest,
   type RetryRung,
+  type ReviewCallPrice,
   type ReviewDecision,
   type ReviewFindingSummary,
   type SessionReviewOutcome,
@@ -394,6 +395,22 @@ export class CriticLoop implements CriticPort {
     return this.deps.criticAgentId;
   }
 
+  /**
+   * d1116-budget-all: one call's price of this task's review before it runs, at the tier the
+   * review will use (its risk tier, never below its specialist's registry floor) under its
+   * project's settings (`CriticService.reviewCallUsdMicro`).
+   */
+  async reviewCallUsdMicro(task: TaskRow, specialist?: string): Promise<ReviewCallPrice> {
+    const name = specialist || task.specialist;
+    // Never below the light review (`reviewTierOf`), so a model review.
+    const tier = reviewTierOf(task.risk_tier, reviewFloorOf(name, this.deps.specialistFloor)) as
+      | 1
+      | 2
+      | 3;
+    const project = await this.deps.store.project.get(task.project_id);
+    return this.service.reviewCallUsdMicro(tier, project?.settings ?? null);
+  }
+
   async reviewTask(req: TaskReviewRequest): Promise<TaskReviewOutcome> {
     const { store } = this.deps;
     const { task, session, result } = req;
@@ -694,6 +711,8 @@ export class CriticLoop implements CriticPort {
         {
           sessionToken: req.token,
           budget: req.budget,
+          // d1116-budget-all: the review stops at what is left of the task's own budget.
+          ...(req.budgetUsdMicro !== undefined ? { budgetUsdMicro: req.budgetUsdMicro } : {}),
           projectSettings: settings,
           checks,
           cwd: worktree,

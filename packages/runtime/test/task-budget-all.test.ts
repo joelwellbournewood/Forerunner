@@ -39,17 +39,24 @@ const isCoderOn = (title: string) => (r: ModelRequest) =>
   text(r).includes(title);
 const firstCall = (r: ModelRequest) => !text(r).includes("tool_result");
 
-/** The coder on `title` writes `file` in its first call, then says it is done. */
-function codes(title: string, file: string, usage?: { input_tokens: number }): ScriptedReply[] {
+type Billed = { input_tokens: number; output_tokens: number };
+
+/**
+ * The coder on `title` writes `file` in its first call, then says it is done. `billed`: what each
+ * of its two calls bills (Sonnet 5.5: 2 micro-USD an input token, 10 an output token), so a test
+ * knows to the micro-USD what the work cost; the precheck still counts the request as sent.
+ */
+function codes(title: string, file: string, billed?: [Billed, Billed]): ScriptedReply[] {
   return [
     toolReply("write_file", { path: file, content: `<p>${title}</p>\n` }, "Writing the page.", {
       when: (r: ModelRequest) => isCoderOn(title)(r) && firstCall(r),
       times: Number.POSITIVE_INFINITY,
-      ...(usage ? { usage } : {}),
+      ...(billed ? { usage: billed[0] } : {}),
     }),
     textReply(`Wrote ${file}.\n\nWhere I stopped: ${file} is written.\n\nLeft to do: nothing`, {
       when: isCoderOn(title),
       times: Number.POSITIVE_INFINITY,
+      ...(billed ? { usage: billed[1] } : {}),
     }),
   ];
 }
@@ -239,6 +246,42 @@ async function projectWithTask(
     }),
   );
   return { projectId, taskId: String(task.id) };
+}
+
+/** One more coder task in `projectId`, ready. */
+async function addTask(
+  w: Opened,
+  projectId: string,
+  title: string,
+  opts: { budgetUsdMicro?: number; file?: string; priority?: string } = {},
+): Promise<string> {
+  const task = await w.json(
+    `/projects/${projectId}/tasks`,
+    post({
+      title,
+      outcome: `${opts.file ?? "page.html"} is written`,
+      acceptanceCriteria: [`${opts.file ?? "page.html"} exists`],
+      priority: opts.priority ?? "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: opts.budgetUsdMicro ?? 0,
+      specialist: "coder",
+      riskTier: 1,
+    }),
+  );
+  return String(task.id);
+}
+
+/** The task's cards in the Inbox, as the Inbox reads them. */
+async function cardsOf(w: Opened, taskId: string): Promise<Json[]> {
+  const inbox = await w.json("/inbox");
+  return ((inbox.requests as Json[]) ?? []).filter((r) => r.taskId === taskId);
+}
+
+/** The session's log lines. */
+async function linesOf(w: Opened, sessionId: string): Promise<string[]> {
+  const events = (await w.json(`/sessions/${sessionId}/events`)) as unknown as Json[];
+  return events.map((e) => String(e.text ?? ""));
 }
 
 /** Start a session as the Start dialog does; returns its id. */
@@ -443,6 +486,146 @@ describe("d1116-budget-all", () => {
         expect.stringMatching(/^Continue \(CHF \d+\.\d{2} more\)$/),
         "Cancel task",
       ]);
+    } finally {
+      await settleSessions(o.rt);
+      await o.rt.close();
+    }
+  }, 120_000);
+
+  it("BA-3: a review its task's budget cannot pay a first call for is not started: the task pauses at its budget with its work kept and one card, and the session goes on with the next task", async () => {
+    const FOOTER = "Write the footer";
+    const HEADER = "Write the header";
+    // The footer's work bills USD 0.01 (two calls of 1,000 tokens in and 300 out): of its
+    // budget of USD 0.075 (CHF 0.06), 65,000 is left, below the light review's output cap of
+    // 8,192 tokens on Sonnet 5.5 (USD 0.08192).
+    const w = world([
+      ...codes(FOOTER, "footer.html", [
+        { input_tokens: 1_000, output_tokens: 300 },
+        { input_tokens: 1_000, output_tokens: 300 },
+      ]),
+      ...codes(HEADER, "header.html"),
+    ]);
+    const o = await w.open(home());
+    try {
+      const { projectId, taskId } = await projectWithTask(o, FOOTER, {
+        budgetUsdMicro: 75_000,
+        file: "footer.html",
+      });
+      const header = await addTask(o, projectId, HEADER, { file: "header.html" });
+      const sessionId = await start(o, projectId);
+      const s = await ended(o, sessionId);
+      await settleSessions(o.rt);
+      const runs = await o.rt.store.run.forTask(taskId);
+      // No critic Run row: the review never started, and nothing was spent on it.
+      expect(runs.filter((r) => r.specialist === "critic")).toEqual([]);
+      const work = runs.filter((r) => r.specialist !== "critic");
+      expect(work.map((r) => r.outcome)).toEqual(["completed"]);
+      expect(sumRuns(work)).toBe(10_000);
+      const task = await o.rt.store.task.mustGet(taskId);
+      expect(task.actual_cost_usd_micro).toBe(10_000);
+      expect(task.status).toBe("needs_human");
+      expect(task.reason).toBe('"Write the footer" paused at its budget of CHF 0.06.');
+      const lines = await linesOf(o, sessionId);
+      expect(lines).toContain(
+        '"Write the footer" paused before its review: its own budget of CHF 0.06 has no room for it.',
+      );
+      expect(lines.join(" | ")).not.toMatch(/this session's budget/);
+      const cards = await cardsOf(o, taskId);
+      expect(cards).toHaveLength(1);
+      expect(cards[0]?.title).toBe('"Write the footer" paused at its budget of CHF 0.06');
+      expect(cards[0]?.body).toBe("The work is done; its review waits for room in the budget.");
+      expect(cards[0]?.options).toEqual([
+        expect.stringMatching(/^Continue \(CHF \d+\.\d{2} more\)$/),
+        "Cancel task",
+      ]);
+      // The session went on: the next task ran and was reviewed.
+      expect(s.status).toBe("completed");
+      const next = await o.rt.store.task.mustGet(header);
+      expect(next.status).toBe("done");
+      expect(
+        (await o.rt.store.run.forTask(header)).filter((r) => r.specialist === "critic"),
+      ).toHaveLength(1);
+    } finally {
+      await settleSessions(o.rt);
+      await o.rt.close();
+    }
+  }, 120_000);
+
+  it("BA-3: a review is capped at what is left of its task's budget: its first call, refused by the precheck, is never made, and the task pauses at its budget", async () => {
+    const TITLE = "Write the contact page";
+    // The work bills USD 0.0525 of the budget of USD 0.1375 (CHF 0.11): 85,000 is left, above
+    // the review's floor (81,920) but below its first call's worst case (the critic's whole
+    // input plus 8,192 tokens out).
+    const w = world(
+      codes(TITLE, "contact.html", [
+        { input_tokens: 2_000, output_tokens: 1_000 },
+        { input_tokens: 4_750, output_tokens: 2_900 },
+      ]),
+    );
+    const o = await w.open(home());
+    const issued: { agentId: string; taskId?: string; budgetUsdMicro: number }[] = [];
+    const issue = o.rt.tokens.issue.bind(o.rt.tokens);
+    o.rt.tokens.issue = (claims) => {
+      issued.push(claims);
+      return issue(claims);
+    };
+    try {
+      const { projectId, taskId } = await projectWithTask(o, TITLE, {
+        budgetUsdMicro: 137_500,
+        file: "contact.html",
+      });
+      const sessionId = await start(o, projectId);
+      await ended(o, sessionId);
+      await settleSessions(o.rt);
+      // The critic's token for this task's review carries what was left: 85,000.
+      const criticTokens = issued.filter(
+        (c) => c.agentId === o.rt.criticAgent.id && c.taskId === taskId,
+      );
+      expect(criticTokens.map((c) => c.budgetUsdMicro)).toEqual([85_000]);
+      // Its first call was refused before it was made: no critic request, no critic ledger row.
+      expect(w.seen.filter((r) => isCritic(r) && text(r).includes(TITLE))).toEqual([]);
+      const review = (await o.rt.store.run.forTask(taskId)).find((r) => r.specialist === "critic");
+      expect(review?.outcome).toBe("budget_exceeded");
+      expect(review?.cost_usd_micro).toBe(0);
+      const task = await o.rt.store.task.mustGet(taskId);
+      expect(task.actual_cost_usd_micro).toBe(52_500);
+      expect(task.actual_cost_usd_micro).toBeLessThanOrEqual(137_500);
+      expect(task.status).toBe("needs_human");
+      expect(task.reason).toBe('"Write the contact page" paused at its budget of CHF 0.11.');
+      expect(await linesOf(o, sessionId)).toContain(
+        '"Write the contact page" paused before its review: its own budget of CHF 0.11 has no room for it.',
+      );
+      const cards = await cardsOf(o, taskId);
+      expect(cards.map((c) => c.body)).toEqual([
+        "The work is done; its review waits for room in the budget.",
+      ]);
+    } finally {
+      await settleSessions(o.rt);
+      await o.rt.close();
+    }
+  }, 120_000);
+
+  it("BA-3: a task without a budget of its own keeps the session's token for its review", async () => {
+    const TITLE = "Write the about page";
+    const w = world(codes(TITLE, "about.html"));
+    const o = await w.open(home());
+    const issued: { agentId: string; taskId?: string; budgetUsdMicro: number }[] = [];
+    const issue = o.rt.tokens.issue.bind(o.rt.tokens);
+    o.rt.tokens.issue = (claims) => {
+      issued.push(claims);
+      return issue(claims);
+    };
+    try {
+      const { projectId, taskId } = await projectWithTask(o, TITLE, { file: "about.html" });
+      const sessionId = await start(o, projectId);
+      await ended(o, sessionId);
+      await settleSessions(o.rt);
+      expect((await o.rt.store.task.mustGet(taskId)).status).toBe("done");
+      const session = await o.rt.store.session.mustGet(sessionId);
+      const criticTokens = issued.filter(
+        (c) => c.agentId === o.rt.criticAgent.id && c.taskId === taskId,
+      );
+      expect(criticTokens.map((c) => c.budgetUsdMicro)).toEqual([session.budget_cap_usd_micro]);
     } finally {
       await settleSessions(o.rt);
       await o.rt.close();

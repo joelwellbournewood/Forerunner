@@ -123,3 +123,34 @@ describe("credentialRunOutcome: the Run row of a refused run never reads Failed"
     expect(credentialRunOutcome({ outcome: "error" })).toBe("error");
   });
 });
+
+/**
+ * d1116-budget-all, run C (BA-3; the owner's "yes it should count critics reviews, and fixes."):
+ * a review refused at its first call keeps the refused call's estimate, so the card can say what
+ * the review needs (`needs_usd_micro`, one Continue that is enough).
+ */
+describe("d1116-budget-all, run C: a refused review keeps the refused call's estimate (BA-3)", () => {
+  it("the refusal's details keep estimateUsdMicro, level 'run' and capUsdMicro", () => {
+    const e = refusedReviewError(
+      run({
+        outcome: "budget_exceeded",
+        costUsdMicro: 0,
+        error: {
+          code: "budget_exceeded",
+          message: "run budget would be exceeded",
+          level: "run",
+          capUsdMicro: 100_000,
+          estimateUsdMicro: 110_000,
+        },
+      }),
+    );
+    expect(e?.details).toEqual({
+      review: REVIEW_REFUSED,
+      runId: "run-1",
+      spentUsdMicro: 0,
+      level: "run",
+      capUsdMicro: 100_000,
+      estimateUsdMicro: 110_000,
+    });
+  });
+});

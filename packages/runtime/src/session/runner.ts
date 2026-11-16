@@ -991,13 +991,22 @@ interface ReviewFailure {
  */
 interface ReviewRefused {
   refused: ReviewRefusal;
+  /**
+   * d1116-budget-all: where the review's own cap came from: what was left of the task's budget,
+   * when the task has one and it was no more than the session token's budget, else the session's.
+   */
+  capSource: "task_budget" | "session";
 }
 
 /**
- * Which limit refused a task's review (ADR 0112): the critic's run may spend what the session's
- * token allows, so its own cap ("run") is the session's budget too.
+ * Which limit refused a task's review (ADR 0112). The critic's run may spend what the session's
+ * token allows, and, for a task with a budget of its own, no more than what is left of it
+ * (d1116-budget-all): a refusal at the run's own cap ("run") names the limit that set that cap.
  */
-function reviewStopSource(level: string | null): BudgetStopSource {
+function reviewStopSource(
+  level: string | null,
+  capSource: "task_budget" | "session" = "session",
+): BudgetStopSource {
   switch (level) {
     case "project":
       return "project";
@@ -1007,6 +1016,8 @@ function reviewStopSource(level: string | null): BudgetStopSource {
       return "plan";
     case "task":
       return "task_budget";
+    case "run":
+      return capSource;
     default:
       return "session";
   }
@@ -3010,7 +3021,7 @@ export class SessionRunner {
               // again when the attempt and the changed files are unchanged (W15-27,
               // `keepForReview` / `reviewOnlyResult`), else it runs the task again first.
               const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
-              const source = reviewStopSource(refusal.level);
+              const source = reviewStopSource(refusal.level, reviewed.capSource);
               const stop: BudgetStop = {
                 capUsdMicro:
                   source === "task_budget"
@@ -4588,6 +4599,42 @@ export class SessionRunner {
             }),
         );
     };
+    // d1116-budget-all (BA-3): a task with a budget of its own is reviewed within what is left
+    // of it, read now (the work and every earlier review are in its figure), so its reviews
+    // never take it past its budget. A refusal at the review's own cap then names the task's
+    // budget when that is what set the cap (no more than the session token's budget), and the
+    // task pauses there with its work kept (ADR 0112); the session goes on. Without a budget of
+    // its own the review stays under the session's token and its reserve, as before.
+    const fresh = (await store.task.get(taskId)) ?? request.task;
+    const left =
+      fresh.budget_usd_micro > 0
+        ? Math.max(0, fresh.budget_usd_micro - fresh.actual_cost_usd_micro)
+        : undefined;
+    const capSource: ReviewRefused["capSource"] =
+      left !== undefined && left <= request.token.claims.budgetUsdMicro ? "task_budget" : "session";
+    if (left !== undefined) {
+      // Not started: what is left is below the price of the review's output cap alone, a lower
+      // bound of its first call. No check runs, no critic Run row is written, and the task
+      // pauses as at a refused first call.
+      const price = await critic
+        .reviewCallUsdMicro?.(fresh, request.item.specialist)
+        .catch((e: unknown) => {
+          this.logger.warn("the review's price was not read", { taskId, error: errorMessage(e) });
+          return null;
+        });
+      if (price && left < price.floorUsdMicro)
+        return {
+          refused: {
+            kind: "budget",
+            level: "task",
+            capUsdMicro: fresh.budget_usd_micro,
+            spentUsdMicro: 0,
+            message: "the task's budget has no room for its review",
+            estimateUsdMicro: price.floorUsdMicro,
+          },
+          capSource: "task_budget",
+        };
+    }
     let outcome: TaskReviewOutcome;
     try {
       outcome = await critic.reviewTask({
@@ -4596,6 +4643,7 @@ export class SessionRunner {
           void sayStarted();
         },
         onCost: bookReview,
+        ...(left !== undefined ? { budgetUsdMicro: left } : {}),
       });
     } catch (e) {
       await booked;
@@ -4603,7 +4651,7 @@ export class SessionRunner {
       // A limit or a credential refused the review before its verdict: the caller pauses the
       // task or lets it wait (no verdict, no failed try).
       const refused = reviewRefusalOf(e);
-      if (refused && (refused.kind === "budget" || refused.wait)) return { refused };
+      if (refused && (refused.kind === "budget" || refused.wait)) return { refused, capSource };
       // The caller files the card and reports it (U-045).
       return { failed: true, error: errorMessage(e) };
     }
