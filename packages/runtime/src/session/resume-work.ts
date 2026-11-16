@@ -68,6 +68,23 @@ export async function startForPerson(
 }
 
 /**
+ * The tasks an answer made runnable (C3-left-3): the answered task when it is back at Ready (Try
+ * again, Go ahead without, Redo, a dropped branch), else, the task closed as done, the tasks
+ * that wait on it. Passed as `taskIds`, so the running session's admit rule decides for these
+ * tasks only and the card's Done line speaks of them: before, every ready task of the project
+ * was offered and "It joins the session that is running." was said when any one joined.
+ */
+export async function answeredTaskIds(
+  store: Pick<StateStore, "task">,
+  task: { id: string; project_id: string },
+): Promise<string[]> {
+  const now = await store.task.get(task.id);
+  if (now?.status === "ready") return [now.id];
+  const rows = await store.task.forProject(task.project_id, {}, { limit: 10_000 });
+  return rows.filter((t) => t.depends_on.includes(task.id)).map((t) => t.id);
+}
+
+/**
  * Prepare the work an answer made runnable (S-2) through the daemon's port; null without one
  * (a one-shot) or without a project.
  */

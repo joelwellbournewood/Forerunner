@@ -9,7 +9,7 @@ import type {
 import { ANSWER_CARD_KEYS, cannotRunAnswer } from "../wiring/request-answers.ts";
 import { unappliedAnswers } from "./findings.ts";
 import type { PreparePort } from "./prepared-work.ts";
-import { prepareAnswer, recordStart } from "./resume-work.ts";
+import { answeredTaskIds, prepareAnswer, recordStart } from "./resume-work.ts";
 
 /**
  * Every task a run leaves waiting for the person has one card (live walk 4, problem 1; design
@@ -196,6 +196,7 @@ export async function syncCannotRunAnswers(deps: {
             by: "person",
             agentId: deps.agentId,
             projectId: task.project_id,
+            taskIds: await answeredTaskIds(store, task),
             reason: `you asked to try "${task.title}" again`,
           }),
         );

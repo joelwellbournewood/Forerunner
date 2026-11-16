@@ -98,12 +98,16 @@ async function runnableNow(
   return taskIds ? ids.filter((id) => taskIds.includes(id)) : ids;
 }
 
-/** One outcome for several tasks a session answered for at once. */
-function summarize(answers: Map<string, AdmitOutcome>): AdmitOutcome {
+/**
+ * One outcome for several tasks a session answered for at once: "joined" only when every one
+ * joined (C3-left-3: one that joined made the line say so for all); some joined and some not,
+ * the room rule's words, which are true of each.
+ */
+export function summarize(answers: Map<string, AdmitOutcome>): AdmitOutcome {
   const all = [...answers.values()];
   if (all.length > 0 && all.every((a) => a === "joined")) return "joined";
   if (all.length > 0 && all.every((a) => a === "stopping")) return "stopping";
-  return all.includes("joined") ? "joined" : all.includes("no_room") ? "no_room" : "stopping";
+  return all.includes("joined") || all.includes("no_room") ? "no_room" : "stopping";
 }
 
 /**

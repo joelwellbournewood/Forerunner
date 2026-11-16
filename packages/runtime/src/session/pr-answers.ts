@@ -18,7 +18,7 @@ import {
 } from "../loop/merge.ts";
 import { redoneMergeCard } from "../loop/merge-mode.ts";
 import type { PreparePort } from "./prepared-work.ts";
-import { prepareAnswer, recordStart } from "./resume-work.ts";
+import { answeredTaskIds, prepareAnswer, recordStart } from "./resume-work.ts";
 
 /**
  * The answers of the pull-request cards (U-028), applied from `RuntimeApp.syncApprovals` (the
@@ -243,6 +243,7 @@ async function applyRebaseAnswer(deps: PrAnswersDeps, row: HumanRequestRow): Pro
         by: "person",
         agentId: deps.agentId,
         projectId: task.project_id,
+        taskIds: await answeredTaskIds(store, task),
         reason:
           outcome === "resolved"
             ? `you resolved the conflict of "${task.title}"`
@@ -393,6 +394,7 @@ async function applyRedo(
       by: "person",
       agentId: deps.agentId,
       projectId: task.project_id,
+      taskIds: await answeredTaskIds(store, task),
       reason: `Redo of "${task.title}" asked on its card`,
     }),
   );

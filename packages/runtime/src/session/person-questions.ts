@@ -21,7 +21,7 @@ import {
 } from "../wiring/request-answers.ts";
 import { answerApplied, markAnswer } from "./answer-mark.ts";
 import type { PreparePort } from "./prepared-work.ts";
-import { prepareAnswer, recordStart } from "./resume-work.ts";
+import { answeredTaskIds, prepareAnswer, recordStart } from "./resume-work.ts";
 
 /**
  * What the person chose when they went on without answering (the commands' `WITHOUT_ANSWERS_NOTE`,
@@ -1080,6 +1080,7 @@ async function applyAnswers(
               by: "person",
               agentId: deps.agentId,
               projectId: task.project_id,
+              taskIds: await answeredTaskIds(store, task),
               reason: `you chose to go ahead without answering "${task.title}"`,
             }),
           );
@@ -1187,6 +1188,7 @@ async function applyAnswers(
             by: "person",
             agentId: deps.agentId,
             projectId: task.project_id,
+            taskIds: await answeredTaskIds(store, task),
             reason: `your answers to "${task.title}"`,
           }),
         );

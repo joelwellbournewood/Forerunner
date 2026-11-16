@@ -504,7 +504,13 @@ describe("critic sign-off answers", () => {
     ).toEqual({ ...NONE, revised: 1 });
     expect((await w.store.task.mustGet(task.id)).status).toBe("ready");
     expect(prepared).toEqual([
-      expect.objectContaining({ agentId: w.alice, projectId: task.project_id, by: "person" }),
+      // C3-left-3: the answered task only, so the Done line speaks of it.
+      expect.objectContaining({
+        agentId: w.alice,
+        projectId: task.project_id,
+        by: "person",
+        taskIds: [task.id],
+      }),
     ]);
     const queued = await w.store.queue.list({ project_id: task.project_id } as never);
     expect(queued.map((q) => q.text)).toContain('About "Stubborn task": Use plain CSS.');
