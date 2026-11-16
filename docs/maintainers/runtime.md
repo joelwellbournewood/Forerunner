@@ -7730,6 +7730,61 @@ Tests: `autonomy.test.ts` (ST-1), `selftasks-run.test.ts` in commands (ST-2, ST-
 "d1109-selftasks-run, run C" and `selftasks.test.tsx` (ST-11), and the injection suite's report
 channel (ST-13).
 
+### One credential policy for every call (d1109-cred-engine, [ADR 0120](../decisions/0120-which-claude-does-the-work.md))
+
+- **The policy** (`@forerunner/billing` `policy.ts`, read by `RouterTaskBilling.pick` through
+  `policyOf` at every pick): one order and one rule at a stop for task runs, the critic, planning,
+  the task check, chat and the background jobs. `CALL_FALLBACK_ORDER` and the routed provider's
+  `fallbackOrder` are gone. `TaskBillingRequest.whenStopped` and `.allowSwitch` (append-only) let one
+  pick override the rule (tests; chat's one-off press, never `batch`); `waitOnRest` still reads as
+  `wait`. A source in `req.exclude` goes to the router as `heldNow`. At a stop the chooser never
+  drops a task with hard needs to a group that can do less of it: the pick waits with reason
+  `needs` (`CredentialWait.stop` names the stop; no stop: the policy leaves the only credential that
+  can do it out, `sourceId` "").
+- **Waits** (`session/credential-wait.ts`): `CredentialWait.reason` gains `share`, `key_month` and
+  `needs`, with `stopKey`, `ask` and `stop`; `credentialWaitOf` and `credentialWaitFrom` read them;
+  the row, plan and wait sentences word them (`asStopWait`, `stopWordsOf`, `stopReasonOf`); under
+  `ask` a row reads "Waits for your answer: use your API key?" while the card is open
+  (`daemon/task-display.ts`).
+- **Ask first** (`session/credential-ask.ts`): `ensureAskCard` is called from `noteWait` through
+  `RouterTaskBillingOptions.ask` (the composition prices it as the Start check prices the waiting
+  work, capped at its work budget) and files one `credential:ask` card per stop, only by the writer
+  that set `limits.asking`; `syncAskAnswers` (in `syncApprovals`) applies an answer once: Use API key
+  writes `limits.grant` and an audit row `billing.grant`, then a running session `readmit`s its
+  waiting tasks, or the person's session that ended to wait starts now as theirs (`by: "person"`,
+  its kept continuation dropped); Wait moves nothing. `settleAsks` (the wake, before `takeReady`)
+  ends grants whose stop is over and withdraws cards whose stop ended or whose preset changed.
+  `recordWait` marks a stop answered without a card (the Start dialog's "Start at 15:40" under ask,
+  for d1109-cred-screens). The card's words: `request-words.ts` `askCard`, from
+  `session/credential-words.ts` `askCardWords`; its facts (`credentialAsk`) are read when shown.
+- **Refusals**: `refuse` files the card only when it set the mark (and stores
+  `limits.refusedCategory` and `limits.refusedCard {refusedAt, open}`); `noteWait`'s TR-10 filing
+  again happens only for the writer that opens `refusedCard`; `takeReady` sets it closed when it
+  withdraws the card. The card's body (`credentialRefused` context, `refusedBody`) says why by
+  category and what the work does under the rule.
+- **The routed provider** (`provider/routed.ts`): no order of its own; after a limit or a refusal it
+  picks again under the rule (held: the call ends with the limit, and the log says "the work waits
+  for it, as you chose."); `holdNow(model)` and `withOneOffSwitch()`; the fallback sentence names the
+  reset in the person's clock (`RoutedProviderDeps.timezone`).
+- **Chat** (`conversation/agent.ts`, `ConversationAgentDeps.credentialHold`, wired in compose): a
+  held question makes no model call and books nothing; the reply is `chatHoldReply` with
+  `ChatReply.oneOff` ("Use API key") when another credential serves now and the month cap has room
+  for one quick answer (`ONE_OFF_CHAT_INPUT_TOKENS`, `ONE_OFF_CHAT_OUTPUT_TOKENS`);
+  `ChatRequest.oneOffSwitch` answers that one question on it. When another credential answers (a
+  grant or "then the API key"), the footer says so once per stop per conversation. A model call the
+  rule held on the way gives the hold reply too, never "I could not answer (...)". The person's
+  "first" for d1109-chat-depth's ask line is the policy's first saved kind.
+- **The brief** (`session/task-context.ts`): a run stopped by its credential (`usage_limit`,
+  `credential_refused`, or an artifact `credentialStop: "share"`) is continued from
+  `whereTheCredentialStopped`, never "## The previous attempt".
+
+Tests: `credential-policy.test.ts` (the table over every purpose, stop and rule),
+`credential-ask.test.ts` (composed, file database, restarts), `credential-refusal.test.ts` (one
+card per refusal, TR-10 across a restart, every sentence of `credential-words.ts`),
+`billing-order.test.ts` (chat on the subscription with nothing chosen, the hold reply, the move
+under "then the API key"), `task-usage-limit.test.ts` (the brief), and the UI's real-daemon
+describe "d1109-cred-engine, run C".
+
 ## How to change it
 
 - New limit: add the check to the hook, a `ForerunnerError` code in platform, and a test in

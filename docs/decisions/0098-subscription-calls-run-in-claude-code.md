@@ -94,3 +94,8 @@ at any time.
   results.** Rejected for now: matching calls to sessions, closing sessions a loop abandons and
   the loop's own context changes make it fragile; the quoted transcript is enough for one
   follow-up call.
+
+## Amendment 2026-11-16 (d1109-cred-engine, [ADR 0120](0120-which-claude-does-the-work.md))
+
+The non-task calls' own order (the API key first when the person chose none) is gone: every call
+follows the person's credential policy.

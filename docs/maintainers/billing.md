@@ -344,6 +344,24 @@ max(estimate, 1)` clamped to [-1, 10]. `errorStats(specialist, taskType?)` gives
 `meanAbsErrorRatio` and `bias`; `suggestedMultiplier` is `1 + bias * n / (n + 3)` clamped to
 [0.5, 3], which the planner applies to its next estimate. `toJSON` / `fromJSON` persist it.
 
+### The credential policy and stops (`src/policy.ts`, [ADR 0120](../decisions/0120-which-claude-does-the-work.md))
+
+`CREDENTIAL_POLICIES` are the five presets; `ruleOf(id)` gives `{order, whenStopped: next | ask |
+wait, kinds}` (`key_only` leaves the subscription out). `credentialPolicyOf(prefs)` reads the
+stored `credential_policy`, else derives the earlier choice (`billing_order`, `mid_session_limit`)
+at every read, else the default preset (`DEFAULT_CREDENTIAL_POLICY`, `chosen: "default"`).
+`moneyRank` orders them by how much money they can move without the person. `stopOf(source,
+status, nowMs, planShareCap)` names a source's stop (`limit`, `refused`, `share`, `key_month`), its
+end (a share or a month cap: the next month's start UTC) and its key (a new rest, refusal, raised
+allowance or cap, or month gives another key); `grantOf` reads `limits.grant`.
+
+The router (`RouteContext.whenStopped`, `heldNow`, `kinds`, `nowMs`) holds every stop under
+`wait` and `ask` (`details.waitFor {sourceId, kind, reason, until, stopKey, ask}`); under `next` the
+next source serves. A grant for the current stop key lets the granted kind serve, never for
+`batch`. The fake row is never left out by `kinds`. `BillingSourceLimits` gains (append-only)
+`asking`, `grant`, `switchNotified`, `refusedCard` and `refusedCategory`; none holds a credential.
+Tests: `policy.test.ts`, `router.test.ts` ("d1109-cred-engine, run C").
+
 ## How to change it
 
 - **Provider rule change** (subscription allowed on cloud, plan credits order, a new cap):

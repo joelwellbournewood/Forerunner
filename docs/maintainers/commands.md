@@ -811,6 +811,17 @@ run C").
 Tests: `test/selftasks-run.test.ts` (ST-2, ST-3, ST-5), `test/registry.test.ts` (no
 `task_split` tool).
 
+### credential_policy ([ADR 0120](../decisions/0120-which-claude-does-the-work.md))
+
+`settings.set credential_policy` takes one of the five presets; it is the person's alone (an agent
+is refused: "Only you can change which Claude does the work."), narrows by `moneyRank` (less money
+without the person acts at once, more asks a yes; an Undo is judged the same way) and reads its
+value in force from older settings (`SettingSpec.currentOfPrefs`); its Undo puts the stored value
+back. `billing_order` and `mid_session_limit` are kept for the legacy reader, hidden from
+settings_set's definition (`hiddenFromTool`) and, once credential_policy is stored, refused with
+`CREDENTIAL_KEY_REPLACED` (also an Undo of their old rows, `undoBlocked`). Tests:
+`credential-policy.test.ts`, `w15-chat.test.ts`.
+
 ## How to change it
 
 **Add a command.** Write `src/commands/<area>.ts` exporting a `CommandDef`: a zod `params`
