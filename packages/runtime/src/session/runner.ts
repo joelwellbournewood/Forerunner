@@ -990,6 +990,13 @@ export function isTransientError(code: string | undefined): boolean {
 export const NOTHING_RUNNABLE = "nothing_runnable";
 
 /**
+ * d1116-budget-all (BA-8): the mark on a plan whose estimates hold each task's review (and,
+ * through the learned ratios, its fixes): the session review sets the planned tasks' whole cost
+ * against it (`planCountsAll` in `@forerunner/critic`). A plan without it was written before.
+ */
+export const PLAN_COUNTS_ALL = "all";
+
+/**
  * Runs of one task in one session at most (design §4.3: retries happen inside the session, up
  * to the retry limit). The critic's ladder hands a task to the person after its fourth failed
  * attempt; this only stops a task that keeps coming back for another reason.
@@ -1689,7 +1696,7 @@ export class SessionRunner {
       session = await store.session.setPlan(
         beforePlan.id,
         beforePlan.version,
-        { ...plan, startedBy, ...(promise ? { promise } : {}) } as never,
+        { ...plan, startedBy, ...(promise ? { promise } : {}), counts: PLAN_COUNTS_ALL } as never,
         planReason(plan),
         { agentId: agent.id },
       );
@@ -2071,7 +2078,12 @@ export class SessionRunner {
           session = await store.session.setPlan(
             fresh.id,
             fresh.version,
-            { ...plan, startedBy, ...(promise ? { promise } : {}) } as never,
+            {
+              ...plan,
+              startedBy,
+              ...(promise ? { promise } : {}),
+              counts: PLAN_COUNTS_ALL,
+            } as never,
             `took "${item.title}", larger than this session's work budget, with what is left`,
             { agentId: agent.id },
           );
@@ -2250,7 +2262,12 @@ export class SessionRunner {
           session = await store.session.setPlan(
             fresh.id,
             fresh.version,
-            { ...plan, startedBy, ...(promise ? { promise } : {}) } as never,
+            {
+              ...plan,
+              startedBy,
+              ...(promise ? { promise } : {}),
+              counts: PLAN_COUNTS_ALL,
+            } as never,
             `took ${cut.items.length} more task${cut.items.length === 1 ? "" : "s"} as ${
               cut.items.length === 1 ? "it" : "they"
             } became ready`,

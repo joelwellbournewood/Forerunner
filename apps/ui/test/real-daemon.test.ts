@@ -16802,10 +16802,13 @@ describe("l3-money-engine, run L3", () => {
       const said = (type: string) => lines.filter(([t]) => t === type).map(([, text]) => text);
       const planned = chfIn(said("session.planned")[0] ?? "");
       expect(planned).not.toBeNull();
+      // d1116-budget-all (BA-8): the plan's estimate holds the review, so the planned task's
+      // whole cost (both tries and their reviews) is set against it, the session's own checks
+      // apart (before: 'the work cost CHF x against an estimate of CHF y, and the reviews ...').
       expect(said("critic.session_review_metrics")).toEqual([
         expect.stringMatching(
           new RegExp(
-            `^Session review measured: 1 of 1 planned task done; the work cost (CHF \\d+\\.\\d{2}|less than CHF 0\\.01) against an estimate of CHF ${(planned ?? "").replace(".", "\\.")}, and the reviews `,
+            `^Session review measured: 1 of 1 planned task done; the planned tasks cost (CHF \\d+\\.\\d{2}|less than CHF 0\\.01) against an estimate of CHF ${(planned ?? "").replace(".", "\\.")}(, and the session's own checks (CHF \\d+\\.\\d{2}|less than CHF 0\\.01))?\\.$`,
           ),
         ),
       ]);

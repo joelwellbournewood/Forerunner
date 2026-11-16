@@ -56,6 +56,17 @@ export interface SessionReviewData {
    * CHF, U-074); null when the ledger has no rows. Absent from data built before it: no check.
    */
   ledgerChfMicro?: number | null;
+  /**
+   * d1116-budget-all (BA-8): the plan's estimates hold each task's review (the runner marks such a
+   * plan `counts: "all"`), so the session review sets the planned tasks' whole cost against it.
+   * Absent or false: a plan of before, whose estimate was the work's, read as written.
+   */
+  countsAll?: boolean;
+  /**
+   * For a marked plan: what its planned tasks cost in the session, the ledger rows booked to them
+   * (their runs' costs when the session has no ledger row, as the actual figure falls back).
+   */
+  plannedTasksUsdMicro?: number;
 }
 
 export interface SessionMetrics {
@@ -73,6 +84,14 @@ export interface SessionMetrics {
    */
   reviewsUsdMicro?: number;
   workUsdMicro?: number;
+  /**
+   * d1116-budget-all (BA-8), for a plan whose estimates hold the reviews: `counts` "all", what
+   * the planned tasks cost (their work, reviews and fixes: what the estimate counts) and the
+   * session's other spend (its own checks: the task check, lesson reviews; no task of the plan).
+   */
+  counts?: "all";
+  tasksUsdMicro?: number;
+  otherUsdMicro?: number;
   costPerDoneTaskUsdMicro: number | null;
   claimedDone: number | null;
   claimedCostUsdMicro: number | null;
@@ -196,6 +215,23 @@ export async function loadSessionReviewData(
     if (t) tasks.set(id, t);
   }
   const ledger = await store.costLedger.sum({ sessionId });
+  // d1116-budget-all (BA-8): a plan whose estimates hold the reviews is set against what its
+  // tasks cost in the session, their rows of the ledger (their runs when the session has none,
+  // as the actual figure falls back to the session's counter); the rest is the session's own.
+  const countsAll = planCountsAll(session.plan);
+  let plannedTasksUsdMicro: number | undefined;
+  if (countsAll) {
+    const planned = new Set(planItems.map((i) => i.taskId));
+    plannedTasksUsdMicro = 0;
+    if (ledger.entries > 0) {
+      for (const b of await store.costLedger.breakdown("task_id", { sessionId }))
+        if (b.key && planned.has(b.key)) plannedTasksUsdMicro += b.usd_micro;
+    } else {
+      for (const r of runs)
+        if (r.task_id && planned.has(r.task_id))
+          plannedTasksUsdMicro += Math.max(0, r.cost_usd_micro);
+    }
+  }
   return {
     session,
     planItems,
@@ -204,7 +240,18 @@ export async function loadSessionReviewData(
     runs,
     ledgerUsdMicro: ledger.entries > 0 ? ledger.usd_micro : null,
     ledgerChfMicro: ledger.entries > 0 ? ledger.chf_micro : null,
+    ...(countsAll ? { countsAll: true, plannedTasksUsdMicro } : {}),
   };
+}
+
+/** d1116-budget-all: whether a plan's estimates hold each task's review (`counts: "all"`). */
+export function planCountsAll(plan: JsonValue): boolean {
+  return (
+    !!plan &&
+    typeof plan === "object" &&
+    !Array.isArray(plan) &&
+    (plan as { counts?: unknown }).counts === "all"
+  );
 }
 
 const chfText = (micro: number): string => `CHF ${(micro / 1_000_000).toFixed(2)}`;
@@ -331,6 +378,13 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
       .reduce((s, r) => s + Math.max(0, r.cost_usd_micro), 0),
   );
   const work = Math.max(0, actual - reviews);
+  // d1116-budget-all (BA-8): a plan whose estimates hold the reviews is set against what its
+  // planned tasks cost (work, reviews and fixes); the session's own checks are named apart and
+  // never counted in an overrun.
+  const countsAll = data.countsAll === true;
+  const tasksCost = countsAll ? Math.min(actual, Math.max(0, data.plannedTasksUsdMicro ?? 0)) : 0;
+  const other = countsAll ? Math.max(0, actual - tasksCost) : 0;
+  const compared = countsAll ? tasksCost : work;
   if (planItems.length === 0 && actual > 0) {
     add(
       "medium",
@@ -349,10 +403,10 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   const doneTasks = [...data.tasks.values()].filter((t) => t.status === "done").length;
   if (
     estimate > 0 &&
-    work > estimate * COST_OVERRUN_RATIO &&
-    work - estimate > COST_NOISE_USD_MICRO
+    compared > estimate * COST_OVERRUN_RATIO &&
+    compared - estimate > COST_NOISE_USD_MICRO
   ) {
-    const pct = Math.round(((work - estimate) / estimate) * 100);
+    const pct = Math.round(((compared - estimate) / estimate) * 100);
     // L3-run-2: the estimate counts each task once; work that tried a task again is named as
     // such, so a send-back that doubled the cost is flagged and its cause read at a glance.
     // Plain words for the tries (design §5): one task tried twice or N times, or N tasks tried
@@ -369,9 +423,11 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
             : `, with one task tried ${again + 1} times`;
     add(
       "medium",
-      reviews > 0
-        ? `Session work cost ${money(work)} exceeded its estimate ${money(estimate)} by ${pct}%${tried} (the reviews, ${money(reviews)} more, are not in the estimate)`
-        : `Session cost ${money(actual)} exceeded its estimate ${money(estimate)} by ${pct}%${tried}`,
+      countsAll
+        ? `Planned tasks cost ${money(compared)}, over their estimate of ${money(estimate)} by ${pct}%${tried}`
+        : reviews > 0
+          ? `Session work cost ${money(work)} exceeded its estimate ${money(estimate)} by ${pct}%${tried} (the reviews, ${money(reviews)} more, are not in the estimate)`
+          : `Session cost ${money(actual)} exceeded its estimate ${money(estimate)} by ${pct}%${tried}`,
       "Record the overrun against the estimate so the next plan is calibrated; split the work that overran",
     );
   }
@@ -544,6 +600,9 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
       actualUsdMicro: actual,
       reviewsUsdMicro: reviews,
       workUsdMicro: work,
+      ...(countsAll
+        ? { counts: "all" as const, tasksUsdMicro: tasksCost, otherUsdMicro: other }
+        : {}),
       costPerDoneTaskUsdMicro: costPerDone,
       claimedDone: claims.done ?? null,
       claimedCostUsdMicro: claims.costUsdMicro ?? null,
@@ -709,11 +768,18 @@ export async function reviewSession(opts: ReviewSessionOptions): Promise<ReviewO
     checks.metrics.actualChfMicro ?? Math.round(checks.metrics.actualUsdMicro * rate);
   const estimateText = chfText(Math.round(checks.metrics.estimateUsdMicro * rate));
   const reviewsUsd = checks.metrics.reviewsUsdMicro ?? 0;
-  // W15-18: with reviews, the work's cost is what the estimate is set against.
+  // W15-18: with reviews, the work's cost is what the estimate is set against. d1116-budget-all
+  // (BA-8): a plan whose estimates hold the reviews sets the planned tasks' whole cost against
+  // it, and names the session's own checks apart.
+  const otherUsd = checks.metrics.otherUsdMicro ?? 0;
   const costText =
-    reviewsUsd > 0
-      ? `cost ${chfText(spentChf)} (work ${chfText(Math.round((checks.metrics.workUsdMicro ?? 0) * rate))} against an estimate of ${estimateText}, reviews ${chfText(Math.round(reviewsUsd * rate))})`
-      : `cost ${chfText(spentChf)} against an estimate of ${estimateText}`;
+    checks.metrics.counts === "all"
+      ? otherUsd > 0
+        ? `cost ${chfText(spentChf)} (the planned tasks ${chfText(Math.round((checks.metrics.tasksUsdMicro ?? 0) * rate))} against an estimate of ${estimateText}, the session's own checks ${chfText(Math.round(otherUsd * rate))})`
+        : `cost ${chfText(spentChf)} against an estimate of ${estimateText}`
+      : reviewsUsd > 0
+        ? `cost ${chfText(spentChf)} (work ${chfText(Math.round((checks.metrics.workUsdMicro ?? 0) * rate))} against an estimate of ${estimateText}, reviews ${chfText(Math.round(reviewsUsd * rate))})`
+        : `cost ${chfText(spentChf)} against an estimate of ${estimateText}`;
   const summary =
     // P7-34 (polish-words): plurals as the number says, never "(s)".
     `Session review: ${countWords(checks.metrics.doneTasks, "done task")} (${checks.metrics.plannedDoneTasks}/${checks.metrics.plannedTasks} planned), ` +

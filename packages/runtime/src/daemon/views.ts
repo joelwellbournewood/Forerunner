@@ -814,6 +814,11 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
       const money = (key: string) => moneyWords(chfOf(k(key), chfPerUsd), k(key));
       // W15B-19: the work against the estimate, the reviews named apart (the estimate is the
       // work's: W15-18). Before: "CHF 0.10 spent of a CHF 0.23 estimate", reviews included.
+      // d1116-budget-all (BA-8): a plan whose estimates hold the reviews: one figure, the
+      // planned tasks' whole cost, against it; the session's own checks named apart. Metrics
+      // written before read as written.
+      if (m.counts === "all" && typeof m.tasksUsdMicro === "number")
+        return `Session review measured: ${done}; the planned tasks cost ${money("tasksUsdMicro")} against an estimate of ${money("estimateUsdMicro")}${k("otherUsdMicro") > 0 ? `, and the session's own checks ${money("otherUsdMicro")}` : ""}.`;
       if (typeof m.workUsdMicro === "number")
         return `Session review measured: ${done}; the work cost ${money("workUsdMicro")} against an estimate of ${money("estimateUsdMicro")}${k("reviewsUsdMicro") > 0 ? `, and the reviews ${money("reviewsUsdMicro")}` : ""}.`;
       return `Session review measured: ${done}, ${money("actualUsdMicro")} spent of a ${money("estimateUsdMicro")} estimate.`;

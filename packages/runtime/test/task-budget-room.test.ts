@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { requestView } from "../src/daemon/views.ts";
+import { describeEvent, requestView } from "../src/daemon/views.ts";
 import { continueLabel, continueUsdMicro } from "../src/session/budget-card.ts";
 import { budgetLineWords, limitWords, pauseSentence } from "../src/session/budget-pause.ts";
 import { runCapOf, workRunCapOf } from "../src/session/executor.ts";
@@ -200,5 +200,53 @@ describe("d1116-budget-all, run C: one Continue at the task's budget gives what 
         needsUsdMicro: 5_000_000,
       }),
     ).toBe(2_000_000);
+  });
+
+  it("BA-8: the session review's line sets the planned tasks' whole cost against a plan that counts it, the session's own checks apart; a line of before reads as written", () => {
+    const line = (metrics: Record<string, unknown>) =>
+      describeEvent("critic.session_review_metrics", { metrics }, 0.8);
+    expect(
+      line({
+        plannedDoneTasks: 1,
+        plannedTasks: 1,
+        actualUsdMicro: 280_000,
+        workUsdMicro: 180_000,
+        reviewsUsdMicro: 100_000,
+        estimateUsdMicro: 240_000,
+        counts: "all",
+        tasksUsdMicro: 250_000,
+        otherUsdMicro: 30_000,
+      }),
+    ).toBe(
+      "Session review measured: 1 of 1 planned task done; the planned tasks cost CHF 0.20 against an estimate of CHF 0.19, and the session's own checks CHF 0.02.",
+    );
+    expect(
+      line({
+        plannedDoneTasks: 1,
+        plannedTasks: 1,
+        actualUsdMicro: 250_000,
+        workUsdMicro: 150_000,
+        reviewsUsdMicro: 100_000,
+        estimateUsdMicro: 240_000,
+        counts: "all",
+        tasksUsdMicro: 250_000,
+        otherUsdMicro: 0,
+      }),
+    ).toBe(
+      "Session review measured: 1 of 1 planned task done; the planned tasks cost CHF 0.20 against an estimate of CHF 0.19.",
+    );
+    // Written before the mark: the work against the estimate, the reviews apart.
+    expect(
+      line({
+        plannedDoneTasks: 1,
+        plannedTasks: 1,
+        actualUsdMicro: 250_000,
+        workUsdMicro: 150_000,
+        reviewsUsdMicro: 100_000,
+        estimateUsdMicro: 240_000,
+      }),
+    ).toBe(
+      "Session review measured: 1 of 1 planned task done; the work cost CHF 0.12 against an estimate of CHF 0.19, and the reviews CHF 0.08.",
+    );
   });
 });
