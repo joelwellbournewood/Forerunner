@@ -1430,16 +1430,20 @@ starts with ● and the project's name while a session runs. Home's and the Over
 
 Once a month the critic checks itself on examples whose right answers are known; while it does,
 the bar reads **Forerunner · the critic's monthly check on known examples**, and Stop's menu
-says what it is for and what it may spend.
+says what it is for and what it may spend; its **Stop now** stops the check at once, and that
+month's report is then not written.
 
 When a session of yours stopped to wait for Claude (a usage limit, a refused key) and goes on by
 itself when Claude is back, the bar reads **Quote page · waiting until 15:40, then it goes on**
 with **Cancel** instead of Stop; Cancel means nothing starts when Claude is back and its tasks
 wait for your Start. The same wait shows on the project's line and on that session's page (with
 Cancel, or once cancelled **Continue**, which opens Start with the rest of that session and what
-is left of its budget). The project's line also says what waits to start: "Starts at 15:40" for
-a Start you pressed while Claude was out (with Cancel), "Starts after your quiet hours", 'Starts
-after the session on "Quote page"', or "Ready: 3 tasks wait for your Start".
+is left of its budget). After Cancel, the session's result on its page, on the Overview (and in
+Read aloud) and its Update line in the Inbox say "...; then it runs at your next Start." instead
+of "then your session goes on". The project's line also says what waits to start: "Starts at
+15:40" for a Start you pressed while Claude was out (with Cancel), "Starts after your quiet
+hours", 'Starts after the session on "Quote page"' (as soon as you press Start there, no reload
+needed), or "Ready: 3 tasks wait for your Start".
 
 After an answer in the Inbox that readied work for your next Start, its Done line offers
 **Start**, which opens that project's Start dialog; it is not shown while a session of that
