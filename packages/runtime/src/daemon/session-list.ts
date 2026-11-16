@@ -25,7 +25,7 @@ import type {
   SessionTaskView,
 } from "./api-types.ts";
 import { joinedFromOf, joinedIntoOf, sessionsBeforeJoinSentence } from "./join-words.ts";
-import { type ProjectWorking, projectStatusLine } from "./project-status.ts";
+import { sessionRunText } from "./run-indicator.ts";
 import { loadTaskDisplayContext, taskDisplay } from "./task-display.ts";
 import { shortTitle, withoutIds } from "./task-words.ts";
 
@@ -542,49 +542,30 @@ export function durationOf(
 
 // --- Working now ---------------------------------------------------------------------------------
 
-/** The task a working session runs now, from its log (as `workingOn` reads it). */
-async function workingOf(store: StateStore, row: SessionRow): Promise<ProjectWorking> {
-  const agentName = (await store.agent.get(row.agent_id).catch(() => undefined))?.name ?? null;
-  const last = (await store.event.list(row.id, 0, 10_000))
-    .filter((e) => e.type === "task.started" || e.type === "task.finished")
-    .at(-1);
-  const payload = (last?.payload ?? {}) as { title?: unknown; taskId?: unknown };
-  const running = last?.type === "task.started";
-  return {
-    sessionId: row.id,
-    agentName,
-    taskId: running && typeof payload.taskId === "string" ? payload.taskId : null,
-    taskTitle: running && typeof payload.title === "string" ? payload.title : null,
-    since: row.started_at ?? row.created_at,
-  };
-}
-
 /**
- * What a working session does now, in the project status's own working sentence ('Working on
- * "Style the page" (3 of 7 done)', design §2), never a wording of its own; a planning call reads
- * "Drafting the plan…". d1109-run-visible (run C5) re-points this at its run view, so the
- * header, Home, the Overview and this list say what runs now in the same words.
+ * What a working session does now, in the run indicator's own words (d1109-run-visible, run C5:
+ * `run-indicator.ts`), so the header's bar, Home, the Overview and this list say what runs now in
+ * one vocabulary: 'Quote page · the coder works on "Style the page"', 'Quote page · picks the
+ * next task', 'Quote page · stops after "Style the page"' (before: the project status's 'Working
+ * on "Style the page" (3 of 7 done)', and the session page's 'Choosing the next task…'); a
+ * planning call reads "Drafting the plan…".
  */
 export async function workingWords(
   store: StateStore,
   row: SessionRow,
-  tasks?: readonly TaskRow[],
+  _tasks?: readonly TaskRow[],
 ): Promise<string> {
   if (isIntakeSession(row)) return planningGist({ state: "drafting" });
-  const all =
-    tasks ??
-    (row.project_id
-      ? await store.task.list({ project_id: row.project_id } as never, { limit: 2000 })
-      : []);
-  return projectStatusLine({
-    projectId: row.project_id ?? "",
-    tasks: all,
-    displays: new Map(),
-    cards: [],
-    plan: "none",
-    working: await workingOf(store, row),
-    folder: null,
-  }).text;
+  return sessionRunText(store, row);
+}
+
+/** The task a working session runs now: its last task.started with no task.finished after it. */
+async function runningTaskIdOf(store: StateStore, sessionId: string): Promise<string | null> {
+  const [last] = await store.event.ofTypes(sessionId, ["task.started", "task.finished"], {
+    limit: 1,
+  });
+  const taskId = (last?.payload as { taskId?: unknown } | undefined)?.taskId;
+  return last?.type === "task.started" && typeof taskId === "string" ? taskId : null;
 }
 
 // --- The list --------------------------------------------------------------------------------
@@ -815,7 +796,7 @@ export async function sessionTasksView(
       ...(outcome.cancelled ?? []),
     ])
       if (!order.includes(t.id)) order.push(t.id);
-  const runningId = working ? (await workingOf(store, row)).taskId : null;
+  const runningId = working ? await runningTaskIdOf(store, row.id) : null;
   const spendByTask = new Map(
     (await store.costLedger.breakdown("task_id", { sessionId })).map((b) => [b.key, b]),
   );

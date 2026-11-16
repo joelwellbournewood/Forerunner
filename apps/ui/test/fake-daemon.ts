@@ -39,6 +39,7 @@ import type {
   ProjectSessionRowView,
   ReviewsView,
   ReviewView,
+  RunningView,
   SessionTaskView,
   SessionView,
   SetupStatusView,
@@ -153,6 +154,7 @@ import {
   sinceLines,
 } from "@forerunner/runtime/daemon/project-status";
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
+import { runText, stopChoices } from "@forerunner/runtime/daemon/run-words";
 import {
   quoted,
   TAKE_OUT_NOTICE_PREFIX,
@@ -545,6 +547,12 @@ export interface FakeDaemonState {
    */
   costs: Record<string, CostView>;
   sessions: SessionView[];
+  /**
+   * d1109-run-visible: entries `GET /running` adds after the running sessions (a person's session
+   * waiting to go on, the critic's monthly check), in the daemon's words. A test seeds them and
+   * calls `emitRunning()`; `POST /projects/:id/continuation/cancel` drops a waiting one.
+   */
+  runningExtra: RunningView[];
   /**
    * d1109-sessions (ADR 0116): each project's ended sessions as `GET /projects/:id/sessions`
    * lists them (newest first), every word as the daemon writes it; the working ones are read
@@ -1295,6 +1303,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     costs: clone(COSTS),
     runs: clone(RUNS),
     sessions: clone(SESSIONS),
+    runningExtra: [],
     projectSessions: clone(PROJECT_SESSIONS),
     projectSessionsChat: {},
     sessionTasks: clone(SESSION_TASKS),
@@ -1384,6 +1393,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ? { ...(data as object), needsYouCount: needsYouCount() }
         : data;
     for (const l of state.listeners) l(event, sent);
+    // d1109-run-visible: as the daemon's debounced emitter, a session's change moves the run
+    // indicator: its list follows on the stream.
+    if (event === "session.changed")
+      for (const l of state.listeners) l("run.changed", fakeRunning());
   };
   const later = (fn: () => void, ms: number) => {
     const t = setTimeout(() => {
@@ -1397,6 +1410,49 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.requests.filter((r) => r.status === "open" && r.blocking).length;
   /** Every open card waits on the person (design §3.8): the Inbox's and the header's count. */
   const needsYouCount = () => state.requests.filter((r) => r.status === "open").length;
+  /**
+   * d1109-run-visible: the run indicator as the daemon reads it (`runViews`, in its words): each
+   * running or paused session (its task in flight, or picking the next; paused: stops after it),
+   * then the seeded extras (a waiting session, the monthly check) whose project runs nothing.
+   */
+  const fakeRunning = (): RunningView[] => {
+    const views: RunningView[] = [];
+    const busy = new Set<string>();
+    for (const s of state.sessions) {
+      if (!["running", "paused", "planned"].includes(s.status) || !s.projectId) continue;
+      const project = state.projects.find((p) => p.id === s.projectId);
+      if (!project) continue;
+      busy.add(project.id);
+      const task = s.currentTask;
+      const runState: RunningView["state"] =
+        s.status === "paused" ? "stopping" : task ? "working" : "between";
+      const words = {
+        state: runState,
+        taskTitle: task?.title ?? null,
+        specialist: task?.specialist ?? null,
+      };
+      const text = runText({ projectName: project.name, ...words });
+      views.push({
+        key: s.id,
+        sessionId: s.id,
+        projectId: project.id,
+        projectName: project.name,
+        state: runState,
+        what: text.slice(project.name.length + 3),
+        text,
+        since: s.startedAt,
+        stop: stopChoices(runState),
+        cancel: false,
+        nextProject: null,
+        explain: null,
+      });
+    }
+    for (const extra of state.runningExtra)
+      if (!extra.projectId || !busy.has(extra.projectId)) views.push(clone(extra));
+    return views;
+  };
+  /** d1109-run-visible: the `run.changed` frame, as the daemon sends it when the list changed. */
+  const emitRunning = () => emit("run.changed", fakeRunning());
   /** The reset's time in a credential wait's sentence ("... until 09:30 (...)"), or null. */
   const fakeResetAt = (text: string): string | null => /until (\d\d:\d\d)/.exec(text)?.[1] ?? null;
   /**
@@ -1623,10 +1679,25 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return c.json({ ok: true });
   });
 
+  // d1109-run-visible: what runs now, the run indicator's list (the daemon's `GET /running`).
+  app.get("/running", (c) => c.json(fakeRunning()));
   app.get("/health", (c) =>
     c.json({
       ...HEALTH,
       version: state.version,
+      // As the daemon: the run indicator's first entry, a running session before a waiting one.
+      running: (() => {
+        const all = fakeRunning();
+        const first = all.find((v) => v.state !== "waiting") ?? all[0];
+        return first
+          ? {
+              projectName: first.projectName,
+              what: first.what,
+              text: first.text,
+              waiting: first.state === "waiting",
+            }
+          : null;
+      })(),
       activeSessions: state.sessions.filter((s) => s.status === "running").length,
       killActive: state.killActive,
       extensions: {
@@ -3157,34 +3228,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       : state.sessions
           .filter((s) => s.projectId === id && ["running", "paused", "planned"].includes(s.status))
           .map((s) => {
-            // As the daemon's `workingWords`: the project status's own working sentence.
-            const tasks = projectTaskViews(
-              state.tasks,
-              id,
-              state.requests,
-              state.sandbox.ready,
-              state.taskMeta,
-            );
-            const gist = projectStatusLine({
-              projectId: id,
-              tasks: tasks.map((t) => ({
-                id: t.id,
-                title: t.title,
-                status: t.status as never,
-                depends_on: t.dependsOn,
-              })),
-              displays: new Map(),
-              cards: [],
-              plan: "none",
-              working: {
-                sessionId: s.id,
-                agentName: s.agentName,
-                taskId: s.currentTask?.id ?? null,
-                taskTitle: s.currentTask?.title ?? null,
-                since: s.startedAt ?? new Date().toISOString(),
-              },
-              folder: null,
-            }).text;
+            // As the daemon's `workingWords` (d1109-run-visible): the run indicator's words.
+            const gist =
+              fakeRunning().find((v) => v.sessionId === s.id)?.text ??
+              `${state.projects.find((p) => p.id === id)?.name ?? ""} · picks the next task`;
             return fakeWorkingRow(s, gist);
           });
     const rows = ended.slice(from, from + limit);
@@ -3237,6 +3284,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       text: wait.text.replace("; then your session goes on.", "; then it runs at your next Start."),
       save: wait.save,
     };
+    // d1109-run-visible: the run indicator's waiting entry goes with it.
+    state.runningExtra = state.runningExtra.filter(
+      (r) => !(r.state === "waiting" && r.projectId === project.id),
+    );
+    emitRunning();
     return c.json({
       cancelled: true,
       sentence: "Cancelled: nothing goes on by itself; its tasks run at your next Start.",
@@ -3456,6 +3508,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
    */
   function stopAll(): number {
     state.killActive = true;
+    // As the daemon (S-10): Stop all drops every session kept to go on after its credential wait.
+    state.runningExtra = state.runningExtra.filter((r) => r.state !== "waiting");
     let stopped = 0;
     for (const s of state.sessions) {
       if (s.status === "running" || s.status === "paused" || s.status === "planned") {

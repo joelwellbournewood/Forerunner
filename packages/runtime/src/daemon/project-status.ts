@@ -537,9 +537,9 @@ export async function workingOn(
     .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
   if (!s) return null;
   const agentName = (await store.agent.get(s.agent_id))?.name ?? null;
-  const last = (await store.event.list(s.id, 0, 10_000))
-    .filter((e) => e.type === "task.started" || e.type === "task.finished")
-    .at(-1);
+  // d1109-run-visible (D8-1): the newest task.started or task.finished only, as the run
+  // indicator reads a session's log (before: the session's whole event list, per project card).
+  const [last] = await store.event.ofTypes(s.id, ["task.started", "task.finished"], { limit: 1 });
   const payload = (last?.payload ?? {}) as { title?: unknown; taskId?: unknown };
   const running = last?.type === "task.started";
   return {

@@ -2,6 +2,8 @@ import {
   DesktopIndicatorEventData,
   type EventView,
   EventView as EventViewSchema,
+  type RunningView,
+  RunningView as RunningViewSchema,
   type SessionView,
   SessionView as SessionViewSchema,
   SpeakStartedView as SpeakStartedSchema,
@@ -63,7 +65,12 @@ export type DaemonEvent =
   | { event: "desktop.indicator"; data: DesktopIndicatorEventData }
   /** Something is being read aloud (ADR 0063); a speech player plays `player: "any"` ones. */
   | { event: "speak.started"; data: SpeakStartedView }
-  | { event: "heartbeat"; data: { at: string } };
+  | { event: "heartbeat"; data: { at: string } }
+  /**
+   * d1109-run-visible (V-1): what runs now changed; the run indicator's whole list (`GET
+   * /running`). Polling reads `/running` on every tick and hands it on as this frame.
+   */
+  | { event: "run.changed"; data: RunningView[] };
 
 /** What the daemon's `/events` stream says happened in a session (server.ts `onSession`). */
 export interface SessionActivity {
@@ -150,6 +157,10 @@ export function parseDaemonEvent(event: string, rawData: string): DaemonEvent | 
       const p = Heartbeat.safeParse(data);
       return p.success ? { event, data: p.data } : null;
     }
+    case "run.changed": {
+      const p = z.array(RunningViewSchema).safeParse(data);
+      return p.success ? { event, data: p.data } : null;
+    }
     default:
       return null;
   }
@@ -167,6 +178,7 @@ export const DAEMON_EVENT_NAMES = [
   "desktop.indicator",
   "speak.started",
   "heartbeat",
+  "run.changed",
 ] as const;
 
 /** The subset of the EventSource interface the helpers use; injectable for tests. */
@@ -399,6 +411,12 @@ export function subscribeDaemonEvents(
       const running = await client.sessions({ status: "running" });
       for (const s of running) handlers.onEvent({ event: "session.changed", data: s });
       handlers.onEvent({ event: "sessions.running", data: running });
+      // d1109-run-visible: the run indicator follows polling too (an older daemon has no route).
+      try {
+        handlers.onEvent({ event: "run.changed", data: await client.running() });
+      } catch {
+        // no /running on this daemon, or a transient failure: the next tick reads again
+      }
       try {
         const desktop = await client.desktopStatus();
         handlers.onEvent({

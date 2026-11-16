@@ -1,4 +1,4 @@
-import type { AgentView, HealthView, HumanView, ProjectCard } from "../api/client.ts";
+import type { AgentView, HealthView, HumanView, ProjectCard, RunningView } from "../api/client.ts";
 import type { DaemonConfig } from "../api/config.ts";
 import type { DesktopIndicatorEventData, RestartRequested, StreamMode } from "../api/sse.ts";
 import { type KeyValueStore, storageKey } from "../lib/storage.ts";
@@ -66,6 +66,12 @@ export interface UiState {
    * Nothing is kept in the browser: a reload reads them again from the daemon.
    */
   conversations: Record<string, ConversationState>;
+  /**
+   * d1109-run-visible (V-2): what runs now, the run indicator's list in the daemon's words
+   * (`GET /running` at bootstrap and on reconnect, then every `run.changed` frame, polling too).
+   * The header's bar, Home, the Overview and Talk read it; empty when nothing runs or waits.
+   */
+  running: RunningView[];
 }
 
 /** What the desktop-control banner shows. */
@@ -155,7 +161,9 @@ export type UiAction =
    * `GET /projects/:id/conversation` (key: the project id; "" outside any project) and show it
    * from here, so both always show the same lines.
    */
-  | { type: "conversation"; key: string; update: (c: ConversationState) => ConversationState };
+  | { type: "conversation"; key: string; update: (c: ConversationState) => ConversationState }
+  /** d1109-run-visible: the run indicator's list from the daemon (a frame or a read). */
+  | { type: "running"; running: RunningView[] };
 
 export const STORAGE_NAMES = {
   activeProject: "activeProject",
@@ -194,6 +202,7 @@ export function initialState(config: DaemonConfig, storage: KeyValueStore): UiSt
     desktopControl: null,
     desktopOrder: { next: 0, applied: 0 },
     conversations: {},
+    running: [],
   };
 }
 
@@ -280,6 +289,11 @@ export function reduce(state: UiState, action: UiAction): UiState {
         conversations: { ...state.conversations, [action.key]: action.update(prev) },
       };
     }
+    case "running":
+      // A frame that says the same keeps the list's object (the bar does not re-render).
+      return JSON.stringify(state.running) === JSON.stringify(action.running)
+        ? state
+        : { ...state, running: action.running };
     default:
       return state;
   }

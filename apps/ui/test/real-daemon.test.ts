@@ -53,7 +53,9 @@ import { ZERO_REFUSED } from "../../../packages/commands/src/commands/budget.ts"
 import { saidByName } from "../../../packages/critic/src/followup.ts";
 import {
   AcceptingCriticProvider,
+  removeHomes,
   ScriptedProvider,
+  settleSessions,
 } from "../../../packages/runtime/test/helpers.ts";
 import { ModelCallLog } from "../../../testenv/src/bench/call-log.ts";
 import {
@@ -15757,12 +15759,12 @@ describe("d1109-sessions, run C", () => {
         async () => (await client.session(heldId)).status,
         20_000,
       );
-      const tasksNow = await client.tasks(project.id);
-      const doneNow = tasksNow.filter((t) => t.status === "done").length;
       const view = await client.projectSessions(project.id);
       expect(view.working.map((r) => r.id)).toEqual([heldId]);
+      // d1109-run-visible: the working row says what runs now in the run indicator's words (the
+      // header's bar, Home, the Overview); it read 'Working on "Task 3" (2 of 4 done)'.
       expect(view.working[0]).toMatchObject({
-        gist: `Working on "Task 3" (${doneNow} of ${tasksNow.length} done)`,
+        gist: 'Quote page · the coder works on "Task 3"',
         durationMs: null,
         working: true,
         endedWords: null,
@@ -20875,4 +20877,436 @@ describe("d1116-budget-all, run C", () => {
       await rt.close();
     }
   }, 60_000);
+});
+
+describe("d1109-run-visible, run C", () => {
+  // D8 (the owner, 2026-11-09): "it should at least be very clear to a user when a run is
+  // ongoing. That should also be very visually clear no matter where the person is." V-1: one run
+  // state in the daemon's words, GET /running and /health.running, read through the UI client
+  // across a session's life. Every model call waits at a gate the case opens, so each state is
+  // read while it lasts (no wait on how long real work takes).
+  class GatedProvider {
+    readonly name: string;
+    readonly held: { role: "critic" | "work"; open: () => void }[] = [];
+    private passing = false;
+    constructor(private readonly inner: AcceptingCriticProvider) {
+      this.name = inner.name;
+    }
+    listModels() {
+      return this.inner.listModels();
+    }
+    countTokens(text: string) {
+      return this.inner.countTokens(text);
+    }
+    async *stream(req: ModelRequest) {
+      const role = (req.tools ?? []).some((t) => t.name === "submit_review") ? "critic" : "work";
+      if (!this.passing) await new Promise<void>((open) => this.held.push({ role, open }));
+      yield* this.inner.stream(req);
+    }
+    /** Lets the oldest held call of `role` go on. */
+    release(role: "critic" | "work") {
+      const at = this.held.findIndex((h) => h.role === role);
+      if (at >= 0) this.held.splice(at, 1)[0]?.open();
+    }
+    releaseAll() {
+      for (const h of this.held.splice(0)) h.open();
+    }
+    /** Every call goes on from now (a case's end: nothing it started waits at the gate). */
+    stopGating() {
+      this.passing = true;
+      this.releaseAll();
+    }
+  }
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  async function compose(home = mkdtempSync(join(tmpdir(), "fr-ui-real-run-visible-"))) {
+    if (!homes.includes(home)) homes.push(home);
+    const clock = new SystemClock();
+    const gated = new GatedProvider(
+      new AcceptingCriticProvider(new ScriptedProvider([{ text: "Done." }], clock)),
+    );
+    const env = { FORERUNNER_HOME: home };
+    const rt = await composeRuntime({
+      env,
+      dirs: appDirs({ env }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider: gated as never,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+      // Design §4.10: the sessions a dead process left are ended at the start.
+      recoverSessions: true,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client, gated, home };
+  }
+
+  const addTask = (
+    client: DaemonClient,
+    projectId: string,
+    title: string,
+    priority: "low" | "medium" | "high" = "medium",
+  ) =>
+    client.createTask(projectId, {
+      title,
+      outcome: `${title} is done`,
+      acceptanceCriteria: [],
+      riskTier: 0,
+      priority,
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+      specialist: "coder",
+    });
+
+  it("GET /running and /health.running say what a session does now, in the daemon's words, from its first task to its end", async () => {
+    const { rt, client, gated } = await compose();
+    try {
+      expect(await client.running()).toEqual([]);
+      expect((await client.health()).running).toBeNull();
+      const project = await client.createProject({ name: "Quote page", goal: "Quotes" });
+      const garden = await client.createProject({ name: "Garden site", goal: "Plants" });
+      await addTask(client, project.id, "Write A", "high");
+      await addTask(client, project.id, "Write B", "low");
+      await addTask(client, garden.id, "Water the plants");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      const texts = async () => (await client.running()).map((v) => v.text);
+      const seen = async () =>
+        `${JSON.stringify(await texts())}; held ${gated.held.map((h) => h.role).join(",")}`;
+      // The coder's run of "A" is in its model call.
+      await eventually(
+        async () => gated.held.some((h) => h.role === "work"),
+        "A's run",
+        seen,
+        20_000,
+      );
+      const [working] = await client.running();
+      expect(working).toEqual({
+        key: sessionId,
+        sessionId,
+        projectId: project.id,
+        projectName: "Quote page",
+        state: "working",
+        what: 'the coder works on "Write A"',
+        text: 'Quote page · the coder works on "Write A"',
+        since: expect.any(String),
+        stop: ["after", "now", "all"],
+        cancel: false,
+        nextProject: null,
+        explain: null,
+      });
+      expect((await client.health()).running).toEqual({
+        projectName: "Quote page",
+        what: 'the coder works on "Write A"',
+        text: 'Quote page · the coder works on "Write A"',
+        waiting: false,
+      });
+      // The person presses Start on Garden site: it waits behind this session and is named.
+      const queued = await client.startSession({ agentId, projectId: garden.id });
+      expect(queued.result).toBe("queued");
+      expect(await texts()).toEqual([
+        'Quote page · the coder works on "Write A" · then Garden site',
+      ]);
+      rt.scheduler.cancelPending(agentId, "test cleanup", queued.startId);
+      expect(await texts()).toEqual(['Quote page · the coder works on "Write A"']);
+      // The run ends; the critic checks it.
+      gated.release("work");
+      await eventually(
+        async () => gated.held.some((h) => h.role === "critic"),
+        "A's review",
+        seen,
+        20_000,
+      );
+      expect(await texts()).toEqual(['Quote page · the critic checks "Write A"']);
+      // The review ends (the critic's calls go on); the session takes "B".
+      await eventually(
+        async () => {
+          gated.release("critic");
+          return (await texts())[0] === 'Quote page · the coder works on "Write B"';
+        },
+        "B's run",
+        seen,
+        20_000,
+      );
+      // Stop after this task: the indicator says so and offers Stop now and Stop all.
+      await client.pauseSession(sessionId);
+      const [stopping] = await client.running();
+      expect(stopping).toMatchObject({
+        state: "stopping",
+        text: 'Quote page · stops after "Write B"',
+        stop: ["now", "all"],
+      });
+      await eventually(
+        async () => {
+          gated.releaseAll();
+          return !["running", "paused", "planned"].includes(
+            (await client.session(sessionId)).status,
+          );
+        },
+        "the session to end",
+        seen,
+        20_000,
+      );
+      await eventually(async () => (await client.running()).length === 0, "none", seen, 10_000);
+      expect((await client.health()).running).toBeNull();
+    } finally {
+      gated.stopGating();
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("a plan being drafted is no running session: GET /running is empty and /health counts none", async () => {
+    const { rt, client, gated } = await compose();
+    try {
+      const project = await client.createProject({
+        name: "Planned",
+        goal: "A page",
+        brief: "A one-page site that shows a quote.",
+        intake: true,
+      });
+      await eventually(
+        async () => gated.held.length > 0,
+        "the planning call",
+        async () => `${gated.held.length} held`,
+        20_000,
+      );
+      const rows = await rt.store.session.list({ project_id: project.id } as never, { limit: 5 });
+      expect(rows.some((r) => ["running", "planned", "paused"].includes(r.status))).toBe(true);
+      expect(await client.running()).toEqual([]);
+      const health = await client.health();
+      expect(health.activeSessions).toBe(0);
+      expect(health.running).toBeNull();
+    } finally {
+      gated.stopGating();
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("a session a dead process left is ended at the start, and GET /running is empty after the restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-run-visible-restart-"));
+    const first = await compose(home);
+    let projectId = "";
+    try {
+      projectId = (await first.client.createProject({ name: "Ghost", goal: "x" })).id;
+      // A row a dead process left running (as a crash leaves it).
+      await first.rt.store.session.insert({
+        agent_id: first.rt.agent.id,
+        project_id: projectId,
+        trigger: "manual",
+        plan: { items: [] },
+        reason: "a session a crash left",
+        budget_cap_usd_micro: 5_000_000,
+        step_cap: 200,
+        spent_usd_micro: 0,
+        steps: 0,
+        status: "running",
+        summary: "",
+        handoff: {},
+        runner: "pc",
+        started_at: first.rt.clock.nowIso(),
+        author_agent: first.rt.agent.id,
+      } as never);
+      expect((await first.client.running()).map((v) => v.text)).toEqual([
+        "Ghost · plans the session",
+      ]);
+    } finally {
+      await first.rt.close();
+    }
+    const second = await compose(home);
+    try {
+      expect(await second.client.running()).toEqual([]);
+      expect((await second.client.health()).running).toBeNull();
+      expect((await second.client.project(projectId)).working ?? null).toBeNull();
+    } finally {
+      await second.rt.close();
+    }
+  }, 120_000);
+});
+
+describe("d1109-run-visible, run C: a person's session waiting to go on", () => {
+  // V-1 (the owner's decision of 2026-11-09, last section): a session the person started that
+  // ended to wait for its Claude credential goes on by itself at the reset, "shown on the run
+  // indicator while it waits ('Waiting until 15:40, then it goes on', with Cancel)". Read through
+  // the UI client, before and after the daemon starts again on the same home.
+  const oauth = ["sk-ant-oat01-", "runvisible", "8".repeat(40)].join(""); // not-a-secret
+  const apiKey = ["sk-ant-api03-", "runvisible", "9".repeat(40)].join(""); // not-a-secret
+  const resetAt = "2026-03-05T10:40:00.000Z";
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /** Claude Code at the plan's limit on its first turn, then answering. */
+  const claudeCode =
+    (calls: string[]): NonNullable<ComposeOptions["sdkQuery"]> =>
+    ({ prompt }) => {
+      calls.push(prompt);
+      const atLimit = calls.length <= 1;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        if (atLimit) {
+          yield {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt: Date.parse(resetAt) / 1000 },
+          };
+          yield {
+            type: "assistant",
+            error: "rate_limit",
+            message: { content: [{ type: "text", text: "You've hit your limit" }] },
+          };
+          yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+          return;
+        }
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${calls.length}`,
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+
+  async function compose(home: string, calls: string[]) {
+    if (!homes.includes(home)) homes.push(home);
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const env = { FORERUNNER_HOME: home };
+    const rt = await composeRuntime({
+      env,
+      dirs: appDirs({ env }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      provider: new AcceptingCriticProvider(
+        new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock),
+      ),
+      sdkQuery: claudeCode(calls),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client, clock };
+  }
+
+  it("reads 'waiting until 11:40, then it goes on' with Cancel and no Stop, names the end of the quiet hours when later, keeps it after a restart, and is gone after Cancel", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-run-visible-wait-"));
+    const calls: string[] = [];
+    let projectId = "";
+    let sessionId = "";
+    const first = await compose(home, calls);
+    try {
+      const { client, rt } = first;
+      const project = await client.createProject({ name: "Quote page", goal: "A note" });
+      projectId = project.id;
+      await client.createTask(project.id, {
+        title: "Write note A",
+        outcome: "Note A is written",
+        acceptanceCriteria: ["it is written"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 0,
+      });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end at the limit",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      await settleSessions(rt);
+      // 10:40 UTC is 11:40 in Zurich.
+      expect(await client.running()).toEqual([
+        {
+          key: `wait:${project.id}`,
+          sessionId,
+          projectId: project.id,
+          projectName: "Quote page",
+          state: "waiting",
+          what: "waiting until 11:40, then it goes on",
+          text: "Quote page · waiting until 11:40, then it goes on",
+          since: expect.any(String),
+          stop: [],
+          cancel: true,
+          nextProject: null,
+          explain: null,
+        },
+      ]);
+      expect((await client.health()).running).toEqual({
+        projectName: "Quote page",
+        what: "waiting until 11:40, then it goes on",
+        text: "Quote page · waiting until 11:40, then it goes on",
+        waiting: true,
+      });
+      // The person's quiet hours cover the reset: it goes on when they end.
+      const me = await rt.store.human.mustGet(rt.human.id);
+      await rt.store.human.update(me.id, me.version, {
+        notify_prefs: { ...me.notify_prefs, quiet_hours: { start: "11:00", end: "12:30" } },
+      } as never);
+      expect((await client.running()).map((v) => v.text)).toEqual([
+        "Quote page · waiting until 12:30 (after your quiet hours), then it goes on",
+      ]);
+      await rt.store.human.update(me.id, me.version + 1, {
+        notify_prefs: me.notify_prefs,
+      } as never);
+    } finally {
+      await settleSessions(first.rt);
+      await first.rt.close();
+    }
+    // The daemon starts again on the same home: the wait and its words are kept.
+    const second = await compose(home, calls);
+    try {
+      expect((await second.client.running()).map((v) => [v.text, v.sessionId, v.cancel])).toEqual([
+        ["Quote page · waiting until 11:40, then it goes on", sessionId, true],
+      ]);
+      // Cancel (POST /projects/:id/continuation/cancel): nothing waits to go on any more.
+      expect((await second.client.cancelContinuation(projectId)).cancelled).toBe(true);
+      expect(await second.client.running()).toEqual([]);
+      expect((await second.client.health()).running).toBeNull();
+    } finally {
+      await settleSessions(second.rt);
+      await second.rt.close();
+    }
+  }, 120_000);
 });

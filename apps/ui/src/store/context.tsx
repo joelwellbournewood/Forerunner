@@ -141,6 +141,15 @@ export function AppProvider({
                 event.data.some((s) => s.projectId && !shown.has(s.id)) ||
                 [...shown].some((id) => !ids.has(id));
               if (moved) liveProjects.refresh();
+            } else if (event.event === "run.changed") {
+              // d1109-run-visible (V-2): what runs now, in the daemon's words; the bar, Home,
+              // the Overview and Talk follow it without a reload. A session that began or ended
+              // also moves the project cards (their status sentence).
+              const before = new Set(store.getState().running.map((r) => r.key));
+              store.dispatch({ type: "running", running: event.data });
+              const after = new Set(event.data.map((r) => r.key));
+              if (before.size !== after.size || [...after].some((k) => !before.has(k)))
+                liveProjects.refresh();
             } else if (event.event === "project.changed") {
               void client
                 .project(event.data.id)
@@ -215,8 +224,12 @@ export function AppProvider({
           onMode: (mode) => {
             store.dispatch({ type: "connection", patch: { streamMode: mode } });
             // The stream (re)opened: frames sent while it was down are lost, so the desktop
-            // control banner re-reads its state from the daemon (spec S.32, ADR 0067).
-            if (mode === "sse") void refreshDesktopControl(client, store);
+            // control banner re-reads its state from the daemon (spec S.32, ADR 0067), and so
+            // does the run indicator (d1109-run-visible).
+            if (mode === "sse") {
+              void refreshDesktopControl(client, store);
+              void refreshRunning(client, store);
+            }
           },
         },
         {
@@ -300,6 +313,7 @@ export async function bootstrapStore(
     });
   }
   await refreshDesktopControl(client, store, signal);
+  await refreshRunning(client, store, signal);
   const humanId = store.getState().me?.id;
   if (humanId) {
     try {
@@ -310,6 +324,23 @@ export async function bootstrapStore(
     }
   }
   return true;
+}
+
+/**
+ * d1109-run-visible (V-2): read what runs now again (`GET /running`): at bootstrap and when the
+ * stream (re)opens, since frames sent while it was down are lost. An older daemon has no route:
+ * the list stays as it is.
+ */
+export async function refreshRunning(
+  client: DaemonClient,
+  store: UiStore,
+  signal?: AbortSignal,
+): Promise<void> {
+  try {
+    store.dispatch({ type: "running", running: await client.running(signal) });
+  } catch {
+    // no /running on this daemon, or a transient failure: the next frame or poll brings it
+  }
 }
 
 export function useApp(): AppContextValue {

@@ -132,6 +132,7 @@ import {
   PinLessonBody,
   type PlanProjectView,
   RenameAgentBody,
+  type RunningView,
   SetTaskDependenciesBody,
   SpeakBody,
   type SpeakStartedView,
@@ -172,6 +173,7 @@ import { planTaskViews } from "./plan-tasks.ts";
 import { projectRepository } from "./pull-requests.ts";
 import { createQueueRoutes } from "./queue-routes.ts";
 import type { RestartRequestFile } from "./restart.ts";
+import { RUN_CHANGED_EVENT, runningHealth } from "./run-indicator.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
 import { createSandboxRoutes } from "./sandbox-routes.ts";
 import {
@@ -574,6 +576,9 @@ export function createDaemonApp(
   app.get("/health", async (c) => {
     const active = await rt.store.session.active(rt.agent.id);
     const extensions = await rt.extensions.list();
+    // d1109-run-visible (V-1, V-7): what runs now, in the run indicator's words, for the shells
+    // that read only health (the tray, the window title); a plan being drafted is no session.
+    const running = await rt.running.views().catch(() => []);
     const view: HealthView = {
       ok: true,
       version: rt.appVersion,
@@ -582,7 +587,8 @@ export function createDaemonApp(
       platform: osFacts().platform,
       stateUrl: (rt.config?.stateUrl ?? "sqlite").replace(/\/\/[^@]*@/, "//[REDACTED]@"),
       vaultBackend: rt.vault.backend,
-      activeSessions: active.filter((s) => s.summary !== "conversation").length,
+      activeSessions: active.filter((s) => s.summary !== "conversation" && !isIntakeSession(s))
+        .length,
       killActive: rt.kill.isFrozen({ agentId: rt.agent.id }),
       sandbox: sandboxHealth(
         rt.sandbox.readiness.current() ?? (await rt.sandbox.readiness.ensureChecked()),
@@ -592,9 +598,14 @@ export function createDaemonApp(
         pending: extensions.filter((e) => e.status === "pending_approval").length,
       },
       sync: syncHealth(rt.schemaSync.status()),
+      running: runningHealth(running),
     };
     return c.json(view);
   });
+
+  // d1109-run-visible (V-1): the run indicator, what runs now in the daemon's words (the header's
+  // bar, Home, the Overview, Talk, the phone later); `run.changed` on /events carries the same.
+  app.get("/running", async (c) => c.json(await rt.running.views()));
 
   // Module sub-apps behind the same bearer check: the Extensions panel (spec K.6, L.5), the
   // updates screen (spec M) and the model watch (spec D). Each keeps its own error mapping.
@@ -3240,6 +3251,12 @@ export function createDaemonApp(
       // `/speak/:id/events`; a stream that declared `?speech=play` counts as one.
       const onSpeak = (p: SpeakStartedView) =>
         void stream.writeSSE({ event: "speak.started", data: JSON.stringify(p) });
+      // d1109-run-visible (V-1): what runs now changed (a task began, its review, a stop asked
+      // for, a start queued, a wait kept or cancelled): the run indicator's whole list.
+      const onRun = (views: RunningView[]) =>
+        void stream
+          .writeSSE({ event: "run.changed", data: JSON.stringify(views) })
+          .catch(() => undefined);
       // d1109-chat-depth: a chat turn started, took a step or ended: the conversation's screens
       // re-read it (the answering line after a reload, the reply on the other surface).
       const offConversation =
@@ -3267,6 +3284,7 @@ export function createDaemonApp(
       rt.events.on("notification", onNotification);
       rt.events.on(DESKTOP_INDICATOR_EVENT, onDesktopIndicator);
       rt.events.on("speak", onSpeak);
+      rt.events.on(RUN_CHANGED_EVENT, onRun);
       try {
         await onInbox();
         await streamUntilClosed(stream, 15_000, async () => {
@@ -3286,6 +3304,7 @@ export function createDaemonApp(
         rt.events.off("notification", onNotification);
         rt.events.off(DESKTOP_INDICATOR_EVENT, onDesktopIndicator);
         rt.events.off("speak", onSpeak);
+        rt.events.off(RUN_CHANGED_EVENT, onRun);
         offConversation();
         detachShell();
         detachPlayer();

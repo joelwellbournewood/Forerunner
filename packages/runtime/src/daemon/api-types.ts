@@ -187,7 +187,7 @@ export const ProjectCard = z.object({
       text: z.string(),
       action: z
         .object({
-          kind: z.enum(["link", "start", "retry"]),
+          kind: z.enum(["link", "start", "retry", "cancel"]),
           label: z.string(),
           to: z.string().nullable(),
         })
@@ -1984,6 +1984,21 @@ export const SyncHealth = z.object({
 });
 export type SyncHealth = z.infer<typeof SyncHealth>;
 
+/**
+ * d1109-run-visible (V-1, V-7): what runs now, for a shell that reads only `/health` (the desktop
+ * tray's tooltip and first item, the window's title): the first entry of `GET /running`, with its
+ * words split as the tray says them ('Quote page: the coder works on "A"'). `waiting` marks a
+ * person's session that only waits to go on (the title and the tray icon stay as when nothing
+ * runs). Null when nothing runs or waits.
+ */
+export const RunningHealth = z.object({
+  projectName: z.string(),
+  what: z.string(),
+  text: z.string(),
+  waiting: z.boolean(),
+});
+export type RunningHealth = z.infer<typeof RunningHealth>;
+
 export const HealthView = z.object({
   ok: z.literal(true),
   version: z.string(),
@@ -1997,6 +2012,8 @@ export const HealthView = z.object({
   sandbox: SandboxHealth,
   extensions: ExtensionsHealth,
   sync: SyncHealth.optional(),
+  /** d1109-run-visible: what runs now in the run indicator's words (absent from an older daemon). */
+  running: RunningHealth.nullable().optional(),
 });
 export type HealthView = z.infer<typeof HealthView>;
 
@@ -3409,6 +3426,44 @@ export const JoinPreviewView = z.object({
 });
 export type JoinPreviewView = z.infer<typeof JoinPreviewView>;
 
+/**
+ * d1109-run-visible (V-1, ADR 0118 point 12; D8): one entry of the run indicator, `GET /running`
+ * and the `run.changed` frame on `GET /events`. In the daemon's words (`daemon/run-indicator.ts`),
+ * so the header's bar, Home, the Overview, Talk, the Sessions list, the tray and the window title
+ * say the same: `text` is '<project> · <what>' within 80 characters ('Quote page · the coder
+ * works on "Style the page"', 'Forerunner · the critic's monthly check on known examples', 'Quote
+ * page · waiting until 15:40, then it goes on'). `stop` is what Stop offers ('after': Stop after
+ * this task, 'now': Stop now, 'all': Stop all); a person's session waiting to go on after its
+ * credential wait offers none and `cancel` (POST /projects/:id/continuation/cancel). `nextProject` names
+ * a person start of another project waiting behind it; `explain` is the open form's sentence of
+ * what the critic's monthly check does. `key` is stable while the entry lasts.
+ */
+export const RUN_STATES = [
+  "planning",
+  "working",
+  "reviewing",
+  "between",
+  "wrapping",
+  "stopping",
+  "calibrating",
+  "waiting",
+] as const;
+export const RunningView = z.object({
+  key: z.string(),
+  sessionId: z.string().nullable(),
+  projectId: z.string().nullable(),
+  projectName: z.string(),
+  state: z.enum(RUN_STATES),
+  what: z.string(),
+  text: z.string(),
+  since: z.string().nullable(),
+  stop: z.array(z.enum(["after", "now", "all"])),
+  cancel: z.boolean(),
+  nextProject: z.string().nullable(),
+  explain: z.string().nullable(),
+});
+export type RunningView = z.infer<typeof RunningView>;
+
 export const DAEMON_ROUTES = {
   health: "GET /health",
   me: "GET /me",
@@ -3664,11 +3719,13 @@ export const DAEMON_ROUTES = {
   speakEvents:
     "GET /speak/:id/events?afterSeq= (JSON SpeakEventView[]; 409 when afterSeq is not a number; a numeric Last-Event-ID resumes after the later of the two) | Accept: text/event-stream (SSE speak.event frames: sentence, audio with the voice loop's PCM frame, speaking_start, speaking_end, error, speak.done; heartbeat; ?token= accepted)",
   events:
-    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, agent.changed ({ id, name }: an agent was renamed; re-read /me and /agents), extension.changed, restart.requested, notification, desktop.indicator, speak.started, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts; ?speech=play marks a stream whose client plays the speak.started utterances)",
+    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, agent.changed ({ id, name }: an agent was renamed; re-read /me and /agents), extension.changed, restart.requested, notification, desktop.indicator, speak.started, run.changed (RunningView[]: what runs now, d1109-run-visible), heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts; ?speech=play marks a stream whose client plays the speak.started utterances)",
   projectSessions:
     "GET /projects/:id/sessions?before=&limit= (ProjectSessionsView: the project's Sessions list, d1109-sessions, ADR 0116: the sessions that ran a task, spent money or work now, planning calls included, never the conversation; the working ones on top (first page), then the ended ones newest first by start, `limit` a page (20, at most 50), `next` the opaque cursor of the page after (null on the last; it stays valid across a restart); `count` in all, no money total; each row's words are the daemon's and its figure the cost ledger's as booked, read when shown; `chat` 'Chat about this project: CHF 0.30.' when above zero; 404 'No such project.'; 400 for a cursor it cannot read)",
   joinPreview:
     "GET /projects/:id/join-preview?with= (JoinPreviewView: d1109-onerepo-join OJ-05, the Make one project dialog's facts for the projects on this computer that share the project's repository or folder, `with` a comma-separated list of the other ids to show (all of them when empty): each with its open and done tasks, open pull requests, spent so far in CHF, budget per session, project budget, who merges and what research reads; per project as the kept one what moves, what stays, each of its settings that differs and the sentence that holds the join now (null when nothing does); read only; 404 for an unknown project)",
+  running:
+    "GET /running (RunningView[]: d1109-run-visible V-1, the run indicator: the sessions that run now in the daemon's words (never the conversation or a plan being drafted), the critic's monthly check, and a person's session waiting to go on after its Claude credential wait, with what Stop or Cancel offers; [] when nothing runs or waits; the same list is the run.changed frame on GET /events, sent at most once a second when it changes)",
   sessionTasks:
     "GET /sessions/:id/tasks (SessionTasksView: the tasks a session worked on, in the order it first ran them, each with what happened to it there, what it is now when that differs and what the session spent on it (the ledger's rows for the session and the task, reviews included); none for a planning call; 404 for an unknown session; d1109-sessions)",
 } as const;
