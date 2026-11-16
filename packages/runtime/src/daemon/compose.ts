@@ -2281,6 +2281,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const d = registry.specialists.get(name);
       return d ? { maxBudgetUsd: d.max_budget_usd, timeoutMinutes: d.timeout_minutes } : undefined;
     },
+    // d1116-budget-all: an estimate holds the task's review at the tier the critic will use, never
+    // below its specialist's registry floor (a deploy or a migration gets the full review).
+    reviewFloor: (name) => registry.specialists.get(name)?.risk_tier_floor,
   });
 
   // Git host and the PR executor.
@@ -2873,7 +2876,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       if (!projectId || !repoProposals || plan.items.length === 0) return;
       await repoProposals.consider({ projectId, sessionId, items: plan.items });
     },
-    // Actual versus estimate at task.finished feeds the next plan (spec I).
+    // Actual versus estimate feeds the next plan (spec I). d1116-budget-all (BA-7): the runner
+    // calls this once, at the task's close (done, failed after its tries, cancelled; after the
+    // verdict that closes it), so its sample holds its reviews and every try, as the fold's does.
     onTaskFinished: async ({ task, item, result }) => {
       // The same sample the fold builds after a restart ('cost', L-22): measured against the
       // task's own estimate (or its kind's starting one), never the plan item's figure, which

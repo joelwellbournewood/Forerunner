@@ -1331,6 +1331,27 @@ export class SessionRunner {
     const stoppedByMove = (c: AbortController) =>
       c.signal.aborted && c.signal.reason !== controller.signal.reason;
     /**
+     * d1116-budget-all (BA-7): the finished hook (`onTaskFinished`, the estimates' live feed) runs
+     * once, at the task's close: done, failed after its tries or cancelled, after the verdict that
+     * closes it. Before, it ran at every task.finished, before the review and once per try, so the
+     * live sample held neither the task's reviews nor its later tries, and a restart's fold, which
+     * reads each finished task once from its final rows, moved the figures. Each run's facts are
+     * kept here until then.
+     */
+    const finishedRuns = new Map<string, TaskFinishedInfo>();
+    const closeIfFinished = async (taskId: string) => {
+      const info = finishedRuns.get(taskId);
+      if (!info || !this.deps.onTaskFinished) return;
+      const now = await store.task.get(taskId).catch(() => undefined);
+      if (!now || !["done", "failed", "cancelled"].includes(now.status)) return;
+      finishedRuns.delete(taskId);
+      try {
+        await this.deps.onTaskFinished({ ...info, task: now });
+      } catch (e) {
+        this.logger.warn("task finished hook failed", { taskId, error: errorMessage(e) });
+      }
+    };
+    /**
      * A task someone else moved while this session held it (U-039: during its run; U-045:
      * during its review): the state set stands, it is counted in the list of that state and
      * named, and the session goes on. `stopped`: the move stopped its live run or review
@@ -1389,6 +1410,8 @@ export class SessionRunner {
         t.id,
         `moved to ${t.status} while it ${during === "run" ? "ran" : "was reviewed"}`,
       );
+      // A cancel (or a person's Done) closes the task: its sample, from its final rows.
+      await closeIfFinished(t.id);
     };
 
     try {
@@ -2745,21 +2768,15 @@ export class SessionRunner {
               },
               result.costUsdMicro,
             );
-          if (!result.reviewOnly)
-            try {
-              await this.deps.onTaskFinished?.({
-                sessionId: session.id,
-                task,
-                item,
-                result,
-                durationMs: Math.max(0, Math.round(clock.monotonic() - execStarted)),
-              });
-            } catch (e) {
-              this.logger.warn("task finished hook failed", {
-                taskId: task.id,
-                error: errorMessage(e),
-              });
-            }
+          // d1116-budget-all (BA-7): the finished hook waits for the task's close
+          // (`closeIfFinished`), after the verdict that closes it.
+          finishedRuns.set(task.id, {
+            sessionId: session.id,
+            task,
+            item,
+            result,
+            durationMs: Math.max(0, Math.round(clock.monotonic() - execStarted)),
+          });
           // The task is read again now that the run returned: a state a person set while it ran
           // stands, and the runner never moves the task from it (U-039). A session stopped by
           // the kill switch still ends as killed; when the person's move of the task stopped
@@ -3252,6 +3269,9 @@ export class SessionRunner {
                 default:
                   inReview.push(task.id);
               }
+              // The verdict that closes the task (an accept, or failed after its tries): its
+              // sample, with every try and every review (d1116-budget-all, BA-7).
+              await closeIfFinished(task.id);
             }
           } else if (
             result.outcome === "needs_human" ||

@@ -6,7 +6,6 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
-import { chfText } from "../src/money-words.ts";
 import type {
   ModelProvider,
   ModelRef,
@@ -387,14 +386,16 @@ describe("the intake through the daemon: live replies become plan cards, a bad r
       for (const i of asked) expect(i.estimateUsdMicro, i.key).toBe(0);
       const agents = items.filter((i) => !isPerson(i.key));
       for (const i of agents) expect(i.estimateUsdMicro, i.key).toBeGreaterThan(0);
-      const total = agents.reduce((s, i) => s + i.estimateUsdMicro, 0);
-      expect(card.why).toContain(
-        `a first-session plan of ${items.length} task(s) (~${chfText(total)})`,
-      );
+      // d1116-budget-all (BA-6): the card's stored words name no figure; its rows and its total
+      // are the daemon's (the Start dialog's figures, each with its review). Before: "(~CHF x)"
+      // after the plan and after each first-session task, the person's at "~CHF 0.00".
+      expect(card.why).toContain(`a first-session plan of ${items.length} task(s).`);
+      expect(card.why).not.toContain("CHF");
       const first = card.steps.find((s) => s.startsWith("First session: ")) ?? "";
+      expect(first).not.toContain("CHF");
       for (const i of asked) {
         const title = planned.find((t) => t.key === i.key)?.title ?? "";
-        expect(first).toContain(`${title} (~CHF 0.00)`);
+        expect(first).toContain(title);
       }
       // Reply 25's agent work all waits on the person's answers, so approving it starts a
       // session with nothing to run: the person's task is written with no estimate.

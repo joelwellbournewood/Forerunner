@@ -19,6 +19,8 @@ import {
   PLAN_ESTIMATE_BOUND,
   planEstimateUsdMicro,
   RATIO_MAX,
+  REVIEW_STARTING_ESTIMATES_USD_MICRO,
+  reviewPartUsdMicro,
   SIZE_FACTOR_MAX,
   type SpecialistDefaults,
   STARTING_ESTIMATES_USD_MICRO,
@@ -33,6 +35,15 @@ const REGISTRY: Record<string, SpecialistDefaults> = {
   researcher: { maxBudgetUsd: 2, timeoutMinutes: 30 },
 };
 const defaults = (name: string) => REGISTRY[name];
+/**
+ * d1116-budget-all: the work part of an estimate. Since the owner's answer of 2026-11-16 ("yes it
+ * should count critics reviews, and fixes.") an estimate holds the task's review too
+ * (`reviewUsdMicro`); the cases below about the work's learning compare the work part.
+ */
+const workOf = (r: { usdMicro: number; reviewUsdMicro?: number }) =>
+  r.usdMicro - (r.reviewUsdMicro ?? 0);
+/** The light review's starting figure (tier 1): USD 0.03. */
+const R1 = REVIEW_STARTING_ESTIMATES_USD_MICRO[1] as number;
 
 function sample(over: Partial<EstimateSample> & { i: number }): EstimateSample {
   return {
@@ -51,9 +62,10 @@ describe("estimate model: the calibrated starting estimates (cost, L-22)", () =>
   it("a task with no estimate of its own starts at what its kind of work cost on the real model", () => {
     const m = new EstimateModel({ defaults });
     for (const [specialist, usdMicro] of Object.entries(STARTING_ESTIMATES_USD_MICRO)) {
-      expect(m.estimate({ specialist, risk_tier: 1 }), specialist).toMatchObject({
+      const r = m.estimate({ specialist, risk_tier: 1 });
+      expect({ basis: r.basis, work: workOf(r), samples: r.samples }, specialist).toEqual({
         basis: "calibrated",
-        usdMicro,
+        work: usdMicro,
         samples: 0,
       });
     }
@@ -66,10 +78,9 @@ describe("estimate model: the calibrated starting estimates (cost, L-22)", () =>
     // Start dialog said a CHF 0.50 session could run nothing.
     expect(m.estimate({ specialist: "coder", risk_tier: 1 }).usdMicro).toBeLessThan(100_000);
     // A specialist the table does not name starts at the typical figure, not at a cap.
-    expect(m.estimate({ specialist: "illustrator", risk_tier: 0 })).toMatchObject({
-      basis: "calibrated",
-      usdMicro: DEFAULT_STARTING_ESTIMATE_USD_MICRO,
-    });
+    const other = m.estimate({ specialist: "illustrator", risk_tier: 0 });
+    expect(other.basis).toBe("calibrated");
+    expect(workOf(other)).toBe(DEFAULT_STARTING_ESTIMATE_USD_MICRO);
   });
 
   it("the plan model's guess is kept within the calibrated band of its kind", () => {
@@ -89,7 +100,7 @@ describe("estimate model: the calibrated starting estimates (cost, L-22)", () =>
   it("converges on a ten-times over-estimate: within x2 after 3 tasks of the kind, within x1.25 after 10", () => {
     const m = new EstimateModel({ defaults });
     const query = { specialist: "coder", risk_tier: 1, est_cost_usd_micro: 1_000_000 };
-    const off = () => m.estimate(query).usdMicro / 100_000;
+    const off = () => workOf(m.estimate(query)) / 100_000;
     for (let i = 0; i < 3; i++) m.observe(sample({ i, actualUsdMicro: 100_000 }));
     expect(off()).toBeLessThanOrEqual(2);
     for (let i = 3; i < 10; i++) m.observe(sample({ i, actualUsdMicro: 100_000 }));
@@ -97,7 +108,7 @@ describe("estimate model: the calibrated starting estimates (cost, L-22)", () =>
     // And the other way: a five-times under-estimate is caught as fast.
     const low = new EstimateModel({ defaults });
     for (let i = 0; i < 3; i++) low.observe(sample({ i, actualUsdMicro: 5_000_000 }));
-    expect(5_000_000 / low.estimate(query).usdMicro).toBeLessThanOrEqual(2);
+    expect(5_000_000 / workOf(low.estimate(query))).toBeLessThanOrEqual(2);
   });
 });
 
@@ -130,7 +141,13 @@ describe("estimate model: cold start and bases", () => {
   it("a task's own estimate is the base when present", () => {
     const m = new EstimateModel({ defaults });
     const r = m.estimate({ specialist: "coder", risk_tier: 1, est_cost_usd_micro: 250_000 });
-    expect(r).toMatchObject({ basis: "task_estimate", usdMicro: 250_000, samples: 0 });
+    // d1116-budget-all: its own estimate is the work part; its light review comes on top.
+    expect(r).toMatchObject({
+      basis: "task_estimate",
+      usdMicro: 250_000 + R1,
+      reviewUsdMicro: R1,
+      samples: 0,
+    });
     expect(kindOfTask({ risk_tier: 3 })).toBe("tier3");
     expect(kindOfTask({ risk_tier: 9 })).toBe("tier3");
     expect(kindOfTask({ risk_tier: 1, kind: "migration" })).toBe("migration");
@@ -151,7 +168,7 @@ describe("estimate model: learning", () => {
     expect(last.costRatio).toBeGreaterThan(1.4);
     expect(last.costRatio).toBeLessThanOrEqual(1.5);
     expect(last.wallRatio).toBeGreaterThan(1.4);
-    expect(last.usdMicro).toBe(Math.round(1_000_000 * last.costRatio));
+    expect(workOf(last)).toBe(Math.round(1_000_000 * last.costRatio));
     expect(last.wallMs).toBe(Math.round(45 * 60_000 * 0.5 * last.wallRatio));
     // Monotone approach toward 1.5 as the shrinkage weight grows.
     for (let i = 1; i < ratios.length; i++)
@@ -204,7 +221,9 @@ describe("estimate model: learning", () => {
     const m = new EstimateModel({ defaults });
     for (let i = 0; i < 7; i++) m.observe(sample({ i }));
     const snap = m.toJSON();
-    expect(snap.version).toBe(2);
+    // d1116-budget-all (BA-7): version 3 keeps the samples, one per task, and replays them.
+    expect(snap.version).toBe(3);
+    expect(snap.samples).toHaveLength(7);
     const copy = EstimateModel.fromJSON(JSON.parse(JSON.stringify(snap)), { defaults });
     expect(copy.estimate({ specialist: "coder", risk_tier: 1 })).toEqual(
       m.estimate({ specialist: "coder", risk_tier: 1 }),
@@ -212,6 +231,10 @@ describe("estimate model: learning", () => {
     expect(copy.recentSamples()).toHaveLength(7);
     const stale = { ...snap, version: 1, folded: ["t1"] } as unknown as EstimateModelSnapshot;
     expect(() => EstimateModel.fromJSON(stale, { defaults })).toThrow(ForerunnerError);
+    const v2 = { version: 2, keys: [], recent: [], cursor: null, folded: [] };
+    expect(() =>
+      EstimateModel.fromJSON(v2 as unknown as EstimateModelSnapshot, { defaults }),
+    ).toThrow(ForerunnerError);
   });
 });
 
@@ -473,7 +496,7 @@ describe("estimate model: learning from run rows and the cost ledger", () => {
     const start = STARTING_ESTIMATES_USD_MICRO.researcher as number;
     expect(r.basis).toBe("learned");
     expect(r.costRatio).toBeLessThan(0.5);
-    expect(r.usdMicro).toBe(Math.round(start * r.costRatio));
+    expect(workOf(r)).toBe(Math.round(start * r.costRatio));
     expect(r.wallRatio).toBeLessThan(1);
   });
 
@@ -559,7 +582,7 @@ describe("estimate model: learning from run rows and the cost ledger", () => {
 });
 
 describe("estimate model: bounded incremental refresh and live learning", () => {
-  it("a refresh reads only the overlap window behind the cursor, and the folded set stays bounded", async () => {
+  it("a refresh reads only the overlap window behind the cursor, and a task read again counts once", async () => {
     const w = await world();
     worlds.push(w);
     // Forty tasks a minute apart; the default window covers the last few of them only.
@@ -568,8 +591,8 @@ describe("estimate model: bounded incremental refresh and live learning", () => 
     const windowTasks = Math.floor(DEFAULT_FOLD_OVERLAP_MS / 60_000) + 1;
     const m = await EstimateModel.fromStore(w.store, { defaults });
     expect(m.stats()[0]?.samples).toBe(40);
-    expect(m.toJSON().folded.length).toBeLessThanOrEqual(windowTasks);
-    expect(m.toJSON().folded.length).toBeGreaterThan(0);
+    // d1116-budget-all (BA-7): one sample per task, kept by its id (no remembered window).
+    expect(m.toJSON().samples).toHaveLength(40);
 
     await finishedTask(w, { estimate: 1_000_000, actual: 1_200_000, ledger: true });
     const rows = vi.spyOn(w.store.task, "rows");
@@ -583,8 +606,9 @@ describe("estimate model: bounded incremental refresh and live learning", () => 
     expect(rows.mock.calls[0]?.[0]).toContain('"updated_at" >= ?');
     // The ledger breakdown is bounded too: rows older than the fresh tasks are not read.
     expect(breakdown.mock.calls[0]?.[1]?.from).toBeTypeOf("string");
-    expect(m.toJSON().folded.length).toBeLessThanOrEqual(windowTasks + 1);
+    // A second refresh reads the window again and changes nothing: each task counts once.
     expect(await m.refresh(w.store)).toBe(0);
+    expect(m.stats()[0]?.samples).toBe(41);
     rows.mockRestore();
     breakdown.mockRestore();
   });
@@ -901,10 +925,13 @@ describe("w15-run, wave 15: an estimate grows with the task's size (W15-18)", ()
     const m = new EstimateModel({ defaults });
     const big = m.estimate(swiss);
     const small = m.estimate(footer);
-    expect(small.usdMicro).toBe(STARTING_ESTIMATES_USD_MICRO.coder);
-    expect(big.usdMicro).toBeGreaterThanOrEqual(3 * small.usdMicro);
-    expect(big.usdMicro).toBeGreaterThanOrEqual(208_000 / 2);
-    expect(big.usdMicro).toBeLessThanOrEqual(208_000 * 2);
+    expect(workOf(small)).toBe(STARTING_ESTIMATES_USD_MICRO.coder);
+    expect(workOf(big)).toBeGreaterThanOrEqual(3 * workOf(small));
+    expect(workOf(big)).toBeGreaterThanOrEqual(208_000 / 2);
+    expect(workOf(big)).toBeLessThanOrEqual(208_000 * 2);
+    // d1116-budget-all: its review grows with its size too.
+    expect(big.reviewUsdMicro).toBe(Math.round(R1 * taskSizeFactor(swiss)));
+    expect(small.reviewUsdMicro).toBe(R1);
     expect(new EstimateModel({ defaults }).estimate(swiss)).toEqual(big);
     // "A Node.js tool" names no file; a tester's tests are its starting figure's work.
     expect(taskSizeFactor({ outcome: "A Node.js tool that prints the date" })).toBe(1);
@@ -919,7 +946,7 @@ describe("w15-run, wave 15: an estimate grows with the task's size (W15-18)", ()
     };
     expect(taskSizeFactor(huge)).toBe(SIZE_FACTOR_MAX);
     // A task with its own estimate keeps it: the plan's figure already holds the size.
-    expect(m.estimate({ ...swiss, est_cost_usd_micro: 90_000 }).usdMicro).toBe(90_000);
+    expect(workOf(m.estimate({ ...swiss, est_cost_usd_micro: 90_000 }))).toBe(90_000);
   });
 
   it("the plan's guess is kept in the band of the sized starting figure, and the task row it writes is priced the same", () => {
@@ -939,13 +966,18 @@ describe("w15-run, wave 15: an estimate grows with the task's size (W15-18)", ()
       budget_usd_micro: 0,
       actual_cost_usd_micro: 0,
     };
+    // d1116-budget-all: the row's own estimate is its work; its review, priced by its size, comes
+    // on top, the same figure wherever the row is priced.
     expect(planEstimateUsdMicro(m, row as unknown as TaskRow)).toBe(
+      bounded + reviewPartUsdMicro(swiss),
+    );
+    expect(
       planEstimateUsdMicro(m, {
         ...row,
         outcome: "",
         acceptance_criteria: [],
       } as unknown as TaskRow),
-    );
+    ).toBe(bounded + R1);
   });
 
   it("the learner learns per unit of size: a large task's sample does not lift a small task's figure", () => {
@@ -960,7 +992,7 @@ describe("w15-run, wave 15: an estimate grows with the task's size (W15-18)", ()
       Math.round((STARTING_ESTIMATES_USD_MICRO.coder ?? 0) * taskSizeFactor(swiss)),
     );
     // The footer's figure moves by the large task's ratio per unit of size, under x2.
-    expect(m.estimate(footer).usdMicro).toBeLessThan(2 * (STARTING_ESTIMATES_USD_MICRO.coder ?? 0));
+    expect(workOf(m.estimate(footer))).toBeLessThan(2 * (STARTING_ESTIMATES_USD_MICRO.coder ?? 0));
   });
 });
 
@@ -1013,6 +1045,8 @@ describe("d1109-oversize-start, run C: a task that resumes from kept work is pla
     return w.store.task.mustGet(task.id);
   }
   const usd = (n: number) => Math.round(n * 1_000_000);
+  // d1116-budget-all: the whole estimate holds the light review (USD 0.03) beside the work.
+  const whole = usd(6) + R1;
 
   it("estimateLeftUsdMicro: the estimate less the kept work, a fifth of it once the kept work reached it", () => {
     expect(estimateLeftUsdMicro(usd(6), null)).toEqual({
@@ -1041,10 +1075,12 @@ describe("d1109-oversize-start, run C: a task that resumes from kept work is pla
     const figure = async (t: TaskRow) =>
       planEstimateUsdMicro(port, t, await keptWorkFor(w.store, t));
     // Its last run paused at a budget with USD 4.00 of work kept: USD 2.00 is left.
-    expect(await figure(await taskWithRuns(w, [{ outcome: "paused", usd: usd(4) }]))).toBe(usd(2));
+    expect(await figure(await taskWithRuns(w, [{ outcome: "paused", usd: usd(4) }]))).toBe(
+      whole - usd(4),
+    );
     // A hard stop at the session's budget keeps its work too ("budget_exceeded").
     expect(await figure(await taskWithRuns(w, [{ outcome: "budget_exceeded", usd: usd(4) }]))).toBe(
-      usd(2),
+      whole - usd(4),
     );
     // Two pauses in a row: both runs' work is kept.
     expect(
@@ -1054,11 +1090,11 @@ describe("d1109-oversize-start, run C: a task that resumes from kept work is pla
           { outcome: "paused", usd: usd(1.5) },
         ]),
       ),
-    ).toBe(usd(2.5));
+    ).toBe(whole - usd(3.5));
     // More kept than the estimate: a fifth of it.
     const passed = await taskWithRuns(w, [{ outcome: "paused", usd: usd(6.5) }]);
-    expect(await figure(passed)).toBe(usd(1.2));
-    expect(estimateLeftUsdMicro(usd(6), await keptWorkFor(w.store, passed)).estimatePassed).toBe(
+    expect(await figure(passed)).toBe(Math.round(whole * 0.2));
+    expect(estimateLeftUsdMicro(whole, await keptWorkFor(w.store, passed)).estimatePassed).toBe(
       true,
     );
     // A budget of its own still caps it (withinTaskBudget unchanged): USD 3.00 less 2.50 spent.
@@ -1070,7 +1106,7 @@ describe("d1109-oversize-start, run C: a task that resumes from kept work is pla
     // A task that spent USD 4.00 and was redone from main (its last run finished): it starts
     // over, so its whole estimate.
     expect(await figure(await taskWithRuns(w, [{ outcome: "completed", usd: usd(4) }]))).toBe(
-      usd(6),
+      whole,
     );
     // One whose review sent it back (the critic's run after the work's): the whole estimate.
     expect(
@@ -1080,9 +1116,9 @@ describe("d1109-oversize-start, run C: a task that resumes from kept work is pla
           { outcome: "completed", usd: usd(0.2), specialist: "critic" },
         ]),
       ),
-    ).toBe(usd(6));
+    ).toBe(whole);
     // A failed task sent to Try again: the whole estimate.
-    expect(await figure(await taskWithRuns(w, [{ outcome: "error", usd: usd(4) }]))).toBe(usd(6));
+    expect(await figure(await taskWithRuns(w, [{ outcome: "error", usd: usd(4) }]))).toBe(whole);
     // It failed once (USD 0.80), was tried again and paused with USD 1.00 kept: only the runs
     // after its last start over count.
     expect(
@@ -1092,9 +1128,9 @@ describe("d1109-oversize-start, run C: a task that resumes from kept work is pla
           { outcome: "paused", usd: usd(1) },
         ]),
       ),
-    ).toBe(usd(5));
+    ).toBe(whole - usd(1));
     // No spend at all: today's figure.
-    expect(await figure(await taskWithRuns(w, []))).toBe(usd(6));
+    expect(await figure(await taskWithRuns(w, []))).toBe(whole);
     expect(await keptWorkFor(w.store, await taskWithRuns(w, []))).toBeNull();
   });
 
@@ -1106,8 +1142,8 @@ describe("d1109-oversize-start, run C: a task that resumes from kept work is pla
     const over = await taskWithRuns(w, [{ outcome: "completed", usd: usd(4) }]);
     const check = await startCheck({ store: w.store, estimates: port }, w.project, usd(100));
     const priced = new Map(check.runnable.map((t) => [t.taskId, t.estimateUsdMicro]));
-    expect(priced.get(kept.id)).toBe(usd(2));
-    expect(priced.get(over.id)).toBe(usd(6));
+    expect(priced.get(kept.id)).toBe(whole - usd(4));
+    expect(priced.get(over.id)).toBe(whole);
     // The session's planner: the same figure, through the runner's planner context.
     const plan = await new StaticPlanner(500_000, port).plan({
       brief: { generatedAt: w.clock.nowIso(), project: null },
@@ -1116,9 +1152,116 @@ describe("d1109-oversize-start, run C: a task that resumes from kept work is pla
     } as never);
     expect(new Map(plan.items.map((i) => [i.taskId, i.estimateUsdMicro]))).toEqual(
       new Map([
-        [kept.id, usd(2)],
-        [over.id, usd(6)],
+        [kept.id, whole - usd(4)],
+        [over.id, whole],
       ]),
+    );
+  });
+});
+
+/**
+ * d1116-budget-all, run C (BA-6, BA-7; the owner's answer of 2026-11-16: "yes it should count
+ * critics reviews, and fixes."): an estimate is what the task should cost in all, its work and
+ * its review (the fixes are work runs, so the learned work ratio holds them), and the model keeps
+ * one sample per task, so a task that closes twice counts once, live as after a restart.
+ */
+describe("d1116-budget-all", () => {
+  it("BA-6: the estimate is the work part plus the review part of its review tier", () => {
+    const m = new EstimateModel({ defaults });
+    expect(m.estimate({ specialist: "coder", risk_tier: 1 })).toMatchObject({
+      usdMicro: 70_000,
+      reviewUsdMicro: 30_000,
+    });
+    expect(m.estimate({ specialist: "coder", risk_tier: 2 }).usdMicro).toBe(130_000);
+    expect(m.estimate({ specialist: "coder", risk_tier: 3 }).usdMicro).toBe(340_000);
+    // A tier 0 task gets the light review (no task closes on the specialist's own word).
+    expect(m.estimate({ specialist: "coder", risk_tier: 0 }).reviewUsdMicro).toBe(30_000);
+    // The registry's floor raises the review: a deploy at risk tier 1 gets the full review.
+    const floored = new EstimateModel({
+      defaults,
+      reviewFloor: (name) => (name === "ops-deploy" ? 2 : undefined),
+    });
+    expect(floored.estimate({ specialist: "ops-deploy", risk_tier: 1 })).toMatchObject({
+      usdMicro: 40_000 + 90_000,
+      reviewUsdMicro: 90_000,
+    });
+    expect(reviewPartUsdMicro({ specialist: "ops-deploy", risk_tier: 1 }, 2)).toBe(90_000);
+    // A task with its own estimate (the work part) and size 1.
+    expect(
+      m.estimate({ specialist: "coder", risk_tier: 1, est_cost_usd_micro: 250_000 }).usdMicro,
+    ).toBe(280_000);
+    // The older cold start without review starts: no review part; a task for the person: none.
+    const old = new EstimateModel({ defaults, startingEstimates: null });
+    expect(old.estimate({ specialist: "coder", risk_tier: 1 }).reviewUsdMicro).toBe(0);
+    expect(reviewPartUsdMicro({ specialist: "person", risk_tier: 1 })).toBe(0);
+    // withinTaskBudget caps the whole at what is left of the task's budget.
+    const row = {
+      specialist: "coder",
+      risk_tier: 1,
+      est_cost_usd_micro: 0,
+      budget_usd_micro: 100_000,
+      actual_cost_usd_micro: 40_000,
+      outcome: "",
+      acceptance_criteria: [],
+    } as unknown as TaskRow;
+    expect(planEstimateUsdMicro(m, row)).toBe(60_000);
+    expect(planEstimateUsdMicro(m, { ...row, budget_usd_micro: 0 })).toBe(70_000);
+  });
+
+  it("BA-6: the learner learns the review part per key as it learns the work", () => {
+    const m = new EstimateModel({ defaults });
+    for (let i = 0; i < 3; i++)
+      m.observe({
+        specialist: "coder",
+        kind: "tier1",
+        estimateUsdMicro: 40_000,
+        actualUsdMicro: 40_000,
+        estimateWallMs: 600_000,
+        actualWallMs: 600_000,
+        at: new Date(Date.UTC(2026, 10, 16, 9, i)).toISOString(),
+        taskId: `t${i}`,
+        reviewEstimateUsdMicro: 30_000,
+        reviewActualUsdMicro: 60_000,
+      });
+    const r = m.estimate({ specialist: "coder", risk_tier: 1 });
+    expect(r.costRatio).toBe(1);
+    // Three samples at twice the start, shrunk by one pseudo-sample: 2^(3/4).
+    expect(r.reviewRatio).toBeCloseTo(2 ** 0.75, 3);
+    expect(r.reviewUsdMicro).toBe(Math.round(30_000 * (r.reviewRatio as number)));
+    expect(r.usdMicro).toBe(40_000 + (r.reviewUsdMicro as number));
+  });
+
+  it("BA-7: one sample per task: a task that closes again replaces its sample, and the replay does not depend on the order the samples came in", () => {
+    const at = (min: number) => new Date(Date.UTC(2026, 10, 16, 9, min)).toISOString();
+    const s = (taskId: string, min: number, actual: number, review = 0): EstimateSample => ({
+      specialist: "coder",
+      kind: "tier1",
+      estimateUsdMicro: 40_000,
+      actualUsdMicro: actual,
+      estimateWallMs: 600_000,
+      actualWallMs: 600_000,
+      at: at(min),
+      taskId,
+      ...(review ? { reviewEstimateUsdMicro: 30_000, reviewActualUsdMicro: review } : {}),
+    });
+    const live = new EstimateModel({ defaults });
+    live.observe(s("a", 1, 80_000, 30_000));
+    live.observe(s("b", 2, 40_000, 15_000));
+    // "a" was redone and closed again: its final rows replace its first sample.
+    live.observe(s("a", 3, 120_000, 60_000));
+    expect(live.stats()[0]?.samples).toBe(2);
+    // The fold after a restart meets the final samples in another order: the same state.
+    const folded = new EstimateModel({ defaults });
+    folded.observe(s("a", 3, 120_000, 60_000));
+    folded.observe(s("b", 2, 40_000, 15_000));
+    expect(folded.estimate({ specialist: "coder", risk_tier: 1 })).toEqual(
+      live.estimate({ specialist: "coder", risk_tier: 1 }),
+    );
+    expect(folded.stats()).toEqual(live.stats());
+    // A snapshot replays the same samples.
+    const copy = EstimateModel.fromJSON(JSON.parse(JSON.stringify(live.toJSON())), { defaults });
+    expect(copy.estimate({ specialist: "coder", risk_tier: 1 })).toEqual(
+      live.estimate({ specialist: "coder", risk_tier: 1 }),
     );
   });
 });

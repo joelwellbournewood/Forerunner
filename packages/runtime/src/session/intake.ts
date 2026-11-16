@@ -1451,9 +1451,12 @@ export class IntakeService {
     // small-project mode the phases join one milestone (ADR 0051).
     const shaped = shapeProjectPlan(plan, project);
     const named = keyedTasks(plan);
+    // d1116-budget-all (BA-6): the card's stored words name no figure. Its rows and its total
+    // are the daemon's (`planTasks`, the Start dialog's figures, which hold each task's review);
+    // the bounded work guess here would be a third figure beside them.
     const first = proposal.firstSession.items.map((item, i) => {
       const t = named.get(item.key) as PlanTaskNamed;
-      return `${i + 1}. ${t.title} (~${approxChf(item.estimateUsdMicro)})`;
+      return `${i + 1}. ${t.title}`;
     });
     const docPaths = Object.keys(proposal.docs);
     const n = sizes(proposal, shaped);
@@ -1468,8 +1471,8 @@ export class IntakeService {
       kind: "approval",
       why: cut(
         planOnly
-          ? `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} new task(s) and a first-session plan of ${n.firstSessionTasks} task(s) (~${approxChf(estimate)}). Approve to add them to the project; nothing is written until then.`
-          : `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s) and a first-session plan of ${n.firstSessionTasks} task(s) (~${approxChf(estimate)}). Approve to write the plan and the docs${
+          ? `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} new task(s) and a first-session plan of ${n.firstSessionTasks} task(s). Approve to add them to the project; nothing is written until then.`
+          : `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s) and a first-session plan of ${n.firstSessionTasks} task(s). Approve to write the plan and the docs${
               repo ? ` (the docs as a pull request on ${repo.owner}/${repo.name})` : ""
             }; nothing is written until then.`,
         4000,
