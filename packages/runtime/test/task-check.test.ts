@@ -270,7 +270,9 @@ describe("d1109-selftasks-run, run C: the task check's call (ST-7)", () => {
     }).withPurpose("interactive");
     const r = await check(w, routed);
     expect(r.status).toBe("checked");
-    expect(purposes).toEqual(["interactive"]);
+    // d1109-cred-engine (CE-3): the check first asks whether the person's policy holds the call
+    // (a pick that reads only), then makes it: both as the intake's planning call.
+    expect(purposes).toEqual(["interactive", "interactive"]);
     expect(inner.calls[0]?.system).toBe(EXPECTED_SYSTEM);
     const ledger = await w.store.costLedger.list({ session_id: w.session } as never);
     expect(ledger.map((e) => [e.kind, e.billing_source_id])).toEqual([["subscription", "sub"]]);
