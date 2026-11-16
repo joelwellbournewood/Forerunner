@@ -7886,6 +7886,60 @@ a session, the model list and a restart; a refused sign-in under 'ask'), `creden
 under "then the API key"), `task-usage-limit.test.ts` and `where-last-run-stopped.test.ts` (the
 brief), and the UI's real-daemon describe "d1109-cred-engine, run C" (on the Messages API stand-in).
 
+### The policy on the screens and the switch's data (d1109-cred-screens, [ADR 0120](../decisions/0120-which-claude-does-the-work.md))
+
+Every screen sentence of the policy is in `daemon/credential-policy-view.ts` (the cards' and the
+log's lines stay in `session/credential-words.ts`); the shapes are in
+`daemon/credential-policy-types.ts`.
+
+- **Settings** (`daemon/credential-policy-routes.ts`): `GET /settings/credential-policy` is the
+  section (`credentialPolicySection`: the five presets with their lines, the selected one and
+  whether it was chosen, stored, derived or the default, one row per credential with its role and
+  state now, the open ask card's Answer, a standing grant's line); `POST
+  /settings/credential-policy/grant/end` ends a grant (`endGrant`, audited). A change goes through
+  `settings.set credential_policy` (a widening is pending: the read-back, then a tap).
+  `POST /settings/billing-order` stores the preset its order maps onto (`presetForOrder`).
+- **Start** (`daemon/credential-start.ts`): `GET /projects/:id/start-check`'s `credential` (the
+  line, and while the first choice is out under ask or wait `runOut {use, later, lean,
+  goesOnLine}`); `POST /sessions` with `useOtherCredential` writes a grant for the stop
+  (`grantForStart`, by "start"), answers the open ask card and makes the person's start (or lets the
+  kept continuation go on now); refused when nothing is offered. `GET /inbox`'s open plan card
+  carries `planCredentialLine`.
+- **The switch** (C5-left-1, CE-11): `TaskBillingPort.switchOf(pick)` (`RouterTaskBilling`: the
+  first choice is stopped and the pick is another kind; `by: "grant"` when a grant of that stop
+  covers it). The executor puts `switchedFrom {kind, stop, until, by}` on the Run row and hands
+  the switch to the runner with `onStarted`; the runner writes `billing.switch` (once per stop
+  and session as the person's line, `switchRunLine`; later tasks `repeat`: a detail) and
+  `billing.back` once when a run is on the first choice again. Each stop's line is read back from
+  the session's own log (`switchLogOf`), so a runtime composed again never writes it twice. A run
+  its credential stopped that another takes over now no longer logs '"X" continues on your API
+  key now.': its `billing.fallback` is a detail and the run that goes on says the switch.
+  `session/credential-switch.ts` (`sessionSwitches`, `switchSpend`) reads the log and the ledger:
+  `SessionResult.switched`, `GET /sessions/:id`'s `switchLine` (`sessionSwitchLine` while it
+  works, `resultSwitchLine` once it ended) and `GET /tasks/:id` runs' `switchLine`
+  (`drawerRunLine`). `CostView.byCredential` (`costView`) groups the window's ledger by the
+  paying source's kind at the totals' rate.
+- **Chat** (C5-left-3): `ChatRequestBody.oneOff` reaches the agent as `oneOffSwitch`;
+  `ChatReplyView.oneOff` and the conversation turn's `reply.oneOff` (the newest reply only, kept
+  on the `chat.reply` row) carry "Use API key"; a held reply is a notice with no closer (no Think
+  it through).
+- **The refused card's closed line** (C5-left-5): `closeRefusedCards(..., {why, workWaited})`
+  records why it closed; `refusedClosedLine` words it.
+- **Rows and status** (CS-5): `waitRowWords` covers the share (Change the allowance), a key's
+  monthly cap and the open ask (Answer, `/inbox#card-<id>`); `projectStatusLine` puts the ask
+  first.
+
+The open owner question "a one-off Use API key under 'then wait'" is built as yes:
+`ONE_OFF_UNDER_WAIT` in `credential-policy-view.ts`. Not built here: the switch notification
+(CE-12, `switchNotificationWords` has no producer), the run indicator's ' on your API key' and
+'1 task waits for your answer' forms (CS-7), `StartCheck.reviewMayWait` (C4b-left-5).
+
+Tests: `credential-policy-view.test.ts` (every sentence), `credential-switch.test.ts` (composed on
+`cred-world.ts`: one switch line, the detail, the back line, the Run rows, the result, the page's
+line, Costs, and composed again), `credential-refused-closed.test.ts`, and the UI's
+`credential-policy.test.tsx`, `credential-start.test.tsx`, `credential-switch.test.tsx`,
+`credential-chat.test.tsx` with the real-daemon describe "d1109-cred-screens, run C".
+
 ## How to change it
 
 - New limit: add the check to the hook, a `ForerunnerError` code in platform, and a test in

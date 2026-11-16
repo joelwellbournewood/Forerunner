@@ -822,6 +822,11 @@ settings_set's definition (`hiddenFromTool`) and, once credential_policy is stor
 `CREDENTIAL_KEY_REPLACED` (also an Undo of their old rows, `undoBlocked`). Tests:
 `credential-policy.test.ts`, `w15-chat.test.ts`.
 
+d1109-cred-screens: setting the preset in force while none is stored is a change (its row reads
+"Set which Claude does the work to Subscription first, then wait: ... Undo."), and the Undo of a
+first pick derives the value it restores from the older settings, so it is judged narrowing or
+widening correctly (C5-left-4). The labels come from `@forerunner/billing/policy`.
+
 ## How to change it
 
 **Add a command.** Write `src/commands/<area>.ts` exporting a `CommandDef`: a zod `params`

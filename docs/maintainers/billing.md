@@ -362,6 +362,11 @@ next source serves. A grant for the current stop key lets the granted kind serve
 `asking`, `grant`, `switchNotified`, `refusedCard` and `refusedCategory`; none holds a credential.
 Tests: `policy.test.ts`, `router.test.ts` ("d1109-cred-engine, run C").
 
+`CREDENTIAL_POLICY_LABELS`, `credentialPolicyLabel` and `credentialPolicyEffectWords` are the
+presets' names and one-line effects (d1109-cred-screens: the Settings section, the Changes row and
+the read-back use the same words; `@forerunner/billing/policy` is imported by the UI's fake daemon,
+so it stays free of Node modules).
+
 ## How to change it
 
 - **Provider rule change** (subscription allowed on cloud, plan credits order, a new cap):

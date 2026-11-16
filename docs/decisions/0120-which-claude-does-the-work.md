@@ -91,3 +91,40 @@ work waits.
 - Keep two settings and widen 'wait' to every call: still two things to explain, and no way to
   ask first.
 - Ask on every call: one card per call would flood the Inbox; one card per stop is enough.
+
+## Amendment 2026-11-16: the policy where the person reads it (d1109-cred-screens)
+
+The owner's words this builds on (2026-11-09, point 7): a) "allow the task to be completed by the
+API, but in a transparent way. It should also be possible to give a framework for what to use when
+,and then the system just does it."; b) "It should definitely not automatically do something even
+when told to wait or showing that it is waiting."; c) "If a credential is refused, follow the
+frameowrk for a) or b) as if it has run out, but also give the user some kind of notification or
+information."
+
+1. **One place**: Settings → "Which Claude does the work" lists the five presets with their lines;
+   until the person picks, the default is shown as used ("Used until you choose: ..."). A pick that
+   moves more money reads back and needs a tap; one that moves less acts at once. Each saved
+   credential has its role under the preset and its state now. Advanced keeps only what each
+   credential can do here; the older order and mid-session settings are gone from the screens.
+2. **The Start dialog and the plan card** say what happens if the first choice runs out. While it
+   is out under 'ask' or 'wait' the dialog offers "Use API key" (a grant for this stop, by the
+   person's start; no budget is raised) and "Start at 15:40" (nothing moves before), the preset's
+   lean first; when the project's own session waits to go on, its line replaces "Start at" and Use
+   API key lets it go on now.
+3. **Every wait in words** on the rows and the project's status line: the limit, the share (with
+   Change the allowance), a key's monthly cap, and the open question (Answer).
+4. **The switch as data** (CE-11): the Run row's `switchedFrom`, `billing.switch` once per stop and
+   session ('"Style the page" goes on with your API key from where it stopped: ...', with ', and
+   you said yes.' after a grant) and `billing.back`, `SessionResult.switched`, the session page's
+   line, the drawer's run line and Costs by credential, all read from the log and the ledger.
+5. **Chat's one-off** "Use API key" reaches the screen through POST /chat; a held reply offers no
+   Think it through.
+
+Open owner question built as its default (one constant): a one-off "Use API key" is offered under
+"then wait" too (`ONE_OFF_UNDER_WAIT = true` in `credential-policy-view.ts`): 'wait' means the app
+does nothing by itself, not that the person cannot choose.
+
+Not built in this round: the switch notification (CE-12), the run indicator's credential forms
+(CS-7), the Start dialog's review-may-wait line (C4b-left-5), and the "needs" row form ("Waits for
+your API key: only it can read web pages here."), for want of the need in the wait entry.
+
