@@ -198,7 +198,7 @@
      ]
     },
     "leftovers_for_triage": "/tmp/frbench/leftovers-C5.json",
-    "ci": "pending: CI 312 (43958488578) and Desktop app 77 (43958488591), started 2026-11-16 21:17 UTC"
+    "ci": "green on Windows and Linux: CI 312 (43958488578) and Desktop app 77 (43958488591, its window job read the bar and the title live), 2026-11-16 21:58 UTC"
    }
   },
   {

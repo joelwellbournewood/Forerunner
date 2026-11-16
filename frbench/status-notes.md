@@ -61,3 +61,8 @@
 - Leftovers: place-c5-leftovers.cjs (tags " C5 leftovers adds", "(C5-merge)"): C5-left-1..5 -> d1109-cred-screens (1 = CE-11 switch data, major: CS-5 needs it; 2 = CE-12; 3 = CE-9 chat one-off; 4 = billing_order reads; 5 = refused card line), C5-left-6/7 -> d1109-selftasks-chat (6 = remaining created_at tie of C4b-left-3; 7 = C4-left-11). Triage leftovers-C5.json (29: C5L-1..24 plus the carried L3-left-14, C3-left-4/5/6, C4b-left-1). LC-C20/21/23/24/31 folded. Backups runC-plan.before-C5L.json, phaseE.before-C5L.json.
 - C6 args: /tmp/frbench/runC-C6-args.json (wave 22, d1109-cred-screens + d1109-selftasks-chat, base d133246) with the base note (scratchpad/c6-base-note.cjs).
 - CI 312 (43958488578) and Desktop app 77 (43958488591) running on d133246 since 21:17 UTC.
+
+## 2026-11-16 ~22:02 UTC: C6 launched
+- CI 312 and Desktop app 77 green on d133246 (Windows and Linux). The window job read the bar and title live during the session: bar 'Window check 21:56:35 · picks the next task just started Stop ▾', title '● Window check 21:56:35 · Forerunner' (LC-C20 first part; C5L-25 asks whether the bar text is a run-on; only one page checked). 'the app exited (code 1)' at the end also appears on run 76: the check closes it.
+- runC-plan.json C5 merged.ci set (place-c5-leftovers.cjs, now 30 triage items incl. C5L-25).
+- C6 (wave 22, d1109-cred-screens + d1109-selftasks-chat, base d133246): run wf_2ce6c7a0-0e2, task wt0k9zuah. The last sub-run of run C; then live check 4.

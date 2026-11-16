@@ -100,6 +100,7 @@ const triage = [
   ["C5L-22", "decision", "d1109-run-visible", "The UI's unit suite runs in Node, so a browser-only failure (a value import that reaches a Node module) blanked every page while vitest stayed green during the fix; apps/ui/test/browser-imports.test.ts now guards the workspace packages, and Playwright with the real Vite build runs at every merge (it did at C5's). Accepted as is; keep Playwright in every merge's validation."],
   ["C5L-23", "decision", "d1109-run-visible", "The session log line written at the time of a wait keeps '...; then your session goes on.' after Cancel: a timestamped record of what was promised then, not a promise now. Accepted."],
   ["C5L-24", "minor, tests", "d1109-run-visible", "Not walked on a real desktop: the tray dot, tooltip and menu's first item, the native window title, the critic's monthly check on the bar (nothing on a running daemon can start it) and a working row past 49 steps (the stand-in's tasks stop at 30 parts). Covered by cargo tests, run-indicator.test.tsx and unit cases with 60 and 120 steps; the owner's install walk covers the tray and title (U-096)."],
+  ["C5L-25", "words", "d1109-run-visible", "The Desktop app workflow's window job on d133246 (run 77, job 133641313286) read the bar while the session ran: 'Window check 21:56:35 · picks the next task just started Stop ▾', title '● Window check 21:56:35 · Forerunner'. The project and title are right (LC-C20's first part passes, read live, not after the end). Check whether 'picks the next task just started' is two elements (the state and an elapsed time) or one run-on sentence (design section 5): the screenshot is in that run's desktop-window-check artifact. The check reads one page only; LC-C20 also asks for Home, Inbox and Settings."],
   ...carried.map(([id, sev]) => [`C5L-${id}`, sev, "d1109-cred-engine (carried, not built in C5: time)", carriedText(id)]),
 ];
 
@@ -195,7 +196,7 @@ c5.merged = Object.assign({}, c5.merged || {}, {
   leftovers_placed: Object.fromEntries(Object.entries(toAreas).map(([k, v]) => [k, v.items.map((i) => i[0])])),
   leftovers_for_triage: "/tmp/frbench/leftovers-C5.json",
 });
-if (!c5.merged.ci) c5.merged.ci = "pending: CI 312 (43958488578) and Desktop app 77 (43958488591), started 2026-11-16 21:17 UTC";
+c5.merged.ci = "green on Windows and Linux: CI 312 (43958488578) and Desktop app 77 (43958488591, its window job read the bar and the title live), 2026-11-16 21:58 UTC";
 
 fs.writeFileSync(E, JSON.stringify(e, null, 1));
 fs.writeFileSync(P, JSON.stringify(p, null, 1));

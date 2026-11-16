@@ -147,6 +147,12 @@
    "text": "Not walked on a real desktop: the tray dot, tooltip and menu's first item, the native window title, the critic's monthly check on the bar (nothing on a running daemon can start it) and a working row past 49 steps (the stand-in's tasks stop at 30 parts). Covered by cargo tests, run-indicator.test.tsx and unit cases with 60 and 120 steps; the owner's install walk covers the tray and title (U-096)."
   },
   {
+   "id": "C5L-25",
+   "severity": "words",
+   "from": "d1109-run-visible",
+   "text": "The Desktop app workflow's window job on d133246 (run 77, job 133641313286) read the bar while the session ran: 'Window check 21:56:35 · picks the next task just started Stop ▾', title '● Window check 21:56:35 · Forerunner'. The project and title are right (LC-C20's first part passes, read live, not after the end). Check whether 'picks the next task just started' is two elements (the state and an elapsed time) or one run-on sentence (design section 5): the screenshot is in that run's desktop-window-check artifact. The check reads one page only; LC-C20 also asks for Home, Inbox and Settings."
+  },
+  {
    "id": "C5L-L3-left-14",
    "severity": "money",
    "from": "d1109-cred-engine (carried, not built in C5: time)",
