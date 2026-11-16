@@ -640,17 +640,8 @@ export const SETTINGS: SettingView[] = [
     description: "The channel your notifications use first (desktop when unset)",
     risk: "low",
   },
-  {
-    // U-078, as settings-view.ts: wait (the default) or use the other one; task runs only.
-    key: "human.mid_session_limit",
-    label: "When my first choice runs out mid-session",
-    scope: "human",
-    scopeId: "human_alice",
-    value: "wait",
-    description:
-      "Tasks only: wait for its reset, then your session goes on, or go on at once on your other Claude credential (which may cost money). Chat, planning and reviews always use the next one",
-    risk: "medium",
-  },
+  // d1109-cred-screens (CS-2), as settings-view.ts: no "When my first choice runs out mid-session"
+  // row; the one choice is Settings -> Basics -> "Which Claude does the work".
   {
     // U-078, as settings-view.ts: the credential chooser's setting (default my first choice).
     key: "human.code_commands",

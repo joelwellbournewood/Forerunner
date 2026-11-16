@@ -23,7 +23,8 @@ import { HotkeySettings } from "../shell/HotkeySettings.tsx";
 import { refreshIdentity, useClient, useUiState, useUiStore } from "../store/context.tsx";
 import type { ThemePreference, UiState } from "../store/store.ts";
 import { AgentNameSection } from "./AgentNameSection.tsx";
-import { BillingOrderSection } from "./BillingOrderSection.tsx";
+import { AbilityTable } from "./BillingOrderSection.tsx";
+import { CredentialPolicySection } from "./CredentialPolicySection.tsx";
 import { DesktopAllowlistSection } from "./DesktopAllowlistSection.tsx";
 import { DevicesSection } from "./DevicesSection.tsx";
 import { ModelSettingsSection } from "./ModelSettingsSection.tsx";
@@ -98,7 +99,6 @@ export const SETTING_KEYS = [
   "shared_with",
   "quiet_hours",
   "notify_channel",
-  "mid_session_limit",
   "code_commands",
   "web_access",
   "voice_alerts",
@@ -983,7 +983,7 @@ function AccountsSection() {
 
 /** What Advanced holds, named on its summary so a pointer like "Settings → Voice" is found. */
 const ADVANCED_CONTENTS =
-  "models, which Claude credential is used first, the subscription allowance, voice, devices, sources, email, desktop control, fast mode, appearance, shortcuts, the background service and every other setting";
+  "models, what each Claude credential can do here, the subscription allowance, voice, devices, sources, email, desktop control, fast mode, appearance, shortcuts, the background service and every other setting";
 
 /**
  * Settings (design §6; spec K.7, Q.1, R.2). It opens on **Basics**: your name and your agent's,
@@ -1039,6 +1039,8 @@ export function SettingsPage() {
         <YourNameSection />
         <AgentNameSection />
         <AccountsSection />
+        {/* d1109-cred-screens CS-1: the one place for which Claude does the work. */}
+        <CredentialPolicySection />
         <div
           className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
           data-testid="basic-settings"
@@ -1078,7 +1080,13 @@ export function SettingsPage() {
         <div className="space-y-5 p-3 pt-0">
           <PlanAllowanceSection />
 
-          <BillingOrderSection />
+          {/* CS-2: what each credential can do here; the choice itself is under Basics. */}
+          <div
+            className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+            data-testid="credential-abilities"
+          >
+            <AbilityTable />
+          </div>
 
           <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
             <h2 className="font-semibold">Appearance</h2>

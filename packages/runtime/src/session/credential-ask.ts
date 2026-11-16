@@ -120,6 +120,46 @@ export async function recordWait(
   return wrote;
 }
 
+/** The audit row the end of a grant writes (d1109-cred-screens). */
+export const BILLING_GRANT_END_AUDIT_TOOL = "billing.grant_end";
+
+/**
+ * d1109-cred-screens CS-1 (Settings' "Stop using it"): the person ends their standing yes. The
+ * grant goes (version-checked); the asking mark stays, so no new card comes for this stop and
+ * the next pick waits for its end. A run already going on the other credential finishes (a run
+ * is never moved mid-way, ADR 0100 point 3). Returns the sources whose grant ended.
+ */
+export async function endGrant(
+  store: Pick<StateStore, "billingSource" | "auditLog">,
+  clock: Clock,
+  humanId: string,
+): Promise<string[]> {
+  const ended: string[] = [];
+  for (const row of await store.billingSource.list({ human_id: humanId }, { limit: 100 })) {
+    if (!(row.limits as { grant?: unknown }).grant) continue;
+    let mine = false;
+    await updateSourceLimits(store, row.id, (limits) => {
+      if (!limits.grant) return null;
+      mine = true;
+      const { grant: _g, ...rest } = limits;
+      return rest;
+    });
+    if (!mine) continue;
+    ended.push(row.id);
+    await store.auditLog
+      .append({
+        tool: BILLING_GRANT_END_AUDIT_TOOL,
+        allowed: true,
+        human_id: humanId,
+        input_summary: JSON.stringify({ sourceId: row.id }),
+        result_summary: "the person ended their yes: the next pick waits for the stop's end",
+        occurred_at: clock.nowIso(),
+      })
+      .catch(() => undefined);
+  }
+  return ended;
+}
+
 /** The person's answer of an ask card: Use API key or Wait (the option labels), else null. */
 export function askAnswerOf(answer: unknown): "use" | "wait" | null {
   const raw =

@@ -137,6 +137,12 @@ function fakeLinkOf(
   return null;
 }
 
+import {
+  type CredentialFacts,
+  credentialPolicyOf,
+  credentialPolicySection,
+  policyChangeWords,
+} from "@forerunner/runtime/daemon/credential-policy-view";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import {
@@ -380,6 +386,16 @@ export interface FakeDaemonOptions {
   billingOrder?: {
     sources?: Partial<BillingOrderSourceView>[];
     order?: BillingOrderKind[] | null;
+  };
+  /**
+   * d1109-cred-screens (CS-1): the person's stored credential policy at start (none: derived from
+   * `billingOrder.order` and `mid_session_limit`, else the default), and a standing yes to the
+   * API key for the subscription's stop now (`grant`).
+   */
+  credentialPolicy?: {
+    stored?: string | null;
+    midSessionLimit?: "wait" | "use_other";
+    grant?: boolean;
   };
   /**
    * The credential chooser (U-078): what this install offers each credential, over the defaults
@@ -1385,7 +1401,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     fastMode: {},
     desktop: { revoked: false, revokedReason: null, control: { ...DESKTOP_OFF } },
     speedQuality: {},
-    settingValues: {},
+    settingValues: {
+      ...(options.credentialPolicy?.stored
+        ? { credential_policy: options.credentialPolicy.stored }
+        : {}),
+      ...(options.credentialPolicy?.midSessionLimit
+        ? { mid_session_limit: options.credentialPolicy.midSessionLimit }
+        : {}),
+    },
     desktopAllowlist: [{ app: "code" }],
     modelSettings: withWebAccess(clone(MODEL_SETTINGS), !options.noWebAccess),
     acceptsTemperature: options.acceptsTemperature ?? true,
@@ -6572,6 +6595,50 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const risk = SETTING_RISK[key];
       if (!risk) return refuse(`unknown setting ${key}`);
       const project = projectByRef(projectRef);
+      // d1109-cred-screens (CS-1), as SETTING_SPECS.credential_policy: a change that moves less
+      // money acts at once, one that moves more asks the person's yes; the default stored as
+      // the person's choice is a change too; the same stored value is refused.
+      if (key === "credential_policy") {
+        const presets = [
+          "subscription_then_wait",
+          "subscription_then_ask",
+          "subscription_then_key",
+          "key_then_subscription",
+          "key_only",
+        ];
+        const value = String(params.value ?? "");
+        if (!presets.includes(value)) return refuse(`${value} is not a preset`);
+        const before = fakePolicy();
+        if (before.id === value && before.chosen === "stored")
+          return refuse(`Which Claude does the work is already ${value}.`);
+        const words = policyChangeWords(before.id, value as never);
+        const r: Risk = words.narrows ? "low" : "medium";
+        return {
+          name,
+          params,
+          risk: r,
+          card: card(
+            {
+              command: name,
+              what: "which Claude does the work",
+              oldValue: before.id,
+              newValue: value,
+              scope: "global",
+              sentence: words.sentence,
+              ask: words.ask,
+            },
+            r,
+          ),
+          apply: () => {
+            const previous = state.settingValues.credential_policy ?? null;
+            state.settingValues.credential_policy = value;
+            return {
+              before: { key, project_id: null, value: previous },
+              after: { key, project_id: null, value },
+            };
+          },
+        };
+      }
       if (key === "web_access" && project) {
         // As SETTING_SPECS.web_access ('sites'): the one clean-up, refused entries in words, a
         // yes only when the rule widens (judged against the rule in force), the same value refused.
@@ -8126,8 +8193,104 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       sentence: `Set which Claude credential is used first from ${orderWords(billingOrder)} to ${orderWords(next)}: every model call uses them in this order, and when one cannot be used the next one is. Undo.`,
       reversible: true,
     });
+    // d1109-cred-screens (CS-2, C5-left-4), as billing-order-routes.ts: the order is stored as the
+    // credential policy it maps onto (the rule kept), through settings.set credential_policy.
+    const before = fakePolicy();
+    const preset =
+      next[0] === "subscription"
+        ? before.rule.whenStopped === "ask"
+          ? "subscription_then_ask"
+          : before.rule.whenStopped === "next"
+            ? "subscription_then_key"
+            : "subscription_then_wait"
+        : before.rule.whenStopped === "next"
+          ? "key_then_subscription"
+          : "key_only";
+    if (preset !== before.id || before.chosen !== "stored") {
+      const words = policyChangeWords(before.id, preset);
+      pushChange({
+        commands: [{ name: "settings.set", params: { key: "credential_policy", value: preset } }],
+        before: {
+          key: "credential_policy",
+          project_id: null,
+          value: state.settingValues.credential_policy ?? null,
+        },
+        after: { key: "credential_policy", project_id: null, value: preset },
+        scope: "global",
+        projectId: null,
+        source: "ui",
+        wordsUsed: `Settings: Which Claude does the work to ${preset}`,
+        sentence: words.sentence,
+        reversible: true,
+      });
+      state.settingValues.credential_policy = preset;
+    }
     billingOrder = next;
     return c.json(billingOrderView());
+  });
+  // d1109-cred-screens CS-1, mirroring credential-policy-routes.ts with the runtime's own
+  // builder: the preset in force (stored, derived from the earlier order, or the default), the
+  // saved credentials' state from their rows, a standing yes and the open ask card.
+  const fakePolicy = () =>
+    credentialPolicyOf({
+      ...(state.settingValues.credential_policy
+        ? { credential_policy: state.settingValues.credential_policy }
+        : {}),
+      ...(billingOrder ? { billing_order: billingOrder } : {}),
+      ...(state.settingValues.mid_session_limit
+        ? { mid_session_limit: state.settingValues.mid_session_limit }
+        : {}),
+    });
+  let credentialGrant = options.credentialPolicy?.grant === true;
+  const nextMonthStart = () => {
+    const d = new Date();
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)).toISOString();
+  };
+  const credentialPolicyViewNow = () => {
+    const credentials: CredentialFacts[] = billingSources.map((s) => {
+      const stop =
+        s.blocked === "resting" && s.restingUntil
+          ? { reason: "limit" as const, until: s.restingUntil, stopKey: `limit:${s.restingUntil}` }
+          : s.blocked === "refused"
+            ? { reason: "refused" as const, until: null, stopKey: "refused:fake" }
+            : s.blocked === "allowance"
+              ? { reason: "share" as const, until: nextMonthStart(), stopKey: "share:fake" }
+              : s.blocked === "monthly_cap"
+                ? {
+                    reason: "key_month" as const,
+                    until: nextMonthStart(),
+                    stopKey: "key_month:fake",
+                  }
+                : null;
+      return {
+        kind: s.kind,
+        saved: s.blocked !== "no_credential",
+        enabled: s.blocked !== "disabled",
+        stop,
+        planShare: s.planShare,
+        monthChfMicro: s.monthSpent.chfMicro,
+        grant:
+          credentialGrant && stop && s.kind === "subscription"
+            ? { to: "api_key" as const, stopKey: stop.stopKey }
+            : null,
+      };
+    });
+    const ask = state.requests.find(
+      (r) =>
+        r.status === "open" && (r.changeCard as { key?: unknown } | null)?.key === "credential:ask",
+    );
+    return credentialPolicySection({
+      policy: fakePolicy(),
+      credentials,
+      openAskId: ask?.id ?? null,
+      startedWith: options.startedWith ?? null,
+      opts: { timezone: "UTC", nowMs: Date.now() },
+    });
+  };
+  app.get("/settings/credential-policy", (c) => c.json(credentialPolicyViewNow()));
+  app.post("/settings/credential-policy/grant/end", (c) => {
+    credentialGrant = false;
+    return c.json(credentialPolicyViewNow());
   });
   // The mailbox passwords and cloud voice keys typed in the app (U-054), mirroring
   // packages/runtime/src/secrets/store-routes.ts: an allowlist, the value kept here for the

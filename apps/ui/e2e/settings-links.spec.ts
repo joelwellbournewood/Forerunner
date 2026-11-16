@@ -44,7 +44,7 @@ test("a link to Other settings lands on it after the sections above it load, and
     [
       "/settings/models",
       "/settings/plan-allowance",
-      "/settings/billing-order",
+      "/settings/credential-policy",
       "/devices",
       "/sources",
     ],
@@ -67,7 +67,7 @@ test("a link to Other settings lands on it after the sections above it load, and
   // Then the sections above load and grow.
   releaseAbove();
   await expect(page.getByTestId("plan-allowance-input")).toBeVisible();
-  await expect(page.getByTestId("billing-order-section")).toBeVisible();
+  await expect(page.getByTestId("credential-policy")).toBeVisible();
   await expect(page.getByTestId("model-settings-row").first()).toBeVisible();
   // "Other settings" is at the top of the view all the same (before: 400 to 1900 px down).
   await expect

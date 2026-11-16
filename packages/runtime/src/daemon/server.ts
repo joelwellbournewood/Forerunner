@@ -85,7 +85,7 @@ import {
   voiceStatusView,
   voiceTurnView,
 } from "../voice/views.ts";
-import { keptContinuationOf, keptStartOf } from "../wiring/billing-pick.ts";
+import { keptContinuationOf, keptStartOf, RouterTaskBilling } from "../wiring/billing-pick.ts";
 import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
 import { assertAnswerAccepted, isChatOnlyCard, NOT_AN_OPTION } from "../wiring/request-answers.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
@@ -168,6 +168,7 @@ import { changeRowViews } from "./change-rows.ts";
 import type { RuntimeApp } from "./compose.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
+import { createCredentialPolicyRoutes } from "./credential-policy-routes.ts";
 import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
 import { joinPreview, sharesRepositoryWith } from "./join-preview.ts";
@@ -2861,34 +2862,46 @@ export function createDaemonApp(
     };
   };
 
-  // Settings -> Claude: which to use first (U-078, ADR 0100): the order goes through the
-  // registry's `settings.set billing_order` (low risk, so it runs at once and Changes lists it
-  // with Undo); the router reads it at every pick.
+  // Settings -> Claude: which to use first (U-078, ADR 0100). d1109-cred-screens (CS-2,
+  // C5-left-4): the route keeps answering, and an order is stored as the credential policy it
+  // maps onto (`settings.set credential_policy`, the person's own tap: Changes lists it with
+  // Undo); the router reads the policy at every pick.
+  const billingOrderDeps = {
+    store: rt.store,
+    vault: rt.vault,
+    clock: rt.clock,
+    humanId: rt.human.id,
+    chfPerUsd: chf,
+    startedWith: rt.startedWith,
+    setPolicy: async (preset: string) => {
+      const turn = await turnFor({
+        source: "ui",
+        wordsUsed: `Settings: Which Claude does the work to ${preset}`,
+      });
+      const r = await rt.commands.execute(
+        { name: "settings.set", params: { key: "credential_policy", value: preset } },
+        turn,
+        { confirmation: { kind: "tap", by: { kind: "human", id: rt.human.id } } },
+      );
+      if (r.status !== "done" && r.status !== "partial")
+        throw new ForerunnerError(
+          (r.code ?? "validation") as ErrorCode,
+          r.reason ?? `the choice was not saved (${r.status})`,
+        );
+    },
+  };
+  app.route("/", createBillingOrderRoutes(billingOrderDeps));
+  // d1109-cred-screens CS-1: Settings -> Basics -> "Which Claude does the work" (GET), and the end
+  // of a standing yes ("Stop using it"); a choice goes through POST /commands/execute.
   app.route(
     "/",
-    createBillingOrderRoutes({
-      store: rt.store,
-      vault: rt.vault,
-      clock: rt.clock,
-      humanId: rt.human.id,
-      chfPerUsd: chf,
-      startedWith: rt.startedWith,
-      setOrder: async (order) => {
-        const turn = await turnFor({
-          source: "ui",
-          wordsUsed: `Settings: use ${order.join(", then ")} first`,
-        });
-        const r = await rt.commands.execute(
-          { name: "settings.set", params: { key: "billing_order", value: order } },
-          turn,
-          { confirmation: { kind: "tap", by: { kind: "human", id: rt.human.id } } },
-        );
-        if (r.status !== "done" && r.status !== "partial")
-          throw new ForerunnerError(
-            (r.code ?? "validation") as ErrorCode,
-            r.reason ?? `the order was not saved (${r.status})`,
-          );
-      },
+    createCredentialPolicyRoutes({
+      ...billingOrderDeps,
+      currentStopOf: (sourceId) =>
+        rt.billing.pick instanceof RouterTaskBilling
+          ? rt.billing.pick.currentStopOf(sourceId)
+          : Promise.resolve(null),
+      changed: () => rt.events.emit("inbox", {}),
     }),
   );
 

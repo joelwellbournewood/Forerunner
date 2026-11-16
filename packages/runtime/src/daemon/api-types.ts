@@ -6,6 +6,7 @@ import { SECRET_STORE_ROUTES } from "../secrets/store-types.ts";
 import { PLAN_ALLOWANCE_ROUTES, SETUP_ROUTES } from "../setup/types.ts";
 import { VOICE_INSTALL_ROUTES } from "../voice/install-types.ts";
 import { BILLING_ORDER_ROUTES } from "./billing-order-types.ts";
+import { CREDENTIAL_POLICY_ROUTES } from "./credential-policy-types.ts";
 
 /** Settings -> Devices shapes (spec R.2): the daemon's `/devices` routes' bodies and answers. */
 export {
@@ -109,6 +110,14 @@ export {
   BillingOrderSourceView,
   BillingOrderView,
 } from "./billing-order-types.ts";
+/** d1109-cred-screens CS-1: Settings -> Basics -> "Which Claude does the work". */
+export {
+  CREDENTIAL_POLICY_ROUTES,
+  CredentialPolicyPresetId,
+  CredentialPolicyPresetView,
+  CredentialPolicyRowView,
+  CredentialPolicyView,
+} from "./credential-policy-types.ts";
 
 /**
  * Local daemon API contract (ADR 0011). The desktop and Android shells, the approvals web
@@ -3756,4 +3765,6 @@ export const DAEMON_ROUTES = {
     "GET /running (RunningView[]: d1109-run-visible V-1, the run indicator: the sessions that run now in the daemon's words (never the conversation or a plan being drafted), the critic's monthly check, and a person's session waiting to go on after its Claude credential wait, with what Stop or Cancel offers; [] when nothing runs or waits; the same list is the run.changed frame on GET /events, sent at most once a second when it changes)",
   sessionTasks:
     "GET /sessions/:id/tasks (SessionTasksView: the tasks a session worked on, in the order it first ran them, each with what happened to it there, what it is now when that differs and what the session spent on it (the ledger's rows for the session and the task, reviews included); none for a planning call; 404 for an unknown session; d1109-sessions)",
+  // d1109-cred-screens (run C, C6): Settings' "Which Claude does the work".
+  ...CREDENTIAL_POLICY_ROUTES,
 } as const;

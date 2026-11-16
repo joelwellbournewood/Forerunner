@@ -165,47 +165,17 @@ describe("every setting is visible in Settings (U-060)", () => {
     );
   });
 
-  it("when my first choice runs out mid-session: Wait by default; Use the other one asks a yes and is sent as settings.set (U-078)", async () => {
-    const user = userEvent.setup();
+  it("no 'When my first choice runs out mid-session' row: the one choice is Basics' 'Which Claude does the work' (d1109-cred-screens CS-2; before U-078's row)", async () => {
     const harness = createHarness();
     renderApp("/settings", harness);
-    const row = await rowFor("human.mid_session_limit");
-    expect(within(row).getByTestId("setting-label")).toHaveTextContent(
-      "When my first choice runs out mid-session",
-    );
-    expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent(
-      "Wait for its reset; then your session goes on",
-    );
-    // The row says what it covers: tasks only, and that the other one may cost money.
-    expect(row).toHaveTextContent("Chat, planning and reviews always use the next one");
-    await user.click(within(row).getByTestId("setting-change"));
-    const dialog = await screen.findByTestId("setting-dialog");
-    // One full stop after the description (review of credential-limits: "next one.. The same").
-    expect(dialog).toHaveTextContent("Chat, planning and reviews always use the next one. The");
-    expect(dialog).not.toHaveTextContent("..");
-    await user.selectOptions(within(dialog).getByTestId("setting-value"), "use_other");
-    await user.click(within(dialog).getByTestId("setting-apply"));
-    await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
-    expect(postedCalls(harness, "/commands/execute")[0]?.body).toEqual({
-      commands: [
-        { name: "settings.set", params: { key: "mid_session_limit", value: "use_other" } },
-      ],
-      wordsUsed:
-        "Settings: When my first choice runs out mid-session to Use the other one at once (may cost money)",
-      source: "ui",
-    });
-    // Moving plan-limit work onto money is a yes first (medium risk).
-    const pending = await within(dialog).findByTestId("command-pending");
-    expect(pending).toHaveAttribute("data-decision", "needs_yes");
-    await user.click(within(pending).getByTestId("command-yes"));
-    await within(dialog).findByTestId("command-done");
-    expect(harness.daemon.state.settingValues.mid_session_limit).toBe("use_other");
-    await user.click(within(dialog).getByTestId("command-close"));
-    await waitFor(async () =>
-      expect(
-        within(await rowFor("human.mid_session_limit")).getByTestId("setting-value-cell"),
-      ).toHaveTextContent("Use the other one at once (may cost money)"),
-    );
+    await screen.findAllByTestId("setting-row");
+    expect(
+      screen
+        .queryAllByTestId("setting-row")
+        .some((r) => r.dataset.key === "human.mid_session_limit"),
+    ).toBe(false);
+    expect(document.body).not.toHaveTextContent("When my first choice runs out mid-session");
+    expect(await screen.findByTestId("credential-policy")).toBeInTheDocument();
   });
 
   it("code tasks that need commands: my first choice by default; the API key asks a yes and is sent as settings.set (U-078, the chooser)", async () => {

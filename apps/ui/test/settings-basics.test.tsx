@@ -64,7 +64,8 @@ describe("Settings Basics (design §6)", () => {
     expect(summary).toHaveTextContent(/models.*voice.*devices/i);
     for (const id of [
       "daemon-status",
-      "billing-order-section",
+      // d1109-cred-screens (CS-2): Advanced keeps "What each can do here"; the choice is in Basics.
+      "credential-abilities",
       "plan-allowance-section",
       "devices-section",
       "desktop-allowlist",

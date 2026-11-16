@@ -1696,12 +1696,9 @@ describe("the UI client against the real daemon", () => {
     expect((refused as ApiError).message).toContain("positive amount of CHF per month");
   });
 
-  it("Settings' Claude order: the credentials in order, Move up's order stored and in Changes (U-078)", async () => {
+  it("Settings' Claude order: the credentials in order, an order posted is stored as the policy it maps onto and in Changes (U-078; d1109-cred-screens CS-2)", async () => {
     const before = await client.billingOrder();
-    expect(before).toMatchObject({
-      chosen: false,
-      order: ["subscription", "plan_credits", "api_key"],
-    });
+    expect(before.chosen).toBe(false);
     // A subscription row and an API key row as a start seeds them (turned off here, so the
     // other cases' sessions keep running on the stand-in provider).
     for (const [kind, ref, priority] of [
@@ -1723,14 +1720,18 @@ describe("the UI client against the real daemon", () => {
       ["subscription", "Claude subscription", "claude_code", "disabled"],
       ["api_key", "API key", "api", "disabled"],
     ]);
-    // What Move up on the API key row posts.
+    // What the older Move up on the API key row posted: d1109-cred-screens (CS-2, C5-left-4)
+    // stores it as the credential policy it maps onto, the rule kept ('wait': API key only).
     const saved = await client.setBillingOrder(["api_key", "subscription"]);
     expect(saved).toMatchObject({ chosen: true, order: ["api_key", "subscription"] });
     expect(saved.sources.map((s) => s.kind)).toEqual(["api_key", "subscription"]);
     expect((await client.billingOrder()).order).toEqual(["api_key", "subscription"]);
-    const change = (await client.changes({})).find((r) => r.sentence.includes("is used first"));
+    expect((await client.credentialPolicy()).selected).toBe("key_only");
+    const change = (await client.changes({})).find((r) =>
+      r.sentence.includes("which Claude does the work"),
+    );
     expect(change?.sentence).toBe(
-      "Set which Claude credential is used first from not chosen (the defaults) to the API key, then the Claude subscription: every model call uses them in this order, and when one cannot be used the next one is. Undo.",
+      "Set which Claude does the work from Subscription first, then wait to API key only: only your API key does the work, at a cost per use; when it stops, the work waits. Undo.",
     );
     const refused = await client.setBillingOrder(["api_key", "api_key"]).then(
       () => null,
@@ -8155,10 +8156,12 @@ describe("the UI client against the real daemon: a Claude credential at its limi
     const sdkCalls: string[] = [];
     const { rt, client, clock, onKey } = await compose(claudeCode(sdkCalls, 1));
     try {
-      // Settings lists the setting, at its default.
-      const row = (await client.settings()).find((s) => s.key === "human.mid_session_limit");
-      expect(row?.value).toBe("wait");
-      expect(row?.label).toBe("When my first choice runs out mid-session");
+      // d1109-cred-screens (CS-2): the older row is gone from Settings; the one choice, at its
+      // default, is "Which Claude does the work".
+      expect((await client.settings()).some((s) => s.key === "human.mid_session_limit")).toBe(
+        false,
+      );
+      expect((await client.credentialPolicy()).selected).toBe("subscription_then_wait");
       const project = await client.createProject({ name: "Waits", goal: "Two notes" });
       await addTask(client, project.id, "Write note A");
       await addTask(client, project.id, "Write note B");
@@ -8304,9 +8307,8 @@ describe("the UI client against the real daemon: a Claude credential at its limi
       expect(asked.status, JSON.stringify(asked)).toBe("pending");
       const yes = await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" });
       expect(yes.status, JSON.stringify(yes)).toBe("done");
-      expect(
-        (await client.settings()).find((s) => s.key === "human.mid_session_limit")?.value,
-      ).toBe("use_other");
+      // d1109-cred-screens: the older key, stored before a preset is, reads as its preset.
+      expect((await client.credentialPolicy()).selected).toBe("subscription_then_key");
       const project = await client.createProject({ name: "Other", goal: "A note" });
       await addTask(client, project.id, "Write the note");
       const sessionId = await runToEnd(client, project.id);
@@ -21858,4 +21860,282 @@ describe("d1109-run-visible, run C: the page of a session that ended to wait (V-
       await rt.close();
     }
   }, 120_000);
+});
+
+// d1109-cred-screens (run C, C6; ADR 0120 amended 2026-11-16; the owner's answer 4 of 2026-11-09:
+// "There should be a nice clean options menu"): Settings -> Basics -> "Which Claude does the work"
+// read and changed through the UI's client against the real daemon, composed twice on one home.
+describe("d1109-cred-screens, run C", () => {
+  const oauth = ["sk-ant-oat01-", "credscreens", "8".repeat(40)].join(""); // not-a-secret
+  const apiKey = ["sk-ant-api03-", "credscreens", "9".repeat(40)].join(""); // not-a-secret
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  async function composeCs(
+    opts: {
+      home?: string;
+      clock?: SimulatedClock;
+      vault?: MemoryVault;
+      sdkQuery?: ComposeOptions["sdkQuery"];
+      standIn?: ReturnType<typeof messagesApiStandIn>;
+    } = {},
+  ) {
+    const home = opts.home ?? mkdtempSync(join(tmpdir(), "fr-ui-real-credscreens-"));
+    if (!homes.includes(home)) homes.push(home);
+    const clock = opts.clock ?? new SimulatedClock("2026-03-05T08:00:00Z");
+    const vault =
+      opts.vault ??
+      new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey });
+    const standIn =
+      opts.standIn ??
+      messagesApiStandIn({
+        model: new AcceptingCriticProvider(
+          new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock),
+        ),
+        clock,
+      });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault,
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      ...(opts.sdkQuery ? { sdkQuery: opts.sdkQuery } : {}),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client, home, clock, vault, standIn };
+  }
+
+  /** The subscription's row rests until `until` (its usage limit), as the router writes it. */
+  async function restSubscription(
+    rt: RuntimeApp,
+    until: string,
+    extra: Record<string, unknown> = {},
+  ) {
+    const row = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
+      (r) => r.kind === "subscription",
+    );
+    if (!row) throw new Error("no subscription row");
+    await rt.store.billingSource.update(row.id, row.version, {
+      limits: {
+        ...(row.limits as Record<string, unknown>),
+        restingUntil: until,
+        ...extra,
+      } as never,
+    });
+    return row.id;
+  }
+
+  it("CS-1: GET /settings/credential-policy answers the fake's shape; the default is shown as used until you pick; picking it stores it with no yes; a widening asks first; composed again, the same preset is selected", async () => {
+    const first = await composeCs();
+    const { client, home, vault } = first;
+    try {
+      const view = await client.credentialPolicy();
+      expect(view.selected).toBe("subscription_then_wait");
+      expect(view.chosen).toBe("default");
+      expect(view.choiceLine).toBe(
+        "Used until you choose: your subscription first for everything it can do here; when it runs out, the work waits.",
+      );
+      expect(view.presets.map((p) => p.label)).toEqual([
+        "Subscription first, then wait",
+        "Subscription first, ask before API key",
+        "Subscription first, then API key",
+        "API key first, then subscription",
+        "API key only",
+      ]);
+      expect(view.rows.map((r) => [r.kind, r.role, r.state])).toEqual([
+        ["subscription", "Does the work", "Works now"],
+        ["api_key", "Only for a task your subscription cannot do", "Works now"],
+      ]);
+      expect(view.nowLine).toBe("If your subscription runs out, the work waits for it.");
+      expect(view.single).toBeNull();
+
+      // Picking the default stores it: one change, no yes.
+      const stored = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "credential_policy", value: "subscription_then_wait" },
+          },
+        ],
+        wordsUsed: "Settings: Which Claude does the work to Subscription first, then wait",
+        source: "ui",
+      });
+      expect(stored.status, JSON.stringify(stored)).toBe("done");
+      expect(stored.sentence).toBe(
+        "Set which Claude does the work to Subscription first, then wait: when your subscription runs out, nothing moves until it can work again. Undo.",
+      );
+      expect((await client.credentialPolicy()).chosen).toBe("stored");
+
+      // 'Subscription first, then API key' moves more money: the yes first, nothing stored before.
+      const asked = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "credential_policy", value: "subscription_then_key" },
+          },
+        ],
+        wordsUsed: "Settings: Which Claude does the work to Subscription first, then API key",
+        source: "ui",
+      });
+      expect(asked.status).toBe("pending");
+      expect(asked.readback).toBe(
+        "Set which Claude does the work to Subscription first, then API key? When your subscription runs out, work goes on with your API key at once, at a cost per use.",
+      );
+      expect((await client.credentialPolicy()).selected).toBe("subscription_then_wait");
+      const yes = await client.confirmCommand(asked.pendingId ?? "", { answer: "tap" });
+      expect(yes.status, JSON.stringify(yes)).toBe("done");
+      const after = await client.credentialPolicy();
+      expect(after.selected).toBe("subscription_then_key");
+      expect(after.nowLine).toBe(
+        "If your subscription runs out, the work goes on with your API key (costs money).",
+      );
+      expect(after.rows[1]?.role).toBe("Takes over when your subscription runs out");
+    } finally {
+      await first.rt.close();
+    }
+    // Composed again on the same home: the stored preset is selected.
+    const second = await composeCs({ home, vault });
+    try {
+      const view = await second.client.credentialPolicy();
+      expect(view.selected).toBe("subscription_then_key");
+      expect(view.chosen).toBe("stored");
+      // C5-left-4: the older order view reads the policy in force, after the restart too.
+      const order = await second.client.billingOrder();
+      expect(order.chosen).toBe(true);
+      expect(order.order[0]).toBe("subscription");
+    } finally {
+      await second.rt.close();
+    }
+  }, 60_000);
+
+  it("CS-1: an earlier API-key-first order reads as its preset (use_other) or as 'your earlier choice' (wait), with no new change", async () => {
+    const { rt, client } = await composeCs();
+    try {
+      const human = await rt.store.human.mustGet(rt.human.id);
+      await rt.store.human.update(human.id, human.version, {
+        notify_prefs: {
+          ...human.notify_prefs,
+          billing_order: ["api_key", "subscription"],
+          mid_session_limit: "use_other",
+        },
+      } as never);
+      const derived = await client.credentialPolicy();
+      expect(derived.selected).toBe("key_then_subscription");
+      expect(derived.chosen).toBe("derived");
+      expect(derived.choiceLine).toBeNull();
+      expect(derived.rows.map((r) => r.kind)).toEqual(["api_key", "subscription"]);
+      const h2 = await rt.store.human.mustGet(rt.human.id);
+      await rt.store.human.update(h2.id, h2.version, {
+        notify_prefs: { ...h2.notify_prefs, mid_session_limit: "wait" },
+      } as never);
+      const earlier = await client.credentialPolicy();
+      expect(earlier.selected).toBeNull();
+      expect(earlier.choiceLine).toBe(
+        "Your earlier choice: your API key first, your subscription only for a task your key cannot do here. When your key runs out, the work waits.",
+      );
+      expect((await client.changes()).length).toBe(0);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("CS-1: with a yes standing the now line names it; Stop using it ends the grant and the next pick waits; the grant survives a restart until then", async () => {
+    const first = await composeCs();
+    const until = "2026-03-05T10:40:00.000Z";
+    try {
+      await first.client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "credential_policy", value: "subscription_then_ask" },
+          },
+        ],
+        wordsUsed: "Settings: Which Claude does the work to Subscription first, ask before API key",
+        source: "ui",
+        confirm: "tap",
+      } as never);
+      const pending = await first.client.pendingCommands();
+      for (const p of pending) await first.client.confirmCommand(p.id, { answer: "tap" });
+      await restSubscription(first.rt, until, {
+        grant: { to: "api_key", stopKey: `limit:${until}`, by: "card", at: "2026-03-05T08:00:00Z" },
+      });
+      const view = await first.client.credentialPolicy();
+      expect(view.selected).toBe("subscription_then_ask");
+      expect(view.nowLine).toBe("Your work and chat use your API key until 11:40: you said yes.");
+      expect(view.grant).toBe(true);
+      expect(view.rows[0]?.state).toBe("At its limit until 11:40");
+    } finally {
+      await first.rt.close();
+    }
+    const second = await composeCs({ home: first.home, vault: first.vault });
+    try {
+      expect((await second.client.credentialPolicy()).grant).toBe(true);
+      const ended = await second.client.endCredentialGrant();
+      expect(ended.grant).toBe(false);
+      expect(ended.nowLine).toBe(
+        "Your subscription is at its limit until 11:40; the work waits for it.",
+      );
+      // The next pick waits for the stop's end: nothing goes to the API key.
+      const picker = second.rt.billing.pick;
+      const agentId = (await second.client.agents())[0]?.id ?? "";
+      const waited = await picker
+        .pick({
+          agentId,
+          agentOwnerHumanId: second.rt.human.id,
+          runner: "pc",
+          modelTier: "standard",
+          purpose: "session",
+        })
+        .then(
+          () => null,
+          (e: unknown) => e as { code?: string; details?: { waitFor?: { reason?: string } } },
+        );
+      expect(waited?.code).toBe("unavailable");
+      expect(waited?.details?.waitFor?.reason).toBe("limit");
+    } finally {
+      await second.rt.close();
+    }
+  }, 60_000);
+
+  it("CS-2: POST /settings/billing-order still answers and is stored as the policy the order maps onto (the rule kept), in Changes", async () => {
+    const { rt, client } = await composeCs();
+    try {
+      const order = await client.setBillingOrder(["api_key", "subscription"]);
+      expect(order.order[0]).toBe("api_key");
+      const view = await client.credentialPolicy();
+      expect(view.selected).toBe("key_only");
+      expect(view.chosen).toBe("stored");
+      const changes = await client.changes();
+      expect(changes[0]?.sentence).toBe(
+        "Set which Claude does the work from Subscription first, then wait to API key only: only your API key does the work, at a cost per use; when it stops, the work waits. Undo.",
+      );
+      // The settings list has no "When my first choice runs out mid-session" row any more.
+      expect((await client.settings()).some((s) => s.key === "human.mid_session_limit")).toBe(
+        false,
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });

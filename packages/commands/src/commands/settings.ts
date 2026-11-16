@@ -2,6 +2,8 @@ import {
   CREDENTIAL_POLICIES,
   CREDENTIAL_POLICY_SETTING,
   type CredentialPolicyId,
+  credentialPolicyEffectWords,
+  credentialPolicyLabel,
   credentialPolicyOf,
   formatChf,
   moneyRank,
@@ -111,40 +113,18 @@ export interface SettingSpec {
 export const CREDENTIAL_KEY_REPLACED =
   'This was replaced by "Which Claude does the work"; change it there.';
 
-/** The presets as a person reads them in Settings and in the change log (CE-1). */
+/**
+ * The presets as a person reads them in Settings and in the change log (CE-1; d1109-cred-screens
+ * CS-1: the labels show the order, "Subscription first, ask before API key", before "then ask
+ * me"): `@forerunner/billing`'s `CREDENTIAL_POLICY_LABELS`, the one place.
+ */
 export function credentialPolicyWords(v: unknown): string {
-  switch (v) {
-    case "subscription_then_wait":
-      return "Subscription first, then wait";
-    case "subscription_then_ask":
-      return "Subscription first, then ask me";
-    case "subscription_then_key":
-      return "Subscription first, then the API key";
-    case "key_then_subscription":
-      return "API key first, then the subscription";
-    case "key_only":
-      return "API key only";
-    case "earlier":
-      return "your earlier choice";
-    default:
-      return "Subscription first, then wait";
-  }
+  return credentialPolicyLabel(v);
 }
 
 /** What a preset does when the first credential stops, for the card and the change log. */
 export function credentialPolicyEffect(v: unknown): string {
-  switch (v) {
-    case "subscription_then_ask":
-      return "when your subscription runs out, you are asked first before your API key does any work";
-    case "subscription_then_key":
-      return "when your subscription runs out, work goes on with your API key at once, at a cost per use";
-    case "key_then_subscription":
-      return "your API key does the work first, at a cost per use; when it stops, your subscription goes on";
-    case "key_only":
-      return "only your API key does the work, at a cost per use; when it stops, the work waits";
-    default:
-      return "when your subscription runs out, nothing moves until it can work again";
-  }
+  return credentialPolicyEffectWords(v);
 }
 
 /** What an effect sentence may read besides the value: the prices in force (ADR 0057). */
@@ -1058,7 +1038,9 @@ const showFor = (spec: SettingSpec, v: unknown): string =>
 
 function sentenceOf(t: Target): string {
   const { effect } = t;
-  return `Set ${t.what} from ${showFor(t.spec, t.current)} to ${showFor(t.spec, t.value)}${effect ? `: ${effect}` : ""}. Undo.`;
+  // CS-1: the default stored as the person's choice reads "Set X to b: ..." (no "from b to b").
+  const from = storesReadValue(t) ? "" : ` from ${showFor(t.spec, t.current)}`;
+  return `Set ${t.what}${from} to ${showFor(t.spec, t.value)}${effect ? `: ${effect}` : ""}. Undo.`;
 }
 
 /** The same value in JSON terms (key order aside): a change from it to it changes nothing. */
@@ -1080,8 +1062,22 @@ function sameValue(a: unknown, b: unknown): boolean {
  * A change to the value already set is refused in words (design §5; the walks: "Set the
  * default autonomy for new projects from 3 to 3." was accepted and logged in Changes).
  */
+/**
+ * d1109-cred-screens (CS-1): a global key whose value in force is read from other settings
+ * (`currentOfPrefs`) and has nothing stored yet: storing the value it reads as is a change (the
+ * person picks the default preset Settings shows as used until they choose).
+ */
+function storesReadValue(t: Target): boolean {
+  return (
+    !!t.spec.currentOfPrefs &&
+    t.spec.scope === "global" &&
+    t.human.notify_prefs[t.spec.key] == null &&
+    sameValue(t.current, t.value)
+  );
+}
+
 function refuseNoChange(t: Target): void {
-  if (!sameValue(t.current, t.value)) return;
+  if (!sameValue(t.current, t.value) || storesReadValue(t)) return;
   const what = t.what.charAt(0).toUpperCase() + t.what.slice(1);
   throw new ForerunnerError("validation", `${what} is already ${showFor(t.spec, t.current)}.`, {
     details: { key: t.spec.key, unchanged: true },
@@ -1205,11 +1201,21 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
     const human = await ctx.store.human.get(ctx.humanId);
     return human?.notify_prefs[spec.replacedBy] != null ? CREDENTIAL_KEY_REPLACED : null;
   },
-  async undoRisk(_p, before, after) {
+  async undoRisk(_p, before, after, ctx) {
     const b = asObject(before);
     if (typeof b.key !== "string" || !Object.hasOwn(SETTING_SPECS, b.key)) return "low";
     const spec = settingSpec(b.key);
-    const restored = b.value ?? null;
+    let restored = b.value ?? null;
+    // C5-left-4 (d1109-cred-screens): an Undo back to nothing stored puts back the value the
+    // other settings read as (credential_policy: an earlier choice or the default), so its money
+    // is judged from that, never as the lowest rank.
+    if (restored === null && spec.currentOfPrefs && spec.scope === "global") {
+      const human = await ctx.store.human.get(ctx.humanId).catch(() => undefined);
+      if (human) {
+        const { [spec.key]: _stored, ...rest } = human.notify_prefs;
+        restored = spec.currentOfPrefs(rest as HumanRow["notify_prefs"]);
+      }
+    }
     if (spec.narrows?.(restored, asObject(after).value ?? null)) return "low";
     return settingRisk(spec, restored);
   },

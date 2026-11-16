@@ -24,6 +24,43 @@ export const CREDENTIAL_POLICIES = [
 
 export type CredentialPolicyId = (typeof CREDENTIAL_POLICIES)[number];
 
+/**
+ * The presets as a person reads them (d1109-cred-screens CS-1: the labels show the order), in
+ * Settings' options menu, the change card and the change log. One place: `@forerunner/commands`'
+ * `credentialPolicyWords` and the screens' words read these.
+ */
+export const CREDENTIAL_POLICY_LABELS: Record<CredentialPolicyId | "earlier", string> = {
+  subscription_then_wait: "Subscription first, then wait",
+  subscription_then_ask: "Subscription first, ask before API key",
+  subscription_then_key: "Subscription first, then API key",
+  key_then_subscription: "API key first, then subscription",
+  key_only: "API key only",
+  earlier: "your earlier choice",
+};
+
+/** A preset's label; anything else reads as the default's. */
+export function credentialPolicyLabel(v: unknown): string {
+  return typeof v === "string" && Object.hasOwn(CREDENTIAL_POLICY_LABELS, v)
+    ? CREDENTIAL_POLICY_LABELS[v as CredentialPolicyId]
+    : CREDENTIAL_POLICY_LABELS.subscription_then_wait;
+}
+
+/** What a preset does when the first credential stops, for the change card and the change log. */
+export function credentialPolicyEffectWords(v: unknown): string {
+  switch (v) {
+    case "subscription_then_ask":
+      return "when your subscription runs out, you are asked first before your API key does any work";
+    case "subscription_then_key":
+      return "when your subscription runs out, work goes on with your API key at once, at a cost per use";
+    case "key_then_subscription":
+      return "your API key does the work first, at a cost per use; when it stops, your subscription goes on";
+    case "key_only":
+      return "only your API key does the work, at a cost per use; when it stops, the work waits";
+    default:
+      return "when your subscription runs out, nothing moves until it can work again";
+  }
+}
+
 /** The setting's key in `human.notify_prefs`. */
 export const CREDENTIAL_POLICY_SETTING = "credential_policy";
 

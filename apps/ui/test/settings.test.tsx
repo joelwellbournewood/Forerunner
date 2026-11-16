@@ -224,7 +224,9 @@ describe("Settings", () => {
     // that change nothing (language, the model provider, chat.model): design §6 hides them.
     // polish-screens: each project's budget row too (Atlas and Beacon), as the daemon lists it.
     // d1109-chat-depth: "Chat asks first" (chat_ask_above) is one more.
-    expect(rows).toHaveLength(23);
+    // d1109-cred-screens (CS-2): "When my first choice runs out mid-session" is one less (the one
+    // choice is Basics' "Which Claude does the work").
+    expect(rows).toHaveLength(22);
     const advanced = screen.getByTestId("settings-advanced");
     for (const row of rows) {
       // Every row under Advanced names its scope; in Basics a project's row names the project

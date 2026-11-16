@@ -73,7 +73,8 @@ export const SETTING_LABELS: Record<string, string> = {
   push_unfinished_work: "Push unfinished work to GitHub",
   start_by_itself: "When work is ready",
   speed_quality_offset: "Speed or quality",
-  mid_session_limit: "When my first choice runs out mid-session",
+  // d1109-cred-screens (CS-1): the one place for the choice (Settings -> Basics).
+  credential_policy: "Which Claude does the work",
   code_commands: "Code tasks that need commands",
   web_access: "Web pages research may read",
 };
@@ -108,16 +109,6 @@ export const NOTIFY_CHANNELS = [
   { value: "telegram", label: "Telegram" },
   { value: "signal", label: "Signal" },
   { value: "push", label: "The phone app (push)" },
-] as const;
-
-/**
- * "When my first choice runs out mid-session" (U-078, the owner's decision of 2026-11-02): wait
- * (the default) or go on at once on the other credential, which moves plan-limit work onto money.
- */
-export const MID_SESSION_LIMITS = [
-  // d1109-starts-engine S-10 (ADR 0118): only the person's session goes on at the reset.
-  { value: "wait", label: "Wait for its reset; then your session goes on" },
-  { value: "use_other", label: "Use the other one at once (may cost money)" },
 ] as const;
 
 /**
@@ -200,8 +191,6 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
       return v === true ? "on" : "off";
     case "notify_channel":
       return option(NOTIFY_CHANNELS);
-    case "mid_session_limit":
-      return v === "use_other" ? MID_SESSION_LIMITS[1].label : MID_SESSION_LIMITS[0].label;
     case "merge_mode":
       return v === "after_review" ? MERGE_MODES[1].label : MERGE_MODES[0].label;
     case "start_by_itself":
@@ -380,14 +369,6 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
       );
     case "voice_alerts":
       return select(leaf, ON_OFF, asBool, boolInitial, {});
-    case "mid_session_limit":
-      return select(
-        leaf,
-        MID_SESSION_LIMITS,
-        (v) => v,
-        (c) => (c === "use_other" ? "use_other" : "wait"),
-        {},
-      );
     case "code_commands":
       return select(
         leaf,
