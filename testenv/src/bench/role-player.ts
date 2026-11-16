@@ -330,6 +330,8 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
   /** Runs (by run id) of a task that were made to fail / reviews made to reject. */
   const failedRuns = new Map<string, Set<string>>();
   const rejectedRuns = new Map<string, Set<string>>();
+  /** Gradings seen per task where a request carries no run id (the bench-api path). */
+  const reviewsOf = new Map<string, number>();
   /** Task titles seen in specialist runs: the critic's brief is "<title>: <outcome>". */
   const titles = new Set<string>();
   let callSeq = 0;
@@ -366,7 +368,18 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
         return criticAnswer(
           req,
           opts,
-          (key, runId) => pick(rejectedRuns, key, runId, opts.rejectTimes),
+          // C4b-left-4: the bench-api path sends no `origin`, so each grading of the task counts
+          // as its own review (keyed by the task and how many reviews it had), never one run
+          // that is sent back for good.
+          (key, runId) => {
+            let id = runId;
+            if (runId === "no-run-id") {
+              const n = (reviewsOf.get(key) ?? 0) + 1;
+              reviewsOf.set(key, n);
+              id = `${key}#review-${n}`;
+            }
+            return pick(rejectedRuns, key, id, opts.rejectTimes);
+          },
           titles,
         );
       case "chat":

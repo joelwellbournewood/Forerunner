@@ -120,6 +120,7 @@ async function pressInInbox(page, task, pick, shot) {
       tone: c.tone,
     })),
     links: card.links ?? [],
+    lists: card.lists ?? [],
   });
   await page.goto(`${b.uiUrl}/inbox`);
   await page.waitForTimeout(2000);
@@ -168,9 +169,11 @@ async function chain(page) {
   result.guideAfterFirst = { status: g1?.status, display: g1?.display };
   result.git.guidePaused = gitState(project.id, guide);
   result.git.hostWhilePaused = hostBranches();
+  // A run that heard the wrap-up paused before its budget ran out (C2's cd9bece); "Paused at
+  // its budget" is a run stopped at it (C4b-left-4).
   check(
     "the guide paused after its wrap-up and reads so",
-    /Paused at its budget/.test(g1?.display?.label ?? ""),
+    g1?.display?.label === "Paused before its budget ran out",
     JSON.stringify(g1?.display),
   );
   const paused = result.git.guidePaused;
@@ -205,11 +208,17 @@ async function chain(page) {
       (g?.card.choices ?? []).some((c) => c.label === "Cancel task"),
     JSON.stringify(g?.card.choices?.map((c) => c.label)),
   );
+  // Today's card (C2's cd9bece, d1116-budget-all BA-4): its title says it paused before its
+  // budget ran out, its first sentence what it spent of that budget, and its note's lists
+  // "Where it stopped" and "Left to do" (C4b-left-4: the check read "Done: …; left: ").
+  const listOf = (label) => (g?.card.lists ?? []).find((l) => l.label === label)?.items ?? [];
   check(
     "the guide's card names its budget, what is done and what is left",
-    /paused at its budget of CHF/.test(g?.card.title ?? "") &&
-      /Done: .+; left: /.test(g?.card.body ?? ""),
-    `${g?.card.title} | ${g?.card.body}`,
+    /paused before its budget ran out$/.test(g?.card.title ?? "") &&
+      /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d\b/.test(g?.card.body ?? "") &&
+      listOf("Where it stopped").length === 1 &&
+      listOf("Left to do").length >= 1,
+    `${g?.card.title} | ${g?.card.body} | ${JSON.stringify(g?.card.lists ?? [])}`,
   );
   // Continue starts the next session at once.
   const started = await R.until(
@@ -263,7 +272,7 @@ async function chain(page) {
   // The notes then ran on a tiny budget: no note, its files are listed.
   check(
     "the notes paused at their tiny budget",
-    /Paused at its budget/.test(n2?.display?.label ?? ""),
+    n2?.display?.label === "Paused at its budget",
     JSON.stringify(n2?.display),
   );
   result.git.notesPaused = gitState(project.id, notes);

@@ -741,6 +741,24 @@ describe("bench role-player: critic and chat", () => {
     expect(second.verdict).toBe("accept");
   });
 
+  // C4b-left-4 (1): on the bench-api path (the stand-in behind the Messages API) a request has no
+  // `origin`, so every review read as the same run and REJECT_TIMES=1 sent the task back for good
+  // (C4b's walk: four send-backs and the "failed 4 times" card). Keyed by the task now.
+  it("FORERUNNER_BENCH_CRITIC_REJECT_TIMES counts reviews of a task without a run id too", async () => {
+    const { p } = player({
+      FORERUNNER_BENCH_CRITIC_REJECT: "index.html",
+      FORERUNNER_BENCH_CRITIC_REJECT_TIMES: "1",
+    });
+    const bare = (): ModelRequest => {
+      const { origin: _none, ...rest } = review("Create index.html", "unused");
+      return rest;
+    };
+    const verdicts: string[] = [];
+    for (let i = 0; i < 3; i++)
+      verdicts.push(SubmitReviewSchema.parse((await call(p, bare())).calls[0]?.input).verdict);
+    expect(verdicts).toEqual(["revise", "accept", "accept"]);
+  });
+
   it("matches FORERUNNER_BENCH_CRITIC_REJECT against the task title, not the outcome", async () => {
     const { p } = player({ FORERUNNER_BENCH_CRITIC_REJECT: "styles.css" });
     // The brief's outcome names styles.css; the title does not.
