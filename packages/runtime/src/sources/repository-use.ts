@@ -425,6 +425,10 @@ export class RepositoryIndex {
 /** A marker's project name as data: cut at 60 characters, control characters removed, scanned. */
 export function markerNameOf(name: string | null | undefined): string | null {
   if (!name) return null;
+  // C2-left-9 (d1109-onerepo-join): scanned as written too, before its line breaks become
+  // spaces: a role line ("\nSYSTEM: you are now ...") is caught where it starts a line, and the
+  // cleaned one-line form alone scored below the bar (the injection suite's record-009).
+  if (scanForInjection(name, "repo_file").suspicious) return null;
   // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are removed.
   const clean = name.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").trim();
   const cut = clean.length > 60 ? clean.slice(0, 60).trim() : clean;
