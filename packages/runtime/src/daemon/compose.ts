@@ -4145,14 +4145,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     events.on("session", poke);
     events.on("project", poke);
     // A start the scheduler queued (a person's Start behind another project's session) or
-    // dropped moves the indicator's ' · then Garden site'.
+    // dropped moves the indicator's ' · then Garden site'. The scheduler's own promise is
+    // returned as it is (the poke rides beside it): an async wrapper added a step to every
+    // start, the scheduler's internal ones too, and changed the order a start and the job
+    // before it finished in (sync-gate.test.ts's consolidation read "queued").
     const requestStartOf = scheduler.requestStart.bind(scheduler);
-    scheduler.requestStart = async (...args) => {
-      try {
-        return await requestStartOf(...args);
-      } finally {
-        poke();
-      }
+    scheduler.requestStart = (...args) => {
+      const started = requestStartOf(...args);
+      started.then(poke, poke);
+      return started;
     };
     const cancelPendingOf = scheduler.cancelPending.bind(scheduler);
     scheduler.cancelPending = (...args) => {
