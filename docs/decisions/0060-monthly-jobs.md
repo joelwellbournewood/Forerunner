@@ -142,3 +142,9 @@ fired day or month is written only when its start leaves the line (started or qu
 quiet hours held, or that was refused, comes again at the next tick; before, the key was written
 first and a held start was lost for the month. Quiet hours hold every start the person did not
 press, schedules included.
+
+The critic's monthly calibration is the one start nobody pressed on this computer (ADR 0118 point
+11, the owner's answer 6 of 2026-11-09 keeps it monthly and on): it grades the golden eval set,
+does no project work and spends within its own cap. Quiet hours hold it like every schedule; its
+fired month is written once its start leaves the line, so a held calibration still runs that
+month, once.

@@ -5,13 +5,30 @@ Status: accepted
 
 ## Context
 
-The owner's decision D6 of 2026-11-09: "only the user should start the session, the user clearly
-states when a session will run", with option C for work made ready while a session runs ("it
-joins the running session if it fits, else it waits for the next Start"), the hands-off setting
-optional and off by default ("Off by default with the hands-off setting optional. Yes, that
-sounds good."), and, for a session the person started: "A session the person started keeps
-going by itself until its work is done, including after a credential wait inside it". CI results
-and pull request comments start nothing, also with the setting on ("fine", answer 9).
+The owner's decision D6 of 2026-11-09 (`/tmp/frbench/owner-decisions-2026-11-09.md`, quoted as
+written). On when sessions start: "the management of the tasks should be able to feed into
+sessions that are already running when appropriate, and it should be dynamic as much as possible.
+But it should also be the case that the user clearly states when a session will run, such that
+they could maybe queue up tasks and then change things and then also give some text context into
+the chat or to tell the project something and only then run a session. Because now it might run
+sessions when I'm in the middle of giving it instructions but haven't yet kind of fully figured
+out what I wanted to do, and maybe I will also tell it things in between sessions." On work made
+ready while a session runs, option C ("Join only if it fits"): "the session keeps its promise and
+spare budget isn't wasted, I think that's probably the best." The session lead then proposed that
+the person says when a session starts, an optional "start by itself when work is ready" setting
+off by default, and that everything else prepares work; the owner confirmed it: "All this sounds
+good except the status line that notifies you if work has waited a few hours. I think that's not
+necessary." and "Try to build those in." (the session lead's record of that confirmation: "Only
+when you say so" is the default, the hands-off setting optional, off). On credentials, the
+owner's answer 7b: "It should definitely not automatically do something even when told to wait or
+showing that it is waiting." The session lead's notes after the run C designs record what the
+confirmation already answered for a session the person started (their words, not the owner's): it
+"keeps going by itself until its work is done, including after a credential wait inside it: when
+the credential is back (the reset), that session goes on by itself (that is what 'wait' means)
+... A NEW session after a stop the person did not start still needs the person (or the hands-off
+setting)." Answer 9 on pull request comments and CI results with the setting on: "fine" (they
+start no session). Answer 6 on the critic's monthly calibration: "sure, but also please explain
+what function this serves." (it stays monthly and on, and the running-session bar shows it).
 
 Before this decision every answer started paid work: `resumeWork` (`session/resume-work.ts`)
 asked the scheduler for a start with a non-person trigger after Try again, Go ahead without, Send
@@ -46,7 +63,12 @@ schedules wrote their fired key before their start left the line; a start carrie
    running.", "Ready: it joins this session if budget is left after its own tasks, else your
    next Start.", "Ready: it runs at your next Start.", "Ready: sessions are stopped; it runs at
    your next Start once you allow them again."). A card's Done line keeps the outcome
-   (`change_card.start`) and says it ("Trying "X" again: it runs at your next Start.").
+   (`change_card.start`) and says it ("Trying "X" again: it runs at your next Start."). An Inbox
+   option that prepares work says before it is pressed what pressing it does, read when the card
+   is shown by the same steps `prepareWork` takes (`preparedContextOf`, `preparedExplain`):
+   "...; it joins the running session if it fits." while a session of the project runs, "...; a
+   session starts for it by itself." with the hands-off setting on, "...; it runs at your next
+   Start." otherwise.
 4. **A session's promise** (`session/promise.ts`, `session/live-sessions.ts`): at its start a
    session promises the runnable tasks and the followers its work budget holds after them, in the
    plan's order (`cutFollowers`); the Start dialog shows the same split (`laterBeyond`: "1 more
@@ -67,7 +89,10 @@ schedules wrote their fired key before their start left the line; a start carrie
    credential keeps one continuation with the rest of its budget; at the reset (or when a new
    credential is saved, or another credential may serve the work) the wake starts it once
    (`by: "continuation"`, `trigger: "budget_reset"`), its first line "Goes on with your session
-   of 14:05.". Quiet hours hold it; Cancel (`POST /projects/:id/continuation/cancel`), Stop all
+   of 14:05.". Quiet hours hold it, and every sentence that says when it goes on (the session's
+   end, the task rows, the log, the project's status, the Start check) names the later of the
+   reset and the end of the quiet hours ("Waits until 17:00 (after your quiet hours); then your
+   session goes on."). Cancel (`POST /projects/:id/continuation/cancel`), Stop all
    and removing the project drop it; none is kept for a session the person stopped, one that was
    wrapping up, or one with nothing of its budget left. One wait per project: a Start pressed
    while it waits starts nothing and says when it goes on ("Your session of 10:00 goes on by
@@ -88,6 +113,23 @@ schedules wrote their fired key before their start left the line; a start carrie
    mid-run; your note goes into its next attempt.') and the note it carries is kept. The
    estimate the session promised stays as planned (re-pricing it at the claim is left: the
    area's report names it).
+10. **A Start pressed while the credential is out is kept** ("Start at 15:40",
+   `RuntimeApp.continuations.keepStart`, `keepStartAtReset`): when the Claude credential the work
+   needs rests at its usage limit, nothing is kept for the project and no session of it runs,
+   `POST /sessions` (the Start dialog, Continue where it stopped, the phone) keeps one person
+   start on the wait (`kept.by: "person"`, with the budget, the session it continues and the
+   note given) and answers `kept` with when ("A session of Quote page starts at 15:40."); no
+   session runs now (before, one ran only to meet the wait). At the stop's end the wake starts it
+   once, by the person: quiet hours do not hold it, since the person chose that time. The Start
+   button reads "Start at 15:40" and the project's status "Starts at 15:40 (your subscription's
+   limit): 1 task"; Cancel the wait drops it like a continuation. It survives a restart and is
+   made once.
+11. **The one exception on this computer: the critic's monthly calibration.** It is a schedule
+   nobody pressed Start for (on by default, `by: "schedule"`, ADR 0060): it grades the golden
+   eval set so the critic's catch rate and drift are known, does no project work and spends
+   within its own cap. The owner kept it monthly and on (answer 6); quiet hours hold it like every
+   schedule, and the running-session indicator shows it with words saying what it does
+   (d1109-run-visible, sub-run C5).
 
 ## Consequences
 
@@ -103,6 +145,15 @@ schedules wrote their fired key before their start left the line; a start carrie
   start fails).
 - The chat's tool text grew by 156 tokens a turn (the four task moves' clause, `session_start`'s
   read-back and `settings_set`'s new key).
+- **Known gap: the cloud runner.** `services/cloud-runner/src/inbox-trigger.ts` still asks its
+  scheduler for a session with trigger `message` on a new message from another agent or an
+  answered request (spec E.1), so an answer given while a project runs on the cloud runner
+  starts work there. The cloud runner was out of scope this round; it is brought in line with
+  this decision in a later round. Nothing on this computer depends on it.
+- **Known gap: a start said in chat during a stop.** Chat's `session.start` (after its yes) is
+  not kept for the reset as a Start pressed in the dialog is (point 10): its session meets the
+  wait and keeps the person's continuation, which quiet hours then hold. Its read-back and its
+  words stay true.
 
 ## Alternatives considered
 

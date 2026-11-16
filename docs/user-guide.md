@@ -905,7 +905,10 @@ Answering never starts a session: only you do (Start, Approve and start, Continu
 "run it now" in chat after you said yes, a schedule you set). An answer that makes a task ready
 joins the session that is running if that session's budget has room for it; otherwise it waits
 for your next Start, and the card's Done line says which ("Trying "Write the FAQ" again: it runs
-at your next Start."). If you want work you make ready to start by itself, turn on **When work is
+at your next Start."). The option itself says so before you press it, as things stand when you
+look: "Tries again with your note, if any; it joins the running session if it fits." while a
+session of the project runs, "...; it runs at your next Start." when none does, and "...; a
+session starts for it by itself." with the setting below on. If you want work you make ready to start by itself, turn on **When work is
 ready: Start a session by itself** for the project in Settings (it asks you once; never in your
 quiet hours or while sessions are stopped, and never for work the agent made ready itself). CI
 results and pull request comments never start a session; the next session you start reads them.
@@ -1004,7 +1007,9 @@ hour when it gives none), and the session log says so in one sentence. For tasks
   limit); then your session goes on.". Each waiting task's row reads "Waits until 15:40, your
   subscription's limit", and at that time your session goes on by itself, once, with the rest of
   its budget (its first line: "Goes on with your session of 14:05."), also after Forerunner was
-  closed and opened again. Your quiet hours hold it until they end; **Cancel** on the Start dialog
+  closed and opened again. Your quiet hours hold it until they end, and then every line names
+  their end instead of the reset ("Waits until 17:00 (after your quiet hours); then your session
+  goes on."); **Cancel** on the Start dialog
   or Stop all drops it, and then its tasks run at your next Start. A session you stopped does not
   go on, and work you did not start a session for waits for your next Start ("; then it runs at
   your next Start."). The session log names a task as started only
@@ -1034,10 +1039,15 @@ new API key: 2 tasks"), and so does the Start dialog ("Nothing can run until you
 key in Settings.", with **Save a new key**) instead of what a session would run.
 Opening the Start dialog changes nothing: when your credential rests until a reset and no
 session has met that yet, the dialog says "Nothing can run until 15:40 (your API key's limit).
-Press Start and the work starts then." and **Start** stays on; press it (or **Continue where it
-stopped**) and your session goes on by itself at 15:40 (then the dialog says "Nothing can run
-until 15:40 (your API key's limit); then your session goes on.", and a second Start says "Your
-session of 09:00 goes on by itself at 15:40."). Only looking starts nothing. The
+Press Start and the work starts then." and the button reads **Start at 15:40**; press it (or
+**Continue where it stopped**) and your Start is kept: no session runs now, the dialog says "A
+session of Quote page starts at 15:40.", the project's line reads "Starts at 15:40 (your API key's
+limit): 1 task", and at 15:40 the session starts once, as yours (your quiet hours do not hold
+it: you chose that time), also after Forerunner was closed and opened again. Then the dialog
+says "Nothing can run until 15:40 (your API key's limit); then your session goes on." with
+**Cancel the wait**, and a second Start says "A session of Quote page starts at 15:40.". A start
+you ask for in chat during such a wait runs a session that meets the wait instead, and your
+session then goes on at the reset. Only looking starts nothing. The
 project's line says it too: "Ready: 1 task; nothing runs until 15:40 (your API key's limit)"
 with **Continue**, and where New task, the plan card or Settings say where a specialist runs,
 they say "Waits until 15:40 (your API key's limit). Press Start and the work starts then."

@@ -720,7 +720,13 @@ only if its budget has room (`start-session-join`). The Tasks tab's Make ready a
 again: ..." (`lib/task-actions.ts`), and every action's line comes from the daemon. Settings has
 the project's "When work is ready" (`start_by_itself`: "Wait for my Start" or "Start a session by
 itself", `SettingsFields.tsx`). The client's `cancelContinuation(projectId)` is `POST
-/projects/:id/continuation/cancel`, and `startSession` takes `continues`. The billing order's
+/projects/:id/continuation/cancel`, and `startSession` takes `continues`. While the work's
+Claude credential rests and nothing is kept, the Start button reads the check's `startLabel`
+("Start at 15:40"); a Start then answers `kept` and the dialog's notice is the daemon's sentence
+("A session of Quote page starts at 15:40.", no Open the session). The Inbox's explains come from
+the daemon read when shown (a running session, the hands-off setting); the fake daemon mirrors
+them from its sessions and `start_by_itself:<project>` setting, gives `startLabel`, and keeps a
+Start on a startable wait as the daemon does. The billing order's
 resting line says "your session that waits for it goes on then". The fake daemon answers cards as
 prepared (`change_card.start: "waits_start"`, so their Done lines read "...: it runs at your next
 Start."; Mark done anyway only when work after it can run), cuts `later` by the work budget into
