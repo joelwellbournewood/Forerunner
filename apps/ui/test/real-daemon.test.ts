@@ -10767,6 +10767,8 @@ describe("leftovers7-web: the Start check names a credential wait (R-startcred)"
         // W15-78 (before: "Nothing can run yet. Waits for a new API key: save one in Settings.").
         sentence: "Nothing can run until you save a new API key in Settings.",
         action: { kind: "link", label: "Save a new key", to: "/setup" },
+        // d1109-starts-engine S-10: the person's session waits to go on; Cancel the wait is offered.
+        kept: true,
       });
       // R-runsonrefused: New task's line (and the plan card's) says the wait, never "Runs on
       // your API key" for a key Anthropic refused.

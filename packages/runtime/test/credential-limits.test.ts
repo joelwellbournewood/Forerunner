@@ -525,6 +525,9 @@ describe("credential waits: the Start check, another credential, a failed start,
         // key: save one in Settings.").
         sentence: "Nothing can run until you save a new API key in Settings.",
         action: { kind: "link", label: "Save a new key", to: "/setup" },
+        // d1109-starts-engine S-10: the person's session that waited is kept on the wait (it goes
+        // on once a credential serves); the dialog offers Cancel the wait.
+        kept: true,
       });
       // R-refusedstays: the person adds a Claude subscription instead of a new key. With no
       // order chosen, task runs use the subscription first: the work starts by itself on it.
