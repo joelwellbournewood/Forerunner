@@ -10,6 +10,7 @@ import {
   runText,
   runViews,
   runWhat,
+  startOfferOf,
   stopChoices,
 } from "../src/daemon/run-indicator.ts";
 
@@ -392,5 +393,26 @@ describe("runViews (V-1)", () => {
       expect(v.text).not.toContain(s.id);
       expect(v.text).not.toMatch(/USD|\$/);
     }
+  });
+});
+
+/**
+ * d1109-run-visible V-6: which answered cards' Done lines offer Start (the answer readied work
+ * for the person's next Start); the Inbox hides it while a session of the project runs.
+ */
+describe("the Done line's Start (V-6)", () => {
+  it("offers it after an answer readied work for the next Start, and only then", () => {
+    for (const start of ["waits_start", "stopping", "failed"])
+      expect(startOfferOf({ start }, "answered", "p1"), start).toBe(true);
+    for (const start of ["joined", "no_room", "waits_continuation", "stopped_all", "started"])
+      expect(startOfferOf({ start }, "answered", "p1"), start).toBe(false);
+    for (const start of ["queued", "deferred", "nothing_to_run", undefined])
+      expect(startOfferOf({ start }, "answered", "p1"), String(start)).toBe(false);
+  });
+  it("never for an open card, a card with no project, or a start the hands-off setting made", () => {
+    expect(startOfferOf({ start: "waits_start" }, "open", "p1")).toBe(false);
+    expect(startOfferOf({ start: "waits_start" }, "answered", null)).toBe(false);
+    expect(startOfferOf({ start: "failed", start_by: "hands_off" }, "answered", "p1")).toBe(false);
+    expect(startOfferOf(null, "answered", "p1")).toBe(false);
   });
 });

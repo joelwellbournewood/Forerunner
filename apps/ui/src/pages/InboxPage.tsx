@@ -37,6 +37,7 @@ import { relativeTime } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useScrollToHash } from "../lib/use-hash-scroll.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
+import { StartSessionDialog } from "./project/StartSessionDialog.tsx";
 
 /** Blocking first, then newest first. */
 export function sortRequests(requests: HumanRequestView[]): HumanRequestView[] {
@@ -646,6 +647,7 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
             >
               {d.line}
               <FollowUp request={d.request} onDone={inbox.reload} />
+              <DoneStart request={d.request} />
             </li>
           ))}
         </ul>
@@ -790,6 +792,50 @@ function FollowUp({ request, onDone }: { request: HumanRequestView; onDone: () =
       <span className="text-xs text-neutral-600 dark:text-neutral-400">{follow.explain}</span>
       {error ? <span role="alert">{error}</span> : null}
     </span>
+  );
+}
+
+/**
+ * d1109-run-visible (V-6): Start beside a Done line whose answer readied work for the person's
+ * next Start (`startOffer`), so the start is one click from where they answered; it opens that
+ * project's Start dialog (nothing starts until its own Start). Never while a session of that
+ * project runs or waits to go on (the run indicator's list, live on `run.changed`).
+ */
+function DoneStart({ request }: { request: HumanRequestView }) {
+  const projectId = request.projectId;
+  const project = useUiState((s) => s.projects.find((p) => p.id === projectId) ?? null);
+  const busy = useUiState((s) => s.running.some((r) => r.projectId === projectId));
+  const [open, setOpen] = useState(false);
+  if (!request.startOffer || !projectId || !project) return null;
+  return (
+    <>
+      {busy ? null : (
+        <span className="ml-2 inline-flex flex-wrap items-center gap-2">
+          <Button
+            variant="primary"
+            onClick={() => setOpen(true)}
+            data-testid="done-line-start"
+            title={`Opens Start for ${project.name}.`}
+          >
+            Start
+          </Button>
+          <span
+            className="text-xs text-neutral-600 dark:text-neutral-400"
+            data-testid="done-line-start-explain"
+          >
+            Opens Start for {project.name}.
+          </span>
+        </span>
+      )}
+      {open ? (
+        <StartSessionDialog
+          open
+          onClose={() => setOpen(false)}
+          projectId={project.id}
+          reference={project.budget}
+        />
+      ) : null}
+    </>
   );
 }
 

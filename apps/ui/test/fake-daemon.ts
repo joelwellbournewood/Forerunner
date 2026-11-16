@@ -155,7 +155,7 @@ import {
   sinceLines,
 } from "@forerunner/runtime/daemon/project-status";
 import { requestWords } from "@forerunner/runtime/daemon/request-words";
-import { runText, stopChoices } from "@forerunner/runtime/daemon/run-words";
+import { runText, startOfferOf, stopChoices } from "@forerunner/runtime/daemon/run-words";
 import {
   quoted,
   TAKE_OUT_NOTICE_PREFIX,
@@ -1531,7 +1531,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ...(r.status === "open" && r.projectId ? preparedOfFake(r.projectId) : {}),
       },
     );
-    return { ...r, ...words };
+    // d1109-run-visible (V-6): as the daemon's `requestView`, the Done line's Start.
+    const offer = startOfferOf(r.changeCard, r.status, r.projectId) ? { startOffer: true } : {};
+    return { ...r, ...words, ...offer };
   };
 
   /**

@@ -118,6 +118,7 @@ import {
   workingOn,
 } from "./project-status.ts";
 import { type RequestWordsContext, requestWords } from "./request-words.ts";
+import { startOfferOf } from "./run-words.ts";
 import {
   outcomeOfHandoff,
   type PlanningFacts,
@@ -920,6 +921,8 @@ export function requestView(
     details: words.details,
     ...(words.lists?.length ? { lists: words.lists } : {}),
     outcome: words.outcome,
+    // d1109-run-visible (V-6): the Done line's Start.
+    ...(startOfferOf(r.change_card, r.status, r.project_id) ? { startOffer: true } : {}),
     answeredAt: r.answered_at ?? null,
     followUp: words.followUp ?? null,
   };

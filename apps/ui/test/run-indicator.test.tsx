@@ -535,3 +535,112 @@ describe("d1109-run-visible: the page of a session that ended to wait (V-5), its
     expect(document.body.textContent ?? "").not.toMatch(/\b(info|escalation) \(\d+\)/);
   });
 });
+
+describe("d1109-run-visible: the Inbox's Done line offers Start (V-6)", () => {
+  /** Atlas's failed-task card, as `/inbox` serves it after the last try. */
+  const retryCard = () => ({
+    id: "req_retry",
+    projectId: "proj_atlas",
+    projectName: "Atlas",
+    taskId: "task_3",
+    taskTitle: "Decide the versioning scheme",
+    sessionId: "sess_1",
+    kind: "approval",
+    why: '"Decide the versioning scheme" failed 4 times. The writer said: "The work needs something I do not have here."',
+    steps: ["[high] The worker changed nothing: Do the work the brief asks for."],
+    options: ["Try again", "Mark done anyway", "Cancel task"],
+    blocking: true,
+    risk: "high" as const,
+    changeCard: {
+      key: "critic:signoff",
+      task_id: "task_3",
+      review_id: "rev_1",
+      run_id: "run_1",
+      finding_ids: ["f_1"],
+      reason: "retry_ladder_exhausted",
+      title: '"Decide the versioning scheme" failed 4 times',
+      said: "The work needs something I do not have here.",
+      said_by: "writer",
+      applied_at: null,
+    },
+    status: "open",
+    answer: null,
+    createdAt: "2026-10-31T09:00:00.000Z",
+    version: 1,
+  });
+  const setUp = () => {
+    const harness = createHarness();
+    harness.daemon.state.requests.unshift(retryCard());
+    const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+    if (t3) t3.status = "needs_human";
+    return harness;
+  };
+  const press = async (user: ReturnType<typeof userEvent.setup>, label: string) => {
+    const card = (await screen.findAllByTestId("request")).find(
+      (r) => r.getAttribute("data-request-id") === "req_retry",
+    ) as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: label }));
+    const yes = screen.queryByTestId("choice-confirm-yes");
+    if (yes) await user.click(yes);
+    return screen.findByTestId("done-line");
+  };
+
+  it("an answer that readies work for the next Start offers Start beside its Done line; Start opens that project's Start dialog", async () => {
+    const user = userEvent.setup();
+    const harness = setUp();
+    renderApp("/inbox", harness, liveEvents(harness));
+    const done = await press(user, "Try again");
+    expect(done).toHaveTextContent(
+      'Done: Trying "Decide the versioning scheme" again: it runs at your next Start.',
+    );
+    const start = await within(done).findByTestId("done-line-start");
+    expect(start).toHaveTextContent("Start");
+    expect(within(done).getByTestId("done-line-start-explain")).toHaveTextContent(
+      "Opens Start for Atlas.",
+    );
+    await user.click(start);
+    const dialog = await screen.findByTestId("start-session-dialog");
+    expect(dialog).toHaveTextContent("Start a session");
+    // Nothing starts until the person presses the dialog's own Start.
+    expect(postedCalls(harness, "/sessions")).toHaveLength(0);
+  });
+
+  it("never while a session of that project runs: Start goes when one starts, and comes back when it ends", async () => {
+    const user = userEvent.setup();
+    const harness = setUp();
+    renderApp("/inbox", harness, liveEvents(harness));
+    const done = await press(user, "Try again");
+    await within(done).findByTestId("done-line-start");
+    const live: RunningView = {
+      key: "sess_live",
+      sessionId: "sess_live",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      state: "working",
+      what: 'the coder works on "Decide the versioning scheme"',
+      text: 'Atlas · the coder works on "Decide the versioning scheme"',
+      since: new Date().toISOString(),
+      stop: ["after", "now", "all"],
+      cancel: false,
+      nextProject: null,
+      explain: null,
+    };
+    await act(async () => {
+      for (const l of harness.daemon.state.listeners) l("run.changed", [live]);
+    });
+    await waitFor(() => expect(within(done).queryByTestId("done-line-start")).toBeNull());
+    await act(async () => {
+      for (const l of harness.daemon.state.listeners) l("run.changed", []);
+    });
+    expect(await within(done).findByTestId("done-line-start")).toBeInTheDocument();
+  });
+
+  it("no Start for an answer that readied nothing (Cancel task)", async () => {
+    const user = userEvent.setup();
+    const harness = setUp();
+    renderApp("/inbox", harness, liveEvents(harness));
+    const done = await press(user, "Cancel task");
+    expect(done).toHaveTextContent(/^Done: /);
+    expect(within(done).queryByTestId("done-line-start")).toBeNull();
+  });
+});

@@ -249,6 +249,29 @@ export const RUN_EVENT_TYPES = [
 export { CANCEL_WAIT_EXPLAIN } from "./run-wait-words.ts";
 
 /**
+ * The prepared outcomes (`change_card.start`, d1109-starts-engine S-2) after which the answered
+ * work waits for the person's next Start: no session of the project took it, none starts for it
+ * by itself. "stopped_all" is not one (Start is refused until sessions are allowed again).
+ */
+const START_OFFER_OUTCOMES: ReadonlySet<string> = new Set(["waits_start", "stopping", "failed"]);
+
+/**
+ * d1109-run-visible (V-6): whether an answered card's Done line offers Start (the person's start
+ * is one click from where they answered). True when its answer readied work that runs at the
+ * person's next Start and the card names its project; the Inbox then hides it while a session
+ * of that project runs (the run indicator's list). Never for an open card, a session the
+ * hands-off setting starts, or an answer that started a session or readied nothing.
+ */
+export function startOfferOf(card: unknown, status: string, projectId: string | null): boolean {
+  if (status === "open" || !projectId) return false;
+  if (!card || typeof card !== "object" || Array.isArray(card)) return false;
+  const c = card as { start?: unknown; start_by?: unknown };
+  return (
+    typeof c.start === "string" && START_OFFER_OUTCOMES.has(c.start) && c.start_by !== "hands_off"
+  );
+}
+
+/**
  * C3-left-8: an ended session's stored result promises "...; then your session goes on." while
  * its continuation is kept; once nothing is kept (Cancel, Stop all), the words follow what is true
  * now: "...; then it runs at your next Start." (the wait sentences' own two forms).

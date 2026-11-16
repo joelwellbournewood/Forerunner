@@ -3433,6 +3433,12 @@ describe("the UI client against the real daemon: a task that fails gets one card
     expect(tried.outcome).toBe(
       'Trying "Write the scope in docs/scope.md" again: it runs at your next Start.',
     );
+    // d1109-run-visible (V-6): its Done line offers Start (the Inbox hides it while a session of
+    // the project runs), on the answer and on the Inbox's answered card alike.
+    expect(tried.startOffer).toBe(true);
+    expect((await client.inbox(me.id)).requests.find((r) => r.id === card?.id)?.startOffer).toBe(
+      true,
+    );
     expect((await sessionsOf()).length).toBe(sessionsBefore);
     await client.startSession({ agentId, projectId: project.id });
     await eventually(

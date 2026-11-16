@@ -961,6 +961,12 @@ export const HumanRequestView = z.object({
    */
   lists: z.array(z.object({ label: z.string(), items: z.array(z.string()) })).optional(),
   outcome: z.string().nullable().optional(),
+  /**
+   * d1109-run-visible (V-6): the answer readied work that runs at the person's next Start
+   * (`run-words.ts` `startOfferOf`): the Inbox's Done line offers Start for the card's project
+   * while no session of it runs. Absent otherwise and from an older daemon.
+   */
+  startOffer: z.boolean().optional(),
   answeredAt: z.string().nullable().optional(),
   /** Answers that came after their task moved on: "Redo with these answers" (design §3.8). */
   followUp: z
