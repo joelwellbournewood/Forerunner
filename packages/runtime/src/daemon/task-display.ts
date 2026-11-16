@@ -13,6 +13,7 @@ import type {
 import { mergeModeOf } from "../loop/merge-mode.ts";
 import {
   type CredentialWaitWords,
+  continuationGoesOnAt,
   refusedCredentialWords,
   waitRowWords,
 } from "../session/credential-wait.ts";
@@ -190,6 +191,12 @@ export async function credentialWaitRow(
     const refused = typeof limits.refusedAt === "string";
     if (!until && !refused) continue;
     const human = await store.human.get(row.human_id).catch(() => undefined);
+    // S-10: the person's waiting session goes on when their quiet hours end, if they hold it
+    // past the reset (a continuation; a Start the person kept is never held: they chose the time).
+    const goesOnAt =
+      entry.kept?.by === "continuation" && !refused
+        ? continuationGoesOnAt(human, until)
+        : undefined;
     return waitRowWords(
       {
         reason: refused ? "refused" : "limit",
@@ -202,6 +209,8 @@ export async function credentialWaitRow(
         nowMs: now,
         // S-10: the person's session waits to go on (a kept continuation or start).
         goesOn: !!entry.kept,
+        ...(goesOnAt ? { goesOnAt } : {}),
+        ...(entry.kept?.by === "person" ? { startKept: true } : {}),
       },
     );
   }

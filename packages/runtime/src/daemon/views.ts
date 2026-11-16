@@ -43,6 +43,7 @@ import { CREDENTIAL_REFUSED_KEY } from "../session/credential-wait.ts";
 import { runCapOf } from "../session/executor.ts";
 import { aboutWords, moneyWords } from "../session/money-words.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
+import type { PreparedContext } from "../session/prepared-work.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
 import { isIntakeSession } from "../session/recovery.ts";
 import type { LastSessionOutcome } from "../session/result.ts";
@@ -174,6 +175,8 @@ export interface ProjectCardFacts {
     text: string;
     save: { label: string; to: string } | null;
     startable?: boolean;
+    /** S-10: a Start the person pressed is kept for the reset ("Starts at 15:40 (...)"). */
+    startsAt?: string;
   } | null>;
   /** OR-07: the Overview's line about the repository (`RepositoryUse.overviewOf`). */
   repositoryElsewhere?: (project: ProjectRow) => Promise<ProjectCard["repositoryElsewhere"]>;
@@ -851,12 +854,22 @@ export function requestView(
 }
 
 /**
+ * What an open card's options that prepare work meet now (d1109-starts-engine S-9): the running
+ * session, the person's waiting session, the hands-off setting, Stop all and the quiet hours, as
+ * `prepareWork` would meet them (the daemon's `preparedContextOf`). Absent: worded as with no
+ * session running and the setting off.
+ */
+export type PreparedContextReader = (projectId: string) => Promise<PreparedContext>;
+
+/**
  * What a card needs beyond its row, read now (design §5 rule 4): its project's and task's
- * names, the task's status, and the tasks not done that wait on it.
+ * names, the task's status, the tasks not done that wait on it, and for an open card what its
+ * options that prepare work meet now (`prepared`, S-9).
  */
 export async function requestContexts(
   store: StateStore,
   rows: readonly HumanRequestRow[],
+  prepared?: PreparedContextReader,
 ): Promise<
   Map<
     string,
@@ -878,6 +891,17 @@ export async function requestContexts(
   // L-20: which projects work on a repository (the plan card's line while Approve and start
   // writes its docs pull request).
   const onRepository = new Map<string, boolean>();
+  // S-9: read once per project, for its open cards only (an answered card offers nothing).
+  const preparedOf = new Map<string, Promise<PreparedContext>>();
+  const preparedFor = async (r: HumanRequestRow): Promise<PreparedContext> => {
+    if (!prepared || r.status !== "open" || !r.project_id) return {};
+    let p = preparedOf.get(r.project_id);
+    if (!p) {
+      p = prepared(r.project_id).catch(() => ({}));
+      preparedOf.set(r.project_id, p);
+    }
+    return p;
+  };
   for (const r of rows) {
     if (r.project_id && !projects.has(r.project_id)) {
       const p = await store.project.get(r.project_id);
@@ -913,10 +937,12 @@ export async function requestContexts(
         waiting,
         movedByYou: !!task?.author_human && !task.author_agent,
         ...(budgetOpen && task ? { heldWork: await taskHeldWork(store, task) } : {}),
+        ...(await preparedFor(r)),
       });
       continue;
     }
     out.set(r.id, {
+      ...(await preparedFor(r)),
       projectName: r.project_id ? (projects.get(r.project_id) ?? null) : null,
       taskTitle: null,
       ...(r.project_id && onRepository.get(r.project_id) ? { projectRepository: true } : {}),
@@ -951,12 +977,16 @@ async function credentialGoesOnFor(store: StateStore, r: HumanRequestRow): Promi
   return other?.kind ?? null;
 }
 
-/** `requestView` of each row with what it needs read now (`requestContexts`). */
+/**
+ * `requestView` of each row with what it needs read now (`requestContexts`); `prepared` is the
+ * daemon's reader of what prepared work meets now (S-9), passed wherever a person reads a card.
+ */
 export async function requestViews(
   store: StateStore,
   rows: readonly HumanRequestRow[],
+  prepared?: PreparedContextReader,
 ): Promise<HumanRequestView[]> {
-  const ctx = await requestContexts(store, rows);
+  const ctx = await requestContexts(store, rows, prepared);
   return rows.map((r) => {
     const c = ctx.get(r.id) ?? { projectName: null, taskTitle: null };
     const { projectName, taskTitle, ...rest } = c;

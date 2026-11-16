@@ -641,8 +641,8 @@ describe("Project page", () => {
 
 /**
  * leftovers7-tailrun, wave 13 (TR-2): looking at the Start check records nothing, so a reset no
- * Start kept a wait for says what Start does, and Start stays pressable: its session keeps the
- * wait and the work starts by itself at the reset.
+ * Start kept a wait for says what Start does, and Start stays pressable: the Start is kept for the
+ * reset and starts once then (d1109-starts-engine S-10, "Start at 09:30").
  */
 describe("leftovers7-tailrun, wave 13: Start keeps a credential wait, looking does not (TR-2)", () => {
   it("the dialog says what Start does and Start sends the start", async () => {
@@ -666,12 +666,19 @@ describe("leftovers7-tailrun, wave 13: Start keeps a credential wait, looking do
     // never started by itself.
     const start = within(dialog).getByTestId("confirm-start-session");
     await waitFor(() => expect(start).toBeEnabled());
+    // d1109-starts-engine S-10 (ADR 0118): the button says when the start runs, and the Start is
+    // kept for the reset (no session now); the notice says when, in the daemon's words.
+    expect(start).toHaveTextContent(/^Start at 09:30$/);
     await user.click(start);
     await waitFor(() => expect(postedCalls(harness, "/sessions")).toHaveLength(1));
     expect(postedCalls(harness, "/sessions")[0]?.body).toMatchObject({
       projectId: "proj_atlas",
       trigger: "manual",
     });
+    expect(await within(dialog).findByTestId("start-session-notice")).toHaveTextContent(
+      /^A session of Atlas starts at 09:30\.\s*$/,
+    );
+    expect(within(dialog).queryByTestId("start-session-open")).toBeNull();
   });
 
   it("a wait already kept says the person's session goes on, and Start stays off", async () => {

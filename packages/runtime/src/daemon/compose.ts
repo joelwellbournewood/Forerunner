@@ -173,7 +173,7 @@ import {
   VOICE_NO_PLAYER,
   VoiceChannel,
 } from "../notifications/index.ts";
-import { isQuietAt, resolvePrefs } from "../notifications/prefs.ts";
+import { isQuietAt, quietHoursEndAt, resolvePrefs } from "../notifications/prefs.ts";
 import type { QuietHours } from "../notifications/types.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ClaudeCodeProvider } from "../provider/claude-code.ts";
@@ -231,6 +231,7 @@ import {
   type CredentialWait,
   clockTime,
   credentialWaitOf,
+  keptStartLine,
   saveLink,
   startKeepsWaitSentence,
   waitSentence,
@@ -267,7 +268,9 @@ import { syncPrAnswers } from "../session/pr-answers.ts";
 import {
   dropStartPending,
   type PrepareDeps,
+  type PreparedContext,
   type PrepareRequest,
+  preparedContextOf,
   prepareWork,
   previewWork,
   startPendingOf,
@@ -329,6 +332,7 @@ import {
   type ChooserFacts,
   dropKeptStart,
   keepContinuation,
+  keepStartAtReset,
   keptContinuationOf,
   keptStartOf,
   planUsageOf,
@@ -844,7 +848,25 @@ export interface RuntimeApp {
     cancel(projectId: string): Promise<boolean>;
     /** Stop all: every kept continuation and start is dropped. */
     dropAll(): Promise<void>;
+    /**
+     * "Start at 15:40" (S-10): a Start the person pressed while the Claude credential the work
+     * needs is out (its usage limit) and nothing is kept for the project: one person start is
+     * kept on the wait and starts once at the stop's end (by the person: quiet hours do not hold
+     * it), also after a restart. The sentence that says when ("A session of Quote page starts at
+     * 15:40."); null when nothing waits for a reset now (the Start then runs as usual).
+     */
+    keepStart(
+      projectId: string,
+      agentId: string,
+      opts: { budgetUsdMicro?: number; continues?: string; note?: string },
+    ): Promise<string | null>;
   };
+  /**
+   * d1109-starts-engine (S-9): what work prepared for a project meets now (its running session,
+   * the person's waiting session, "Start a session by itself", Stop all, the quiet hours), read
+   * when a card is shown, so an option that prepares work says what pressing it does.
+   */
+  preparedContext(projectId: string): Promise<PreparedContext>;
   conversation: ConversationAgent | null;
   gitHost: GitHost;
   human: { id: string; name: string; timezone: string };
@@ -896,6 +918,10 @@ export interface RuntimeApp {
         startable?: boolean;
         /** S-10: the person's session (or a Start) is kept on the wait: Cancel drops it. */
         kept?: boolean;
+        /** S-10, with `startable`: the Start button's words ("Start at 15:40"). */
+        startLabel?: string;
+        /** S-10: a kept person Start: "Starts at 15:40 (your subscription's limit)". */
+        startsAt?: string;
       } | null>;
     };
   };
@@ -3561,16 +3587,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       },
       isQuiet: (now: number) => isQuietAt(window.quiet, window.timezone, now),
       /** When the window holding now ends, as an ISO time; null outside it. */
-      endsAt: (now: number): string | null => {
-        if (!isQuietAt(window.quiet, window.timezone, now)) return null;
-        // The first minute after `now` outside the window (at most a day ahead).
-        for (let m = 1; m <= 24 * 60; m++) {
-          const at = now + m * 60_000;
-          if (!isQuietAt(window.quiet, window.timezone, at))
-            return new Date(Math.floor(at / 60_000) * 60_000).toISOString();
-        }
-        return null;
-      },
+      endsAt: (now: number): string | null => quietHoursEndAt(window.quiet, window.timezone, now),
     };
   })();
   await quietHours.refresh();
@@ -3651,6 +3668,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     now: () => clock.nowIso(),
   };
   const prepareWorkPort = (req: PrepareRequest) => prepareWork(prepareDeps, req);
+  /** S-9: what prepared work of a project meets now, as `prepareWork` would meet it. */
+  const preparedContext = (projectId: string) =>
+    preparedContextOf(
+      {
+        ...prepareDeps,
+        runningOther: (agentId, id) => {
+          const active = scheduler.activeStart(agentId)?.req.projectId;
+          return (!!active && active !== id) || liveSessions.all().some((h) => h.projectId !== id);
+        },
+        quietNow: async () => {
+          await quietHours.refresh();
+          return quietHours.isQuiet(clock.now());
+        },
+      },
+      { agentId: agent.id, projectId },
+    );
   /**
    * S-5: the hands-off starts kept on their projects (`summary_cache.start_pending`): each is asked
    * again once quiet hours ended, sessions are allowed and no session of the agent runs or
@@ -3850,6 +3883,27 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       for (const p of await store.project.list({}, { limit: 1000 }))
         await dropKeptStart(store, p.id);
     },
+    keepStart: async (projectId, agentId, opts) => {
+      // Only where the Start check says "Press Start and the work starts then" (TR-2): the
+      // credential rests (a refusal needs a new one saved first), nothing is kept for the
+      // project, and no session of it runs or waits in line.
+      if (busyHere(scheduler.activeStart(agentId), projectId)) return null;
+      if (scheduler.pendingStarts(agentId).some((p) => p.req.projectId === projectId)) return null;
+      const wait = await credentialWaitNow(projectId);
+      if (wait?.reason !== "limit") return null;
+      if ((await keptContinuationOf(store, projectId)) || (await keptStartOf(store, projectId)))
+        return null;
+      await taskBilling.noteWait(wait.sourceId, projectId, agentId);
+      const kept = await keepStartAtReset(store, projectId, {
+        at: clock.nowIso(),
+        ...(opts.budgetUsdMicro ? { budgetUsdMicro: opts.budgetUsdMicro } : {}),
+        ...(opts.continues ? { continues: opts.continues } : {}),
+        ...(opts.note?.trim() ? { note: opts.note.trim() } : {}),
+      });
+      if (!kept) return null;
+      events.emit("project", { id: projectId });
+      return continuations.waiting(projectId);
+    },
   };
   const credentialWaits: RuntimeApp["billing"]["waits"] = {
     wake: async () => {
@@ -3930,6 +3984,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           by: kept.by,
           ...(kept.continues ? { continues: kept.continues } : {}),
           ...(kept.budgetUsdMicro ? { budgetUsdMicro: kept.budgetUsdMicro } : {}),
+          // A kept Start's note, as the person gave it to the Start dialog (quoted as data).
+          ...(kept.note ? { note: kept.note } : {}),
           reason:
             kept.by === "continuation"
               ? "your session goes on: the Claude credential it waited for can serve again"
@@ -3985,21 +4041,33 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       await quietHours.refresh();
       // TR-2: looking records nothing (the Start dialog's check, the stopped bar's read). A
       // wait a Start or a session already kept on its source starts by itself, and says so; a
-      // reset nobody kept a wait for says what Start does, and Start stays pressable: its
-      // session meets the wait and keeps it (the executor's `noteWait`).
+      // reset nobody kept a wait for says what Start does, and Start stays pressable: it keeps
+      // one person start for the reset ("Start at 15:40", `continuations.keepStart`, S-10).
       const words = { timezone: human.timezone, nowMs: clock.now() };
       const source = await store.billingSource.get(wait.sourceId).catch(() => undefined);
-      // S-10: only a kept continuation or person start goes on by itself; a Start pressed now
-      // meets the wait and keeps the person's session's continuation.
+      // S-10: only a kept continuation or person start goes on by itself; a Start pressed now is
+      // kept for the reset.
       const kept = source
         ? waitingOf(source.limits).find((w) => w.projectId === projectId)?.kept
         : undefined;
       if (wait.reason !== "refused" && !kept)
-        return { text: startKeepsWaitSentence(wait, words), save: null, startable: true };
+        return {
+          text: startKeepsWaitSentence(wait, words),
+          save: null,
+          startable: true,
+          // S-10: a Start now is kept for the reset ("Start at 15:40").
+          ...(wait.until
+            ? { startLabel: `Start at ${clockTime(wait.until, words.timezone, words.nowMs)}` }
+            : {}),
+        };
       return {
         text: waitSentence(wait, { ...words, goesOn: !!kept, ...goesOnAtOf(wait, kept) }),
         save: wait.reason === "refused" ? saveLink(wait.kind) : null,
         ...(kept ? { kept: true } : {}),
+        // S-10: the person's kept Start, as the project's status says it.
+        ...(kept?.by === "person" && keptStartLine(wait, words)
+          ? { startsAt: keptStartLine(wait, words) as string }
+          : {}),
       };
     },
   };
@@ -4165,7 +4233,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // Phase E: a card answered in chat or voice is read back in the Inbox's own words (its
       // title, the option and what it does) and its Done line is the reply once it is applied.
       cardWords: async (request) => {
-        const [view] = await requestViews(store, [request]);
+        // S-9: the options say what pressing them does now, as the Inbox says it.
+        const [view] = await requestViews(store, [request], preparedContext);
         return view
           ? {
               title: view.title ?? request.why,
@@ -5039,6 +5108,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     scheduler,
     quietHours,
     continuations,
+    preparedContext,
     conversation,
     gitHost,
     human: { id: human.id, name: human.name, timezone: human.timezone },

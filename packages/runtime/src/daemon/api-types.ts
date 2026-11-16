@@ -1154,10 +1154,14 @@ export type ContinuationCancelView = z.infer<typeof ContinuationCancelView>;
  * The answer of `POST /sessions` (U-003): the scheduler's outcome, the start's id (what its
  * undo names), and the session the start began. `session` is null while the start is queued
  * behind a running session or deferred by quiet hours, and when the run has not created its
- * session within the wait (`SESSION_START_WAIT_MS`); the session list shows it then.
+ * session within the wait (`SESSION_START_WAIT_MS`); the session list shows it then. `kept`
+ * (d1109-starts-engine S-10, ADR 0118): the Claude credential the work needs is out (its usage
+ * limit) and no session waits to go on, so the Start is kept for the reset: nothing runs now, it
+ * starts once then (the person chose that time, so quiet hours do not hold it); `startId` is
+ * empty, `session` null, and `sentence` says when ("A session of Quote page starts at 15:40.").
  */
 export const StartSessionView = z.object({
-  result: z.enum(["started", "queued", "deferred"]),
+  result: z.enum(["started", "queued", "deferred", "kept"]),
   startId: z.string(),
   session: SessionView.nullable(),
   /**
@@ -1166,6 +1170,8 @@ export const StartSessionView = z.object({
    * (U-043). Absent for a start that began.
    */
   ahead: z.number().int().nonnegative().optional(),
+  /** A kept start (S-10): when it starts, in one sentence. Absent otherwise. */
+  sentence: z.string().optional(),
 });
 export type StartSessionView = z.infer<typeof StartSessionView>;
 
@@ -1772,6 +1778,11 @@ export const StartCheckView = z.object({
        * /projects/:id/continuation/cancel`. Absent from an older daemon.
        */
       kept: z.boolean().optional(),
+      /**
+       * S-10, with `startable`: the Start button's words, "Start at 15:40": a Start now is kept
+       * for the credential's reset and starts once then (`StartSessionView.result` "kept").
+       */
+      startLabel: z.string().optional(),
     })
     .nullable()
     .default(null),
@@ -3277,7 +3288,7 @@ export const DAEMON_ROUTES = {
   runs: "GET /projects/:id/runs?limit=",
   sessions: "GET /sessions?agentId=&projectId=&status=",
   startSession:
-    "POST /sessions (StartSessionBody -> 202 StartSessionView: started, queued behind the agent's running session, or deferred by quiet hours; a started one waits up to 15 s for its session and carries it; a waiting one carries `ahead`, the number of the agent's waiting starts before it, which run in order and are never replaced (U-043); a run that fails before its session begins answers that error)",
+    "POST /sessions (StartSessionBody -> 202 StartSessionView: started, queued behind the agent's running session, or deferred by quiet hours; a started one waits up to 15 s for its session and carries it; a waiting one carries `ahead`, the number of the agent's waiting starts before it, which run in order and are never replaced (U-043); a run that fails before its session begins answers that error; kept, with its sentence, when the Claude credential the work needs is out and no session waits to go on: the Start is kept for the reset and starts once then, d1109-starts-engine S-10; 409 with when it goes on while one waits)",
   session: "GET /sessions/:id",
   cancelContinuation:
     "POST /projects/:id/continuation/cancel (-> ContinuationCancelView: d1109-starts-engine S-10, the person's session that waits to go on after its Claude credential, or a Start kept for the reset, is dropped and nothing starts at the reset; its tasks wait for the next Start; cancelled false when none waited; 404 for an unknown project)",

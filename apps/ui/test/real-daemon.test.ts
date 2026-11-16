@@ -11364,7 +11364,7 @@ describe("leftovers7-tailmerge, wave 13", () => {
  * against the real daemon.
  */
 describe("leftovers7-tailrun, wave 13", () => {
-  it("TR-2: looking at the Start check while the only key rests records nothing; Start keeps the wait and that work starts at the reset", async () => {
+  it("TR-2: looking at the Start check while the only key rests records nothing; Start keeps the wait and that work starts at the reset (d1109-starts-engine S-10: the Start itself is kept, 'Start at 09:30')", async () => {
     const key = ["sk-ant-api03-", "tailrun", "5".repeat(40)].join(""); // not-a-secret
     const clock = new SimulatedClock("2026-11-09T08:00:00Z");
     const home = mkdtempSync(join(tmpdir(), "fr-ui-real-tailrun-"));
@@ -11447,22 +11447,27 @@ describe("leftovers7-tailrun, wave 13", () => {
             "Nothing can run until 09:30 (your API key's limit). Press Start and the work starts then.",
           action: null,
           startable: true,
+          // S-10: the Start button says when its start runs.
+          startLabel: "Start at 09:30",
         });
       }
       // Looking recorded nothing (before: both projects' waits were kept on the key).
       expect(await waitsOnKey()).toEqual([]);
-      // Start on one of them, as the dialog sends it: its session meets the wait and keeps it.
+      // Start on one of them, as the dialog sends it: d1109-starts-engine S-10 (ADR 0118), the
+      // Start is kept for the reset; no session runs now (before: one ran only to meet the wait).
       const agentId = (await client.agents())[0]?.id ?? "";
       const first = await client.startSession({ agentId, projectId: started.id });
-      const sessionId = first.session?.id ?? "";
-      await eventually(
-        async () =>
-          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
-        "the session that met the wait to end",
-        async () => (await client.session(sessionId)).status,
-        20_000,
-      );
+      expect(first).toMatchObject({
+        result: "kept",
+        session: null,
+        sentence: "A session of Started starts at 09:30.",
+      });
+      expect(await rt.store.session.list({ project_id: started.id } as never)).toEqual([]);
       expect(await waitsOnKey()).toEqual([started.id]);
+      // The project's status says when it starts.
+      expect((await client.project(started.id)).statusLine?.text).toBe(
+        "Starts at 09:30 (your API key's limit): 1 task",
+      );
       // From then on its check says the person's session goes on (true now), with Start off.
       expect((await client.startCheck(started.id)).blocked).toEqual({
         kind: "nothing_runnable",
@@ -11470,7 +11475,7 @@ describe("leftovers7-tailrun, wave 13", () => {
         // d1109-starts-engine S-10: only the person's session goes on by itself.
         sentence: "Nothing can run until 09:30 (your API key's limit); then your session goes on.",
         action: null,
-        // The person's session waits to go on: the dialog offers Cancel the wait.
+        // The person's Start is kept: the dialog offers Cancel the wait.
         kept: true,
       });
       // At the reset: the work Start waited for starts by itself; the project only looked at
@@ -11487,7 +11492,10 @@ describe("leftovers7-tailrun, wave 13", () => {
         async () => (await triggers(started.id)).join(", "),
         15_000,
       );
-      expect((await triggers(started.id)).sort()).toEqual(["budget_reset", "manual"]);
+      // One session, at the reset, the person's own start (S-10).
+      expect(await triggers(started.id)).toEqual(["budget_reset"]);
+      const [reset] = await rt.store.session.list({ project_id: started.id } as never);
+      expect((reset?.plan as { startedBy?: unknown } | null)?.startedBy).toEqual({ by: "person" });
       expect(await triggers(looked.id)).toEqual([]);
     } finally {
       await rt.kill.stop("all", "test over", { by: "you", freeze: false }).catch(() => undefined);
@@ -18941,4 +18949,140 @@ describe("d1109-starts-engine, run C", () => {
       await rt.close();
     }
   }, 120_000);
+
+  // Fix-up of the review (S-9, design §5 rules 4 and 9): the Inbox's Try again said "it runs at
+  // your next Start" whatever was true when the card was shown; pressing it then joined the running
+  // session, or started one under "Start a session by itself". The explain is read when the card is
+  // shown, and pressing the option does what it said.
+  it("S-9: GET /inbox's Try again says what pressing it does now (no session, the project's session running, the hands-off setting on), and the answer does that", async () => {
+    // The specialist's first call of the second session is held, so the card is read while it runs.
+    let gate: { armed: boolean; reached: () => void; released: Promise<void> } | null = null;
+    let reachedP: Promise<void> = Promise.resolve();
+    let release: () => void = () => undefined;
+    const arm = () => {
+      let reached!: () => void;
+      reachedP = new Promise<void>((r) => {
+        reached = r;
+      });
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      gate = { armed: true, reached, released };
+    };
+    const player = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0", FORERUNNER_BENCH_FAIL: "Fail me" },
+        new ModelCallLog({ file: join(mkdtempSync(join(tmpdir(), "fr-s9-explain-")), "c.jsonl") }),
+      ),
+    );
+    const stream = player.stream.bind(player);
+    player.stream = (req) => {
+      const g = gate;
+      if (!g?.armed || detectRole(req).role !== "specialist") return stream(req);
+      g.armed = false;
+      return (async function* () {
+        g.reached();
+        await g.released;
+        yield* stream(req);
+      })();
+    };
+    const { rt, client } = await composeWithRolePlayer({}, { provider: player });
+    try {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Quote page", goal: "A quote page" });
+      const failing = await readyTask(rt, client, project.id, "Fail me first", 0.01);
+      const sessionsOf = async () => client.sessions({ projectId: project.id });
+      const card = async () => {
+        let found: Awaited<ReturnType<DaemonClient["inbox"]>>["requests"][number] | undefined;
+        await eventually(
+          async () => {
+            found = (await client.inbox(me.id)).requests.find(
+              (r) => r.taskId === failing.id && r.status === "open",
+            );
+            return !!found;
+          },
+          "the failed task's card (at least 10 s of real time)",
+          async () => (await client.inbox(me.id)).requests.map((r) => r.title).join(" | "),
+          60_000,
+        );
+        return found as NonNullable<typeof found>;
+      };
+      const tryAgain = (c: Awaited<ReturnType<typeof card>>) =>
+        c.choices?.find((x) => x.label === "Try again")?.explain;
+
+      // Nothing runs: the person's next Start runs it.
+      const first = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      await ended(client, first.session?.id ?? "");
+      const failed = await card();
+      expect(tryAgain(failed)).toBe(
+        "Tries again with your note, if any; it runs at your next Start.",
+      );
+
+      // A session of the project runs: it joins that session if it fits, and it does.
+      await readyTask(rt, client, project.id, "Write the intro", 0.01);
+      arm();
+      const second = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      await reachedP;
+      const shownWhileRunning = await card();
+      expect(shownWhileRunning.id).toBe(failed.id);
+      expect(tryAgain(shownWhileRunning)).toBe(
+        "Tries again with your note, if any; it joins the running session if it fits.",
+      );
+      const joined = await client.answerRequest(shownWhileRunning.id, {
+        version: shownWhileRunning.version,
+        answer: { choice: "Try again" },
+      });
+      expect(joined.outcome).toBe(
+        'Trying "Fail me first" again: it joins the session that is running.',
+      );
+      release();
+      await ended(client, second.session?.id ?? "");
+      expect(
+        (await rt.store.event.list(second.session?.id ?? "")).some(
+          (e) => e.type === "session.joined",
+        ),
+      ).toBe(true);
+
+      // "Start a session by itself" on, nothing running: a session starts for it, and one does.
+      const asked = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "start_by_itself", value: true, project: project.id },
+          },
+        ],
+        source: "ui",
+      });
+      expect(asked.status).toBe("pending");
+      expect((await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" })).status).toBe(
+        "done",
+      );
+      const again = await card();
+      expect(again.id).not.toBe(failed.id);
+      expect(tryAgain(again)).toBe(
+        "Tries again with your note, if any; a session starts for it by itself.",
+      );
+      const before = (await sessionsOf()).length;
+      const started = await client.answerRequest(again.id, {
+        version: again.version,
+        answer: { choice: "Try again" },
+      });
+      expect(started.outcome).toBe(
+        'Trying "Fail me first" again: a session started for it (this project starts by itself when work is ready).',
+      );
+      await eventually(
+        async () => (await sessionsOf()).length === before + 1,
+        "the session the setting started (at least 10 s of real time)",
+        async () => `${(await sessionsOf()).length} sessions`,
+        60_000,
+      );
+      const third = (await sessionsOf()).find(
+        (s) => s.id !== first.session?.id && s.id !== second.session?.id,
+      );
+      await ended(client, third?.id ?? "");
+    } finally {
+      release();
+      await rt.close();
+    }
+  }, 240_000);
 });

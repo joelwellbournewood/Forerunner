@@ -1,6 +1,7 @@
 import type { BillingSourceKind } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
-import type { HumanRequestRow, StateStore } from "@forerunner/state";
+import type { HumanRequestRow, HumanRow, StateStore } from "@forerunner/state";
+import { quietHoursEndAt, resolvePrefs } from "../notifications/prefs.ts";
 
 /**
  * Work that waits for a Claude credential (U-078, ADR 0100 amended 2026-11-03, the owner's
@@ -181,6 +182,32 @@ export function afterWaitClause(goesOn: boolean | undefined): string {
 }
 
 /**
+ * S-10 (ADR 0118): when the person's waiting session goes on, if their quiet hours hold it past
+ * the stop's end (a continuation starts with nobody pressing anything, so quiet hours hold it):
+ * the end of the quiet hours, as an ISO time; undefined when it goes on at the stop's end. Every
+ * sentence that says when it goes on names this later time (`goesOnAt`).
+ */
+export function continuationGoesOnAt(
+  human: Pick<HumanRow, "timezone" | "email" | "notify_prefs"> | null | undefined,
+  until: string | null | undefined,
+): string | undefined {
+  if (!human || !until) return undefined;
+  const at = Date.parse(until);
+  if (!Number.isFinite(at)) return undefined;
+  const prefs = resolvePrefs(human);
+  return quietHoursEndAt(prefs.quiet_hours, prefs.timezone, at) ?? undefined;
+}
+
+/** `continuationGoesOnAt` as the words' option: `{ goesOnAt }`, or nothing when not later. */
+export function goesOnAtWords(
+  human: Pick<HumanRow, "timezone" | "email" | "notify_prefs"> | null | undefined,
+  until: string | null | undefined,
+): { goesOnAt?: string } {
+  const at = continuationGoesOnAt(human, until);
+  return at ? { goesOnAt: at } : {};
+}
+
+/**
  * The wait as one sentence (the session result, the log, the Overview): "Waits until 15:40 (your
  * subscription's limit); then your session goes on." (the person's session waits to go on, S-10)
  * or "...; then it runs at your next Start.", or "Waits for a new API key: save one in
@@ -217,6 +244,19 @@ export function startKeepsWaitSentence(
 }
 
 const PRESS_START_THEN = "Press Start and the work starts then.";
+
+/**
+ * S-10 (ADR 0118): a Start the person pressed while the credential was out, kept for its reset,
+ * as the project's status says it: "Starts at 15:40 (your subscription's limit)". Null for a
+ * refusal or a reset not known.
+ */
+export function keptStartLine(
+  wait: CredentialWait,
+  opts: { timezone?: string; nowMs: number },
+): string | null {
+  if (wait.reason !== "limit" || !wait.until) return null;
+  return `Starts at ${clockTime(wait.until, opts.timezone, opts.nowMs)} (${limitOf(wait.kind)})`;
+}
 
 /**
  * W15-66: the wait where none is recorded (the credential chooser's runs-on line on New task,
@@ -285,7 +325,14 @@ export function refusedCredentialWords(kind: string | null | undefined): string 
  */
 export function waitRowWords(
   wait: CredentialWait,
-  opts: { timezone?: string; nowMs: number; goesOn?: boolean },
+  opts: {
+    timezone?: string;
+    nowMs: number;
+    goesOn?: boolean;
+    goesOnAt?: string;
+    /** S-10: a Start the person pressed is kept for the reset: the status says it starts then. */
+    startKept?: boolean;
+  },
 ): CredentialWaitWords {
   if (wait.reason === "refused")
     return {
@@ -294,11 +341,24 @@ export function waitRowWords(
       line: `Waiting for ${newCredential(wait.kind)}`,
       save: saveLink(wait.kind),
     };
+  // S-10: the person's waiting session goes on when their quiet hours end, later than the reset.
+  if (opts.goesOn && opts.goesOnAt) {
+    const later = clockTime(opts.goesOnAt, opts.timezone, opts.nowMs);
+    return {
+      label: `Waits until ${later}, after your quiet hours`,
+      detail: "Then your session goes on.",
+      line: `Waiting until ${later} (after your quiet hours)`,
+      save: null,
+    };
+  }
   const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
   return {
     label: `Waits until ${at}, ${limitOf(wait.kind)}`,
     detail: opts.goesOn ? "Then your session goes on." : "Then it runs at your next Start.",
-    line: `Waiting until ${at} (${limitOf(wait.kind)})`,
+    // S-10: "Starts at 15:40 (your subscription's limit)" while the person's Start is kept.
+    line:
+      (opts.startKept ? keptStartLine(wait, opts) : null) ??
+      `Waiting until ${at} (${limitOf(wait.kind)})`,
     save: null,
   };
 }

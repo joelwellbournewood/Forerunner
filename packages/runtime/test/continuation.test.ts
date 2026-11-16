@@ -87,6 +87,7 @@ interface World {
   clock: SimulatedClock;
   calls: string[];
   post: <T>(path: string, body?: unknown) => Promise<{ status: number; json: T }>;
+  get: <T>(path: string) => Promise<{ status: number; json: T }>;
   close: () => Promise<void>;
 }
 
@@ -143,12 +144,17 @@ async function compose(
     });
     return { status: res.status, json: (await res.json()) as T };
   };
+  const get = async <T>(path: string) => {
+    const res = await app.request(path, { headers: { authorization: `Bearer ${token}` } });
+    return { status: res.status, json: (await res.json()) as T };
+  };
   world = {
     rt,
     home,
     clock,
     calls,
     post,
+    get,
     close: async () => {
       await rt.close();
       open.splice(open.indexOf(rt), 1);
@@ -262,6 +268,9 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     expect(
       describeEvent(CONTINUES_EVENT, (continues?.payload ?? {}) as Record<string, unknown>),
     ).toBe("Goes on with your session of 10:00.");
+    // Fix-up of the review: it is the session log's first line, before the budget line.
+    expect(events[0]?.type).toBe(CONTINUES_EVENT);
+    expect(events[1]?.type).toBe("session.started");
     // Once: the next ticks start nothing more, and nothing waits any longer.
     await atTheReset(w, "2026-10-31T14:30:00Z");
     await atTheReset(w, "2026-10-31T15:30:00Z");
@@ -303,6 +312,159 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
       "continuation",
     );
   }, 60_000);
+
+  // Fix-up of the review (S-10: "every sentence that says when it goes on names the later of the
+  // stop's end and the end of the quiet hours"): with quiet hours set before the session met its
+  // limit, the session's end sentence, the task's row and the log named the reset (15:00) while
+  // the continuation went on at 17:00.
+  it("quiet hours over the reset, set before the session: its end sentence, the task's row, the log and the Start check name their end", async () => {
+    const w = await compose();
+    const { project, task } = await changelog(w.rt);
+    const set = await w.post<{ status: string }>("/commands/execute", {
+      commands: [
+        {
+          name: "settings.set",
+          params: { key: "quiet_hours", value: { start: "14:30", end: "17:00" } },
+        },
+      ],
+      source: "ui",
+      confirm: "tap",
+    });
+    expect(set.json.status, JSON.stringify(set.json)).toBe("done");
+    const first = await personStartsAndWaits(w, project.id);
+    const said = "Waits until 17:00 (after your quiet hours); then your session goes on.";
+    expect(first.summary?.split("\n")[0]).toBe(said);
+    const rows = await w.get<{ id: string; display?: { label?: string; detail?: string } }[]>(
+      `/projects/${project.id}/tasks`,
+    );
+    expect(rows.json.find((t) => t.id === task.id)?.display).toMatchObject({
+      label: "Waits until 17:00, after your quiet hours",
+      detail: "Then your session goes on.",
+    });
+    const log = (await w.rt.store.event.list(first.id))
+      .map((e) => describeEvent(e.type, (e.payload ?? {}) as Record<string, unknown>))
+      .filter((l): l is string => typeof l === "string" && /Waits until|waits until/.test(l));
+    expect(log.length, log.join("\n")).toBeGreaterThan(1);
+    expect(
+      log.some((l) => l.endsWith("then your session goes on.")),
+      log.join("\n"),
+    ).toBe(true);
+    for (const line of log) {
+      expect(line).toContain("until 17:00 (after your quiet hours)");
+      expect(line).not.toContain("15:00");
+    }
+    const check = await w.get<{ blocked: { sentence?: string } | null }>(
+      `/projects/${project.id}/start-check`,
+    );
+    expect(check.json.blocked?.sentence).toBe(
+      "Nothing can run until 17:00 (after your quiet hours); then your session goes on.",
+    );
+    expect(await w.rt.continuations.waiting(project.id)).toBe(
+      "Your session of 10:00 goes on by itself at 17:00.",
+    );
+  }, 60_000);
+
+  // Fix-up of the review (S-10, "Start at 15:40"): a Start pressed while the subscription rested
+  // and nothing was kept ran a session that only met the wait and became a continuation, which
+  // quiet hours then held although the person chose the time; the project's status never said
+  // when it starts. The Start is kept for the reset now and starts once then, by the person.
+  it("a Start pressed while the credential is out is kept: nothing runs now, the status says when, and it starts once at the reset by the person, quiet hours not holding it, also after a restart", async () => {
+    const clock = new SimulatedClock(START);
+    const calls: string[] = [];
+    const w1 = await compose({ clock, calls, limited: 0 });
+    const { project, task } = await changelog(w1.rt);
+    // The subscription rests until the reset (another session met its limit earlier).
+    const sub = (await w1.rt.store.billingSource.list({} as never, { limit: 20 })).find(
+      (s) => s.kind === "subscription",
+    );
+    if (!sub) throw new Error("no subscription source");
+    await w1.rt.store.billingSource.patch(sub.id, {
+      limits: { ...sub.limits, restingUntil: RESET },
+    });
+    const check = await w1.get<{ blocked: Record<string, unknown> | null }>(
+      `/projects/${project.id}/start-check`,
+    );
+    expect(check.json.blocked).toMatchObject({
+      sentence:
+        "Nothing can run until 15:00 (your subscription's limit). Press Start and the work starts then.",
+      startable: true,
+      startLabel: "Start at 15:00",
+    });
+    const pressed = await w1.post<{ result: string; session: unknown; sentence?: string }>(
+      "/sessions",
+      {
+        agentId: w1.rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        budgetUsdMicro: BUDGET,
+        note: "Keep it to one paragraph.",
+      },
+    );
+    expect(pressed.status, JSON.stringify(pressed.json)).toBe(202);
+    expect(pressed.json).toMatchObject({
+      result: "kept",
+      session: null,
+      sentence: "A session of Limits starts at 15:00.",
+    });
+    // Nothing ran: no session, no model call.
+    expect(await sessionsOf(w1.rt, project.id)).toEqual([]);
+    expect(calls).toEqual([]);
+    const card = await w1.get<{ statusLine?: { text?: string } }>(`/projects/${project.id}`);
+    expect(card.json.statusLine?.text).toBe("Starts at 15:00 (your subscription's limit): 1 task");
+    expect(
+      (
+        await w1.get<{ blocked: Record<string, unknown> | null }>(
+          `/projects/${project.id}/start-check`,
+        )
+      ).json.blocked,
+    ).toMatchObject({ kept: true });
+    // One wait per project: a second Start keeps nothing new and says when.
+    const again = await w1.post("/sessions", {
+      agentId: w1.rt.agent.id,
+      projectId: project.id,
+      trigger: "manual",
+    });
+    expect(again.status).toBe(409);
+    expect(JSON.stringify(again.json)).toContain("A session of Limits starts at 15:00.");
+    // Quiet hours over the reset hold a start nobody pressed; this one the person pressed.
+    const set = await w1.post<{ status: string }>("/commands/execute", {
+      commands: [
+        {
+          name: "settings.set",
+          params: { key: "quiet_hours", value: { start: "14:30", end: "17:00" } },
+        },
+      ],
+      source: "ui",
+      confirm: "tap",
+    });
+    expect(set.json.status, JSON.stringify(set.json)).toBe("done");
+    await w1.close();
+
+    const w2 = await compose({ home: w1.home, clock, calls, limited: 0 });
+    expect(await w2.rt.continuations.waiting(project.id)).toBe(
+      "A session of Limits starts at 15:00.",
+    );
+    await atTheReset(w2);
+    await until(
+      "the task to be done",
+      async () => (await w2.rt.store.task.mustGet(task.id)).status === "done",
+    );
+    const all = await sessionsOf(w2.rt, project.id);
+    expect(all).toHaveLength(1);
+    expect(all[0]?.trigger).toBe("budget_reset");
+    expect((all[0]?.plan as { startedBy?: unknown } | null)?.startedBy).toEqual({ by: "person" });
+    expect(all[0]?.budget_cap_usd_micro).toBe(BUDGET);
+    // The note the person gave reached the brief, as their own words.
+    expect(calls.some((c) => c.includes("Keep it to one paragraph."))).toBe(true);
+    await atTheReset(w2, "2026-10-31T14:30:00Z");
+    expect(await sessionsOf(w2.rt, project.id)).toHaveLength(1);
+    await w2.close();
+
+    const w3 = await compose({ home: w1.home, clock, calls, limited: 0 });
+    expect(await w3.rt.continuations.waiting(project.id)).toBeNull();
+    await atTheReset(w3, "2026-10-31T16:30:00Z");
+    expect(await sessionsOf(w3.rt, project.id)).toHaveLength(1);
+  }, 90_000);
 
   it("Cancel drops it: nothing starts at the reset and its task waits for the next Start", async () => {
     const w = await compose();

@@ -248,24 +248,75 @@ export function isPreparedOutcome(outcome: unknown): outcome is PrepareOutcome {
 
 /**
  * What an option that prepares work says will happen (a card's explain, read when the card is
- * shown, S-9): a running session of the project takes it if it fits; with "Start a session by
- * itself" on a session starts for it; else the person's next Start runs it.
+ * shown, S-9): a running session of the project takes it if it fits; the person's own session
+ * that waits to go on takes it then; with "Start a session by itself" on a session starts for it
+ * (after the current one, after the quiet hours, never while sessions are stopped); else the
+ * person's next Start runs it. The same steps, in the same order, as `prepareWork`'s, so pressing
+ * the option does what its explain said (`preparedContextOf` reads them).
  */
 export interface PreparedContext {
   /** A session of the card's project runs now, or one of another project does. */
   running?: "this_project" | "other" | null;
   /** The project's "When work is ready: Start a session by itself" is on. */
   startsByItself?: boolean;
+  /** The person's own session waits to go on for this project (S-10). */
+  continuationWaits?: boolean;
+  /** Stop all is on: the hands-off setting starts nothing. */
+  stopped?: boolean;
+  /** The person's quiet hours hold a start they did not press now. */
+  quiet?: boolean;
 }
 
 /** The clause an option's explain ends with ("...; it runs at your next Start."). */
 export function preparedExplain(ctx: PreparedContext = {}): string {
   if (ctx.running === "this_project") return "it joins the running session if it fits";
-  if (ctx.startsByItself)
+  if (ctx.continuationWaits) return "it joins your session when it goes on, if it fits";
+  if (ctx.startsByItself) {
+    if (ctx.stopped) return "it runs at your next Start once you allow sessions again";
+    if (ctx.quiet) return "a session starts for it after your quiet hours";
     return ctx.running === "other"
       ? "a session starts for it after the current one"
       : "a session starts for it by itself";
+  }
   return "it runs at your next Start";
+}
+
+/** What `preparedContextOf` reads beyond `PrepareDeps`. */
+export interface PreparedContextDeps
+  extends Pick<PrepareDeps, "store" | "live" | "startedFor" | "continuationWaits" | "frozen"> {
+  /** A session of another project of the agent runs or was asked for now. */
+  runningOther?: (agentId: string, projectId: string) => boolean;
+  /** The person's quiet hours hold a start they did not press now (read fresh). */
+  quietNow?: () => Promise<boolean>;
+}
+
+/**
+ * What prepared work of this project would meet now, read-only (S-9: a card's explain is read
+ * when the card is shown, design §5 rule 4): the facts `prepareWork` decides by, nothing admitted
+ * and nothing started.
+ */
+export async function preparedContextOf(
+  deps: PreparedContextDeps,
+  req: { agentId: string; projectId: string },
+): Promise<PreparedContext> {
+  const own =
+    !!deps.live?.forProject(req.projectId) || !!deps.startedFor?.(req.agentId, req.projectId);
+  const running: PreparedContext["running"] = own
+    ? "this_project"
+    : deps.runningOther?.(req.agentId, req.projectId)
+      ? "other"
+      : null;
+  const project = await deps.store.project.get(req.projectId).catch(() => undefined);
+  const byItself = startsByItself(project);
+  const waits = !own && !!(await deps.continuationWaits?.(req.projectId).catch(() => false));
+  const quiet = byItself && !!(await deps.quietNow?.().catch(() => false));
+  return {
+    running,
+    ...(byItself ? { startsByItself: true } : {}),
+    ...(waits ? { continuationWaits: true } : {}),
+    ...(byItself && deps.frozen?.(req.agentId) ? { stopped: true } : {}),
+    ...(quiet ? { quiet: true } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------------------

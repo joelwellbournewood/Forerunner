@@ -1318,6 +1318,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.requests.filter((r) => r.status === "open" && r.blocking).length;
   /** Every open card waits on the person (design §3.8): the Inbox's and the header's count. */
   const needsYouCount = () => state.requests.filter((r) => r.status === "open").length;
+  /** The reset's time in a credential wait's sentence ("... until 09:30 (...)"), or null. */
+  const fakeResetAt = (text: string): string | null => /until (\d\d:\d\d)/.exec(text)?.[1] ?? null;
+  /**
+   * d1109-starts-engine S-9, as the daemon's `preparedContextOf`: what an open card's options that
+   * prepare work meet now (a session of the project running, another one, the hands-off setting).
+   */
+  const preparedOfFake = (projectId: string) => {
+    const live = state.sessions.filter((s) => s.status === "running" || s.status === "planned");
+    const running = live.some((s) => s.projectId === projectId)
+      ? ("this_project" as const)
+      : live.length
+        ? ("other" as const)
+        : null;
+    const byItself = state.settingValues[`start_by_itself:${projectId}`] === true;
+    return { running, ...(byItself ? { startsByItself: true } : {}) };
+  };
   /**
    * A request as the daemon's `requestView` words it (design §3.8, `daemon/request-words.ts`):
    * the card's title, body, choices with their consequence lines, the reply it takes, and once
@@ -1360,6 +1376,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         (r.changeCard as { key?: unknown } | null)?.key === "task:budget_stop"
           ? { heldWork: !!state.taskMeta.heldWork?.has(task.id) }
           : {}),
+        // d1109-starts-engine S-9: as the daemon's `preparedContextOf`, an open card's options
+        // that prepare work say what pressing them does now (a session of the project running,
+        // another one running, "Start a session by itself" on).
+        ...(r.status === "open" && r.projectId ? preparedOfFake(r.projectId) : {}),
       },
     );
     return { ...r, ...words };
@@ -2914,6 +2934,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           : null,
         ...(credentialWait.startable ? { startable: true } : {}),
         ...(credentialWait.kept ? { kept: true } : {}),
+        // d1109-starts-engine S-10, as the daemon: a Start now is kept for the reset.
+        ...(credentialWait.startable && fakeResetAt(credentialWait.text)
+          ? { startLabel: `Start at ${fakeResetAt(credentialWait.text)}` }
+          : {}),
       };
     // C2-left-2, as the daemon: nothing is ready because a task waits on the person's card.
     if (view.blocked?.sentence === "Nothing can run: no task is ready.") {
@@ -3101,6 +3125,29 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         "conflict",
         `The project "${removed.name.replace(/ \(removed(?: \d+)?\)$/, "")}" was removed, so nothing of it runs.`,
       );
+    // d1109-starts-engine S-10, as the daemon: while a credential's reset no Start kept yet holds
+    // the work, the Start is kept for the reset: no session now, its sentence says when, and the
+    // wait reads as the person's kept Start (Cancel the wait drops it).
+    const resting = parsed.data.projectId ? state.credentialWaitNow[parsed.data.projectId] : null;
+    const at = resting?.startable ? fakeResetAt(resting.text) : null;
+    if (parsed.data.projectId && resting && at) {
+      const project = state.projects.find((p) => p.id === parsed.data.projectId);
+      const limit = /\(([^)]+)\)/.exec(resting.text)?.[1] ?? "its limit";
+      state.credentialWaitNow[parsed.data.projectId] = {
+        text: `Waits until ${at} (${limit}); then your session goes on.`,
+        save: null,
+        kept: true,
+      };
+      return c.json(
+        StartSessionView.parse({
+          result: "kept",
+          startId: "",
+          session: null,
+          sentence: `A session of ${project?.name ?? "the project"} starts at ${at}.`,
+        }),
+        202,
+      );
+    }
     // As the daemon (later #38): nothing a session could run is refused with the start check's
     // sentence, whoever asks (the Start dialog, Continue where it stopped, the phone).
     if (parsed.data.projectId) {
@@ -5480,6 +5527,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     code_commands: "medium",
     // 'sites': medium, as SETTING_SPECS.web_access (widening asks a yes; narrowing acts at once).
     web_access: "medium",
+    // d1109-starts-engine S-5: medium, as SETTING_SPECS.start_by_itself (turning on asks a yes).
+    start_by_itself: "medium",
   };
   /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
   const settingSlot = (key: string, projectId: string | null) =>
@@ -5495,8 +5544,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     after_review: mergeModeEffect("after_review"),
   };
   /** The yes/no keys (`z.boolean()` in SETTING_SPECS): "on" or "off", off until set (W15B-16). */
-  const BOOLEAN_KEYS = new Set(["small_project_mode", "voice_alerts", "status_pull_request"]);
+  const BOOLEAN_KEYS = new Set([
+    "small_project_mode",
+    "voice_alerts",
+    "status_pull_request",
+    "start_by_itself",
+  ]);
   const PROJECT_KEYS = new Set([
+    "start_by_itself",
     "small_project_mode",
     "status_pull_request",
     "merge_mode",

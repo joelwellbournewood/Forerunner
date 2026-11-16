@@ -1028,6 +1028,8 @@ export interface KeptStart {
   budgetUsdMicro?: number;
   /** When it was kept (ISO). */
   at: string;
+  /** A kept person start: the note the person gave the Start dialog (for every task's brief). */
+  note?: string;
 }
 
 /** One project's wait on a source (`limits.waiting`, U-078; S-10's session and kept start). */
@@ -1052,6 +1054,7 @@ function keptOf(v: unknown): KeptStart | undefined {
       ? { budgetUsdMicro: k.budgetUsdMicro }
       : {}),
     at: typeof k.at === "string" ? k.at : "",
+    ...(typeof k.note === "string" && k.note.trim() ? { note: k.note } : {}),
   };
 }
 
@@ -1122,7 +1125,11 @@ export async function keepContinuation(
   return keepOnWait(store, projectId, { ...kept, by: "continuation" });
 }
 
-/** Keep a person start for the stop's end (S-10's "Start at 15:40", C6 presses it). */
+/**
+ * Keep a person start for the stop's end (S-10's "Start at 15:40": POST /sessions while the
+ * credential is out and nothing is kept, `RuntimeApp.continuations.keepStart`); the project's
+ * wait must be on the source already (`noteWait`). One per project: a kept one stays.
+ */
 export async function keepStartAtReset(
   store: { billingSource: Pick<StateStore["billingSource"], "list" | "get" | "update"> },
   projectId: string,

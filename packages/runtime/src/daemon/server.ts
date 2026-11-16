@@ -1701,6 +1701,29 @@ export function createDaemonApp(
         throw new ForerunnerError("validation", blocked.sentence, {
           details: { blocked },
         });
+      // S-10 (ADR 0118), "Start at 15:40": the Claude credential the work needs is out (its usage
+      // limit) and nothing is kept for the project, so the person's Start is kept for the reset:
+      // no session runs now (it would only meet the wait), and at the reset it starts once, by the
+      // person (quiet hours do not hold it: they chose that time), also after a restart.
+      if (
+        (check.runnable.length > 0 || check.oversized) &&
+        !rt.kill.isFrozen({ agentId: rt.agent.id })
+      ) {
+        const kept = await rt.continuations.keepStart(body.projectId, body.agentId, {
+          ...(body.budgetUsdMicro ? { budgetUsdMicro: body.budgetUsdMicro } : {}),
+          ...(body.continues ? { continues: body.continues } : {}),
+          ...(body.note?.trim() ? { note: body.note.trim() } : {}),
+        });
+        if (kept) {
+          const view: StartSessionView = {
+            result: "kept",
+            startId: "",
+            session: null,
+            sentence: kept,
+          };
+          return c.json(view, 202);
+        }
+      }
     }
     let begun: () => void = () => undefined;
     const sessionBegun = new Promise<"begun">((resolve) => {
@@ -2017,7 +2040,8 @@ export function createDaemonApp(
     );
     const names = new Map<string, string>();
     // U-073: every card names its task beside its project; design §3.8: what waits on it now.
-    const reqViews = await requestViews(rt.store, [...requests, ...answered]);
+    // S-9: an option that prepares work says what pressing it does now.
+    const reqViews = await requestViews(rt.store, [...requests, ...answered], rt.preparedContext);
     // U-078, C-68: an open plan card's tasks as this install would run them now (who does each,
     // where it runs and why), so the card says it before the person approves. One chooser batch
     // per request: the credentials and settings are read once, not per task (R-inboxperf).
@@ -2113,7 +2137,11 @@ export function createDaemonApp(
     rt.events.emit("inbox", {});
     // Design §3.8: the answer comes back as the card now, with the line of what happens next
     // (the sync above applied it), which the Inbox shows in the card's place.
-    const [view] = await requestViews(rt.store, [await rt.store.humanRequest.mustGet(r.id)]);
+    const [view] = await requestViews(
+      rt.store,
+      [await rt.store.humanRequest.mustGet(r.id)],
+      rt.preparedContext,
+    );
     return c.json(view ?? requestView(r, null));
   });
 

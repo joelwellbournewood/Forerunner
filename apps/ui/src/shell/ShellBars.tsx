@@ -183,8 +183,8 @@ export function StoppedBar() {
           r.stoppedProjects ?? (await client.projects().catch(() => projects)).map((p) => p.id);
         for (const id of ids) {
           const check = await client.startCheck(id).catch(() => null);
-          // A wait for a credential's reset nobody kept yet still starts (TR-2): the session
-          // keeps the wait, and the work starts by itself at the reset.
+          // A wait for a credential's reset nobody kept yet still starts (TR-2): the Start is
+          // kept for the reset and starts once then (d1109-starts-engine S-10).
           // D4: a task larger than the work budget is work too (`oversized`): the session takes it.
           if (
             !check ||

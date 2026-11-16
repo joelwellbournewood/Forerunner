@@ -149,6 +149,7 @@ import { needsOf } from "./credential-choice.ts";
 import {
   type CredentialWait,
   credentialWaitOf,
+  goesOnAtWords,
   stoppedRunSentence,
   waitSentence,
 } from "./credential-wait.ts";
@@ -1737,13 +1738,14 @@ export class LoopTaskExecutor implements TaskExecutor {
               } satisfies CredentialWait,
             };
       if (next.wait) await this.noteWait(ctx, next.wait);
-      const words = await this.waitWords(ctx);
+      // S-10: the person's own session goes on after the wait (at the end of their quiet hours
+      // when those hold it past the reset); other work waits for a Start.
+      const words = await this.waitWords(ctx, next.wait);
       const summary = stoppedRunSentence(
         { reason: credentialStop, kind: source?.kind ?? "api_key" },
         task.title,
         next.wait ? { wait: next.wait } : { continuesOn: next.continuesOn ?? "api_key" },
-        // S-10: the person's own session goes on after the wait; other work waits for a Start.
-        { ...words, goesOn: personsSession(ctx.session.plan) },
+        words,
       );
       onEvent({ type: "warning", message: summary });
       return {
@@ -1996,11 +1998,10 @@ export class LoopTaskExecutor implements TaskExecutor {
       throw new ForerunnerError(
         "unavailable",
         waitSentence(wait, {
-          ...(await this.waitWords(ctx)),
-          title: ctx.task.title,
           // S-10: a session the person started goes on after the wait; other work waits for
           // the person's next Start.
-          goesOn: personsSession(ctx.session.plan),
+          ...(await this.waitWords(ctx, wait)),
+          title: ctx.task.title,
         }),
         { details: { wait: wait as unknown as JsonValue } },
       );
@@ -2196,13 +2197,18 @@ export class LoopTaskExecutor implements TaskExecutor {
   /** The person's time zone and now, for the wait's reset time in their words (U-078). */
   private async waitWords(
     ctx: Parameters<TaskExecutor["execute"]>[0],
-  ): Promise<{ timezone?: string; nowMs: number }> {
+    wait?: CredentialWait,
+  ): Promise<{ timezone?: string; nowMs: number; goesOn: boolean; goesOnAt?: string }> {
     const human = await this.deps.store.human
       .get(ctx.token.claims.ownerHumanId)
       .catch(() => undefined);
+    // S-10: the person's session goes on after the wait, when their quiet hours end if later.
+    const goesOn = personsSession(ctx.session.plan);
     return {
       ...(human?.timezone ? { timezone: human.timezone } : {}),
       nowMs: this.deps.clock.now(),
+      goesOn,
+      ...(goesOn && wait?.reason === "limit" ? goesOnAtWords(human, wait.until) : {}),
     };
   }
 

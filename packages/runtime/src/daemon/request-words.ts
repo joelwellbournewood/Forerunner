@@ -130,6 +130,10 @@ export interface RequestWordsContext {
   startsByItself?: boolean;
   /** The person's own session waits to go on for this project (S-10). */
   continuationWaits?: boolean;
+  /** Stop all is on: the hands-off setting starts nothing (S-5). */
+  stopped?: boolean;
+  /** The person's quiet hours hold a start they did not press now (S-1). */
+  quiet?: boolean;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>

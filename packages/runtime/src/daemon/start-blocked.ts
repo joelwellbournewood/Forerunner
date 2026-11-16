@@ -45,6 +45,8 @@ export interface StartBlockedFacts {
     startable?: boolean;
     /** S-10: the person's session (or a Start they pressed) is kept on the wait: Cancel drops it. */
     kept?: boolean;
+    /** S-10, with `startable`: the Start button's words ("Start at 15:40"). */
+    startLabel?: string;
   } | null;
   /**
    * C2-left-2 (run C3): with no task ready, the title of a task of the project that waits on the
@@ -94,6 +96,9 @@ export function startBlocked(r: StartCheck, f: StartBlockedFacts): StartCheckVie
         : null,
       ...(f.credentialWait.startable ? { startable: true } : {}),
       ...(f.credentialWait.kept ? { kept: true } : {}),
+      ...(f.credentialWait.startable && f.credentialWait.startLabel
+        ? { startLabel: f.credentialWait.startLabel }
+        : {}),
     };
   if (blocked?.kind !== "nothing_runnable" || r.ready !== 0) return blocked;
   if (f.plan === "pending")

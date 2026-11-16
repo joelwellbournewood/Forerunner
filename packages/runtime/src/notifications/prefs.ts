@@ -208,6 +208,25 @@ export function isQuietAt(quiet: QuietHours | null, timezone: string, nowMs: num
   return start < end ? t >= start && t < end : t >= start || t < end;
 }
 
+/**
+ * When the window holding `atMs` ends: the first whole minute after it outside the window (at
+ * most a day ahead), as an ISO time; null when `atMs` is outside the window (d1109-starts-engine
+ * S-10: a start the person did not press that falls in their quiet hours goes on at their end).
+ */
+export function quietHoursEndAt(
+  quiet: QuietHours | null,
+  timezone: string,
+  atMs: number,
+): string | null {
+  if (!isQuietAt(quiet, timezone, atMs)) return null;
+  for (let m = 1; m <= 24 * 60; m++) {
+    const at = atMs + m * 60_000;
+    if (!isQuietAt(quiet, timezone, at))
+      return new Date(Math.floor(at / 60_000) * 60_000).toISOString();
+  }
+  return null;
+}
+
 /** Local day key (YYYY-MM-DD in `timezone`) and whether the digest time has passed today. */
 export function digestState(
   digestTime: string | null,

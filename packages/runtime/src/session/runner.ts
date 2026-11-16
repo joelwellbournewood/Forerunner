@@ -96,6 +96,7 @@ import {
   CREDENTIAL_WAIT_STOP,
   type CredentialWait,
   clockTime,
+  goesOnAtWords,
   stoppedRunSentence,
   waitSentence,
 } from "./credential-wait.ts";
@@ -1109,6 +1110,13 @@ export class SessionRunner {
       await store.event.append(session.id, type, payload as never, cost);
       opts.onEvent?.(type, payload);
     };
+    // S-10: the person's session going on after its credential wait says so first, as its log's
+    // first line ("Goes on with your session of 14:05."), before the budget line.
+    if (startedBy?.by === "continuation")
+      await emit(CONTINUES_EVENT, {
+        continues: opts.continues ?? null,
+        at: startedBy.continuesAt ?? null,
+      });
     await emit("session.started", {
       trigger: opts.trigger,
       ...(startedBy ? { by: startedBy.by } : {}),
@@ -1117,12 +1125,6 @@ export class SessionRunner {
       stepCap,
       autonomy,
     });
-    // S-10: the person's session going on after its credential wait says so first.
-    if (startedBy?.by === "continuation")
-      await emit(CONTINUES_EVENT, {
-        continues: opts.continues ?? null,
-        at: startedBy.continuesAt ?? null,
-      });
     // Context layer: resolve the project's compression policy now; when it asked for Headroom
     // and the proxy is not usable, say so once per session (never silently native).
     const sessionContext = await this.deps.context?.forSession(session.id, project?.id);
@@ -2826,6 +2828,10 @@ export class SessionRunner {
                 // W15-27: the work waits only for its review; it is reviewed without a run.
                 await this.keepForReview(now, result, runItem.specialist);
                 const owner = await store.human.get(agent.owner_human_id).catch(() => undefined);
+                const personsOwn =
+                  startedBy?.by === "person" ||
+                  startedBy?.by === "continuation" ||
+                  opts.personSchedule === true;
                 await emit(BILLING_FALLBACK_EVENT, {
                   taskId: task.id,
                   title: task.title,
@@ -2837,11 +2843,12 @@ export class SessionRunner {
                     {
                       ...(owner?.timezone ? { timezone: owner.timezone } : {}),
                       nowMs: clock.now(),
-                      // S-10: the person's own session goes on after the wait.
-                      goesOn:
-                        startedBy?.by === "person" ||
-                        startedBy?.by === "continuation" ||
-                        opts.personSchedule === true,
+                      // S-10: the person's own session goes on after the wait, when their
+                      // quiet hours end if they hold it past the reset.
+                      goesOn: personsOwn,
+                      ...(personsOwn && wait.reason === "limit"
+                        ? goesOnAtWords(owner, wait.until)
+                        : {}),
                     },
                   ),
                 });
@@ -3525,6 +3532,8 @@ export class SessionRunner {
         ? {
             credentialWait: waitSentence(credentialWait, {
               goesOn,
+              // S-10: the continuation goes on when the person's quiet hours end, if later.
+              ...(goesOn ? goesOnAtWords(waitOwner, credentialWait.until) : {}),
               ...(waitOwner?.timezone ? { timezone: waitOwner.timezone } : {}),
               nowMs: clock.now(),
             }),
@@ -4277,12 +4286,6 @@ export class SessionRunner {
   }
 
   /**
-   * W15-27 (TR-15): the kept result of the task's latest run, to review without running the
-   * specialist, when the run kept one (`reviewPending`), the attempt is the same, the executor
-   * can make its workspace ready (`prepareReview`) and the work there is unchanged (`workHash`).
-   * The entry is cleared when the pass takes it, and when it no longer applies. Null: run it.
-   */
-  /**
    * A task priced as the planner prices it now (S-6, S-7): its whole estimate (the learned one,
    * its own, its budget, the default), less what its paused runs kept, within its own budget.
    */
@@ -4296,6 +4299,12 @@ export class SessionRunner {
     );
   }
 
+  /**
+   * W15-27 (TR-15): the kept result of the task's latest run, to review without running the
+   * specialist, when the run kept one (`reviewPending`), the attempt is the same, the executor
+   * can make its workspace ready (`prepareReview`) and the work there is unchanged (`workHash`).
+   * The entry is cleared when the pass takes it, and when it no longer applies. Null: run it.
+   */
   private async reviewOnlyResult(task: TaskRow): Promise<TaskExecutionResult | null> {
     const { store, executor } = this.deps;
     if (!this.deps.critic || !executor.prepareReview) return null;

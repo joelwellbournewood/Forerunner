@@ -60,6 +60,10 @@ export function startNotice(
       return ahead > 0
         ? `Deferred: it is quiet hours, and ${before} This one starts after them, once the quiet hours end.`
         : "Deferred: it is quiet hours. The session starts when they end.";
+    // d1109-starts-engine S-10: the Start is kept for the credential's reset (the daemon's
+    // sentence names the time; this is only for an answer without one).
+    case "kept":
+      return "Kept: the session starts when the Claude credential is back.";
     default:
       return "Started: the session works until nothing more can run, the budget is used, or you stop it.";
   }
@@ -388,7 +392,12 @@ export function StartSessionDialog({
       });
       setNote("");
       // The person stays where they were (design §3.6); the session can be opened from here.
-      setNotice(startNotice(started.result, started.ahead, { planning }));
+      // S-10: a Start kept for the credential's reset says when it starts, in the daemon's words.
+      setNotice(
+        started.result === "kept" && started.sentence
+          ? started.sentence
+          : startNotice(started.result, started.ahead, { planning }),
+      );
       setStartedId(started.session?.id ?? null);
       setCheckTick((n) => n + 1);
     } catch (err) {
@@ -591,7 +600,8 @@ export function StartSessionDialog({
               disabled={busy || !identity || stops || !!problem}
               data-testid="confirm-start-session"
             >
-              {busy ? "Starting…" : "Start"}
+              {/* S-10: while the credential is out, a Start is kept for its reset: "Start at 15:40". */}
+              {busy ? "Starting…" : (blocked?.startable && blocked.startLabel) || "Start"}
             </Button>
           )}
         </div>
