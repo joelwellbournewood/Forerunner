@@ -243,3 +243,12 @@ Consequences of the amendment:
   this channel (`record.where: "repo_marker"`, record-008 to record-010, controls record-103 and
   record-104).
 - `project_join` is a new chat tool (the tool list grows by one definition on every turn).
+- Every entry point answers a link refusal the same way (C2-left-12): the Data tab's import now
+  answers 409 `conflict` with `details.cause`, as `POST /projects` and Sources do.
+- Take it over says what it could not do (C2-left-11): when its docs pull request could not be
+  opened, the sentence and the Changes row say that GitHub still names the other project. A
+  take-over after this project's own `fr/docs-scaffold` pull request was opened still leaves
+  that pull request without the take-over line (not done; it needs the docs loop to rebuild that
+  branch on the default branch).
+- A together project's Docs rows (C2-left-13) say who writes a doc it does not have, never "not
+  written yet", and carry no missing mark (`DocView.notWrittenHere`).
