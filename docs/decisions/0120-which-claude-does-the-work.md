@@ -44,14 +44,22 @@ work waits.
 3. **Ask first** is one card per stop (`credential:ask`), filed only by the writer that set
    `limits.asking` on the stopped source. "Use API key" writes `limits.grant {to, stopKey}`: the API
    key serves every purpose but the background jobs until that stop ends; the waiting work goes on
-   (a running session takes its waiting tasks back; the person's session that ended to wait goes on
-   now as their start). "Wait" moves nothing; at the stop's end the person's waiting session goes on
-   by itself (ADR 0118). A late answer grants nothing; the wake ends grants and closes cards whose
-   stop is over or whose preset changed.
+   (a running session takes its waiting tasks back; the person's session that ended to wait, or a
+   Start they pressed during the stop, goes on now as their start). "Wait" moves nothing; at the
+   stop's end the person's waiting session goes on by itself (ADR 0118). A late answer grants
+   nothing; the wake ends grants and closes cards whose stop is over, whose preset changed or whose
+   other credential cannot serve any more. No card is filed when no other credential serves now or
+   the month cap has no room. The words say "waits for your answer ... The card is in the Inbox."
+   only while that card is open (`askShown`); otherwise the plain wait.
 4. **A refusal informs once and is never retried.** One card per refusal, filed only by the writer
    that set the mark (and TR-10's filing again only by the writer that opens
    `limits.refusedCard`); the card says why by category (never the provider's words) and what the
-   work does under the rule.
+   work does under the rule. No path asks a refused credential anything until a different one is
+   saved, the model list and a model's output limit included. Under "then ask me" a refusal of the
+   first choice is a stop like a limit (the owner's 7c, "as if it has run out"): one ask card
+   ("Use your API key until a new sign-in is saved?"), whose grant lasts until a new credential is
+   saved; the refused card stays the notification with its link and carries no options of its
+   own.
 5. **Chat holds too.** A held question makes no model call and books nothing; the reply says why,
    with a one-off "Use API key" for that one question when another credential serves now and the
    month cap has room. When another credential answers (a grant, or 'then the API key'), the
@@ -67,10 +75,13 @@ work waits.
   their tasks; at its limit chat holds with a one-off press (the owner question below).
 - The run that continues a credential-stopped task is briefed "## Where the last run stopped"
   from its kept work, never "It failed".
-- Not built in this round (named in the report): the share reached mid-run is still the hooks'
-  plan-level budget pause (CE-6); the background jobs' "not marked done for the period" (CE-10);
-  the switch's data on the session result and the cost view (CE-11) and the switch notification
-  (CE-12); d1109-cred-screens (C6) builds the screens on this.
+- The task check is held like every call: a held check makes no call, writes no Run row, keeps
+  its notes for the next boundary and, under 'ask', joins the stop's one card.
+- Not built in this round (named in the report, for the session lead's decision against the cut
+  line): the share reached mid-run is still the hooks' plan-level budget pause, and the allowance
+  raise's change line (CE-6); the background jobs' "not marked done for the period" (CE-10); the
+  switch's session log line, its data on the session result and the cost view (CE-11) and the
+  switch notification (CE-12); d1109-cred-screens (C6) builds the screens on this.
 - Open owner questions (built as their defaults, each in one place): the default preset is
   `subscription_then_wait` (`DEFAULT_CREDENTIAL_POLICY`); no monthly limit of Forerunner's own on
   the API key (a limit stored by an earlier version counts as a stop).

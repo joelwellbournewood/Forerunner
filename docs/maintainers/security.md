@@ -435,8 +435,10 @@ harnesses and the nine scenarios" step. `docs/status/gates.md` cites the step fo
 ### Refused Claude credentials ([ADR 0120](../decisions/0120-which-claude-does-the-work.md))
 
 A refused credential gets no second request from any path (a switch, a grant, a continuation,
-chat, a job) until a different one is saved: the router holds it under every rule, and the one
-card per refusal is filed only by the writer that set the mark. `limits.refusedWhy` stays redacted
+chat, a job, the routed provider's model list and output limit) until a different one is saved:
+the router holds it under every rule, `RoutedProvider`'s `apiProvider` skips a source whose refusal
+stands (`credential-refused-once.test.ts` counts one 401 per key in the stand-in's log), and the
+one card per refusal is filed only by the writer that set the mark. `limits.refusedWhy` stays redacted
 and only its category (`refusedCategory`) is shown; the asking, grant and switchNotified marks
 hold no credential value.
 

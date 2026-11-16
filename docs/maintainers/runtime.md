@@ -7777,13 +7777,43 @@ channel (ST-13).
 - **The brief** (`session/task-context.ts`): a run stopped by its credential (`usage_limit`,
   `credential_refused`, or an artifact `credentialStop: "share"`) is continued from
   `whereTheCredentialStopped`, never "## The previous attempt".
+- **The ask form only while its card is open** (fix-up): the router's `waitFor.ask` means "the
+  rule asks", not "a card is open". Every sentence that names the card (the executor's wait and
+  stopped-run sentences, `withReviewWait`, the plan's wait, the Start check's `now`) passes the
+  wait through `askShown` (`credential-wait.ts`), which keeps `ask` only while
+  `askCardOpen(store, sourceId, stopKey)` finds the stop's card open; otherwise the plain wait. The
+  plan from a brief keeps `stopKey` and `ask` on its stored wait for this.
+- **A grant and a kept Start**: `onGrant` starts the person's kept continuation or, when none, a
+  Start they pressed during the stop (`keptStartOf`, its note kept), as their own start, so the
+  Done line's "your session goes on now" is what happens. The ask card's outcomes carry no
+  "Done:" of their own (the Inbox adds it).
+- **Closing and not filing**: `settleAsks` also closes an open card whose other credential cannot
+  serve any more (`otherServes`, composition: a pick with `allowSwitch`; "Closed: your API key cannot
+  do the work now either."). The composition's `ask` files no card when the month cap has no room.
+- **A refusal under 'ask'** is a stop like a limit: `askFor` files the one ask card for it ("Use
+  your API key until a new sign-in is saved?", `refusedAskWords`); its grant lasts until a new
+  credential is saved (the stop key changes). The refused card carries no options; its body
+  (`views.ts` `credentialRefusedFor`) names the choice while the ask card is open, the key after Use
+  API key, and the wait otherwise.
+- **The routed provider's model list and output limit** skip a source whose refusal stands
+  (`RoutedProviderDeps.refused`): a refused key gets no second request from any path.
+- **The task check** (`session/task-check.ts`): `runTaskCheck` asks the routed provider's
+  `holdNow` before its call; a held check returns `not_made` / `held` with its wait (no call, no Run
+  row, nothing booked, the notes kept) and keeps the project's wait on the stopped source
+  (`noteWait`: its one ask card under 'ask').
 
 Tests: `credential-policy.test.ts` (the table over every purpose, stop and rule),
-`credential-ask.test.ts` (composed, file database, restarts), `credential-refusal.test.ts` (one
-card per refusal, TR-10 across a restart, every sentence of `credential-words.ts`),
+`credential-policy-session.test.ts` (composed with no injected provider: the review, the task check,
+chat and a plan from a brief under each preset), `credential-ask.test.ts` and
+`credential-ask-words.test.ts` (composed on `cred-world.ts`, no injected provider: one card per
+stop, restarts, the ask form only while the card is open, a kept Start after Use API key, closing
+when the stop ended while closed, on a policy change and when the other credential cannot serve, no
+card at a spent month cap), `credential-refused-once.test.ts` (one 401 per refused key across chat,
+a session, the model list and a restart; a refused sign-in under 'ask'), `credential-refusal.test.ts`
+(one card per refusal, TR-10 across a restart, every sentence of `credential-words.ts`),
 `billing-order.test.ts` (chat on the subscription with nothing chosen, the hold reply, the move
-under "then the API key"), `task-usage-limit.test.ts` (the brief), and the UI's real-daemon
-describe "d1109-cred-engine, run C".
+under "then the API key"), `task-usage-limit.test.ts` and `where-last-run-stopped.test.ts` (the
+brief), and the UI's real-daemon describe "d1109-cred-engine, run C" (on the Messages API stand-in).
 
 ## How to change it
 
