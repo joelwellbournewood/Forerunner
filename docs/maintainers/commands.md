@@ -696,9 +696,45 @@ run C").
   project. Close it there first', `TAKE_OVER_UNDO_MERGED` 'the repository already names this
   project on GitHub', `TAKE_OVER_UNDO_UNREADABLE` 'GitHub did not answer, so the repository
   cannot be checked. Try again'; Changes shows 'Cannot be undone now: <it>.');
-  `undoSentence` is 'o/kite is no longer taken over from "Kite club".'.
+  `undoSentence` is 'o/kite is no longer taken over from "Kite club".'. When `writeMarker`
+  answers `failed` (the scaffold threw), the change keeps `after.pr_failed` and the sentence is
+  `tookOverNoPullRequestSentence` ('Took over o/kite from "Kite club" here, but the docs pull
+  request that names this project could not be opened, so GitHub still names "Kite club".',
+  C2-left-11).
 - **Names**: a command name may join two words with an underscore inside a dotted part
   (`NAME_RE`, `repo.take_over`; tool name `repo_take_over`).
+
+### Make one project (`project.join`, d1109-onerepo-join, ADR 0117 amended 2026-11-16)
+
+`commands/project-join.ts`, appended to `COMMAND_NAMES` and registered after
+`repo.take_over`; chat tool `project_join`.
+
+- **Params**: `{keep, close}` (`keep` the project the person chose to keep, `close` one to ten
+  others). Medium risk, `askFromChat` (chat reads it back with `joinAsk`: 'Make one project:
+  move the tasks, plan and cards of "Kite club" into "Site"? Changes has its Undo.'; the dialog's
+  press is the yes with `confirm: "tap"`), scope project, reversible. Its definition
+  (`PROJECT_JOIN_DESCRIPTION`) tells the model to use it only when the person asks and names
+  the project to keep; the test asserts it exactly.
+- **Plan and run** ask `CommandPorts.projectJoin.refusal(keep, close)` (compose's port over
+  `joinRefusal`, runtime.md) and refuse with its sentence; nothing is chosen by the model.
+- **The moves** (`moveWork`, one `store.transaction`): every task of the closed project (any
+  status), its milestones after the kept one's last `order_index` (reason 'Moved into "Site" when
+  "Kite club" joined it.'), its human requests (the ones of a moved task and the open ones), its
+  queued queue items, merge records, decisions, accepted source candidates and data assets. The
+  closed project is archived (`active: false`, `repos: []`, `settings.joined_into`,
+  `settings.was_linked`); the kept one's `settings.joined_from` gets it. Sessions, change rows,
+  spending and lessons stay where they are (lessons are files, ADR 0002). `after` keeps
+  `{keep, closed, moved: {[closedId]: ids}, at}` and `before` `{closed: [the rows as they
+  were]}`; the outcome's project is the kept one. Its sentence is `joinSentence` ('Made one
+  project: "Kite club" joined "Site".').
+- **Undo** puts every moved row back and reopens the closed project with its links
+  ('"Kite club" is its own project again.'). `undoBlocked` answers a fragment: a session working
+  on the kept project, a moved pull request being merged, or a dependency between moved and
+  kept tasks created since ('"Shop page" waits for "Cart", which came from "Kite club": change
+  that first'). The kept project's `project.create` cannot be undone while it includes another's
+  work (`joinedCreateUndoBlocked`); a joined project's own rows answer `joinedProjectWords`
+  ('"Kite club" joined "Site"') through the executor's guard, and `removedProjectRefusal`
+  answers '"Kite club" joined "Site", so its work runs there.' for any command on it.
 
 ### Who starts a session (d1109-starts-engine, [ADR 0118](../decisions/0118-who-starts-a-session.md))
 

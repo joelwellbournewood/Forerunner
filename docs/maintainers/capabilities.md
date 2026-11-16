@@ -615,7 +615,14 @@ with their milestone.
   Local only gets none and its PR keeps the repository's) and `test/git.test.ts` "a push never
   carries Local only" and "a checkout never replaces the person's ignored file".
 - `MemoryGitHost` (`memory.ts`) is an in-memory implementation of the contract for unit tests
-  of callers.
+  of callers. It reads owner and repository names whatever their case, as GitHub does (kept
+  under the lower-cased `owner/name`, answered with the name as made; `listRepos` by owner the
+  same way; d1109-onerepo-join, C2-left-12).
+- d1109-onerepo-join (C2-left-10): `GitHubHost` cuts every REST and GraphQL request at
+  `requestTimeoutMs` (default `GITHUB_REQUEST_TIMEOUT_MS`, 30 s, `AbortSignal.timeout`); a
+  request GitHub never answers throws `provider_error` 'GitHub API at <origin> did not answer in
+  time' (retryable). Before, a GitHub that accepted the connection and never answered held
+  `POST /projects` (the docs scaffold awaited it) for ever.
 - Project operations on the same contract (`ensureProject`, `ensureFields`, `listProjectItems`,
   `findItem`, `upsertItem`, `setItemFields`, `archiveItem`) back the one-way task mirror below.
   `GitHubHost` serves them over the GraphQL endpoint (`github-graphql.ts` holds the documents;

@@ -118,3 +118,16 @@ by itself when work was ready", `continuation` is "goes on with your session of 
 `continuesAt`, else "goes on with your earlier session"); `person` says nothing, except "started
 from your phone" for a phone's start; `schedule` is "started on its schedule". A session's first
 log line for a continuation is "Goes on with your session of 14:05.".
+
+## Amendment 2026-11-16 (ADR 0117 amended, d1109-onerepo-join): a project that joined another
+
+When the person makes one project of two that used one repository (ADR 0117's amendment of
+this date), the closed project's sessions stay its own: they are not moved, so each row still
+says what that session did, spent and how it ended in the project it ran in. The kept project's
+list says they exist instead: `ProjectSessionsView.joined` has one line per project that joined
+it, on the first page only ('"Kite club" had 3 sessions before it joined.'), with Open to that
+project's Sessions tab, which still lists them. The heading's count stays this project's own;
+no joined session is counted twice or shown in the kept project's rows. After Undo the line is
+gone. The chat's recall of the kept project reads the joined project's sessions as well
+(`conversation/scope.ts` `withJoined`), so "what did Kite club's last session do" is answered
+from "Site".

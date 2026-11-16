@@ -7487,7 +7487,57 @@ no store, git host or file system, so the UI's fake daemon imports it).
   `writeMarker` (`docs.scaffoldProject` again, never throws) and `takeOverUndoBlocked` (the
   default branch's marker names this project, or a docs pull request of this project updated
   since the take-over, or the one the run opened, is merged: refused; open: refused; GitHub
-  unreadable: refused).
+  unreadable: refused). When the scaffold throws, `writeMarker` answers `{prUrl: null, failed:
+  true}` and the sentence is `tookOverNoPullRequestSentence` ('Took over o/kite from "Kite club"
+  here, but the docs pull request that names this project could not be opened, so GitHub still
+  names "Kite club".', C2-left-11). `readRepository` and every take-over read are cut at
+  `READ_WAIT_MS` (8 s, `RepositoryUse` dep `readWaitMs`, compose's `githubReadWaitMs`); a pull
+  request without an author counts as another account's (C2-left-10). `markerNameOf` scans the
+  name as written before it cleans it (C2-left-9: a line break hid a "SYSTEM:" line).
+- **One answer at every entry point** (C2-left-12): the Data tab's import (`data/routes.ts`)
+  answers a link refusal as `POST /projects` and Sources do: 409 `conflict`, `details.cause`,
+  no `untrusted`.
+- **A together project's Docs rows** (C2-left-13): a doc it does not have reads
+  `togetherDocNote` ('The other Forerunner of "Kite club" writes this doc on GitHub; this
+  project does not write docs.') with `DocView.notWrittenHere`, never "not written yet".
+
+### Make one project (d1109-onerepo-join, ADR 0117 amended 2026-11-16)
+
+Projects made before one repository was one project can share a repository or a folder. The
+person makes them one: the one they keep takes the others' work, the others close and keep
+their history to read. Every sentence is in `daemon/join-words.ts` (light, as
+`repository-words.ts`; the fake daemon imports it), the facts in `daemon/join-preview.ts`, the
+moves in `project.join` (commands.md).
+
+- **The facts** (`JoinDeps` on `RuntimeApp.joinDeps`: the store, the person and agent ids, the
+  repository index, `identities`, `keptWaitWhen` and `chfPerUsd`). `sharedLinkOf(deps, project)`
+  lists the other projects here that use one of its links (`projectsUsing`; the locator spelled
+  as the oldest project spells it) and `sharesRepositoryWith` is the Overview's line
+  (`ProjectCard.sharesRepositoryWith`, `sharedLinkSentence`: '"Site" and "Kite club" both work in
+  o/site.'); only the person's own projects (`ownsOwnProject`) are named.
+- **The refusal** (`joinRefusal(deps, {keep, close})`, compose's `projectJoin` port, asked by
+  the command's plan and run and by `GET /projects/:id/join-preview`): not the person's, not a
+  project here, not sharing a link, a running session, a plan that waits for an answer or is
+  being drafted, a pull request being merged, and (C3-left-2) a session that waits to go on
+  (`keptWait(projectId)`, which `continuations.waiting` also uses: the kept continuation at its
+  time, else `keptStartOf`, else `summary_cache.start_pending`). Each refusal is one sentence
+  that says what to do first.
+- **The dialog's facts** (`joinPreview(deps, project, withIds)`, `JoinPreviewView`): per project
+  its counts (tasks open and done, open pull requests), spend so far in CHF, its budgets
+  (`sessionBudgetWords`, `projectBudgetWords`), who merges (repository projects only) and
+  Research reads; the moves line, the stays line and the setting that applies.
+- **After a join**: the closed project is archived with `settings.joined_into {project, name,
+  at}` (`joinedIntoOf`), the kept one has `settings.joined_from` (the index's keeper). Its card
+  has `joinedInto` and the status line kind `joined` ('Joined into "Site" on 9 Nov.' with Open
+  it, `project-status.ts`); the kept card `includesWorkOf`. `costView` adds `joinedSpend` ('Spent
+  in "Kite club" before it joined: CHF 3.20'), `projectSessionsView` adds `joined` on its first
+  page ('"Kite club" had 3 sessions before it joined.'). `change-rows.ts` never reads a joined
+  project as removed; `removedProjectRefusal` answers '"Kite club" joined "Site", so its work
+  runs there.' for anything asked of it. The chat's recall reads the kept project with the ones
+  that joined it (`conversation/scope.ts` `withJoined`, used by `recall.ts`).
+- **GitHub that does not answer** (C2-left-10): `GitHubHost` cuts every request at
+  `GITHUB_REQUEST_TIMEOUT_MS` (30 s, option `requestTimeoutMs`), so `POST /projects` and the
+  scaffold no longer wait for ever (capabilities.md).
 
 ### Who starts a session (d1109-starts-engine, [ADR 0118](../decisions/0118-who-starts-a-session.md))
 
