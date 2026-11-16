@@ -14362,7 +14362,8 @@ describe("w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)", 
         specialist: "coder",
         riskTier: 0,
       });
-      // The only key rests until 08:30 UTC; a session meets the wait and keeps it on the key.
+      // The only key rests until 08:30 UTC; the person's Start is kept on the key for the reset
+      // (d1109-starts-engine S-10, ADR 0118 point 10: before, a session ran to meet the wait).
       const src = (await rt.store.billingSource.list({} as never, { limit: 20 })).find(
         (s) => s.kind === "api_key",
       );
@@ -14372,14 +14373,7 @@ describe("w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)", 
       });
       const agentId = (await client.agents())[0]?.id ?? "";
       const first = await client.startSession({ agentId, projectId: project.id });
-      const sessionId = first.session?.id ?? "";
-      await eventually(
-        async () =>
-          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
-        "the session that met the wait to end (at least 20 s)",
-        async () => (await client.session(sessionId)).status,
-        20_000,
-      );
+      expect(first).toMatchObject({ result: "kept", session: null });
       expect(await waitsOnKey()).toEqual([project.id]);
       // The creation's Undo removes the project; its task stays ready, its wait on the key.
       expect((await client.undoChange(creation.id)).status).toBe("done");
@@ -14389,7 +14383,7 @@ describe("w15-tail, wave 15 run B: a removed project starts nothing (W15B-02)", 
       clock.set(Date.parse("2026-11-09T08:31:00Z"));
       // Before: 1 (a session of the removed project started by itself and spent).
       expect(await rt.billing.waits.wake()).toBe(0);
-      expect((await sessionsOf(rt, project.id)).map((s) => s.trigger)).toEqual(["manual"]);
+      expect((await sessionsOf(rt, project.id)).map((s) => s.trigger)).toEqual([]);
       expect(await waitsOnKey()).toEqual([]);
       // The next tick finds nothing to try again.
       expect(await rt.billing.waits.wake()).toBe(0);
@@ -15041,13 +15035,15 @@ describe("w15-words, wave 15 run B", () => {
           expect(coder?.runsOn?.line).toBe(
             "Waits until 09:30 (your API key's limit). Press Start and the work starts then.",
           );
-          // W15-65: the Start check says what Start does.
+          // W15-65: the Start check says what Start does (d1109-starts-engine S-10: its button
+          // reads "Start at 09:30", since a Start now is kept for the reset).
           expect((await client.startCheck(project.id)).blocked).toEqual({
             kind: "nothing_runnable",
             sentence:
               "Nothing can run until 09:30 (your API key's limit). Press Start and the work starts then.",
             action: null,
             startable: true,
+            startLabel: "Start at 09:30",
           });
           // W15-67: the project's line names the wait and its time; Continue keeps the wait.
           const line = (await client.project(project.id)).statusLine;
