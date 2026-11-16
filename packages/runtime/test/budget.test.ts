@@ -261,3 +261,23 @@ describe("session budget", () => {
     ).toBe(3_015_000);
   });
 });
+
+// fixup-d1109-chat-depth (review: "Answer now has no test that fails without it"): Answer now
+// makes a longer chat pass's next call carry its wrap-up, once, whatever it spent.
+describe("d1109-chat-depth fixup: SessionBudget.wrapUpNow (Answer now)", () => {
+  it("the run's next call brings the wrap-up far below its line, once; a second press after it answers false; another run keeps its own line", () => {
+    const b = mk(10_000_000);
+    expect(b.precheck("r1", 1_000_000, 100_000, "work").decision).toBe("allow");
+    b.record("r1", 100_000);
+    // Far below the line (800 000): no wrap-up by spend.
+    expect(b.precheck("r1", 1_000_000, 100_000, "work")).toEqual({ decision: "allow" });
+    expect(b.wrapUpNow("r1")).toBe(true);
+    expect(b.precheck("r1", 1_000_000, 100_000, "work").decision).toBe("wrap_up");
+    // Once: the next call is allowed, and a second Answer now has nothing left to do.
+    expect(b.precheck("r1", 1_000_000, 100_000, "work").decision).toBe("allow");
+    expect(b.wrapUpNow("r1")).toBe(false);
+    // Another run keeps its own line: Answer now on r1 never wraps r2 up.
+    expect(b.precheck("r2", 1_000_000, 100_000, "work").decision).toBe("allow");
+    expect(b.precheck("r2", 1_000_000, 100_000, "work").decision).toBe("allow");
+  });
+});

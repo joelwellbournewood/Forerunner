@@ -513,8 +513,9 @@ export function SettingChangeDialog({
     >
       <div className="space-y-3 text-sm">
         <p className="text-xs text-neutral-600 dark:text-neutral-400">
-          {setting.description}. The same change chat and voice make, with the same change card and
-          the same entry in Changes.
+          {/* One period after the description, whether or not it ends with one (fixup-d1109-chat-depth). */}
+          {setting.description.replace(/[.!?]+$/, "")}. The same change chat and voice make, with
+          the same change card and the same entry in Changes.
         </p>
         {result === null ? (
           <form onSubmit={submit} className="space-y-2">

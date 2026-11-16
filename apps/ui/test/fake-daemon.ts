@@ -6100,7 +6100,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         const had = state.settingValues.chat_ask_above;
         const before = typeof had === "number" ? had : 0.1;
         const words = (v: number) =>
-          v <= 0 ? "asks before every longer answer" : `asks first above CHF ${v.toFixed(2)}`;
+          v <= 0 ? "CHF 0.00, so chat asks before every longer answer" : `CHF ${v.toFixed(2)}`;
         const what = "the amount above which chat asks first";
         if (before === value && had !== undefined)
           return refuse(`The amount above which chat asks first is already ${words(before)}.`);

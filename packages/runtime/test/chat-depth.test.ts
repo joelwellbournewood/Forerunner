@@ -242,6 +242,36 @@ describe("d1109-chat-depth, run C: the signal and Stop (D3-12)", () => {
     expect(w.agent.turnsOf().stop(turnId)).toBe(false);
   });
 
+  // fixup-d1109-chat-depth (review: an acceptance case the fixer left out): Stop's consequence
+  // line says "Changes it already made stay, each with Undo."
+  it("Stop after the turn added a task: the task stays, with its Undo, and the reply says it was stopped", async () => {
+    const slow = new FakeProvider({
+      replies: [
+        toolReply("task_create", { title: "Write the FAQ page", outcome: "An FAQ page." }),
+        textReply("Added the FAQ page.", { ttftMs: 600_000 }),
+      ],
+      latency: "simulated",
+    });
+    const w = await world({ provider: slow });
+    let turnId = "";
+    const pending = w.chat("could you make sure we remember the FAQ page?", {
+      onTurn: (t) => (turnId = t.turnId),
+    });
+    // Stop once the call after the change is being made (at most 10 s of real time).
+    const started = Date.now();
+    while (slow.calls.length < 2 && Date.now() - started < 10_000)
+      await new Promise((r) => setTimeout(r, 5));
+    expect(slow.calls.length, "the call after the change never started").toBe(2);
+    expect(w.agent.turnsOf().stop(turnId)).toBe(true);
+    const reply = await pending;
+    expect(reply.footer).toMatch(/^You stopped this answer: (?:under )?CHF \d+\.\d{2} spent\.$/);
+    const added = reply.actions.find((a) => a.kind === "task.create");
+    expect(added?.undoToken).toBeTruthy();
+    const tasks = await w.store.task.forProject(w.project, {}, { limit: 10 });
+    expect(tasks.map((t) => t.title)).toContain("Write the FAQ page");
+    expect((await w.lastRow()).outcome).toBe("stopped");
+  });
+
   it("the request's own signal (voice's barge-in) now reaches the run: aborted mid-call, the run ends as killed", async () => {
     // A scripted fake that waits on its own (simulated) clock until the signal ends it.
     const slow = new FakeProvider({
@@ -436,6 +466,36 @@ describe("d1109-chat-depth, run C: answer_thoroughly, the gate and the ask", () 
     expect(w.requests().every((r) => !isThorough(r as ModelRequest))).toBe(true);
     const y = await w.chat("yes");
     expect(y.reply).toBe("Yes to what? Nothing is waiting for your yes.");
+  });
+
+  // fixup-d1109-chat-depth (review): with an older read-back card still waiting and a newer ask
+  // line under the last answer, a typed "yes" answered the card (a change the person did not
+  // mean) instead of the line they had just read. The card keeps its own Yes and No.
+  it("a typed 'yes' after a newer ask line takes the ask line, not an older card still waiting; the card stays", async () => {
+    const w = await world({
+      replies: [
+        toolReply("settings_set", { key: "chat_ask_above", value: 1 }, undefined, {
+          when: (r) => !isThorough(r) && String(r.messages.at(-1)?.content).includes("allow more"),
+        }),
+        textReply("That waits for your yes.", { when: (r) => !isThorough(r) }),
+        toolReply("answer_thoroughly", { why: "failure" }, undefined, {
+          when: (r) => !isThorough(r),
+        }),
+        textReply("Brief.", { when: (r) => !isThorough(r) }),
+        textReply("It fails because styles.css is never linked.", { when: isThorough }),
+      ],
+    });
+    const card = await w.chat("could you allow more for chat answers, CHF 1 please?");
+    expect(card.pendingConfirmation).not.toBeNull();
+    const asked = await w.chat(QUESTION);
+    expect(asked.offer?.action).toBe("go_ahead");
+    const yes = await w.chat("yes");
+    expect(w.requests().filter((q) => isThorough(q as ModelRequest))).toHaveLength(1);
+    expect(yes.reply).toBe("It fails because styles.css is never linked.");
+    // The card was not answered: the amount is unchanged, and the card still waits.
+    expect((await w.store.human.mustGet(w.human)).notify_prefs.chat_ask_above).toBeUndefined();
+    const open = await w.store.humanRequest.open({ humanId: w.human }, { limit: 10 });
+    expect(open.some((r) => r.id === card.pendingConfirmation?.id)).toBe(true);
   });
 
   it("called after a task_get, the gate refuses (records read): exactly 'Not now: …' and Think it through under the answer", async () => {
@@ -669,6 +729,123 @@ describe("d1109-chat-depth, run C: money", () => {
     expect(r.reply).toBe(
       "This needs a stronger model: about CHF 0.10 (at most CHF 0.20) and 50 seconds. Go ahead?",
     );
+  });
+
+  // fixup-d1109-chat-depth (review, money): a longer pass that goes ahead without a yes has the
+  // person's amount within the outer room (ADR 0114's pass budgets), not also twice the median of
+  // the last answers: before, cheap past answers made the pass wrap up at CHF 0.05.
+  it("a longer pass that goes ahead has the person's amount as its budget, whatever the medians", async () => {
+    const w = await world({ replies: [textReply("Thought it through.")] });
+    const sessionId = await w.agent.conversationSessionId(w.alice, w.project);
+    for (const cost of [10_000, 12_000, 14_000])
+      await w.store.event.append(sessionId, "chat.reply", {
+        transcriptId: `seed-${cost}`,
+        text: "seed",
+        conversationProjectId: "elsewhere",
+        passes: [
+          {
+            depth: "longer",
+            model: "fake-haiku",
+            effort: "medium",
+            durationMs: 9_000,
+            costUsdMicro: cost,
+          },
+        ],
+      } as never);
+    const steps: string[] = [];
+    const r = await w.chat("think it through: what did the last two sessions do?", {
+      onStep: (l) => steps.push(l),
+    });
+    expect(r.depth).toBe("longer");
+    // CHF 0.10 at 0.8 CHF per USD is USD 0.125.
+    expect(w.runs[0]?.req.budget.limits.budgetUsdMicro).toBe(125_000);
+    expect(steps).toContain(
+      "Thinking it through more carefully: about 10 seconds, at most CHF 0.10.",
+    );
+  });
+
+  // fixup-d1109-chat-depth (review: an acceptance case the fixer left out).
+  it("with 'Chat asks first' at CHF 1.00 a longer pass estimated at CHF 0.40 goes ahead, and a stronger one still asks", async () => {
+    const w = await world({
+      prefs: { chat_ask_above: 1 },
+      replies: [
+        textReply("Thought it through.", { when: isThorough }),
+        toolReply("answer_thoroughly", { why: "comparison" }, undefined, {
+          when: (r) => !isThorough(r),
+        }),
+        textReply("Briefly: both work.", { when: (r) => !isThorough(r) }),
+      ],
+    });
+    const sessionId = await w.agent.conversationSessionId(w.alice, w.project);
+    // Past longer answers on this model at USD 0.50 (CHF 0.40 at 0.8).
+    for (const [i, cost] of [500_000, 500_000, 500_000].entries())
+      await w.store.event.append(sessionId, "chat.reply", {
+        transcriptId: `seed-${i}`,
+        text: "seed",
+        conversationProjectId: "elsewhere",
+        passes: [
+          {
+            depth: "longer",
+            model: "fake-haiku",
+            effort: "medium",
+            durationMs: 20_000,
+            costUsdMicro: cost,
+          },
+        ],
+      } as never);
+    const longer = await w.chat("think it through: what did the last two sessions do?");
+    expect(longer.depth).toBe("longer");
+    expect(longer.offer).toBeNull();
+    // CHF 1.00 at 0.8 is USD 1.25: the pass's budget is the person's amount.
+    expect(w.runs[0]?.req.budget.limits.budgetUsdMicro).toBe(1_250_000);
+    const stronger = await w.chat("compare the two ways to style the page, please");
+    expect(stronger.offer?.action).toBe("go_ahead");
+    expect(stronger.offer?.line).toMatch(/^This needs a stronger model: /);
+    expect(w.requests().filter((q) => isThorough(q as ModelRequest))).toHaveLength(1);
+  });
+
+  // fixup-d1109-chat-depth (review: Answer now had no test that fails without it).
+  it("Answer now during a longer pass: its next call carries the wrap-up (far below the pass's line) and the reply comes from that call; a quick turn has no Answer now", async () => {
+    let pressed: boolean | null = null;
+    let turnId = "";
+    const w = await world({
+      replies: [
+        toolReply("tasks_list", {}, undefined, {
+          when: (r) => {
+            if (!isThorough(r) || JSON.stringify(r.messages).includes("Wrap up now")) return false;
+            // The person presses Answer now while the pass's first call is made.
+            pressed ??= w.agent.turnsOf().get(turnId)?.answerNow?.() ?? false;
+            return true;
+          },
+          times: 5,
+        }),
+        textReply("From what I have so far: two tasks are left.", {
+          when: (r) => JSON.stringify(r.messages.at(-1)?.content).includes("Wrap up now"),
+        }),
+      ],
+    });
+    const r = await w.chat("think it through: what is left?", {
+      onTurn: (t) => (turnId = t.turnId),
+    });
+    expect(pressed).toBe(true);
+    const thorough = w.requests().filter((q) => isThorough(q as ModelRequest));
+    // The first call looked something up; the second heard the wrap-up, exactly, and answered.
+    expect(thorough).toHaveLength(2);
+    expect(JSON.stringify(thorough[1]?.messages.at(-1)?.content)).toContain(CHAT_WRAP_UP);
+    expect(r.reply).toBe("From what I have so far: two tasks are left.");
+    // A quick turn's run has no Answer now.
+    const q = await world({ replies: [textReply("Two are left.")] });
+    let quickTurn = "";
+    let quickAnswerNow: unknown = "unset";
+    await q.chat("what is left?", {
+      onTurn: (t) => {
+        quickTurn = t.turnId;
+      },
+      onStep: () => {
+        quickAnswerNow = q.agent.turnsOf().get(quickTurn)?.answerNow;
+      },
+    });
+    expect(quickAnswerNow === "unset" || quickAnswerNow === undefined).toBe(true);
   });
 });
 

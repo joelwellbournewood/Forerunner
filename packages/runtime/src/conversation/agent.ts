@@ -1093,6 +1093,11 @@ export class ConversationAgent {
     // restart it is found again from the conversation itself.
     const pendingKey = `${req.humanId}|${conversationProject ?? ""}`;
     const pending = await this.pendingOf(pendingKey, earlier);
+    // fixup-d1109-chat-depth: a newer answer's ask line ("… Go ahead?") is what a typed "yes" or
+    // "no" answers; the older card keeps its own Yes and No (before, it took the yes: a change
+    // the person did not mean).
+    const newerOffer = liveOffer(earlier);
+    const askAfterCard = !!newerOffer && !!pending && newerOffer.reply?.pendingId !== pending.id;
     if (pending && this.deps.commands) {
       if (await this.stopsLiveSession(agent.id, req.text)) {
         // Spec O.9, "stopping is immediate": a stop said while a work session runs stops it
@@ -1111,7 +1116,7 @@ export class ConversationAgent {
         } as never);
         cancelledForStop = true;
         if (answeredBy(r)) answeredHere = pending.id;
-      } else if (isYes(req.text) || NO_RE.test(req.text)) {
+      } else if ((isYes(req.text) || NO_RE.test(req.text)) && !askAfterCard) {
         this.pending.delete(pendingKey);
         const r = await this.deps.commands.confirmByText(pending.id, req.text, turn);
         await store.event.append(sessionId, isYes(req.text) ? "chat.confirmed" : "chat.cancelled", {
@@ -1672,7 +1677,10 @@ export class ConversationAgent {
         offer = offerOf(f, question);
         return null;
       }
-      const budgetUsdMicro = yes ? yes.atMostUsdMicro : Math.min(amountUsdMicro, f.atMostUsdMicro);
+      // ADR 0114 (the pass budgets): a yes covers its line's "at most"; a pass that goes ahead
+      // without one has the person's amount (fixup-d1109-chat-depth: before, also capped at twice
+      // the median, so a pass reached its wrap-up sooner than the amount the person set allows).
+      const budgetUsdMicro = yes ? yes.atMostUsdMicro : amountUsdMicro;
       const level = capFor(f, budgetUsdMicro);
       if (level) {
         capLevel = level;
@@ -1795,11 +1803,8 @@ export class ConversationAgent {
         thorough = await thoroughPass(
           go.route,
           go.figures,
-          Math.min(
-            amountUsdMicro,
-            go.figures.atMostUsdMicro,
-            room?.usdMicro ?? Number.POSITIVE_INFINITY,
-          ),
+          // A pass that goes ahead without a yes: the person's amount within the outer room.
+          Math.min(amountUsdMicro, room?.usdMicro ?? Number.POSITIVE_INFINITY),
         );
       // A refusal that is no cap offers Think it through with what a closer look takes.
       if (!offer && refusedFor && !capLevel && !spoken && longerFigures)

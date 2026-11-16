@@ -33,8 +33,11 @@ export class ChatTurns {
   private readonly turns = new Map<string, ChatTurnEntry>();
   private readonly listeners = new Set<ChatTurnListener>();
 
-  /** `startedAt`: when this daemon started (ISO): a person's line older than it without a reply was cut off by a restart. */
-  constructor(readonly startedAt: string = new Date().toISOString()) {}
+  /**
+   * `startedAt`: when this daemon started (ISO, from its Clock: AGENTS.md): a person's line older
+   * than it without a reply was cut off by a restart.
+   */
+  constructor(readonly startedAt: string) {}
 
   begin(o: {
     turnId: string;

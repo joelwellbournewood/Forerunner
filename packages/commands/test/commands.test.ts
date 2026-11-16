@@ -1708,7 +1708,8 @@ describe("d1109-chat-depth, run C: chat_ask_above", () => {
       }),
     );
     expect(lower.sentence).toBe(
-      "Set the amount above which chat asks first from asks first above CHF 0.10 to asks first above CHF 0.05. Undo.",
+      // fixup-d1109-chat-depth: the amount in CHF, not "asks first above" twice in one sentence.
+      "Set the amount above which chat asks first from CHF 0.10 to CHF 0.05. Undo.",
     );
     expect((await w.store.human.mustGet(w.human.id)).notify_prefs.chat_ask_above).toBe(0.05);
     const zero = done(
@@ -1718,13 +1719,18 @@ describe("d1109-chat-depth, run C: chat_ask_above", () => {
         ctx: w.ctx(),
       }),
     );
-    expect(zero.sentence).toContain("to asks before every longer answer");
+    expect(zero.sentence).toBe(
+      "Set the amount above which chat asks first from CHF 0.05 to CHF 0.00, so chat asks before every longer answer. Undo.",
+    );
     const higher = await w.executor.execute({
       name: "settings.set",
       params: { key: "chat_ask_above", value: 1 },
       ctx: w.ctx(),
     });
     expect(higher.status).toBe("pending");
+    expect((higher as { readback?: string }).readback).toContain(
+      "Set the amount above which chat asks first to CHF 1.00?",
+    );
     expect((await w.store.human.mustGet(w.human.id)).notify_prefs.chat_ask_above).toBe(0);
     const negative = refused(
       await w.executor.execute({

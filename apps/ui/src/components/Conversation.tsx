@@ -2,6 +2,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { Link } from "react-router";
 import { streamChat } from "../api/chat-stream.ts";
 import { type ConversationTurnView, describeError } from "../api/client.ts";
+import { systemClock, useNow } from "../lib/clock.ts";
 import { inAppText, withoutUndoWord } from "../lib/plain-words.ts";
 import { useClient, useIdentity, useUiState, useUiStore } from "../store/context.tsx";
 import {
@@ -97,7 +98,6 @@ export function Conversation({
   const state = useUiState((s) => s.conversations[key]) ?? EMPTY_CONVERSATION;
   const [input, setInput] = useState("");
   const [undoNotes, setUndoNotes] = useState<Record<string, string>>({});
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const listRef = useRef<HTMLDivElement>(null);
   // The answer being made: this screen's own line, or (after a reload, or on the other surface)
   // the daemon's `answering`.
@@ -115,13 +115,8 @@ export function Conversation({
     return () => controller.abort();
   }, [client, store, projectId]);
 
-  // The seconds after the waiting line tick while an answer is made.
-  useEffect(() => {
-    if (!busy) return;
-    setNowMs(Date.now());
-    const t = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [busy]);
+  // The seconds after the waiting line tick while an answer is made (the UI's clock, AGENTS.md).
+  const nowMs = useNow(systemClock, 1000, busy);
 
   const turns = (state.view?.turns ?? []).filter(
     (t) =>

@@ -630,11 +630,16 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
 /** The default of `chat_ask_above` (CHF): the session lead's reading of "expensive". */
 export const CHAT_ASK_ABOVE_DEFAULT_CHF = 0.1;
 
-/** `chat_ask_above` in words: "asks first above CHF 0.10", "asks before every longer answer". */
+/**
+ * `chat_ask_above` in words, after its label ("the amount above which chat asks first"): "CHF
+ * 0.10", or "CHF 0.00, so chat asks before every longer answer". fixup-d1109-chat-depth: before,
+ * "asks first above CHF 0.10", so a sentence said "asks first" twice ("Set the amount above which
+ * chat asks first to asks first above CHF 0.10?").
+ */
 export function chatAskAboveWords(value: unknown): string {
   const chf =
     typeof value === "number" && Number.isFinite(value) ? value : CHAT_ASK_ABOVE_DEFAULT_CHF;
-  return chf <= 0 ? "asks before every longer answer" : `asks first above CHF ${chf.toFixed(2)}`;
+  return chf <= 0 ? "CHF 0.00, so chat asks before every longer answer" : `CHF ${chf.toFixed(2)}`;
 }
 
 /** The risk of setting `value` on the key: its `riskFor` when it has one, else its `risk`. */

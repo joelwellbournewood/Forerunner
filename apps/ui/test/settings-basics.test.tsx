@@ -230,6 +230,12 @@ describe("d1109-chat-depth, run C: Settings, Basics, Chat asks first", () => {
     );
     await user.click(within(row).getByTestId("setting-change"));
     const dialog = await screen.findByTestId("setting-dialog");
+    // fixup-d1109-chat-depth: the description is a sentence; the dialog reads it with one period
+    // (before: "… on the same model.. The same change …").
+    expect(dialog).toHaveTextContent(
+      "Below that it thinks longer when it helps, on the same model. The same change chat and voice make",
+    );
+    expect(dialog.textContent ?? "").not.toMatch(/\.\./);
     const input = within(dialog).getByTestId("setting-value");
     await user.clear(input);
     await user.type(input, "0");
