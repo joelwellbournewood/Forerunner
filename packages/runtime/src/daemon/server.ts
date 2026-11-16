@@ -367,6 +367,8 @@ export function createDaemonApp(
     offer: r.offer
       ? { line: r.offer.line, action: r.offer.action, explain: r.offer.explain ?? null }
       : null,
+    // C5-left-3 (CE-9): the hold reply's "Use API key" for this one question.
+    oneOff: r.oneOff ?? null,
   });
 
   // Every open SSE stream registers how to end it: `server.close()` waits for in-flight
@@ -2610,6 +2612,7 @@ export function createDaemonApp(
       source: body.source,
       ...(body.depth ? { depth: body.depth } : {}),
       ...(body.offer ? { offer: body.offer } : {}),
+      ...(body.oneOff ? { oneOffSwitch: true } : {}),
     });
     await heardChat(r);
     return c.json(chatReplyView(r));
@@ -2638,6 +2641,7 @@ export function createDaemonApp(
           source: body.source,
           ...(body.depth ? { depth: body.depth } : {}),
           ...(body.offer ? { offer: body.offer } : {}),
+          ...(body.oneOff ? { oneOffSwitch: true } : {}),
           // The turn's id first (for Stop), then what it is doing at each step, then the tokens.
           onTurn: (t) => send("turn", t satisfies ChatTurnFrame),
           onStep: (text, o) =>
@@ -2795,6 +2799,9 @@ export function createDaemonApp(
                 depth: r.depth ?? "quick",
                 footer: r.footer ?? null,
                 ...(offer && (offer.line || offer.action) ? { offer } : { offer: null }),
+                // C5-left-3: the newest hold reply's "Use API key" (an older one's question
+                // has moved on: a press would answer it out of turn).
+                oneOff: newest && r.oneOff ? r.oneOff : null,
               }
             : null,
           // A line with no reply that is not being answered: Forerunner closed before answering

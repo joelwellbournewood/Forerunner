@@ -1124,6 +1124,8 @@ export class ConversationAgent {
           : {}),
         ...(extra.ttftMs !== undefined ? { ttftMs: extra.ttftMs } : {}),
         ...(extra.costUsdMicro ? { costUsdMicro: extra.costUsdMicro } : {}),
+        // C5-left-3: a hold reply keeps its one-off press, so the conversation shows it again.
+        ...(extra.oneOff ? { oneOff: extra.oneOff } : {}),
       } as never);
       return {
         reply,
@@ -2123,6 +2125,15 @@ export class ConversationAgent {
     // sentence, a notice, a read-back, a voice turn or a longer answer). fixup-d1109-chat-depth: a
     // turn whose command tools ran (a change, a partial change, a refusal) is a command's sentence
     // too; before, its press sent the change line to a longer pass that has the command tools.
+    const heldOneOff = heldAfter?.oneOff
+      ? {
+          label: "Use API key",
+          explain: chatOneOffExplain(
+            heldAfter.oneOff.kind,
+            chfText(heldAfter.oneOff.estimateUsdMicro, chf),
+          ),
+        }
+      : null;
     const closer =
       !deep &&
       !spoken &&
@@ -2131,6 +2142,9 @@ export class ConversationAgent {
       !pendingCard &&
       !guardNotice &&
       !stopped &&
+      // C5-left-3 (d1109-cred-screens): a hold reply is no answer to think longer about (before,
+      // it offered Think it through, whose press got the hold reply again).
+      !heldAfter &&
       results.length === 0
         ? {
             estimateUsdMicro: longerFigures.estimateUsdMicro,
@@ -2245,7 +2259,9 @@ export class ConversationAgent {
             }
           : {}),
         ...(stopped ? { stopped: true } : {}),
-        ...(ownAsk ? { notice: true } : {}),
+        ...(ownAsk || heldAfter ? { notice: true } : {}),
+        // C5-left-3: the hold reply keeps its one-off press, so the conversation shows it.
+        ...(heldOneOff ? { oneOff: heldOneOff } : {}),
       } as never,
       costUsdMicro,
     );
@@ -2262,17 +2278,7 @@ export class ConversationAgent {
       depth,
       footer,
       offer: lineUnder,
-      ...(heldAfter?.oneOff
-        ? {
-            oneOff: {
-              label: "Use API key",
-              explain: chatOneOffExplain(
-                heldAfter.oneOff.kind,
-                chfText(heldAfter.oneOff.estimateUsdMicro, chf),
-              ),
-            },
-          }
-        : {}),
+      ...(heldOneOff ? { oneOff: heldOneOff } : {}),
     };
   }
 

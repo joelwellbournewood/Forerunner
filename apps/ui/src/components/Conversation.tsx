@@ -143,7 +143,10 @@ export function Conversation({
     [store, key],
   );
 
-  const send = async (text: string, extra: { offer?: string; depth?: "longer" } = {}) => {
+  const send = async (
+    text: string,
+    extra: { offer?: string; depth?: "longer"; oneOff?: boolean } = {},
+  ) => {
     const said = text.trim();
     if (!identity || busy || !said) return;
     update((c) => ({
@@ -305,6 +308,7 @@ export function Conversation({
             onAnswer={(word) => void send(word)}
             onGoAhead={() => void send("Go ahead.", { offer: t.id })}
             onThink={() => void send("Think it through.", { offer: t.id, depth: "longer" })}
+            onOneOff={() => void send(t.said, { oneOff: true })}
             onAskAgain={() => void send(t.said)}
             waitingEstimate={waiting && t.reply?.waiting ? waiting.estimate : null}
             busy={busy}
@@ -467,6 +471,7 @@ function Turn({
   onAnswer,
   onGoAhead,
   onThink,
+  onOneOff,
   onAskAgain,
   waitingEstimate,
   busy,
@@ -483,6 +488,8 @@ function Turn({
   onAnswer: (word: string) => void;
   onGoAhead: () => void;
   onThink: () => void;
+  /** C5-left-3: the hold reply's "Use API key": this one question again, on the key. */
+  onOneOff: () => void;
   onAskAgain: () => void;
   waitingEstimate: { usdMicro: number; chfMicro: number } | null;
   busy: boolean;
@@ -706,6 +713,28 @@ function Turn({
                   {offer.explain}
                 </span>
               ) : null}
+            </div>
+          ) : null}
+          {/* C5-left-3 (d1109-cred-screens): chat waits for the person's first choice; this one
+              question may go on the API key, at the cost the line names. Disabled while any
+              answer is coming, so one press asks once. */}
+          {r.oneOff && newest ? (
+            <div className="mt-1">
+              <Button
+                variant="primary"
+                className="px-2 py-0.5 text-xs"
+                onClick={onOneOff}
+                disabled={busy}
+                data-testid={`${testIds}-one-off`}
+              >
+                {r.oneOff.label}
+              </Button>
+              <span
+                className="ml-2 text-xs text-neutral-500"
+                data-testid={`${testIds}-one-off-explain`}
+              >
+                {r.oneOff.explain}
+              </span>
             </div>
           ) : null}
           {r.footer ? (

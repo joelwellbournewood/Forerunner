@@ -22445,4 +22445,61 @@ describe("d1109-cred-screens, run C", () => {
       await rt.close();
     }
   }, 120_000);
+
+  // CS-8, C5-left-3 (CE-9, the owner's 7b): under "then wait", chat holds with the hold reply
+  // and its one-off press; POST /chat with oneOff answers that one question on the API key (one
+  // ledger row on the key, the note under it), and the next plain question holds again.
+  it("CS-8: POST /chat's hold reply carries Use API key; the one-off flag answers that question on the key with its note, once", async () => {
+    const { rt, client, standIn } = await composeCs();
+    try {
+      await restSubscription(rt, "2026-03-05T10:40:00.000Z");
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const keyId = (
+        await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+      ).find((r) => r.kind === "api_key")?.id;
+      const keyRows = async () =>
+        (await rt.store.costLedger.list({ human_id: rt.human.id } as never, { limit: 500 })).filter(
+          (r) => r.billing_source_id === keyId,
+        ).length;
+      const keyCalls = () =>
+        standIn.requests.filter((r) => r.method === "POST" && r.path === "/v1/messages").length;
+      const held = await client.chat({ humanId: me.id, agentId, text: "what is next?" });
+      expect(held.reply).toBe(
+        "Your Claude subscription is at its limit until 11:40, so I have not answered. I can still add, move and start tasks.",
+      );
+      expect(held.oneOff?.label).toBe("Use API key");
+      expect(held.oneOff?.explain).toMatch(
+        /^Answers this question on your API key: about (CHF \d+\.\d\d|less than CHF 0\.01)\.$/,
+      );
+      expect(held.offer ?? null).toBeNull();
+      expect(keyCalls()).toBe(0);
+      expect(await keyRows()).toBe(0);
+      // The conversation shows the press under its newest reply, and no Think it through.
+      const conv = await client.conversation(null);
+      const last = conv.turns.at(-1)?.reply;
+      expect(last?.oneOff?.label).toBe("Use API key");
+      expect(last?.offer ?? null).toBeNull();
+      const answered = await client.chat({
+        humanId: me.id,
+        agentId,
+        text: "what is next?",
+        oneOff: true,
+      });
+      expect(answered.reply).not.toContain("so I have not answered");
+      expect(answered.oneOff ?? null).toBeNull();
+      expect(answered.footer).toBe(
+        "Answered with your API key: your subscription is at its limit until 11:40.",
+      );
+      expect(keyCalls()).toBe(1);
+      expect(await keyRows()).toBe(1);
+      // No grant, no card: the next plain question holds again.
+      const again = await client.chat({ humanId: me.id, agentId, text: "and then?" });
+      expect(again.reply).toMatch(/so I have not answered/);
+      expect(keyCalls()).toBe(1);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
 });

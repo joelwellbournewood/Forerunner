@@ -73,6 +73,8 @@ export interface TranscriptReply {
   stopped?: boolean;
   /** The answer failed while Forerunner ran ("I could not answer this."). */
   failed?: boolean;
+  /** C5-left-3: a hold reply's one-off press ("Use API key") with its consequence line. */
+  oneOff?: { label: string; explain: string } | null;
 }
 
 export interface TranscriptTurn {
@@ -145,6 +147,10 @@ function replyOf(p: Record<string, unknown>): TranscriptReply {
     capLine: typeof p.capLine === "string" && p.capLine ? p.capLine : null,
     stopped: p.stopped === true,
     failed: p.failed === true,
+    oneOff:
+      typeof obj(p.oneOff).label === "string" && typeof obj(p.oneOff).explain === "string"
+        ? { label: str(obj(p.oneOff).label), explain: str(obj(p.oneOff).explain) }
+        : null,
   };
 }
 

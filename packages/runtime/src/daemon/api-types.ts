@@ -1119,8 +1119,16 @@ export const ChatRequestBody = z.object({
    * turn id. It runs once on that answer's question; any other line drops the offer.
    */
   offer: z.string().optional(),
+  /**
+   * C5-left-3 (d1109-cred-screens, CE-9): the person's "Use API key" under a hold reply: this
+   * one question may go to the next credential at the stop (no grant, no card, never a job).
+   */
+  oneOff: z.boolean().optional(),
 });
 export type ChatRequestBody = z.infer<typeof ChatRequestBody>;
+
+/** C5-left-3: the one-off press under a hold reply, with its consequence line. */
+export const ChatOneOffView = z.object({ label: z.string(), explain: z.string() });
 
 /**
  * What the app offers under a chat answer (d1109-chat-depth): an ask line with Go ahead, a closer
@@ -1251,6 +1259,11 @@ export const ConversationTurnView = z.object({
       footer: z.string().nullable().optional(),
       /** What the app offers under the answer (the newest answer's only has an action). */
       offer: ChatOfferView.nullable().optional(),
+      /**
+       * C5-left-3: under the newest hold reply, "Use API key" with 'Answers this question on your
+       * API key: about CHF 0.02.'; null otherwise. Absent from an older daemon.
+       */
+      oneOff: ChatOneOffView.nullable().optional(),
     })
     .nullable(),
   /** d1109-chat-depth: Forerunner closed before answering this line (a restart cut it off). */
@@ -1304,6 +1317,8 @@ export const ChatReplyView = z.object({
   footer: z.string().nullable().optional(),
   /** What the app offers under the answer. */
   offer: ChatOfferView.nullable().optional(),
+  /** C5-left-3: the hold reply's one-off press; null otherwise. Absent from an older daemon. */
+  oneOff: ChatOneOffView.nullable().optional(),
 });
 export type ChatReplyView = z.infer<typeof ChatReplyView>;
 

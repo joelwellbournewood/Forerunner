@@ -764,7 +764,13 @@ export interface FakeDaemonState {
     depth?: string;
     footer?: string | null;
     offer?: ChatOfferViewT | null;
+    /** C5-left-3: the turn is a hold reply with "Use API key" (the daemon's words). */
+    oneOff?: { label: string; explain: string } | null;
+    /** C5-left-3: the reply text of this turn (a hold reply, or the answer the press gets). */
+    reply?: string;
   } | null;
+  /** C5-left-3: what the last chat posts asked for: the text and whether it was the one-off. */
+  chatPosts: { text: string; oneOff: boolean }[];
   /** d1109-chat-depth: the turn being answered now (the conversation's `answering`; Stop ends it). */
   answering: {
     turnId: string;
@@ -1386,6 +1392,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     nextChatReply: null,
     nextChatSources: null,
     nextChatTurn: null,
+    chatPosts: [],
     answering: null,
     conversations: new Map(),
     nextChatActions: null,
@@ -4506,6 +4513,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         depth: reply.depth ?? "quick",
         footer: reply.footer ?? null,
         offer: reply.offer ?? null,
+        oneOff: reply.oneOff ?? null,
       },
     });
     // A yes or a no answers the card read back before it.
@@ -4584,11 +4592,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
     const extra = state.nextChatTurn;
     state.nextChatTurn = null;
+    state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
+    const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
     const reply = keepTurn(parsed.data, {
-      ...chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
+      ...base,
+      ...(extra?.reply ? { reply: extra.reply } : {}),
       depth: extra?.depth ?? "quick",
       footer: extra?.footer ?? null,
       offer: extra?.offer ?? null,
+      oneOff: extra?.oneOff ?? null,
     });
     heardChat(reply, parsed.data.projectId);
     return c.json(reply);
@@ -4617,6 +4629,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
     const extra = state.nextChatTurn;
     state.nextChatTurn = null;
+    state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
     const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
     const key = parsed.data.projectId ?? "";
     const startedAt = new Date().toISOString();
@@ -4653,7 +4666,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       if (state.answering?.turnId === base.transcriptId) state.answering = null;
       const reply: ChatReplyView = {
         ...base,
+        ...(extra?.reply ? { reply: extra.reply } : {}),
         ...(stopped ? { reply: "" } : {}),
+        oneOff: stopped ? null : (extra?.oneOff ?? null),
         depth: extra?.depth ?? "quick",
         footer: stopped
           ? "You stopped this answer: under CHF 0.01 spent."
