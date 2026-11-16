@@ -207,7 +207,7 @@ describe("times on a screen: 24-hour HH:MM, in a browser set to en-US (later #66
       } as unknown as Parameters<typeof usableNow>[0];
       // Before: "Resting until Nov 03, 2026, 04:36 AM (its usage limit)".
       expect(usableNow(resting)).toBe(
-        `Resting until ${formatClock(until)} (its usage limit); waiting work starts by itself then`,
+        `Resting until ${formatClock(until)} (its usage limit); your session that waits for it goes on then`,
       );
       expect(usableNow(resting)).toMatch(/until (\d+ \w{3}, )?\d\d:\d\d \(/);
       expect(usableNow(resting)).not.toMatch(/AM|PM|2026/);

@@ -529,13 +529,19 @@ function questionsOutcome(card: JsonObject, ctx: RequestWordsContext): string | 
   if (outcome === "cancelled") return `${task} was cancelled.`;
   if (outcome === "task_moved_on")
     return `Your answers came after ${task} had finished. They are kept in the decision record.`;
+  // S-2: a done task's prepared work is what waits on it ("what waits on it runs at your next
+  // Start"), never the done task itself.
+  const after =
+    ctx.taskStatus === "done" && started && isPreparedOutcome(card.start)
+      ? started.replace(/^it /, "what waits on it ")
+      : started;
   if (outcome === "without")
     return ctx.taskStatus === "done"
-      ? `${task} is done without your answers${started ? `; ${started}` : ""}.`
+      ? `${task} is done without your answers${after ? `; ${after}` : ""}.`
       : `${task} goes on without your answers${started ? `: ${started}` : ""}.`;
   if (outcome === "answered") {
     if (ctx.taskStatus === "done")
-      return `Answers saved in the decision record; ${task} is done${started ? `; ${started}` : ""}.`;
+      return `Answers saved in the decision record; ${task} is done${after ? `; ${after}` : ""}.`;
     return `Answers sent: ${task} goes on with them${started ? `; ${started}` : ""}.`;
   }
   return null;

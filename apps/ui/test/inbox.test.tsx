@@ -914,7 +914,8 @@ describe("Inbox", () => {
       await user.type(fields[0] as HTMLElement, "Cloudflare Pages");
       await user.click(within(form).getByTestId("send-answers"));
       expect(await screen.findByTestId("done-line")).toHaveTextContent(
-        'Done: Answers saved in the decision record; "Index the documentation pages" is done; a session started.',
+        // d1109-starts-engine S-2: the answer prepares what waited on the task; no session starts.
+        'Done: Answers saved in the decision record; "Index the documentation pages" is done; what waits on it runs at your next Start.',
       );
     });
 
@@ -1016,7 +1017,7 @@ describe("Inbox", () => {
         expect(harness.daemon.state.tasks.find((t) => t.id === "task_1")?.status).toBe("ready"),
       );
       expect(await screen.findByTestId("done-line")).toHaveTextContent(
-        'Done: "Index the documentation pages" goes on without your answers: a session started.',
+        'Done: "Index the documentation pages" goes on without your answers: it runs at your next Start.',
       );
     });
 
@@ -1170,7 +1171,8 @@ describe("Inbox", () => {
           .getAllByTestId("option-explain")
           .map((e) => e.textContent),
       ).toEqual([
-        "Starts a session that tries again; add a note if you know what to change.",
+        // d1109-starts-engine S-2: an answer prepares the work; only Start starts a session.
+        "Tries again with your note, if any; it runs at your next Start.",
         'Closes it although nothing passed review. "Add the search box to the header" after it will run.',
         'Drops it; "Add the search box to the header" after it will be stuck.',
       ]);
@@ -1195,7 +1197,7 @@ describe("Inbox", () => {
         }),
       );
       expect(await screen.findByTestId("done-line")).toHaveTextContent(
-        'Done: Trying "Decide the versioning scheme" again: a session started.',
+        'Done: Trying "Decide the versioning scheme" again: it runs at your next Start.',
       );
       expect(
         screen.queryAllByTestId("request").map((r) => r.getAttribute("data-request-id")),
@@ -1221,7 +1223,8 @@ describe("Inbox", () => {
         }),
       );
       expect(await screen.findByTestId("done-line")).toHaveTextContent(
-        'Done: "Decide the versioning scheme" is done: accepted without review.',
+        // d1109-starts-engine S-2: the ready work after it waits for the next Start.
+        'Done: "Decide the versioning scheme" is done: accepted without review; what comes after it runs at your next Start.',
       );
       // The Tasks tab says so too (design §2).
       const tasks = await harness.client.tasks("proj_atlas");
@@ -1475,7 +1478,7 @@ describe("Inbox", () => {
       version: 1,
     });
 
-    it("offers no Continue: it says how it goes on by itself, links Settings and offers Cancel task", async () => {
+    it("offers no Continue: it says how it gets ready again, links Settings and offers Cancel task", async () => {
       // The review of budget-stop: Raise the budget started a session that stopped at once at the
       // same cap and filed the same card again.
       const harness = createHarness();
@@ -1489,7 +1492,8 @@ describe("Inbox", () => {
         (r) => r.getAttribute("data-request-id") === "req_month",
       ) as HTMLElement;
       expect(within(card).getByTestId("request-body")).toHaveTextContent(
-        "It stopped before it could say where it stood; its work so far is kept. It goes on by itself once you raise the monthly cap in Settings, or on 1 December.",
+        // d1109-starts-engine (ADR 0118 amending 0112): a raised cap prepares it for the next Start.
+        "It stopped before it could say where it stood; its work so far is kept. Ready again once you raise the monthly cap in Settings, or on 1 December; it runs at your next Start.",
       );
       expect(
         within(card)
@@ -1502,7 +1506,8 @@ describe("Inbox", () => {
       const view = (await harness.client.tasks("proj_atlas")).find((t) => t.id === "task_3");
       expect(view?.display).toMatchObject({
         label: "Paused at this month's cap",
-        detail: "It goes on by itself once that limit is raised or resets; cancel it in the Inbox.",
+        detail:
+          "Ready again once that limit is raised or resets, for your next Start; or cancel it.",
       });
     });
   });
@@ -1554,7 +1559,7 @@ describe("Inbox", () => {
         (r) => r.getAttribute("data-request-id") === "req_cannot",
       ) as HTMLElement;
 
-    it("says why in at most two sentences, without tool names; Try again sends the option and a session starts", async () => {
+    it("says why in at most two sentences, without tool names; Try again sends the option and it runs at the next Start", async () => {
       const user = userEvent.setup();
       const harness = setUp();
       renderApp("/inbox", harness);
@@ -1569,7 +1574,7 @@ describe("Inbox", () => {
           .getAllByTestId("option-explain")
           .map((e) => e.textContent),
       ).toEqual([
-        "Starts a session that tries again; first fix what stopped it (Edit changes who does it).",
+        "Tries again; fix what stopped it first, with Edit; it runs at your next Start.",
         "Drops it. Nothing waits on it.",
       ]);
       await user.click(within(card).getByRole("button", { name: "Try again" }));
@@ -1580,7 +1585,7 @@ describe("Inbox", () => {
         }),
       );
       expect(await screen.findByTestId("done-line")).toHaveTextContent(
-        'Done: Trying "Decide the versioning scheme" again: a session started.',
+        'Done: Trying "Decide the versioning scheme" again: it runs at your next Start.',
       );
       expect(harness.daemon.state.tasks.find((t) => t.id === "task_3")?.status).toBe("ready");
     });

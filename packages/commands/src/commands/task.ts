@@ -1343,7 +1343,15 @@ async function withNextLine(
       by: ctx.actor.kind === "agent" ? "agent" : "person",
     })
     .catch(() => null);
-  return line ? { ...outcome, sentence: `${outcome.sentence} ${line}` } : outcome;
+  return line ? { ...outcome, sentence: `${outcome.sentence} ${afterMove(line)}` } : outcome;
+}
+
+/**
+ * The prepared line after a move's own sentence, which already says the task is ready: "It runs
+ * at your next Start.", not "... is ready again. Ready: it runs at your next Start.".
+ */
+function afterMove(line: string): string {
+  return line.replace(/^Ready: (\S)/, (_m, c: string) => c.toUpperCase());
 }
 
 /** The read-back of such a move with what would happen next, read-only (S-9). */
@@ -1360,7 +1368,7 @@ async function withPreview(
       by: ctx.actor.kind === "agent" ? "agent" : "person",
     })
     .catch(() => null);
-  return line ? `${ask} ${line}` : ask;
+  return line ? `${ask} ${afterMove(line)}` : ask;
 }
 
 // --- task.update -----------------------------------------------------------------------------

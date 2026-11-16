@@ -3438,6 +3438,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // once; a start that then fails puts it back (the wake's `keep`).
     if (req.projectId && req.trigger === "budget_reset" && req.by)
       await dropKeptStart(store, req.projectId).catch(() => undefined);
+    // S-5: one start per preparation: a hands-off start that begins (the scheduler's own, held
+    // through quiet hours, or the sweep's) clears the start kept on its project, so the sweep
+    // never starts a second one for what is left after it.
+    if (req.projectId && req.by === "hands_off")
+      await dropStartPending(store, req.projectId).catch(() => undefined);
     return runSession(req);
   };
   // The scheduler runs a start in the background and only logs a rejection: one bound to an
@@ -3535,9 +3540,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   /**
    * The person's quiet hours as the scheduler reads them (d1109-starts-engine S-1): the window and
-   * the time zone of `notify_prefs`, cached, refreshed before every tick and by a settings change
-   * (`refresh`), so the scheduler's synchronous port holds every start the person did not ask for
-   * in them ("No notifications and no sessions that start on their own between these times").
+   * the time zone of `notify_prefs`, cached for the scheduler's synchronous port and read again
+   * (`refresh`) before every tick, before every start the person did not press (the wake of a
+   * credential wait, a hands-off start, the kept hands-off starts) and before every sentence that
+   * names their end, so a change in Settings holds the next such start and its words at once ("No notifications and no sessions that start on their own between these times").
    */
   const quietHours = (() => {
     let window: { quiet: QuietHours | null; timezone: string } = {
@@ -3632,7 +3638,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const prepareDeps: PrepareDeps = {
     store,
     live: liveSessions,
-    start: (req) => scheduler.requestStart(req),
+    start: async (req) => {
+      await quietHours.refresh();
+      return scheduler.requestStart(req);
+    },
     frozen: (agentId) => kill.isFrozen({ agentId }),
     startedFor: (agentId, projectId) => scheduler.activeStart(agentId)?.req.projectId === projectId,
     // S-10: the person's session waits to go on: it takes the prepared work then, if it fits.
@@ -3646,6 +3655,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
    * waits; dropped when the setting was turned off, the project removed, or nothing can run.
    */
   const sweepStartPending = async () => {
+    await quietHours.refresh();
     const projects = await store.project.list({ status: "active" }, { limit: 1000 });
     for (const p of projects) {
       if (!startPendingOf(p)) continue;
@@ -3805,6 +3815,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
    */
   const continuations: RuntimeApp["continuations"] = {
     waiting: async (projectId) => {
+      await quietHours.refresh();
       const found =
         (await keptContinuationOf(store, projectId)) ?? (await keptStartOf(store, projectId));
       if (!found) return null;
@@ -3840,6 +3851,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   const credentialWaits: RuntimeApp["billing"]["waits"] = {
     wake: async () => {
+      await quietHours.refresh();
       // R-refusedstays: a project kept on a source that cannot serve is taken too when another
       // credential serves its work now (a subscription saved while the only key is refused).
       const ready = await taskBilling.takeReady(async (projectId) => {
@@ -3968,6 +3980,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     now: async (projectId) => {
       const wait = await credentialWaitNow(projectId);
       if (!wait) return null;
+      await quietHours.refresh();
       // TR-2: looking records nothing (the Start dialog's check, the stopped bar's read). A
       // wait a Start or a session already kept on its source starts by itself, and says so; a
       // reset nobody kept a wait for says what Start does, and Start stays pressable: its

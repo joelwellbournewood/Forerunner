@@ -193,8 +193,22 @@ describe("session.start / stop / pause", () => {
     const costly = await w.executor.plan({ name: "session.start", params: {} }, w.ctx());
     expect(costly.impact.risk).toBe("medium");
     expect(costly.impact.costUsdMicro).toBe(6_250_000);
+    // d1109-starts-engine S-11 (ADR 0118): a start said in chat is read back at any budget.
+    const asked = await w.executor.execute({
+      name: "session.start",
+      params: { budgetChf: 1 },
+      ctx: w.ctx(),
+    });
+    expect(asked).toMatchObject({
+      status: "pending",
+      readback: "Start a session on PharmaWatch (up to CHF 1)?",
+    });
+    expect(w.ports.starts).toEqual([]);
     const cheap = done(
-      await w.executor.execute({ name: "session.start", params: { budgetChf: 1 }, ctx: w.ctx() }),
+      await w.executor.confirmByText((asked as { pendingId: string }).pendingId, "yes", {
+        kind: "human",
+        id: w.human.id,
+      }),
     );
     // Design §5: the start in plain words, its budget, no "Undo." (the Undo is a button).
     expect(cheap.sentence).toBe("Started a session on PharmaWatch (up to CHF 1).");
@@ -223,7 +237,8 @@ describe("session.start / stop / pause", () => {
       await w.executor.execute({
         name: "session.start",
         params: { budgetChf: 1 },
-        ctx: w.ctx({ deviceId: w.phone.id }),
+        // The phone's Start button (a press, not words).
+        ctx: w.ctx({ deviceId: w.phone.id, source: "ui" }),
       }),
     );
     expect(r.sentence).toBe(
@@ -719,7 +734,8 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     });
     expect(asked).toMatchObject({
       status: "pending",
-      readback: 'Make "Sketch the import" ready? A session will pick it up.',
+      // d1109-starts-engine S-9: no start promise (no session is running in this world).
+      readback: 'Make "Sketch the import" ready?',
     });
     const ready = done(
       await w.executor.confirmByText((asked as { pendingId: string }).pendingId, "yes", {
@@ -727,7 +743,7 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
         id: w.human.id,
       }),
     );
-    expect(ready.sentence).toBe('"Sketch the import" is ready: a session will pick it up.');
+    expect(ready.sentence).toBe('"Sketch the import" is ready.');
     // Every move can be undone right after it: the undo puts the status back.
     expect(ready.undoToken).toBe(ready.changeLogId);
     const back = done(await w.executor.undo(ready.changeLogId, w.ctx()));

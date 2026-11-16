@@ -207,14 +207,14 @@ describe("Tasks tab (design §3.5)", () => {
     expect(within(await rowOf("t_gone")).queryByTestId("task-cap")).toBeNull();
   });
 
-  it("a ready task that waits for a Claude credential says until when, and that it starts by itself (U-078)", async () => {
+  it("a ready task that waits for a Claude credential says until when, and that the person's session goes on then (U-078)", async () => {
     const harness = createHarness();
     // The session put the task back to ready because it waits (leftovers7-session: only such a
     // task says it waits).
     addTask(harness, "t_wait", "Write note A", { reason: CREDENTIAL_WAIT_REASON });
     harness.daemon.state.taskMeta.credentialWaits.set("proj_atlas", {
       label: "Waits until 16:40, your API key's limit",
-      detail: "It starts by itself then.",
+      detail: "Then your session goes on.",
     });
     renderApp("/projects/proj_atlas/tasks?task=t_wait", harness);
     const row = await rowOf("t_wait");
@@ -223,7 +223,7 @@ describe("Tasks tab (design §3.5)", () => {
     );
     // The drawer says what comes next.
     const drawer = await screen.findByTestId("task-drawer");
-    expect(drawer).toHaveTextContent("It starts by itself then.");
+    expect(drawer).toHaveTextContent("Then your session goes on.");
     // It is no failure: the ready task's own actions, never Try again.
     expect(actionsOf(row)).toEqual(["Pause", "Cancel"]);
     expect(row.textContent).not.toMatch(/Failed|no billing source/);
@@ -241,7 +241,7 @@ describe("Tasks tab (design §3.5)", () => {
     addTask(harness, "t_wait", "Write note A", { reason: CREDENTIAL_WAIT_REASON });
     harness.daemon.state.taskMeta.credentialWaits.set("proj_atlas", {
       label: "Waits for a new API key",
-      detail: "Save one in Settings; it starts by itself then.",
+      detail: "Save one in Settings; then your session goes on.",
       line: "Waiting for a new API key",
       save: { label: "Save a new key", to: "/setup" },
     });

@@ -3026,6 +3026,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const agent = AGENTS.find((a) => a.id === parsed.data.agentId);
     if (!agent) return errorBody(c, 404, "not_found", "no such agent");
+    // d1109-starts-engine (S-10), as the daemon: Continue goes on with the ended session, with the
+    // rest of its budget (its cap less its spend), and is refused in words when none is left.
+    if (parsed.data.continues) {
+      const earlier = state.sessions.find((x) => x.id === parsed.data.continues);
+      if (!earlier) return errorBody(c, 404, "not_found", "no such session");
+      const left = earlier.budgetCap.usdMicro - earlier.spent.usdMicro;
+      if (left <= 0)
+        return errorBody(
+          c,
+          409,
+          "validation",
+          "That session used its whole budget: start a new one to go on.",
+        );
+      parsed.data.projectId ??= earlier.projectId ?? undefined;
+      parsed.data.budgetUsdMicro = left;
+    }
     // W15B-02, as the daemon: a removed project (its creation undone) starts nothing, refused in
     // one sentence with its name before the removal (the daemon keeps it in the settings; the
     // fake's card has only "<name> (removed)").
@@ -3393,9 +3409,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       else if (task && read?.kind === "without") task.status = "ready";
       else if (task && read?.kind === "answers")
         task.status = personCard.on_answer === "ready" ? "ready" : "done";
-      // As the daemon's resumeWork: an answer that leaves a task of the project runnable (the
-      // task itself back at ready, or what waited on the person's task now done) starts a
-      // session; nothing runnable, no start.
+      // As the daemon's prepareAnswer (d1109-starts-engine S-2, ADR 0118): an answer that leaves
+      // a task of the project runnable (the task itself back at ready, or what waited on the
+      // person's task now done) prepares it: with no session running here it waits for the
+      // person's next Start; nothing runnable, nothing said.
       const byId = new Map(state.tasks.map((t) => [t.id, t]));
       const runnable = state.tasks.some(
         (t) =>
@@ -3408,12 +3425,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         applied_at: new Date().toISOString(),
         outcome:
           read?.kind === "cancel" ? "cancelled" : read?.kind === "without" ? "without" : "answered",
-        ...(read?.kind !== "cancel" && runnable ? { start: "started" } : {}),
+        ...(read?.kind !== "cancel" && runnable ? { start: "waits_start" } : {}),
       };
     }
     // As the daemon's `syncSignoffAnswers` (design §3.8): Try again / Send it back sends the task
-    // back to ready and a session starts; Mark done anyway closes it "accepted without review";
-    // Cancel task cancels it.
+    // back to ready, prepared for the person's next Start (S-2); Mark done anyway closes it
+    // "accepted without review"; Cancel task cancels it.
     const signCard = r.changeCard as { key?: unknown; reason?: unknown } | null;
     if (signCard?.key === "critic:signoff") {
       const task = state.tasks.find((t) => t.id === r.taskId);
@@ -3431,11 +3448,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         task.status = "cancelled";
         task.reason = "you cancelled it in the Inbox";
       }
+      // As the daemon: what the answer made runnable is prepared; Mark done anyway says so only
+      // when work that waited on the task can run now.
+      const byId = new Map(state.tasks.map((t) => [t.id, t]));
+      const runnable = state.tasks.some(
+        (t) =>
+          t.projectId === r.projectId &&
+          t.status === "ready" &&
+          t.dependsOn.every((d) => byId.get(d)?.status === "done"),
+      );
       r.changeCard = {
         ...signCard,
         applied_at: new Date().toISOString(),
         outcome: read,
-        ...(read !== "cancel" ? { start: "started" } : {}),
+        ...(read === "revise" || (read === "accept" && runnable) ? { start: "waits_start" } : {}),
       };
     }
     // As the daemon's `syncBudgetStopAnswers` (budget-resume, ADR 0112 amended): Continue (CHF
@@ -3487,7 +3513,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       };
     }
     // As the daemon's `syncCannotRunAnswers` (live walk 4): Try again puts the task back to
-    // ready and a session tries again; Cancel task cancels it.
+    // ready for the person's next Start (S-2); Cancel task cancels it.
     const cannotRun = r.changeCard as { key?: unknown } | null;
     if (cannotRun?.key === "task:cannot_run") {
       const task = state.tasks.find((t) => t.id === r.taskId);
@@ -3506,7 +3532,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ...cannotRun,
         applied_at: new Date().toISOString(),
         outcome: moved ? "task_moved_on" : read,
-        ...(!moved && read === "retry" ? { start: "started" } : {}),
+        ...(!moved && read === "retry" ? { start: "waits_start" } : {}),
       };
     }
     if (r.kind === "capability_grant") {

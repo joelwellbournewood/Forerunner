@@ -674,11 +674,11 @@ describe("leftovers7-tailrun, wave 13: Start keeps a credential wait, looking do
     });
   });
 
-  it("a wait already kept says the work starts by itself, and Start stays off", async () => {
+  it("a wait already kept says the person's session goes on, and Start stays off", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     harness.daemon.state.credentialWaitNow.proj_atlas = {
-      text: "Waits until 09:30 (your API key's limit) and starts by itself.",
+      text: "Waits until 09:30 (your API key's limit); then your session goes on.",
       save: null,
     };
     renderApp("/projects/proj_atlas", harness);
@@ -688,7 +688,7 @@ describe("leftovers7-tailrun, wave 13: Start keeps a credential wait, looking do
     // W15-78: one sentence with a subject (before: "Nothing can run yet. Waits until 09:30 ...
     // and starts by itself.").
     expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(
-      /^Nothing can run until 09:30 \(your API key's limit\); it starts by itself then\.$/,
+      /^Nothing can run until 09:30 \(your API key's limit\); then your session goes on\.$/,
     );
     expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
   });

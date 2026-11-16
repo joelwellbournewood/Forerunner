@@ -57,7 +57,7 @@ describe("Settings -> Claude: which to use first (U-078)", () => {
     expect(within(sub).getByTestId("billing-order-how")).toHaveTextContent("Through Claude Code");
     expect(within(sub).getByTestId("billing-order-status")).toHaveTextContent(
       // U-078: what happens to the work that waits for it.
-      `Resting until ${formatClock(resting)} (its usage limit); waiting work starts by itself then`,
+      `Resting until ${formatClock(resting)} (its usage limit); your session that waits for it goes on then`,
     );
     expect(within(sub).getByTestId("billing-order-spent")).toHaveTextContent(
       "42% of the allowance used this month",
