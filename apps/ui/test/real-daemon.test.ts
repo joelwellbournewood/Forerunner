@@ -11470,6 +11470,8 @@ describe("leftovers7-tailrun, wave 13", () => {
         // d1109-starts-engine S-10: only the person's session goes on by itself.
         sentence: "Nothing can run until 09:30 (your API key's limit); then your session goes on.",
         action: null,
+        // The person's session waits to go on: the dialog offers Cancel the wait.
+        kept: true,
       });
       // At the reset: the work Start waited for starts by itself; the project only looked at
       // does not (before: both started).
