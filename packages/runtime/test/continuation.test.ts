@@ -372,9 +372,11 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     const check = await w.get<{ blocked: { sentence?: string } | null }>(
       `/projects/${project.id}/start-check`,
     );
-    expect(check.json.blocked?.sentence).toBe(
-      "Nothing can run until 17:00 (after your quiet hours); then your session goes on.",
-    );
+    // d1109-cred-screens (CS-3): with the API key able to serve, the Start dialog names the
+    // waiting session and when it goes on by itself (the quiet hours' end, 17:00), the same words
+    // a Start answers with (before: "Nothing can run until 17:00 (after your quiet hours); then
+    // your session goes on.").
+    expect(check.json.blocked?.sentence).toBe("Your session of 10:00 goes on by itself at 17:00.");
     expect(await w.rt.continuations.waiting(project.id)).toBe(
       "Your session of 10:00 goes on by itself at 17:00.",
     );
@@ -402,7 +404,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     );
     expect(check.json.blocked).toMatchObject({
       sentence:
-        "Nothing can run until 15:00 (your subscription's limit). Press Start and the work starts then.",
+        "Nothing can run until 15:00 (your subscription's limit). Press Start at 15:00 and the work starts then.",
       startable: true,
       startLabel: "Start at 15:00",
     });

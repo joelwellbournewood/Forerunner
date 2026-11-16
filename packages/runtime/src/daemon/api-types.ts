@@ -1309,6 +1309,14 @@ export const StartSessionBody = z.object({
    * words when nothing is left). The budget sent, if any, is ignored for it.
    */
   continues: z.string().optional(),
+  /**
+   * d1109-cred-screens (CS-3): the Start dialog's "Use API key" while the first choice is out
+   * under "ask" or "wait": the person's yes for this stop (the ask card's grant, by "start"), an
+   * open ask card closed with its Done line, then the person's start (or the project's waiting
+   * session goes on now). Refused in words when the policy or the facts do not allow it. Never
+   * raises a budget.
+   */
+  useOtherCredential: z.boolean().optional(),
 });
 export type StartSessionBody = z.infer<typeof StartSessionBody>;
 
@@ -1981,6 +1989,28 @@ export const StartCheckView = z.object({
    * work that fits, with its warning; null when none (an older daemon sends none).
    */
   oversized: StartCheckOversizedView.nullable().default(null),
+  /**
+   * d1109-cred-screens (CS-3): which Claude does the work, in the dialog: `line` one sentence
+   * under the plan ("If your subscription runs out, you are asked before your API key is used.";
+   * the run-out form under "then API key"; a standing yes); `runOut` under "ask" and "wait" with
+   * the first choice out and the API key able to serve: "Use API key" and "Start at 15:40" with
+   * their lines, the one the preset leans to first, or the project's waiting session's line in
+   * place of the second. Null with one credential saved (an older daemon sends none).
+   */
+  credential: z
+    .object({
+      line: z.string().nullable(),
+      runOut: z
+        .object({
+          use: z.object({ label: z.string(), explain: z.string() }),
+          later: z.object({ label: z.string(), explain: z.string() }).nullable(),
+          lean: z.enum(["use", "later"]),
+          goesOnLine: z.string().nullable(),
+        })
+        .nullable(),
+    })
+    .nullable()
+    .default(null),
 });
 export type StartCheckView = z.infer<typeof StartCheckView>;
 

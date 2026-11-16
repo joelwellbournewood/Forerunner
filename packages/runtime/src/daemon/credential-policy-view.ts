@@ -312,6 +312,14 @@ export function grantNowLine(
 
 // ── CS-3: the Start dialog ───────────────────────────────────────────────────────────────────
 
+/**
+ * Open owner question (runC-plan.json owner_questions, CS-3/CS-8): under "Subscription first,
+ * then wait" the Start dialog and chat still offer a one-off "Use API key" that spends only when
+ * the person presses it. Built meanwhile: offered under "then wait" and "ask before API key"
+ * alike. The owner's answer changes this one constant (false: only under "ask before API key").
+ */
+export const ONE_OFF_UNDER_WAIT = true;
+
 /** Under next with the first choice out: "Your subscription is at its limit until 15:40, so this runs on your API key (about CHF 0.90)." */
 export function startRunOutLine(
   kind: CredentialKind | string,

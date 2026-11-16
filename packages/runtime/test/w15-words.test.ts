@@ -376,8 +376,9 @@ describe("w15-words, wave 15 run B", () => {
     });
 
     it("W15-65: the Start check's sentence names what starts", () => {
+      // C3-left-9 (d1109-cred-screens): one sentence that names the button beside it.
       expect(startKeepsWaitSentence(resting, words)).toBe(
-        "Nothing can run until 09:30 (your API key's limit). Press Start and the work starts then.",
+        "Nothing can run until 09:30 (your API key's limit). Press Start at 09:30 and the work starts then.",
       );
     });
 

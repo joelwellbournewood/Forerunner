@@ -1,0 +1,151 @@
+import { credentialPolicyOf, grantOf, type StopReason } from "@forerunner/billing";
+import type { Clock } from "@forerunner/platform";
+import type { JsonObject, StateStore } from "@forerunner/state";
+import { chfText } from "../money-words.ts";
+import { continuationGoesOnAt } from "../session/credential-wait.ts";
+import { aboutWords } from "../session/money-words.ts";
+import { keptContinuationOf, keptStartOf, type RouterTaskBilling } from "../wiring/billing-pick.ts";
+import {
+  grantStartLine,
+  ifRunsOutLine,
+  ONE_OFF_UNDER_WAIT,
+  sessionGoesOnLine,
+  startLaterExplain,
+  startLaterLabel,
+  startRunOutLine,
+  useApiKeyExplain,
+} from "./credential-policy-view.ts";
+
+/**
+ * d1109-cred-screens CS-3 (ADR 0120 amended 2026-11-16; the owner's 7a "go to API after asking
+ * human" and the reading of 2026-11-09: "the person is there; 'wait' means the app does nothing
+ * by itself, not that the person cannot choose"): what the Start dialog says of which Claude
+ * does the work, and whether its "Use API key" may be offered. Read only: looking records
+ * nothing. `POST /sessions` with `useOtherCredential` acts on `offer` alone.
+ */
+export interface StartCredentialView {
+  /** One line under the plan sentence; null with one credential saved or under ask and wait with the first choice out. */
+  line: string | null;
+  /** Under ask and wait with the first choice out and the API key able to serve: the two buttons. */
+  runOut: {
+    use: { label: string; explain: string };
+    /** "Start at 15:40" (a person start kept for the reset); null when a session already waits or for a refusal. */
+    later: { label: string; explain: string } | null;
+    /** The preset leans to: ask -> use first, wait -> later first. */
+    lean: "use" | "later";
+    /** The project's own session already waits to go on: "Your session of 14:05 goes on by itself at 15:40." */
+    goesOnLine: string | null;
+  } | null;
+}
+
+/** The stop "Use API key" acts on (CS-3), when it may be offered. */
+export interface StartCredentialOffer {
+  sourceId: string;
+  stopKey: string;
+  kind: string;
+  reason: StopReason;
+  until: string | null;
+  whenStopped: "ask" | "wait";
+}
+
+export interface StartCredentialDeps {
+  store: StateStore;
+  clock: Clock;
+  humanId: string;
+  billing: Pick<RouterTaskBilling, "firstChoiceStop" | "currentStopOf" | "savedKinds"> | null;
+  chfPerUsd: () => number;
+  /** What is left of the monthly cap (null: no cap). */
+  monthLeftUsdMicro: () => Promise<number | null>;
+}
+
+export async function startCredential(
+  deps: StartCredentialDeps,
+  projectId: string,
+  /** What the session would spend: the runnable work's estimate, capped by its work budget. */
+  estimateUsdMicro: number,
+): Promise<{ view: StartCredentialView | null; offer: StartCredentialOffer | null }> {
+  if (!deps.billing) return { view: null, offer: null };
+  const human = await deps.store.human.get(deps.humanId);
+  const policy = credentialPolicyOf((human?.notify_prefs ?? {}) as Record<string, unknown>);
+  const saved = await deps.billing.savedKinds();
+  if (!(saved.includes("subscription") && saved.includes("api_key")))
+    return { view: null, offer: null };
+  const opts = {
+    ...(human?.timezone ? { timezone: human.timezone } : {}),
+    nowMs: deps.clock.now(),
+  };
+  const first = await deps.billing.firstChoiceStop().catch(() => null);
+  if (!first || first.reason === "needs" || !first.stopKey)
+    return { view: { line: ifRunsOutLine(policy.rule, saved), runOut: null }, offer: null };
+  const stop = { reason: first.reason, until: first.until };
+  const about = aboutWords(
+    chfText(Math.max(0, estimateUsdMicro), deps.chfPerUsd()),
+    estimateUsdMicro,
+  );
+  const row = await deps.store.billingSource.get(first.sourceId).catch(() => undefined);
+  const grant = grantOf((row?.limits as JsonObject | undefined)?.grant);
+  if (grant && grant.stopKey === first.stopKey)
+    return {
+      view: { line: grantStartLine(first.kind, grant.to, stop, about, opts), runOut: null },
+      offer: null,
+    };
+  // The other credential (the API key, after the subscription) serves now, and the month has room.
+  const serves = async (): Promise<boolean> => {
+    if (first.kind !== "subscription") return false;
+    const key = (await deps.store.billingSource.list({ human_id: deps.humanId }, { limit: 100 }))
+      .filter((r) => r.kind === "api_key" && r.enabled)
+      .sort((a, b) => a.priority - b.priority)[0];
+    if (!key) return false;
+    if (await deps.billing?.currentStopOf(key.id).catch(() => ({ stopKey: "?" }))) return false;
+    const left = await deps.monthLeftUsdMicro();
+    return left === null || left > 0;
+  };
+  if (policy.rule.whenStopped === "next")
+    return {
+      view: {
+        line: (await serves()) ? startRunOutLine(first.kind, stop, about, opts) : null,
+        runOut: null,
+      },
+      offer: null,
+    };
+  const whenStopped = policy.rule.whenStopped;
+  if ((whenStopped === "wait" && !ONE_OFF_UNDER_WAIT) || !(await serves()))
+    return { view: { line: null, runOut: null }, offer: null };
+  // S-10's one wait per project: the project's own session already waits to go on by itself.
+  const continuation = await keptContinuationOf(deps.store, projectId).catch(() => null);
+  const keptStart = continuation
+    ? null
+    : await keptStartOf(deps.store, projectId).catch(() => null);
+  let goesOnLine: string | null = null;
+  if (continuation && first.until) {
+    const session = continuation.kept.continues
+      ? await deps.store.session.get(continuation.kept.continues).catch(() => undefined)
+      : undefined;
+    const startedAt = session?.started_at ?? session?.created_at ?? continuation.entry.since;
+    const goesOnAt = continuationGoesOnAt(human, first.until) ?? first.until;
+    if (startedAt) goesOnLine = sessionGoesOnLine(startedAt, goesOnAt, opts);
+  }
+  const later =
+    continuation || keptStart || !first.until
+      ? null
+      : { label: startLaterLabel(stop, opts), explain: startLaterExplain(first.kind) };
+  return {
+    view: {
+      line: null,
+      runOut: {
+        use: { label: "Use API key", explain: useApiKeyExplain(first.kind, stop, about, opts) },
+        later,
+        lean: whenStopped === "ask" ? "use" : "later",
+        goesOnLine,
+      },
+    },
+    offer: {
+      sourceId: first.sourceId,
+      stopKey: first.stopKey,
+      kind: first.kind,
+      reason: first.reason as StopReason,
+      until: first.until,
+      whenStopped,
+    },
+  };
+}

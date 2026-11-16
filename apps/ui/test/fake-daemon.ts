@@ -643,6 +643,15 @@ export interface FakeDaemonState {
    * (as `RuntimeApp.billing.waits.now`): the Start check says it in one sentence
    * (`nothingRunsYetSentence`), and the project's ready line names it (W15-67).
    */
+  /**
+   * d1109-cred-screens (CS-3): per project, what the Start dialog says of which Claude does the
+   * work (`StartCheckView.credential`, as `credential-start.ts` words it); a test sets it.
+   * `POST /sessions` with `useOtherCredential` is refused in words without its `runOut`, else it
+   * records the yes (`credentialGrants`), ends the project's wait and starts (or the waiting
+   * session goes on).
+   */
+  startCredential: Record<string, StartCheckView["credential"]>;
+  credentialGrants: string[];
   credentialWaitNow: Record<
     string,
     {
@@ -1241,6 +1250,8 @@ function fakeStartCheck(
     laterBeyond,
     blocked,
     oversized,
+    // d1109-cred-screens (CS-3): set per project by the route (`state.startCredential`).
+    credential: null,
     monthLeft: money(FAKE_MONTH_LEFT_USD_MICRO),
     busy: opts.busy ?? false,
     planning: false,
@@ -1349,6 +1360,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     joinRefusal: null,
     joinUndoBlocked: null,
     credentialWaitNow: {},
+    startCredential: {},
+    credentialGrants: [],
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
     copies: {},
@@ -3203,6 +3216,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           ? { startLabel: `Start at ${fakeResetAt(credentialWait.text)}` }
           : {}),
       };
+    // d1109-cred-screens (CS-3), as the daemon: which Claude does the work, and when the
+    // project's own session already waits, its line in place of the wait's sentence.
+    view.credential = state.startCredential[id] ?? null;
+    const goesOn = view.credential?.runOut?.goesOnLine ?? null;
+    if (goesOn && view.blocked) view.blocked = { ...view.blocked, sentence: goesOn };
     // C2-left-2, as the daemon: nothing is ready because a task waits on the person's card.
     if (view.blocked?.sentence === "Nothing can run: no task is ready.") {
       const held = state.tasks.find(
@@ -3379,6 +3397,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const agent = AGENTS.find((a) => a.id === parsed.data.agentId);
     if (!agent) return errorBody(c, 404, "not_found", "no such agent");
+    // d1109-cred-screens (CS-3), as the daemon: the Start dialog's "Use API key" is the person's
+    // yes for this stop; refused in words when the dialog offered none. The project's wait ends
+    // (the key serves), and the start goes on as usual below.
+    if (parsed.data.useOtherCredential && parsed.data.projectId) {
+      const offered = state.startCredential[parsed.data.projectId]?.runOut;
+      if (!offered)
+        return errorBody(
+          c,
+          400,
+          "validation",
+          "Your API key cannot take this work now: your first choice serves, your choice moves to it by itself, or the key cannot serve either.",
+        );
+      state.credentialGrants.push(parsed.data.projectId);
+      delete state.credentialWaitNow[parsed.data.projectId];
+      state.startCredential[parsed.data.projectId] = null;
+    }
     // d1109-starts-engine (S-10), as the daemon: Continue goes on with the ended session, with the
     // rest of its budget (its cap less its spend), and is refused in words when none is left.
     if (parsed.data.continues) {

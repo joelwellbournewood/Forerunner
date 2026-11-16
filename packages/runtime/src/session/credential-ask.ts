@@ -120,6 +120,66 @@ export async function recordWait(
   return wrote;
 }
 
+/**
+ * d1109-cred-screens CS-3 (the Start dialog's "Use API key", the person's tap): the same grant
+ * the ask card's Use API key writes (`limits.grant {to, stopKey, by: "start"}`, version-checked,
+ * one billing.grant audit row), for this stop only. An open ask card of the stop is answered with
+ * "Use API key" and applied at once (outcome granted), so it shows its Done line and the sync
+ * never applies it twice. Returns whether a card was closed.
+ */
+export async function grantForStart(
+  deps: {
+    store: Pick<StateStore, "billingSource" | "humanRequest" | "auditLog">;
+    clock: Clock;
+    humanId: string;
+  },
+  stop: { sourceId: string; stopKey: string },
+  sessionGoesOn: boolean,
+): Promise<{ closedCard: boolean }> {
+  await updateSourceLimits(deps.store, stop.sourceId, (limits) => {
+    const g = limits.grant as { stopKey?: unknown } | undefined;
+    if (g?.stopKey === stop.stopKey) return null;
+    return {
+      ...limits,
+      grant: { to: "api_key", stopKey: stop.stopKey, by: "start", at: deps.clock.nowIso() },
+    };
+  });
+  await deps.store.auditLog
+    .append({
+      tool: BILLING_GRANT_AUDIT_TOOL,
+      allowed: true,
+      human_id: deps.humanId,
+      input_summary: JSON.stringify({ sourceId: stop.sourceId, to: "api_key", by: "start" }),
+      result_summary:
+        "the person's yes in the Start dialog: the API key serves until this stop ends",
+      occurred_at: deps.clock.nowIso(),
+    })
+    .catch(() => undefined);
+  let closedCard = false;
+  const open = (
+    await deps.store.humanRequest.open({ humanId: deps.humanId }, { limit: 500 })
+  ).filter((r) => {
+    const card = r.change_card as { key?: unknown; stop_key?: unknown } | null;
+    return card?.key === CREDENTIAL_ASK_KEY && card.stop_key === stop.stopKey;
+  });
+  for (const r of open) {
+    const answered = await deps.store.humanRequest
+      .answer(r.id, r.version, ASK_OPTIONS[0], deps.humanId, deps.clock.nowIso())
+      .catch(() => null);
+    if (!answered) continue;
+    await deps.store.humanRequest.patch(answered.id, {
+      change_card: {
+        ...((answered.change_card ?? {}) as JsonObject),
+        applied_at: deps.clock.nowIso(),
+        outcome: "granted",
+        session_goes_on: sessionGoesOn,
+      },
+    });
+    closedCard = true;
+  }
+  return { closedCard };
+}
+
 /** The audit row the end of a grant writes (d1109-cred-screens). */
 export const BILLING_GRANT_END_AUDIT_TOOL = "billing.grant_end";
 

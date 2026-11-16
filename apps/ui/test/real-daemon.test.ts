@@ -11470,7 +11470,7 @@ describe("leftovers7-tailrun, wave 13", () => {
           kind: "nothing_runnable",
           // W15-65 (before: "... Press Start and it runs then.").
           sentence:
-            "Nothing can run until 09:30 (your API key's limit). Press Start and the work starts then.",
+            "Nothing can run until 09:30 (your API key's limit). Press Start at 09:30 and the work starts then.",
           action: null,
           startable: true,
           // S-10: the Start button says when its start runs.
@@ -15071,7 +15071,7 @@ describe("w15-words, wave 15 run B", () => {
           expect((await client.startCheck(project.id)).blocked).toEqual({
             kind: "nothing_runnable",
             sentence:
-              "Nothing can run until 09:30 (your API key's limit). Press Start and the work starts then.",
+              "Nothing can run until 09:30 (your API key's limit). Press Start at 09:30 and the work starts then.",
             action: null,
             startable: true,
             startLabel: "Start at 09:30",
@@ -22138,4 +22138,228 @@ describe("d1109-cred-screens, run C", () => {
       await rt.close();
     }
   }, 60_000);
+
+  // CS-3: the Start dialog says what happens if the first choice runs out; with it out under
+  // 'ask' or 'wait' it offers "Use API key" and "Start at 11:40" (the preset's lean first), or,
+  // when the project's own session waits to go on, that session's line and "Use API key".
+  const resetAt = "2026-03-05T10:40:00.000Z";
+  /** Claude Code at the plan's limit on its first turn (resets 10:40 UTC, 11:40 in Zurich). */
+  const claudeCodeAtLimit =
+    (calls: string[]): NonNullable<ComposeOptions["sdkQuery"]> =>
+    ({ prompt }) => {
+      calls.push(prompt);
+      const atLimit = calls.length <= 1;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        if (atLimit) {
+          yield {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt: Date.parse(resetAt) / 1000 },
+          };
+          yield {
+            type: "assistant",
+            error: "rate_limit",
+            message: { content: [{ type: "text", text: "You've hit your limit" }] },
+          };
+          yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+          return;
+        }
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${calls.length}`,
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+  const setPolicyCs = async (client: DaemonClient, value: string) => {
+    const r = await client.executeCommands({
+      commands: [{ name: "settings.set", params: { key: "credential_policy", value } }],
+      wordsUsed: `Settings: Which Claude does the work to ${value}`,
+      source: "ui",
+    });
+    if (r.status === "pending") await client.confirmCommand(r.pendingId ?? "", { answer: "tap" });
+  };
+  const addReady = (client: DaemonClient, projectId: string, title: string) =>
+    client.createTask(projectId, {
+      title,
+      outcome: `${title} is done`,
+      acceptanceCriteria: ["it is done"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+      specialist: "coder",
+      riskTier: 0,
+    });
+
+  it("CS-3: one line under the plan per preset, none with one credential; under 'then API key' with the subscription out, the run-out line", async () => {
+    const { rt, client } = await composeCs();
+    try {
+      const project = await client.createProject({ name: "Quote page", goal: "A quote page" });
+      await addReady(client, project.id, "Style the page");
+      expect((await client.startCheck(project.id)).credential?.line).toBe(
+        "If your subscription runs out, the work waits for it.",
+      );
+      await setPolicyCs(client, "subscription_then_ask");
+      expect((await client.startCheck(project.id)).credential?.line).toBe(
+        "If your subscription runs out, you are asked before your API key is used.",
+      );
+      await setPolicyCs(client, "key_then_subscription");
+      expect((await client.startCheck(project.id)).credential?.line).toBe(
+        "If your API key runs out, the work goes on with your subscription.",
+      );
+      await setPolicyCs(client, "subscription_then_key");
+      await restSubscription(rt, resetAt);
+      const out = await client.startCheck(project.id);
+      expect(out.blocked).toBeNull();
+      expect(out.credential?.line).toMatch(
+        /^Your subscription is at its limit until 11:40, so this runs on your API key \((about CHF \d+\.\d\d|less than CHF 0\.01)\)\.$/,
+      );
+      expect(out.credential?.runOut).toBeNull();
+    } finally {
+      await rt.close();
+    }
+    // One credential saved: no line.
+    const single = await composeCs({
+      vault: new MemoryVault({ anthropic_subscription_token: oauth }),
+    });
+    try {
+      const project = await single.client.createProject({ name: "Solo", goal: "One" });
+      await addReady(single.client, project.id, "Write it");
+      expect((await single.client.startCheck(project.id)).credential).toBeNull();
+    } finally {
+      await single.rt.close();
+    }
+  }, 60_000);
+
+  it("CS-3, C3-left-9: under 'wait' with the subscription out, 'Start at 11:40' first; it keeps one person start (no key request), also after a restart", async () => {
+    const first = await composeCs();
+    const keyCalls = () =>
+      first.standIn.requests.filter((r) => r.method === "POST" && r.path === "/v1/messages");
+    let projectId = "";
+    try {
+      const project = await first.client.createProject({ name: "Quote page", goal: "A quote" });
+      projectId = project.id;
+      await addReady(first.client, project.id, "Style the page");
+      await restSubscription(first.rt, resetAt);
+      const check = await first.client.startCheck(project.id);
+      // One sentence that names the button beside it (C3-left-9).
+      expect(check.blocked?.sentence).toBe(
+        "Nothing can run until 11:40 (your subscription's limit). Press Start at 11:40 and the work starts then.",
+      );
+      expect(check.credential?.line).toBeNull();
+      const runOut = check.credential?.runOut;
+      expect(runOut?.lean).toBe("later");
+      expect(runOut?.later).toEqual({
+        label: "Start at 11:40",
+        explain: "Runs on your subscription once it is back; nothing moves before.",
+      });
+      expect(runOut?.use.label).toBe("Use API key");
+      expect(runOut?.use.explain).toMatch(
+        /^Runs now on your API key until 11:40, (about CHF \d+\.\d\d|less than CHF 0\.01); nothing passes this session's budget\.$/,
+      );
+      expect(runOut?.goesOnLine).toBeNull();
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const kept = await first.client.startSession({ agentId, projectId: project.id });
+      expect(kept.result).toBe("kept");
+      expect(keyCalls()).toHaveLength(0);
+      // The kept start is the project's one wait: no second "Start at".
+      expect((await first.client.startCheck(project.id)).credential?.runOut?.later).toBeNull();
+    } finally {
+      await settleSessions(first.rt);
+      await first.rt.close();
+    }
+    const second = await composeCs({ home: first.home, vault: first.vault, clock: first.clock });
+    try {
+      const card = (await second.client.projects()).find((p) => p.id === projectId);
+      expect(JSON.stringify(card)).toContain("Starts at 11:40 (your subscription's limit)");
+    } finally {
+      await second.rt.close();
+    }
+  }, 60_000);
+
+  it("CS-3: under 'ask', the session that ended to wait goes on now with Use API key: its line, the grant by the person's start, the card closed with its Done line; composed again the key still serves until 11:40", async () => {
+    const sdkCalls: string[] = [];
+    const first = await composeCs({ sdkQuery: claudeCodeAtLimit(sdkCalls) });
+    const { client } = first;
+    const keyCalls = () =>
+      first.standIn.requests.filter((r) => r.method === "POST" && r.path === "/v1/messages");
+    let projectId = "";
+    try {
+      await setPolicyCs(client, "subscription_then_ask");
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      projectId = project.id;
+      await addReady(client, project.id, "Style the page");
+      await addReady(client, project.id, "Write the copy");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end to wait (at least 10 s of real time)",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      expect(keyCalls()).toHaveLength(0);
+      const check = await client.startCheck(project.id);
+      const runOut = check.credential?.runOut;
+      expect(runOut?.lean).toBe("use");
+      expect(runOut?.later).toBeNull();
+      expect(runOut?.goesOnLine).toBe("Your session of 09:00 goes on by itself at 11:40.");
+      expect(check.blocked?.sentence).toBe("Your session of 09:00 goes on by itself at 11:40.");
+      const me = await client.me();
+      const open = (await client.inbox(me.id)).requests.filter(
+        (r) => r.status === "open" && (r.title ?? "").startsWith("Use your API key"),
+      );
+      expect(open).toHaveLength(1);
+      // "Use API key", as the dialog sends it.
+      const goes = await client.startSession({
+        agentId,
+        projectId: project.id,
+        useOtherCredential: true,
+      });
+      expect(["started", "queued"]).toContain(goes.result);
+      await eventually(
+        async () => (await client.tasks(project.id)).every((t) => t.status === "done"),
+        "the waiting tasks to run on the API key (at least 10 s of real time)",
+        async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+        20_000,
+      );
+      expect(keyCalls().length).toBeGreaterThan(0);
+      const card = (await client.inbox(me.id)).requests.find((r) => r.id === open[0]?.id);
+      expect(card?.outcome).toBe(
+        "Your API key does the work until 11:40; your session goes on now.",
+      );
+      const source = (
+        await first.rt.store.billingSource.list({ human_id: first.rt.human.id }, { limit: 10 })
+      ).find((r) => r.kind === "subscription");
+      expect((source?.limits as { grant?: { by?: string } }).grant?.by).toBe("start");
+    } finally {
+      await settleSessions(first.rt);
+      await first.rt.close();
+    }
+    // Composed again before 11:40: the yes stands, the dialog says so and a new Start runs on the key.
+    const second = await composeCs({
+      home: first.home,
+      vault: first.vault,
+      clock: first.clock,
+      sdkQuery: claudeCodeAtLimit(sdkCalls),
+      standIn: first.standIn,
+    });
+    try {
+      await addReady(second.client, projectId, "Add a footer");
+      const check = await second.client.startCheck(projectId);
+      expect(check.credential?.line).toMatch(
+        /^You said yes to your API key until 11:40, so this runs on it \((about CHF \d+\.\d\d|less than CHF 0\.01)\)\.$/,
+      );
+      expect(check.credential?.runOut).toBeNull();
+    } finally {
+      await second.rt.close();
+    }
+  }, 120_000);
 });

@@ -652,7 +652,7 @@ describe("leftovers7-tailrun, wave 13: Start keeps a credential wait, looking do
     const harness = createHarness();
     harness.daemon.state.credentialWaitNow.proj_atlas = {
       // W15-65: the daemon's words (before: "... Press Start and it runs then.").
-      text: "Nothing can run until 09:30 (your API key's limit). Press Start and the work starts then.",
+      text: "Nothing can run until 09:30 (your API key's limit). Press Start at 09:30 and the work starts then.",
       save: null,
       startable: true,
     };
@@ -661,7 +661,7 @@ describe("leftovers7-tailrun, wave 13: Start keeps a credential wait, looking do
     await user.click(screen.getByTestId("start-session"));
     const dialog = await screen.findByTestId("start-session-dialog");
     expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(
-      /^Nothing can run until 09:30 \(your API key's limit\)\. Press Start and the work starts then\.$/,
+      /^Nothing can run until 09:30 \(your API key's limit\)\. Press Start at 09:30 and the work starts then\.$/,
     );
     expect(within(dialog).queryByTestId("start-session-plan")).toBeNull();
     // Before: Start was off whenever the check named a wait, so nothing kept it and the work

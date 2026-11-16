@@ -308,7 +308,11 @@ export function startKeepsWaitSentence(
   opts: { timezone?: string; nowMs: number },
 ): string {
   const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
-  return `Nothing can run until ${at} (${stopWordsOf(wait)}). ${PRESS_START_THEN}`;
+  // C3-left-9 (d1109-cred-screens): the sentence names the button beside it ("Start at 15:40"),
+  // whose start is kept for the reset (before: "Press Start and the work starts then.").
+  return wait.until
+    ? `Nothing can run until ${at} (${stopWordsOf(wait)}). Press Start at ${at} and the work starts then.`
+    : `Nothing can run until ${at} (${stopWordsOf(wait)}). ${PRESS_START_THEN}`;
 }
 
 const PRESS_START_THEN = "Press Start and the work starts then.";

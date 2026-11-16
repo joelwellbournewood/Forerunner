@@ -42,6 +42,7 @@ import { createRunnerUnlockRoutes } from "../secrets/runner-unlock-routes.ts";
 import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
 import { createSecretStoreRoutes } from "../secrets/store-routes.ts";
 import { CODE_COMMANDS_DEFAULT } from "../session/billing.ts";
+import { grantForStart, recordWait } from "../session/credential-ask.ts";
 import { needsOf } from "../session/credential-choice.ts";
 import { CREDENTIAL_WAIT_STOP } from "../session/credential-wait.ts";
 import { buildPeerFeed } from "../session/peers.ts";
@@ -85,7 +86,12 @@ import {
   voiceStatusView,
   voiceTurnView,
 } from "../voice/views.ts";
-import { keptContinuationOf, keptStartOf, RouterTaskBilling } from "../wiring/billing-pick.ts";
+import {
+  dropKeptStart,
+  keptContinuationOf,
+  keptStartOf,
+  RouterTaskBilling,
+} from "../wiring/billing-pick.ts";
 import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
 import { assertAnswerAccepted, isChatOnlyCard, NOT_AN_OPTION } from "../wiring/request-answers.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
@@ -169,6 +175,7 @@ import type { RuntimeApp } from "./compose.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
 import { createCredentialPolicyRoutes } from "./credential-policy-routes.ts";
+import { startCredential } from "./credential-start.ts";
 import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
 import { joinPreview, sharesRepositoryWith } from "./join-preview.ts";
@@ -1527,6 +1534,28 @@ export function createDaemonApp(
     return Math.max(0, cap - spent);
   };
   /**
+   * d1109-cred-screens (CS-3): which Claude does the work, as the Start dialog says it, and the
+   * stop its "Use API key" acts on (`credential-start.ts`). The figure is the runnable work's
+   * estimate, never above the session's work budget.
+   */
+  const credentialAtStart = (r: Awaited<ReturnType<RuntimeApp["startCheck"]>>, projectId: string) =>
+    startCredential(
+      {
+        store: rt.store,
+        clock: rt.clock,
+        humanId: rt.human.id,
+        billing: rt.billing.pick instanceof RouterTaskBilling ? rt.billing.pick : null,
+        chfPerUsd: chf,
+        monthLeftUsdMicro,
+      },
+      projectId,
+      Math.min(
+        r.workBudgetUsdMicro,
+        r.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0) +
+          (r.oversized ? r.workBudgetUsdMicro : 0),
+      ),
+    ).catch(() => ({ view: null, offer: null }));
+  /**
    * Why a Start now would do nothing (design §3.6; `start-blocked.ts`, the chat says the same).
    * `agentId`'s running session makes a start wait rather than refuse only when it can make
    * this project's tasks ready (`busyHere`, later #38).
@@ -1605,7 +1634,12 @@ export function createDaemonApp(
     const sessionRuns = rt.scheduler.isActive(rt.agent.id);
     const planning = !sessionRuns && rt.scheduler.isHeld(rt.agent.id);
     const busy = sessionRuns || planning;
-    const blocked = await startBlocked(r, projectId, rt.agent.id, { credentialWait: true });
+    const found = await startBlocked(r, projectId, rt.agent.id, { credentialWait: true });
+    const credential = await credentialAtStart(r, projectId);
+    // CS-3: the project's own session already waits to go on (one wait per project): the dialog
+    // says when it goes on by itself, beside its "Use API key".
+    const goesOn = credential.view?.runOut?.goesOnLine ?? null;
+    const blocked = found && goesOn ? { ...found, sentence: goesOn } : found;
     const view: StartCheckView = {
       projectId: r.projectId,
       sessionBudget: money(r.sessionBudgetUsdMicro, rate),
@@ -1638,6 +1672,7 @@ export function createDaemonApp(
       // D4 (d1109-oversize-start): the task larger than the work budget the session takes after
       // the work that fits, with the warning the Start dialog shows; Start is not refused for it.
       oversized: oversizedView(r, rate),
+      credential: credential.view,
     };
     return c.json(view);
   });
@@ -1767,6 +1802,48 @@ export function createDaemonApp(
       body.projectId ??= earlier.project_id ?? undefined;
       body.budgetUsdMicro = left;
     }
+    // d1109-cred-screens (CS-3): the Start dialog's "Use API key" under "ask" or "wait" with the
+    // first choice out: the person's yes for this stop (the ask card's grant, by "start"; an open
+    // card closed with its Done line), then their start, or their waiting session goes on now.
+    // Refused in words when the facts do not allow it; it never raises a budget.
+    if (body.useOtherCredential && body.projectId) {
+      const check = await rt.startCheck(body.projectId, body.budgetUsdMicro);
+      const { offer } = await credentialAtStart(check, body.projectId);
+      if (!offer)
+        throw new ForerunnerError(
+          "validation",
+          "Your API key cannot take this work now: your first choice serves, your choice moves to it by itself, or the key cannot serve either.",
+          { details: { cause: "use_other_not_offered" } },
+        );
+      const kept =
+        (await keptContinuationOf(rt.store, body.projectId)) ??
+        (await keptStartOf(rt.store, body.projectId));
+      await grantForStart(
+        { store: rt.store, clock: rt.clock, humanId: rt.human.id },
+        { sourceId: offer.sourceId, stopKey: offer.stopKey },
+        true,
+      );
+      rt.events.emit("inbox", {});
+      if (kept) {
+        // The project's own session that waited (or a Start kept for the reset) goes on now, on
+        // the key, as the person's start; nothing new is kept.
+        const entry = await rt.scheduler.requestStart({
+          agentId: kept.entry.agentId,
+          projectId: body.projectId,
+          trigger: "manual",
+          by: "person",
+          ...(kept.kept.continues ? { continues: kept.kept.continues } : {}),
+          ...(kept.kept.budgetUsdMicro ? { budgetUsdMicro: kept.kept.budgetUsdMicro } : {}),
+          ...(kept.kept.note ? { note: kept.kept.note } : {}),
+          reason: "your yes in the Start dialog: your API key does the work until the stop ends",
+        } as StartRequest);
+        if (entry.result === "started" || entry.result === "queued")
+          await dropKeptStart(rt.store, body.projectId);
+        rt.events.emit("project", { id: body.projectId });
+        const view: StartSessionView = { result: entry.result, startId: entry.id, session: null };
+        return c.json(view, 202);
+      }
+    }
     // S-10: one wait per project: while the person's session waits to go on (or a Start was kept
     // for the reset), a Start keeps nothing new and starts nothing; it says when it goes on. The
     // wake runs first, so a stop that has ended goes on now.
@@ -1825,6 +1902,13 @@ export function createDaemonApp(
           ...(body.note?.trim() ? { note: body.note.trim() } : {}),
         });
         if (kept) {
+          // d1109-cred-screens (CS-3): under "ask before API key", "Start at 15:40" is the
+          // person's Wait for this stop: no ask card follows their own choice.
+          const { offer } = await credentialAtStart(check, body.projectId);
+          if (offer?.whenStopped === "ask")
+            await recordWait(rt.store, rt.clock, offer.sourceId, offer.stopKey).catch(
+              () => false,
+            );
           const view: StartSessionView = {
             result: "kept",
             startId: "",
