@@ -346,3 +346,24 @@ describe("GitHubHost when GitHub cannot be reached (U-053)", () => {
     expect(err?.message).not.toContain(token);
   });
 });
+
+describe("d1109-onerepo-join, run C: a GitHub that never answers (C2-left-10)", () => {
+  it("a request that gets no answer fails as unreachable after the request timeout instead of waiting for ever", async () => {
+    // fetch that never answers, ending only when its signal aborts (as a real fetch does).
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      })) as typeof fetch;
+    const gh = new GitHubHost({
+      token: "t",
+      baseUrl: "http://github.test",
+      fetchImpl: hanging,
+      requestTimeoutMs: 50,
+    });
+    const started = Date.now();
+    await expect(gh.getRepo({ owner: "o", name: "kite" })).rejects.toThrow(
+      "GitHub API at http://github.test did not answer in time",
+    );
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});

@@ -71,7 +71,17 @@ export interface GitHubOptions {
   graphqlUrl?: string;
   /** Items per page on list endpoints, 1 to 100 (GitHub's cap). Default 100. */
   pageSize?: number;
+  /**
+   * C2-left-10 (d1109-onerepo-join): how long one request waits for GitHub's answer before it
+   * fails as unreachable (a GitHub that hangs rather than refuses ends like one that refuses, so
+   * no caller waits for ever: a creation's link check, its docs scaffold, a merge). Default
+   * `GITHUB_REQUEST_TIMEOUT_MS`.
+   */
+  requestTimeoutMs?: number;
 }
+
+/** How long one GitHub request waits for an answer before it fails (C2-left-10). */
+export const GITHUB_REQUEST_TIMEOUT_MS = 30_000;
 
 /** Bound on pages followed through `Link: rel="next"` (100 per page: 10,000 items). */
 export const MAX_LIST_PAGES = 100;
@@ -122,6 +132,7 @@ export class GitHubHost implements GitHost {
   private readonly clock: Clock;
   private readonly headers: Record<string, string>;
   private readonly maxWait: number;
+  private readonly requestTimeoutMs: number;
   private readonly pageSize: number;
   /** `baseUrl`'s origin: the one place the token goes (null when `baseUrl` is not a URL). */
   private readonly origin: string | null;
@@ -140,6 +151,7 @@ export class GitHubHost implements GitHost {
     this.f = opts.fetchImpl ?? fetch;
     this.clock = opts.clock ?? systemClock;
     this.maxWait = opts.maxRateLimitWaitSec ?? 120;
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? GITHUB_REQUEST_TIMEOUT_MS;
     const pageSize = opts.pageSize ?? 100;
     if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
       throw new ForerunnerError("validation", "GitHub adapter: pageSize must be 1 to 100", {
@@ -260,9 +272,16 @@ export class GitHubHost implements GitHost {
    * one about a header quotes the header, the token included.
    */
   private async send(url: string, init: RequestInit): Promise<Response> {
+    const signal = AbortSignal.timeout(this.requestTimeoutMs);
     try {
-      return await this.f(url, init);
+      return await this.f(url, { ...init, signal });
     } catch (e) {
+      if (signal.aborted)
+        throw new ForerunnerError(
+          "provider_error",
+          `GitHub API at ${this.origin ?? this.baseUrl} did not answer in time`,
+          { retryable: true },
+        );
       const token = (this.headers.Authorization ?? "").replace(/^Bearer /, "");
       throw new ForerunnerError(
         "provider_error",

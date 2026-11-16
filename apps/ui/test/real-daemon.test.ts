@@ -20121,4 +20121,49 @@ describe("d1109-onerepo-join, run C", () => {
       await rt.close();
     }
   }, 120_000);
+
+  it("C2-left-10: New project on a repository while GitHub never answers is made after the wait (as when GitHub refuses), and Work together is refused in words", async () => {
+    // A GitHub that hangs rather than refuses: every request waits until its timeout.
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      })) as typeof fetch;
+    const { rt, client } = await composeWithRolePlayer(
+      {},
+      {
+        gitHost: new GitHubHost({
+          token: "t",
+          baseUrl: "http://github.test",
+          fetchImpl: hanging,
+          requestTimeoutMs: 200,
+        }),
+        tryIt: false,
+        githubReadWaitMs: 100,
+      },
+    );
+    try {
+      const started = Date.now();
+      const made = await client.createProject({ name: "Kites", goal: "Kites", repos: ["o/kite"] });
+      expect(made.name).toBe("Kites");
+      let refusal: ApiError | null = null;
+      try {
+        await client.createProject({
+          name: "Kites two",
+          goal: "Kites",
+          repos: ["o/kite-two"],
+          together: { project: "01a1a000-0000-7000-8000-00000000c1ab" },
+        });
+      } catch (e) {
+        if (e instanceof ApiError) refusal = e;
+        else throw e;
+      }
+      expect(refusal?.status).toBe(409);
+      expect(refusal?.message).toBe(
+        "GitHub did not answer, so the project cannot be checked. Try again.",
+      );
+      expect(Date.now() - started).toBeLessThan(10_000);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });

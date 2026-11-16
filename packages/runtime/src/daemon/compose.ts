@@ -429,6 +429,11 @@ export interface ComposeOptions {
   provider?: ModelProvider;
   /** Injected git host (tests); otherwise GitHub from the vault token, else an in-memory host. */
   gitHost?: GitHost;
+  /**
+   * C2-left-10 (tests): how long a link's check waits on GitHub before it counts the read as
+   * failed (`RepositoryUse` `readWaitMs`); default `READ_WAIT_MS`.
+   */
+  githubReadWaitMs?: number;
   /** Injected Headroom port (tests); otherwise the adapter from FORERUNNER_HEADROOM_* (ADR 0003). */
   headroom?: HeadroomPort;
   registryDir?: string;
@@ -2308,6 +2313,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     timezone: async () => (await store.human.get(human.id))?.timezone ?? null,
     // OR-07: the Overview reads this computer's copy of the repository (made further down).
     copyMarker: (projectId) => docs.copyMarker(projectId),
+    ...(opts.githubReadWaitMs !== undefined ? { readWaitMs: opts.githubReadWaitMs } : {}),
   });
   const appVersion = opts.appVersion ?? env.FORERUNNER_VERSION ?? APP_VERSION;
 
