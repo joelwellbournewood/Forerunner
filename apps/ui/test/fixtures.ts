@@ -2604,6 +2604,23 @@ export const MODEL_SETTINGS: ModelSettingsView = {
             note: "Chat runs at most opus; no setting raises it.",
           },
         },
+        // d1109-chat-depth: the longer chat answer's own mode, as the daemon lists it.
+        {
+          mode: "chat_thorough",
+          model: "fake-sonnet",
+          tier: setting("sonnet"),
+          effort: setting("medium"),
+          maxTokens: setting(4096),
+          speedMode: setting("standard"),
+          timeoutMinutes: setting(2),
+          temperature: setting(null),
+          speedModeApplies: false,
+          ceiling: {
+            tier: "opus",
+            raisable: true,
+            note: "Runs at most opus unless a project raises its highest model (Settings, per project: Highest model).",
+          },
+        },
       ],
     },
     {

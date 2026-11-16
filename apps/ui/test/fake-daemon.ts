@@ -5899,7 +5899,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const subject =
         typeof params.specialist === "string"
           ? `the ${params.specialist} specialist for Alice`
-          : `Alice's ${params.mode === "text_chat" ? "chat" : params.mode}`;
+          : `Alice's ${
+              params.mode === "text_chat"
+                ? "chat"
+                : params.mode === "chat_thorough"
+                  ? "chat's thorough answers"
+                  : params.mode
+            }`;
       // The daemon's words for each field (`MODEL_SETTING_LABELS` in packages/commands).
       const words: Record<string, string> = {
         tier: "the model",

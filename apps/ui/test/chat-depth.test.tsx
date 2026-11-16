@@ -180,6 +180,32 @@ describe("d1109-chat-depth, run C: the waiting line and Stop", () => {
     await user.click(within(talk).getByTestId("conversation-stop"));
     await waitFor(() => expect(harness.daemon.state.answering).toBeNull());
   });
+
+  // fixup-d1109-chat-depth (review blocking 3): Stop was the form's submit button, so Enter in the
+  // input while an answer was made stopped it and left the typed line unsent. Stop is the
+  // person's own press ("nothing ends by accident"): Enter keeps the answer going and the line.
+  it("Enter in the input while an answer is made neither stops it nor drops the typed line; Stop still stops it on its own press", async () => {
+    const { user, harness, input } = await openChat();
+    harness.daemon.state.nextChatTurn = {
+      steps: [{ text: "Reading the last session…" }],
+      hold: true,
+    };
+    await user.type(input, "what did the last session do?");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-waiting")).toHaveTextContent("Reading the last session…"),
+    );
+    await waitFor(() => expect(screen.getByTestId("chat-stop")).toBeEnabled());
+    await user.type(input, "and what is left?{Enter}");
+    const stops = () =>
+      harness.daemon.state.calls.filter((c) => /^\/chat\/turns\/[^/]+\/stop$/.test(c.path));
+    expect(stops()).toHaveLength(0);
+    expect(input).toHaveValue("and what is left?");
+    expect(screen.getByTestId("chat-waiting")).toHaveTextContent("Reading the last session…");
+    expect(screen.queryByTestId("chat-footer")).toBeNull();
+    await user.click(screen.getByTestId("chat-stop"));
+    await waitFor(() => expect(stops()).toHaveLength(1));
+  });
 });
 
 describe("d1109-chat-depth, run C: under the answer", () => {

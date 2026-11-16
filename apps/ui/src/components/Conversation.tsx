@@ -247,10 +247,9 @@ export function Conversation({
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (busy) {
-      void stop();
-      return;
-    }
+    // While an answer is made, Enter neither stops it nor drops the line typed meanwhile: Stop
+    // ends an answer only on its own press (fixup-d1109-chat-depth; nothing ends by accident).
+    if (busy) return;
     const text = input;
     setInput("");
     void send(text);
@@ -370,8 +369,9 @@ export function Conversation({
         {busy ? (
           <Button
             variant="primary"
-            type="submit"
+            type="button"
             className="whitespace-nowrap"
+            onClick={() => void stop()}
             disabled={!turnId || stopping}
             title={STOP_EXPLAIN}
             data-testid={`${testIds}-stop`}

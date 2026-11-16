@@ -63,6 +63,8 @@ const NUMBER_RULES: Partial<
 const MODE_LABELS: Record<string, string> = {
   planning: "planning",
   text_chat: "chat",
+  // d1109-chat-depth: the longer chat answers' own mode (ADR 0072), in words (design §5 rule 6).
+  chat_thorough: "chat, thorough answers",
   critic_t1: "light review",
   critic_t23: "full review",
 };
