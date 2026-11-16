@@ -21496,37 +21496,53 @@ describe("d1109-run-visible, run C: the page of a session that ended to wait (V-
   it("goes on: the wait with Cancel; after Cancel: stopped, with Continue and the budget left; Continue keeps a Start for the reset: starts again, with Cancel", async () => {
     const home = mkdtempSync(join(tmpdir(), "fr-ui-real-run-visible-v5-"));
     homes.push(home);
-    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
-    const env = { FORERUNNER_HOME: home };
-    const rt = await composeRuntime({
-      env,
-      dirs: appDirs({ env }),
-      config: null,
-      clock,
-      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
-      vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
-      provider: new AcceptingCriticProvider(
-        new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock),
-      ),
-      sdkQuery: atLimitFirst([]),
-      registryDir: REGISTRY,
-      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
-      appVersion: "0.0.0-ui-contract",
-      sandboxDetection: NO_ENGINE,
-      startServices: false,
-    });
-    const { app, token } = createDaemonApp(rt);
-    const client = createClient(
-      {
-        baseUrl: "http://daemon.test",
-        token,
-        source: "env",
-        installId: null,
-        platform: null,
-        shellVersion: null,
-      },
-      (input, init) => Promise.resolve(app.request(input, init)),
-    );
+    const open = async (start: string) => {
+      const clock = new SimulatedClock(start);
+      const env = { FORERUNNER_HOME: home };
+      const rt = await composeRuntime({
+        env,
+        dirs: appDirs({ env }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+        provider: new AcceptingCriticProvider(
+          new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock),
+        ),
+        sdkQuery: atLimitFirst([]),
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+        startServices: false,
+      });
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+    let { rt, client } = await open("2026-03-05T08:00:00Z");
+    // The places that show the session's stored result: the Overview's Last result and its Read
+    // aloud, and the Inbox's Update line of the session (the review of d1109-run-visible,
+    // blocking 3: after Cancel these still promised that the session goes on).
+    const shown = async (projectId: string) => {
+      const summary = await client.projectSummary(projectId);
+      const inbox = await client.inbox(rt.human.id);
+      return {
+        last: (summary.lastSession?.summary ?? "").split("\n")[0],
+        spoken: summary.spoken,
+        updates: inbox.messages.filter((m) => m.projectId === projectId).map((m) => m.body),
+      };
+    };
     try {
       const project = await client.createProject({ name: "Notes", goal: "Two notes" });
       for (const title of ["Write note A", "Write note B"])
@@ -21564,8 +21580,35 @@ describe("d1109-run-visible, run C: the page of a session that ended to wait (V-
       expect(ended.summary.split("\n")[0]).toBe(
         "Waits until 11:40 (your subscription's limit); then your session goes on.",
       );
+      // While it is kept to go on, every place says so.
+      const before = await shown(project.id);
+      expect(before.last).toBe(
+        "Waits until 11:40 (your subscription's limit); then your session goes on.",
+      );
+      expect(before.spoken).toContain(
+        "Last session: Waits until 11:40 (your subscription's limit); then your session goes on.",
+      );
+      expect(before.updates.join("\n")).toContain("then your session goes on.");
       // Cancel: nothing goes on by itself; the page offers Continue with what is left.
       await client.cancelContinuation(project.id);
+      // C3-left-8: nothing that shows the result says it goes on; each says what is true now.
+      const after = await shown(project.id);
+      expect(after.last).toBe(
+        "Waits until 11:40 (your subscription's limit); then it runs at your next Start.",
+      );
+      expect(after.spoken).not.toContain("then your session goes on");
+      expect(after.spoken).toContain("then it runs at your next Start.");
+      expect(after.updates.length).toBeGreaterThan(0);
+      for (const u of after.updates) expect(u).not.toContain("then your session goes on");
+      expect(after.updates.join("\n")).toContain("then it runs at your next Start.");
+      // The same after a restart (what is kept is read from the store, not this process).
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await open("2026-03-05T08:30:00Z"));
+      expect(await shown(project.id)).toEqual(after);
+      expect((await client.session(sessionId)).summary.split("\n")[0]).toBe(
+        "Waits until 11:40 (your subscription's limit); then it runs at your next Start.",
+      );
       const stopped = await client.session(sessionId);
       expect(stopped.waitBlock).toMatchObject({
         state: "stopped",

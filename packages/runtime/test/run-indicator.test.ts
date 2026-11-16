@@ -7,6 +7,7 @@ import {
   emptyRunFold,
   foldRunEvents,
   RUN_TEXT_MAX,
+  resultAfterWait,
   runFoldsOf,
   runText,
   runViews,
@@ -15,6 +16,7 @@ import {
   startOfferOf,
   stopChoices,
 } from "../src/daemon/run-indicator.ts";
+import { dropKeptStart } from "../src/wiring/billing-pick.ts";
 
 /**
  * d1109-run-visible V-1 (D8, the owner, 2026-11-09: "it should at least be very clear to a user
@@ -445,6 +447,58 @@ describe("runViews (V-1)", () => {
     // A row read with no fold kept (a fresh daemon, the list read first) folds the whole log too.
     runFoldsOf(store).clear();
     expect(await sessionRunText(store, row, critic)).toBe(wrapping);
+  });
+
+  // C3-left-8 (the review of d1109-run-visible, blocking 3): a stored result's "then your session
+  // goes on" is read as it holds now, wherever it shows (the session page, the Overview, Read
+  // aloud, the Inbox's Update line).
+  const PROMISE = "Waits until 15:40 (your subscription's limit); then your session goes on.";
+  const AFTER = "Waits until 15:40 (your subscription's limit); then it runs at your next Start.";
+  const keepWait = async (kept: Record<string, unknown> | null, since: string) => {
+    const human = (await store.agent.mustGet(agent)).owner_human_id;
+    await store.billingSource.insert({
+      human_id: human,
+      kind: "subscription",
+      label: "Max plan",
+      credential_ref: "anthropic_subscription_token",
+      limits: { waiting: [{ projectId: quote, agentId: agent, since, ...(kept ? { kept } : {}) }] },
+      enabled: true,
+      priority: 1,
+    } as never);
+  };
+
+  it("keeps a result's 'then your session goes on' while it is kept and once it went on; else says it runs at the next Start", async () => {
+    const ended = await session({ status: "stopped", ended_at: clock.nowIso() });
+    const since = clock.nowIso();
+    await keepWait({ by: "continuation", continues: ended.id, at: since }, since);
+    expect(await resultAfterWait(store, quote, since, PROMISE)).toBe(PROMISE);
+    // A line with no promise is never changed; nor one with no project.
+    expect(await resultAfterWait(store, quote, since, "Done: 2 tasks.")).toBe("Done: 2 tasks.");
+    expect(await resultAfterWait(store, null, since, PROMISE)).toBe(PROMISE);
+    // Cancel (or Stop all): nothing is kept, nothing went on.
+    expect(await dropKeptStart(store, quote)).toBe(true);
+    expect(await resultAfterWait(store, quote, since, PROMISE)).toBe(AFTER);
+    // A session the continuation started after it: it went on by itself, the words were true.
+    clock.advance(60_000);
+    await session({
+      status: "completed",
+      plan: { items: [], startedBy: { by: "continuation", continues: ended.id } },
+    });
+    expect(await resultAfterWait(store, quote, since, PROMISE)).toBe(PROMISE);
+  });
+
+  it("says it runs at the next Start once the person started a session instead, even while a later wait is kept", async () => {
+    const ended = await session({ status: "stopped", ended_at: clock.nowIso() });
+    const since = clock.nowIso();
+    clock.advance(60_000);
+    // The person's own Start after Cancel; it too stopped to wait, and its continuation is kept.
+    const next = await session({
+      status: "stopped",
+      plan: { items: [], startedBy: { by: "person" } },
+    });
+    await keepWait({ by: "continuation", continues: next.id, at: clock.nowIso() }, since);
+    expect(await resultAfterWait(store, quote, since, PROMISE)).toBe(AFTER);
+    expect(ended.id).not.toBe(next.id);
   });
 });
 

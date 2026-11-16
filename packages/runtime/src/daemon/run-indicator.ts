@@ -1,5 +1,6 @@
 import { saidByName } from "@forerunner/critic";
 import type { SessionRow, StateStore } from "@forerunner/state";
+import { keptContinuationOf, keptStartOf } from "../wiring/billing-pick.ts";
 import type { RunningHealth, RunningView } from "./api-types.ts";
 import { isIntakeSession } from "./project-status.ts";
 import {
@@ -13,10 +14,58 @@ import {
   type RunWords,
   runFit,
   stopChoices,
+  summaryAfterWait,
   runText as wordsText,
 } from "./run-words.ts";
 
 export * from "./run-words.ts";
+
+// --- A stored result's promise, as it holds now (C3-left-8) ---------------------------------------
+
+/** The clause a stored result ends with while the person's session waits to go on. */
+const GOES_ON_CLAUSE = "; then your session goes on.";
+
+/** Whether a session row is the continuation of the person's waiting session (S-10). */
+function startedByContinuation(row: Pick<SessionRow, "plan">): boolean {
+  const by = (row.plan as { startedBy?: { by?: unknown } } | null)?.startedBy?.by;
+  return by === "continuation";
+}
+
+/**
+ * C3-left-8 (and the review of d1109-run-visible, blocking 3): whether "...; then your session
+ * goes on." in a result written at `since` for a project is still true. It is while the
+ * continuation (or a Start kept for the reset) is kept and no session of the project began since,
+ * and once a continuation began after it (it went on by itself). After Cancel, Stop all, or a
+ * session the person started instead, it is not: nothing went on by itself.
+ */
+export async function waitPromiseHolds(
+  store: StateStore,
+  projectId: string,
+  since: string,
+): Promise<boolean> {
+  const later = (await store.session.forProject(projectId, { limit: 20 })).filter(
+    (r) => r.created_at > since && !isIntakeSession(r),
+  );
+  if (later.some(startedByContinuation)) return true;
+  if (later.length) return false;
+  return !!(await keptContinuationOf(store, projectId)) || !!(await keptStartOf(store, projectId));
+}
+
+/**
+ * A stored result as it reads now: unchanged unless it promises that the person's session goes
+ * on and that no longer holds (`waitPromiseHolds`), then "...; then it runs at your next
+ * Start." (`summaryAfterWait`). Every place that shows a session's stored result reads it so: the
+ * session page, the Overview's Last result and its Read aloud, and the Inbox's Update line.
+ */
+export async function resultAfterWait(
+  store: StateStore,
+  projectId: string | null | undefined,
+  since: string | null | undefined,
+  text: string,
+): Promise<string> {
+  if (!projectId || !since || !text.includes(GOES_ON_CLAUSE)) return text;
+  return (await waitPromiseHolds(store, projectId, since)) ? text : summaryAfterWait(text);
+}
 
 /** The words with the specialist in a person's words (`saidByName`: writer-marketing is "writer"). */
 function said<T extends RunWords>(w: T): T {

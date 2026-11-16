@@ -182,8 +182,8 @@ import type { RestartRequestFile } from "./restart.ts";
 import {
   CANCEL_WAIT_EXPLAIN,
   RUN_CHANGED_EVENT,
+  resultAfterWait,
   runningHealth,
-  summaryAfterWait,
 } from "./run-indicator.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
 import { createSandboxRoutes } from "./sandbox-routes.ts";
@@ -1982,12 +1982,15 @@ export function createDaemonApp(
     });
     const waitBlock = await waitBlockOf(s).catch(() => null);
     // C3-left-8: the stored result's promise follows what is kept now: after Cancel nothing says
-    // the session goes on ("Waits until 02:23 (...); then your session goes on." read on).
-    return {
-      ...view,
-      summary: waitBlock?.state === "stopped" ? summaryAfterWait(view.summary) : view.summary,
-      waitBlock,
-    };
+    // the session goes on ("Waits until 02:23 (...); then your session goes on." read on), as
+    // the Overview's Last result and the Inbox's Update line read it (`resultAfterWait`).
+    const summary = await resultAfterWait(
+      rt.store,
+      s.project_id,
+      s.ended_at ?? s.created_at,
+      view.summary,
+    ).catch(() => view.summary);
+    return { ...view, summary, waitBlock };
   };
 
   app.get("/sessions/:id/events", async (c) => {
@@ -2278,7 +2281,11 @@ export function createDaemonApp(
           m.from_agent_id,
           (await rt.store.agent.get(m.from_agent_id))?.name ?? m.from_agent_id,
         );
-      msgViews.push(messageView(m, names.get(m.from_agent_id) ?? m.from_agent_id));
+      // C3-left-8: a session's Update line that promised it goes on says what is true now.
+      const body = await resultAfterWait(rt.store, m.project_id, m.created_at, m.body).catch(
+        () => m.body,
+      );
+      msgViews.push(messageView({ ...m, body }, names.get(m.from_agent_id) ?? m.from_agent_id));
     }
     return c.json({
       requests: reqViews,

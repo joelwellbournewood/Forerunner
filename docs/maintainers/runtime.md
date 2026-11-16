@@ -7716,8 +7716,12 @@ sentences from it); `daemon/run-indicator.ts` reads the store and re-exports the
   after the session on "Quote page"' (a waiting person start), and rule 4 reads "Ready: 3 tasks
   wait for your Start"; a session that ended to wait has `SessionView.waitBlock` (`{state:
   goes_on | starts_again | stopped, text, action: cancel | continue, explain, projectId,
-  budgetLeft}`), and once its continuation is cancelled its summary says "...; then it runs at
-  your next Start." (`summaryAfterWait`, C3-left-8); an answered card whose answer readied work
+  budgetLeft}`), and once nothing goes on by itself its stored result says "...; then it runs
+  at your next Start." (`summaryAfterWait`, C3-left-8) wherever it shows: the session page, the
+  Overview's Last result and its Read aloud, and the Inbox's Update line (`resultAfterWait`:
+  "then your session goes on" holds while the continuation or a Start for the reset is kept and
+  no session of the project began since, or once a continuation began after it; Cancel, Stop
+  all or a session the person started instead end it); an answered card whose answer readied work
   for the next Start has `startOffer` (`startOfferOf`: the stored prepared outcome waits_start,
   stopping or failed, never a hands-off start), so the Inbox's Done line offers Start (V-6).
 
