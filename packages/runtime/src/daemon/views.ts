@@ -946,6 +946,7 @@ export function requestView(
     links: words.links,
     reply: words.reply,
     details: words.details,
+    ...(words.openDetails ? { openDetails: true } : {}),
     ...(words.lists?.length ? { lists: words.lists } : {}),
     outcome: words.outcome,
     // d1109-run-visible (V-6): the Done line's Start.

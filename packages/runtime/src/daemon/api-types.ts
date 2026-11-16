@@ -963,6 +963,8 @@ export const HumanRequestView = z.object({
     .optional(),
   reply: z.enum(["none", "text", "form"]).optional(),
   details: z.array(z.string()).optional(),
+  /** d1109-selftasks-chat (SC-9): the details are the card's subject: shown open. */
+  openDetails: z.boolean().optional(),
   /**
    * Items the card lists whole under its body, each list with its label: a paused run's "Where it
    * stopped" and "Left to do" (L3-research-2; run together into one sentence they were cut in
