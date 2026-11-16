@@ -535,3 +535,54 @@ once that limit is raised or resets, for your next Start; or cancel it.").
 ## Amendment 2026-11-16 (ADR 0119, d1109-selftasks-run): the task check stays inside the budget
 
 A task check's call is booked in the session's spend and is made only when its cap fits the room left after the session's promise; it is never made past the wrap-up line, and the tasks it adds join only by the admit rule.
+
+## Amendment 2026-11-16 ('d1116-budget-all'): a task's budget counts its work, its reviews and its fixes
+
+The owner's answer of 2026-11-16 to "should a task's budget count the critic's reviews?": "yes it
+should count critics reviews, and fixes." A task's budget counts one figure, what the task costs:
+its work runs, every call of the critic's reviews of it (a call Stop now cut off included), and
+every fix after a send-back. This amendment replaces the 'cost' amendment's point 4, last
+sentence; the 'w15-run' point 6's "`actual_cost_usd_micro` stays the work-only figure the task's
+budget counts"; for a task with its own budget, the 'leftovers7-session' point 2's "(the critic's
+own run cap is the session's budget)"; and the 'l3-money-screens' point 1. Point 7 (the session's
+fifth kept for reviews) stays.
+
+1. **One figure (BA-1, BA-2).** Each critic call's cost is booked on the task as it ends
+   (`task.addCost`, no version bump), on the session and in the cost ledger with the task's id,
+   once. `actual_cost_usd_micro` equals the ledger's sum for the task. Migration 0010 raises the
+   figure of every task written before to its ledger's sum (data only, never lower).
+2. **The review stops at what is left (BA-3).** A task's review may spend at most its budget
+   less its figure (`TaskReviewRequest.budgetUsdMicro`; the critic's token budget is the smaller
+   of its own and the task's). A refusal names the task's budget ("task_budget"). A review that
+   cannot start (what is left is below one critic call's floor, `reviewCallUsdMicro().floor`)
+   does not start: the task pauses with its work kept, its card names the estimate the review
+   needed, and Continue runs only the review (the review-only pass, W15-27), also after a restart.
+3. **The room rule, the task's twin of point 7 (BA-4).** Each work run, a fix after a send-back
+   included, keeps room in its task's budget for the review that follows it: R + W, R the review
+   part of the task's estimate, W one critic call's worst case at its review tier
+   (`CriticPort.reviewCallUsdMicro`). The room is kept only when it is at most half of what is
+   left; else the work runs with all that is left (the owner's "it should get done anyway") and
+   its review waits for Continue if it does not fit. The run's start line, its pause sentence and
+   its card say what is kept ("This run may spend CHF 0.20 (CHF 0.04 of the task's budget is kept
+   for its review): ..."; "It spent CHF 0.56 of its budget of CHF 0.80, keeping CHF 0.10 for its
+   review."), never when nothing is kept. The run's cap source follows its own cap.
+4. **One Continue is enough (BA-5).** A task-budget card stores what the task needs beyond what
+   is left (`needs_usd_micro`: a work pause, its estimate left plus W; a review that waits, R plus
+   the refused call's worst case), and Continue gives the larger of it and the same amount again.
+   The button still names what it adds; nothing is added beyond it.
+5. **The screens (BA-9).** The Tasks row, the drawer and Costs > By task show that one figure
+   (every ledger row of each task now in the project, `costLedger.byTaskOf`, so a task Make one
+   project moved keeps its whole figure); the line under it reads "of CHF 0.20 budget", or "CHF
+   0.20 budget used up" once nothing is left, with the tooltip "Its work, the critic's reviews
+   and any fixes all count. The task pauses at this budget and keeps its work." The Costs total
+   and its other buckets stay the project's own.
+6. **What stays out.** The session review, the task check, the critic's lesson reviews and
+   monthly check, planning and chat are the session's or the project's spend (no task id); the
+   critic's checks and tries, the kept-work check, rebuilds and the merge step book nothing.
+   Redo, Try again and a conflict card's Redo keep the task's figure; a Redo with nothing left
+   pauses before it runs with one card and Continue.
+
+No budget, wrap-up line, monthly cap or plan-share cap is passed: every call is still checked on
+its worst case before it is made. Tests: `packages/runtime/test/task-budget-all.test.ts`,
+`task-budget-room.test.ts`, `packages/critic/test/review-price.test.ts`, the session review's,
+the estimates', the state suite's `byTaskOf` and the UI's "d1116-budget-all, run C" cases.

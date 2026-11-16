@@ -70,6 +70,12 @@ schema and the snapshot disagree.
   table dropped, the new one renamed, its two indexes recreated); Postgres: `DROP CONSTRAINT` /
   `ADD CONSTRAINT` of `change_log_source_enum`. Tested on both (`schema.test.ts`,
   `migrations.integration.test.ts`).
+- `src/migrations/0010-task-spent-all.ts` (d1116-budget-all, ADR 0112's amendment of
+  2026-11-16): hand written and frozen, data only: `task.actual_cost_usd_micro` becomes the larger
+  of itself and the cost ledger's sum for the task (`MAX` on SQLite, `GREATEST` on Postgres), so
+  a task written before, whose figure held its work only, counts its reviews as a new one does;
+  never lower, and a task without ledger rows keeps its figure. Tested on both
+  (`schema.test.ts`, `migrations.integration.test.ts`).
 - `src/migrations/index.ts`: `MIGRATIONS` (ascending) and `migrate(db, { clock?, migrations? })`.
   `migrate` creates `schema_migrations (version PK, name, applied_at)` if missing, then applies
   every pending migration inside **one transaction** (both dialects have transactional DDL) and
@@ -182,7 +188,9 @@ of kind `skill` named `memory-format`), tested on fixture directories for both p
 A project's Sessions list (d1109-sessions, ADR 0116) needed no migration: `handoff.outcome`,
 `handoff.planning`, `handoff.last_worked_at` and `plan.startedBy` are fields of the session's JSON
 columns, and the repository methods it added (`SessionRepo.pageForProject` and
-`listedCountForProject`, `CostLedgerRepo.sumsBySessionAndSource` and `chatSpendForProject`) are
+`listedCountForProject`, `CostLedgerRepo.sumsBySessionAndSource` and `chatSpendForProject`; and
+`CostLedgerRepo.byTaskOf(projectId, {from, to})` for d1116-budget-all, each task now in the
+project with every ledger row booked to it whatever project the row names) are
 queries on the existing tables (the listed rule reads `plan.intake` with `json_extract` on SQLite
 and `->` on Postgres). `suite.ts`' "a project's sessions (d1109-sessions)" runs them on both.
 

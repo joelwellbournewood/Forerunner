@@ -104,3 +104,8 @@ This ADR is run C's sub-run C4 (`d1109-selftasks-run`, the run). Chat's own task
   the agent within this fence), ADR 0100 (the check is a planning call: interactive purpose) and
   ADR 0112 (a check's call is counted in the session's spend and never past its wrap-up line).
   Each carries a dated note.
+
+## Amendment 2026-11-16 ('d1116-budget-all', ADR 0112's amendment of that date)
+
+A split shares what is left of the task's budget after its work and its reviews (its figure holds
+both), and the task check stays the session's spend: its Run row and ledger rows name no task.

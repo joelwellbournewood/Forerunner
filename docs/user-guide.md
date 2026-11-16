@@ -1178,12 +1178,17 @@ New task says the same sentence when you pick who does it, for the words you typ
 words need your answer ("uses the owner's choice of hosting") says "Runs on your API key: only it
 can ask you questions while it works here." before you press Create.
 
-A task's own budget (New task, **Budget**) is what its runs stop at: all its runs together
-never spend more. It counts the work only: the critic's reviews are not counted in it (they
-count against the session's budget). The Tasks tab shows it under the task's cost ("of CHF 4.00 budget"). The cost there
-includes the reviews, as Costs does, so once a review was paid the line says what is left for
-the work instead ("CHF 0.11 of CHF 0.20 budget left; reviews are not counted"), the same amount
-as the run's own line in the session's log ("This run may spend CHF 0.11"). A task
+A task's own budget (New task, **Budget**) is what the task may cost, all of it together: its
+work, the critic's reviews of it and any fixes after the critic sent it back all count, and
+together they never spend more. The Tasks tab, the task's drawer and Costs show that one figure,
+with the budget under it on the Tasks tab ("of CHF 0.20 budget", or "CHF 0.20 budget used up"
+once nothing is left; its tooltip says "Its work, the critic's reviews and any fixes all count.
+The task pauses at this budget and keeps its work."); a task moved in by **Make one project**
+keeps its whole figure there. Each run keeps room in the budget for the review that follows it,
+when the budget is large enough, and its line in the session's log says so ("This run may spend
+CHF 0.20 (CHF 0.04 of the task's budget is kept for its review): ..."). A budget too small for
+the work and its review still gets the work done: the run uses what is left, and the review then
+waits for you (below). A task
 without a budget stops each run at its specialist's limit, and the Tasks tab says so ("each
 run stops at CHF 2.40 (the coder's limit)"; a task you left to the agent's choice names no
 specialist there); a done or cancelled task shows no limit. The estimate a
@@ -1195,9 +1200,13 @@ checks describe it: each file it names, tests to write, "at least six cases" and
 checks make it larger, up to four times (a tool in four files with its tests is about CHF 0.11,
 a footer line a few centimes). It learns from every task that finishes, per unit of that size,
 so a large task does not make the small ones look dear: after three tasks of a kind it is
-within about twice what they really cost. The session review sets the work's cost against the
-estimate and names the critic's reviews apart ("cost CHF 0.25 (work CHF 0.15 against an
-estimate of CHF 0.14, reviews CHF 0.10)"), since the estimate is the work's. That estimate is
+within about twice what they really cost. The estimate holds the task's review as well as its
+work (a light review a couple of centimes, a full review more), and it learns both, so the plan
+line and the Start dialog price a task as its budget counts it; with reviews in, fewer tasks fit
+one session's budget than before. The session review sets what the planned tasks cost, their
+work, reviews and fixes, against that estimate, and names the session's own checks apart ("cost
+CHF 0.28 (the planned tasks CHF 0.20 against an estimate of CHF 0.19, the session's own checks
+CHF 0.02)"); a session planned before this reads as it did. That estimate is
 the one the plan line and the Start dialog showed you: a task the critic sent back and the
 session did again counts once, and when the second try makes the work cost much more than
 planned, the review says so ("with one task tried twice", "with 2 tasks tried again").
@@ -1263,7 +1272,12 @@ its review waits for room in the budget."; the log does not say the critic start
 that never ran), it does not count as a failed
 try, and once it goes on its next session reviews the work without running the specialist
 again (its log says only that the critic reviewed it), unless the files it wrote changed
-meanwhile: then the specialist does it again first.
+meanwhile: then the specialist does it again first. The task's own budget is such a limit too,
+since it counts the review: a review that would pass what is left of it pauses the task with
+its work kept, and **Continue** on its card adds what the review needs (its usual cost and one
+step's worst case), so one Continue is enough. A task the critic sent back whose budget is spent
+says so ("The critic sent it back, and its budget of CHF 0.20 is spent (CHF 0.20 so far):
+Continue in the Inbox gives it more for the changes the critic asked for.").
 
 **A paused task keeps its work.** Forerunner's own code saves what the run did, whatever the
 agent did with the wrap-up: in a project linked to a GitHub repository it is one commit on the

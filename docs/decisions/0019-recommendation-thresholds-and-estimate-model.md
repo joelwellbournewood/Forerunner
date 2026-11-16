@@ -167,3 +167,10 @@ unless the human consented to it: an explicit "run evaluations", an `evaluate`
 answer on a report whose evals were withheld (an adopt never starts a paid run), or the opt-in setting `model_watch.run_evals`
 (default off). The 5 USD `evalBudgetUsdMicro` now caps that consented run. The consequence
 above ("roughly 20 USD a month") holds only for an install that turned the opt-in on.
+
+## Amendment 2026-11-16 ('d1116-budget-all', ADR 0112's amendment of that date)
+
+A task's estimate has two parts, its work and its review (`REVIEW_STARTING_ESTIMATES_USD_MICRO`
+by review tier times the task's size, times the learned review ratio); the model keeps one sample
+per task by its id (a later close replaces it; the fold after a restart equals the live model),
+and the session review sets a marked plan's tasks' whole cost (work, reviews, fixes) against it.

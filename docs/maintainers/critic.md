@@ -232,7 +232,15 @@ outcome `usage_limit` or `credential_refused`, `credentialRunOutcome`, never `er
 or finding is, and the review throws a `ForerunnerError` with the refusal's code and
 `details.review = REVIEW_REFUSED` (the runtime's `session/review-refusal.ts`). Before, it was an
 `escalate` with the finding "Critic review did not complete (budget_exceeded)", which the retry
-ladder counted as a failed try of the work. A refusal after the verdict was captured still
+ladder counted as a failed try of the work. d1116-budget-all (BA-3): the refusal keeps the refused call's
+estimate (`details.estimateUsdMicro`, copied onto `RunResult.error` by the loop), which the
+runtime's card stores. `CriticService.reviewCallUsdMicro(tier, projectSettings)` prices one
+review call as the review will make it (`ReviewCallPrice`): `worstUsdMicro`, its model at its
+output cap (`deps.maxTokensPerCall ?? REVIEW_TOKENS_PER_CALL`, `MAX_EFFORT_TOKENS_CEILING` at
+effort max) with the system prompt plus `REVIEW_EVIDENCE_ALLOWANCE_TOKENS` (8,000) of input;
+`floorUsdMicro`, the 8,192-token output floor a call may not start below; the runtime's critic
+port exposes it as `CriticPort.reviewCallUsdMicro(task, specialist)` for the room a work run
+keeps and the floor below which a review does not start (test `test/review-price.test.ts`). A refusal after the verdict was captured still
 completes the review (`REFUSALS_AFTER_VERDICT`); session reviews, promotion reviews and
 calibration keep their conservative outcome (`critic.test.ts`, `budget-pause.test.ts`,
 `credential-wait-session.test.ts`; the two mappings themselves, each code, the kept details
@@ -443,14 +451,22 @@ store and persists a `Review` with `session_id` set and `task_id` null:
 
 Money in its findings and evidence is CHF (design §5 rule 7): `sessionChecks` converts at the
 ledger's own rate (`ledgerChfMicro / ledgerUsdMicro`), else `DEFAULT_CHF_PER_USD` ("Session cost
-CHF 0.20 exceeded its estimate CHF 0.10 by 100%"); it said "USD 0.2000". The estimate is the
-work's (the critic's reviews are paid from the session's review reserve), so the overrun check
-sets the work's cost against it, the ledger less the critic's Run rows (`metrics.workUsdMicro`,
-`metrics.reviewsUsdMicro`; W15-18, live check 2's RUN-16: "CHF 0.17 spent of a CHF 0.05
-estimate" counted the reviews), and with reviews the finding and the summary name them apart
-("Session work cost CHF 0.12 exceeded its estimate CHF 0.05 by 140% (the reviews, CHF 0.05
-more, are not in the estimate)"; "cost CHF 0.25 (work CHF 0.15 against an estimate of CHF 0.14,
-reviews CHF 0.10)"); without reviews the words are as before. The estimate is the plan's figure
+CHF 0.20 exceeded its estimate CHF 0.10 by 100%"); it said "USD 0.2000". d1116-budget-all
+(BA-8, the owner's answer of 2026-11-16: a task's budget and its estimate count its work, its
+reviews and its fixes): a plan the runner marked `counts: "all"` (`planCountsAll`; every plan it
+writes since) is set against what its planned tasks cost, their ledger rows (their runs when
+the session has no ledger row; `SessionReviewData.countsAll`, `plannedTasksUsdMicro`), and the
+session's own spend on no planned task (the task check, lesson reviews) is named apart and never
+counted in an overrun (`metrics.counts`, `tasksUsdMicro`, `otherUsdMicro`): "Planned tasks cost
+CHF 0.17, over their estimate of CHF 0.05 by 240%"; "cost CHF 0.28 (the planned tasks CHF 0.20
+against an estimate of CHF 0.19, the session's own checks CHF 0.02)", or "cost CHF 0.17 against
+an estimate of CHF 0.05" with nothing else spent. A plan written before the mark, whose estimate
+was the work's, reads as written: the overrun check sets the work's cost against it, the ledger
+less the critic's Run rows (`metrics.workUsdMicro`, `metrics.reviewsUsdMicro`; W15-18), and names
+the reviews apart ("Session work cost CHF 0.12 exceeded its estimate CHF 0.05 by 140% (the
+reviews, CHF 0.05 more, are not in the estimate)"; "cost CHF
+0.25 (work CHF 0.15 against an estimate of CHF 0.14, reviews CHF 0.10)"); without reviews the words
+are as before. Tests: `test/session-review.test.ts` "d1116-budget-all, run C". The estimate is the plan's figure
 the person saw on the plan line and in the Start dialog, each task counted once (L3-run-2, live
 check 3): `planEstimateOf` skips an item the runner marked `again` (a task taken again after a
 send-back or a failed try) and any later item of a task already counted, and, when items repeat a
@@ -459,8 +475,8 @@ task, computes the figure from the first item per task instead of trusting the s
 plan said about CHF 0.11). "Plan lists the same task twice" is no finding for a repeat that is
 marked `again`, whose task the critic sent back (`handoff.sent_back`) or ran in this session; a
 plan that lists a task twice that never ran is still one. Work that tried a task again is named in
-an overrun finding (`attemptsAgainOf`: "Session work cost CHF 0.18 exceeded its estimate CHF 0.08
-by 130%, with one task tried twice (the reviews, CHF 0.05 more, are not in the estimate)"), so a
+an overrun finding (`attemptsAgainOf`: "Planned tasks cost CHF 0.17, over their estimate of CHF
+0.05 by 240%, with one task tried twice" for a marked plan), so a
 send-back that doubled the cost is flagged instead of hidden by a doubled estimate; more tries
 read "with one task tried 3 times" or "with 2 tasks tried again" (`tasksTriedAgainOf`; before:
 "with 2 more attempts of tasks tried again"). The daemon's `critic.session_review_metrics` log
