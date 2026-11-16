@@ -531,7 +531,11 @@ export function StartSessionDialog({
             ) : null}
             <Field
               label="Session budget (CHF)"
-              hint={`The project's default is filled in. The session stops when it is used; a fifth is kept for reviews.${
+              hint={`${
+                continues
+                  ? "What is left of that session's budget is filled in: it goes on with that, never more."
+                  : "The project's default is filled in."
+              } The session stops when it is used; a fifth is kept for reviews.${
                 data?.monthLeft ? ` Left this month: ${chfWords(data.monthLeft.chfMicro)}.` : ""
               }`}
             >

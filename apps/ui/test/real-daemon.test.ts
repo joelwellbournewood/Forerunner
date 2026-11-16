@@ -20543,14 +20543,30 @@ describe("d1109-selftasks-run, run C", () => {
       expect(answered.outcome).toBe("Changed 2 tasks; your next Start runs them.");
       const tasks = await b.client.tasks(w.project.id);
       const byTitle = new Map(tasks.map((t) => [t.title, t]));
+      // The two tasks the change made, in the order the run order ranks them (priority, then
+      // when each was made, then its id): both are made in one answer after the restart, so the
+      // same millisecond can hold both (the review of d1109-run-visible).
+      const madeNow = (
+        await Promise.all(
+          ["Style the page: colours", "Check that the links work"].map((t) =>
+            b.rt.store.task.mustGet(byTitle.get(t)?.id ?? ""),
+          ),
+        )
+      )
+        .sort(
+          (x, y) =>
+            y.priority - x.priority ||
+            x.created_at.localeCompare(y.created_at) ||
+            x.id.localeCompare(y.id),
+        )
+        .map((t) => t.title);
       // In run order, as the Tasks tab lists them: the two tasks the change made are younger than
-      // every task made before the restart, the split's part first (it is made first).
+      // every task made before the restart.
       expect(tasks.map((t) => [t.title, t.status])).toEqual([
         ["Create the page in index.html", "done"],
         ["Send the logo", "needs_human"],
         ["Style the page: layout", "ready"],
-        ["Style the page: colours", "ready"],
-        ["Check that the links work", "ready"],
+        ...madeNow.map((t) => [t, "ready"]),
       ]);
       // The task keeps its id as the first part; the second waits for it.
       expect(byTitle.get("Style the page: layout")?.id).toBe(w.style.id);
@@ -20582,8 +20598,7 @@ describe("d1109-selftasks-run, run C", () => {
         ["Create the page in index.html", "done"],
         ["Send the logo", "needs_human"],
         ["Style the page", "ready"],
-        ["Style the page: colours", "cancelled"],
-        ["Check that the links work", "cancelled"],
+        ...madeNow.map((t) => [t, "cancelled"]),
       ]);
       expect((await b.client.tasks(w.project.id)).find((t) => t.id === w.style.id)).toMatchObject({
         acceptanceCriteria: ["the layout is a grid", "the colours match the logo"],

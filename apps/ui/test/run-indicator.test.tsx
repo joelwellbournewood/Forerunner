@@ -543,6 +543,12 @@ describe("d1109-run-visible: the page of a session that ended to wait (V-5), its
     await waitFor(() =>
       expect(within(dialog).getByLabelText(/Session budget/)).toHaveValue("1.20"),
     );
+    // The review of d1109-run-visible: the hint says what is filled in (not "the project's
+    // default"), and that the daemon goes on with no more than that.
+    expect(dialog).toHaveTextContent(
+      "What is left of that session's budget is filled in: it goes on with that, never more.",
+    );
+    expect(dialog).not.toHaveTextContent("The project's default is filled in.");
     await user.click(within(dialog).getByTestId("confirm-start-session"));
     await waitFor(() => expect(postedCalls(harness, "/sessions")).toHaveLength(1));
     expect(postedCalls(harness, "/sessions")[0]?.body).toMatchObject({

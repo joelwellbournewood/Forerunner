@@ -553,6 +553,11 @@ one leaves it "Forerunner"). The same element in its **block** form is Home's an
 modal covers the header). The Inbox's Done line offers **Start** (V-6, `DoneStart`) when the
 answer readied work for the person's next Start (`HumanRequestView.startOffer`) and no session of
 that project runs or waits (the same `running` list); it opens that project's Start dialog.
+The page of a session that ended to wait for its credential shows the daemon's
+`SessionView.waitBlock` (`session-wait`) with Cancel, or after Cancel with **Continue**, which
+opens Start with the rest of that session and what is left of its budget; its hint then reads
+"What is left of that session's budget is filled in: it goes on with that, never more." (the
+daemon sets a continuation's budget to what is left), not "The project's default is filled in."
 Tests: `test/run-indicator.test.tsx` (every route at two widths, the menu, `run.changed`, the
 waiting entry, the title, Home, the Overview, Talk, the session page's wait block, the Done
 line's Start), real-daemon "d1109-run-visible, run C", `e2e/smoke.spec.ts` (two widths).
