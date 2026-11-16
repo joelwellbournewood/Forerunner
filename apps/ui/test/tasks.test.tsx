@@ -2096,9 +2096,9 @@ describe("d1116-budget-all, run C", () => {
     const extra = {
       status: "ready",
       specialist: "coder",
-      dependsOn: [],
-      priority: "high",
-    } as const;
+      dependsOn: [] as string[],
+      priority: "high" as const,
+    };
     addTask(harness, "t_whole", "Add a footer line with the club's name to index.html", {
       ...extra,
       estimate: money(60_000),
