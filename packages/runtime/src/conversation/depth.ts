@@ -248,6 +248,12 @@ export function handOverStep(f: PassFigures & { budgetUsdMicro: number }): strin
 export const WRAP_UP_STEP = "Answering with what I found…";
 /** The step when the person pressed Stop and the run is ending. */
 export const STOPPING_STEP = "Stopping…";
+/**
+ * The step when the claim guard asks the model again (l3-chat-claims): its reply said it changed
+ * something or asked for a yes that no command of the turn did. It carries reset, so the live
+ * bubble drops the claim streamed before it (fixup-d1109-chat-depth, L3-left-9).
+ */
+export const CHECKING_STEP = "Checking what changed…";
 
 /** The muted line under a longer answer: its model, its time, its cost (design §3.9). */
 export function footerWords(o: {

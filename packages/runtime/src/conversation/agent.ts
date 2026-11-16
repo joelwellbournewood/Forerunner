@@ -70,6 +70,7 @@ import {
   type CapLevel,
   CHAT_THOROUGH_RULES,
   CHAT_WRAP_UP,
+  CHECKING_STEP,
   type CredentialWords,
   capWords,
   chfToUsdMicroAt,
@@ -1501,14 +1502,16 @@ export class ConversationAgent {
       atMostUsdMicro: f.atMostUsdMicro,
       model: f.model,
     });
-    // The facts' thinking_longer line (volatile, so the cached prefix holds).
+    // The facts' thinking_longer line (volatile, so the cached prefix holds). Facts that carry a
+    // record's words (a card in full, fixup-d1109-chat-depth) never let a pass go ahead on the
+    // model's ask: the line says the person is asked.
     const longerRoute = routeOf("longer");
     const longerFigures = spoken ? null : await figuresOf(longerRoute);
     const thinkingLonger = spoken
       ? thinkingLongerFact({ state: "spoken" })
       : longerFigures && capFor(longerFigures, longerFigures.atMostUsdMicro)
         ? thinkingLongerFact({ state: "room" })
-        : longerFigures && !asksFirst(longerFigures)
+        : longerFigures && !asksFirst(longerFigures) && !turn.recordsRead
           ? thinkingLongerFact({
               state: "goes_ahead",
               amountUsdMicro: Math.min(amountUsdMicro, room?.usdMicro ?? amountUsdMicro),
@@ -1716,19 +1719,26 @@ export class ConversationAgent {
           // The gate, in order: a typed turn; no quick ask; no record read yet; the room; a rung.
           if (spoken) return refuse(NOT_NOW.spoken);
           if (asked.ask === "quick") return refuse(NOT_NOW.quick);
-          if (turn.recordsRead || lookedUp || results.length) return refuse(NOT_NOW.records);
+          // A lookup or a change came first (the hand-over comes before any), or something this
+          // turn was shown reads like instructions (the facts, the history, a tool result).
+          if (lookedUp || results.length || injection.length > 0) return refuse(NOT_NOW.records);
           const f = await figuresOf(route);
-          const level = capFor(
-            f,
-            asksFirst(f) ? f.atMostUsdMicro : Math.min(amountUsdMicro, f.atMostUsdMicro),
-          );
+          const asks = asksFirst(f) || amountUsdMicro < f.floorUsdMicro;
+          // fixup-d1109-chat-depth: the facts carry a record's words (a card listed in full that
+          // quotes words Forerunner did not write, such as a failed task's retry card while it
+          // blocks). A record never starts a spend by itself: a pass that would go ahead without
+          // the person's yes is refused; one that asks first asks, and only the yes spends. Before,
+          // every hand-over was refused here, so "why does X keep failing?" never offered the
+          // stronger model in a project whose X had failed (U-094).
+          if (turn.recordsRead && !asks) return refuse(NOT_NOW.records);
+          const level = capFor(f, asksFirst(f) ? f.atMostUsdMicro : amountUsdMicro);
           if (level) {
             capLevel = level;
             return refuse(NOT_NOW.room);
           }
           if (route.sameModel && route.effort === effort && effort !== "low")
             return refuse(NOT_NOW.rung);
-          if (asksFirst(f) || Math.min(amountUsdMicro, f.atMostUsdMicro) < f.floorUsdMicro) {
+          if (asks) {
             offer = offerOf(f, question);
             decided = ASK_RESULT;
             return { content: decided };
@@ -1811,7 +1821,8 @@ export class ConversationAgent {
       : quick
         ? { run: quick.run, result: quick.result, maxTurns: CHAT_MAX_MODEL_CALLS }
         : null;
-    const stopped = entry.stopped;
+    // Read again after the claim guard below: a Stop during its nudge counts too.
+    let stopped = entry.stopped;
     let result: RunResult | null = last?.result ?? null;
     // l3-chat-claims (live check 3, L3-run-1): a reply that says it changed something or asked
     // for the person's yes when no command of this turn did (`claimOf`, judged by `didNow`: what
@@ -1849,6 +1860,11 @@ export class ConversationAgent {
       const left = last.maxTurns - result.modelCalls;
       const nudged = left > 0 && !signal.aborted;
       let replaced = true;
+      // fixup-d1109-chat-depth (L3-left-9): the claim streamed is not true; the step's reset drops
+      // it from the live bubble while the guard checks (before, it stayed on screen for the whole
+      // nudge call). A spoken turn has said it already: the speaker cannot take it back.
+      streamed = "";
+      step(CHECKING_STEP, { reset: true });
       if (nudged) {
         const again = await this.deps.hooksDriver.run({
           ...last.run,
@@ -1873,6 +1889,8 @@ export class ConversationAgent {
         nudged,
         replaced,
       });
+      // A Stop pressed during the nudge: the reply is the true line, and it says it was stopped.
+      stopped = entry.stopped;
     }
     // What the whole turn cost and took: every pass, the nudge included.
     const passes: {
@@ -1910,10 +1928,11 @@ export class ConversationAgent {
     // line and its notice: a "Nothing changed" line is about the app, not an answer.
     const didAll = didNow();
     const guardNotice = !!claimGuard?.replaced && !didAll.changed && !didAll.asked;
-    let reply = stopped
-      ? completeSentencesOf(streamed)
-      : claimGuard?.replaced
-        ? this.trueLine(results, didAll)
+    // The claim guard's true line comes first: what was streamed before it is the false claim.
+    let reply = claimGuard?.replaced
+      ? this.trueLine(results, didAll)
+      : stopped
+        ? completeSentencesOf(streamed)
         : !result
           ? ""
           : truncated
@@ -1986,9 +2005,18 @@ export class ConversationAgent {
         offer = offerOf(await figuresOf(next), question);
     }
     // Think it through under a quick model answer of a typed turn (never under a command's
-    // sentence, a notice, a read-back, a voice turn or a longer answer).
+    // sentence, a notice, a read-back, a voice turn or a longer answer). fixup-d1109-chat-depth: a
+    // turn whose command tools ran (a change, a partial change, a refusal) is a command's sentence
+    // too; before, its press sent the change line to a longer pass that has the command tools.
     const closer =
-      !deep && !spoken && result && longerFigures && !pendingCard && !guardNotice && !stopped
+      !deep &&
+      !spoken &&
+      result &&
+      longerFigures &&
+      !pendingCard &&
+      !guardNotice &&
+      !stopped &&
+      results.length === 0
         ? {
             estimateUsdMicro: longerFigures.estimateUsdMicro,
             atMostUsdMicro: longerFigures.atMostUsdMicro,

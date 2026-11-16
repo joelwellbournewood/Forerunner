@@ -18977,4 +18977,85 @@ describe("d1109-chat-depth, run C", () => {
       await b.rt.close();
     }
   }, 60_000);
+
+  // fixup-d1109-chat-depth (review blocking 2, L3-left-9): the claim guard's nudge step sends a
+  // step with reset, so the live bubble drops the false claim streamed before it. Before, the
+  // nudge sent no step: "I've added the task …" stayed on screen for the whole nudge call.
+  it("POST /chat/stream: a reply that claims a change no command made is followed by the step 'Checking what changed…' with reset before the nudge, and nothing streams after it; the reply is the true line", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-d1109-chat-depth-claim-"));
+    const a = await open(home);
+    try {
+      const project = await a.client.createProject({ name: "Garden Notes", goal: "Notes" });
+      const order: string[] = [];
+      const steps: { text: string; reset: boolean }[] = [];
+      let live = "";
+      const reply = await streamChat(
+        a.client,
+        {
+          humanId: a.me.id,
+          agentId: a.agentId,
+          projectId: project.id,
+          projectTab: true,
+          text: 'say: I\'ve added the task "Write the FAQ" for you.',
+          source: "text",
+        },
+        {
+          onStep: (s) => {
+            order.push(s.reset ? "reset" : "step");
+            steps.push({ text: s.text, reset: s.reset });
+            if (s.reset) live = "";
+          },
+          onToken: (_t, soFar) => {
+            if (order.at(-1) !== "token") order.push("token");
+            live = soFar;
+          },
+        },
+      );
+      // The claim streamed first, then the guard's step with reset, and no token after it.
+      expect(order.indexOf("token")).toBeGreaterThanOrEqual(0);
+      expect(order.indexOf("reset")).toBeGreaterThan(order.indexOf("token"));
+      expect(order.at(-1)).toBe("reset");
+      expect(steps.find((s) => s.reset)?.text).toBe("Checking what changed…");
+      expect(live).toBe("");
+      expect(reply.reply).not.toContain("I've added");
+      expect(reply.reply).toBe(
+        "Nothing changed, and nothing waits for your yes. Say it again to try once more.",
+      );
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+
+  // fixup-d1109-chat-depth (review blocking 4): Think it through never sits under a command's
+  // sentence. Before, "Added "Write the FAQ page" to Garden Notes. Undo" offered it.
+  it("GET /projects/:id/conversation: a model turn whose command made a change offers no Think it through; the quick answer after it does", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-d1109-chat-depth-think-"));
+    const a = await open(home);
+    try {
+      const project = await a.client.createProject({ name: "Garden Notes", goal: "Notes" });
+      const body = {
+        humanId: a.me.id,
+        agentId: a.agentId,
+        projectId: project.id,
+        projectTab: true,
+        source: "text" as const,
+      };
+      const changed = await streamChat(a.client, {
+        ...body,
+        text: 'tool: task_create {"title": "Write the FAQ page", "outcome": "An FAQ page."}',
+      });
+      expect(changed.actions.map((x) => x.kind)).toContain("task.create");
+      let view = await a.client.conversation(project.id);
+      const turn = view.turns.find((t) => t.id === changed.transcriptId);
+      expect(turn?.reply?.actions.some((x) => x.canUndo)).toBe(true);
+      expect(turn?.reply?.offer).toBeNull();
+      const quick = await streamChat(a.client, { ...body, text: "what is left?" });
+      view = await a.client.conversation(project.id);
+      const after = view.turns.find((t) => t.id === quick.transcriptId);
+      expect(after?.reply?.offer?.action).toBe("think");
+      expect(after?.reply?.offer?.explain).toMatch(/^Thinks longer on this model: about /);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });
