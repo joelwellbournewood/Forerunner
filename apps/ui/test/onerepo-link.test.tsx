@@ -6,7 +6,8 @@ import {
   TAKE_OVER_UNDO_OPEN,
   TAKE_OVER_UNDO_UNREADABLE,
 } from "../../../packages/runtime/src/sources/repository-words.ts";
-import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
+import { createClient } from "../src/api/client.ts";
+import { createHarness, fetchFromApp, postedCalls, renderApp, testConfig } from "./helpers.tsx";
 
 /**
  * D1 (the owner's words of 2026-11-09: "There should not be 2 projects in one repo. ... Make it
@@ -260,6 +261,27 @@ describe("d1109-onerepo-link, run C: the Overview's line about the repository (O
     // Undo from Changes puts the line back.
     await harness.client.undoChange(String(row?.id));
     expect(harness.daemon.state.repositoryOverview.proj_atlas).toEqual(ELSEWHERE);
+  });
+
+  it("Take it over while the background service does not answer says so in its words, never the raw error (C2-left-13)", async () => {
+    // Design §5 rule 8: the error path showed e.message ("daemon unreachable at http://…:
+    // Failed to fetch").
+    const user = userEvent.setup();
+    const base = createHarness();
+    base.daemon.state.repositoryOverview.proj_atlas = ELSEWHERE;
+    const inner = fetchFromApp(base.daemon.app);
+    const client = createClient(testConfig("test-token"), (input, init) =>
+      String(input).includes("/commands/execute")
+        ? Promise.reject(new TypeError("Failed to fetch"))
+        : inner(input, init),
+    );
+    renderApp("/projects/proj_atlas/summary", { ...base, client });
+    const section = await screen.findByTestId("repository-elsewhere");
+    await user.click(within(section).getByTestId("repository-take-over"));
+    expect(await within(section).findByRole("alert")).toHaveTextContent(
+      /^Forerunner's background service does not answer\.$/,
+    );
+    expect(section).not.toHaveTextContent(/unreachable|Failed to fetch|http/);
   });
 
   it("another GitHub account worked on it within 14 days: the line says when, with no Take it over", async () => {

@@ -85,7 +85,10 @@ export function DocsTab({ projectId }: { projectId: string }) {
                 <td className="py-1 pr-2 font-mono text-xs">{d.path}</td>
                 <td className="py-1 pr-2">
                   {!d.exists && d.pullRequest ? <Badge tone="warn">in a pull request</Badge> : null}
-                  {!d.exists && !d.pullRequest ? <Badge tone="bad">missing</Badge> : null}
+                  {/* C2-left-13: a together project's doc is the other's, never "missing" here. */}
+                  {!d.exists && !d.pullRequest && !d.notWrittenHere ? (
+                    <Badge tone="bad">missing</Badge>
+                  ) : null}
                   {d.exists && d.drift ? (
                     <Badge tone="warn" title={d.note}>
                       drift

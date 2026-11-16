@@ -227,6 +227,16 @@ export function togetherStatusNote(name: string): string {
   return `Kept in the app: you work on "${name}" together, so GitHub's copy is left as it is.`;
 }
 
+/**
+ * The Docs row of a doc a together project does not have (D9, C2-left-13): a together project
+ * never writes docs, so the row says who does, not "not written yet".
+ */
+export function togetherDocNote(name: string): string {
+  return name
+    ? `The other Forerunner of "${name}" writes this doc on GitHub; this project does not write docs.`
+    : "Another Forerunner writes this doc on GitHub; this project does not write docs.";
+}
+
 /** Why a link was refused (`details.cause` of the 409): the UI's offer reads it. */
 export type LinkRefusalCause =
   | "repository_in_use"

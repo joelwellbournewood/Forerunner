@@ -1356,6 +1356,11 @@ export const DocView = z.object({
    * note then says "waiting in pull request #1" (ADR 0106).
    */
   pullRequest: z.object({ number: z.number().int(), url: z.string() }).nullable().optional(),
+  /**
+   * A doc a together project does not have (D9, C2-left-13): it never writes docs, so the note
+   * says who does and the row has no missing mark.
+   */
+  notWrittenHere: z.boolean().optional(),
 });
 export type DocView = z.infer<typeof DocView>;
 

@@ -9,6 +9,7 @@ import type {
   ProjectPullRequestView,
   SettingView,
 } from "../../api/client.ts";
+import { describeError } from "../../api/client.ts";
 import { ExternalLink } from "../../components/ExternalLink.tsx";
 import { FolderPath } from "../../components/FolderPath.tsx";
 import { ReadAloud } from "../../components/ReadAloud.tsx";
@@ -300,7 +301,7 @@ function RepositoryElsewhere({ projectId, project }: { projectId: string; projec
         await refreshProjects(client, store).catch(() => undefined);
       } else setError(r.reason ?? "The repository was not taken over.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(describeError(e));
     } finally {
       setBusy(false);
     }
@@ -457,7 +458,7 @@ function ResearchReads({ projectId, project }: { projectId: string; project?: Pr
           setError(null);
           void rowOf()
             .then((r) => (r ? setRow(r) : setError("This project's setting was not found.")))
-            .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+            .catch((e: unknown) => setError(describeError(e)));
         }}
         data-testid="research-reads-change"
       >
@@ -603,7 +604,7 @@ function RepositoryFiles({
       } else setPressed({ order: answer.order, sentence: answer.sentence, before: prs.data });
       reload();
     } catch (e) {
-      setMergeError(e instanceof Error ? e.message : String(e));
+      setMergeError(describeError(e));
     } finally {
       setBusy(false);
     }
@@ -630,7 +631,7 @@ function RepositoryFiles({
         reload();
       } else setPreviewError({ number: pr.number, sentence: answer.sentence });
     } catch (e) {
-      setPreviewError({ number: pr.number, sentence: e instanceof Error ? e.message : String(e) });
+      setPreviewError({ number: pr.number, sentence: describeError(e) });
     } finally {
       setPreviewing(null);
     }
