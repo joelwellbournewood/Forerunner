@@ -480,17 +480,24 @@ export const TaskView = z.object({
   dependsOn: z.array(z.string()),
   budget: Money,
   estimate: Money,
-  /** What the task's work runs spent: the figure its budget counts (ADR 0112 point 4). */
+  /**
+   * What the task cost: its work runs, the critic's reviews and any fixes, the one figure its
+   * budget counts (d1116-budget-all, the owner's answer of 2026-11-16; ADR 0112's amendment of
+   * that date). Before it, the work runs only.
+   */
   actual: Money,
   /**
-   * What the task cost, its reviews included, from the cost ledger as Costs > By task reads it
-   * (W15-20): the figure the Tasks row and the drawer show, so the three agree. It follows each
-   * model call while the task runs (W15-21). Optional for an older daemon: then `actual`.
+   * The same figure as the cost ledger books it, every row of the task whatever project the row
+   * names (d1116-budget-all, BA-9: a task Make one project moved keeps its earlier rows on the
+   * closed project), as Costs > By task reads it: the figure the Tasks row and the drawer show,
+   * equal to `actual`. It follows each model call while the task runs (W15-21). Optional for an
+   * older daemon: then `actual`.
    */
   spent: Money.optional(),
   /**
-   * What a run of the task stops at (U-042): what is left of `budget` when the task has one,
-   * else its specialist's per-run limit. The estimate never caps a run.
+   * What a run of the task stops at (U-042): what is left of `budget` (the budget less `actual`)
+   * when the task has one, else its specialist's per-run limit. A work run may spend less, the
+   * room its review needs being kept (BA-4). The estimate never caps a run.
    */
   cap: Money,
   capSource: z.enum(["task_budget", "specialist_limit", "unknown"]),

@@ -30,6 +30,7 @@ import {
   chfMicroToUsdMicro,
   chfToMicro,
   formatAmount,
+  formatMoney,
   type MoneyLike,
   usdMicroToChfMicro,
 } from "../../lib/money.ts";
@@ -51,7 +52,7 @@ import {
 import { formatDateTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient, useStreamOptions, useUiState } from "../../store/context.tsx";
-import { useDockerReady, useWhoChoices } from "./NewTaskDialog.tsx";
+import { TASK_BUDGET_HINT, useDockerReady, useWhoChoices } from "./NewTaskDialog.tsx";
 
 /**
  * The task drawer (design §3.5): what the task asks for (outcome, criteria), what it waits for
@@ -155,6 +156,8 @@ function DrawerBody({
           {reviewLevelName(reviewLevelValue(task.riskTier, task.specialist))} ·{" "}
           {PRIORITY_LABELS[task.priority]} priority · {whoName(task.specialist)} · spent{" "}
           <Money value={task.spent ?? task.actual} />
+          {/* d1116-budget-all (BA-9): the budget its one figure counts against, as the row says. */}
+          {task.capSource === "task_budget" ? ` of ${formatMoney(task.budget)} budget` : null}
         </span>
       </div>
       {d.detail ? <p className="text-neutral-700 dark:text-neutral-300">{d.detail}</p> : null}
@@ -722,10 +725,7 @@ function EditTaskForm({
             ))}
           </select>
         </Field>
-        <Field
-          label="Budget (CHF, optional)"
-          hint="Empty: each run stops at its specialist's limit."
-        >
+        <Field label="Budget (CHF, optional)" hint={TASK_BUDGET_HINT}>
           <input
             className={INPUT_CLASS}
             value={budget}

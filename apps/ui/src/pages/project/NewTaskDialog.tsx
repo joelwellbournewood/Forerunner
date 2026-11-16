@@ -48,6 +48,13 @@ export function seedFromMessage(text: string): TaskSeed {
 export const PROJECT_DEFAULT_TIER = "";
 
 /**
+ * d1116-budget-all (BA-9): the hint under Budget in New task and Edit, what the budget counts
+ * (the owner's answer of 2026-11-16) and what empty means.
+ */
+export const TASK_BUDGET_HINT =
+  "Its work, the critic's reviews and any fixes count. Empty: each run stops at its specialist's limit.";
+
+/**
  * Whether the Docker sandbox is ready (`GET /sandbox`), for the review level's words: a full
  * review needs it (ADR 0101). Null while not known (or the daemon has no such route).
  */
@@ -337,10 +344,7 @@ export function NewTaskDialog({
               ))}
             </select>
           </Field>
-          <Field
-            label="Budget (CHF, optional)"
-            hint="Empty: each run stops at its specialist's limit."
-          >
+          <Field label="Budget (CHF, optional)" hint={TASK_BUDGET_HINT}>
             <input
               className={INPUT_CLASS}
               value={budget}

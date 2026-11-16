@@ -154,6 +154,34 @@ export class CostLedgerRepo extends Repository<CostLedgerRow> {
   }
 
   /**
+   * d1116-budget-all (BA-9): what each task now in this project cost, every ledger row booked to
+   * it whatever project the row names, largest first. A task Make one project moved keeps the
+   * rows of its earlier runs on the project it came from (the ledger is never rewritten), so a
+   * project filter would read less than the task's figure; this reads all of it. Bounded on
+   * `occurred_at` as `CostFilter` is (from inclusive, to exclusive).
+   */
+  async byTaskOf(
+    projectId: string,
+    range: Pick<CostFilter, "from" | "to"> = {},
+  ): Promise<CostBucket[]> {
+    const parts = [`"task_id" IN (SELECT "id" FROM "task" WHERE "project_id" = ?)`];
+    const params: unknown[] = [projectId];
+    if (range.from) {
+      parts.push('"occurred_at" >= ?');
+      params.push(range.from);
+    }
+    if (range.to) {
+      parts.push('"occurred_at" < ?');
+      params.push(range.to);
+    }
+    const rows = await this.db.query<RawSum & { key: string | null }>(
+      `SELECT "task_id" AS key, ${SUM_COLUMNS} FROM "cost_ledger" WHERE ${parts.join(" AND ")} GROUP BY "task_id" ORDER BY usd_micro DESC, key`,
+      params,
+    );
+    return rows.map((r) => ({ key: r.key ?? null, ...toSum(r) }));
+  }
+
+  /**
    * What each of these sessions spent, split by the kind of the billing source that paid
    * (`api_key`, `subscription`, `plan_credits`, `fake`; null for a row without a source), in one
    * query per 500 ids (d1109-sessions, ADR 0116): the Sessions list's one figure per row and

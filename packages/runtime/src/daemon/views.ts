@@ -1082,12 +1082,37 @@ export async function costView(
       }),
     );
   };
-  const [byModel, ledgerBySpecialist, byTask, byProject] = await Promise.all([
+  const [byModel, ledgerBySpecialist, ledgerByTask, byProject] = await Promise.all([
     bucket("model"),
     bucket("specialist"),
     bucket("task_id"),
     bucket("project_id"),
   ]);
+  // d1116-budget-all (BA-9): a project's By task gives each task now in it its whole figure,
+  // every ledger row booked to it whatever project the row names (a task Make one project moved
+  // keeps its earlier rows on the closed project; the Tasks row reads the same). The project's
+  // other rows (no task, or a task now elsewhere) stay as booked here. The totals and the other
+  // buckets stay the project's own.
+  const byTask = filter.projectId
+    ? await (async () => {
+        const whole = (
+          await store.costLedger.byTaskOf(filter.projectId as string, {
+            ...(f.from ? { from: f.from } : {}),
+            ...(f.to ? { to: f.to } : {}),
+          })
+        ).map((b) => ({
+          key: b.key ?? "(none)",
+          label: b.key ?? "(none)",
+          cost: money(b.usd_micro, chfPerUsd),
+          runs: b.entries,
+          accepted: null as number | null,
+        }));
+        const here = new Set(whole.map((b) => b.key));
+        return [...whole, ...ledgerByTask.filter((b) => !here.has(b.key))].sort(
+          (a, b) => b.cost.usdMicro - a.cost.usdMicro || a.key.localeCompare(b.key),
+        );
+      })()
+    : ledgerByTask;
   // Design §5 rule 3 (names, not ids): the tasks by their titles and the work by the
   // specialist that ran it, with the runs the critic accepted. The ledger's entries name a run;
   // the run names its specialist (the ledger's own column is not filled), and a task's accepted
@@ -1105,7 +1130,13 @@ export async function costView(
   // "Runs" counts runs, not ledger entries (one per model call): "1 / 3 accepted" compares
   // like with like.
   for (const b of byTask) {
-    const t = facts.tasks.get(b.key);
+    // BA-9: a task now here whose rows are all on the project it came from has no row in this
+    // project's facts: its title is read from it.
+    const t =
+      facts.tasks.get(b.key) ??
+      (filter.projectId && b.key !== "(none)"
+        ? ((await store.task.get(b.key)) ?? undefined)
+        : undefined);
     if (t) {
       b.label = t.title;
       b.runs = facts.runsByTask.get(b.key) ?? b.runs;

@@ -71,19 +71,19 @@ export interface TaskCapWords {
   title: string;
 }
 
-const TASK_BUDGET_TITLE =
-  "Runs of this task stop when the work's spend reaches this budget. The critic's reviews are not counted in it.";
+/** d1116-budget-all (BA-9): what a task's budget counts, the owner's answer of 2026-11-16. */
+export const TASK_BUDGET_TITLE =
+  "Its work, the critic's reviews and any fixes all count. The task pauses at this budget and keeps its work.";
 
 /**
  * What a run of the task stops at (U-042), under its cost, for a task not done or cancelled.
- * With a budget of its own, the budget counts the work's spend only (`actual`, ADR 0112 point 4),
- * while the cost above it is what the task cost with its reviews (`spent`, W15-20). While the two
- * read the same, "of CHF 0.20 budget" goes with the cost above it. Once a review was paid they
- * part, and the line names what is left of the budget for the work (`cap`: the budget less the
- * work, the figure of the run's "This run may spend CHF X" line) and that reviews are not counted
- * (L3-run-3: live check 3's row read "CHF 0.13 of CHF 0.20 budget" while the run could spend CHF
- * 0.11). Without a budget, the specialist's limit per run. The estimate is the plan's forecast
- * and never stops a run.
+ * d1116-budget-all (BA-9): with a budget of its own, the budget counts the one figure above it,
+ * the task's work, the critic's reviews and any fixes (`spent`, the ledger's figure, which is
+ * `actual`), so the line goes with it: "of CHF 0.20 budget" while it is below the budget, and
+ * "CHF 0.20 budget used up" once nothing is left to start a run (`cap` 0) or the figure reached
+ * the budget. Never "CHF 0.00", never that reviews are not counted (before: 'CHF 0.11 of CHF 0.20
+ * budget left; reviews are not counted'). Without a budget, the specialist's limit per run. The
+ * estimate is the plan's forecast and never stops a run.
  */
 export function taskCapWords(
   task: Pick<TaskView, "capSource" | "budget" | "cap" | "actual" | "spent">,
@@ -91,13 +91,10 @@ export function taskCapWords(
 ): TaskCapWords | null {
   if (task.capSource === "task_budget") {
     const budget = formatMoney(task.budget);
-    if (formatMoney(task.spent ?? task.actual) === formatMoney(task.actual))
-      return { text: `of ${budget} budget`, title: TASK_BUDGET_TITLE };
+    const cost = task.spent ?? task.actual;
+    const usedUp = task.cap.usdMicro <= 0 || cost.usdMicro >= task.budget.usdMicro;
     return {
-      text:
-        task.cap.chfMicro > 0
-          ? `${formatMoney(task.cap)} of ${budget} budget left; reviews are not counted`
-          : `${budget} budget used up; reviews are not counted`,
+      text: usedUp ? `${budget} budget used up` : `of ${budget} budget`,
       title: TASK_BUDGET_TITLE,
     };
   }

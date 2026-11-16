@@ -1130,8 +1130,10 @@ export function createDaemonApp(
       live: (taskId: string) => rt.kill.hasTask(taskId),
     };
     // W15-20: what each task cost, its reviews included, as Costs > By task reads the ledger.
+    // d1116-budget-all (BA-9): every row of each task now in the project, whatever project the
+    // row names (a task Make one project moved keeps its earlier rows on the closed project).
     const booked = new Map(
-      (await rt.store.costLedger.breakdown("task_id", { projectId }).catch(() => []))
+      (await rt.store.costLedger.byTaskOf(projectId).catch(() => []))
         .filter((b) => b.key !== null && b.entries > 0)
         .map((b) => [b.key as string, b.usd_micro]),
     );

@@ -1021,6 +1021,54 @@ export function defineStateSuite(target: SuiteTarget): void {
           (await store.costLedger.bySpecialist({ humanId: s.human2.id })).map((b) => b.key),
         ).toEqual([null]);
       });
+
+      it("byTaskOf: each task now in the project with every row booked to it, whatever project the row names (d1116-budget-all, BA-9)", async () => {
+        const { p2, task } = await ledger();
+        // The task's earlier rows stayed on the project it came from (Make one project moves
+        // the task row, never the ledger's).
+        await store.costLedger.record({
+          human_id: s.human.id,
+          kind: "api",
+          project_id: p2.id,
+          task_id: task.id,
+          usd_micro: 500,
+          chf_micro: 450,
+          model: "m-big",
+          occurred_at: "2026-02-20T09:00:00.000Z",
+        });
+        const other = await store.task.insert({ project_id: p2.id, title: "elsewhere" });
+        await store.costLedger.record({
+          human_id: s.human.id,
+          kind: "api",
+          project_id: s.project.id,
+          task_id: other.id,
+          usd_micro: 700,
+          chf_micro: 630,
+          model: "m-big",
+          occurred_at: "2026-03-01T11:00:00.000Z",
+        });
+        expect(
+          (await store.costLedger.byTaskOf(s.project.id)).map((b) => [
+            b.key,
+            b.usd_micro,
+            b.entries,
+          ]),
+        ).toEqual([[task.id, 1_500, 2]]);
+        // The rows of a task now in another project count there, never here.
+        expect((await store.costLedger.byTaskOf(p2.id)).map((b) => [b.key, b.usd_micro])).toEqual([
+          [other.id, 700],
+        ]);
+        // Bounded like the other sums: from inclusive, to exclusive.
+        expect(
+          (
+            await store.costLedger.byTaskOf(s.project.id, {
+              from: "2026-03-01T00:00:00.000Z",
+              to: "2026-03-02T00:00:00.000Z",
+            })
+          ).map((b) => [b.key, b.usd_micro]),
+        ).toEqual([[task.id, 1_000]]);
+        expect(await store.costLedger.byTaskOf("none")).toEqual([]);
+      });
     });
 
     describe("decisions", () => {
