@@ -1195,8 +1195,14 @@ export async function applyTaskChanges(
     }));
     applied.push({ fenced, changeLogId: r.changeLogId, sentence: r.sentence, made });
     // ADR 0119 point 12(e): a task written or rewritten from a report says so in its brief.
+    // C4-left-1: an added step's own task only; the tasks it comes before are only made to wait
+    // for it (their brief would have said the agent wrote them).
     if (input.fromReport && c.kind !== "order" && c.kind !== "drop")
-      await markAgentWritten(store, project.id, [...fenced.taskIds, ...madeIds]);
+      await markAgentWritten(
+        store,
+        project.id,
+        c.kind === "add" ? madeIds : [...fenced.taskIds, ...madeIds],
+      );
   }
   return { applied, refused, proposed: false };
 }

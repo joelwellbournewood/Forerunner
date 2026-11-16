@@ -955,7 +955,8 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       reason:
         ctx.actor.kind === "human"
           ? "Added by you"
-          : `created by ${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`,
+          : // d1109-selftasks-chat (SC-12): who made it, in words; never an id or the channel.
+            agentReason("Added", params.why),
       ...authorOf(ctx),
     });
     // Each task it comes before waits for it too (what it waited for before is kept for Undo).
@@ -1185,6 +1186,31 @@ export function droppedSentence(title: string, same: string): string {
 }
 
 /** The reason a person's move leaves on the row when none was given. */
+/**
+ * d1109-selftasks-chat (SC-12, ADR 0119): a change the project's agent made says so where it is
+ * stored ("Added by the agent: nothing checks the links"); before, "created by agent <id> via
+ * session" put an id and a channel in the row's reason.
+ */
+function agentReason(verb: string, why: string | undefined): string {
+  const said = why
+    ?.trim()
+    .replace(/\s+/g, " ")
+    .replace(/[.\s]+$/, "");
+  return said
+    ? `${verb} by the agent: ${said.charAt(0).toLowerCase()}${said.slice(1)}`
+    : `${verb} by the agent`;
+}
+
+/** A move the agent made, in words (never an id or the channel). */
+function movedByAgent(from: TaskStatus, to: TaskStatus): string {
+  if (to === "needs_human")
+    return RUNNING.includes(from) ? "Stopped by the agent" : "Paused by the agent";
+  if (to === "cancelled") return "Cancelled by the agent";
+  if (to === "ready" && from === "draft") return "Made ready by the agent";
+  if (to === "ready") return "Made ready again by the agent";
+  return `Marked ${statusWords(to)} by the agent`;
+}
+
 function movedByYou(from: TaskStatus, to: TaskStatus): string {
   if (to === "needs_human") return RUNNING.includes(from) ? "Stopped by you" : "Paused by you";
   if (to === "cancelled") return "Cancelled by you";
@@ -1284,7 +1310,7 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
         params.note?.trim() ||
         (ctx.actor.kind === "human"
           ? movedByYou(task.status, params.to)
-          : `${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`),
+          : movedByAgent(task.status, params.to)),
       note: params.note,
     });
     return params.to === "ready" ? withNextLine(ctx, moved, task) : moved;
@@ -1809,7 +1835,10 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
           task.id,
           task.version,
           patch,
-          params.note?.trim() || `Changed by you: ${words}`,
+          params.note?.trim() ||
+            (ctx.actor.kind === "agent"
+              ? `Changed by the agent: ${words}`
+              : `Changed by you: ${words}`),
           actorOf(ctx),
         )
       : task;
@@ -1960,7 +1989,11 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
       task.id,
       task.version,
       ids,
-      params.reason || params.note?.trim() || "What it waits for changed by you",
+      params.reason ||
+        params.note?.trim() ||
+        (ctx.actor.kind === "agent"
+          ? "What it waits for changed by the agent"
+          : "What it waits for changed by you"),
       actorOf(ctx),
     );
     const noteId = await queueNote(ctx, task, params.note);
