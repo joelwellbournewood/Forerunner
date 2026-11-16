@@ -8,6 +8,7 @@ import { LoopAgentDriver } from "../src/agent/loop.ts";
 import {
   CARD_EXPIRED_REPLY,
   CHAT_OPEN_REQUEST_RULES,
+  CHAT_TURN_BUDGET_CEILING_USD_MICRO,
   ConversationAgent,
   cardAnsweredReply,
   YES_TO_WHAT_REPLY,
@@ -54,7 +55,15 @@ const text = (c: unknown): string =>
       ? c.map((b) => (b && typeof b === "object" && "text" in b ? String(b.text) : "")).join("")
       : "";
 
-async function setup(replies: ScriptedReply[] = []): Promise<World> {
+/**
+ * `turnBudgetUsdMicro` sets the turn's budget; unset, the agent's default (ADR 0091). merge-w19:
+ * flatPricing (USD 1 per million tokens) is dearer than any chat model, and with both C3 areas'
+ * tool text the default USD 0.05 holds only five calls of this world's request.
+ */
+async function setup(
+  replies: ScriptedReply[] = [],
+  opts: { turnBudgetUsdMicro?: number } = {},
+): Promise<World> {
   const h = harness();
   const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
   const human = (
@@ -120,6 +129,9 @@ async function setup(replies: ScriptedReply[] = []): Promise<World> {
       hooksDriver: new LoopAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock }),
       modelId: "fake-haiku",
       commands,
+      ...(opts.turnBudgetUsdMicro !== undefined
+        ? { turnBudgetUsdMicro: opts.turnBudgetUsdMicro }
+        : {}),
     });
   const w: World = {
     store,
@@ -1145,15 +1157,23 @@ describe("l3-chat-claims, run L3", () => {
   // d1109-chat-recall: a turn may make six model calls (a search, an open, the answer, a
   // command and the nudge); four before.
   it("the nudge stays inside the turn's six model calls: a claim on the sixth is replaced at once (L3-run-1)", async () => {
-    const w = await setup([
-      toolReply("tasks_list", {}),
-      toolReply("tasks_list", {}),
-      toolReply("tasks_list", {}),
-      toolReply("tasks_list", {}),
-      toolReply("tasks_list", {}),
-      textReply(CLAIM, { ttftMs: 0 }),
-      textReply("never sent", { ttftMs: 0 }),
-    ]);
+    // merge-w19 (d1109-starts-engine, d1109-chat-depth): this case is about the six-call cap, not
+    // the budget. Both C3 areas grew every request's tools (session_start's and the task moves'
+    // words, answer_thoroughly, the thinking_longer line, the prompt's "Thinking longer" and two
+    // settings_set key lines), so on flatPricing the default USD 0.05 refused the sixth call
+    // ("run budget would be exceeded"). The turn gets ADR 0091's ceiling, so the call cap decides.
+    const w = await setup(
+      [
+        toolReply("tasks_list", {}),
+        toolReply("tasks_list", {}),
+        toolReply("tasks_list", {}),
+        toolReply("tasks_list", {}),
+        toolReply("tasks_list", {}),
+        textReply(CLAIM, { ttftMs: 0 }),
+        textReply("never sent", { ttftMs: 0 }),
+      ],
+      { turnBudgetUsdMicro: CHAT_TURN_BUDGET_CEILING_USD_MICRO },
+    );
     const res = await w.chat("research may read any public website again");
     expect(w.provider.calls).toHaveLength(6);
     expect(res.reply).toBe(TRUE_LINE);
