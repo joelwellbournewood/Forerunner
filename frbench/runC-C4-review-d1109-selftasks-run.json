@@ -1,0 +1,95 @@
+{
+  "verdict": "pass",
+  "acceptance_walk": "Bench \"review-d1109-selftasks-run\" (--provider bench, daemon 48711, UI 2311, started from the worktree at cd92a03). Env: FORERUNNER_BENCH_TASK_LIST=\"Create the page skeleton\", FORERUNNER_BENCH_TASK_LIST_SAYS='\"Style the page in styles.css\" is two jobs, the layout and the colours|nothing checks that the links work', FORERUNNER_BENCH_DELAY_MS=600. Screenshots and texts are in /tmp/frbench/review-d1109-selftasks-run/steps/. The bench is stopped and its home and browser profile are deleted.\n\n(1) Standard, from the intake's plan (\"Bakery menu\"): opened the plan card in the Inbox and pressed Approve and start (02-standard-plan-card). One task-check call followed \"Create the page skeleton\". The model-call log shows fake-sonnet, effort medium, max_tokens 4096 and no tools. At person level the session page shows the split line and 'Added \"Check that the links work\" before ...' (09-std-session-9467). Details adds 'Checked the task list after \"Create the page skeleton in index.html\": changed 2 tasks (less than CHF 0.01).' (10-...-details). The result line reads 'Changed 2 tasks: split ...; added ...'. The Tasks tab lists the two parts and the step (11-std-tasks). Changes has one row per change; its Undo is refused in words once a part has run (12-std-changes). The Inbox has exactly one Update, 'Bakery menu: did 7 tasks; changed 2 tasks.', and no line per change (13-std-inbox). All 98 specialist briefs carry the task-list line exactly once.\n\n(2) Assisted, after a restart (\"Tea house\"): approved the Assisted-mode card. The session filed ONE card, 'Tea house: the agent suggests 2 changes to the tasks', which quotes the coder's line and has Make these changes / Keep the tasks, each with its consequence line (15-, 16-restart-tea-house-card*). I restarted the daemon with restart-daemon.mjs and pressed Make these changes in the UI. The Done line read 'Done: Changed 2 tasks; your next Start runs them.' (17-). The tasks were split and the step added. Within 15 s no session started. Changes showed one composed row with Undo. Pressing Undo restored \"Style the page in styles.css\" and cancelled the new part and the step (18-, 19-).\n\n(3) Standard with the person's own tasks (\"Corner shop\", tasks made through POST /projects/:id/tasks): the fence asked first ('Asks you first: ... a task you added or changed yourself'). I answered Make these changes while the session ran. The Done line read 'Changed 2 tasks; the session takes them if they fit.'. The approved tasks joined that same session ('Took \"Style the page in styles.css: colours\", made ready while it ran'; 21- to 24-corner-*). No extra session started.\n\n(4) Injection (\"Flower stall\", daemon restarted with an instruction line added to SAYS): the task check's message held 'One line of this report was left out: it reads like an instruction.' and no 'Ignore the plan' or 'CHF 500'. At Standard the set became one card quoting the line, and nothing changed. Keep the tasks gave 'Done: Kept the tasks as they are; nothing changed.' Tasks were unchanged and no session started.\n\nThe walk matches design §3.8 and §5 for this area's screens. The gaps I saw (no Undo on the session page's change lines, Changes showing 'In the app' and 'me' for the session's own rows, the card's list collapsed under Details) are explicitly owned by d1109-selftasks-chat (C6). Work continued by itself as the design says: after a change the session re-planned and ran the parts and the step within the same Start.\n\nTests: pnpm check passes (5607 passed, 7 skipped; docs-check ok with --base). UI vitest 1218/1218. Playwright 36/36 with the local config. test:injection passes, including report-001..006 and 101/102. test:integration 30 passed; the Postgres migration case passes on a private Postgres (FORERUNNER_TEST_PG). test:e2e 25 passed.\n\nFail-before checks:\n- With runner.ts reverted to the base: all 8 cases of session-task-list.test.ts fail ('expected +0 to be 1' check calls).\n- With findings.ts reverted to the base: signoff-answer.test.ts \"Try again on the retry card\" fails (the taskIds assertion).\n- With compose.ts reverted to the base: real-daemon \"d1109-selftasks-run, run C\" fails 2 of 3 (card undefined). The third case, the /commands/execute guard, passes on the base by design.\n- The worktree was restored to cd92a03; it is clean.",
+  "blocking": [],
+  "claims_checked": [
+    {
+      "claim": "ST-1: plan_fix is free from Standard up and asks first at Advisor/Assisted; no extension can declare it",
+      "holds": true,
+      "note": "autonomy.test.ts passes. mcp.ts excludes plan_fix at type level and inference never yields it. On the bench Standard acted at once and Assisted filed a card."
+    },
+    {
+      "claim": "ST-5: 'session' source with migration 0009; a session's change posts no Inbox line and no shared-with message",
+      "holds": true,
+      "note": "schema.test passes. The Postgres migration case passes on my private PG. The bench Inbox holds only the one Update. /commands/execute refuses source 'session' because CommandSourceBody has no 'session'."
+    },
+    {
+      "claim": "ST-2/ST-3: task.split, task.create before, task.transition duplicate_of, each with an Undo that survives a restart",
+      "holds": true,
+      "note": "selftasks-run.test.ts passes. On the bench the composed row's Undo after a daemon restart restored the task and cancelled the part and the step."
+    },
+    {
+      "claim": "ST-6: TASK_LIST_BRIEF_LINE once per brief, rung 2 points to it, report lines come back as data",
+      "holds": true,
+      "note": "98/98 specialist calls in the bench log carry the line exactly once. AGENT_WROTE_TASK_LINE also lands on tasks that were only made to wait for an added step (see non_blocking 1)."
+    },
+    {
+      "claim": "ST-7/ST-8: one planning call (medium, 4096, no tools), a Run row 'task-check' booked in the session, the fence with every rule",
+      "holds": true,
+      "note": "task-check.test passes. The bench call log shows fake-sonnet, medium, 4096 and 0 tools. The ledger total equals the session's spend in the test."
+    },
+    {
+      "claim": "ST-9/ST-10/ST-12: check at a boundary, admit rule, notes kept across a restart, result and Update lines",
+      "holds": true,
+      "note": "Composed tests pass and fail with the base runner.ts. Bench Update: 'Bakery menu: did 7 tasks; changed 2 tasks.'"
+    },
+    {
+      "claim": "ST-11: one card, both options, after a restart; Done lines; no session starts; the fake daemon changed in the same commit",
+      "holds": true,
+      "note": "The real-daemon describe fails with the base compose.ts. fake-daemon.ts and real-daemon.test.ts are both in 96fda7f. The bench confirmed both Done lines and that no session started. 'Same suggestion not filed again that session' has no test."
+    },
+    {
+      "claim": "ST-13: report channel with 8 cases including critic's notes and kept notes after a restart",
+      "holds": true,
+      "note": "pnpm test:injection passes. The spec's report-006 (researcher reach rule, 'read the supplier's web pages') was replaced by an ops-deploy case. The reach rule is covered only by a task-check.test.ts unit test."
+    },
+    {
+      "claim": "ST-14: the bench stand-in plays task_check, with FORERUNNER_BENCH_TASK_LIST knobs",
+      "holds": true,
+      "note": "Walked on my bench. scripts/bench/README.md does not list the knobs (testing.md does)."
+    },
+    {
+      "claim": "A split and a step before the task it splits are both made in one check",
+      "holds": true,
+      "note": "Bench session log shows both lines; the composed test passes."
+    },
+    {
+      "claim": "C3-left-3: answeredTaskIds passed on all 7 answer paths; 'joined' only when every task joined",
+      "holds": true,
+      "note": "7 call sites changed. signoff-answer.test fails with the base findings.ts."
+    },
+    {
+      "claim": "Validation: lint has 42 existing warnings, none from this area",
+      "holds": false,
+      "note": "packages/commands/src/commands/task.ts:1022 useOptionalChain is in this area's new taskCreate undo code. It is a warning only."
+    },
+    {
+      "claim": "Bench walk: Assisted card, Done line, tasks, Changes and Undo checks pass",
+      "holds": true,
+      "note": "The fixer's own walk-result.json has false checks it did not mention (e.g. 'no session started by the answer' 0→2, probably counting the planning session). My walk shows the behaviour is right."
+    },
+    {
+      "claim": "not_done: L3-left-13 and C2-left-14 each with a reason",
+      "holds": true,
+      "note": "Both are recorded with reasons and named in ADR 0119 as known gaps."
+    }
+  ],
+  "non_blocking": [
+    "1. Model-facing line on tasks the agent did not write. In packages/runtime/src/session/task-check.ts, applyTaskChanges marks [...fenced.taskIds, ...madeIds] as agent-written for kind 'add'. For an add, fenced.taskIds are the `before` tasks, so a plan task that was only made to wait for the new step gets AGENT_WROTE_TASK_LINE in its brief ('The project's agent wrote this task from an earlier run's report, not the person'). Bench evidence: the call labelled 'coder on Add the page behaviour in script.js' carries the line. This contradicts design point 12(e) and the code's own exclusion of 'order'. Fix: mark only madeIds for 'add', and add a brief test.",
+    "2. Owned by C6 (d1109-selftasks-chat decisions), recorded for the session lead: (a) the session page's change lines have no Undo (design point 7, ST-9/ST-14 wording); (b) Changes lists the session's own rows as 'In the app' with 'me' as who, so until C6 the agent's changes read as the person's; (c) the suggestion card's list of changes starts collapsed under Details; (d) a step the agent creates gets the reason 'created by agent <id> via session' (SC-12).",
+    "3. Design point 6 says 'A refused change is listed in Details with its reason'. The TASK_CHECKED_EVENT payload carries `refused`, but event-lines.ts renders only the sentence, so the refusals are not visible in words.",
+    "4. ST-11 'the same suggestion is not filed again that session' after Keep the tasks: the code exists (fingerprint check in fileTaskProposal) but no test covers it.",
+    "5. ST-13's report-006 as specified (a plain request at Standard for a researcher task that would read web pages, with the card quoting the reach reason) is not in the injection suite. The case uses ops-deploy instead, and the reach rule is covered only by a unit test.",
+    "6. Evidence made only of flagged lines makes no call and files no card. The instruction is quoted only in a Details line ('Left out of the task check: ...'), and the note is dropped rather than kept. ST-13 says 'the set becomes one suggestion card quoting the instruction'. The fixer's reading (no set, no card) is defensible, but the session lead should confirm it.",
+    "7. Words: the composed Undo after a split plus a step-before says '... \"Style the page in styles.css: layout\" wait for what they waited for before'. That title no longer exists once the split is undone (§5 rule 4).",
+    "8. Words: 'Changed 1 task; your next Start runs them.' (the real-daemon test asserts it): 'them' does not agree with one task.",
+    "9. Words: 'Asks you first: it would add work for the ops-deploy (a deploy or a migration needs your yes).' uses the registry name. The user guide's 'the deploy specialist' reads better.",
+    "10. The task check's model is rungModelFor(modeDefaults.planning.tier). Unlike the intake (intake.ts ~1592-1602, resolveRunSettings with the principal's planning override and the project ceiling), it ignores both. 'Routed like the intake's planning call' holds for the provider, not for the model choice.",
+    "11. Chat's tool definitions changed in this area: task_create gains before and why, and task_transition gains duplicate_of. chat-recall.test subtracts their tokens. `why` is accepted but stored only in the change log params. C6 should account for this.",
+    "12. A split's Undo resets the waiting tasks' dependencies to their pre-split lists. Undoing the split row after a later step-before row would drop the step's dependency, because undoBlocked does not check that those dependencies are unchanged.",
+    "13. syncTaskProposals marks a card 'applying' before composing. A crash between the two leaves the card at 'Making the changes…' with nothing applied and no retry.",
+    "14. New lint warning task.ts:1022 (useOptionalChain) comes from this area. scripts/bench/README.md does not list FORERUNNER_BENCH_TASK_LIST / FORERUNNER_BENCH_TASK_LIST_SAYS.",
+    "15. Pre-existing, not this area: at Assisted the 'Assisted mode' session-plan card has raw options 'approve'/'reject' with no explanations. The approved session plan held only the 1 ready task, so on the bench the suggestion card arrived as that session ended. 'The session goes on' at Assisted is shown only by the composed test.",
+    "16. Live check 4 suggestion. With the real model at Standard, end a coder report with 'For the task list:' lines (a split and a missing step) and check: the reply is the strict JSON shape; each split carries every criterion (the message now lists them); the Details line costs about CHF 0.03-0.05. At Assisted, check the card's body quotes the report once."
+  ]
+}

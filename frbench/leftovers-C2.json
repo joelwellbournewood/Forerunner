@@ -1,102 +1,103 @@
 {
- "why": "Run C step 2's leftovers that no later run C area owns. Triage them with live check 4's findings and /tmp/frbench/leftovers-L3.json (the next leftovers run). Sources: /tmp/frbench/runC-C2-{fix,review,fixup}-<key>.json and runC-C2-merge.json problems_left.",
- "base": "b5fb66f5d2977deea413cd158ce72308f2ba6f6a",
- "items": [
-  {
-   "id": "CL-1",
-   "severity": "minor",
-   "from": "d1109-onerepo-link",
-   "text": "OR-12 (cut line): GitHub's repository id is read (RepoInfo.id) but not stored on projects or used by the index, so a renamed or transferred repository is a new link until the project's link is updated (ADR 0117 Consequences)."
-  },
-  {
-   "id": "CL-2",
-   "severity": "minor",
-   "from": "d1109-onerepo-link",
-   "text": "OR-15's chat path (cut line): project.create has no together flag; for a repository whose project is not on this computer the tool answer ends 'Open New project to work on it together.' (CHAT_TOGETHER_HINT)."
-  },
-  {
-   "id": "CL-3",
-   "severity": "words",
-   "from": "d1109-onerepo-link",
-   "text": "L3-left-8, carried (not built in C2): the intake docs pull request's branch name still carries the project's id (fr/intake-<id>-docs; intake.ts:158). Renaming it needs the branch-to-project detection (projectIdsNamedBy, isProjectDocsPr) to keep reading every open pull request an earlier version opened, and the take-over and undo checks read that branch. A together project writes no intake branch."
-  },
-  {
-   "id": "CL-4",
-   "severity": "minor",
-   "from": "d1109-chat-recall",
-   "text": "L3-left-5, carried (not built in C2): after a cancelled task's pull request is closed on GitHub, the chat's '# Your files' still says it was 'Left open on GitHub when their task was cancelled'. The chat never waits on GitHub (d1109-chat-guard) and nothing stores the pull request's state once it is closed there; triage with LL-1 (merge cards stay open after a close on GitHub)."
-  },
-  {
-   "id": "CL-5",
-   "severity": "words",
-   "from": "d1109-onerepo-link",
-   "text": "Add to it shows no 'Drafting the plan…' state: POST /projects/:id/intake is synchronous, so the dialog shows 'Adding…' for the whole planning call (design 3.3). LC-C2 times the wait on the real model."
-  },
-  {
-   "id": "CL-6",
-   "severity": "minor",
-   "from": "d1109-onerepo-link",
-   "text": "IntakeProposalBody.docs is now IntakeDocs.default({}) for the first-plan form too: a first-plan reply missing 'docs' is accepted silently (no decision record on the card) instead of being asked again. Require docs unless the plan is plan-only."
-  },
-  {
-   "id": "CL-7",
-   "severity": "minor",
-   "from": "d1109-onerepo-link",
-   "text": "create-project.ts:113 and :153 use new Date().toISOString() for settings.together.at (AGENTS.md: time goes through a Clock); discovery.ts reads a folder candidate's marker with node:fs readFileSync instead of the discovery's injected fs."
-  },
-  {
-   "id": "CL-8",
-   "severity": "words",
-   "from": "d1109-onerepo-link",
-   "text": "otherHostSentence hardcodes 'github.com', untrue for an install configured with a GitHub Enterprise API base; takeOverLine can pass 100 characters with a 60-character marker name."
-  },
-  {
-   "id": "CL-9",
-   "severity": "minor",
-   "from": "d1109-onerepo-link",
-   "text": "The 'Updated by Forerunner from the project's brief' comment path (W15B-13) lost its words test; it is nearly unreachable now: remove it or test it."
-  },
-  {
-   "id": "CL-10",
-   "severity": "minor",
-   "from": "d1109-chat-recall",
-   "text": "Recall's merge date comes from merge_record.updated_at (recall.ts:487): a later patch, such as the take-out pull request's state, moves it, and a merged record whose work was taken out still reads 'merged on …'."
-  },
-  {
-   "id": "CL-11",
-   "severity": "minor",
-   "from": "d1109-chat-recall",
-   "text": "Recall ranking: the person's own earlier question lines can outrank the record asked about (after the restart, recall {words: 'the FAQ'} ranked 'what happened to the FAQ task? (you)' r1 ahead of the task 'Write the FAQ'); down-weight the person's question lines, measured against the golden set. Card hits on cards with several questions cut the answer at 160 characters before the later answers, and snippetOf centres on the first query term, not the rarest. LC-C10 watches the real model's choice."
-  },
-  {
-   "id": "CL-12",
-   "severity": "minor",
-   "from": "d1109-chat-recall",
-   "text": "Recall reads the store once per record (mergeRecord.forTask per done task, sessionRowView per session, statSync per document): fine for the homes measured; watch the chat's latency on a large home (LC-C10) before batching."
-  },
-  {
-   "id": "CL-13",
-   "severity": "words",
-   "from": "d1109-oversize-pause",
-   "text": "OP-7's drawer line (cut line): the drawer has no line of its own about the spend past the estimate; the card and the result carry the sentence."
-  },
-  {
-   "id": "CL-14",
-   "severity": "minor",
-   "from": "d1109-oversize-pause",
-   "text": "Test gaps (cut line): OP-5 (the run again in the session) has no composed real-daemon test with a test registry (coder limit per run USD 0.50, session USD 2.00, asserted through the ledger and the model-call log), because the real-daemon harness has no test registry; no real-daemon GET /requests case reads kept_checks from a real kept-work check (no sandbox in that harness). Both are covered at the runner and on the bench."
-  },
-  {
-   "id": "CL-15",
-   "severity": "minor",
-   "from": "d1109-oversize-pause",
-   "text": "The learned estimate swings a lot (the first Start said the shop 'needs about CHF 6.40'; after one session the card said 'more than its estimate of CHF 1.65'), and OP-7's new sentence shows the swing to the person."
-  },
-  {
-   "id": "CL-16",
-   "severity": "words",
-   "from": "d1109-oversize-pause",
-   "text": "During OP-5's run again, that run's 'The coder finished … (CHF 0.33)' line is Details-only (the retry audience), so the person's log shows no spend for the second run; the task row and the session total include it."
-  }
- ]
+  "why": "Run C step 2's leftovers that no later run C area owns. Triage them with live check 4's findings and /tmp/frbench/leftovers-L3.json (the next leftovers run). Sources: /tmp/frbench/runC-C2-{fix,review,fixup}-<key>.json and runC-C2-merge.json problems_left.",
+  "base": "b5fb66f5d2977deea413cd158ce72308f2ba6f6a",
+  "items": [
+    {
+      "id": "CL-1",
+      "severity": "minor",
+      "from": "d1109-onerepo-link",
+      "text": "OR-12 (cut line): GitHub's repository id is read (RepoInfo.id) but not stored on projects or used by the index, so a renamed or transferred repository is a new link until the project's link is updated (ADR 0117 Consequences)."
+    },
+    {
+      "id": "CL-2",
+      "severity": "minor",
+      "from": "d1109-onerepo-link",
+      "text": "OR-15's chat path (cut line): project.create has no together flag; for a repository whose project is not on this computer the tool answer ends 'Open New project to work on it together.' (CHAT_TOGETHER_HINT)."
+    },
+    {
+      "id": "CL-3",
+      "severity": "words",
+      "from": "d1109-onerepo-link",
+      "text": "L3-left-8, carried (not built in C2): the intake docs pull request's branch name still carries the project's id (fr/intake-<id>-docs; intake.ts:158). Renaming it needs the branch-to-project detection (projectIdsNamedBy, isProjectDocsPr) to keep reading every open pull request an earlier version opened, and the take-over and undo checks read that branch. A together project writes no intake branch."
+    },
+    {
+      "id": "CL-4",
+      "severity": "minor",
+      "from": "d1109-chat-recall",
+      "text": "L3-left-5, carried (not built in C2): after a cancelled task's pull request is closed on GitHub, the chat's '# Your files' still says it was 'Left open on GitHub when their task was cancelled'. The chat never waits on GitHub (d1109-chat-guard) and nothing stores the pull request's state once it is closed there; triage with LL-1 (merge cards stay open after a close on GitHub)."
+    },
+    {
+      "id": "CL-5",
+      "severity": "words",
+      "from": "d1109-onerepo-link",
+      "text": "Add to it shows no 'Drafting the plan…' state: POST /projects/:id/intake is synchronous, so the dialog shows 'Adding…' for the whole planning call (design 3.3). LC-C2 times the wait on the real model."
+    },
+    {
+      "id": "CL-6",
+      "severity": "minor",
+      "from": "d1109-onerepo-link",
+      "text": "IntakeProposalBody.docs is now IntakeDocs.default({}) for the first-plan form too: a first-plan reply missing 'docs' is accepted silently (no decision record on the card) instead of being asked again. Require docs unless the plan is plan-only."
+    },
+    {
+      "id": "CL-7",
+      "severity": "minor",
+      "from": "d1109-onerepo-link",
+      "text": "create-project.ts:113 and :153 use new Date().toISOString() for settings.together.at (AGENTS.md: time goes through a Clock); discovery.ts reads a folder candidate's marker with node:fs readFileSync instead of the discovery's injected fs."
+    },
+    {
+      "id": "CL-8",
+      "severity": "words",
+      "from": "d1109-onerepo-link",
+      "text": "otherHostSentence hardcodes 'github.com', untrue for an install configured with a GitHub Enterprise API base; takeOverLine can pass 100 characters with a 60-character marker name."
+    },
+    {
+      "id": "CL-9",
+      "severity": "minor",
+      "from": "d1109-onerepo-link",
+      "text": "The 'Updated by Forerunner from the project's brief' comment path (W15B-13) lost its words test; it is nearly unreachable now: remove it or test it."
+    },
+    {
+      "id": "CL-10",
+      "severity": "minor",
+      "from": "d1109-chat-recall",
+      "text": "Recall's merge date comes from merge_record.updated_at (recall.ts:487): a later patch, such as the take-out pull request's state, moves it, and a merged record whose work was taken out still reads 'merged on …'."
+    },
+    {
+      "id": "CL-11",
+      "severity": "minor",
+      "from": "d1109-chat-recall",
+      "text": "Recall ranking: the person's own earlier question lines can outrank the record asked about (after the restart, recall {words: 'the FAQ'} ranked 'what happened to the FAQ task? (you)' r1 ahead of the task 'Write the FAQ'); down-weight the person's question lines, measured against the golden set. Card hits on cards with several questions cut the answer at 160 characters before the later answers, and snippetOf centres on the first query term, not the rarest. LC-C10 watches the real model's choice."
+    },
+    {
+      "id": "CL-12",
+      "severity": "minor",
+      "from": "d1109-chat-recall",
+      "text": "Recall reads the store once per record (mergeRecord.forTask per done task, sessionRowView per session, statSync per document): fine for the homes measured; watch the chat's latency on a large home (LC-C10) before batching."
+    },
+    {
+      "id": "CL-13",
+      "severity": "words",
+      "from": "d1109-oversize-pause",
+      "text": "OP-7's drawer line (cut line): the drawer has no line of its own about the spend past the estimate; the card and the result carry the sentence."
+    },
+    {
+      "id": "CL-14",
+      "severity": "minor",
+      "from": "d1109-oversize-pause",
+      "text": "Test gaps (cut line): OP-5 (the run again in the session) has no composed real-daemon test with a test registry (coder limit per run USD 0.50, session USD 2.00, asserted through the ledger and the model-call log), because the real-daemon harness has no test registry; no real-daemon GET /requests case reads kept_checks from a real kept-work check (no sandbox in that harness). Both are covered at the runner and on the bench."
+    },
+    {
+      "id": "CL-15",
+      "severity": "minor",
+      "from": "d1109-oversize-pause",
+      "text": "The learned estimate swings a lot (the first Start said the shop 'needs about CHF 6.40'; after one session the card said 'more than its estimate of CHF 1.65'), and OP-7's new sentence shows the swing to the person.",
+      "note_2026_11_16": "2026-11-16: not closed by C4b. The review part is learned on its own ratio, so a send-back no longer swings the work's ratio twice, and one sample per task stops a task tried twice from counting twice."
+    },
+    {
+      "id": "CL-16",
+      "severity": "words",
+      "from": "d1109-oversize-pause",
+      "text": "During OP-5's run again, that run's 'The coder finished … (CHF 0.33)' line is Details-only (the retry audience), so the person's log shows no spend for the second run; the task row and the session total include it."
+    }
+  ]
 }

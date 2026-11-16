@@ -1,0 +1,114 @@
+{
+ "why": "Run C step 4's leftovers that no later run C area owns. Triage them with live check 4's findings, /tmp/frbench/leftovers-L3.json, leftovers-C2.json, leftovers-C3.json and leftovers-C4b-design.json (the next leftovers run). Sources: /tmp/frbench/runC-C4-{fix,review,fixup}-<key>.json and runC-C4-merge.json problems_left.",
+ "base": "a866c387cb151770d4dd56069549960530fe5b94",
+ "items": [
+  {
+   "id": "C4L-1",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "OJ-11 (cut line, not built): Work together for a project already here (the dialog's together form, moving into a together project keyed by the repository's id inside the join's transaction, closing the closing project's own status pull request as the one GitHub write, a two-home composed test with the fake host). project.join's moveWork and joinRefusal are written for reuse. Goes to wave 8 (wave8_amendments, (C4))."
+  },
+  {
+   "id": "C4L-2",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "C2-left-11 part 2: a take-over after this project's own fr/docs-scaffold pull request was opened leaves that pull request without the take-over line, and its marker conflicts with main's on merge. Needs the docs loop to rebuild the scaffold branch on the default branch under the copy's lock before writing the replaced marker (ADR 0117's amendment)."
+  },
+  {
+   "id": "C4L-3",
+   "severity": "words",
+   "from": "d1109-onerepo-join",
+   "text": "OJ-06's Home line (cut line): Home lists the kept project only, and its card has no 'Includes the work of \"Kite club\"' line (the Overview, Sessions and Costs have it)."
+  },
+  {
+   "id": "C4L-4",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "Lessons of the closed project are not moved (ADR 0117's amendment: a lesson's file is canonical and carries its project). Chat recall reads them through withJoined, but the kept project's sessions do not get them in memory."
+  },
+  {
+   "id": "C4L-5",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "The closing project's open fr/status pull request is listed on no Overview after the join when the kept project's 'Status pull request' is off (isProjectDocsPr needs statusPullRequestOn(kept)), and the dialog names only four settings, so the person is never told. A dialog line for the status setting, or the joined project's status pull request listed as information (loop/docs.ts and pull-requests.ts, d1109-onerepo-link's). LC-C4 reads it."
+  },
+  {
+   "id": "C4L-6",
+   "severity": "minor, tests",
+   "from": "d1109-onerepo-join",
+   "text": "OJ-02's Postgres case in the integration suite is missing (no FORERUNNER_TEST_PG here); the join runs in one store.transaction through the repository methods both backends share."
+  },
+  {
+   "id": "C4L-7",
+   "severity": "minor, tests",
+   "from": "d1109-onerepo-join",
+   "text": "Validation rule 3: docs-routes.ts' DocView.notWrittenHere (C2-left-13) has no real-daemon.test.ts case and no fake-daemon change (only the composed HTTP case in onerepo-together.test.ts); the fake daemon's data import never answers a link refusal, so data/routes.ts' 409 (C2-left-12) is not mirrored there."
+  },
+  {
+   "id": "C4L-8",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "project.join's Undo sets active: true on the reopened project whatever the stored closed[].active: a project paused before the join comes back active. Undo restores what was stored, with a case."
+  },
+  {
+   "id": "C4L-9",
+   "severity": "words",
+   "from": "d1109-onerepo-join",
+   "text": "On a joined project's page, Last result still says '\"Write the rules in rules.md\" is ready to continue' about a task that now belongs to the kept project (d1109-sessions' summary text in views.ts)."
+  },
+  {
+   "id": "C4L-10",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "GitHubHost.send's AbortSignal.timeout also covers reading the response body after send() returns: a slow body throws a plain AbortError instead of the 'did not answer in time' error (C2-left-10's edge)."
+  },
+  {
+   "id": "C4L-11",
+   "severity": "words",
+   "from": "d1109-onerepo-join",
+   "text": "The hands-off refusal ('A session of \"Kite club\" waits to start by itself. Make one project after it ran, or turn \"When work is ready\" back to Wait for my Start.') is about 140 characters: one sentence read at a glance (design section 5)."
+  },
+  {
+   "id": "C4L-12",
+   "severity": "words",
+   "from": "d1109-onerepo-join",
+   "text": "A joined project's Overview still offers 'Research reads: ... · Change' and the 'Note for the next session' input though nothing runs there; hide them as the Start button is hidden. The Undo of a join (and every undo) answers a change card whose undoHint reads 'This cannot be undone.' (pre-existing, generic)."
+  },
+  {
+   "id": "C4L-13",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "Guards on a closed project: POST /projects/:id/plan (applyProjectPlan, no UI client method) still writes milestones and tasks on it; the Data tab's Add and Import still accept data on it (unseen by the kept project); a chat change read back before the join and answered Yes after it runs from its prepared steps without the new guard (the guard is in prepare)."
+  },
+  {
+   "id": "C4L-14",
+   "severity": "minor",
+   "from": "merge-w20",
+   "text": "project.join does not move the closing project's summary_cache.task_list_notes (d1109-selftasks-run's kept task-list notes), so no check of the kept project reads them; and it moves every human_request card, task_proposal cards included, so the kept project can end with two open suggestion cards (the one-open-card rule acts only when a card is filed)."
+  },
+  {
+   "id": "C4L-15",
+   "severity": "decision",
+   "from": "d1109-selftasks-run",
+   "text": "The task check's line ('Checked the task list after ...') shows under Details only, not in the person-level session log; the Inbox card is the person-facing signal. Whether the line belongs at person level is a design question (LC-C27 reads it)."
+  },
+  {
+   "id": "C4L-16",
+   "severity": "words",
+   "from": "d1109-selftasks-run",
+   "text": "Pre-existing: at Assisted the 'Assisted mode' session-plan card has raw options 'approve'/'reject' with no explanations (design section 5)."
+  },
+  {
+   "id": "C4L-17",
+   "severity": "minor, security",
+   "from": "d1109-selftasks-run",
+   "text": "C2-left-14, carried (recorded in ADR 0119 as a known gap): the brief's quoted parts (a kept-work check's output, a handoff note, a Left-to-do list) have no pnpm test:injection channel; a 'brief' channel with its own planting and judge."
+  },
+  {
+   "id": "C4L-18",
+   "severity": "minor",
+   "from": "d1109-onerepo-join, d1109-selftasks-run",
+   "text": "Tooling: Biome warnings noConfusingVoidType (commands/src/types.ts:569 and executor.ts:657, pre-existing) and useOptionalChain (task.ts:1022, C4); scripts/bench/README.md does not list FORERUNNER_BENCH_TASK_LIST and FORERUNNER_BENCH_TASK_LIST_SAYS; in a worktree without an upstream 'pnpm docs:check' alone says 'nothing to check' (only '-- --base claude/nifty-knuth-f9udt0' checks)."
+  }
+ ]
+}

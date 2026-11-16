@@ -1,0 +1,49 @@
+{
+  "why": "Points the d1116-budget-all design (wf_5df2fe4b-667) left for the triage after live check 4 or for phase G; not built in C4b.",
+  "base": "ba9874a (design), C4b builds on C4's merged head",
+  "items": [
+    {
+      "id": "C4bD-1",
+      "severity": "minor",
+      "from": "design leftovers_resolved 6",
+      "text": "Run L3 l3-money-engine fixup not_done[0] (a room check before the critic's checks run): C4b meets it when what is left is below the review's output floor (no checks, no Run row); between that floor and the real first call it stays a leftover."
+    },
+    {
+      "id": "C4bD-2",
+      "severity": "minor",
+      "from": "design leftovers_resolved 13",
+      "text": "Requirement I.4 ('15 to 25% of the session budget reserved for review and fixes by default'): its words stay, but work runs (fixes included) stop below the session's reserve so the reserve pays reviews only (packages/runtime/src/enforcement/budget.ts:318-326). Phase G: the session lead reconciles the requirement's words with the code."
+    },
+    {
+      "id": "C4bD-3",
+      "severity": "minor",
+      "from": "design live_check_4_steps LC-C32",
+      "text": "Record each real review's first-call worst case and real cost from LC-C32 and tune REVIEW_EVIDENCE_ALLOWANCE_TOKENS and the tier 1 review start from them."
+    }
+  ],
+  "suggested_session_lead_lines": [
+    "docs/status/UPDATE-LOG.md, U-042's areas: add 'd1116-budget-all (C4b): a task's budget counts its work, the critic's reviews and the fixes after a review, as one figure (the owner's answer of 2026-11-16)'. Its Check in the app gains the step in area.u_entries[0].",
+    "CHANGELOG.md [Unreleased]: 'Tasks: a task's own budget now counts everything spent on it: its work, the critic's reviews of it and the fixes after a review. The Tasks row reads the cost with \"of CHF 0.20 budget\" under it, the same figure as the drawer and Costs, and a review that does not fit waits for Continue with the work kept (the owner's answer of 2026-11-16).'",
+    "CHANGELOG.md [Unreleased]: 'Tasks: when its budget is large enough, a run keeps part of it for the task's review and says so at its start (\"CHF 0.10 of the task's budget is kept for its review\").'",
+    "CHANGELOG.md [Unreleased]: 'Upgrade: tasks made before this version now count the reviews they already had, so a task whose reviews took it past its budget pauses before its next run and asks you to continue.'",
+    "CHANGELOG.md [Unreleased]: 'Estimates: the plan line, the Start dialog and the plan card include each task's review, so a session plans fewer tasks for the same budget (before, the plan could promise more than the budget paid for); the session review sets what the planned tasks cost against that one figure and names its own checks apart.'",
+    "docs/requirements.md I.4: keep its words. Add to the leftovers or BLOCKERS: 'I.4 says the reserve is for review and fixes; work runs, fixes included, stop below the reserve, so it pays the last reviews only (budget.ts:318-326). To be reconciled in phase G.'",
+    "docs/requirements.md, a new line after I.7 (I.8): 'A task's budget counts everything spent on the task: its work, the critic's reviews and the fixes after a review. The task pauses at its budget on that total with its work kept, its estimate includes the reviews and fixes, and the Tasks row, the drawer and Costs show one figure against the budget.' Status in progress: d1116-budget-all. Reword U.6's actual_cost to 'everything spent on the task'.",
+    "docs/design/core-experience.md §3.5 (Tasks, the cost column): 'under a task's cost, its budget: \"of CHF 0.20 budget\", or \"CHF 0.20 budget used up\"; the budget counts its work, the critic's reviews and any fixes; without a budget, \"each run stops at CHF 2.40 (the coder's limit)\"'.",
+    "docs/design/core-experience.md §4.2 and §4 point 'A task larger than one session': '(their estimates, each with its review; a fifth of the session kept for the last reviews)'.",
+    "docs/status/handoff/NEXT-SESSION.md: add sub-run C4b (d1116-budget-all, wave 24) between C4 and C5, about 5 to 7 hours, and live check 4's LC-C32 (USD 0.15, priority 1).",
+    "/tmp/frbench/runC-plan.json and the args builder: apply plan_corrections (sub_runs and depends_on_sub_runs, owner_questions[9], the builder's count, index and answered-question filter, the How-to-run wave range, shared_files, the C5 and C6 depends_on lines, live_check_4, adr_plan, u_entries, design_doc_changes §4.2, session_lead_decisions S-8 and the migration line)."
+  ],
+  "unclear_spend_kinds": [
+    "Redo of a done task, Try again on a failed task's card, and Redo from main on a rebuild or conflict card. These are not a review's send-back, so 'fixes' does not clearly cover them.\n- Decision: they count against the same budget. They never reset or raise it.\n- Evidence: the same task row is used, and actual_cost_usd_micro is only ever written by task.addCost (packages/state/src/repos/task.ts:104-116) or as 0 on new rows (packages/runtime/src/daemon/plan-tasks.ts:154, session/project-plan.ts:576, jobs/handover.ts:574, :644). A Redo with nothing left pauses before it runs with one card and Continue (executor.ts:977-995). BA-7 keeps such a task one sample.\n- Why: the owner's intent is that the budget is what the task costs, and a Redo is that task's work done again.",
+    "A retry after a failed run, a transient error retried at once, the ladder's next rung and its stand-in specialist (U-044).\n- Decision: they count, as fixes and work.\n- Evidence: they are work runs on the same task (runner.ts:933-936; executor.ts:696-706 already subtracts them).\n- Why: work done again on the task.",
+    "The agent's task check (d1109-selftasks-run, C4), even when one task's report triggered it.\n- Decision: it stays out of every task's budget, as the session's spend, paid only from the room after the session's promise (ADR 0119's amendment of 0112). The session review names it apart (BA-8).\n- Evidence: its token has no task id and its Run row has task_id null (git show fix/d1109-selftasks-run:packages/runtime/src/session/task-check.ts lines 473-490 and 519-539, session.recordSpend).\n- Why: it judges the whole task list and may change other tasks, so the report is only its evidence. Chat's 'fix the tasks' (C6, SC-4) follows the same rule, booked to the project.",
+    "The critic's session review, its lesson reviews (promotion) and the monthly calibration.\n- Decision: they stay out.\n- Evidence: no task id (runner.ts:1159-1176 session token; loop/critic.ts:931-1007; critic.ts:500 taskId only for a task subject; jobs/calibration.ts).\n- Why: they review the session, a lesson or known examples, not one task's work.",
+    "Planning (intake, Change the plan) and chat answers about a task.\n- Decision: they stay out. They count against the project's budget and the monthly cap, as built for owner_questions[1].\n- Evidence: intake Run rows have task_id null (session/intake.ts:1914-1921), and conversation tokens carry no task id (conversation/agent.ts:1581-1594).\n- Why: not one task's spend. Work that chat starts counts as work.",
+    "Web searches inside a work run.\n- Decision: they count, as now.\n- Evidence: priced into the call's cost (billing/src/pricing.ts:214-231; agent/loop.ts:679-680, :865), so already in the run's cost and the task's figure.\n- Why: part of the work. Page reads (web_fetch) book no money.",
+    "A review that a budget or credential refused after one or more calls, a review Stop now cut off, and a review that failed.\n- Decision: count what it booked. A refusal is still 'no review, no try' (ADR 0112 'leftovers7-session').\n- Evidence: its calls are in the ledger with the task id (critic.ts:496-516; hooks.ts:262-283; the cut-off call via agent/loop.ts:765-801, CUT_OFF_STOP_REASON).\n- Why: it is the review's spend. BA-3's floor and BA-4's room avoid most of it. BA-7 takes no review sample from such a review.",
+    "The critic's project checks and verification tries, the kept-work check after a pause, rebuilds after another merge, conflict handling and the merge step.\n- Decision: nothing to count, and no sentence about them.\n- Evidence: no model call, nothing booked (loop/critic.ts:640-684: the checks run before the first model call; ADR 0112:511-515; session/dependent-branches.ts:33-60; loop/merge.ts budgetUsdMicro 0 at :1432, :1607, :1989).\n- Why: no spend. A Redo they lead to counts as work.",
+    "A call Stop now or a timeout cut off, the late usage of a stopped Claude Code run, and an SDK run's subagents.\n- Decision: they count, as now.\n- Evidence: booked through model_call_end and lateRunCost (executor.ts:1250, :2456-2499; agent/sdk.ts' per-model booking).\n- Why: the run's own spend.",
+    "Reviews of a task without a budget of its own.\n- Decision: no per-task cap. They stay under the session's budget and its review reserve, and the row keeps 'each run stops at CHF 2.40 (the coder's limit)'.\n- Evidence: runCapOf's specialist-limit branch (executor.ts:696-706); the owner spoke of 'a task's budget'.\n- Why: there is no task budget to count against. Their spend still shows in the row's cost and on Costs."
+  ]
+}

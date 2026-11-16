@@ -1,0 +1,102 @@
+{
+  "merged": [
+    "fix/d1109-onerepo-join at ba453ca (fix-up head; merge commit 83eb2d8, no conflicts)",
+    "fix/d1109-selftasks-run at cd92a03 (merge commit a866c38, 5 conflicted files resolved)"
+  ],
+  "head_sha": "a866c387cb151770d4dd56069549960530fe5b94",
+  "pushed": true,
+  "conflicts_resolved": [
+    "packages/commands/src/commands/index.ts: kept both append-only registrations in key order, .register(projectJoin) then .register(taskSplit) (shared_files run C: project.join C4 onerepo-join, task.split C4 selftasks-run)",
+    "packages/commands/src/types.ts COMMAND_NAMES: 'project.join' then 'task.split' (append-only, key order)",
+    "packages/commands/src/executor.ts imports: kept selftasks-run's decideAutonomy import (used by freesPlanFix) and onerepo-join's OPEN_ON_A_CLOSED_PROJECT import (used by refuseClosedProject); git auto-merged both bodies (the planFix read-back and no-Inbox rules, the closed-project guard in prepare)",
+    "evals/src/injection-runner.ts imports: kept both sets (MemoryGitHost and chatLinkCheck/RepositoryUse for onerepo-join's repo_marker record source; CommandExecutor, task-check, task-list-notes and task-proposal for selftasks-run's report channel), sorted by path",
+    "apps/ui/test/real-daemon.test.ts: git had interleaved the two appended describes; rebuilt as onerepo-join's whole file (its describe 'd1109-onerepo-join, run C' and its earlier edits) followed by selftasks-run's whole describe 'd1109-selftasks-run, run C' (selftasks-run's file before its describe was identical to the base, so nothing else was dropped)"
+  ],
+  "integration_fixes": [],
+  "validation": [
+    {
+      "command": "pnpm install --frozen-lockfile",
+      "result": "ok"
+    },
+    {
+      "command": "pnpm lint",
+      "result": "exit 0, 42 warnings and 1 info, no errors. 40 warnings were already on the base; selftasks-run reports its own count of 42, which includes the new useOptionalChain warning at task.ts:1022."
+    },
+    {
+      "command": "pnpm lint:paths",
+      "result": "check-paths: ok (1551 files)"
+    },
+    {
+      "command": "pnpm typecheck",
+      "result": "exit 0 (node tsconfig plus apps/approvals-web and apps/ui)"
+    },
+    {
+      "command": "pnpm test (unit)",
+      "result": "521 files; 5620 passed, 7 skipped"
+    },
+    {
+      "command": "pnpm docs:check -- --base origin/claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (125 files). Without --base the check cannot diff here (there is no origin/main) and says 'nothing to check', the same as on the baseline."
+    },
+    {
+      "command": "pnpm docs:links",
+      "result": "link-check: ok (212 files)"
+    },
+    {
+      "command": "pnpm secrets:scan",
+      "result": "secret-scan: clean (2188 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "5 files passed, 6 skipped; 30 passed, 79 skipped (Postgres cases skip without FORERUNNER_TEST_PG, as expected)"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "13 files; 25 passed, 1 skipped"
+    },
+    {
+      "command": "pnpm --filter @forerunner/live test",
+      "result": "11 files passed, 4 skipped; 63 passed, 17 skipped"
+    },
+    {
+      "command": "pnpm test:injection",
+      "result": "PASS: 81 cases (58 hostile, 23 controls), 81 passed, 0 failed. record-008/009 'not delivered', record-010 read back; report-001..006 and report-101/102 pass"
+    },
+    {
+      "command": "FORCE_COLOR=1 HOME=<empty dir> pnpm test",
+      "result": "521 files; 5620 passed, 7 skipped"
+    },
+    {
+      "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty dir> pnpm vitest run --config vitest.config.ts",
+      "result": "95 files, 1238 tests passed, including the real-daemon describes 'd1109-onerepo-join, run C' and 'd1109-selftasks-run, run C', onerepo-join.test.tsx and selftasks.test.tsx"
+    },
+    {
+      "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && npx playwright test --config playwright.local.config.ts)",
+      "result": "36 passed; the local config is git-ignored and was not committed"
+    },
+    {
+      "command": "cargo fmt/clippy/test in apps/desktop/src-tauri",
+      "result": "not run: git diff ba9874a..HEAD -- apps/desktop is empty, so neither area touched the desktop shell"
+    },
+    {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "empty"
+    },
+    {
+      "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+      "result": "printed nothing: all 32 commits signed, both merge commits included"
+    },
+    {
+      "command": "git push -u origin claude/nifty-knuth-f9udt0",
+      "result": "ba9874a..a866c38 pushed on the first try; no force-push"
+    }
+  ],
+  "smoke": "The bench smoke passed 25 of 25 checks, with 0 findings and 0 recorded problems. Command: node scripts/bench/start.mjs --name merge-w20 --daemon-port 48730 --ui-port 2330 --fresh, then scripts/bench/journeys/smoke.cjs merge-w20. Model calls: intake 1, specialist 9, critic 6, chat 1. There was no task-check call, which is expected: the stand-in only writes 'For the task list:' lines when FORERUNNER_BENCH_TASK_LIST is set. The bench was stopped with scripts/bench/stop.mjs, and its home, githost data and browser profile were deleted. Logs are in /tmp/frbench/merge-w20/validation/ (smoke.log, smoke-result.json and every validation log). I did not change the journey script.",
+  "problems_left": [
+    "Nothing is broken after the merge: every suite above is green and nothing needed fixing.",
+    "Seen while reading the merged code, not tested, not a merge break (d1109-onerepo-join and d1109-selftasks-run): project.join does not move the closing project's summary_cache.task_list_notes (selftasks-run's kept task-list notes). If a session of the closing project ended with notes kept for the next check, those notes stay on the closed project and no check of the kept project ever reads them. A later area could move or merge them in moveWork.",
+    "Seen while reading the merged code, not tested (both areas): project.join moves every human_request card of the closing project, task_proposal cards included. If both projects have an open 'the agent suggests N changes to the tasks' card, the kept project ends up with two open suggestion cards. selftasks-run's one-open-card-per-project rule only acts when a new card is filed. Each card still applies its own changes when answered.",
+    "As the areas reported: task.split on a task of a joined project is refused in words by the executor's closed-project guard, because task.split is not in OPEN_ON_A_CLOSED_PROJECT. This is intended; it only matters for C6's chat task_split.",
+    "The areas' own not_done items and non-blocking findings are still open: OJ-11 Work together for a project already here; C2-left-11 part 2; OJ-06's Home line; lessons not moved; the orphaned fr/status pull request when the kept project's status setting is off; no Postgres join case; L3-left-13; C2-left-14; selftasks-run review items 1 to 16 (for example AGENT_WROTE_TASK_LINE is put on tasks that were only made to wait for an added step, and 'Changed 1 task; your next Start runs them.')."
+  ]
+}

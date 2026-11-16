@@ -87,7 +87,7 @@ const adds = {
   "LC-C31": "C3 adds: the continuation's first log line is 'Goes on with your session of HH:MM.'; while the credential rests, Start reads 'Start at HH:MM' and keeps one start; with quiet hours covering the reset, every line names when the session really goes on; after Cancel the wait, nothing anywhere says the session goes on (C3-left-8).",
 };
 const l = p.live_check_4;
-const own = / C3 adds(?:(?! C\d adds)[^])*/;
+const own = / C3 adds(?:(?! C\d\w? adds)[^])*/;
 for (const s of l.steps) {
   s.step = s.step.replace(own, "");
   if (adds[s.id]) s.step = `${s.step} ${adds[s.id]}`;

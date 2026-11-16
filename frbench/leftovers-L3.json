@@ -1,84 +1,86 @@
 {
- "why": "Run L3's leftovers that no run C area owns. Triage them with live check 4's findings (the next leftovers run). Sources: /tmp/frbench/runL3-<area>-{fix,review,fixup}.json and runL3-merge.json problems_left.",
- "base": "7aa7add2ee13db95d051fa4fa3d6fec375ff2d6e",
- "items": [
-  {
-   "id": "LL-1",
-   "severity": "minor",
-   "from": "l3-merge",
-   "text": "Merge cards stay open when their pull request is closed on GitHub without a merge (run L3 closes them on every merge only)."
-  },
-  {
-   "id": "LL-2",
-   "severity": "minor",
-   "from": "l3-merge",
-   "text": "A Merge press on a pull request whose check failed, or that stopped merging cleanly, after Forerunner's last look still answers 'Merging #N.' first (a sibling of L3-github-3, which now says a head move at once)."
-  },
-  {
-   "id": "LL-3",
-   "severity": "words",
-   "from": "l3-merge",
-   "text": "notCheckedSentence (the press's 'could not check' path) has no boundary test and is two sentences."
-  },
-  {
-   "id": "LL-4",
-   "severity": "major",
-   "from": "l3-merge",
-   "text": "L3-github-1 part 3: when B, still holding closed A, is merged on GitHub's website before any poll, A's record says only '#A was closed without merging.'; no card says A's change reached main through #B, and nothing offers Take this work out on A."
-  },
-  {
-   "id": "LL-5",
-   "severity": "minor",
-   "from": "l3-merge",
-   "text": "The optional Close button on a cancelled task's open pull request (ADR 0105 point 4's amendment of 2026-11-15 records it as an option for later)."
-  },
-  {
-   "id": "LL-6",
-   "severity": "words",
-   "from": "l3-merge",
-   "text": "After a press-time check A's Tasks row reads 'Accepted · waiting for you to merge' until the next poll; the Overview's cancelled block is plural with one row; a rebuilt-without row still sits under 'Reviewed by the critic'; the press-time rebuild costs a listPullRequests call and a git fetch per waiting dependent per retry."
-  },
-  {
-   "id": "LL-7",
-   "severity": "minor",
-   "from": "l3-handoff-checks",
-   "text": "The node --test marker check runs every script directly in test/, tests/ or __tests__/: a helper that never exits hits the check timeout and blocks the accept."
-  },
-  {
-   "id": "LL-8",
-   "severity": "minor",
-   "from": "l3-handoff-checks",
-   "text": "Optional: one line in the intake prompt naming the checks Forerunner can run (the verifier's sketch item 4 for L3-research-4)."
-  },
-  {
-   "id": "LL-9",
-   "severity": "minor",
-   "from": "l3-money-screens",
-   "text": "No vitest can render a screen against the real daemon (jsdom cannot bundle node:sqlite in packages/state); and the Tasks row's 'left' figure equals 'This run may spend' only at the run's start."
-  },
-  {
-   "id": "LL-10",
-   "severity": "words",
-   "from": "l3-chat-claims",
-   "text": "The chat's own correction lines (NOTHING_CHANGED_REPLY, NOTHING_CHANGED_CARD_WAITS_REPLY, NO_ANSWER_REPLY, like 'Yes to what? …') are English only, so a German conversation gets an English line: whether the app's own chat lines follow the conversation's language is a decision."
-  },
-  {
-   "id": "LL-11",
-   "severity": "minor",
-   "from": "l3-small",
-   "text": "Refs refs/forerunner/before|first/<task> show in `git log --all --decorate=full` and in git GUIs on the person's folder."
-  },
-  {
-   "id": "LL-12",
-   "severity": "words",
-   "from": "l3-small",
-   "text": "A finding the critic named no fix for has no 'To fix' line now (L3-research-3); naming an action would be a critic prompt change (ask the critic for one)."
-  },
-  {
-   "id": "LL-13",
-   "severity": "owner",
-   "from": "l3-money-screens",
-   "text": "Owner question (told 2026-11-15): a task's budget counts only the work, not the critic's reviews; run L3 made the screens say which figure each line counts. Should the budget count the reviews too?"
-  }
- ]
+  "why": "Run L3's leftovers that no run C area owns. Triage them with live check 4's findings (the next leftovers run). Sources: /tmp/frbench/runL3-<area>-{fix,review,fixup}.json and runL3-merge.json problems_left.",
+  "base": "7aa7add2ee13db95d051fa4fa3d6fec375ff2d6e",
+  "items": [
+    {
+      "id": "LL-1",
+      "severity": "minor",
+      "from": "l3-merge",
+      "text": "Merge cards stay open when their pull request is closed on GitHub without a merge (run L3 closes them on every merge only)."
+    },
+    {
+      "id": "LL-2",
+      "severity": "minor",
+      "from": "l3-merge",
+      "text": "A Merge press on a pull request whose check failed, or that stopped merging cleanly, after Forerunner's last look still answers 'Merging #N.' first (a sibling of L3-github-3, which now says a head move at once)."
+    },
+    {
+      "id": "LL-3",
+      "severity": "words",
+      "from": "l3-merge",
+      "text": "notCheckedSentence (the press's 'could not check' path) has no boundary test and is two sentences."
+    },
+    {
+      "id": "LL-4",
+      "severity": "major",
+      "from": "l3-merge",
+      "text": "L3-github-1 part 3: when B, still holding closed A, is merged on GitHub's website before any poll, A's record says only '#A was closed without merging.'; no card says A's change reached main through #B, and nothing offers Take this work out on A."
+    },
+    {
+      "id": "LL-5",
+      "severity": "minor",
+      "from": "l3-merge",
+      "text": "The optional Close button on a cancelled task's open pull request (ADR 0105 point 4's amendment of 2026-11-15 records it as an option for later)."
+    },
+    {
+      "id": "LL-6",
+      "severity": "words",
+      "from": "l3-merge",
+      "text": "After a press-time check A's Tasks row reads 'Accepted · waiting for you to merge' until the next poll; the Overview's cancelled block is plural with one row; a rebuilt-without row still sits under 'Reviewed by the critic'; the press-time rebuild costs a listPullRequests call and a git fetch per waiting dependent per retry."
+    },
+    {
+      "id": "LL-7",
+      "severity": "minor",
+      "from": "l3-handoff-checks",
+      "text": "The node --test marker check runs every script directly in test/, tests/ or __tests__/: a helper that never exits hits the check timeout and blocks the accept."
+    },
+    {
+      "id": "LL-8",
+      "severity": "minor",
+      "from": "l3-handoff-checks",
+      "text": "Optional: one line in the intake prompt naming the checks Forerunner can run (the verifier's sketch item 4 for L3-research-4)."
+    },
+    {
+      "id": "LL-9",
+      "severity": "minor",
+      "from": "l3-money-screens",
+      "text": "No vitest can render a screen against the real daemon (jsdom cannot bundle node:sqlite in packages/state); and the Tasks row's 'left' figure equals 'This run may spend' only at the run's start.",
+      "note_2026_11_16": "Second half closed by C4b d1116-budget-all (the row reads 'of CHF 0.20 budget' and the run's own line names the room kept for its review); the first half (no vitest renders against the real daemon) stays a test-infra leftover."
+    },
+    {
+      "id": "LL-10",
+      "severity": "words",
+      "from": "l3-chat-claims",
+      "text": "The chat's own correction lines (NOTHING_CHANGED_REPLY, NOTHING_CHANGED_CARD_WAITS_REPLY, NO_ANSWER_REPLY, like 'Yes to what? …') are English only, so a German conversation gets an English line: whether the app's own chat lines follow the conversation's language is a decision."
+    },
+    {
+      "id": "LL-11",
+      "severity": "minor",
+      "from": "l3-small",
+      "text": "Refs refs/forerunner/before|first/<task> show in `git log --all --decorate=full` and in git GUIs on the person's folder."
+    },
+    {
+      "id": "LL-12",
+      "severity": "words",
+      "from": "l3-small",
+      "text": "A finding the critic named no fix for has no 'To fix' line now (L3-research-3); naming an action would be a critic prompt change (ask the critic for one)."
+    },
+    {
+      "id": "LL-13",
+      "severity": "owner",
+      "from": "l3-money-screens",
+      "text": "Owner question (told 2026-11-15): a task's budget counts only the work, not the critic's reviews; run L3 made the screens say which figure each line counts. Should the budget count the reviews too?",
+      "note_2026_11_16": "Closed 2026-11-16: the owner answered ('yes it should count critics reviews, and fixes.'); built by C4b d1116-budget-all."
+    }
+  ]
 }

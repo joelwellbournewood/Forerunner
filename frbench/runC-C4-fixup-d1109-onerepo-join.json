@@ -1,0 +1,147 @@
+{
+  "area": "d1109-onerepo-join",
+  "branch": "fix/d1109-onerepo-join",
+  "head_sha": "ba453ca68648c0980a462c7a34e7f04a13155fcc",
+  "commits": [
+    {
+      "sha": "afaa06fcb6494af10a8bb6597ec176fc544fccfb",
+      "subject": "onerepo-join: a joined project takes no new work: its page, its chat and its routes (U-091, OJ-06)"
+    },
+    {
+      "sha": "1d5daf69174af0d12498f1abbb6a51940008d51d",
+      "subject": "onerepo-join: Undo of a join gives the closed project back as it was (U-091, OJ-04)"
+    },
+    {
+      "sha": "48ff8247b2eff731af0d14cdcbee173c7f8c6fec",
+      "subject": "onerepo-join: a real-daemon case for a together project's Docs rows (C2-left-13)"
+    },
+    {
+      "sha": "ba453ca68648c0980a462c7a34e7f04a13155fcc",
+      "subject": "onerepo-join: docs for a closed project that takes no new work (U-091, OJ-06, OJ-09)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "Blocking finding (OJ-06): the joined (closed) project still accepted new work, and so did its siblings.\n- Its Tasks tab offered New task, under 'No tasks yet. Press New task, or describe them in Chat.'\n- POST /projects/<kite>/tasks answered 201, and Changes promised 'It runs at your next Start.' No session ever runs on a joined project and the task's Undo is refused.\n- Its Chat offered 'add a task: …' and Make this a task.\n- Its Overview offered 'Note for the next session' and 'Research reads · Change'.\nRoot cause: only starts asked removedProjectRefusal. The command executor, POST /projects/:id/queue and the page's Tasks, Chat and Overview did not know a project could be closed into another.",
+      "u_ids": [
+        "U-091"
+      ],
+      "failing_test_before": "packages/commands/test/project-join.test.ts 'd1109-onerepo-join, run C: a closed project takes no new work (OJ-06)' > 'after the join a task, a note, a setting, autonomy and a switch for Kite club are refused ...' (task.create came back done); apps/ui/test/real-daemon.test.ts 'd1109-onerepo-join, run C' > 'OJ-06: a joined project takes no new work: New task, a note for the next session, a setting and a task from its chat are refused ...' (createTask answered ok); apps/ui/test/onerepo-join.test.tsx 'd1109-onerepo-join, run C: a joined project offers no new work (OJ-06)', 4 cases (New task shown, note box and Research reads shown, no chat-closed line, the fake took the task)",
+      "how": "Executor:\n- CommandExecutor.prepare calls refuseClosedProject(name, card) after the plan.\n- A command whose card names a project closed into another, or a removed one (W15B-02's sibling), is refused with removedProjectRefusal's sentence: '\"Kite club\" joined \"Site\", so its work runs there.' / 'The project \"X\" was removed, so nothing of it runs.'\n- Code validation, which the routes answer as 409 conflict, the same as the start's refusal. details.cause is project_joined or project_removed.\n- This applies from the app, from chat and to a pending yes.\n- OPEN_ON_A_CLOSED_PROJECT in join-words.ts is shared with the fake daemon. It keeps summary.speak, session.stop, session.pause, request.answer and project.join answering.\n\nRoute: POST /projects/:id/queue refuses a note for a closed project with the same sentence.\n\nSentences: joinedRefusalSentence, joinedTasksSentence and joinedChatSentence, all in join-words.ts.\n\nUI:\n- TasksTab (closed prop): no New task; with no task, 'Its tasks are in \"Site\".' with Open it.\n- ChatTab (closed prop): the conversation is kept to read under 'This chat is kept to read; ask about its work in the Chat of \"Site\".' with Open it, which opens Site's Chat.\n- Conversation readOnly: no message box, no examples, no Make this a task, no Yes/No, Undo, question options or Go ahead. An empty one reads 'Nothing was said here.'\n- SummaryTab: no Research reads line and no note box for a closed project; no Decisions for a joined one, because they moved.\n- A removed project gets the same treatment in its own words.\n\nFake daemon: refuses New task, a note and any command on a joined project, as the daemon does.",
+      "check_in_the_app": "Setup: two projects on one repository, then Make one project, keeping Site.\n1. Open Kite club, Tasks tab. Expected: no New task button; 'Its tasks are in \"Site\".' with Open it, which opens Site's Tasks.\n2. Kite club, Chat tab. Expected: 'This chat is kept to read; ask about its work in the Chat of \"Site\".' with Open it; no message box and no 'Try: add a task' line. Open it lands on Site's Chat with its message box.\n3. Kite club, Overview. Expected: no Note for the next session, no Research reads Change, no Decisions; Last result and Your files still shown.\n4. Through the API, POST /projects/<kite>/tasks and POST /projects/<kite>/queue. Expected: 409 '\"Kite club\" joined \"Site\", so its work runs there.'; settings.set for Kite club is refused with the same sentence.\n5. Restart the app and repeat steps 1-4. Expected: the same.\n6. Undo the join from Changes. Expected: Kite club has New task, its tasks and its chat box again, and takes a new task.\n\nBench evidence:\n- /tmp/frbench/fixup-d1109-onerepo-join/steps/04-a-kite-joined-overview.png, 05-a-kite-joined-tasks.png, 06-a-kite-joined-chat.png, 07-a-site-chat.png\n- After the daemon restart: 08 to 11 b-*.png; Undo from the Changes UI: 12 to 15.\n- Checks: walk-a.json 13 of 14 and walk-b.json 15 of 15. The one failure in part a was the walk script's own count: the two queue items it saw were consumed brief and plan notes from before the join, not the probe note; part b's corrected check passes.\n\nLive check for the session lead:\n- In Kite club's Chat tab after a join there is no box to type in.\n- In Talk opened on Kite club's page, say 'add a task: write the FAQ'. The real model must relay the refusal ('\"Kite club\" joined \"Site\", so its work runs there.'), not claim the task was added, and nothing is written."
+    },
+    {
+      "problem": "Non-blocking finding (OJ-04): project.join's undo set active: true on the reopened project whatever it stored, so a project left off before the join came back on.",
+      "u_ids": [
+        "U-091"
+      ],
+      "failing_test_before": "packages/commands/test/project-join.test.ts 'a closed project takes no new work (OJ-06)' > 'Undo of the join gives Kite club back as it was: a paused project left off comes back paused and off, and takes work again' (active came back true)",
+      "how": "project-join.ts undo writes c.active from before.closed (status was already restored from c.status).",
+      "check_in_the_app": "Pause a project and take it off Home, make one project with it closed into another, then Undo in Changes: it comes back paused and off as before, and New task works on it again."
+    },
+    {
+      "problem": "Non-blocking finding (validation rule 3): GET /projects/:id/docs changed (DocView.notWrittenHere, togetherDocNote) with no real-daemon case.",
+      "u_ids": [
+        "C2-left-13"
+      ],
+      "failing_test_before": "none: a coverage case added for an existing fix (dbf307d), not a failing-first test. It passes on the fixer's head and asserts what the person sees through client.docs, before and after the daemon starts again.",
+      "how": "apps/ui/test/real-daemon.test.ts 'C2-left-13: GET /projects/:id/docs of a project made with Work together ...'. It makes the project through client.createProject with together, then reads client.docs on compose and on compose again. Every missing doc has notWrittenHere and 'The other Forerunner of \"Kite club\" writes this doc on GitHub; this project does not write docs.', and no row says 'not written yet'. The fake daemon already serves the field from seeded rows under the shared schema.",
+      "check_in_the_app": "Open a project made with Work together, Docs tab: each doc it does not have reads 'The other Forerunner of \"Kite club\" writes this doc on GitHub; this project does not write docs.' with no missing mark."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "Kite club's open fr/status pull request is listed on no Overview after the join when the kept project's Status pull request setting is off (review, non-blocking).",
+      "why": "Not a defect of the closed page. Fixing it needs either a dialog line for the status setting or listing the joined project's status pull request as information. Both touch the docs and pull-request rules in loop/docs.ts and pull-requests.ts, which shared_files reserves to d1109-onerepo-link. Left for the session lead's live check: both projects with the setting on, and only the closing one on."
+    },
+    {
+      "problem": "A Postgres case for the join in the integration suite (OJ-02 'SQLite and Postgres').",
+      "why": "No Postgres here (FORERUNNER_TEST_PG unset). A case nobody can run would be untested code. The join runs in one store.transaction through the repository methods both backends share."
+    },
+    {
+      "problem": "The joined page's Last result still says '\"X\" is ready to continue' about a task that now belongs to Site.",
+      "why": "That sentence is built by d1109-sessions' summary text in views.ts, outside this area's regions. It is read-only text, not an action."
+    },
+    {
+      "problem": "GitHubHost.send's timeout also covers reading the response body: a slow body would throw a plain AbortError instead of the 'did not answer in time' error.",
+      "why": "An edge case the reviewer named as non-blocking. Wrapping body reads in every GitHubHost method is a capabilities change of its own."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "exit 0: lint ok (40 warnings that were there before), typecheck ok, 514 files with 5541 tests passed and 7 skipped. docs:check without a base says it cannot diff in this worktree; run with --base below. Started before the last two small edits (the Undo active line and the Conversation empty line), which were re-checked by the next two commands."
+    },
+    {
+      "command": "pnpm lint && npx vitest run --project unit packages/commands packages/runtime/test/project-join.test.ts packages/runtime/test/onerepo-together.test.ts (final head)",
+      "result": "lint ok (40 earlier warnings); 26 files, 280 tests passed"
+    },
+    {
+      "command": "pnpm docs:check -- --base claude/nifty-knuth-f9udt0 && pnpm docs:links && pnpm secrets:scan",
+      "result": "docs-check: ok (62 files); link-check: ok (211 files); secret-scan: clean (2165 files)"
+    },
+    {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+      "result": "94 files, 1232 tests passed"
+    },
+    {
+      "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && npx playwright test --config playwright.local.config.ts)",
+      "result": "36 passed; the local config is git-ignored and not committed"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "5 files passed, 6 skipped; 30 tests passed, 78 skipped"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "13 files passed; 25 tests passed, 1 skipped"
+    },
+    {
+      "command": "pnpm test:injection",
+      "result": "PASS: 73 cases (52 hostile, 21 controls), 73 passed"
+    },
+    {
+      "command": "Bench walk on 'fixup-d1109-onerepo-join' (daemon 48720, UI 2320, --provider bench, --githost 48721): Kite club planned and worked on bench/seeded, Site paired to it through the database as before the rule; scripts in the scratchpad (fj-setup.cjs, fj-pair-db.mjs, fj-walk.cjs a/b)",
+      "result": "Part a, the join through the dialog in the UI: 13 of 14 checks pass; the one failure was the walk script's own queue count (two consumed notes from before the join, not the probe). Part b, after a daemon restart: 15 of 15 pass, including Undo pressed in the Changes UI and Kite club taking a task again. Checks are in /tmp/frbench/fixup-d1109-onerepo-join/walk-a.json and walk-b.json. Bench stopped with scripts/bench/stop.mjs; home, githost data and browser profile deleted."
+    },
+    {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "empty"
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/review-d1109-onerepo-join/steps/09-a09-kite-joined-overview.png",
+      "/tmp/frbench/review-d1109-onerepo-join/steps/10-a10-kite-joined-tasks.png",
+      "/tmp/frbench/review-d1109-onerepo-join/steps/11-a11-kite-joined-chat.png"
+    ],
+    "after": [
+      "/tmp/frbench/fixup-d1109-onerepo-join/steps/04-a-kite-joined-overview.png",
+      "/tmp/frbench/fixup-d1109-onerepo-join/steps/05-a-kite-joined-tasks.png",
+      "/tmp/frbench/fixup-d1109-onerepo-join/steps/06-a-kite-joined-chat.png",
+      "/tmp/frbench/fixup-d1109-onerepo-join/steps/07-a-site-chat.png",
+      "/tmp/frbench/fixup-d1109-onerepo-join/steps/09-b-kite-joined-tasks.png",
+      "/tmp/frbench/fixup-d1109-onerepo-join/steps/12-b10-changes-after-restart.png",
+      "/tmp/frbench/fixup-d1109-onerepo-join/steps/13-b11-changes-undone.png",
+      "/tmp/frbench/fixup-d1109-onerepo-join/steps/14-b12-kite-tasks-after-undo.png"
+    ]
+  },
+  "tests_changed_for_design": [],
+  "new_problems": [
+    "Talk opened on a joined project's page (ConversationPanel uses the project on screen) still has its message box. A change asked there is refused in words by the executor's guard, but the panel itself does not say the chat is kept to read.",
+    "POST /projects/:id/plan (applyProjectPlan, no UI client method) still writes milestones and tasks on a closed project. It has no real-daemon case to extend, so it is not guarded here.",
+    "The Data tab's Add and Import still accept data on a joined project. The data routes have no store in their deps. Data assets start no work, but an import into the joined project is not seen by the kept one.",
+    "A chat change read back on a project before the join, and answered Yes after it, runs from its already-prepared steps without the new guard (the guard is in prepare). Rare: the join is not refused while a chat yes is pending.",
+    "The executor.ts re-indentation is limited to refuseClosedProject. Conversation.tsx's message box and examples moved one level in (wrapped in readOnly), which may cost a whitespace-only merge conflict with a later area that edits the chat composer."
+  ],
+  "notes_for_other_areas": [
+    "packages/commands/src/executor.ts: CommandExecutor.prepare now calls refuseClosedProject(name, card) after the plan. It is a new private method, outside decideSteps and post, so d1109-selftasks-run's executor regions are untouched. Any command whose card.projectId is archived (joined or removed) is refused unless its name is in OPEN_ON_A_CLOSED_PROJECT.",
+    "@forerunner/runtime/daemon/join-words exports OPEN_ON_A_CLOSED_PROJECT (summary.speak, session.stop, session.pause, request.answer, project.join), joinedRefusalSentence(name, into), joinedTasksSentence(into) and joinedChatSentence(into). joinedProjectRefusal in commands' project.ts now builds its sentence with joinedRefusalSentence; the words are unchanged.",
+    "A later area that adds a command acting on a closed project must add it to OPEN_ON_A_CLOSED_PROJECT, or the executor refuses it in words. Example: task.split on a task of a joined project is refused.",
+    "POST /projects/:id/queue refuses a closed project (joined or removed) with ForerunnerError validation, which answers 409 conflict, before writing.",
+    "UI: TasksTab and ChatTab take a closed prop ({text, to}) from ProjectPage; Conversation takes readOnly; SummaryTab hides ResearchReads and QueueSection for a closed project and DecisionsSection for a joined one. Testids: chat-closed, no-tasks (with the closed text), chat-empty ('Nothing was said here.' when read-only).",
+    "Fake daemon: joinedRefusalOf(projectId) refuses POST /projects/:id/tasks, POST /projects/:id/queue and /commands/execute (except the open commands) for state.joined projects, with code validation for the command result.",
+    "project.join's undo restores the closed project's active flag from before.closed (it was always true before).",
+    "Suggested UPDATE-LOG line for U-091: 'A project that joined another takes no new work: its Tasks tab says where its tasks are, its Chat is kept to read, and a task, note or setting asked for it is answered \"Kite club\" joined \"Site\", so its work runs there.'"
+  ]
+}

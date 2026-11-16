@@ -1,102 +1,103 @@
 {
- "why": "Run C step 3's leftovers that no later run C area owns. Triage them with live check 4's findings, /tmp/frbench/leftovers-L3.json and leftovers-C2.json (the next leftovers run). Sources: /tmp/frbench/runC-C3-{fix,review,fixup}-<key>.json and runC-C3-merge.json problems_left.",
- "base": "46c516dc193179e8fb8f2f12fde091077c8648e7",
- "items": [
-  {
-   "id": "C3L-1",
-   "severity": "minor",
-   "from": "d1109-starts-engine",
-   "text": "L3-left-12, carried (not built in C3): a review-only session's plan line and session review use the writer's estimate ('Plan: 1 task, about CHF 0.03.'; the review measured against item.estimateUsdMicro). It needs a review-only estimate in the estimates model (l3-money-engine's module)."
-  },
-  {
-   "id": "C3L-2",
-   "severity": "words",
-   "from": "d1109-starts-engine",
-   "text": "S-11 (cut line): 'go ahead and run it' is not parsed as a start (the parser splits on 'and', so the line goes to the chat model, whose session_start is read back too); no German start phrases."
-  },
-  {
-   "id": "C3L-3",
-   "severity": "words",
-   "from": "d1109-starts-engine",
-   "text": "S-3 (cut line): Settings' change line after a budget raise does not say what follows ('Raised: … it runs at your next Start'); the cards and row words do."
-  },
-  {
-   "id": "C3L-4",
-   "severity": "words",
-   "from": "d1109-starts-engine",
-   "text": "With the hands-off setting turned on later, its session also runs a task made ready while it was off, whose line had said 'It runs at your next Start.': say so in the setting's effect line."
-  },
-  {
-   "id": "C3L-5",
-   "severity": "words",
-   "from": "d1109-starts-engine",
-   "text": "Chat's start read-back says 'up to CHF 5' (formatChfShort drops .00): money reads with two decimals (design section 5 rule 7)."
-  },
-  {
-   "id": "C3L-6",
-   "severity": "minor",
-   "from": "d1109-starts-engine",
-   "text": "runner.ts: priceNow was inserted between reviewOnlyResult's JSDoc and its function, so that doc comment sits on priceNow."
-  },
-  {
-   "id": "C3L-7",
-   "severity": "words",
-   "from": "d1109-chat-depth",
-   "text": "Sibling of L3-left-11: every chat failure but the timeout still reads 'I could not answer (<error message>).', a raw state in brackets; some messages carry meaning (conversation.test.ts asserts 'month cap reached'), so it needs one sentence per error code (caps, credentials, provider errors)."
-  },
-  {
-   "id": "C3L-8",
-   "severity": "words",
-   "from": "d1109-chat-depth",
-   "text": "Once another line follows an ask line, the old line stays as text ending 'Go ahead?' with no button, a question the person can no longer answer (a typed yes then answers nothing: 'Yes to what?'): dim it or word it as past."
-  },
-  {
-   "id": "C3L-9",
-   "severity": "minor",
-   "from": "d1109-chat-depth",
-   "text": "C2-left-7's end: Inbox, Overview and Changes do not read ?answered=, ?request=, ?decision= or ?projectId=, so the From line names those records with no link (the spec allowed it); making those pages open the record is page work."
-  },
-  {
-   "id": "C3L-10",
-   "severity": "minor, tests",
-   "from": "d1109-chat-depth",
-   "text": "Chat depth's missing acceptance cases: Stop leaves a task the turn added with its Undo; chat_ask_above at CHF 1.00 (a CHF 0.40 longer pass goes ahead, a stronger one still asks); the project-budget cap line composed; at least three lookups before the wrap-up on a 10,000-token context; Costs' 'Planning and chat' growing; after composing twice, the ask repeated with new figures when the price changed; Answer now has no test that fails without it (SessionBudget.wrapUpNow untested)."
-  },
-  {
-   "id": "C3L-11",
-   "severity": "minor",
-   "from": "d1109-chat-depth",
-   "text": "figuresOf runs on every typed quick turn before the first model call (it builds the thorough request's tool registry, counts its tokens and reads up to 200 chat.reply rows): unmeasured latency on the 1 s first-token path; LC-C12 reads it."
-  },
-  {
-   "id": "C3L-12",
-   "severity": "minor",
-   "from": "d1109-chat-depth",
-   "text": "depth.ts still exports askAboveWords ('asks first above CHF 0.10'), used only by its words test; the settings words come from commands' chatAskAboveWords: remove the dead export."
-  },
-  {
-   "id": "C3L-13",
-   "severity": "minor",
-   "from": "merge-w19",
-   "text": "With both C3 areas, every chat request is about 3% larger; on flatPricing the default USD 0.05 turn floor no longer holds six calls of a lookup-heavy turn (the merge gave one test the ceiling). On the real chat model's prices the floor holds far more; LC-C10 watches for 'I could not answer (run budget would be exceeded).' on a lookup-heavy turn."
-  },
-  {
-   "id": "C3L-14",
-   "severity": "decision",
-   "from": "d1109-chat-depth",
-   "text": "In a project with a failed task's card listed in full, every chat change (task_create and the rest) waits for a Yes (d1109-chat-guard's read-back after records), even when nothing in the card reads like instructions (bench: 'Add \"Write the FAQ page\" to Quote Page?'). By design; the owner sees it in LC-C13, then decide whether an unflagged card should keep that rule."
-  },
-  {
-   "id": "C3L-15",
-   "severity": "minor, tests",
-   "from": "ci-307-fix review",
-   "text": "The 'once' / 'no second one' / 'nothing more' checks tick right after 'task done' while that session may still be active; a start made by mistake at those ticks is queued (scheduler.pendingFor), not started, and with startServices false nothing drains it until a later tick, so the count right after can miss it (continuation.test.ts about :281-284, :465-472, :585-586; start-by-itself.test.ts about :197-199, :310-311). Strengthen without loosening: await settleSessions(rt) before the 'nothing more' ticks and before the count, and expect(rt.scheduler.pendingFor(rt.agent.id)).toBeUndefined()."
-  },
-  {
-   "id": "C3L-16",
-   "severity": "minor, CI",
-   "from": "ci-307-fix review",
-   "text": "Windows: other composed tests close while a session's tail may still run and then remove the home with plain rmSync, or compose again on the same home (stop-by.test.ts:288-289 after POST /shutdown; capabilities-wiring.test.ts:373-378; budget-pause.test.ts:461 and :1381; oversized-task.test.ts:218 and :451). They passed on Windows CI so far; give each the same settleSessions and removeHomes (packages/runtime/test/helpers.ts, ba9874a) where a session can still run."
-  }
- ]
+  "why": "Run C step 3's leftovers that no later run C area owns. Triage them with live check 4's findings, /tmp/frbench/leftovers-L3.json and leftovers-C2.json (the next leftovers run). Sources: /tmp/frbench/runC-C3-{fix,review,fixup}-<key>.json and runC-C3-merge.json problems_left.",
+  "base": "46c516dc193179e8fb8f2f12fde091077c8648e7",
+  "items": [
+    {
+      "id": "C3L-1",
+      "severity": "minor",
+      "from": "d1109-starts-engine",
+      "text": "L3-left-12, carried (not built in C3): a review-only session's plan line and session review use the writer's estimate ('Plan: 1 task, about CHF 0.03.'; the review measured against item.estimateUsdMicro). It needs a review-only estimate in the estimates model (l3-money-engine's module).",
+      "note_2026_11_16": "2026-11-16: not built in C4b, but now buildable: the review estimate it needs exists after C4b (reviewPartUsdMicro); its plan line is views.ts lineOf's session.planned case (C1's region) and its price is start-check.ts'."
+    },
+    {
+      "id": "C3L-2",
+      "severity": "words",
+      "from": "d1109-starts-engine",
+      "text": "S-11 (cut line): 'go ahead and run it' is not parsed as a start (the parser splits on 'and', so the line goes to the chat model, whose session_start is read back too); no German start phrases."
+    },
+    {
+      "id": "C3L-3",
+      "severity": "words",
+      "from": "d1109-starts-engine",
+      "text": "S-3 (cut line): Settings' change line after a budget raise does not say what follows ('Raised: … it runs at your next Start'); the cards and row words do."
+    },
+    {
+      "id": "C3L-4",
+      "severity": "words",
+      "from": "d1109-starts-engine",
+      "text": "With the hands-off setting turned on later, its session also runs a task made ready while it was off, whose line had said 'It runs at your next Start.': say so in the setting's effect line."
+    },
+    {
+      "id": "C3L-5",
+      "severity": "words",
+      "from": "d1109-starts-engine",
+      "text": "Chat's start read-back says 'up to CHF 5' (formatChfShort drops .00): money reads with two decimals (design section 5 rule 7)."
+    },
+    {
+      "id": "C3L-6",
+      "severity": "minor",
+      "from": "d1109-starts-engine",
+      "text": "runner.ts: priceNow was inserted between reviewOnlyResult's JSDoc and its function, so that doc comment sits on priceNow."
+    },
+    {
+      "id": "C3L-7",
+      "severity": "words",
+      "from": "d1109-chat-depth",
+      "text": "Sibling of L3-left-11: every chat failure but the timeout still reads 'I could not answer (<error message>).', a raw state in brackets; some messages carry meaning (conversation.test.ts asserts 'month cap reached'), so it needs one sentence per error code (caps, credentials, provider errors)."
+    },
+    {
+      "id": "C3L-8",
+      "severity": "words",
+      "from": "d1109-chat-depth",
+      "text": "Once another line follows an ask line, the old line stays as text ending 'Go ahead?' with no button, a question the person can no longer answer (a typed yes then answers nothing: 'Yes to what?'): dim it or word it as past."
+    },
+    {
+      "id": "C3L-9",
+      "severity": "minor",
+      "from": "d1109-chat-depth",
+      "text": "C2-left-7's end: Inbox, Overview and Changes do not read ?answered=, ?request=, ?decision= or ?projectId=, so the From line names those records with no link (the spec allowed it); making those pages open the record is page work."
+    },
+    {
+      "id": "C3L-10",
+      "severity": "minor, tests",
+      "from": "d1109-chat-depth",
+      "text": "Chat depth's missing acceptance cases: Stop leaves a task the turn added with its Undo; chat_ask_above at CHF 1.00 (a CHF 0.40 longer pass goes ahead, a stronger one still asks); the project-budget cap line composed; at least three lookups before the wrap-up on a 10,000-token context; Costs' 'Planning and chat' growing; after composing twice, the ask repeated with new figures when the price changed; Answer now has no test that fails without it (SessionBudget.wrapUpNow untested)."
+    },
+    {
+      "id": "C3L-11",
+      "severity": "minor",
+      "from": "d1109-chat-depth",
+      "text": "figuresOf runs on every typed quick turn before the first model call (it builds the thorough request's tool registry, counts its tokens and reads up to 200 chat.reply rows): unmeasured latency on the 1 s first-token path; LC-C12 reads it."
+    },
+    {
+      "id": "C3L-12",
+      "severity": "minor",
+      "from": "d1109-chat-depth",
+      "text": "depth.ts still exports askAboveWords ('asks first above CHF 0.10'), used only by its words test; the settings words come from commands' chatAskAboveWords: remove the dead export."
+    },
+    {
+      "id": "C3L-13",
+      "severity": "minor",
+      "from": "merge-w19",
+      "text": "With both C3 areas, every chat request is about 3% larger; on flatPricing the default USD 0.05 turn floor no longer holds six calls of a lookup-heavy turn (the merge gave one test the ceiling). On the real chat model's prices the floor holds far more; LC-C10 watches for 'I could not answer (run budget would be exceeded).' on a lookup-heavy turn."
+    },
+    {
+      "id": "C3L-14",
+      "severity": "decision",
+      "from": "d1109-chat-depth",
+      "text": "In a project with a failed task's card listed in full, every chat change (task_create and the rest) waits for a Yes (d1109-chat-guard's read-back after records), even when nothing in the card reads like instructions (bench: 'Add \"Write the FAQ page\" to Quote Page?'). By design; the owner sees it in LC-C13, then decide whether an unflagged card should keep that rule."
+    },
+    {
+      "id": "C3L-15",
+      "severity": "minor, tests",
+      "from": "ci-307-fix review",
+      "text": "The 'once' / 'no second one' / 'nothing more' checks tick right after 'task done' while that session may still be active; a start made by mistake at those ticks is queued (scheduler.pendingFor), not started, and with startServices false nothing drains it until a later tick, so the count right after can miss it (continuation.test.ts about :281-284, :465-472, :585-586; start-by-itself.test.ts about :197-199, :310-311). Strengthen without loosening: await settleSessions(rt) before the 'nothing more' ticks and before the count, and expect(rt.scheduler.pendingFor(rt.agent.id)).toBeUndefined()."
+    },
+    {
+      "id": "C3L-16",
+      "severity": "minor, CI",
+      "from": "ci-307-fix review",
+      "text": "Windows: other composed tests close while a session's tail may still run and then remove the home with plain rmSync, or compose again on the same home (stop-by.test.ts:288-289 after POST /shutdown; capabilities-wiring.test.ts:373-378; budget-pause.test.ts:461 and :1381; oversized-task.test.ts:218 and :451). They passed on Windows CI so far; give each the same settleSessions and removeHomes (packages/runtime/test/helpers.ts, ba9874a) where a session can still run."
+    }
+  ]
 }

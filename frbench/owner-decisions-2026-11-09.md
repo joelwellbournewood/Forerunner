@@ -206,3 +206,17 @@ the roll-up ("All this sounds good except the status line ..."), and are NOT ope
 Also: "Take these answers into account, specify the roadmap, and start to wrap up for this
 session. You can let some things finish if they are ongoing, but then stop and schedule to
 continue next weekly reset on sunday morning."
+
+## Answer of 2026-11-16 ~07:58 UTC (binding; overrules the run L3 default)
+
+Question (run L3): "a task's budget counts only the work, not the critic's reviews of it, so a
+task's cost can read higher than its budget. ... Should the budget count the reviews too?"
+
+Owner, verbatim: "yes it should count critics reviews, and fixes."
+
+- Reading: a task's budget counts everything spent on the task: the specialist's work, the
+  critic's reviews of it, and the fixes (the work done again after a review sent it back, and
+  any later rounds of review and fix). A task pauses at its budget on that total (ADR 0112's
+  clean pause), its estimate includes the reviews and fixes, and the Tasks row, the drawer and
+  Costs show one figure against the budget. The default built by run L3 (work only, with the
+  screens saying which figure each line counts) is replaced.

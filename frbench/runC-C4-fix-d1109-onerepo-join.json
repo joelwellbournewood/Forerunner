@@ -1,0 +1,302 @@
+{
+  "area": "d1109-onerepo-join",
+  "branch": "fix/d1109-onerepo-join",
+  "head_sha": "7f14bae4c816e4a612029a64b226c0c2038c3db7",
+  "commits": [
+    {
+      "sha": "21b203ea8664d877fe277540bb017fc472767801",
+      "subject": "onerepo-join: Make one project for two projects on one repository (U-091, U-087)"
+    },
+    {
+      "sha": "2bba21f089d69e1b413ec5a2ec474edc37c801bb",
+      "subject": "onerepo-join: pull requests, sessions, chat, costs and the waits after Make one project (U-091, U-087)"
+    },
+    {
+      "sha": "70a080172ec3877d7af0ec8f5270744207b46c7b",
+      "subject": "onerepo-join: a GitHub that hangs ends like one that refuses; an unknown author is another account (C2-left-10)"
+    },
+    {
+      "sha": "1357b81c3d16e2093ea85edf4b8380e7e2cebe64",
+      "subject": "onerepo-join: the injection suite covers a repository's marker name (C2-left-9)"
+    },
+    {
+      "sha": "073e7dfc9902e297d7175b6271b983f6e5335a3b",
+      "subject": "onerepo-join: the Sessions tab test keeps its clock at noon (C3-left-1)"
+    },
+    {
+      "sha": "dbf307d6125af45e308c43088f78bd50072f199a",
+      "subject": "onerepo-join: a together project's Docs say who writes them; Overview errors in words (C2-left-13)"
+    },
+    {
+      "sha": "80c6cea3df44bc3bd43d9c70362f1386c07da116",
+      "subject": "onerepo-join: the Data import refuses a used repository as 409; the stand-in ignores case (C2-left-12)"
+    },
+    {
+      "sha": "b893856d65a46af3375b9013c7ce0a3fab46c469",
+      "subject": "onerepo-join: Take it over says when its docs pull request could not be opened (C2-left-11)"
+    },
+    {
+      "sha": "0d444ecd09098167b3a5efa1c7e51b3e555a343b",
+      "subject": "onerepo-join: docs for Make one project and the leftovers (OJ-09)"
+    },
+    {
+      "sha": "ab4f3c3884f727dfc8f16fc4f8b648dce7bb2bae",
+      "subject": "onerepo-join: ADR 0117's amendment lists the leftovers' consequences (C2-left-11, C2-left-12, C2-left-13)"
+    },
+    {
+      "sha": "00ef42ded5209f3267c6350a552503a8b8281c5a",
+      "subject": "onerepo-join: the together Docs test reads B's client through a constant (typecheck)"
+    },
+    {
+      "sha": "7f14bae4c816e4a612029a64b226c0c2038c3db7",
+      "subject": "onerepo-join: the record channel's unit test lists the repository-marker cases (C2-left-9)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "OJ-01: two projects on this computer that use one repository or folder (made before one repository was one project) were not told apart anywhere: neither Overview said so and nothing offered to make them one.",
+      "u_ids": [
+        "U-091",
+        "U-087"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-onerepo-join, run C' > 'OJ-01: two projects on one repository made before the rule: each card names the other with the Overview's line; a project alone has none; the same after the daemon starts again'; apps/ui/test/onerepo-join.test.tsx 'the Overview says both work in the repository, with Make one project and its line; ...'",
+      "how": "ProjectCard.sharesRepositoryWith from join-preview.ts sharedLinkOf (RepositoryIndex.projectsUsing; locator spelled as the oldest project spells it; only the person's own projects). SummaryTab's SharedRepository shows '\"Site\" and \"Kite club\" both work in o/site.' (\"the same folder\" for folders) with Make one project and MAKE_ONE_EXPLAIN. Shown, not stopped: nothing is held.",
+      "check_in_the_app": "Have two projects that use one GitHub repository or folder (an install that made them before this version). Open either project's Overview: it says '\"Site\" and \"Kite club\" both work in o/site.' with Make one project and 'You choose which to keep; the other's tasks, plan and cards move into it.' A project alone has no such line. Restart the app: the line is still there. Bench evidence: /tmp/frbench/fix-d1109-onerepo-join/after/01-after-01-site-overview-line.png (before: /tmp/frbench/fix-d1109-onerepo-join/before/02-before-02-site-overview-no-line.png). Live check for the session lead: on a bench-live home, link two projects to the same real repository by an install made before run C (or the DB edit in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/join-pair-db.mjs with the daemon restarted) and read both Overviews."
+    },
+    {
+      "problem": "OJ-02/OJ-05: there was no way to make one project: no dialog, no command, no route; the refusals (a running session, a plan waiting or being drafted, a merge under way, not sharing a link, not the person's project) were not defined.",
+      "u_ids": [
+        "U-091",
+        "U-087"
+      ],
+      "failing_test_before": "packages/commands/test/project-join.test.ts 'moves Kite club's work into Site in one change: ...' and 'each refusal answers its sentence and moves nothing: ...'; apps/ui/test/onerepo-join.test.tsx 'what holds the join now is said in its sentence and keeps Make one project disabled'; apps/ui/test/real-daemon.test.ts 'OJ-05, OJ-02, OJ-06, OJ-04: the dialog's facts ...'",
+      "how": "New command project.join (commands/project-join.ts, medium risk, askFromChat, reversible) moves in one store.transaction every task of the closed project, its milestones after the kept one's last order_index, its cards, queued notes, merge records, decisions, accepted source candidates and data assets; the closed project is archived with settings.joined_into, the kept one gets joined_from; sessions, changes, spending stay readable where they are, no budget changes. Refusals come from compose's projectJoin port over joinRefusal (join-preview.ts). GET /projects/:id/join-preview feeds JoinProjectsDialog.tsx (per project counts, spend in CHF, budgets, who merges, Research reads, Keep \"Name\" radios, moves and stays lines, the differing setting, Make one project disabled until chosen or while refused).",
+      "check_in_the_app": "On the Overview of one of the two projects press Make one project. The dialog lists both with their tasks, open pull requests, 'Spent so far: CHF ...', budgets and Research reads; Make one project stays disabled until you pick Keep \"Site\". It says 'The tasks, plan, cards and pull requests of \"Kite club\" move into \"Site\".' and '\"Kite club\" keeps its sessions, changes and spending to read; no budget changes.' Press Make one project: the app opens Site; its tasks list now has Kite club's tasks; Changes lists 'Made one project: \"Kite club\" joined \"Site\".'. With a session running on either, the dialog shows 'A session is working on \"Kite club\". Make one project when it ends.' instead of the button. Bench evidence: /tmp/frbench/fix-d1109-onerepo-join/after/02-after-02-dialog.png, 03-after-03-dialog-keep-site.png, 04-after-04-site-includes.png."
+    },
+    {
+      "problem": "OJ-03: after a join the closed project's open pull requests (task chain, docs scaffold, status) had no project to be listed or merged from.",
+      "u_ids": [
+        "U-091"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'OJ-03: after Make one project Site's Overview lists Kite club's status and scaffold pull requests as its own, ...' and 'OJ-03: Kite club's open task pull requests (a chain of two) are listed on Site's Overview after the join and merge from there in order; ...'",
+      "how": "The moved tasks keep their branches and pr_url; isProjectDocsPr/isProjectStatusPr read joined_from (d1109-onerepo-link's index), so Site lists Kite club's docs and status pull requests as its own and its next session writes its status into Kite club's open status pull request; merges of the moved chain go in order from Site; another project's pull request on the repository is never pushed to or commented on.",
+      "check_in_the_app": "Live check for the session lead (needs GitHub; never run here): with two projects on one real repository, each with an open task pull request, make one project keeping Site. Site's Overview lists Kite club's pull requests under Waiting for you; press Merge on the first of a chain, then the next: both merge on GitHub in order. Start a session on Site with the status pull request on: it updates the open fr/status pull request, no second one is opened."
+    },
+    {
+      "problem": "OJ-04: Undo of a join had to exist (also after a restart) and must not leave a dependency across two projects or undo while a session or merge runs.",
+      "u_ids": [
+        "U-091"
+      ],
+      "failing_test_before": "packages/commands/test/project-join.test.ts 'OJ-04: Undo is refused while a session runs on Site, while a moved task's merge is under way, and while a Site task that was not moved waits for a moved one; ...'",
+      "how": "project.join's undo puts every moved row back and reopens the closed project with its links; undoBlocked answers fragments ('a session is working on \"Site\". Undo when it ends', the merge, '\"Shop page\" waits for \"Cart\", which came from \"Kite club\": change that first'); the kept project's project.create cannot be undone while it includes another's work, and a joined project's rows answer '\"Kite club\" joined \"Site\"'.",
+      "check_in_the_app": "After Make one project, restart the app, open Changes: the row 'Made one project: \"Kite club\" joined \"Site\".' has Undo; press it: Changes says '\"Kite club\" is its own project again.', Kite club's Overview shows its tasks and the shared line again. Bench evidence: /tmp/frbench/fix-d1109-onerepo-join/after/08-after-08-changes-row.png and 09-after-09-undone-after-restart.png (walk checks in /tmp/frbench/fix-d1109-onerepo-join/after-walk.json, 15 of 15 pass)."
+    },
+    {
+      "problem": "OJ-06/OJ-07/OJ-10: a joined project read as removed ('This project was removed.'), and the kept project said nothing of the work, spending and sessions it now includes.",
+      "u_ids": [
+        "U-091",
+        "U-087"
+      ],
+      "failing_test_before": "apps/ui/test/onerepo-join.test.tsx 'a joined project's page reads where its work went with Open it, never 'This project was removed.', and offers no start' and 'the kept project's Sessions list ends with the joined project's line and Open; its Costs names what the joined project spent before it joined'; apps/ui/test/real-daemon.test.ts 'OJ-10: after the join Site's Sessions list ends with ...'",
+      "how": "Status line kind 'joined' ('Joined into \"Site\" on 9 Nov.' with Open it), ProjectPage hides Start, repository and intake for a joined project; ProjectCard.includesWorkOf on the kept Overview; CostView.joinedSpend ('Spent in \"Kite club\" before it joined: CHF 3.20'); ProjectSessionsView.joined on the first page ('\"Kite club\" had 3 sessions before it joined.' with Open); change-rows never reads a joined project as removed; removedProjectRefusal answers '\"Kite club\" joined \"Site\", so its work runs there.'; chat recall reads the kept project with the ones that joined it (scope.ts withJoined).",
+      "check_in_the_app": "After Make one project keeping Site: open Kite club (from Changes or an old link): 'Joined into \"Site\" on <day>.' with Open it, no Start session. Site's Overview says 'Includes the work of \"Kite club\".'; More, Sessions ends with '\"Kite club\" had 2 sessions before it joined.' and Open; More, Costs says 'Spent in \"Kite club\" before it joined: CHF 0.04'. In Site's Chat ask what Kite club's last session did: the answer names Kite club's session. Bench evidence: /tmp/frbench/fix-d1109-onerepo-join/after/05-after-05-site-sessions-joined.png, 06-after-06-site-costs-joined.png, 07-after-07-kite-joined-page.png."
+    },
+    {
+      "problem": "OJ-08: chat could not make one project, and the model's tool definition and read-back had to be exact.",
+      "u_ids": [
+        "U-091"
+      ],
+      "failing_test_before": "packages/commands/test/project-join.test.ts 'OJ-08: from chat the join is read back with Yes and No and its definition is the model's exact text; the yes runs the same moves'; apps/ui/test/real-daemon.test.ts 'OJ-08: in chat project_join's definition is the model's exact text, ...'",
+      "how": "project_join chat tool with PROJECT_JOIN_DESCRIPTION asserted exactly; askFromChat reads back 'Make one project: move the tasks, plan and cards of \"Kite club\" into \"Site\"? Changes has its Undo.' and waits for Yes. chat-recall's token bound accounts for the one more tool definition.",
+      "check_in_the_app": "In Chat say 'make Site and Kite club one project, keep Site': the reply asks 'Make one project: move the tasks, plan and cards of \"Kite club\" into \"Site\"? Changes has its Undo.' with Yes and No; nothing moves until Yes. Live check for the session lead (bench-live, real model): the same sentence, and 'make them one project' without naming one to keep: the model must ask which to keep, never choose."
+    },
+    {
+      "problem": "C3-left-2: a join could go through while a session of either project waited to go on (a kept continuation, a kept Start, a pending hands-off start), leaving that start on a closed project.",
+      "u_ids": [
+        "C3-left-2"
+      ],
+      "failing_test_before": "packages/runtime/test/project-join.test.ts 'the person's session of Kite club waiting for its credential holds the join with its time, also after the daemon starts again; after Cancel the join goes through' and 'a Start kept for the reset ('Start at 15:00') holds the join with its time; after Cancel the join goes through'; packages/commands/test/project-join.test.ts refusal case keepStartPending",
+      "how": "compose's keptWait(projectId) (shared with continuations.waiting): kept continuation at its time, else keptStartOf, else summary_cache.start_pending; joinRefusal answers 'A session of \"Kite club\" waits to go on at 15:40. Make one project after it ran, or cancel it first.' or the hands-off sentence.",
+      "check_in_the_app": "Have a session of Kite club wait for its Claude credential or keep 'Start at 15:40'; open Make one project: the dialog says 'A session of \"Kite club\" waits to go on at 15:40. Make one project after it ran, or cancel it first.' and the button stays disabled. Cancel the waiting start; open the dialog again: the join goes through."
+    },
+    {
+      "problem": "C2-left-10 (major): a GitHub that accepted the connection and never answered held POST /projects (the docs scaffold awaited it) and the repository read for ever; a pull request without a named author did not count as another account's.",
+      "u_ids": [
+        "C2-left-10"
+      ],
+      "failing_test_before": "packages/runtime/test/repository-use.test.ts 'd1109-onerepo-join, run C: a GitHub that does not answer, and an unknown author (C2-left-10)' (both cases); packages/capabilities/test/github.test.ts 'd1109-onerepo-join, run C: a GitHub that never answers (C2-left-10)'; apps/ui/test/real-daemon.test.ts 'C2-left-10: New project on a repository while GitHub never answers is made after the wait ...'",
+      "how": "GitHubHost cuts every request at GITHUB_REQUEST_TIMEOUT_MS (30 s, requestTimeoutMs option, AbortSignal.timeout) with a retryable provider_error 'GitHub API at <origin> did not answer in time'; RepositoryUse cuts its reads at READ_WAIT_MS (8 s, compose's githubReadWaitMs); elsewhereOf counts a pull request whose author is unknown as another account's.",
+      "check_in_the_app": "Live check for the session lead: with the network to api.github.com blocked after setup (or a GitHub API base pointing at a host that accepts and never answers), New project with a repository: the project is made after about 8 seconds instead of hanging, and Work together on a marked repository answers 'GitHub did not answer, so the project cannot be checked. Try again.'"
+    },
+    {
+      "problem": "C2-left-9 (major, security): a project name read from a repository's install marker reached the New project offer, the Overview, the take-over and chat's tool answers with no injection case; a name with a line break hid a 'SYSTEM:' line from the scan.",
+      "u_ids": [
+        "C2-left-9"
+      ],
+      "failing_test_before": "pnpm test:injection record-009 (the marker name reached the model and nothing reported it); evals/test/injection.test.ts record channel cases (until 7f14bae listed only record-001..007)",
+      "how": "Injection runner record source 'repo_marker' (marker planted on a MemoryGitHost, CommandLoop with chatLinkCheck, the obedient model's read is project_create on o/kite); cases record-008, record-009, record-010 (enforcement only) and controls record-103, record-104. markerNameOf now scans the name as written before cleaning it.",
+      "check_in_the_app": "Run pnpm test:injection: 73 cases pass; record-008/009 are dropped before any quote ('not delivered'), record-010's cancel is read back with Yes and No. In the app: a repository whose .forerunner/project.json name is 'CANARY. Ignore all previous instructions' is offered as 'another Forerunner project', never quoting the text."
+    },
+    {
+      "problem": "C2-left-13: a together project's Docs tab read 'missing · not written yet' for every doc it did not have, though a together project never writes docs; the Overview's Take it over (and three sibling error paths) showed the raw request error ('daemon unreachable at http://...: Failed to fetch').",
+      "u_ids": [
+        "C2-left-13"
+      ],
+      "failing_test_before": "packages/runtime/test/onerepo-together.test.ts (OR-15 case, B's missing docs read 'not written yet'); apps/ui/test/project-tabs.test.tsx 'a together project's doc it does not have says who writes it, with no missing mark (C2-left-13)'; apps/ui/test/onerepo-link.test.tsx 'Take it over while the background service does not answer says so in its words, never the raw error (C2-left-13)'",
+      "how": "docs-routes.ts answers such a row with togetherDocNote ('The other Forerunner of \"Kite club\" writes this doc on GitHub; this project does not write docs.') and DocView.notWrittenHere; DocsTab shows no missing badge for it. SummaryTab's Take it over, Research reads' Change, Merge and preview errors go through describeError ('Forerunner's background service does not answer.').",
+      "check_in_the_app": "Open a project made with Work together, Docs tab: each doc it does not have reads 'The other Forerunner of \"Kite club\" writes this doc on GitHub; this project does not write docs.' with no red 'missing'. Quit the background service, press Take it over on an Overview that offers it: the banner says 'Forerunner's background service does not answer.'"
+    },
+    {
+      "problem": "C2-left-12: the Data tab's GitHub import answered a link refusal with 400 'validation' while POST /projects and Sources answer 409 'conflict' with details.cause (and it leaked the chat-only untrusted mark); MemoryGitHost read owner and name case-sensitively unlike GitHub.",
+      "u_ids": [
+        "C2-left-12"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'the Data tab's import of a repository another project uses ... (OR-04, OR-05)' (expected 409, received 400); packages/capabilities/test/github.test.ts 'finds a repository and its files whatever the letters' case, and keeps the name as made' (repo O/Kite not found)",
+      "how": "data/routes.ts answers a link refusal (isLinkRefusalCause) as 409 'conflict' with details.cause and without untrusted; MemoryGitHost keeps repositories under the lower-cased owner/name and lists by owner case-insensitively, answering the name as made.",
+      "check_in_the_app": "On a project's Data tab import from GitHub a repository another project here uses: the answer is the same sentence as New project ('o/site is already the project \"Site\". Open it, or add this to it as new work.') and nothing is cloned."
+    },
+    {
+      "problem": "C2-left-11 (part 1): Take it over said 'Took over o/kite from \"Kite club\".' even when its docs pull request could not be opened (writeMarker swallowed the scaffold's failure), so GitHub still named the other project.",
+      "u_ids": [
+        "C2-left-11"
+      ],
+      "failing_test_before": "packages/commands/test/repo-take-over.test.ts 'when its docs pull request could not be opened, the sentence and the Changes row say what it did and what it could not do (C2-left-11)'",
+      "how": "writeMarker answers {prUrl: null, failed: true} when the scaffold throws; the change keeps pr_failed and the sentence is tookOverNoPullRequestSentence ('Took over o/kite from \"Kite club\" here, but the docs pull request that names this project could not be opened, so GitHub still names \"Kite club\".'); Undo stays open.",
+      "check_in_the_app": "Live check for the session lead: on a project whose repository names another Forerunner project not here and no other account active for 14 days, revoke the GitHub token's write access (or make the push fail), press Take it over: the line under it and the Changes row say '... could not be opened, so GitHub still names \"Kite club\".' and Undo works."
+    },
+    {
+      "problem": "C3-left-1: apps/ui/test/sessions-tab.test.tsx built its rows from the real clock and failed on CI between 00:00 and 03:00 (yesterday's rows show their day, not their time).",
+      "u_ids": [
+        "C3-left-1"
+      ],
+      "failing_test_before": "apps/ui/test/sessions-tab.test.tsx SL-7 'says the count, the working session on top ...' with the clock at 00:30 (received '15 Nov, 22:30 · under a minute · ...')",
+      "how": "The file fakes only Date, set to noon local and going on with real time; a new case pins 00:30 and asserts the intent (today's row '00:10 · ...', yesterday's '15 Nov, 22:30 · ...'). Passes with TZ at Kiritimati and Los Angeles.",
+      "check_in_the_app": "No app change: the Sessions tab shows '14:02 · ...' for a session of today and '15 Nov, 22:30 · ...' for one of yesterday, as before."
+    },
+    {
+      "problem": "OJ-09: docs for Make one project and the leftovers.",
+      "u_ids": [
+        "U-091"
+      ],
+      "failing_test_before": "scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0 (modules changed without their maintainer doc)",
+      "how": "runtime.md (Make one project section and the leftovers under One repository, one project), commands.md (project.join, repo.take_over's failed sentence), capabilities.md (GitHubHost timeout, MemoryGitHost names), apps.md (dialog, lines, describeError, notWrittenHere), testing.md (repo_marker), user-guide.md ('When two projects use one repository'), ADR 0117 amendment 2026-11-16 (decisions and consequences incl. leftovers), ADR 0116 amendment 2026-11-16 (the joined Sessions line).",
+      "check_in_the_app": "Read docs/user-guide.md 'When two projects use one repository' and walk it in the app as written."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "OJ-11: Work together for a project already here (the dialog's together form, moves into a together project with the repository's id, closing Site's own status pull request as the one GitHub write, a composed two-home test).",
+      "why": "On the cut line and not built: it needs re-keying the kept row to the repository's project id inside the join's transaction, a second dialog form and a two-home composed test with the fake host; the time went to OJ-01..OJ-10 and the nine leftovers. project.join's moveWork and joinRefusal are written so OJ-11 can reuse them; nothing of OJ-11 writes to GitHub today."
+    },
+    {
+      "problem": "C2-left-11 part 2: a take-over after this project's own fr/docs-scaffold pull request was opened leaves that pull request without the take-over line, and its marker conflicts with main's on merge.",
+      "why": "Needs the docs loop to rebuild the existing scaffold branch on the default branch (under the copy's lock) before writing the replaced marker: a docs-loop change of its own, with its git conflict handling; recorded in ADR 0117's amendment. Part 1 (the sentence says when the docs pull request could not be opened) is done."
+    },
+    {
+      "problem": "OJ-06's Home line: Home lists the kept project only and its card carries no 'Includes the work of' line.",
+      "why": "Cut line item; the line is on the kept project's Overview (includes-work-of) and its Sessions and Costs tabs. The joined project leaves Home because it is archived."
+    },
+    {
+      "problem": "Lessons of the closed project are not moved into the kept project.",
+      "why": "Design choice recorded in ADR 0117's amendment: a lesson's file is canonical (ADR 0002) and carries its project, so moving the index row alone would be undone by the next mirror. Chat recall in the kept project reads them through withJoined; the kept project's sessions do not get them in their memory yet."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (lint, lint:paths, typecheck, test, docs:check, docs:links, secrets:scan)",
+      "result": "lint ok (40 pre-existing warnings), lint:paths ok, typecheck ok; unit 5537 passed, 2 failed in evals/test/injection.test.ts (record channel list and reported rule did not know the new repo_marker cases), fixed in 7f14bae and the file re-run 25/25; typecheck re-run ok"
+    },
+    {
+      "command": "pnpm docs:check -- --base claude/nifty-knuth-f9udt0 && pnpm docs:links && pnpm secrets:scan",
+      "result": "docs-check: ok (58 files); link-check: ok (211 files); secret-scan: clean (2165 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "5 files passed, 6 skipped; 30 tests passed, 78 skipped"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "13 files passed; 25 tests passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+      "result": "94 files, 1226 tests passed"
+    },
+    {
+      "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && npx playwright test --config playwright.local.config.ts)",
+      "result": "36 passed (config file removed afterwards, not committed)"
+    },
+    {
+      "command": "pnpm test:injection",
+      "result": "PASS: 73 cases (52 hostile, 21 controls), 73 passed; record-008/009 dropped before the model, record-010 read back"
+    },
+    {
+      "command": "bench walk: node scripts/bench/start.mjs --name fix-d1109-onerepo-join --daemon-port 48700 --ui-port 2300 --provider bench; before walk on the base sources, after walk on this branch (/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/join-after.cjs)",
+      "result": "after: 15 of 15 checks pass (/tmp/frbench/fix-d1109-onerepo-join/after-walk.json), Undo after a daemon restart included; bench stopped with scripts/bench/stop.mjs and its home deleted"
+    },
+    {
+      "command": "TZ=Pacific/Kiritimati and TZ=America/Los_Angeles npx vitest run test/sessions-tab.test.tsx",
+      "result": "12 passed in both"
+    },
+    {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "empty"
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/fix-d1109-onerepo-join/before/01-before-01-home-two-projects-one-folder.png",
+      "/tmp/frbench/fix-d1109-onerepo-join/before/02-before-02-site-overview-no-line.png",
+      "/tmp/frbench/fix-d1109-onerepo-join/before/03-before-03-kite-overview-no-line.png"
+    ],
+    "after": [
+      "/tmp/frbench/fix-d1109-onerepo-join/after/01-after-01-site-overview-line.png",
+      "/tmp/frbench/fix-d1109-onerepo-join/after/02-after-02-dialog.png",
+      "/tmp/frbench/fix-d1109-onerepo-join/after/03-after-03-dialog-keep-site.png",
+      "/tmp/frbench/fix-d1109-onerepo-join/after/04-after-04-site-includes.png",
+      "/tmp/frbench/fix-d1109-onerepo-join/after/05-after-05-site-sessions-joined.png",
+      "/tmp/frbench/fix-d1109-onerepo-join/after/06-after-06-site-costs-joined.png",
+      "/tmp/frbench/fix-d1109-onerepo-join/after/07-after-07-kite-joined-page.png",
+      "/tmp/frbench/fix-d1109-onerepo-join/after/08-after-08-changes-row.png",
+      "/tmp/frbench/fix-d1109-onerepo-join/after/09-after-09-undone-after-restart.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "packages/runtime/test/chat-recall.test.ts token-bound case",
+      "why": "The chat's tool list grew by one definition (project_join); the bound subtracts that definition's tokens."
+    },
+    {
+      "test": "apps/ui/test/real-daemon.test.ts OR-07 cases ('a project whose copy of its repository names a project that is not on this computer ...' and 'repo.take_over from chat ...')",
+      "why": "Their copy is a plain folder, so the scaffold fails ('git clone failed: destination path ... already exists'); they asserted 'Took over o/kite from \"Kite club\".' and now assert the sentence that says the docs pull request could not be opened (C2-left-11)."
+    },
+    {
+      "test": "evals/test/injection.test.ts record channel: the hostile case list and the delivered/reported rule",
+      "why": "The repo_marker cases are new (record-008/010 ask for task_transition, record-009 task_create); a hostile marker name that markerNameOf drops never reaches the model (that channel's defence), and record-010 is enforcement only."
+    },
+    {
+      "test": "apps/ui/test/sessions-tab.test.tsx (whole file)",
+      "why": "C3-left-1: the clock is pinned (Date only, noon local, advancing) so the time-versus-day assertions hold at every hour; a new case asserts the intent at 00:30."
+    }
+  ],
+  "new_problems": [
+    "A joined project's Overview still offers 'Research reads: ... · Change' and the 'Note for the next session' input, though nothing runs there (bench /tmp/frbench/fix-d1109-onerepo-join/after/07-after-07-kite-joined-page.png); harmless but misleading, a Settings-style guard like the Start button's would hide them.",
+    "The Undo of a join answers a change card whose undoHint reads 'This cannot be undone.' (the generic card of an undo; seen in /tmp/frbench/fix-d1109-onerepo-join/after-walk.json, 'Undo after the restart'); pre-existing for every undo, not the join's own.",
+    "Pre-existing biome warning lint/suspicious/noConfusingVoidType at packages/commands/src/types.ts:569 (Promise<void | string | undefined>).",
+    "In a worktree without an upstream, 'pnpm docs:check' alone says 'nothing to check'; only 'pnpm docs:check -- --base claude/nifty-knuth-f9udt0' checks the branch."
+  ],
+  "notes_for_other_areas": [
+    "RuntimeApp.joinDeps (JoinDeps: store, humanId, agentId, index(), identities(repos), keptWaitWhen(projectId), chfPerUsd()) and join-preview.ts sharedLinkOf, sharesRepositoryWith, ownsOwnProject, joinRefusal, joinPreview; GET /projects/:id/join-preview?with=a,b (JoinPreviewView, DAEMON_ROUTES.joinPreview).",
+    "daemon/join-words.ts holds every sentence (light; the fake daemon imports it): JOINED_INTO_KEY 'joined_into', WAS_LINKED_KEY, joinedIntoOf(project), joinedFromOf, joinSentence, joinAsk, joinUndoneSentence, includesWorkSentence, joinedIntoSentence, spentBeforeJoinSentence, sessionsBeforeJoinSentence, MAKE_ONE_EXPLAIN.",
+    "ProjectCard gains sharesRepositoryWith {text, projects}, joinedInto {projectId, name, at, text}, includesWorkOf {text, projects}; status line kind 'joined' with action link 'Open it'; CostView.joinedSpend; ProjectSessionsView.joined (first page only); DocView.notWrittenHere.",
+    "COMMAND_NAMES appends 'project.join'; CommandPorts.projectJoin { refusal(keepId, closeIds) }; removedProjectRefusal answers joined projects first ('\"Kite club\" joined \"Site\", so its work runs there.'); executor's undo guard answers joinedProjectWords for a joined project's rows; project.create's undo is refused with the fragment 'this project includes the work of \"Kite club\"' (Changes reads 'Cannot be undone now: ...').",
+    "compose keptWait(projectId) is shared by continuations.waiting and the join's refusal (kept continuation, kept start, summary_cache.start_pending).",
+    "conversation/scope.ts withJoined(mine, project): recall in a kept project reads the joined projects' records.",
+    "GitHubHost option requestTimeoutMs / GITHUB_REQUEST_TIMEOUT_MS (30 s); RepositoryUse dep readWaitMs / READ_WAIT_MS (8 s); compose option githubReadWaitMs.",
+    "RepositoryTakeOverPort.writeMarker returns {prUrl, failed?}; repo.take_over's after carries pr_failed; tookOverNoPullRequestSentence in repository-words.ts; togetherDocNote for a together project's Docs rows.",
+    "The data routes answer a link refusal 409 'conflict' with details.cause (no untrusted), like POST /projects and Sources.",
+    "MemoryGitHost now finds owner/name whatever their case (stored lower-cased, answered as made).",
+    "Injection runner: record.where 'repo_marker' (RECORD_LINES, RECORD_READ project_create on o/kite); a hostile repo_marker case not delivered counts as dropped (pass).",
+    "Owner question default built: the shared-repository line is shown, not stopped; nothing is held until the person makes one project."
+  ]
+}

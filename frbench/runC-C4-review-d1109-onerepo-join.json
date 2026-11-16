@@ -1,0 +1,98 @@
+{
+  "verdict": "fix-needed",
+  "acceptance_walk": "Bench \"review-d1109-onerepo-join\" (daemon 48710, UI 2310, --provider bench, --githost 48711), started from this worktree at 7f14bae. This is the GitHub walk the spec asks for. The fixer's own walk only used a pair of folders.\n\nSetup:\n- \"Kite club\" made on bench/seeded with the status pull request on. It ran a session, which left 3 open pull requests: #1 fr/docs-scaffold, #2 its task, #3 fr/status.\n- \"Site\" made without a repository. Its repos were then set to \"https://github.com/Bench/seeded.git\" in the database (scratchpad rj-pair-db.mjs) and the daemon was restarted. That gives a pair made before the rule.\n- A Site session opened its own task pull request #4.\n\nPart 1 (/tmp/frbench/review-d1109-onerepo-join/walk1.json; steps 01-17 under steps/):\n- Both Overviews read '\"Kite club\" and \"Site\" both work in bench/seeded.' with Make one project and its explain line (02, 03).\n- Failure injection: the daemon was restarted with FORERUNNER_BENCH_DELAY_MS=5000, a task was added to Kite club and a session started.\n  - The dialog opens with nothing chosen and Make one project disabled (04).\n  - After Keep \"Site\" it says 'A session is working on \"Kite club\". Make one project when it ends.' and the button stays disabled (05).\n- Stopped that session, opened the dialog again and chose Keep \"Site\": the moves and stays lines show and there is no refusal (06).\n- Pressed Make one project: the app lands on Site, which reads 'Includes the work of \"Kite club\".' and no longer shows the shared line.\n  - Site's Overview lists Kite club's #2 and #1 next to its own #4 (07).\n  - Kite club's #3 status pull request is listed nowhere, because Site's status setting is off.\n- Pressed Merge on the moved #2 from Site's Overview: it merged and left the list (08).\n- Kite club's page reads 'Joined into \"Site\" on 16 Nov.' with Open it and no Start session (09).\n  - Its Tasks tab still shows New task with 'No tasks yet. Press New task, or describe them in Chat.' (10).\n  - Its Chat still offers \"add a task: …\" (11).\n- Site's Sessions tab: '\"Kite club\" had 2 sessions before it joined. Open' (13).\n- Site's Costs tab: 'Spent in \"Kite club\" before it joined: CHF 0.02' (14).\n- Home lists Site only (16). Changes has the join row with Undo, and Kite club's earlier rows say 'Cannot be undone now: \"Kite club\" joined \"Site\".' (17).\n\nProbe (rj-probe.cjs):\n- POST /projects/<kite>/tasks on the joined project answers 201: the task is made on the closed project.\n- Its Changes row says 'Added \"Probe task on the joined project\" to Kite club, for the coder. It runs at your next Start.'\n- POST /sessions for Kite club is refused: 409 '\"Kite club\" joined \"Site\", so its work runs there.'\n\nPart 2, after a daemon restart (walk2.json, steps 18-22):\n- The join row still has Undo. I pressed Undo in the Changes UI and the note read '\"Kite club\" is its own project again.'\n- Kite club has its tasks back, plus the stray probe task. Site keeps only its own task.\n- A read-only database check showed merge record #2 back on Kite club, still merged.\n- Both Overviews show the shared line again, Kite club has Start session again and Site has no Includes line (20, 21).\n\nBench stopped with scripts/bench/stop.mjs. Home, githost data and browser profile deleted; screenshots, texts and walk JSON kept in /tmp/frbench/review-d1109-onerepo-join/.\n\nTests and commands:\n- Fail on base, pass on the branch:\n  - With base sources for github.ts, repository-use.ts and memory.ts, the 4 new cases in github.test.ts and repository-use.test.ts (C2-left-10, C2-left-12) fail; they pass on the branch.\n  - The base sessions-tab.test.tsx fails with TZ=Etc/GMT+8 (local 00:38); the branch file passes there (C3-left-1).\n- Mutation checks:\n  - Removing joinRefusal's keptWaitWhen check fails 3 tests (both runtime project-join tests and the commands refusal case).\n  - Removing undoBlocked's dependency check fails the OJ-04 commands test.\n- Passing:\n  - packages/commands (275)\n  - the area's runtime, capabilities and commands files (56)\n  - real-daemon 'd1109-onerepo-join|d1109-onerepo-link' (16)\n  - the full UI vitest suite (94 files, 1226 tests)\n  - Playwright with the local config (36)\n  - pnpm test:injection (73 of 73; record-008 and 009 are dropped before the model, record-010 is read back)\n  - pnpm typecheck\n  - pnpm lint (40 warnings that were there before)\n  - docs:check --base claude/nifty-knuth-f9udt0 and docs:links.",
+  "blocking": [
+    {
+      "issue": "The joined (closed) project still offers New task, and a task made there is stranded with a promise the app does not keep. Its siblings are the same: chat's 'add a task: …' and the Overview's 'Note for the next session' on the joined page.",
+      "where": "apps/ui/src/pages/ProjectPage.tsx:104-110 (joined/closed hides only Start, repository and intake); apps/ui/src/pages/project/TasksTab.tsx:420,472 (New task and the empty-state text are not told the project is closed); task.create has no joined-project refusal (packages/commands, cf. removedProjectRefusal used only for starts in server.ts:1699 and compose.ts)",
+      "evidence": "On the bench, after Make one project kept Site:\n- Kite club's Tasks tab shows an enabled New task button and 'No tasks yet. Press New task, or describe them in Chat.' (/tmp/frbench/review-d1109-onerepo-join/steps/10-a10-kite-joined-tasks.png and .txt). Its tasks were moved, so 'No tasks yet' is untrue.\n- POST /projects/<kite>/tasks answered 201: the task was created on the archived project.\n- Changes then read 'Added \"Probe task on the joined project\" to Kite club, for the coder. It runs at your next Start.' with 'Cannot be undone now: \"Kite club\" joined \"Site\".' (steps/18-b01-changes-after-restart.txt).\n- POST /sessions for Kite club is refused: 409 '\"Kite club\" joined \"Site\", so its work runs there.'\n- So the task never runs, does not show on Site, and its own Undo is refused.\n- The Chat tab (steps/11) and the Overview's note box (steps/09) offer the same dead end. The fixer listed the note and 'Research reads · Change' as new problems, but not New task.\n\nRules this breaks:\n- The area's own decision: 'The closed project's page: status sentence ... with Open it, no Start or New task'.\n- The cut line: 'never ... the closed project's true words'.\n- Design §5 rule 9: no promises the code does not keep.",
+      "expected": "A joined project accepts no new work.\n- Its Tasks tab hides New task; the empty state says where its tasks went (e.g. 'Its tasks are in \"Site\". [Open it]').\n- task.create, queue notes and chat changes for a project with settings.joined_into are refused in words through joinedProjectRefusal, as starts already are.\n- The Overview's note box and Research reads Change are hidden on the joined page.\n- Add a failing test first at the boundary: a UI test that the joined page offers no New task, and a real-daemon POST /projects/:id/tasks on a joined project answering the refusal sentence."
+    }
+  ],
+  "claims_checked": [
+    {
+      "claim": "OJ-01: each Overview of a pair on one repository names the other with the shared line and Make one project; a project alone has none; same after a restart",
+      "holds": true,
+      "note": "Bench: both Overviews show '\"Kite club\" and \"Site\" both work in bench/seeded.' (different spellings of the link). The real-daemon OJ-01 case passes, including the second compose."
+    },
+    {
+      "claim": "OJ-02/OJ-05: project.join moves the work in one transaction; the dialog shows each project's facts, nothing chosen, button disabled until chosen or while refused",
+      "holds": true,
+      "note": "Walked in the UI: no choice gives a disabled button; a running session gives the refusal sentence and a disabled button; after the stop the join goes through. The commands unit test counts every table's rows. Small gap: the dialog's 'open pull requests' counts task pull requests only ('1 open pull request' for Kite club, whose Overview listed 3)."
+    },
+    {
+      "claim": "OJ-03: Site lists Kite club's task, docs and status pull requests as its own; moved task pull requests merge from Site",
+      "holds": true,
+      "note": "Bench: Merge of the moved #2 from Site worked and the pull request merged. The status pull request is listed only when the kept project's status setting is on: with Site off, Kite club's open fr/status #3 vanished from every Overview (see non-blocking)."
+    },
+    {
+      "claim": "OJ-04: Undo works after a restart, moves rows back (a merged moved task keeps its merge record), and is refused for running sessions, merges and cross dependencies",
+      "holds": true,
+      "note": "Bench: Undo pressed in the Changes UI after a daemon restart; merge record #2 is back on Kite club, still merged. Mutating the dependency guard fails the OJ-04 commands test."
+    },
+    {
+      "claim": "OJ-06/OJ-07/OJ-10: joined page reads 'Joined into ...' with Open it and no start; kept project's Includes, Sessions and Costs lines",
+      "holds": false,
+      "note": "The lines are all correct on the bench (steps 09, 13, 14, 16). But the joined page still offers New task, the note box and chat changes, which the decision rules out (blocking)."
+    },
+    {
+      "claim": "OJ-08: project_join's definition is the model's exact text; chat reads it back with Yes and No",
+      "holds": true,
+      "note": "The real-daemon OJ-08 case passes (exact description and read-back asserted)."
+    },
+    {
+      "claim": "C3-left-2: a kept continuation, kept start or held hands-off start holds the join, also after a restart; after Cancel the join goes through",
+      "holds": true,
+      "note": "The runtime project-join tests pass; removing the keptWaitWhen check makes them fail."
+    },
+    {
+      "claim": "C2-left-10: GitHubHost request timeout; RepositoryUse read wait; an unknown author counts as another account",
+      "holds": true,
+      "note": "The 3 new cases fail with base sources and pass on the branch."
+    },
+    {
+      "claim": "C2-left-9: the injection suite covers the repository-marker channel",
+      "holds": true,
+      "note": "pnpm test:injection: 73 of 73. The relaxed 'delivered' rule applies only to the new repo_marker hostile cases."
+    },
+    {
+      "claim": "C2-left-12: the Data import answers a link refusal 409 with details.cause; MemoryGitHost ignores case",
+      "holds": true,
+      "note": "The MemoryGitHost case fails on base; the real-daemon 409 assertion passes on the branch."
+    },
+    {
+      "claim": "C2-left-11 part 1: Take it over says when its docs pull request could not be opened",
+      "holds": true,
+      "note": "repo-take-over.test.ts passes. The two OR-07 real-daemon assertions were changed with a stated reason (the copy is a plain folder, so the scaffold fails)."
+    },
+    {
+      "claim": "C2-left-13: a together project's missing docs say who writes them; Overview errors use describeError",
+      "holds": true,
+      "note": "onerepo-together, project-tabs and onerepo-link tests pass."
+    },
+    {
+      "claim": "C3-left-1: sessions-tab test pinned to noon; a new 00:30 case asserts the intent",
+      "holds": true,
+      "note": "The base file fails at local 00:38 (TZ=Etc/GMT+8); the branch file passes."
+    },
+    {
+      "claim": "OJ-09: docs, ADR 0117 and 0116 amendments, user guide",
+      "holds": true,
+      "note": "docs:check and docs:links pass. ADR 0117 point 3 says the status pull request is read as the kept one's; that holds only when the kept project's status setting is on."
+    }
+  ],
+  "non_blocking": [
+    "Kite club's open status pull request is orphaned after the join when Site's status setting is off. Kite club had 'Status pull request' on and Site had it off; after the join, #3 fr/status is listed on neither Overview, because isProjectDocsPr requires statusPullRequestOn(kept) (bench step 07). The dialog names only the four settings the spec lists, so the person is never told. Suggest a dialog line for this setting, or listing the joined project's open status pull request as information.",
+    "Postgres: acceptance OJ-02 says 'SQLite and Postgres' and the spec's files list 'a Postgres case in the integration suite'. No such case was added, and the report's not_done does not mention it.",
+    "Lessons are not moved (acceptance OJ-02 lists them). The report says so in not_done and the ADR records why; the reason is verified (lesson files carry project_id in packages/memory/src/files.ts). The kept project's sessions do not get those lessons in memory.",
+    "Validation rule 3: docs-routes.ts gained DocView.notWrittenHere and a new note (dbf307d). There is no real-daemon.test.ts case and no fake-daemon change in that commit. It is covered only by the composed HTTP case in packages/runtime/test/onerepo-together.test.ts. The fake's docs route serves seeded rows under the shared schema, so the drift risk is low.",
+    "The fake daemon's data import never answers a link refusal, so the 409 change in data/routes.ts is not mirrored there.",
+    "project.join's undo sets active: true on the reopened project regardless of the stored closed[].active (project-join.ts undo). A project paused before the join comes back active.",
+    "On the joined page, Last result still says '\"Write the rules in rules.md\" is ready to continue', though that task now belongs to Site (step 09).",
+    "GitHubHost.send: the AbortSignal.timeout also covers reading the response body after send() returns. A slow body would throw an unwrapped AbortError instead of the 'did not answer in time' ForerunnerError (an edge case).",
+    "The hands-off refusal ('A session of \"Kite club\" waits to start by itself. Make one project after it ran, or turn \"When work is ready\" back to Wait for my Start.') is long, about 140 characters, but correct.",
+    "The fixer's after-walk used a folder pair and pressed Undo through the API, not the UI, and never walked the --githost pull-request merge the spec asks for. My walk covered both, and both work.",
+    "Live check for the session lead (OJ-03): with two projects on one real repository, both with Status pull request on, make one project and run a session on the kept project: it should update the existing fr/status pull request and open no second one. Also try the case where only the closing project had the setting on, and see what the person can still find of its status pull request.",
+    "OJ-11 (Work together for a project already here), OJ-06's Home line and C2-left-11 part 2 are in not_done with reasons, and the cut line allows them."
+  ]
+}
