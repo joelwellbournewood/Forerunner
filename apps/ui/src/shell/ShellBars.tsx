@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router";
-import { describeError, type ProjectCard } from "../api/client.ts";
+import { describeError } from "../api/client.ts";
 import { Button } from "../components/ui.tsx";
 import {
   refreshProjects,
@@ -11,16 +11,11 @@ import {
 } from "../store/context.tsx";
 
 /**
- * The header's live parts (design §3.1): the running chip, Stop all while something runs,
- * the stopped bar with Allow sessions again and Continue where it stopped, the no-key bar, and
- * the More menu of the screens a person does not use day to day.
+ * The header's live parts (design §3.1): the stopped bar with Allow sessions again and Continue
+ * where it stopped, the no-key bar, and the More menu of the screens a person does not use day to
+ * day. What runs now, with Stop, is the run indicator's bar under the header (`RunIndicator.tsx`,
+ * d1109-run-visible: it replaced the running chip and the header's Stop all).
  */
-
-/** The projects a session works on now, from the live project cards (`working`). */
-export function useWorking(): ProjectCard[] {
-  const projects = useUiState((s) => s.projects);
-  return projects.filter((p) => p.working);
-}
 
 /** "2 min", "1 h 5 min": how long a session has run, from when it began. */
 export function elapsedWords(since: string | null | undefined, now: number): string | null {
@@ -43,114 +38,6 @@ export function useNow(everyMs = 30_000): number {
     return () => clearInterval(t);
   }, [everyMs]);
   return now;
-}
-
-/** 'Alice is working on "Style the page" · 2 min ›': the running chip that opens the session. */
-export function RunningChip() {
-  const working = useWorking();
-  const now = useNow();
-  const first = working[0];
-  if (!first?.working) return null;
-  const w = first.working;
-  const what = w.taskTitle ? `"${w.taskTitle}"` : first.name;
-  const elapsed = elapsedWords(w.since, now);
-  return (
-    <Link
-      to={`/sessions/${encodeURIComponent(w.sessionId)}`}
-      className="flex max-w-md items-center gap-1 truncate rounded-full bg-blue-50 px-2 py-0.5 text-sm text-blue-900 hover:bg-blue-100 dark:bg-blue-950 dark:text-blue-100 dark:hover:bg-blue-900"
-      data-testid="running-chip"
-      title={`${first.name}: open the running session`}
-    >
-      <span aria-hidden className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-600" />
-      <span className="truncate">
-        {w.agentName ?? "Your agent"} is working on {what}
-        {elapsed ? ` · ${elapsed}` : ""}
-        {working.length > 1 ? ` (+${working.length - 1} more)` : ""}
-      </span>
-      <span aria-hidden>›</span>
-    </Link>
-  );
-}
-
-/**
- * Stop all, only while something runs, asks once (design §3.1): "Stops every running session
- * now. No session starts until you allow it again." The shell holds whether it asks, so the
- * palette's Stop all opens the same question (later #59).
- */
-export function StopAll({
-  asking: askingProp,
-  onAsking,
-}: {
-  asking?: boolean;
-  onAsking?: (asking: boolean) => void;
-} = {}) {
-  const client = useClient();
-  const store = useUiStore();
-  const working = useWorking();
-  const killActive = useUiState((s) => s.killActive);
-  const [askingOwn, setAskingOwn] = useState(false);
-  const asking = askingProp ?? askingOwn;
-  const setAsking = (next: boolean | ((was: boolean) => boolean)) => {
-    const value = typeof next === "function" ? next(asking) : next;
-    if (onAsking) onAsking(value);
-    else setAskingOwn(value);
-  };
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  if (killActive || working.length === 0) return null;
-  const stop = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await client.kill({ scope: "all", reason: "stop all from the UI" });
-      store.dispatch({ type: "killActive", active: r.killActive });
-      setAsking(false);
-      void refreshProjects(client, store).catch(() => {});
-    } catch (e) {
-      setError(describeError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <span className="relative">
-      <Button
-        variant="danger"
-        data-testid="kill-switch"
-        aria-label="Stop all sessions"
-        onClick={() => setAsking((a) => !a)}
-        aria-expanded={asking}
-      >
-        Stop all ({working.length} running)
-      </Button>
-      {asking ? (
-        <div
-          role="dialog"
-          aria-label="Stop all"
-          className="absolute right-0 z-30 mt-1 w-72 space-y-2 rounded border border-neutral-200 bg-white p-3 text-sm shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
-          data-testid="kill-confirm"
-        >
-          <p>Stops every running session now. No session starts until you allow it again.</p>
-          {error ? (
-            <p className="text-red-700 dark:text-red-300" data-testid="kill-error">
-              {error}
-            </p>
-          ) : null}
-          <div className="flex justify-end gap-2">
-            <Button onClick={() => setAsking(false)}>Keep going</Button>
-            <Button
-              variant="danger"
-              onClick={() => void stop()}
-              disabled={busy}
-              data-testid="kill-confirm-stop"
-            >
-              {busy ? "Stopping…" : "Stop all"}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-    </span>
-  );
 }
 
 /**

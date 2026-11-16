@@ -1947,6 +1947,9 @@ export function createDaemonApp(
   // it changed nothing and it held the agent's one session for good.
   app.post("/sessions/:id/stop", async (c) => {
     const s = await rt.store.session.mustGet(c.req.param("id"));
+    // d1109-run-visible: Stop now on the critic's monthly check stops its run (it ends its row).
+    if (await rt.running.stopCalibration(s.id))
+      return c.json(await liveSessionView(await rt.store.session.mustGet(s.id)));
     const live = rt.kill.activeCount({ sessionId: s.id }) > 0;
     if (live)
       await rt.kill.stop({ sessionId: s.id }, STOP_NOW_REASON, { freeze: false, by: "you" });

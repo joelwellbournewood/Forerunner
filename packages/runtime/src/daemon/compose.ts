@@ -110,6 +110,7 @@ import {
 } from "../extensions/mcp.ts";
 import { ExtensionRegistry } from "../extensions/registry.ts";
 import {
+  CALIBRATION_AGENT_ID,
   CalibrationJob,
   calibrationSettingsOf,
   HandoverJob,
@@ -401,6 +402,7 @@ import { ProjectPullRequests } from "./pull-requests.ts";
 import { changeNotAppliedWords } from "./request-words.ts";
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
 import {
+  isCalibrationSession,
   RUN_CHANGED_EVENT,
   type RunFold,
   type RunIndicatorDeps,
@@ -893,6 +895,8 @@ export interface RuntimeApp {
   running: {
     views(): Promise<RunningView[]>;
     poke(): void;
+    /** Stop now on the critic's monthly check (its session row): true when it was running. */
+    stopCalibration(sessionId: string): Promise<boolean>;
     close(): void;
   };
   conversation: ConversationAgent | null;
@@ -3486,6 +3490,26 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // The once-a-month check is the human's local month, as the schedule's (ADR 0060).
     timezone: async () => (await store.human.mustGet(human.id)).timezone,
   });
+  // d1109-run-visible (V-1): the critic's monthly check shows on the run indicator with Stop now
+  // and Stop all, so its run can be stopped: Stop all through the kill switch, Stop now through
+  // `running.stopCalibration` (the job itself is unchanged; it ends its row when stopped).
+  let calibrationRun: AbortController | null = null;
+  const runCalibration = async () => {
+    const controller = new AbortController();
+    calibrationRun = controller;
+    const off = kill.register({
+      agentId: criticAgent.id,
+      sessionId: CALIBRATION_AGENT_ID,
+      controller,
+      label: "the critic's monthly check",
+    });
+    try {
+      return await calibrationJob.run({ signal: controller.signal });
+    } finally {
+      off();
+      if (calibrationRun === controller) calibrationRun = null;
+    }
+  };
   const handoverJob = new HandoverJob({
     store,
     // The fresh agent's memory is checked where private rows live (the index, ADR 0083).
@@ -3571,7 +3595,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     if (isModelWatchRequest(req)) return modelWatch.run();
     if (isModelWatchReminderRequest(req)) return modelWatch.fileDueReminders();
     if (isMemoryConsolidationRequest(req)) return memory.propose();
-    if (isCalibrationRequest(req)) return calibrationJob.run();
+    if (isCalibrationRequest(req)) return runCalibration();
     await refuseRemovedProject(req.projectId);
     if (isHandoverRequest(req)) return handoverJob.run(req.projectId as string);
     // S-10: a kept continuation or person start that starts now leaves the wait, so it is made
@@ -4139,6 +4163,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     return {
       views,
       poke,
+      stopCalibration: async (sessionId) => {
+        const row = await store.session.get(sessionId).catch(() => undefined);
+        if (!row || !calibrationRun || !isCalibrationSession(row, criticAgent.id)) return false;
+        calibrationRun.abort(new ForerunnerError("killed", "stopped by you"));
+        return true;
+      },
       close: () => {
         closed = true;
         if (timer) clearTimeout(timer);

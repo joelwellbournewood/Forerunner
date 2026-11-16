@@ -718,7 +718,8 @@ describe("the shell's palette and bars (later #59, #63)", () => {
     // A session runs: the palette lists Stop all with how many run.
     const running = { ...harness.daemon.state.sessions[0], id: "sess_live", status: "running" };
     harness.daemon.state.sessions.push(running as (typeof harness.daemon.state.sessions)[0]);
-    await screen.findByTestId("kill-switch");
+    // d1109-run-visible: the run indicator says it runs (the header's Stop all is gone).
+    await screen.findByTestId("run-indicator-bar");
     p = await palette();
     await user.type(within(p).getByTestId("command-input"), "stop all");
     expect(titles(p).filter((t) => /Stop all/.test(t))).toEqual([

@@ -21075,6 +21075,53 @@ describe("d1109-run-visible, run C", () => {
     }
   }, 120_000);
 
+  it("the critic's monthly check reads 'Forerunner · the critic's monthly check on known examples' with Stop now and Stop all and what it is for; Stop now stops it", async () => {
+    const { rt, client, gated } = await compose();
+    try {
+      await rt.scheduler.request({
+        agentId: "critic-calibration",
+        trigger: "schedule",
+        reason: "the critic's monthly check",
+      } as never);
+      await eventually(
+        async () => gated.held.some((h) => h.role === "critic"),
+        "the check's first review",
+        async () => `${gated.held.length} held`,
+        20_000,
+      );
+      const [check, ...more] = await client.running();
+      expect(more).toEqual([]);
+      expect(check).toMatchObject({
+        projectId: null,
+        projectName: "Forerunner",
+        state: "calibrating",
+        what: "the critic's monthly check on known examples",
+        text: "Forerunner · the critic's monthly check on known examples",
+        stop: ["now", "all"],
+        cancel: false,
+        nextProject: null,
+        // The loop's source here is the API key's form: its own monthly budget, in CHF.
+        explain: `Once a month the critic reviews examples whose right answers are known, so you see whether it still catches mistakes; it spends at most CHF ${(10 * rt.chfPerUsd()).toFixed(2)} a month of its own budget.`,
+      });
+      expect(check?.explain).not.toMatch(/verdict|USD/);
+      // Stop now (the indicator's Stop menu): the check's run stops and its row ends.
+      await client.stopSession(check?.sessionId ?? "");
+      gated.stopGating();
+      await eventually(
+        async () => (await client.running()).length === 0,
+        "the check to end",
+        async () => JSON.stringify(await client.running()),
+        20_000,
+      );
+      const row = await rt.store.session.mustGet(check?.sessionId ?? "");
+      expect(["running", "paused", "planned"]).not.toContain(row.status);
+    } finally {
+      gated.stopGating();
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
   it("a plan being drafted is no running session: GET /running is empty and /health counts none", async () => {
     const { rt, client, gated } = await compose();
     try {

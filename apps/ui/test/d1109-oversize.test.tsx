@@ -237,6 +237,8 @@ describe("d1109-oversize-start, run C: the Start dialog warns and starts a task 
       startedAt: new Date(Date.now() - 60_000).toISOString(),
     });
     renderApp("/", harness, { pollIntervalMs: 40 });
+    // d1109-run-visible: Stop all is in the run indicator's Stop menu.
+    await user.click(await screen.findByTestId("run-stop"));
     await user.click(await screen.findByTestId("kill-switch"));
     await user.click(await screen.findByTestId("kill-confirm-stop"));
     const bar = await screen.findByTestId("kill-banner");

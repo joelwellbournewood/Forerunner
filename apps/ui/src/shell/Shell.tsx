@@ -13,7 +13,8 @@ import { ConversationPanel } from "./ConversationPanel.tsx";
 import { buildCommands } from "./commands.ts";
 import { DesktopControlBanner } from "./DesktopControlBanner.tsx";
 import { formatChord, useHotkeyBridge } from "./hotkey.ts";
-import { MoreMenu, NoKeyBar, RunningChip, StopAll, StoppedBar } from "./ShellBars.tsx";
+import { RunIndicator, runTitle } from "./RunIndicator.tsx";
+import { MoreMenu, NoKeyBar, StoppedBar } from "./ShellBars.tsx";
 import { ShellContext } from "./ShellContext.ts";
 import { ShortcutsHelp } from "./ShortcutsHelp.tsx";
 import { createSequenceMatcher, isEditableTarget, paletteShortcut } from "./shortcuts.ts";
@@ -60,6 +61,12 @@ export function Shell() {
   const hotkey = useHotkeyBridge();
   // A fresh install opens the setup assistant first (ADR 0092).
   useSetupGate();
+  // d1109-run-visible (V-2): the browser tab and the window say a session runs ('● Quote page ·
+  // Forerunner'); a session that only waits to go on does not change it.
+  const title = runTitle(state.running);
+  useEffect(() => {
+    document.title = title;
+  }, [title]);
 
   const talk = useCallback(
     () => setConversation((c) => ({ open: true, request: c.request + 1 })),
@@ -346,7 +353,6 @@ export function Shell() {
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
-            <RunningChip />
             <Badge tone={connectionTone} testId="connection-status" title={connection.error ?? ""}>
               {connectionLabel}
             </Badge>
@@ -378,7 +384,6 @@ export function Shell() {
             >
               {palette}
             </Button>
-            <StopAll asking={stopAsking} onAsking={setStopAsking} />
             <NavLink
               to="/settings"
               aria-label="Settings"
@@ -421,6 +426,13 @@ export function Shell() {
             </output>
           ) : null}
         </header>
+        {/* d1109-run-visible (V-2): what runs now, on every page and at every width, directly
+            under the header and never inside the collapsed menu. */}
+        <RunIndicator
+          form="bar"
+          askStopAll={stopAsking}
+          onAskStopAllDone={() => setStopAsking(false)}
+        />
         <main className="flex-1 overflow-auto p-3 md:p-4">
           {connection.status === "disconnected" ? (
             <div
