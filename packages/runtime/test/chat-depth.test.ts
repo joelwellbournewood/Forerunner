@@ -1,5 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { join } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
@@ -29,6 +30,7 @@ import {
 } from "../src/conversation/depth.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
 import type { ModelProvider, ModelRequest } from "../src/provider/types.ts";
+import { loadRegistry } from "../src/registry/loader.ts";
 import { flatPricing, harness } from "./helpers.ts";
 
 /**
@@ -717,5 +719,31 @@ describe("d1109-chat-depth, run C: caching", () => {
     expect(third?.cache_creation_input_tokens ?? 0).toBeLessThan(firstWrote);
     // The thorough pass's second call read its first call's prefix.
     expect(w.runs[1]?.result?.usage.cache_read_input_tokens ?? 0).toBeGreaterThan(0);
+  });
+});
+
+describe("d1109-chat-depth, run C: the exact text", () => {
+  it("the role prompt sent is conversation-agent 1.4.0 with 'Thinking longer', on the fast and the thorough request", async () => {
+    const role = loadRegistry(
+      resolve(import.meta.dirname, "..", "..", "..", "evals", "registry"),
+    ).principals.get("conversation-agent");
+    expect(role?.version).toBe("1.4.0");
+    expect(role?.prompt).toContain("## Thinking longer");
+    expect(role?.prompt).toContain(
+      "- `answer_thoroughly` hands a question to a stronger model that thinks it through. Call it\n  first, before any lookup, and write nothing before it",
+    );
+    expect(role?.promptLines).toBeLessThanOrEqual(120);
+    const w = await world({
+      deps: { prompt: role?.prompt ?? "" },
+      replies: [
+        toolReply("answer_thoroughly", { why: "many_records" }, undefined, {
+          when: (r) => !isThorough(r),
+        }),
+        textReply("Across the sessions.", { when: isThorough }),
+      ],
+    });
+    await w.chat("what did the last two sessions do?");
+    for (const r of w.requests()) expect(r.system).toContain(role?.prompt ?? "-");
+    expect(w.requests()[1]?.system?.endsWith(CHAT_THOROUGH_RULES)).toBe(true);
   });
 });
