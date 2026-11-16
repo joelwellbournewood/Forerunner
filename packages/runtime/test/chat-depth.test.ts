@@ -625,6 +625,11 @@ describe("d1109-chat-depth, run C: money", () => {
     const rows = w.ledger.entries.filter((x) => x.runId.startsWith(r.transcriptId));
     expect(rows.reduce((sum, x) => sum + x.usdMicro, 0)).toBe(r.costUsdMicro);
     expect(r.costUsdMicro).toBeLessThanOrEqual(60_000);
+    // A longer answer that reached its wrap-up offers the stronger model under it, with Go ahead.
+    expect(r.offer?.action).toBe("go_ahead");
+    expect(r.offer?.line).toMatch(
+      /^This needs a stronger model: about CHF \d+\.\d{2} \(at most CHF \d+\.\d{2}\) and 30 seconds\. Go ahead\?$/,
+    );
   });
 
   it("the estimate is the median of the last answers on that rung and model", async () => {
@@ -745,5 +750,47 @@ describe("d1109-chat-depth, run C: the exact text", () => {
     await w.chat("what did the last two sessions do?");
     for (const r of w.requests()) expect(r.system).toContain(role?.prompt ?? "-");
     expect(w.requests()[1]?.system?.endsWith(CHAT_THOROUGH_RULES)).toBe(true);
+  });
+});
+
+describe("d1109-chat-depth, run C: the rungs follow the need, never above the project's highest model", () => {
+  it("'use the best model' on a project whose highest model is opus asks for the strongest model and, after Go ahead, requests fake-opus at chat_thorough's effort", async () => {
+    const w = await world({
+      projectSettings: { critic_ceiling: "opus" },
+      replies: [textReply("The plan, thought through.")],
+    });
+    const r = await w.chat("use the best model: plan the next session");
+    expect(w.requests()).toHaveLength(0);
+    expect(r.reply).toMatch(
+      /^This needs the strongest model: about CHF \d+\.\d{2} \(at most CHF \d+\.\d{2}\) and 30 seconds\. Go ahead\?$/,
+    );
+    const go = await w.chat("Go ahead.", { offer: r.transcriptId });
+    expect(w.requests()[0]?.model).toBe("fake-opus");
+    expect(w.requests()[0]?.effort).toBe("medium");
+    expect(go.footer).toMatch(/^Thought it through with Opus · /);
+  });
+
+  it("on a project whose highest model is haiku the stronger rung is the longer one: fake-haiku at medium, its step 'more carefully', no ask within the amount", async () => {
+    const w = await world({
+      projectSettings: { critic_ceiling: "haiku" },
+      replies: [
+        toolReply("answer_thoroughly", { why: "failure" }, undefined, {
+          when: (r) => !isThorough(r),
+        }),
+        textReply("It fails because the stylesheet is not linked.", { when: isThorough }),
+      ],
+    });
+    const steps: string[] = [];
+    const r = await w.chat(QUESTION, { onStep: (l) => steps.push(l) });
+    const thorough = w.requests().filter((q) => isThorough(q as ModelRequest));
+    expect(thorough).toHaveLength(1);
+    expect(thorough[0]?.model).toBe("fake-haiku");
+    expect(thorough[0]?.effort).toBe("medium");
+    expect(steps).toContain(
+      "Thinking it through more carefully: about 30 seconds, at most CHF 0.10.",
+    );
+    expect(r.footer).toMatch(/^Thought it through more carefully · /);
+    // No request ever names a model above the project's highest.
+    expect(w.requests().every((q) => q.model === "fake-haiku")).toBe(true);
   });
 });
