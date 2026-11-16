@@ -44,6 +44,7 @@ import {
   section,
   slug,
 } from "./roles.ts";
+import { TASK_LIST_DEFAULT_SAYS, taskCheckReply, withTaskListLines } from "./task-check-play.ts";
 
 /**
  * The bench's role-playing stand-in model (`fr daemon --provider bench`, scripts/bench/). It
@@ -107,6 +108,15 @@ export interface BenchOptions {
    * FORERUNNER_BENCH_LONG on the same task it hears the wrap-up.
    */
   leftNote?: string[];
+  /**
+   * Task-title substrings whose specialist ends its report with lines "For the task list:"
+   * (FORERUNNER_BENCH_TASK_LIST, d1109-selftasks-run ST-14), so the session checks its task list
+   * between two tasks; the lines are FORERUNNER_BENCH_TASK_LIST_SAYS, separated by "|" (by
+   * default "nothing checks the finished work end to end."). The stand-in's task check answers
+   * no change unless a line names a split, a missing step, a duplicate or an order.
+   */
+  taskList?: string[];
+  taskListSays?: string[];
   /**
    * Inflated usage (FORERUNNER_BENCH_USAGE=<title substring>:<input tokens>, comma-separated,
    * budget-resume, W6-21): every call of a matching task's specialist bills that many more input
@@ -231,6 +241,11 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     missing: list(env.FORERUNNER_BENCH_MISSING),
     long: list(env.FORERUNNER_BENCH_LONG),
     leftNote: list(env.FORERUNNER_BENCH_LEFT_NOTE),
+    taskList: list(env.FORERUNNER_BENCH_TASK_LIST),
+    taskListSays: (env.FORERUNNER_BENCH_TASK_LIST_SAYS ?? "")
+      .split("|")
+      .map((s) => s.trim())
+      .filter(Boolean),
     usage: usageKnobs(env.FORERUNNER_BENCH_USAGE),
     criticUsage: usageKnobs(env.FORERUNNER_BENCH_CRITIC_USAGE),
     intake: intake === "malformed" || intake === "error" ? intake : "ok",
@@ -356,6 +371,9 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
         );
       case "chat":
         return chatAnswer(req);
+      case "task_check":
+        // d1109-selftasks-run (ST-14): no change unless the evidence names one.
+        return text(taskCheckReply(req));
       default:
         console.error(
           `[bench] unrecognised role: label=${req.origin?.label ?? "-"} system=${(req.system ?? "").slice(0, 80)}`,
@@ -996,6 +1014,16 @@ function specialistAnswer(
 
   // 8. The report, in the shape the registry asks for.
   if (askInReport) return text(askInReport(report(brief, who, calls, req.tools)), `ask=${askHit}`);
+  // FORERUNNER_BENCH_TASK_LIST (d1109-selftasks-run): the report ends with lines for the task list.
+  const listHit = matchesAny(brief.title, opts.taskList ?? []);
+  if (listHit)
+    return text(
+      withTaskListLines(
+        report(brief, who, calls, req.tools),
+        opts.taskListSays?.length ? opts.taskListSays : TASK_LIST_DEFAULT_SAYS,
+      ),
+      `task-list=${listHit}`,
+    );
   return text(report(brief, who, calls, req.tools));
 }
 
