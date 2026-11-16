@@ -376,3 +376,7 @@ for whatever work waited:
    person's session; the row's detail "Then your session goes on." or "Then it runs at your next
    Start."; the waiting sentence names the later of the reset and the end of quiet hours ("Your
    session of 14:05 goes on by itself at 17:00.").
+
+## Amendment 2026-11-16 (ADR 0119, d1109-selftasks-run): the task check is a planning call
+
+The session's task check is one planning call (the intake's model and route, purpose interactive), not a specialist's run; on a resting credential its held branch is C5's (`d1109-cred-engine`).

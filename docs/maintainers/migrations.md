@@ -64,6 +64,12 @@ schema and the snapshot disagree.
   merged task's work out and where it is (`IF NOT EXISTS` on Postgres). Rows written before it
   read back with nulls: nothing taken out. `pin` clears them when a redo's new pull request
   starts the record again.
+- `src/migrations/0009-change-source-session.ts` (d1109-selftasks-run, ADR 0119): hand written
+  and frozen, `change_log.source` gains `session` (the session's own task-list fixes). SQLite:
+  the copy-table dance (`change_log_v9` with the new CHECK, rows copied column by column, the old
+  table dropped, the new one renamed, its two indexes recreated); Postgres: `DROP CONSTRAINT` /
+  `ADD CONSTRAINT` of `change_log_source_enum`. Tested on both (`schema.test.ts`,
+  `migrations.integration.test.ts`).
 - `src/migrations/index.ts`: `MIGRATIONS` (ascending) and `migrate(db, { clock?, migrations? })`.
   `migrate` creates `schema_migrations (version PK, name, applied_at)` if missing, then applies
   every pending migration inside **one transaction** (both dialects have transactional DDL) and

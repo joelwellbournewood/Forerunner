@@ -7573,6 +7573,75 @@ two restarts), `starts-words.test.ts` (the explain's steps and `preparedContextO
 `githost-watcher.test.ts`/`githost-wiring.test.ts` (no firing reaches the scheduler), and the UI
 real-daemon cases under "d1109-starts-engine, run C" and "credential-limits" (S-6, S-10 routes).
 
+An Inbox answer prepares the work it made runnable, for that work only (C3-left-3):
+`answeredTaskIds` (`resume-work.ts`) gives the answered task when it is back at Ready, else (a
+task closed as done) the tasks that wait on it, and every answer path passes them as `taskIds`;
+`summarize` says "joined" only when every task joined (`answer-prepare.test.ts`).
+
+### Keeping the task list right during a run (d1109-selftasks-run, [ADR 0119](../decisions/0119-the-agent-keeps-its-task-list-right.md))
+
+A session checks its own task list between two tasks when a report or a review gave it reason,
+and fixes it as the autonomy level allows. The pieces:
+
+- **The class** (`enforcement/autonomy.ts`): `plan_fix`, free from Standard up (`FREE_AT`);
+  `extensions/mcp.ts` excludes it from what an extension may declare. The command executor's
+  `CommandContext.planFix` (`{ level }`) marks a call as the session's own fix:
+  `decideAutonomy("plan_fix", level)` frees it from the chat read-back, and with source
+  `session` (or `planFix`) no Inbox line and no shared-with message is written (the session's
+  one Update counts the changes). Only the daemon sets either: `POST /commands/execute` refuses
+  the source `session` and strips a `planFix` in its body.
+- **The brief** (`session/executor.ts`): `TASK_LIST_BRIEF_LINE` asks a specialist to end its
+  report with "For the task list:" and one line per point; rung 2 of the retry ladder points to
+  it (`RUNG_TWO_SCOPE`); a check's own new task carries `AGENT_WROTE_TASK_LINE`.
+- **The evidence** (`session/task-list-notes.ts`): `parseTaskListNotes` (the last heading, at
+  most 5 lines of at most 300 characters), `reviewNoteLines` (the critic's notes the task did not
+  cause, `isCriticNote`), `readsLikeInstruction` (the injection scan for `agent_output` plus the
+  steering patterns: budgets and money, settings, the autonomy level by any form of its name,
+  review levels in either order, other projects, starting, merging, deploying, dropping every
+  task, a new role); a flagged line is kept with `flagged: true`, never sent to a model, and
+  quoted to the person. Notes left when a session ends are kept on
+  `summary_cache.task_list_notes` (`keepNotes`, at most 20) and taken once by the next session
+  (`takeNotes`), across a restart.
+- **The call** (`session/task-check.ts`, `runTaskCheck`): one planning call (label `task-check
+  <project id>`, the planning model at effort medium, 4096 tokens, 120 s, no tools, no paths, no
+  secrets) through the loop driver and the hooks, its Run row `task-check` in the session and
+  its cost in the session's spend; no call when its cap does not fit the room left after the
+  session's promise, or when every line is flagged. The message (`taskCheckMessage`, asserted
+  whole in `task-check.test.ts`) gives the project, its milestones, the tasks in run order with
+  the acceptance criteria of those the check may change, and the evidence inside the data
+  envelope. At most 3 checks a session; the reply is read strictly (`readTaskCheckReply`: edit,
+  split, add, order, drop).
+- **The fence** (`fenceTaskChanges`): only Draft and Ready tasks of this project, by exact
+  title; a split keeps the task as its first part and carries every criterion; a drop only of a
+  duplicate that never ran; no cycle; at most 12 changes and 6 new tasks a check, 10 a session.
+  It asks first (one card, whatever the level) when the evidence or the reply had a flagged line,
+  for the person's own task, for a new task's specialist that reaches further than the source's
+  (`reachesFurther`), for ops-deploy or the person, for a specialist the approved plan has none
+  of, and for more than one drop at once.
+- **Applying** (`applyTaskChanges`, `checkAtBoundary`): at Standard and above each change is
+  one change log row with source `session` and its Undo, as the project's agent; its new tasks
+  join the running session by the admit rule (`AdmitHandle.admit(ids, "agent", { partOf, before
+  })`), else wait for the person's next Start ("Left for your next Start: ..."). At Advisor and
+  Assisted the set is one suggestion card (`session/task-proposal.ts`, `fileTaskProposal`): one
+  open card per project, an older one withdrawn as replaced; nothing filed again after "Keep the
+  tasks" for the same set in the same session. `syncTaskProposals` (in `syncApprovals`) applies
+  "Make these changes" as the person (the answer is the confirmation: one `ui` row, one Undo),
+  each change checked again on the tasks now, a change that no longer applies left out and
+  named; the approved new tasks join a running session by the admit rule; no answer starts one.
+  The card's words: `daemon/task-proposal-words.ts` (import-free; the fake daemon reads it) and
+  `request-words.ts`'s `taskProposalCard`.
+- **What the person reads**: the check's line in the session log (`session.task_checked`:
+  'Checked the task list after "Create the page": no change (CHF 0.03).'), each change's
+  sentence, the result's 'Changed 2 tasks: split "Style the page"; added "Check the links".',
+  and the one Update ('Quote page: did 3 tasks; changed 2 tasks.').
+
+Tests: `autonomy.test.ts` (ST-1), `selftasks-run.test.ts` in commands (ST-2, ST-3, ST-5),
+`executor-brief.test.ts` (ST-6), `task-list-notes.test.ts`, `task-check.test.ts` (ST-7, ST-8),
+`session-task-list.test.ts` (composed, file database: ST-9, ST-10 with a restart),
+`session-update.test.ts` (ST-12), `task-proposal-words.test.ts`, the UI's real-daemon describe
+"d1109-selftasks-run, run C" and `selftasks.test.tsx` (ST-11), and the injection suite's report
+channel (ST-13).
+
 ## How to change it
 
 - New limit: add the check to the hook, a `ForerunnerError` code in platform, and a test in

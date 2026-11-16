@@ -531,3 +531,7 @@ monthly cap or a new month is ready again and prepared, not started: it joins a 
 its promise has room, else it waits for the next Start ("Ready again once you raise the monthly
 cap in Settings, or on 1 December; it runs at your next Start."; the row's detail "Ready again
 once that limit is raised or resets, for your next Start; or cancel it.").
+
+## Amendment 2026-11-16 (ADR 0119, d1109-selftasks-run): the task check stays inside the budget
+
+A task check's call is booked in the session's spend and is made only when its cap fits the room left after the session's promise; it is never made past the wrap-up line, and the tasks it adds join only by the admit rule.
