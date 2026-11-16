@@ -1815,7 +1815,7 @@ describe("l3-handoff-checks, run L3", () => {
       // d1116-budget-all (BA-4): and what it kept for its review (before: 'It spent CHF 0.12 of
       // its budget of CHF 0.15, more than its estimate of CHF 0.06.').
       expect(card?.body).toBe(
-        `It spent ${spent} of its budget of ${cap}, more than its estimate of CHF 0.06. ${kept} of the budget is kept for its review.`,
+        `It spent ${spent} of its budget of ${cap}, more than its estimate of CHF 0.06, keeping ${kept} for its review.`,
       );
       // Before: 'Done: I opened six MDN pages and listed the five that mention hint. The sixth,
       // the showPopover page, doesn't mention it. Two pages define hint:…; left: Open the
@@ -1876,9 +1876,8 @@ describe("l3-handoff-checks, run L3", () => {
       expect(String(n?.body)).toMatch(
         // d1109-oversize-pause (OP-7): the card's body, with its spend past its estimate (before:
         // 'It spent CHF 0.12 of its budget of CHF 0.15. Answer it in the Inbox.').
-        // d1116-budget-all (BA-4): the card's first sentence whole; its sentence on what is kept
-        // for its review has no room left and is left out, never cut.
-        /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d, more than its estimate of CHF 0\.06\. Answer it in the Inbox\.$/,
+        // d1116-budget-all (BA-4): with what it kept for its review, whole.
+        /^It spent CHF \d+\.\d\d of its budget of CHF \d+\.\d\d, more than its estimate of CHF 0\.06, keeping CHF \d+\.\d\d for its review\. Answer it in the Inbox\.$/,
       );
     });
 

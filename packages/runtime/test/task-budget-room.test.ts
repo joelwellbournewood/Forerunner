@@ -160,7 +160,7 @@ describe("d1116-budget-all, run C: the room a work run keeps for its review (BA-
       null,
     );
     expect(view.body).toBe(
-      "It spent CHF 0.08 of its budget of CHF 0.20. CHF 0.04 of the budget is kept for its review.",
+      "It spent CHF 0.08 of its budget of CHF 0.20, keeping CHF 0.04 for its review.",
     );
   });
 });

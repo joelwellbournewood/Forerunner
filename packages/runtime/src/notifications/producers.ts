@@ -164,30 +164,10 @@ function bodyOf(text: string | null | undefined, action: string): string {
   // Names (two or more quoted titles) are shortened first; one quotation is cut at its end.
   const shorten = (s: string, max: number) =>
     (s.match(/"[^"]+"/g)?.length ?? 0) >= 2 ? fit(s, max) : cut(s, max);
-  // d1116-budget-all: a body of several sentences that has no room for all of them keeps the
-  // whole sentences that fit (never the next one cut short), when the first fits.
-  const whole = (t.length > room && wholeSentences(t, room)) || t;
-  let said = shorten(whole, room);
-  if ((said.match(/"/g)?.length ?? 0) % 2 === 1) said = `${shorten(whole, room - 1)}"`;
+  let said = shorten(t, room);
+  if ((said.match(/"/g)?.length ?? 0) % 2 === 1) said = `${shorten(t, room - 1)}"`;
   if (!/[.!?"…]$/.test(said)) said = `${said}.`;
   return `${said} ${action}`;
-}
-
-/**
- * The longest run of whole sentences from the start of `text` within `max`, or null when not even
- * the first fits (a sentence ends at ".", "!" or "?" before a space and a capital letter or a
- * quotation; amounts such as "CHF 0.10" never end one, and a run with a quotation left open is
- * no run).
- */
-function wholeSentences(text: string, max: number): string | null {
-  const ends = [...text.matchAll(/[.!?](?=\s+["A-Z])/g)].map((m) => (m.index ?? 0) + 1);
-  let best: string | null = null;
-  for (const end of ends) {
-    const head = text.slice(0, end);
-    if (head.length > max) break;
-    if ((head.match(/"/g)?.length ?? 0) % 2 === 0) best = head;
-  }
-  return best;
 }
 
 /** What a notification about a card needs beyond its row: the names it gives. */

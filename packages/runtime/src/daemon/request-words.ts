@@ -741,15 +741,19 @@ function budgetCard(
     spend && past && spend.startsWith("It spent ")
       ? spend.replace(/\.$/, `, more than its estimate of ${past.estimate}.`)
       : spend;
+  // d1116-budget-all (BA-4): what the run kept of its task's budget for its review, the one
+  // clause the first sentence gains, after its estimate when it passed it ('It spent CHF 0.56 of
+  // its budget of CHF 0.80, keeping CHF 0.10 for its review.').
+  const room =
+    spendPast && card.source === "task_budget"
+      ? chfAt(card.room_usd_micro, card.chf_per_usd)
+      : null;
+  const spendKept =
+    spendPast && room ? spendPast.replace(/\.$/, `, keeping ${room} for its review.`) : spendPast;
   const first = withChecksClause(
-    spendPast ?? (lists.length ? null : pausedWorkSentence(card, ctx.heldWork)),
+    spendKept ?? (lists.length ? null : pausedWorkSentence(card, ctx.heldWork)),
     card,
   );
-  // d1116-budget-all (BA-4): what the run kept of its task's budget for its review, its own
-  // sentence after what it spent (a notification that has no room for it keeps the first whole).
-  const room =
-    spend && card.source === "task_budget" ? chfAt(card.room_usd_micro, card.chf_per_usd) : null;
-  const kept = room ? `${room} of the budget is kept for its review.` : null;
   const second = stuck
     ? outer && card.question !== true
       ? "Its last run changed no file and left the same list, so it waits for you."
@@ -759,7 +763,7 @@ function budgetCard(
       (past && spendPast === spend
         ? `It has spent ${past.spent}, more than its estimate of ${past.estimate}.`
         : null));
-  const body = [first, kept, second].filter(Boolean).join(" ") || null;
+  const body = [first, second].filter(Boolean).join(" ") || null;
   const choices: RequestChoiceWords[] = [];
   for (const option of r.options.map(optionLabel)) {
     const what = budgetStopAnswer(option);
