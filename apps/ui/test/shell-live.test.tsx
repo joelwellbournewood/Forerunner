@@ -76,8 +76,11 @@ describe("the header while a session runs (design §3.1)", () => {
     if (!beaconTask) throw new Error("fixture changed");
     beaconTask.status = "ready";
     renderApp("/", harness, { pollIntervalMs: 40 });
-    // d1109-run-visible: Stop all is in the run indicator's Stop menu.
-    await user.click(await screen.findByTestId("run-stop"));
+    // d1109-run-visible: Stop all is in the run indicator's Stop menu (the bar's; Home's
+    // Working now shows the same element).
+    await user.click(
+      within(await screen.findByTestId("run-indicator-bar")).getByTestId("run-stop"),
+    );
     await user.click(await screen.findByTestId("kill-switch"));
     await user.click(await screen.findByTestId("kill-confirm-stop"));
     const bar = await screen.findByTestId("kill-banner");
@@ -178,8 +181,11 @@ describe("leftovers7-tailrun, wave 13: Continue keeps a credential wait (TR-2)",
       startable: true,
     };
     renderApp("/", harness, { pollIntervalMs: 40 });
-    // d1109-run-visible: Stop all is in the run indicator's Stop menu.
-    await user.click(await screen.findByTestId("run-stop"));
+    // d1109-run-visible: Stop all is in the run indicator's Stop menu (the bar's; Home's
+    // Working now shows the same element).
+    await user.click(
+      within(await screen.findByTestId("run-indicator-bar")).getByTestId("run-stop"),
+    );
     await user.click(await screen.findByTestId("kill-switch"));
     await user.click(await screen.findByTestId("kill-confirm-stop"));
     const bar = await screen.findByTestId("kill-banner");
