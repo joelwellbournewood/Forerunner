@@ -31,6 +31,7 @@ import {
   type ModeDefault,
   modeEffort,
   speedQualityOffsetOf,
+  TASK_CHECK_RUN_SPECIALIST,
   tierOfModel,
 } from "../models/ladder.ts";
 import { type AgentModelConfig, modeOverride, specialistOverride } from "../models/run-settings.ts";
@@ -1176,8 +1177,12 @@ async function costFacts(
     specialists.set(key, s);
   }
   // The planning run and the critic's reviews are no work for the critic to accept.
+  // d1109-selftasks-run: the task check is planning too (ADR 0119).
   const notWork = (key: string) =>
-    key === "critic" || key === "(none)" || key === INTAKE_RUN_SPECIALIST;
+    key === "critic" ||
+    key === "(none)" ||
+    key === INTAKE_RUN_SPECIALIST ||
+    key === TASK_CHECK_RUN_SPECIALIST;
   const runsByTask = new Map<string, number>();
   const runsByModel = new Map<string, number>();
   const allRunsByModel = new Map<string, number>();
@@ -1199,7 +1204,7 @@ async function costFacts(
           ? "Planning and chat"
           : key === "critic"
             ? "the critic"
-            : key === INTAKE_RUN_SPECIALIST
+            : key === INTAKE_RUN_SPECIALIST || key === TASK_CHECK_RUN_SPECIALIST
               ? "planning"
               : `the ${saidByName(key) ?? key}`,
       usdMicro: s.usdMicro,
@@ -1593,7 +1598,8 @@ export function runMode(
     const rung = tierOfModel(run.model, ladder);
     return rung === "opus" || rung === "fable" ? "critic_t23" : "critic_t1";
   }
-  if (run.specialist === INTAKE_RUN_SPECIALIST) return "planning";
+  if (run.specialist === INTAKE_RUN_SPECIALIST || run.specialist === TASK_CHECK_RUN_SPECIALIST)
+    return "planning";
   if (run.specialist === "researcher") return "researcher";
   return "coder";
 }
