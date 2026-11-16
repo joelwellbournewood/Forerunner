@@ -1,3 +1,4 @@
+import { CANCEL_WAIT_EXPLAIN } from "@forerunner/runtime/daemon/run-words";
 import { useState } from "react";
 import { Link } from "react-router";
 import { describeError, type ProjectCard } from "../api/client.ts";
@@ -62,8 +63,7 @@ function RetryPlanButton({
 }
 
 /** What Cancel on a wait that goes on by itself does (d1109-run-visible V-3), said with it. */
-export const CANCEL_WAIT_LINE_EXPLAIN =
-  "Nothing starts when Claude is back; its tasks wait for your Start.";
+export const CANCEL_WAIT_LINE_EXPLAIN = CANCEL_WAIT_EXPLAIN;
 
 /**
  * Cancel on the line of a project whose session waits to go on, or whose Start is kept for the

@@ -1,3 +1,4 @@
+import { CANCEL_WAIT_EXPLAIN } from "@forerunner/runtime/daemon/run-words";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { describeError, type RunningView } from "../api/client.ts";
@@ -38,9 +39,9 @@ const STOP_ALL = {
   label: "Stop all",
   explain: "Stops every running session now. No session starts until you allow it again.",
 } as const;
-/** Cancel on a session that waits to go on (V-2): what pressing it does, as its explanation. */
-export const CANCEL_WAIT_EXPLAIN =
-  "Nothing starts when Claude is back; its tasks wait for your Start.";
+
+/** Cancel on a session that waits to go on (V-2): what pressing it does, the daemon's words. */
+export { CANCEL_WAIT_EXPLAIN };
 
 /** The entries a form shows: one project's for the block form with `projectId`, else all. */
 export function useRunning(projectId?: string | null): RunningView[] {

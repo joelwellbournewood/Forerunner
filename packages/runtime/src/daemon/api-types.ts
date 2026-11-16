@@ -743,6 +743,26 @@ export const SessionView = z.object({
    * planning at 14:05" and lists no tasks. Absent from an older daemon.
    */
   planning: z.boolean().optional(),
+  /**
+   * d1109-run-visible (V-5): a session that ended to wait for its Claude credential says what
+   * comes next, in one block: it goes on by itself ('Waiting until 15:40 (your subscription's
+   * limit), then it goes on with "B" and 1 more.', `cancel`), a Start is kept for the reset
+   * ('Starts again at 15:40 with "B" and 1 more.', `cancel`), or nothing is kept ('Stopped to wait
+   * for your subscription's limit until 15:40: "B" and 1 more wait.', `continue`: the Start dialog
+   * with `continues` and what is left of its budget). Null when it did not end so, or once a later
+   * session of its project began. Absent from an older daemon.
+   */
+  waitBlock: z
+    .object({
+      state: z.enum(["goes_on", "starts_again", "stopped"]),
+      text: z.string(),
+      action: z.enum(["cancel", "continue"]),
+      explain: z.string(),
+      projectId: z.string(),
+      budgetLeft: Money,
+    })
+    .nullable()
+    .optional(),
 });
 export type SessionView = z.infer<typeof SessionView>;
 

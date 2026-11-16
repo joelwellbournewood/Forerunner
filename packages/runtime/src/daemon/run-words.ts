@@ -244,3 +244,19 @@ export const RUN_EVENT_TYPES = [
   "critic.review_failed",
   "critic.review_paused",
 ] as const;
+
+/**
+ * Cancel on a person's session waiting to go on, or on a Start kept for the reset (V-2, V-5): what
+ * pressing it does, said with the button.
+ */
+export const CANCEL_WAIT_EXPLAIN =
+  "Nothing starts when Claude is back; its tasks wait for your Start.";
+
+/**
+ * C3-left-8: an ended session's stored result promises "...; then your session goes on." while
+ * its continuation is kept; once nothing is kept (Cancel, Stop all), the words follow what is true
+ * now: "...; then it runs at your next Start." (the wait sentences' own two forms).
+ */
+export function summaryAfterWait(summary: string): string {
+  return summary.replace("; then your session goes on.", "; then it runs at your next Start.");
+}

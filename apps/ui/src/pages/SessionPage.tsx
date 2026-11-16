@@ -22,9 +22,21 @@ import {
 import { currentFromLog, ENDED_SESSION } from "../lib/session-steps.ts";
 import { formatTime } from "../lib/time.ts";
 import { useClient, useStreamOptions, useUiState } from "../store/context.tsx";
+import { StartSessionDialog } from "./project/StartSessionDialog.tsx";
 
 type Level = EventView["level"];
 const LEVELS: readonly Level[] = ["info", "warning", "escalation", "error"];
+/**
+ * L3-left-15: the level chips in a person's words (design §5 rule 6: no raw level names); a level
+ * with no line has no chip (rule 5: no zero counts). It read "info (20) warning (0) escalation
+ * (0) error (0)".
+ */
+const LEVEL_CHIP_WORDS: Readonly<Record<Level, string>> = {
+  info: "Updates",
+  warning: "Warnings",
+  escalation: "Needs you",
+  error: "Errors",
+};
 
 const LEVEL_STYLES: Record<Level, string> = {
   info: "",
@@ -561,6 +573,13 @@ export function SessionPage() {
             </ul>
           </section>
         ) : null}
+        {session.waitBlock ? (
+          <WaitBlock
+            session={session}
+            block={session.waitBlock}
+            onChanged={(next) => setSession(next)}
+          />
+        ) : null}
         {session.summary && session.summary !== "conversation" ? (
           <div className="flex flex-wrap items-start gap-2">
             <p
@@ -580,7 +599,7 @@ export function SessionPage() {
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
         {details ? <span className="text-neutral-500">Show:</span> : null}
-        {(details ? LEVELS : []).map((level) => (
+        {(details ? LEVELS.filter((l) => counts[l] > 0 || !filters.has(l)) : []).map((level) => (
           <button
             key={level}
             type="button"
@@ -593,7 +612,7 @@ export function SessionPage() {
                 : "border-neutral-300 text-neutral-500 dark:border-neutral-700"
             }`}
           >
-            {level} ({counts[level]})
+            {LEVEL_CHIP_WORDS[level]} ({counts[level]})
           </button>
         ))}
         <label
@@ -699,5 +718,85 @@ export function SessionPage() {
         </ol>
       </div>
     </section>
+  );
+}
+
+/**
+ * d1109-run-visible (V-5; the owner's decision of 2026-11-09: the person's session goes on by
+ * itself when its Claude credential is back, "shown ... with Cancel"): a session that ended to
+ * wait says what comes next, in the daemon's words, with its one button: Cancel while it goes on
+ * by itself (or a Start is kept for the reset), else Continue, which opens Start with the rest of
+ * this session and what is left of its budget (POST /sessions with continues).
+ */
+function WaitBlock({
+  session,
+  block,
+  onChanged,
+}: {
+  session: SessionView;
+  block: NonNullable<SessionView["waitBlock"]>;
+  onChanged: (next: SessionView) => void;
+}) {
+  const client = useClient();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const cancel = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await client.cancelContinuation(block.projectId);
+      // A kept Start dropped: its tasks wait for the next Start (said once, as the Done lines).
+      if (block.state === "starts_again") setNotice("Ready: it runs at your next Start.");
+      onChanged(await client.session(session.id));
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div
+      className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+      data-testid="session-wait"
+      data-state={block.state}
+    >
+      <span className="flex-1" data-testid="session-wait-text">
+        {notice ?? block.text}
+      </span>
+      {notice ? null : block.action === "cancel" ? (
+        <Button
+          onClick={() => void cancel()}
+          disabled={busy}
+          title={block.explain}
+          data-testid="session-wait-cancel"
+        >
+          Cancel
+        </Button>
+      ) : (
+        <Button
+          variant="primary"
+          onClick={() => setStarting(true)}
+          title={block.explain}
+          data-testid="session-wait-continue"
+        >
+          Continue
+        </Button>
+      )}
+      {notice ? null : (
+        <span className="w-full text-xs" data-testid="session-wait-explain">
+          {block.explain}
+        </span>
+      )}
+      {error ? <ErrorBanner message={error} /> : null}
+      <StartSessionDialog
+        open={starting}
+        onClose={() => setStarting(false)}
+        projectId={block.projectId}
+        reference={block.budgetLeft}
+        continues={{ sessionId: session.id, budget: block.budgetLeft }}
+      />
+    </div>
   );
 }

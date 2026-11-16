@@ -561,6 +561,11 @@ export interface FakeDaemonState {
    */
   startsWait: Record<string, StartsWait>;
   /**
+   * d1109-run-visible (V-5): a session's wait block after Cancel, by session id, as the daemon's
+   * `waitBlockOf` reads it then (a test seeds both the block on the session and this one).
+   */
+  waitBlockAfterCancel: Record<string, SessionView["waitBlock"]>;
+  /**
    * d1109-sessions (ADR 0116): each project's ended sessions as `GET /projects/:id/sessions`
    * lists them (newest first), every word as the daemon writes it; the working ones are read
    * from `sessions` (running, paused, planned) with the project's working sentence. A test
@@ -1312,6 +1317,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     sessions: clone(SESSIONS),
     runningExtra: [],
     startsWait: {},
+    waitBlockAfterCancel: {},
     projectSessions: clone(PROJECT_SESSIONS),
     projectSessionsChat: {},
     sessionTasks: clone(SESSION_TASKS),
@@ -3287,6 +3293,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/projects/:id/continuation/cancel", (c) => {
     const project = state.projects.find((p) => p.id === c.req.param("id"));
     if (!project) return errorBody(c, 404, "not_found", "no such project");
+    // d1109-run-visible (V-5): the session page's block says what is true after Cancel.
+    for (const sess of state.sessions)
+      if (sess.projectId === project.id && sess.id in state.waitBlockAfterCancel) {
+        sess.waitBlock = state.waitBlockAfterCancel[sess.id] ?? null;
+        delete state.waitBlockAfterCancel[sess.id];
+      }
     // d1109-run-visible: a continuation or a kept Start on the project's line goes with it.
     const startsWait = state.startsWait[project.id];
     if (startsWait?.kind === "continuation" || startsWait?.kind === "kept_start") {

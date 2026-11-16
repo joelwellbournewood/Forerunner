@@ -21405,3 +21405,161 @@ describe("d1109-run-visible, run C: a person's session waiting to go on", () => 
     }
   }, 120_000);
 });
+
+describe("d1109-run-visible, run C: the page of a session that ended to wait (V-5)", () => {
+  // V-5 (the owner's decision of 2026-11-09: the person's session goes on by itself when its
+  // Claude credential is back, shown with Cancel): GET /sessions/:id says what comes next for a
+  // session that ended to wait, with its one button, as the session page shows it; C3-left-8: its
+  // stored result stops promising that it goes on once nothing is kept.
+  const oauth = ["sk-ant-oat01-", "runvisiblev5", "8".repeat(40)].join(""); // not-a-secret
+  const apiKey = ["sk-ant-api03-", "runvisiblev5", "9".repeat(40)].join(""); // not-a-secret
+  const resetAt = "2026-03-05T10:40:00.000Z";
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  const atLimitFirst =
+    (calls: string[]): NonNullable<ComposeOptions["sdkQuery"]> =>
+    ({ prompt }) => {
+      calls.push(prompt);
+      const atLimit = calls.length <= 1;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        if (atLimit) {
+          yield {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt: Date.parse(resetAt) / 1000 },
+          };
+          yield {
+            type: "assistant",
+            error: "rate_limit",
+            message: { content: [{ type: "text", text: "You've hit your limit" }] },
+          };
+          yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+          return;
+        }
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${calls.length}`,
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+
+  it("goes on: the wait with Cancel; after Cancel: stopped, with Continue and the budget left; Continue keeps a Start for the reset: starts again, with Cancel", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-run-visible-v5-"));
+    homes.push(home);
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const env = { FORERUNNER_HOME: home };
+    const rt = await composeRuntime({
+      env,
+      dirs: appDirs({ env }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      provider: new AcceptingCriticProvider(
+        new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock),
+      ),
+      sdkQuery: atLimitFirst([]),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    try {
+      const project = await client.createProject({ name: "Notes", goal: "Two notes" });
+      for (const title of ["Write note A", "Write note B"])
+        await client.createTask(project.id, {
+          title,
+          outcome: `${title} is written`,
+          acceptanceCriteria: ["it is written"],
+          priority: "medium",
+          status: "ready",
+          dependsOn: [],
+          budgetUsdMicro: 0,
+          specialist: "coder",
+          riskTier: 0,
+        });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end at the limit",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      await settleSessions(rt);
+      const ended = await client.session(sessionId);
+      const left = `CHF ${(ended.budgetCap.chfMicro - ended.spent.chfMicro) / 1_000_000}`;
+      expect(ended.waitBlock).toMatchObject({
+        state: "goes_on",
+        text: 'Waiting until 11:40 (your subscription\'s limit), then it goes on with "Write note A" and 1 more.',
+        action: "cancel",
+        explain: "Nothing starts when Claude is back; its tasks wait for your Start.",
+        projectId: project.id,
+      });
+      expect(ended.summary.split("\n")[0]).toBe(
+        "Waits until 11:40 (your subscription's limit); then your session goes on.",
+      );
+      // Cancel: nothing goes on by itself; the page offers Continue with what is left.
+      await client.cancelContinuation(project.id);
+      const stopped = await client.session(sessionId);
+      expect(stopped.waitBlock).toMatchObject({
+        state: "stopped",
+        text: 'Stopped to wait for your subscription\'s limit until 11:40: "Write note A" and 1 more wait.',
+        action: "continue",
+      });
+      expect(stopped.waitBlock?.explain).toMatch(
+        /^Opens Start with the rest of this session and the CHF \d+\.\d{2} left of its budget\.$/,
+      );
+      expect(stopped.waitBlock?.budgetLeft.chfMicro).toBe(
+        ended.budgetCap.chfMicro - ended.spent.chfMicro,
+      );
+      expect(left).toMatch(/^CHF /);
+      // C3-left-8: the result no longer promises that the session goes on.
+      expect(stopped.summary.split("\n")[0]).toBe(
+        "Waits until 11:40 (your subscription's limit); then it runs at your next Start.",
+      );
+      // ... and neither does its row in the project's Sessions list.
+      const rows = (await client.projectSessions(project.id)).rows;
+      expect(rows.find((r) => r.id === sessionId)?.gist ?? "").not.toContain(
+        "then your session goes on",
+      );
+      // Continue (the Start dialog with `continues`): the credential still rests, so the Start is
+      // kept for the reset, and the page says it starts again then, with Cancel.
+      const kept = await client.startSession({
+        agentId,
+        projectId: project.id,
+        continues: sessionId,
+      });
+      expect(kept.result).toBe("kept");
+      expect((await client.session(sessionId)).waitBlock).toMatchObject({
+        state: "starts_again",
+        text: 'Starts again at 11:40 with "Write note A" and 1 more.',
+        action: "cancel",
+      });
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+});

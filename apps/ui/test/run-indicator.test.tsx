@@ -428,3 +428,110 @@ describe("d1109-run-visible: Home, the Overview, the project's line and Talk (V-
     await waitFor(() => expect(postedCalls(harness, "/sessions/sess_live/pause")).toHaveLength(1));
   });
 });
+
+/**
+ * V-5 (the owner's decision of 2026-11-09: the person's session goes on by itself when its Claude
+ * credential is back, shown with Cancel) and C3-left-7's Continue: the page of a session that
+ * ended to wait says what comes next with its one button. L3-left-15: the log's level chips in
+ * words, none for a level with no line.
+ */
+describe("d1109-run-visible: the page of a session that ended to wait (V-5), its level chips (L3-left-15)", () => {
+  const GOES_ON = {
+    state: "goes_on" as const,
+    text: 'Waiting until 15:40 (your subscription\'s limit), then it goes on with "B" and 1 more.',
+    action: "cancel" as const,
+    explain: "Nothing starts when Claude is back; its tasks wait for your Start.",
+    projectId: "proj_atlas",
+    budgetLeft: { usdMicro: 1_500_000, chfMicro: 1_200_000 },
+  };
+  const STOPPED = {
+    state: "stopped" as const,
+    text: 'Stopped to wait for your subscription\'s limit until 15:40: "B" and 1 more wait.',
+    action: "continue" as const,
+    explain: "Opens Start with the rest of this session and the CHF 1.20 left of its budget.",
+    projectId: "proj_atlas",
+    budgetLeft: { usdMicro: 1_500_000, chfMicro: 1_200_000 },
+  };
+  const waited = (h: Harness): SessionView => {
+    const s = h.daemon.state.sessions[0] as SessionView;
+    s.status = "completed";
+    s.stopReason = "credential_wait";
+    s.projectId = "proj_atlas";
+    s.waitBlock = GOES_ON;
+    h.daemon.state.waitBlockAfterCancel[s.id] = STOPPED;
+    return s;
+  };
+
+  it("goes on by itself: the wait with Cancel; Cancel sends POST /projects/:id/continuation/cancel and then offers Continue with the budget left", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const s = waited(harness);
+    renderApp(`/sessions/${s.id}`, harness);
+    const block = await screen.findByTestId("session-wait");
+    expect(within(block).getByTestId("session-wait-text")).toHaveTextContent(GOES_ON.text);
+    expect(within(block).getByTestId("session-wait-explain")).toHaveTextContent(GOES_ON.explain);
+    await user.click(within(block).getByTestId("session-wait-cancel"));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/projects/proj_atlas/continuation/cancel")).toHaveLength(1),
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("session-wait")).getByTestId("session-wait-text"),
+      ).toHaveTextContent(STOPPED.text),
+    );
+    expect(screen.getByTestId("session-wait-explain")).toHaveTextContent(
+      "Opens Start with the rest of this session and the CHF 1.20 left of its budget.",
+    );
+    // Continue opens Start with what is left of the budget and goes on with this session.
+    await user.click(screen.getByTestId("session-wait-continue"));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText(/Session budget/)).toHaveValue("1.20"),
+    );
+    await user.click(within(dialog).getByTestId("confirm-start-session"));
+    await waitFor(() => expect(postedCalls(harness, "/sessions")).toHaveLength(1));
+    expect(postedCalls(harness, "/sessions")[0]?.body).toMatchObject({
+      projectId: "proj_atlas",
+      continues: s.id,
+    });
+  });
+
+  it("a Start kept for the reset: 'Starts again at 15:40 ...' with Cancel, which then reads 'Ready: it runs at your next Start.'", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const s = waited(harness);
+    s.waitBlock = {
+      ...GOES_ON,
+      state: "starts_again",
+      text: 'Starts again at 15:40 with "B" and 1 more.',
+    };
+    harness.daemon.state.waitBlockAfterCancel[s.id] = STOPPED;
+    renderApp(`/sessions/${s.id}`, harness);
+    const block = await screen.findByTestId("session-wait");
+    expect(within(block).getByTestId("session-wait-text")).toHaveTextContent(
+      'Starts again at 15:40 with "B" and 1 more.',
+    );
+    await user.click(within(block).getByTestId("session-wait-cancel"));
+    await waitFor(() =>
+      expect(screen.getByTestId("session-wait-text")).toHaveTextContent(
+        "Ready: it runs at your next Start.",
+      ),
+    );
+  });
+
+  it("the level chips read in words, with no chip for a level with no line", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const s = harness.daemon.state.sessions[0] as SessionView;
+    renderApp(`/sessions/${s.id}`, harness);
+    await screen.findByTestId("session-header");
+    await user.click(await screen.findByTestId("details-toggle"));
+    const info = await screen.findByTestId("filter-info");
+    expect(info.textContent).toMatch(/^Updates \(\d+\)$/);
+    for (const level of ["warning", "escalation", "error"]) {
+      const chip = screen.queryByTestId(`filter-${level}`);
+      if (chip) expect(chip.textContent).not.toMatch(/\(0\)$/);
+    }
+    expect(document.body.textContent ?? "").not.toMatch(/\b(info|escalation) \(\d+\)/);
+  });
+});
