@@ -1,0 +1,139 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Bench \"review-d1109-chat-depth\" (daemon 48671, UI 2271, --provider bench, run from this worktree at 1a0b619). It started with FORERUNNER_BENCH_CHAT_HOLD_MS=3000 and FORERUNNER_BENCH_FAIL=styles, so every chat call is held 3 s and the task \"Build the random quote page in index.html, styles.css and script.js\" fails 4 times and ends at Needs you, with its failed-task card open. Scripts and results are in /tmp/frbench/review-d1109-chat-depth/walk/ (walk1..walk8.cjs/.json, evidence.cjs/.json, evidence2.cjs/.json). The first run's screenshots were wiped when the bench was restarted with --fresh. The texts of every step are in walk1-7.json. The findings were shot again on a fresh home: /tmp/frbench/review-d1109-chat-depth/steps/01-settings-advanced-models.png, 02-b1-failed-task-why-failing.png, 03-b2-claim-guard-nudge-running.png, 04-b3-enter-while-answering.png, 06-b4-think-under-a-change.png. The bench is stopped and its home deleted.\n\nWhat works as designed, seen on screen:\n- The waiting line: \"Thinking…\", then the step (\"Reading the last session…\", \"Going through the tasks…\", \"Preparing the change…\", \"Answering with what I found…\"), with \" · N s\" from 3 s on.\n- Send becomes Stop, titled \"Stops this answer. Changes it already made stay, each with Undo.\" Answer now sits beside Stop during a longer pass.\n- \"think it through: what did the last two sessions do?\" runs at once on fake-haiku at medium with the thorough system prompt. Its step is \"Thinking it through more carefully: about 30 seconds, at most CHF 0.10.\" and its footer \"Thought it through more carefully · 10 s · CHF 0.02\".\n- \"use a stronger model: why does … keep failing?\" answers only the ask line, with no model call. Go ahead then runs fake-sonnet medium with 33 tools (no answer_thoroughly) and ends with \"Thought it through with Sonnet · 10 s · CHF 0.03\".\n- In a project with no failed task, \"compare the two ways…\" gives a short answer with \"This needs a stronger model: about CHF 0.03 (at most CHF 0.06) and 10 seconds. Go ahead?\". A typed \"yes\" runs Sonnet once. \"what did the last two sessions do?\" goes ahead on the same model without asking. A longer pass that reached its wrap-up offers the stronger model's ask line.\n- With \"Chat asks first\" set to 0, \"think it through\" gives the ask line with no call, and \"no, thanks\" drops it.\n- Raising the amount is read back with Yes/No.\n- Stop gives \"You stopped this answer: under CHF 0.01 spent.\".\n- A reload during an answer brings back the waiting line, Stop and Answer now. Talk shows the same line and Stop.\n- A hard daemon restart during an answer shows \"Forerunner closed before answering this.\" with Ask again. Ask again re-sends the same line and is answered.\n- Settings, Basics shows \"Chat asks first · before a stronger model or an answer over CHF 0.10 · Below that it thinks longer when it helps, on the same model.\".\n- Performance has a \"Chat, thorough answers, under 30.0 s\" row.\n\nWhat fails:\n1. In the project with the failed task, the failure question gets \"This needs a closer look … Think it through\", never the stronger model's ask. The model hears \"Not now: this turn already read records.\" (02-b1).\n2. Live text while the claim guard runs its nudge: the false claim \"I've added the task \"Write the FAQ\" for you.\" stays in the live bubble for the whole nudge call, from 3.6 s to 5.2 s, before the true line replaces it (03-b2).\n3. Typing a follow-up and pressing Enter during an answer stops the answer, and the typed line stays unsent (04-b3).\n4. Think it through shows under a model answer that made a change (\"Added \"Write the FAQ page\" to Garden Notes. Undo\", 06-b4).\n5. Settings, Advanced, Models lists \"Alice · chat_thorough\" (01).\n\nTests run:\n- Runtime and commands: chat-depth, chat-depth-words, performance-view, conversation, commands, w15-chat, chat-recall and daemon tests: 192/192 pass.\n- On base sources with the branch's tests: chat-depth.test.ts fails 25/27, including the Stop/signal case (voice barge-in times out) and the think-it-through case (effort low, not medium). Real-daemon 'd1109-chat-depth, run C' fails 4/4, and chat-depth.test.tsx fails 12/12. Sources were restored afterwards; git status is clean.\n- UI vitest: 1198/1199. The only failure is sessions-tab.test.tsx, which depends on the time of day; it passes with TZ=Etc/GMT-12.\n- Playwright local: 36 passed.\n- pnpm test:e2e: 25 passed, 1 skipped.\n- pnpm test:injection: no failures.\n- pnpm typecheck: clean.\n- biome on the changed files: clean.",
+ "blocking": [
+  {
+   "issue": "In a project with a failed task, the question U-094 is about ('why does \"<failed task>\" keep failing and what should I change?') never gets the stronger model's ask line. The model's answer_thoroughly{why: failure} is refused as 'records read', because that task's failed-task card is always listed in full while blocking, and it quotes the coder's words, which sets context.recordsRead. The person only gets 'This needs a closer look … Think it through' on the same model. The owner's words were \"use more effort or a better model, selectively\", and the decision says a failure goes to the stronger rung. The fixer's check_in_the_app and the user guide ('When a question needs more (why something keeps failing, …) … before a stronger model … it asks in one line') promise what the app does not do. The fixer's bench walk asked about \"Style the page\" in a project with no tasks, so it never met the card.",
+   "where": "packages/runtime/src/conversation/agent.ts:1719 (refuse(NOT_NOW.records) on turn.recordsRead), set from agent.ts:2485-2488 (a card listed in full with quotesOthersWords → recordsRead); packages/runtime/src/conversation/project-facts.ts:363",
+   "evidence": "Bench: steps/02-b1-failed-task-why-failing.png. walk/evidence.json b1: reply '[stand-in model] A short answer from what I have. … This needs a closer look: about 30 seconds, about CHF 0.06. Think it through …', goAhead 0. The second request's tool result reads 'Not now: this turn already read records. …'. The first request's facts show open_requests '… failed 4 times. The coder said: \"I could not complete this task. …\" … [blocking]'. The same happened in walk1.json, with no Go ahead on any failure question in that project.",
+   "expected": "In a project with an open failed-task card, the failure question ends with 'This needs a stronger model: about CHF … (at most CHF …) and … seconds. Go ahead?' and Go ahead. One possible fix: let the record check refuse only a pass that would go ahead without asking, since an ask spends nothing and the yes is the person's. Another: do not count the failed run's own card as a record for the hand-over, while keeping it for the read-back of changes. Add a composed case with a real failed-task card listed in full, failing first, and the bench walk of U-094 in such a project."
+  },
+  {
+   "issue": "L3-left-9 is reported as fixed but is not. The leftover is the claim guard: while its nudge step runs, the live bubble shows the first call's false claim. The fix only puts reset:true on the hand-over step. The claim guard's nudge sends no step and no reset, so the false claim stays on screen for the whole nudge call. The UI test named for L3-left-9 tests the hand-over's reset, not the guard.",
+   "where": "packages/runtime/src/conversation/agent.ts:1849-1860 (the nudge run: onEvent(ev, false), no step(…, {reset: true})); the only reset is at agent.ts:1624 (handOverStep)",
+   "evidence": "Bench: steps/03-b2-claim-guard-nudge-running.png. walk/evidence.json b2 samples: from 3.6 s to 5.2 s, with Stop still shown, the live bubble reads '[stand-in model] I've added the task \"Write the FAQ\" for you.'. At 5.6 s it becomes 'Nothing changed, and nothing waits for your yes. Say it again to try once more.' (walk3.json shows the same). grep finds no reset in the claim guard path, and apps/ui/test/chat-depth.test.tsx:103 tests only the hand-over.",
+   "expected": "When the guard starts its nudge, a step frame with reset (a code-written step line) drops the streamed claim from the live bubble. Add a failing test first at the stream boundary (real-daemon or composed onStep, plus the UI) with a reply that claims a change no command made. Or move L3-left-9 to not_done with the reason."
+  },
+  {
+   "issue": "Pressing Enter in the chat input while an answer is made stops that answer, and the line the person typed is not sent. Stop is the form's submit button, and submit() calls stop() when busy. A person typing their next question while waiting loses the answer they were waiting for, which may be a longer, paid one. The decision says Stop is the person's and 'nothing ends by accident'. Before this change, Enter while busy never ended an answer.",
+   "where": "apps/ui/src/components/Conversation.tsx:248-256 (submit: if (busy) { void stop(); return; }) and :371-380 (Stop is type=\"submit\")",
+   "evidence": "Bench: steps/04-b3-enter-while-answering.png. walk/evidence.json b3: reply 'You stopped this answer: under CHF 0.01 spent.' and inputAfter 'and what is left?'. walk2.json shows the same: the turn 'what happened in the last session?' was stopped by Enter.",
+   "expected": "Enter while an answer is made neither stops it nor drops the typed line. Stop ends an answer only on its own press (type=\"button\"; the form ignores submit while busy, or holds the line until the answer ends). Add a UI test that types a line and presses Enter during an answer and asserts no POST /chat/turns/:id/stop."
+  },
+  {
+   "issue": "Think it through is offered under a model answer that made a change. The spec says 'never under a command's sentence, a notice, a read-back, a voice turn or a thorough answer'. Pressing it sends the change line ('tool: task_create …' or 'add a task …') to a longer pass that has the command tools, which could make the change again.",
+   "where": "packages/runtime/src/conversation/agent.ts:1991-2000 (closer ignores results with status done/partial); packages/runtime/src/daemon/server.ts:2370-2372 (offers think whenever newest && explain && !r.notice)",
+   "evidence": "Bench: steps/06-b4-think-under-a-change.png. walk/evidence2.json b4: 'Added \"Write the FAQ page\" to Garden Notes. Undo' followed by 'Think it through · Thinks longer on this model: about 30 seconds, at most CHF 0.12.' (think 1, undo 1). walk7.json shows thinkUnderCommand 1.",
+   "expected": "No Think it through under a turn whose commands made a change, a partial change or a read-back. Add a composed case (closer is null when results hold a done change) and a UI case."
+  },
+  {
+   "issue": "Settings, Advanced, Models shows the raw mode key 'chat_thorough': the row reads 'Alice · chat_thorough'. The daemon's agent view now lists the new mode, and ModelSettingsSection's MODE_LABELS falls back to m.mode. This breaks design §5 rule 6 (no raw states). The fixer's not_done says this section has no row for the mode, which is not true: the row is there under its raw name. The spec's acceptance (Mode) asks for 'Chat, thorough answers: sonnet, medium' with a settings-models UI test.",
+   "where": "apps/ui/src/pages/ModelSettingsSection.tsx:63-66 (MODE_LABELS without chat_thorough) and :244 (`${a.name} · ${MODE_LABELS[m.mode] ?? m.mode}`)",
+   "evidence": "Bench (fresh home): steps/01-settings-advanced-models.png. walk/walk8.json lines: ['Alice · planning', 'Alice · chat', 'Alice · chat_thorough'].",
+   "expected": "The row is labelled in words, for example 'Alice · chat, thorough answers' (as commands' \"chat's thorough answers\"). Add an apps/ui/test/settings-models.test.tsx case asserting the row's label, model and effort."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "D3-10: chat thinks longer when it helps: rungs, answer_thoroughly, the person's phrases, the ask before a stronger model",
+   "holds": false,
+   "note": "The mechanics hold: explicit phrases, Go ahead, the stronger and longer rungs, the exact requests. But the U-094 check the fixer wrote ('In a project with a failed task, ask … why does … keep failing … you see This needs a stronger model …') fails on the bench. The gate refuses for records because the failed-task card is listed in full (blocking 1)."
+  },
+  {
+   "claim": "D3-11: turn and step frames, the waiting line with seconds, conversation.changed",
+   "holds": true,
+   "note": "Seen on the bench, in the Chat tab and in Talk. Real-daemon and UI tests pass, and fail on base."
+  },
+  {
+   "claim": "D3-12: Stop route, signal to every run, voice barge-in, Answer now",
+   "holds": true,
+   "note": "Stop and the signal work on the bench. The composed signal test times out on base (the barge-in never reached the run). Answer now's effect is not shown by any test: the real-daemon case only checks {done:false} after the turn ended, and SessionBudget.wrapUpNow has no unit test."
+  },
+  {
+   "claim": "D3-13: the ask rule, chat_ask_above (CHF 0.10, 0 always asks), pass budgets, no daily sum",
+   "holds": true,
+   "note": "The setting, its Basics row, narrowing at once and the read-back on raising all work on the bench. One deviation: a pass that goes ahead gets min(amount, 2× median 'at most', room), not min(amount, room) as the spec says. The bench step read 'at most CHF 0.05' once medians existed."
+  },
+  {
+   "claim": "D3-14: answering after a reload; closed and failed lines with Ask again",
+   "holds": true,
+   "note": "Reload and a hard restart were seen on the bench. The real-daemon compose-twice test passes and fails on base."
+  },
+  {
+   "claim": "D3-15: footer, offer and cap lines under an answer",
+   "holds": true,
+   "note": "Seen on the bench, with the exact strings in the words tests. Older ask lines stay as text ('… Go ahead?') without a button."
+  },
+  {
+   "claim": "D3-16: Performance 'Chat, thorough answers' measured on total time",
+   "holds": true,
+   "note": "The Performance page shows the row against 30 s, with 8 samples met."
+  },
+  {
+   "claim": "L3-left-9: the claim guard's streamed text is taken back by a reset step",
+   "holds": false,
+   "note": "Only the hand-over resets. The claim guard's nudge shows the false claim live for the whole nudge call (blocking 2)."
+  },
+  {
+   "claim": "L3-left-10: a reply that joins its changes' sentences shows them once",
+   "holds": true,
+   "note": "The UI test passes. trueLine joins with ' ', which matches Conversation.tsx's check."
+  },
+  {
+   "claim": "L3-left-11: the timeout reply is one sentence (TIMEOUT_REPLY)",
+   "holds": true,
+   "note": "conversation.test.ts now asserts TIMEOUT_REPLY. A sibling remains: other failures still read 'I could not answer (<error message>).'"
+  },
+  {
+   "claim": "C2-left-6: command tools say what they do",
+   "holds": true,
+   "note": "The bench showed 'Preparing the change… · 3 s' during task_create."
+  },
+  {
+   "claim": "C2-left-7: the From line links only where the page shows the record",
+   "holds": true,
+   "note": "recordLink and its UI test. Not walked on the bench."
+  },
+  {
+   "claim": "C2-left-8: the timeout test waits for the model call to start",
+   "holds": true,
+   "note": "The pastTimeout helper races a 'started' promise. Its assertions are kept and strengthened."
+  },
+  {
+   "claim": "not_done: the Models row has no 'Chat, thorough answers' row",
+   "holds": false,
+   "note": "The row exists, but its label is the raw key 'Alice · chat_thorough' (blocking 5)."
+  },
+  {
+   "claim": "A new route has a real-daemon case and the fake daemon changes in the same commit",
+   "holds": true,
+   "note": "f45bfd3 changes server.ts, api-types.ts, real-daemon.test.ts and fake-daemon.ts together."
+  },
+  {
+   "claim": "No test weakened",
+   "holds": true,
+   "note": "Changed assertions follow the design: the turn frame first, 23 settings rows, 9 modes, prompt 1.4.0. The CR-9 bound subtracts this area's measured growth only, and the timeout test is stricter."
+  },
+  {
+   "claim": "pnpm test:integration, test:e2e, test:injection, UI suite and Playwright pass",
+   "holds": true,
+   "note": "I re-ran e2e (25 pass, 1 skipped), injection (no failures), the UI suite (only the time-of-day sessions-tab failure, which is not this area's) and Playwright (36 pass). I did not re-run integration."
+  }
+ ],
+ "non_blocking": [
+  "Money deviation: a longer pass that goes ahead without asking gets min(chat_ask_above, atMost = 2× the median, room), not min(chat_ask_above, room) as the spec says (agent.ts personsPass and the many_records hand-over). Once medians exist, the step reads 'at most CHF 0.05' rather than the amount, and passes reach the wrap-up sooner (bench walk4). Either follow the spec or record the choice in ADR 0114.",
+  "Answer now has no test that fails without it. Nothing tests SessionBudget.wrapUpNow, and the real-daemon case only checks {done:false} on an ended turn. On the bench its effect could not be told apart from the budget's own wrap-up.",
+  "These acceptance cases are missing: Stop leaves a task the turn added with its Undo; chat_ask_above at CHF 1.00 (a CHF 0.40 longer pass goes ahead, a stronger one still asks); the project-budget cap line composed; at least three lookups before the wrap-up on a 10,000-token context; Costs 'Planning and chat' growing; after composing twice, the ask is repeated with new figures when the price changed.",
+  "Words: the Settings dialog reads 'Below that it thinks longer when it helps, on the same model.. The same change …' (a double period, because the setting's description ends with a period). The raise read-back 'Set the amount above which chat asks first to asks first above CHF 0.10?' repeats 'asks first'.",
+  "Once another line follows an ask line, the old line stays as text ending in 'Go ahead?' with no button, a question the person can no longer answer. Consider dimming it or rewording it as past.",
+  "The thinking_longer fact says 'goes ahead up to CHF 0.10 on this model' on turns where the gate will refuse for records (any project with an open failed-task card). The model is told a closer look is available when it is not.",
+  "Sibling of L3-left-11 (validation rule 8): every non-timeout failure still reads 'I could not answer (<error message>).', a raw state in brackets.",
+  "Stop pressed while the claim guard's nudge runs: `stopped` is read before the nudge, so the reply is the guard's true line, the row is not marked stopped and no stopped footer shows.",
+  "figuresOf runs on every typed quick turn before the first model call. It builds the thorough request's tool registry, counts its tokens and reads up to 200 chat.reply rows, adding latency on the 1 s first-token path. It is not measured.",
+  "Conventions: ChatTurns' constructor defaults to new Date().toISOString() (AGENTS.md: time goes through a Clock; compose passes clock.nowIso()). Conversation.tsx uses Date.now() rather than apps/ui/src/lib/clock.ts. api-types.ts's DAEMON_ROUTES.chat line was edited in place, against the area's append-only rule.",
+  "No pnpm test:injection case was added for the hand-over channel. Only the composed card test covers a record's words asking for a thorough answer.",
+  "With a read-back card waiting and a newer ask line, a typed 'yes' answers the older card (the card branch runs first), not the ask line the person just read.",
+  "Another area's flake, confirmed: apps/ui/test/sessions-tab.test.tsx fails in the hours after UTC midnight ('16 Nov, 01:xx ·' against /^\\d\\d:\\d\\d ·/) and passes with TZ=Etc/GMT-12. This is d1109-sessions', not this area's.",
+  "Live check 4 steps the session lead still needs, with a real model, in a project with a failed task: (1) the failure question's ask line and Go ahead (blocked by blocking 1 until fixed); (2) 'think it through' on the same model; (3) Stop; (4) reload during an answer. Also check how often Haiku calls answer_thoroughly in vain, and whether the answer names the cause from the run's report."
+ ]
+}

@@ -1,0 +1,120 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I checked out fix/d1109-starts-engine (13c517b) and ran pnpm install. I used bench \"review-d1109-starts-engine\" (daemon 48670, UI 2270, --provider bench, FORERUNNER_BENCH_FAIL=\"Fail me\") and drove it like a person through Playwright. Logs and JSON are in /tmp/frbench/review-d1109-starts-engine/walk-{a,b,c,d,e}.{log,json}. A --fresh restart for walk E wiped the PNGs of walks A to C, but I looked at each one during the run and their texts are in the logs.\n\nA (S-2): I pressed Start, and \"Fail me first\" failed and got its card. Pressing Try again in the Inbox showed \"Done: Trying \"Fail me first\" again: it runs at your next Start.\" The project still had 1 session after 65 s (two scheduler ticks), and the row read Ready. Pressing Start in the dialog then ran the task. Correct.\n\nB (S-7, S-11): I started a session with 3 tasks. While it ran, I pressed Redo on the done intro from its Tasks row. The line read \"Reopened \"Write the intro in intro.md\" to redo it. Your note goes into its next brief. It joins the session that is running.\" The session got session.joined and ran the intro after its 3 promised tasks. The session page log says \"Took \"Write the intro in intro.md\", made ready while it ran (about CHF 0.01).\" The Start dialog shows the join line. In the project chat I typed \"run it now\": I got a Yes/No read-back \"Start a session on Walk promise (up to CHF 5)?\" and no session started. The stand-in's estimates are too small to show laterBeyond in the dialog; the route is covered by the real-daemon S-6 case.\n\nC (S-5): With the setting off, Make ready read '\"Write the off in off.md\" is ready. It runs at your next Start.' and no session started. In Settings > Advanced, \"When work is ready\" > Change > \"Start a session by itself\" showed a yes dialog with the effect line (\"...up to CHF 5.00 each. Never in your quiet hours or while sessions are stopped.\"). Make ready then read \"A session started for it (this project starts by itself when work is ready).\" and ran one session with by \"hands_off\". The Sessions tab says \"started by itself when work was ready\". With quiet hours 00:00-23:59, Make ready read \"It runs after your quiet hours.\" No session started across restart-daemon.mjs (40 s). After I turned quiet hours off, exactly one session started 18 s later, and no second one followed in 35 s.\n\nD (S-10): I used the bench-api stand-in with a limited key (bench \"review-d1109-starts-engine-cred\"; screenshots in /tmp/frbench/review-d1109-starts-engine-cred/steps/). The person's session ended with \"Waits until 02:23 (your API key's limit); then your session goes on.\" The rows read \"Then your session goes on.\" The Start dialog read \"Nothing can run until 02:23 (your API key's limit); then your session goes on.\" with \"Cancel the wait\", and Start was disabled. POST /sessions answered 409 \"Your session of 02:19 goes on by itself at 02:23.\" On a second project I pressed \"Cancel the wait\" and got \"Cancelled: nothing goes on by itself; its tasks run at your next Start.\" At the reset, the first project went on exactly once: trigger budget_reset, by \"continuation\", budget CHF 5.00 less CHF 0.00 spent, log \"Goes on with your session of 02:19.\", 2 tasks done. The cancelled project started nothing and its row reads Ready.\n\nE (S-9): An open failed card, while a session of its project runs, reads \"Tries again with your note, if any; it runs at your next Start.\" Pressing it gave \"Trying \"Fail me now\" again: it joins the session that is running.\" and the task did join. With \"Start a session by itself\" on and nothing running, the explain reads the same sentence, but pressing it gave \"...: a session started for it (this project starts by itself when work is ready).\" and a session started (1 to 2 sessions).\n\nComposed check (a scratch copy of continuation.test.ts, deleted afterwards): with quiet hours 14:30-17:00 Zurich set before the person's session, the session summary and the Tasks row name 15:00. continuations.waiting and the start check correctly name 17:00. The continuation ran on the subscription (sdk calls 1 to 2).\n\nFailing before the fix: I ran the fix's tests against base sources (git checkout of claude/nifty-knuth-f9udt0's packages/runtime/src and packages/commands/src, then restored). All of these fail on base:\n- scheduler-monthly S-1 (4 cases)\n- githost-watcher S-4 (2)\n- oversize-pause C2-left-1, C2-left-3, C2-left-5 (3)\n- real-daemon \"Try again prepares it for the person's Start\" (explain was \"Starts a session that tries again...\")\n- real-daemon S-1 quiet hours\n\nValidation on the fix head:\n- pnpm test: 510 files, 5458 passed.\n- UI vitest: 1189 passed, 1 failed. The failure is sessions-tab SL-7, the midnight-UTC time-of-day flake; that file is untouched by this branch.\n- Playwright (local config): 35 passed.\n- typecheck: clean.\n- lint: 0 errors, 40 warnings.\n- lint:paths ok; docs-check --base ok (103 files).\n\nThe benches are stopped and their homes and profiles deleted. The worktree is clean.",
+ "blocking": [
+  {
+   "issue": "S-9: an Inbox card's option explains never take account of a running session or the hands-off setting. They always say \"it runs at your next Start\", and pressing the button then does something else: the task joins the running session, or a session starts.",
+   "where": "packages/runtime/src/daemon/views.ts:857-925 (requestContexts never sets running, startsByItself or continuationWaits); packages/runtime/src/daemon/request-words.ts:128-132; packages/runtime/src/session/prepared-work.ts:256-268",
+   "evidence": "Bench walk E (/tmp/frbench/review-d1109-starts-engine/walk-e.json). While the project's session ran, GET /inbox showed Try again as \"Tries again with your note, if any; it runs at your next Start.\" Answering it returned 'Trying \"Fail me now\" again: it joins the session that is running.' and the task joined that session. With start_by_itself on and nothing running, the explain was the same, while the answer returned '...: a session started for it (this project starts by itself when work is ready).' and a session started. grep finds no producer of running \"this_project\", startsByItself or continuationWaits for request words anywhere in src.",
+   "expected": "Acceptance S-9 (cut line: never): 'GET /inbox's Try again explain reads \"...; it joins the running session if it fits.\" while one runs and \"...; it runs at your next Start.\" when none does'. Decision S-9 says RequestWordsContext gains running and startsByItself, read when the card is shown. Design §5 rules 4 and 9 apply: the sentence is true now and promises only what the app does. This needs a real-daemon case for each state and the same change in the fake daemon."
+  },
+  {
+   "issue": "S-10: when quiet hours cover the reset, the Tasks rows and the session's end sentence name the reset time and say \"then your session goes on\", although the continuation goes on only when the quiet hours end.",
+   "where": "packages/runtime/src/daemon/task-display.ts:180-205 (credentialWaitRow passes goesOn but not goesOnAt); packages/runtime/src/session/runner.ts:~3524 (the end sentence's waitSentence without goesOnAt)",
+   "evidence": "Composed check, a scratch copy of continuation.test.ts with quiet hours 14:30-17:00 Zurich set before a 10:00 person start. Session summary: \"Waits until 15:00 (your subscription's limit); then your session goes on.\" GET /projects/:id/tasks display: label \"Waits until 15:00, your subscription's limit\", detail \"Then your session goes on.\" Meanwhile rt.continuations.waiting returned \"Your session of 10:00 goes on by itself at 17:00.\" and the start check said \"Nothing can run until 17:00 (after your quiet hours); then your session goes on.\" continuation.test.ts's quiet-hours case asserts only continuations.waiting.",
+   "expected": "Decision S-10: 'every sentence that says when it goes on names the later of the stop's end and the end of the quiet hours ... \"Waits until 07:00 (after your quiet hours); then your session goes on.\"'. Acceptance S-10: 'with the reset inside quiet hours it waits until they end (the rows ... name that time)'. Add a test on the rows and the summary."
+  },
+  {
+   "issue": "S-10: the kept person start (\"Start at 15:40\") is not built and is not listed in not_done. keepStartAtReset has no caller, so the wake's and continuations.waiting's by-'person' branches are dead code. A Start pressed during a stop instead runs an empty session that meets the wait and becomes a continuation, which quiet hours hold although the person chose the time. The project status never reads 'Starts at 15:40 (your subscription's limit)'.",
+   "where": "packages/runtime/src/wiring/billing-pick.ts:1126 (keepStartAtReset, unused); packages/runtime/src/daemon/compose.ts credentialWaits.wake and continuations.waiting (kept.by === 'person' paths); apps/ui/src/pages/project/StartSessionDialog.tsx (no 'Start at 15:40')",
+   "evidence": "grep -rn keepStartAtReset packages apps finds only its definition. No test covers a kept person start or its status words. In walk D, after Cancel, the dialog offered only the old 'Press Start and the work starts then.' path. notes_for_other_areas passes it to C6 ('C6's \"Start at 15:40\" should use keepStartAtReset'), but the spec puts it in this area (files: StartSessionDialog's \"'Start at 15:40' for a kept start\"; decision S-10).",
+   "expected": "Acceptance S-10 (cut line: never S-10): 'Start pressed during a stop with no continuation kept keeps one person start that starts exactly once at the reset, also across a restart, and the project's status reads \"Starts at 15:40 (your subscription's limit)\"'. Build it with a test, or report it in not_done with the reason and get the session lead's agreement to move it."
+  },
+  {
+   "issue": "S-13: ADR 0118 does not name the critic's monthly calibration as the one exception on this computer, and does not name the cloud runner as a known gap. The ADR also misquotes the owner.",
+   "where": "docs/decisions/0118-who-starts-a-session.md (whole file; Context lines 8-14); docs/decisions/0060-monthly-jobs.md amendment",
+   "evidence": "grep -in 'calibrat\\|runner' on 0118 finds only 'the runner takes the claimed row's title' (S-8). late-approval.ts calls its start port 'a known gap of ADR 0118', but the ADR contains no such gap. The Context quotes the owner as \"only the user should start the session...\" and \"Off by default with the hands-off setting optional. Yes, that sounds good.\" Neither is in owner-decisions-2026-11-09.md. The owner's words are \"the user clearly states when a session will run\" and the confirmed '\"Only when you say so\" is the default, the hands-off setting optional'.",
+   "expected": "Acceptance S-13: 'the ADR (with the calibration named as the exception on this computer and the cloud runner as a known gap)'. Decision S-13 names services/cloud-runner/src/inbox-trigger.ts as still starting on answers. The sub-run note: 'names the cloud runner as a known gap in ADR 0118'. Quote the owner verbatim."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "S-1/S-2: answers start no session; quiet hours hold non-person starts; a schedule's fired key is written when its start leaves the line",
+   "holds": true,
+   "note": "Bench walk A: Try again, no session after two ticks. scheduler-monthly S-1 cases fail on base and pass on the fix. The real-daemon Try again case fails on base."
+  },
+  {
+   "claim": "S-7: Redo while a session runs joins it if it fits; 'Left for your next Start' otherwise",
+   "holds": true,
+   "note": "Bench walk B: joined and ran in the same session, with the session log line. session-join.test.ts passes. The readmit case is vacuous: B is already promised."
+  },
+  {
+   "claim": "S-6: the Start dialog does not promise followers beyond the work budget (laterBeyond)",
+   "holds": true,
+   "note": "Real-daemon S-6 route case and polish-screens UI case. Not reproducible on the stand-in's CHF 0.01 estimates. 'Starts after the session on \"X\"' (decision S-6) is not built."
+  },
+  {
+   "claim": "S-5: start_by_itself, a yes to turn on, one hands_off session, held and kept across a restart in quiet hours, starts once after",
+   "holds": true,
+   "note": "Bench walk C confirmed every step."
+  },
+  {
+   "claim": "S-10: the person's session goes on once at the reset by continuation with the rest of its budget; Cancel, Stop all and one-wait-per-project work",
+   "holds": false,
+   "note": "The core works (bench-api walk D; continuation.test.ts). The rows and summary name the wrong time under quiet hours, and the kept person start ('Start at 15:40') is missing. See blocking."
+  },
+  {
+   "claim": "S-4: CI results and PR comments start nothing and are audited waits_start",
+   "holds": true,
+   "note": "githost-watcher S-4 fails on base and passes on the fix."
+  },
+  {
+   "claim": "S-9/S-12: no word promises a start that does not happen",
+   "holds": false,
+   "note": "Tasks-row lines, Done lines and the deny-list grep test hold. The Inbox explains say 'it runs at your next Start' while the answer joins a running session or starts a hands-off one (walk E)."
+  },
+  {
+   "claim": "S-11: 'run it now' is read back; every chat start asks a yes",
+   "holds": true,
+   "note": "Bench walk B read-back card; starts-engine.test.ts. Negations are not tested."
+  },
+  {
+   "claim": "S-8: an edit made while a task waited applies at its claim; an edit of a running task is refused and the note is kept",
+   "holds": true,
+   "note": "session-join S-8 (via store.task.patch, not the Edit route) and the commands unit. Re-pricing is in not_done, which the cut line allows."
+  },
+  {
+   "claim": "C2-left-1, C2-left-2, C2-left-3, C2-left-5 fixed with failing tests first",
+   "holds": true,
+   "note": "The oversize-pause cases fail on base (label, report progress, runIdAt). C2-left-2 is covered by a real-daemon case."
+  },
+  {
+   "claim": "C2-left-4: a no-progress pause stays out of every automatic start",
+   "holds": true,
+   "note": "start-by-itself.test.ts restart case; the guard already held."
+  },
+  {
+   "claim": "Validation: unit, UI suite, Playwright, typecheck, lint, docs-check green",
+   "holds": true,
+   "note": "Rerun here: 5458 unit passed; UI 1189 passed plus 1 SL-7 midnight flake in an untouched file; Playwright 35 passed; typecheck clean; lint 0 errors; docs-check ok."
+  },
+  {
+   "claim": "Every new route has a real-daemon case and the fake daemon changed in the same commit",
+   "holds": true,
+   "note": "b91d52d adds continuation/cancel and POST /sessions continues, with fake-daemon.ts and real-daemon cases."
+  },
+  {
+   "claim": "S-13: ADR 0118 with its amendments; docs updated",
+   "holds": false,
+   "note": "The calibration exception and the cloud-runner gap are missing, and the owner is misquoted. The maintainer docs and user guide are updated."
+  },
+  {
+   "claim": "L3-left-12 in not_done with a reason",
+   "holds": true,
+   "note": "The reason given is 'no time'; L3-left-12 is not on the cut line's never list."
+  }
+ ],
+ "non_blocking": [
+  "A session that waits keeps its end summary 'Waits until 02:23 ...; then your session goes on.' after Cancel the wait, on its page and in the Sessions list (walk D, project 2), so a stale promise stays visible.",
+  "BillingOrderSection.tsx 'Resting until HH:MM (its usage limit); your session that waits for it goes on then' shows whether or not any session waits (rule 9).",
+  "The continuation's first log line is 'The session started with a budget of CHF 5.00.', with 'Goes on with your session of 02:19.' second. The acceptance says it should come first.",
+  "Every answer path calls prepareAnswer without taskIds (cannot-run-card.ts:195, findings.ts:233/702, person-questions.ts:1079/1186, pr-answers.ts:242/392), so admit takes every ready task of the project. summarize() answers 'joined' if any one joined, so the line can say 'It joins the session that is running.' when the answered task did not fit.",
+  "No UI sends `continues` (a session's Continue prefill in the Start dialog after Cancel); only the route exists. 'Starts after the session on \"Quote page\"' (decision S-6, D6-7) is not built. Neither is in not_done.",
+  "Test gaps: the handover-test continuation, Stop now (as opposed to Stop after this task), the project's removal dropping a continuation, the S-11 negations, a restart after an answered card (S-2), and S-8 through the person's Edit route with the criteria and brief. The S-7 readmit case is vacuous because B is already promised.",
+  "runner.ts: priceNow was inserted between reviewOnlyResult's JSDoc and its function, so that doc comment now sits on priceNow.",
+  "Commits bundle several items each (the spec asks for one commit per item, failing test first), so the order of test and fix is not visible per item.",
+  "With the hands-off setting turned on later, its session also ran a task made ready while the setting was off, whose line had said 'It runs at your next Start.' This is consistent with the setting, but worth a word in the setting's effect line.",
+  "Chat read-back 'up to CHF 5' (formatChfShort drops .00) is not two decimals (rule 7). The format predates this area.",
+  "UI vitest sessions-tab SL-7 fails shortly after midnight UTC ('15 Nov, 23:37 · ...'). The file is untouched here; the fixer already reported it."
+ ]
+}

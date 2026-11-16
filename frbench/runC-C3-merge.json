@@ -1,0 +1,122 @@
+{
+ "merged": [
+  "d1109-starts-engine: the fix-up head 1f61b650419e3fc746857795e8f6a77b1c200f56 (branch fixup-d1109-starts-engine, a fast-forward of fix/d1109-starts-engine's 13c517b) merged as d7c980b. fix/d1109-starts-engine itself still points at 13c517b because worktree .claude/worktrees/wf_415a6fe9-606-1 has it checked out, so I merged the fix-up branch instead. The merge carries the 7 fix commits and the 3 fix-up commits.",
+  "d1109-chat-depth: fix/d1109-chat-depth at 6c8cec587c02a9680452771269f0fd9bbf19ea8b (the same commit as fixup-d1109-chat-depth) merged as 999eaf2. It carries the 8 fix commits and the 4 fix-up commits."
+ ],
+ "head_sha": "46c516dc193179e8fb8f2f12fde091077c8648e7",
+ "pushed": true,
+ "conflicts_resolved": [
+  "packages/commands/src/commands/settings.ts (2 hunks), following shared_files' SETTING_SPECS order (start_by_itself, then chat_ask_above). Hunk 1 keeps START_BY_ITSELF_SETTING and startByItselfEffect, with CHAT_ASK_ABOVE_SETTING after them. Hunk 2 keeps the start_by_itself spec, closes it with '},' and puts the chat_ask_above spec after it. Both specs are byte-identical to their branches.",
+  "packages/commands/test/w15-chat.test.ts (the whole settings_set definition test), re-baselined in the merge commit as shared_files asks. lines.at(-2) is now start_by_itself's exact line, lines.at(-1) is chat_ask_above's exact line, and the key-line count goes from 22 to 23 (21 + 2). Both areas' exact strings are kept.",
+  "packages/runtime/src/daemon/compose.ts: the billing-pick import list. It now has both d1109-starts-engine's dropKeptStart, keepContinuation, keepStartAtReset, keptContinuationOf and keptStartOf and d1109-chat-depth's personOrderOf.",
+  "packages/runtime/test/chat-recall.test.ts CR-9: kept d1109-starts-engine's re-measured BASE_STATUS_TOKENS (8511, its +156 tokens of tool text) and its comment, and kept d1109-chat-depth's depth growth, which the test measures at run time and subtracts (answer_thoroughly, thinking_longer, the 'Thinking longer' section, the chat_ask_above key line).",
+  "apps/ui/test/real-daemon.test.ts: both areas appended a describe block at the end. Both are kept in merge order: 'd1109-starts-engine, run C' (closed with its own '});'), then 'd1109-chat-depth, run C'.",
+  "After resolving: git grep -n '^<<<<<<< ' finds nothing, and typecheck was clean before the merge commit."
+ ],
+ "integration_fixes": [
+  "46c516d merge-w19 (d1109-starts-engine, d1109-chat-depth): the case 'the nudge stays inside the turn's six model calls: a claim on the sixth is replaced at once (L3-run-1)' in packages/runtime/test/conversation-memory.test.ts failed after the merge, though each area alone passed it. Only 5 of 6 calls ran and the reply was 'I could not answer (run budget would be exceeded).'. Root cause: the case runs on flatPricing (USD 1 per million tokens) with the default USD 0.05 turn floor. Both areas grew every request's tool text, so 5 calls spent USD 0.0408 and the sixth call's precheck no longer fit. The case tests the six-call cap, not the budget. Fix: setup() takes an optional turnBudgetUsdMicro, and only this case passes ADR 0091's ceiling (CHAT_TURN_BUDGET_CEILING_USD_MICRO). No assertion changed, and the other 48 cases keep the default. The file failed 1/49 before the fix and passes 49/49 after. This was a test precondition, not a product behaviour bug, so no failing-first product test applies.",
+  "No other fixes were needed. Smoke 25/25 passed without editing the journey script."
+ ],
+ "validation": [
+  {
+   "command": "git status (start)",
+   "result": "on claude/nifty-knuth-f9udt0 at b5fb66f, clean"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "empty"
+  },
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "done"
+  },
+  {
+   "command": "pnpm lint",
+   "result": "exit 0: 0 errors, 40 warnings (same as base), 1 info"
+  },
+  {
+   "command": "pnpm lint:paths",
+   "result": "check-paths: ok (1531 files)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "clean (node + apps ui, approvals-web, desktop, mobile), on the merge and again on the final head"
+  },
+  {
+   "command": "pnpm test (unit), after the merge",
+   "result": "511/512 files, 5527 passed, 1 failed (the conversation-memory six-call case, fixed in 46c516d), 7 skipped"
+  },
+  {
+   "command": "npx vitest run --project unit packages/runtime/test/conversation-memory.test.ts (after 46c516d)",
+   "result": "49/49 passed"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (146 files)"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "link-check: ok (211 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "secret-scan: clean (2153 files)"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 78 skipped (Postgres cases skip without FORERUNNER_TEST_PG)"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "pnpm --filter @forerunner/live test (live harness dry runs)",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 passed, 17 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "exit 0: Failures: None"
+  },
+  {
+   "command": "HOME=<empty dir> FORCE_COLOR=1 npx vitest run --project unit (CI way, final head)",
+   "result": "exit 0: 512 files passed; 5528 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 93 files; 1212 passed (the sessions-tab SL-7 midnight flake did not show at 04:10 UTC)"
+  },
+  {
+   "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 npx vitest run --config vitest.config.ts (CI way)",
+   "result": "exit 0: 93 files; 1212 passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 36 passed (config copied from the template and removed afterwards; never committed)"
+  },
+  {
+   "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+   "result": "not run: neither area touched apps/desktop (git diff b5fb66f..HEAD -- apps/desktop is empty)"
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name merge-w19 --daemon-port 48690 --ui-port 2290 --fresh && node scripts/bench/journeys/smoke.cjs merge-w19; node scripts/bench/stop.mjs --name merge-w19",
+   "result": "smoke 25/25 checks passed, 0 findings; model calls intake 1, specialist 9, critic 6, chat 1. Bench stopped (daemon quit by itself, UI ended), home deleted"
+  },
+  {
+   "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "printed nothing: all 25 commits signed, including both merge commits and 46c516d"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "b5fb66f..46c516d pushed on the first try; no force push"
+  }
+ ],
+ "smoke": "25/25 checks passed on bench merge-w19 (--provider bench, stand-in), 0 findings, 0 recorded problems. The checks covered: plan from the brief, Approve and start, session 1 completed with 2/2 tasks done, the page files written, Files and Overview, a chat reply naming a task (the stand-in now reports the thinking_longer fact and 34 command tools), and the critic reviewing. The journey script needed no change. Logs: /tmp/frbench/merge-w19/smoke.log and /tmp/frbench/merge-w19/steps/smoke-result.json.",
+ "problems_left": [
+  "fix/d1109-starts-engine still points at 13c517b, not the merged fix-up head 1f61b65. The fixer's worktree /home/user/Forerunner/.claude/worktrees/wf_415a6fe9-606-1 has that branch checked out. Once that worktree is released, `git update-ref refs/heads/fix/d1109-starts-engine 1f61b650419e3fc746857795e8f6a77b1c200f56 13c517b81fdc161347aef34981e2f65011249db7` fast-forwards it. The merged content is already the fix-up head.",
+  "packages/commands/src/commands/settings.ts:627-628 (start_by_itself's code comment, d1109-starts-engine) still quotes the owner as 'Only when you say so is the default with the hands-off setting optional. Yes, that sounds good.'. The fix-up corrected this misquote in ADR 0118 but not in the comment. It is only a comment, so I left it for the area or the session lead.",
+  "Watch on CI, from the merge-step fix: per-turn chat requests are now about 3% larger with both C3 areas. On flatPricing the default USD 0.05 turn floor no longer holds six calls of a lookup-heavy test turn. Real Haiku prices are far lower (agent.ts CHAT_TURN_CALL_ROOM's note), but live check 4 could look at whether a 5-lookup chat turn on the real chat model ever answers 'I could not answer (run budget would be exceeded).'.",
+  "The pre-existing time-of-day flake in apps/ui/test/sessions-tab.test.tsx SL-7 (d1109-sessions, reported by both areas) did not show in this run. It is still unfixed.",
+  "After this merge, the session lead syncs conversation-agent 1.4.0 (evals/registry/principals/conversation-agent.md) to forerunner-registry, and writes UPDATE-LOG, CHANGELOG and requirements lines from the area reports. U-093 is for d1109-starts-engine and U-094 for d1109-chat-depth."
+ ]
+}

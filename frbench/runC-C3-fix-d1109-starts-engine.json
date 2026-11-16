@@ -1,0 +1,320 @@
+{
+ "area": "d1109-starts-engine",
+ "branch": "fix/d1109-starts-engine",
+ "head_sha": "13c517b81fdc161347aef34981e2f65011249db7",
+ "commits": [
+  {
+   "sha": "b91d52d269a982ff82da2e4a24984127e7dc8a5d",
+   "subject": "runtime: only the person starts a session; answers and events prepare work (U-093, U-078, U-080, U-043)"
+  },
+  {
+   "sha": "3a5981da03df68e4f7f574744bae5d727249e970",
+   "subject": "runtime: the continuation, the hands-off setting and their routes, tested at the person's boundary (U-078, U-093, U-080)"
+  },
+  {
+   "sha": "e18dc10f7c10762ca054e429072df53e90af0e3d",
+   "subject": "ui, runtime: the Start dialog's promise and Cancel the wait; ADR 0118 and the docs (U-093, U-078, U-080)"
+  },
+  {
+   "sha": "210c20e505abe230d3e18ccff2743fd68f060a0b",
+   "subject": "runtime, commands: edits apply before a run; the pause leftovers of run C step 2 (U-080, U-093)"
+  },
+  {
+   "sha": "293fdd6ab5b836d3595db49d6a17ba17a71717f1",
+   "subject": "runtime, commands, ui: no word promises a start that does not happen (U-078, U-093)"
+  },
+  {
+   "sha": "48f00bc89b0e70e118e01108802ee03f22840b17",
+   "subject": "runtime: the refused-key start check carries kept for the person's waiting session (U-078)"
+  },
+  {
+   "sha": "13c517b81fdc161347aef34981e2f65011249db7",
+   "subject": "ui: the TR-2 case reads the kept continuation on the Start check (U-078)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "S-1/S-2 (D6-1): any card answer started a paid session the person never pressed. On the bench, Try again on a failed card started a 'message' session ('Done: ... again: a session started.'). Root cause: every answer path called resumeWork -> scheduler.requestStart with a non-person trigger. Quiet hours were read through a port nothing set, so they held nothing. A schedule wrote its fired key before its start left the line.",
+   "u_ids": [
+    "U-093",
+    "U-043"
+   ],
+   "failing_test_before": "packages/runtime/test/scheduler-monthly.test.ts (S-1 describe: fired key, quiet hours hold a schedule's start); apps/ui/test/real-daemon.test.ts 'd1109-starts-engine, run C' > 'S-1: with quiet hours on now POST /sessions starts at once ...'; apps/ui/test/real-daemon.test.ts 'after its retries ... Try again prepares it for the person's Start' (before, the answer started a session)",
+   "how": "StartRequest.by (person|schedule|hands_off|continuation) plus startByOf. Quiet hours (compose's cached reader, refreshed at each tick) hold every start the person did not press. The fired key is written only when the start leaves the line. resumeWork is replaced by prepareAnswer -> prepareWork (session/prepared-work.ts) on every answer path: budget-card, intake, person-questions, cannot-run-card, findings, pr-answers, late-approval. The card's Done line keeps the prepared outcome (change_card.start).",
+   "check_in_the_app": "On a project with no session running, let a task fail (title starting 'Fail me' on the bench), open the Inbox, press Try again. The card's Done line reads 'Trying \"...\" again: it runs at your next Start.' and no new row appears under Sessions. Press Start: the task runs."
+  },
+  {
+   "problem": "S-7 (option C): work made ready while a session runs had no rule for joining that session. The session made no promise to measure room against.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "packages/runtime/test/session-join.test.ts (9 cases: promise said once, Redo joins with room and waits without, spare budget used at the next look, cancelled promised task gives room back, nothing joins after Stop after this task or in the last look, D7 parts, level 1, readmit)",
+   "how": "New files: session/promise.ts (promiseOf, cutFollowers), session/live-sessions.ts (LiveSessions and an AdmitHandle with admit/readmit/closing). The runner records plan.promise. It admits a newcomer only when the work budget less the spend and less the remaining own and joined estimates holds the newcomer's estimate. New events: session.promised, session.joined, session.left_for_next_start ('Left for your next Start: ...').",
+   "check_in_the_app": "Start a session with two small tasks. While it runs, press Redo on a done task of the project. Its line reads 'It joins the session that is running.' (or 'Ready: it joins this session if budget is left after its own tasks, else your next Start.'), and the session log names it."
+  },
+  {
+   "problem": "S-6: the Start dialog promised every follower ('continues with up to N more as they become ready') even when the work budget held only some of them.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/polish-screens.test.tsx 'a follower the work budget does not hold waits for a later Start; the join line ...'",
+   "how": "StartCheckView.laterBeyond comes from the runtime's cutFollowers, through the route and the fake daemon. The dialog adds '; N more wait(s) for a later Start.' and the line 'Work you make ready while it runs joins it if its budget has room.'. There is a real-daemon case through client.startCheck.",
+   "check_in_the_app": "Make task B (large estimate) wait on task A. Open Start with a small budget. The plan line reads 'This session runs \"A\" (about CHF ...); 1 more waits for a later Start.' and the join line shows under Start."
+  },
+  {
+   "problem": "S-5: there was no way to have prepared work start a session by itself.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "packages/runtime/test/start-by-itself.test.ts (off: Make ready starts nothing; on after a yes: one hands_off session; quiet hours: held, kept across a restart, starts once); packages/commands/test/starts-engine.test.ts (agent refused, yes to turn on, off at once)",
+   "how": "New per-project setting start_by_itself, appended last in SETTING_SPECS: person only, risk medium, turning it off acts at once. It shows in Settings as 'Start a session by itself' / 'Wait for my Start'. When on, prepareWork starts a hands_off session. A start that cannot run now is kept on summary_cache.start_pending and swept after quiet hours or Stop all. A hands-off start that begins drops the kept start, so there is one start per preparation.",
+   "check_in_the_app": "Project Settings: 'When work is ready' -> 'Start a session by itself'. It asks once with what it does. Make a draft ready on the Tasks tab: the line reads '... A session started for it (this project starts by itself when work is ready).' and Sessions shows 'started by itself when work was ready'."
+  },
+  {
+   "problem": "S-10: every credential wait started a session at the reset, whoever had started the work. The person's own session had no way to go on, no Cancel, no hold for quiet hours, and no single wait per project.",
+   "u_ids": [
+    "U-078"
+   ],
+   "failing_test_before": "packages/runtime/test/continuation.test.ts 'quiet hours hold it ...'. The sentence named 15:00 instead of 17:00: the cached quiet hours were not refreshed after a Settings change. Also apps/ui/test/project.test.tsx 'the person's session waiting to go on offers Cancel the wait'.",
+   "how": "A kept continuation sits on limits.waiting[].kept (keepContinuation, dropKeptStart, keptContinuationOf). The wake starts it once (by: 'continuation', the rest of its budget, first line 'Goes on with your session of 10:00.'). Quiet hours hold it; Cancel (POST /projects/:id/continuation/cancel and 'Cancel the wait' in the Start dialog), Stop all and project removal drop it. No continuation is kept after Stop after this task, a wrap-up, or no budget left. A Start while it waits answers 'Your session of 10:00 goes on by itself at 15:00.'. POST /sessions with continues goes on with the rest of an ended session's budget. Quiet hours are refreshed before every start the person did not press and before every sentence that names their end. Wait words: '; then your session goes on.' or '; then it runs at your next Start.'.",
+   "check_in_the_app": "Hard to reach on the bench stand-in (the subscription path needs Claude Code). In the app: run a session on the subscription until its usage limit. The session ends with 'Waits until HH:MM (your subscription's limit); then your session goes on.'. Open Start: 'Nothing can run until HH:MM ...; then your session goes on.' with Cancel the wait. At the reset the session goes on by itself once, and its first log line is 'Goes on with your session of HH:MM.'."
+  },
+  {
+   "problem": "S-4: CI results and pull request comments started sessions.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "packages/runtime/test/githost-watcher.test.ts 'S-4: no firing reaches the scheduler, idle or with a session running' and githost-wiring.test.ts (before: fired ci/pr_comment through the scheduler)",
+   "how": "GitHostWatcher has no start port. Each firing is audited with outcome 'waits_start'. The messages wait in the agent's inbox for the person's next session.",
+   "check_in_the_app": "Comment on a task's pull request on GitHub. No session starts. The next session you Start reads the comment in its brief."
+  },
+  {
+   "problem": "S-9/S-12: the Tasks tab, chat read-backs and cards promised starts ('A session will pick it up.', 'the next session can run it', 'Redone: ... a session runs it', Settings' 'the tasks start by themselves', the billing order's 'waiting work starts by itself').",
+   "u_ids": [
+    "U-080",
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/tasks.test.tsx 'Make ready and Resume say they start nothing'; packages/runtime/test/starts-words.test.ts (found settings.ts's mid-session effect); dependent-branches-merge.test.ts Redo cases",
+   "how": "Moves (task.create when ready, transition to ready, resume, reopen) call ports.prepareWork after the move. Its line follows the move's own sentence ('\"X\" is ready again. It runs at your next Start.'), and the chat read-back calls previewWork. The words now: task-actions explains, the redone outcome from change_card.start, a done person task's Done line ('what waits on it runs at your next Start'), the billing order resting line, and the mid-session setting's words in Settings, its help line, the settings_set definition and its effect. A source check pins the retired phrases.",
+   "check_in_the_app": "Tasks tab: Make ready on a draft. The dialog explains 'Ready to run: the running session takes it if it fits, else your next Start.' and the change line ends 'It runs at your next Start.'. Settings > When my first choice runs out mid-session reads 'Wait for its reset; then your session goes on'."
+  },
+  {
+   "problem": "S-11: a cheap start said in chat started at once, without a read-back. 'run it now' and German were not read as a start.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "packages/commands/test/starts-engine.test.ts (intent cases, exact definitions); packages/runtime/test/conversation.test.ts 'starts a session only after yes, a costly one and a cheap one alike'",
+   "how": "session.start has askFromChat: true, so chat and voice read it back at any budget (the palette's press, source ui, acts at once). matchStart reads run/start it|them|this|that|the tasks, let's run it, starte es, (jetzt) ausführen. The definitions of session_start and the four task moves say that answers and task changes start nothing; they are asserted word for word. The chat-recall base was re-measured: +156 tokens of tool text.",
+   "check_in_the_app": "In a project's chat type 'run it now'. A Yes/No card asks 'Start a session on <project> (up to CHF 5.00)?'. Nothing starts until Yes."
+  },
+  {
+   "problem": "S-8: an edit made while a task waited did not reach its run. The claim kept the plan's specialist. task.update of a running task dropped the note it carried.",
+   "u_ids": [
+    "U-080"
+   ],
+   "failing_test_before": "packages/runtime/test/session-join.test.ts 'S-8: an edit made while a task waited applies at its claim'; packages/commands/test/starts-engine.test.ts 'S-8: an edit of a running task is refused ...'",
+   "how": "At the claim the queue item takes the claimed row's title and its set specialist before chooseSpecialist and the start line. task.update of a running task refuses with '\"X\" is running now: it is not changed mid-run; your note goes into its next attempt.' and queues the note.",
+   "check_in_the_app": "While a session runs task A, open waiting task B's drawer, Edit its specialist to Writer and rename it. When B starts, the log reads 'The writer started \"<new title>\"'. Edit the running task: one sentence says it is not changed mid-run, and the note shows in Notes for the next session."
+  },
+  {
+   "problem": "C2-left-3 (major): a research task whose work is its report stopped for the person after a pause that wrote more findings. madeProgress compared only the files and the length of Left to do.",
+   "u_ids": [
+    "U-080"
+   ],
+   "failing_test_before": "packages/runtime/test/oversize-pause.test.ts 'C2-left-3: a research task that wrote more of its report between two pauses goes on; one that wrote nothing new still asks'",
+   "how": "New pauseSaid (the run's report plus 'Where I stopped:' plus the Left to do items). madeProgress counts it changing as progress (session/budget-pause.ts, runner keepPausedWork).",
+   "check_in_the_app": "Give a researcher task a small budget so it pauses twice with more findings each time. It goes on instead of filing 'paused again without getting further'."
+  },
+  {
+   "problem": "C2-left-4 (major): after the budget wake stopped starting sessions, nothing pinned that a no-progress pause stays out of automatic starts.",
+   "u_ids": [
+    "U-080"
+   ],
+   "failing_test_before": "none failed: the guard held. packages/runtime/test/start-by-itself.test.ts 'a task whose pause got no further stays out of every automatic start, after a restart too' now pins it (hands-off on, project budget raised, two restarts).",
+   "how": "wakeBudgetWaits files the question card (askAfterNoProgress) and prepares nothing. continuesAtStart excludes no-progress cards. The task stays needs_human until the person answers.",
+   "check_in_the_app": "With 'Start a session by itself' on, raise the project budget for a task whose card reads 'paused again without getting further'. No session starts and the card asks how to go on."
+  },
+  {
+   "problem": "C2-left-1: a no-progress pause read 'Paused before ...' on the Tasks row while its card said 'paused again without getting further'.",
+   "u_ids": [
+    "U-080"
+   ],
+   "failing_test_before": "packages/runtime/test/oversize-pause.test.ts 'OP-4, OP-5: run again, the second pause got no further' (label and detail)",
+   "how": "budgetPauseLabelOf returns 'Paused again without getting further' and budgetPauseDetailOf returns 'Its card in the Inbox asks what to do differently.'",
+   "check_in_the_app": "Tasks tab: a task whose second pause got no further reads 'Paused again without getting further'. Its drawer says its card asks what to do differently."
+  },
+  {
+   "problem": "C2-left-2: with only such a pause waiting, the Start dialog said 'Nothing can run: no task is ready.' and 'Give your agent work first'.",
+   "u_ids": [
+    "U-080"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'C2-left-2: with only a paused task whose card asks, the start check names it and opens the Inbox'",
+   "how": "New StartBlockedFacts.needsYou (the server reads needs_human tasks with an open card). The sentence is 'Nothing can run: \"X\" needs your answer.' with Open it (/inbox). The dialog drops 'Give your agent work first' beside it, and the fake daemon does the same.",
+   "check_in_the_app": "With only a paused task waiting on its card, open Start. It reads 'Nothing can run: \"<task>\" needs your answer.' with Open it."
+  },
+  {
+   "problem": "C2-left-5: run ids came from the platform's random newId, so two runs of one task in one millisecond sorted at random.",
+   "u_ids": [
+    "U-080"
+   ],
+   "failing_test_before": "packages/runtime/test/oversize-pause.test.ts 'C2-left-5: ids made in one millisecond are strictly increasing'. newId fails the same property, checked with tsx.",
+   "how": "executor.ts runIdAt uses the store's monotonicId.",
+   "check_in_the_app": "Not visible in the app (test stability on CI)."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "S-8's re-pricing of the start line: the estimate the session promised is not priced again at the claim.",
+   "why": "Allowed by the cut line. Re-pricing at the claim would change the session's promise and the session review's measure mid-session. The plan's figure stays what the person was shown. Title and specialist are refreshed."
+  },
+  {
+   "problem": "L3-left-12: a review-only session's plan line and session review use the writer's estimate.",
+   "why": "It needs a review-only estimate in the estimates model (l3-money-engine's module), which is outside this area's engine work. There was no time for a safe failing test and fix after the major items. Evidence: the session review measures the review pass against item.estimateUsdMicro, which the planner takes from the task's own figure."
+  },
+  {
+   "problem": "S-11 phrases beyond 'run it now' and German: 'go ahead and run it' is not parsed as a start.",
+   "why": "Allowed by the cut line. The parser splits on 'and', so the text becomes two clauses and goes to the chat model, whose session_start is read back too."
+  },
+  {
+   "problem": "S-3: no Settings change line ('Raised: ... it runs at your next Start') after a budget raise.",
+   "why": "Allowed by the cut line. The raise prepares the paused task (cards and row words say so), but the Settings change sentence itself was not extended."
+  },
+  {
+   "problem": "Bench AFTER walk of the credential continuation and Redo-with-room.",
+   "why": "The bench stand-in (--provider bench) has no subscription path and no usage limits. These are covered by composed tests (continuation.test.ts) and real-daemon cases (credential-limits S-10). The AFTER walk covered Try again and the hands-off setting."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm lint",
+   "result": "0 errors (40 warnings, same as base)"
+  },
+  {
+   "command": "pnpm lint:paths",
+   "result": "ok (1525 files)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "clean (node + apps ui/desktop/mobile/approvals-web)"
+  },
+  {
+   "command": "pnpm test (unit)",
+   "result": "5456 passed, 1 failed (credential-limits R-startcred: expected kept:true), fixed in 48f00bc and rerun: credential-limits 10/10"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "30 passed, 78 skipped, exit 0"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "25 passed, 1 skipped, exit 0"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "1188 passed, 2 failed: TR-2 (kept:true) fixed in 13c517b and rerun passes; sessions-tab SL-7 is a pre-existing midnight flake ('15 Nov, 23:58' vs HH:MM), unrelated"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "ok (100 files)"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "ok (211 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "clean (2147 files)"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "empty"
+  },
+  {
+   "command": "node scripts/bench/stop.mjs --name fix-d1109-starts-engine; rm -rf /tmp/frbench/fix-d1109-starts-engine/home",
+   "result": "bench stopped, home deleted"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-d1109-starts-engine/steps/08-before-retry-card.png",
+   "/tmp/frbench/fix-d1109-starts-engine/steps/09-before-retry-after-answer.png",
+   "/tmp/frbench/fix-d1109-starts-engine/steps/10-before-retry-tasks.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-d1109-starts-engine/steps/11-after-retry-card.png",
+   "/tmp/frbench/fix-d1109-starts-engine/steps/12-after-retry-after-answer.png",
+   "/tmp/frbench/fix-d1109-starts-engine/steps/13-after-retry-tasks.png",
+   "/tmp/frbench/fix-d1109-starts-engine/steps/14-after-handsoff-off-tasks.png",
+   "/tmp/frbench/fix-d1109-starts-engine/steps/15-after-handsoff-settings.png",
+   "/tmp/frbench/fix-d1109-starts-engine/steps/16-after-handsoff-sessions.png"
+  ]
+ },
+ "new_problems": [
+  "apps/ui/test/sessions-tab.test.tsx SL-7 fails when run shortly after midnight UTC. The fake session made about 2 h earlier reads '15 Nov, 23:58 · ...' where the test expects /^\\d\\d:\\d\\d · .../. Time-of-day flake in the d1109-sessions area, not this one.",
+  "Planning that waited for a credential is still drafted again by itself at the reset ('Planning waits until 15:40 (...) and starts by itself.'). It is a planning call the person asked for, not a session, and was kept. The owner may want it under D6 as well.",
+  "When a credential wait ends between ticks and the person presses Start, POST /sessions runs the wake first. The person's continuation starts, and their Start then queues behind it (result 'queued'). Honest, but a later Start may run a second session for what is left.",
+  "Suggested UPDATE-LOG/CHANGELOG lines (not written here): 'Only you start a session now: answers, Tasks-tab actions, chat changes, budget raises, CI results and comments prepare work, which joins the running session if its budget has room, else waits for your next Start (ADR 0118).' / 'A session you started that waited for its Claude credential goes on by itself once at the reset; Cancel the wait in the Start dialog drops it.' / 'New project setting When work is ready: Start a session by itself (off by default).'",
+  "Suggested requirements.md / core-experience.md lines (not written here): design 3.6 should add the laterBeyond line ('N more wait for a later Start'), the join line and Cancel the wait. Design 3.8 'Answering resumes work' should become 'answering prepares work; only Start starts'."
+ ],
+ "notes_for_other_areas": [
+  "prepareWork(deps, req) / PreparePort (session/prepared-work.ts): call it after any action that makes a task ready (by: 'person' | 'system' | 'agent'). It returns {outcome, line, startedBy?}. Store the outcome with resume-work.ts recordStart(store, requestId, outcome). Words: preparedLine, preparedClause, preparedExplain (PreparedContext {running, startsByItself}). previewWork is the read-only sibling.",
+  "LiveSessions (session/live-sessions.ts): forProject(projectId) -> AdmitHandle with admit(taskIds, by, {partOf, before}), readmit(taskIds), closing. The runner registers one per live session.",
+  "StartRequest.by ('person'|'schedule'|'hands_off'|'continuation') plus continues, schedule; startByOf(req). The session plan carries plan.startedBy {by, continues?, continuesAt?} and plan.promise. New events: session.promised, session.joined, session.left_for_next_start, session.continues (CONTINUES_EVENT; line 'Goes on with your session of HH:MM.').",
+  "Continuation on the billing source: limits.waiting[].kept {by, continues?, budgetUsdMicro?, at}. Helpers in wiring/billing-pick.ts: keepContinuation, keepStartAtReset, dropKeptStart, keptContinuationOf, keptStartOf. noteWait(sourceId, projectId, agentId, sessionId?, kept?). C6's 'Start at 15:40' should use keepStartAtReset.",
+  "RuntimeApp.quietHours {refresh, isQuiet, endsAt}: refresh before any start the person did not press. RuntimeApp.continuations {waiting, cancel, dropAll}. billing.waits.now returns kept:true when a continuation or a kept Start waits.",
+  "Routes: POST /projects/:id/continuation/cancel (ContinuationCancelView {cancelled, sentence}); POST /sessions takes continues; StartCheckView.laterBeyond and blocked.kept. The client has cancelContinuation(projectId). The fake daemon mirrors all of them.",
+  "CommandPorts.prepareWork / previewWork / startWaits. session.start has askFromChat: true. start_by_itself is appended last in SETTING_SPECS (personOnly; SettingEffectContext.project), so chat_ask_above and credential_policy go after it. Owner-question defaults used: the continuation is held by quiet hours; the setting is per project only and off.",
+  "summary_cache.start_pending (startPendingOf, keepStartPending, dropStartPending) keeps a hands-off start that could not run now. C4's 'Make one project' should carry or drop it.",
+  "StartBlockedFacts.needsYou names a task waiting on the person's card when nothing is ready (C2-left-2). pauseSaid and madeProgress now count report and handoff changes (C2-left-3). executor runIdAt uses monotonicId (C2-left-5)."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/githost-watcher.test.ts, githost-wiring.test.ts",
+   "why": "S-4: CI results and comments start nothing; firings are audited as waits_start. The scheduler-queue case is replaced by 'no firing reaches the scheduler'."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts (Go ahead without, failed card Try again/Mark done anyway, person task Send answers, chat try X again, W15B-01 x2, W15B-14, SL-9)",
+   "why": "Answers and budget raises only prepare; each case now presses Start. Done lines read '... it runs at your next Start.'."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts (Tasks tab lines, chat Resume read-back, task.create in chat, w15-merge Redo)",
+   "why": "S-9: a move's line ends with what happens next ('It runs at your next Start.'). The old start promises are gone."
+  },
+  {
+   "test": "credential words in w15-words, credential-wait-session, task-usage-limit, credential-limits, real-daemon credential-limits and TR-2, project.test.tsx, tasks.test.tsx",
+   "why": "S-10: '; then your session goes on.' for the person's session, else '; then it runs at your next Start.'. The blocked view carries kept:true."
+  },
+  {
+   "test": "packages/commands/test/commands.test.ts, executor.test.ts, oversize-start.test.ts, packages/runtime/test/loop-commands.test.ts, conversation.test.ts, chat-steering.test.ts",
+   "why": "S-11: a start said in chat is read back at any budget. Mechanics tests use the palette's press (source ui). Read-backs drop 'A session will pick it up'."
+  },
+  {
+   "test": "packages/runtime/test/chat-recall.test.ts BASE_STATUS_TOKENS 8355 -> 8511",
+   "why": "New model-facing tool text (+156 tokens, measured on b5fb66f vs this area)."
+  },
+  {
+   "test": "packages/commands/test/w15-chat.test.ts (22 keys, start_by_itself line asserted)",
+   "why": "S-5: new settings key."
+  },
+  {
+   "test": "apps/ui/test/inbox.test.tsx, fake-daemon.ts",
+   "why": "The fake answers cards as prepared (waits_start); explains and Done lines say 'it runs at your next Start'."
+  },
+  {
+   "test": "packages/runtime/test/dependent-branches-merge.test.ts",
+   "why": "Redo explain and outcome no longer promise a session; the person's Start runs it."
+  },
+  {
+   "test": "apps/ui/test/settings-all.test.tsx, settings-billing-order.test.tsx, polish-screens.test.tsx, fixtures.ts",
+   "why": "S-12: mid-session Wait reads 'then your session goes on'; the billing order's resting line drops 'waiting work starts by itself'."
+  },
+  {
+   "test": "packages/runtime/test/oversize-pause.test.ts OP-4 label/detail",
+   "why": "C2-left-1: new label 'Paused again without getting further' and detail 'Its card in the Inbox asks what to do differently.'."
+  }
+ ]
+}

@@ -1,0 +1,197 @@
+{
+ "area": "d1109-starts-engine",
+ "branch": "fixup-d1109-starts-engine (fix/d1109-starts-engine could not be moved: worktree /home/user/Forerunner/.claude/worktrees/wf_415a6fe9-606-1 has it checked out at 13c517b, so git refuses `git branch -f`. The fix-up head 1f61b65 descends from 13c517b, so it is a fast-forward: `git update-ref refs/heads/fix/d1109-starts-engine 1f61b650419e3fc746857795e8f6a77b1c200f56 13c517b81fdc161347aef34981e2f65011249db7` once that worktree is released, or merge fixupd-d1109-starts-engine)",
+ "head_sha": "1f61b650419e3fc746857795e8f6a77b1c200f56",
+ "commits": [
+  {
+   "sha": "db72752e5e4ebc492d7dd503848cdd8ba92bdfa4",
+   "subject": "runtime, ui: the Inbox says what an answer does now; a continuation names the end of quiet hours; a Start during a stop is kept for the reset (U-093, U-078)"
+  },
+  {
+   "sha": "f16c9348ed829fe97c5ad8f76d30e01ef3cfc10c",
+   "subject": "docs: ADR 0118 quotes the owner, names the calibration and the cloud runner, records the kept Start (U-093, U-078)"
+  },
+  {
+   "sha": "1f61b650419e3fc746857795e8f6a77b1c200f56",
+   "subject": "ui: the siblings of the kept Start read it (U-078)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Blocking 1 (S-9): an Inbox option that prepares work always read '...; it runs at your next Start.'. Pressing it then joined the project's running session, or started one under 'Start a session by itself'. Root cause: views.ts requestContexts never set RequestWordsContext.running or startsByItself.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-starts-engine, run C' > \"S-9: GET /inbox's Try again says what pressing it does now (no session, the project's session running, the hands-off setting on), and the answer does that\". It expected '...; it joins the running session if it fits.' and received '...; it runs at your next Start.'. Also packages/runtime/test/starts-words.test.ts 'd1109-starts-engine S-9: the explain of an option that prepares work' (4 cases fail on the fixer's sources: the continuation, quiet hours, Stop all and preparedContextOf).",
+   "how": "New preparedContextOf in session/prepared-work.ts. It reads, read-only and in prepareWork's order: the project's live or asked-for session, the person's waiting session, start_by_itself with Stop all and quiet hours, and another project's session. PreparedContext gains continuationWaits, stopped and quiet; preparedExplain words each case. RuntimeApp.preparedContext(projectId) feeds requestViews(store, rows, prepared) on GET /inbox, on the answer route's card and on the chat's read-back of a card (compose cardWords). The fake daemon words its open cards from its running sessions and its start_by_itself:<project> setting.",
+   "check_in_the_app": "Live check: give a project a task that fails (bench: a title starting 'Fail me'). Let it fail into its Inbox card. (1) With nothing running, Try again's line reads 'Tries again with your note, if any; it runs at your next Start.' (2) Add a second task and press Start. While that session runs, open the Inbox: the line reads '...; it joins the running session if it fits.' Press Try again: the Done line reads 'Trying \"X\" again: it joins the session that is running.' and the session log names the task. (3) On another project with Settings > When work is ready > 'Start a session by itself' on, the line reads '...; a session starts for it by itself.' Pressing it starts one session (Done line '...: a session started for it (this project starts by itself when work is ready).'). Bench walk: /tmp/frbench/fixup-d1109-starts-engine/walk-s9.json."
+  },
+  {
+   "problem": "Blocking 2 (S-10): with quiet hours covering the reset, several places named the reset (15:00) and said 'then your session goes on', although the continuation goes on at 17:00. These were the session's end sentence, the task rows, the project's status and the session log.",
+   "u_ids": [
+    "U-078"
+   ],
+   "failing_test_before": "packages/runtime/test/continuation.test.ts \"quiet hours over the reset, set before the session: its end sentence, the task's row, the log and the Start check name their end\". It expected 'Waits until 17:00 (after your quiet hours); then your session goes on.' and received 'Waits until 15:00 (your subscription's limit); then your session goes on.'.",
+   "how": "New quietHoursEndAt in notifications/prefs.ts; compose's cached reader uses it too. New continuationGoesOnAt and goesOnAtWords in credential-wait.ts. These feed the runner's end sentence and the review's stop line, the executor's waitWords (used for the log line and the thrown wait), and task-display's credentialWaitRow (only for a kept continuation, not a kept person Start). waitRowWords takes goesOnAt: label 'Waits until 17:00, after your quiet hours', line 'Waiting until 17:00 (after your quiet hours)'.",
+   "check_in_the_app": "Live check (subscription): set Settings > Quiet hours to a window that covers the subscription's next reset. Run a session until its usage limit. The session's end, each waiting task's row ('Waits until HH:MM, after your quiet hours'), the project's status, the session log and the Start dialog all name the end of the quiet hours. At that time the session goes on once."
+  },
+  {
+   "problem": "Blocking 3 (S-10): the kept person Start ('Start at 15:40') was not built, and keepStartAtReset had no caller. A Start pressed while the credential rested ran a session that only met the wait and became a continuation. Quiet hours then held that continuation, although the person had chosen the time. The project's status never said when the work starts.",
+   "u_ids": [
+    "U-078",
+    "U-093"
+   ],
+   "failing_test_before": "packages/runtime/test/continuation.test.ts \"a Start pressed while the credential is out is kept: nothing runs now, the status says when, and it starts once at the reset by the person, quiet hours not holding it, also after a restart\" (fails on the fixer's sources: no startLabel, and a session ran). Also apps/ui/test/project.test.tsx TR-2 'the dialog says what Start does and Start sends the start' (the button read 'Start', not 'Start at 09:30').",
+   "how": "New RuntimeApp.continuations.keepStart(projectId, agentId, {budgetUsdMicro, continues, note}). It runs only when the work's credential rests at its usage limit, nothing is kept and no session of the project runs or waits. It calls noteWait, then keepStartAtReset (KeptStart gains note). POST /sessions calls it after the nothing-runnable check and answers 202 {result: 'kept', startId: '', session: null, sentence: 'A session of X starts at 15:40.'}. No session runs. The wake starts the kept Start once with by 'person', so quiet hours do not hold it; it carries the note. billing.waits.now gives startLabel ('Start at 15:40'), which becomes StartCheckView.blocked.startLabel and the dialog's button. It also gives startsAt (keptStartLine), so the project's status reads 'Starts at 15:40 (your subscription's limit): 1 task'; the rows' line says the same. StartSessionView.result gains 'kept' and sentence (append-only). The dialog's notice is the daemon's sentence. The fake daemon keeps a Start on a startable wait the same way.",
+   "check_in_the_app": "Live check (API key at its limit, or subscription): when the credential rests and nothing is kept for a project, open Start. The line reads 'Nothing can run until HH:MM (...). Press Start and the work starts then.' and the button reads 'Start at HH:MM'. Press it: the dialog says 'A session of <project> starts at HH:MM.' and no session row appears. The project's line reads 'Starts at HH:MM (...): 1 task'. A second Start answers the same sentence. At the reset exactly one session starts (trigger budget_reset, started by you), also inside quiet hours and after Forerunner was closed and opened again. Bench walk on --provider bench-api --api-key limited: /tmp/frbench/fixup-d1109-starts-engine/walk-k.json. There 'Start at 03:43' was pressed, nothing ran, and one session ran at the reset beside the other project's continuation."
+  },
+  {
+   "problem": "Blocking 4 (S-13): ADR 0118 did not name the critic's calibration as the one exception on this computer or the cloud runner as a known gap. It also quoted the owner with words that are not in owner-decisions-2026-11-09.md.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "none (docs). Checked by grep: 'calibrat' and 'cloud-runner' are now in 0118, and every quoted owner sentence is in /tmp/frbench/owner-decisions-2026-11-09.md.",
+   "how": "The Context now quotes the owner as written: the D6 paragraph, option C, the confirmation 'All this sounds good except the status line ...' and 'Try to build those in.', answer 7b, and answers 6 and 9. The session lead's record of the confirmation and of the continuation is marked as theirs. Point 11 names the monthly calibration as the one exception (the 0060 amendment says so too). Consequences name two known gaps: the cloud runner (services/cloud-runner/src/inbox-trigger.ts still starts on answers) and a chat start during a stop. Points 3, 6 and 10 record the three fixes. Maintainer docs (runtime.md, billing.md, apps.md) and the user guide are updated.",
+   "check_in_the_app": "Read docs/decisions/0118-who-starts-a-session.md: Context, points 10 and 11, and Consequences 'Known gap'."
+  },
+  {
+   "problem": "Non-blocking items taken: (a) the continuation's first log line was 'The session started with a budget of CHF 5.00.', with 'Goes on with your session of 02:19.' second, against the acceptance. (b) priceNow was inserted between reviewOnlyResult's JSDoc and its function.",
+   "u_ids": [
+    "U-078"
+   ],
+   "failing_test_before": "packages/runtime/test/continuation.test.ts 'goes on once at the reset, ...' (new assertion: events[0] is session.continues; it failed with 'session.started').",
+   "how": "The runner emits CONTINUES_EVENT before session.started. The doc comment is back on reviewOnlyResult.",
+   "check_in_the_app": "After a continuation runs, its session page log starts with 'Goes on with your session of HH:MM.' (bench walk K: ['Goes on with your session of 03:40.', 'The session started with a budget of CHF 5.00.'])."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "fix/d1109-starts-engine still points at 13c517b.",
+   "why": "The fixer's worktree /home/user/Forerunner/.claude/worktrees/wf_415a6fe9-606-1 has that branch checked out, so `git branch -f` is refused. Moving the ref anyway would change another worktree's checkout. The work is on fixupd-d1109-starts-engine at 1f61b65, a fast-forward of 13c517b."
+  },
+  {
+   "problem": "A start said in chat ('run it now', after its yes) while the credential rests is not kept for the reset the way the dialog's Start is.",
+   "why": "Chat's session.start goes through sessionCommandPorts.startSession, and its undo stops the agent's session when no start id is recorded. A 'kept' outcome there needs its own undo and sentence. The acceptance names 'Start pressed during a stop'. As today, the chat start's session meets the wait and keeps the person's continuation, and its words stay true. Recorded in ADR 0118 as a known gap."
+  },
+  {
+   "problem": "Review non-blocking items not taken: (1) an ended session's stored summary still says '...; then your session goes on.' after Cancel the wait; (2) BillingOrderSection's resting line shows whether or not a session waits; (3) answer paths call prepareAnswer without taskIds, so a Done line can say 'joins' when another ready task joined; (4) no 'Continue' prefill with continues in the Start dialog after Cancel, and no 'Starts after the session on \"X\"'; (5) test gaps: a handover-test continuation, Stop now, a project's removal dropping a continuation, the S-11 negations, a restart after an answered card, S-8 through the Edit route.",
+   "why": "Not blocking. Each needs its own failing test and touches screens or flows outside the four findings. (1) is a stored summary written at the session's end. Left for the session lead to place."
+  },
+  {
+   "problem": "One commit holds the three code fixes, instead of one commit per item.",
+   "why": "Their hunks interleave in compose.ts, server.ts, fake-daemon.ts and real-daemon.test.ts, and interactive staging is not available here. The commit body names each fix, its root cause and its failing test. Each failing test was checked against the fixer's sources, with the tests kept and the sources reverted, then restored."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm lint (biome check .)",
+   "result": "0 errors, 40 warnings (same as base; the one my change added was fixed)"
+  },
+  {
+   "command": "node scripts/check-paths.mjs",
+   "result": "ok (1526 files)"
+  },
+  {
+   "command": "pnpm typecheck",
+   "result": "clean (node + apps)"
+  },
+  {
+   "command": "pnpm test (unit)",
+   "result": "510 files, 5469 passed, 7 skipped"
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "30 passed, 78 skipped, exit 0"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "25 passed, 1 skipped, exit 0"
+  },
+  {
+   "command": "cd apps/ui && npx vitest run --config vitest.config.ts",
+   "result": "92 files, 1191 passed (after the sibling commit; the first run found 2 siblings of the kept Start, W15B-02 (c) and W15-66, both updated in 1f61b65)"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "35 passed"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "ok (107 files)"
+  },
+  {
+   "command": "pnpm docs:links",
+   "result": "ok (211 files)"
+  },
+  {
+   "command": "pnpm secrets:scan",
+   "result": "clean (2148 files)"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "empty"
+  },
+  {
+   "command": "failing-before check: git checkout fix/d1109-starts-engine -- packages/runtime/src apps/ui/src apps/ui/test/fake-daemon.ts, then the new tests, then git checkout HEAD -- (restored)",
+   "result": "continuation.test.ts 3 new or extended cases fail, starts-words.test.ts 4 fail, project.test.tsx TR-2 and real-daemon TR-2 fail; all pass on the fix-up"
+  },
+  {
+   "command": "bench walk S-9 (--provider bench, FORERUNNER_BENCH_FAIL='Fail me'): node walk-s9.cjs",
+   "result": "idle explain '...; it runs at your next Start.'; while running '...; it joins the running session if it fits.', answer joined (session.joined); hands-off '...; a session starts for it by itself.', answer started one session (1 -> 2)"
+  },
+  {
+   "command": "bench walk K (--provider bench-api --api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=2): node walk-k.cjs",
+   "result": "blocked startLabel 'Start at 03:43'; the button reads it; notice 'A session of Walk kept start starts at 03:43.'; 0 sessions; status 'Starts at 03:43 (your API key's limit): 1 task'; a second Start 409 with the same sentence; at the reset one budget_reset session for it and the other project's continuation (first line 'Goes on with your session of 03:40.'); no second session a tick later"
+  },
+  {
+   "command": "node scripts/bench/stop.mjs --name fixup-d1109-starts-engine; rm -rf home and browser-profile",
+   "result": "bench stopped, home and profile deleted"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-d1109-starts-engine/steps/01-e-inbox-while-running.png",
+   "/tmp/frbench/review-d1109-starts-engine-cred/steps/01-d-p1-first-dialog.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-d1109-starts-engine-s9/steps/01-s9-inbox-idle.png",
+   "/tmp/frbench/fixup-d1109-starts-engine-s9/steps/02-s9-inbox-while-running.png",
+   "/tmp/frbench/fixup-d1109-starts-engine-s9/steps/03-s9-inbox-hands-off.png",
+   "/tmp/frbench/fixup-d1109-starts-engine/steps/01-k-dialog-start-at.png",
+   "/tmp/frbench/fixup-d1109-starts-engine/steps/02-k-dialog-kept.png",
+   "/tmp/frbench/fixup-d1109-starts-engine/steps/03-k-project-starts-at.png",
+   "/tmp/frbench/fixup-d1109-starts-engine/steps/04-k-project-after-reset.png"
+  ]
+ },
+ "new_problems": [
+  "The Start dialog's line 'Nothing can run until 03:43 (...). Press Start and the work starts then.' sits beside a button that now reads 'Start at 03:43'. The words are true, but the session lead may want the sentence to match the button. The sentence is asserted in W15-65 and TR-2, so it was not changed here.",
+  "Suggested UPDATE-LOG/CHANGELOG lines (not written here): 'An Inbox option says what pressing it does as things stand: it joins the running session if it fits, a session starts by itself (with the setting on), or it runs at your next Start.' / 'While your Claude credential rests, Start reads \"Start at 15:40\": your Start is kept and the session starts then, once.' / 'When your quiet hours cover the reset, every line names when your session really goes on.'",
+  "Design core-experience.md §3.6 could add the 'Start at 15:40' button and the kept notice, and §3.8 the explain read when the card is shown (for the session lead)."
+ ],
+ "notes_for_other_areas": [
+  "RuntimeApp.preparedContext(projectId) and session/prepared-work.ts preparedContextOf(deps, {agentId, projectId}) return the facts prepareWork decides by. PreparedContext gains continuationWaits, stopped and quiet; RequestWordsContext gains stopped and quiet. requestViews(store, rows, prepared?) takes the reader: pass rt.preparedContext wherever a person reads a card's options.",
+  "C6 / d1109-cred-screens: 'Start at 15:40' is built here. Use RuntimeApp.continuations.keepStart(projectId, agentId, {budgetUsdMicro?, continues?, note?}), which returns the sentence or null. It calls noteWait, then keepStartAtReset; KeptStart gains note. POST /sessions answers {result: 'kept', startId: '', session: null, sentence} (StartSessionView.result gains 'kept' and sentence). StartCheckView.blocked.startLabel is the button's words. billing.waits.now returns startLabel while startable and startsAt (credential-wait.ts keptStartLine) while a person Start is kept. project-status's credentialWaitNow.startsAt gives the status line 'Starts at 15:40 (...): N tasks'.",
+  "C5 d1109-run-visible: every sentence about the person's waiting continuation names the quiet-hours end when it is later. Helpers: notifications/prefs.ts quietHoursEndAt(quiet, tz, atMs); credential-wait.ts continuationGoesOnAt(human, until) and goesOnAtWords(human, until); waitRowWords takes {goesOnAt, startKept}. Read these instead of recomputing. continuations.waiting already says 'Your session of 10:00 goes on by itself at 17:00.' or 'A session of X starts at 15:40.'.",
+  "Event order: a continuation's session now emits session.continues before session.started (its first log line). Code that reads a session's first event must find session.started by type.",
+  "d1109-onerepo-join (C4): keptStartOf now also returns Starts kept by POST /sessions during a stop; Make one project should refuse while either waits (as the spec says).",
+  "Known gap for later rounds (ADR 0118 Consequences): chat's session.start during a stop is not kept; the cloud runner's inbox-trigger still starts on answers."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'leftovers7-tailrun, wave 13' > TR-2",
+   "why": "The Start pressed while the key rests is now kept for the reset (result 'kept', no session; status 'Starts at 09:30 ...'), and only the reset's session runs, by the person. Before: a 'manual' session met the wait and a 'budget_reset' one followed. The blocked view carries startLabel."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'w15-tail, wave 15 run B' > '(c) a removed project's kept credential wait ...'",
+   "why": "The Start is kept, so no session runs for the removed project at all. Before, a 'manual' one did. The intent stays: the wake starts nothing of it and the wait leaves the key."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'w15-words' > 'the only API key rests and no Start kept its wait'",
+   "why": "The Start check's blocked view adds startLabel 'Start at 09:30'. The sentence and 'looking records nothing' are unchanged."
+  },
+  {
+   "test": "apps/ui/test/project.test.tsx TR-2 'the dialog says what Start does and Start sends the start'",
+   "why": "The button reads 'Start at 09:30' and the notice is the kept sentence."
+  }
+ ]
+}

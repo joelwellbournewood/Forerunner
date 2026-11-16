@@ -1,0 +1,294 @@
+{
+ "area": "d1109-chat-depth",
+ "branch": "fix/d1109-chat-depth",
+ "head_sha": "1a0b619368c3c493b038c3de0708dca71abc2a0f",
+ "commits": [
+  {
+   "sha": "258c8da6a078103ab74d683a1abd5d9efc7f908a",
+   "subject": "d1109-chat-depth: chat thinks longer when it helps, asks before a stronger model, and stops on Stop (D3-10, D3-12, D3-13, D3-16, L3-left-11, C2-left-6, C2-left-8)"
+  },
+  {
+   "sha": "f45bfd3c6492dd39bb3045b78e41cf9fb4f6c1d5",
+   "subject": "d1109-chat-depth: the waiting line, Stop and Answer now, the lines under an answer, and \"Chat asks first\" in Settings (D3-11, D3-12, D3-14, D3-15, L3-left-9, L3-left-10, C2-left-7)"
+  },
+  {
+   "sha": "3e0a01a903f0ada070b3bda67c31fee078a8b312",
+   "subject": "d1109-chat-depth: conversation-agent 1.4.0 says when to think longer (D3-10)"
+  },
+  {
+   "sha": "1c08d564afeb55e10d5f7ec6a1325123f562e098",
+   "subject": "d1109-chat-depth: a browser test of the waiting line and Stop (D3-11, D3-12)"
+  },
+  {
+   "sha": "a27a291717712783ef4a860b0f0552fbbed585ba",
+   "subject": "d1109-chat-depth: docs, ADR 0114's amendment and the bench's hand-over (D3-10 to D3-16, C2-left-6)"
+  },
+  {
+   "sha": "08aa680a7dae5572629176a1229770fdc8f9484f",
+   "subject": "d1109-chat-depth: the rungs follow the need under the project's highest model (D3-13)"
+  },
+  {
+   "sha": "c64caa3954b77a9d06ffe92d2a10635e58ead584",
+   "subject": "d1109-chat-depth: the stream conventions test reads the turn frame first (D3-11)"
+  },
+  {
+   "sha": "1a0b619368c3c493b038c3de0708dca71abc2a0f",
+   "subject": "d1109-chat-depth: the palette browser test counts \"Chat asks first\" (D3-13)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "D3-10: every question got the same fast pass (Haiku, low effort, thinking off). Chat could not think longer or use a stronger model when a question needed it.",
+   "u_ids": [
+    "U-094",
+    "U-086"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-depth.test.ts: \"'think it through: …' makes no fast call and runs the longer rung at once: fake-haiku at medium, thinking not off, 4096 tokens, CHAT_THOROUGH_RULES, no answer_thoroughly\"; \"the fast request carries answer_thoroughly with exactly its definition; many_records hands over at once (no ask) after one call\"; \"the role prompt sent is conversation-agent 1.4.0 with 'Thinking longer', on the fast and the thorough request\"; plus the 'rungs follow the need' cases (best rung on opus, haiku ceiling)",
+   "how": "New src/conversation/depth.ts holds the rungs, the word detection and every model-facing and person-facing text. There are three rungs. Longer: the same model one effort step up with adaptive thinking, 4,096 tokens a call, 8 calls, 120 s. Stronger: the new mode chat_thorough (sonnet, medium), held at the project's highest model and at max_effort. Best: the project's highest model, only on the person's words or a Go ahead. The rung is picked by the person's words at the start or end of a line (outside quotes), by the Think it through button (depth: \"longer\"), or by the fast model's one tool answer_thoroughly {why} (an enum). Code picks the model, the effort, the money and whether to ask. The thorough pass reuses the quick pass's facts and has 8,000 tokens of history, recall sizes 3,000/4,000, CHAT_THOROUGH_RULES, and the quick tools without answer_thoroughly. conversation-agent.md 1.4.0 adds a 'Thinking longer' section.",
+   "check_in_the_app": "In a project with a failed task, ask in Chat: why does \"<that task>\" keep failing and what should I change? Under a short answer you see 'This needs a stronger model: about CHF … (at most CHF …) and … seconds. Go ahead?'. Press Go ahead: the answer names the cause and one next step, with 'Thought it through with Sonnet · … s · CHF …' under it. Type 'think it through: what did the last two sessions do?': it thinks longer on the same model without asking. Ask 'what is left?': you get a fast answer with no such line."
+  },
+  {
+   "problem": "D3-11: while a reply was being made, the person saw only 'Thinking…' and a disabled 'Sending…' button, whatever chat was doing.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "apps/ui/test/chat-depth.test.tsx: 'shows the step the daemon sends, Send becomes Stop with its consequence line, and Stop ends the answer with what it cost' and 'with fake timers the waiting bubble reads 'Thinking…', then the step, then ' · 3 s''; apps/ui/test/real-daemon.test.ts 'd1109-chat-depth, run C' > 'POST /chat/stream: a line that reads the last session gets the turn frame first, then the step 'Reading the last session…', then the tokens and the reply…'; apps/ui/e2e/chat.spec.ts 'the waiting line names the step, Send becomes Stop, and Stop ends the answer'",
+   "how": "POST /chat/stream now sends a turn frame {turnId, startedAt} first, then a step frame {text, at, reset?} at each step, then tokens and the reply. Every frame write has a .catch, so a dropped stream never stops a turn. Command tools also say their step (withStep). In the UI, streamChat reads the new frames, and the store's live state keeps the turn id, step, start time and depth. The bubble shows 'Thinking…', then the newest step, then ' · N s' from 3 s on. /events sends conversation.changed, and Talk and the Chat tab read it again.",
+   "check_in_the_app": "Ask 'what did the last session do?': the bubble says 'Reading the last session…' before the answer. During a longer answer it says 'Thinking it through with Sonnet: about … seconds, at most CHF ….' and the seconds count up."
+  },
+  {
+   "problem": "D3-12: an answer could not be stopped. There was no Stop and no route, and ChatRequest.signal never reached the run, so voice's barge-in did not stop the model call.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-depth.test.ts: 'Stop while the stand-in holds a call ends the run as killed within a second, makes no further call, and the reply row says stopped with the call's booked cost' and 'the request's own signal (voice's barge-in) now reaches the run: aborted mid-call, the run ends as killed'; apps/ui/test/real-daemon.test.ts 'Stop on a held turn: {stopped: true}…; another person's Stop is 403; a finished turn's Stop is {stopped: false}; a dropped stream does not stop a turn…'",
+   "how": "New ChatTurns registry (src/conversation/chat-turns.ts) keeps one entry per turn with its own AbortController. Every run of the turn gets AbortSignal.any([req.signal, controller.signal]). New routes: POST /chat/turns/:id/stop (another person gets 403, an ended turn gets {stopped:false}) and POST /chat/turns/:id/answer-now, which calls SessionBudget.wrapUpNow. The loop books the call that was cut off. A stopped reply keeps its complete sentences, and its footer is 'You stopped this answer: CHF … spent.'. In the UI, Send becomes Stop (with its consequence line in the title), and a longer answer also has Answer now.",
+   "check_in_the_app": "During a longer answer, press Stop: the answer ends and 'You stopped this answer: CHF … spent.' is under it. During another one, press Answer now: it answers at once with what it found so far."
+  },
+  {
+   "problem": "D3-13 (money): nothing bounded what chat could spend per answer beyond ADR 0091's USD 0.25 per turn, and nothing asked before a more expensive model.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-depth.test.ts: 'why failure: no stronger call; the model hears exactly the ask result, the answer ends with the ask line and Go ahead; nothing more is booked; a typed 'yes' runs it once', 'any other next line drops the offer with nothing spent', 'called after a task_get, the gate refuses (records read)…', 'a questions card listed in full whose quoted words ask for the best model: the hand-over is refused (records)…', 'the room below the pass's floor refuses with the cap line…', 'a chat credential that is not the person's first…asks and names it', 'with the person's amount at 0 the explicit longer pass asks first…', 'there is no daily sum…', 'the wrap-up reaches the thorough pass once and it still answers; the turn's ledger rows sum to the reply's cost', 'the estimate is the median of the last answers on that rung and model', 'the fast request's tools and system part are byte-identical whether the gate allows a hand-over or not', 'a Go ahead after the agent is composed again on the same store runs once'; packages/commands/test/commands.test.ts chat_ask_above cases; apps/ui/test/real-daemon.test.ts 'GET /settings: 'Chat asks first' is CHF 0.10 unset…'",
+   "how": "The gate is answer_thoroughly's execute. In order, it refuses: a spoken turn; a 'quick' line; a turn that read a record or made a lookup or command first (turn.recordsRead, including a card listed in full); outer room (the month cap or the project's budget, via CapChecker.room) below the pass's floor; no rung above the quick pass. Each refusal is an exact sentence the model hears. The ask rule: a switch of model, an estimate above the person's amount (new setting chat_ask_above, CHF 0.10 by default, 0 means always ask), or a credential that is not the person's first asks in one line with cost and time. Only Go ahead or a typed yes as the next line goes on; any other line drops the offer. Nothing is spent before the yes. Pass budget: min(the amount, 'at most', the room), or after a yes min(the line's 'at most', the room). 'At most' is twice the estimate, rounded up. The floor is three worst cases of the first call. The estimate is the median of the last 20 answers on that rung and model. There is no daily sum. A wrap-up is heard once, and every call is booked. Settings, Basics gains the 'Chat asks first' row.",
+   "check_in_the_app": "In Settings, Basics, 'Chat asks first' reads CHF 0.10. Set it to 0, then type 'think it through: what did the last two sessions do?': you get the ask line with Go ahead instead of an answer, and nothing is spent until you press it. Type any other line: the offer goes away."
+  },
+  {
+   "problem": "D3-14: a reload during an answer, or a restart that cut one off, left the person's line with nothing under it.",
+   "u_ids": [
+    "U-071",
+    "U-094"
+   ],
+   "failing_test_before": "apps/ui/test/chat-depth.test.tsx: 'a remounted conversation (a reload) shows the answering line and Stop from the daemon, then the reply' and 'a line Forerunner closed on says so with Ask again, which sends the same line'; apps/ui/test/real-daemon.test.ts 'a line Forerunner closed on before answering reads as interrupted after the daemon composes again on the same home'; packages/runtime/test/chat-depth.test.ts 'a turn that throws writes 'I could not answer this.' as its reply'",
+   "how": "The conversation view now serves answering {turnId, step, since, depth} for the turn in flight. A line with no reply reads as interrupted (older than the daemon's start: 'Forerunner closed before answering this.') or failed ('I could not answer this.'), each with Ask again. A turn that throws writes FAILED_WORDS as its reply. /events sends conversation.changed when a turn starts, takes a step or ends.",
+   "check_in_the_app": "Reload the page during a longer answer: the same waiting line and Stop come back, then the answer. Quit Forerunner during an answer and start it again: the line says 'Forerunner closed before answering this.' with Ask again."
+  },
+  {
+   "problem": "D3-15: a reply never said which model answered, how long it took or what it cost.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-depth-words.test.ts (footerWords, stoppedWords, askLine, handOverStep, capWords cases); apps/ui/test/chat-depth.test.tsx 'an ask line with Go ahead…', 'Think it through under a quick answer, with its consequence line, sends depth longer', 'a cap line under the answer has nothing to press'",
+   "how": "The chat.reply row keeps depth, passes, why, offer, capLine, closer, footer and stopped, and the view serves footer, offer and depth. A longer answer ends with one line in CHF ('Thought it through with Sonnet · 34 s · CHF 0.06'). A quick typed model answer offers Think it through with its consequence line. A cap refusal shows a cap line with nothing to press.",
+   "check_in_the_app": "After a longer answer, read the line under it: 'Thought it through with Sonnet · … s · CHF …'. Under a quick answer, press Think it through: it thinks longer and ends with 'Thought it through more carefully · …'."
+  },
+  {
+   "problem": "D3-16: Performance measured every typed chat reply against the 1 s first-token target, so a longer answer would read as a miss.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/runtime/test/performance-view.test.ts 'd1109-chat-depth, run C: a longer chat answer on Performance' > 'is a 'Chat, thorough answers' sample on its total time, never a text_chat first-token sample'",
+   "how": "New mode chat_thorough in MODE_DEFAULTS, MODE_VALUES and AGENT_SETTING_MODES, labelled 'Chat, thorough answers' with a 30 s total target. eventSample measures a longer answer on its total time with ttftMs null.",
+   "check_in_the_app": "After a longer answer, open Performance: a 'Chat, thorough answers' row is measured against 30 s, and the 'Chat' first-token row does not count it."
+  },
+  {
+   "problem": "L3-left-9: the claim guard could not take back text already streamed. Talk's live bubble could show the first call's false claim.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "apps/ui/test/chat-depth.test.tsx 'during a longer answer Answer now sits beside Stop and sends its route; the hand-over's reset drops the streamed text (L3-left-9)'",
+   "how": "A step frame can carry reset: true. streamChat and the store then drop the text streamed so far. The hand-over step and the claim guard's step use it.",
+   "check_in_the_app": "Ask a question that hands over to a longer answer: the short text streamed first goes away when 'Thinking it through…' appears, and only the final answer stays."
+  },
+  {
+   "problem": "L3-left-10: a reply that was its changes' sentences joined together showed them twice.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "apps/ui/test/chat-depth.test.tsx 'L3-left-10: a reply that is its two changes' sentences joined shows them once, as the change rows'",
+   "how": "Conversation.tsx shows such a reply once, as the change rows.",
+   "check_in_the_app": "Ask for two changes in one line (for example, rename a task and pause another): each change shows once with its Undo, with no repeated sentence above."
+  },
+  {
+   "problem": "L3-left-11: the timeout reply read 'I could not answer (run timeout).', a raw state in brackets.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation.test.ts 'a typed turn its timeout cuts off before any token records no time to first token' (now asserts TIMEOUT_REPLY); packages/runtime/test/chat-depth.test.ts 'L3-left-11: the timeout reply is one sentence…'",
+   "how": "The timeout reply is now TIMEOUT_REPLY: 'I ran out of time before I could answer. Ask again, or ask for a shorter answer.'",
+   "check_in_the_app": "Hard to trigger by hand. In the stand-in bench with FORERUNNER_BENCH_CHAT_HOLD_MS above the timeout, a chat line answers 'I ran out of time before I could answer. Ask again, or ask for a shorter answer.'"
+  },
+  {
+   "problem": "C2-left-6: the command tools never said what they were doing ('Preparing the change…').",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-depth.test.ts 'C2-left-6: a command tool says what it does ('Preparing the change…')'",
+   "how": "The agent wraps each command tool with withStep, which calls onStep with stepLine's words.",
+   "check_in_the_app": "Ask Chat to rename a task: while it works, the bubble says 'Preparing the change…'."
+  },
+  {
+   "problem": "C2-left-7: the From line linked to pages that do not show the record (/talk, /inbox?answered=, /projects/:id?decision=, /changes?projectId=).",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "apps/ui/test/chat-depth.test.tsx 'the From line names up to three records, linking only those whose page shows them (C2-left-7)'",
+   "how": "recordLink draws a link only where the page reads the parameter and shows the record: a session, a task's drawer (?task=), a file (?path=). Otherwise it shows the name with no link, and a null link draws none.",
+   "check_in_the_app": "Ask 'what did we decide about X?': the From line names the records. A session or task name opens it, and a decision or answered card is plain text, not a dead link."
+  },
+  {
+   "problem": "C2-left-8: the conversation.test.ts timeout test failed under load because its pastTimeout moved the simulated clock before the model call started.",
+   "u_ids": [],
+   "failing_test_before": "packages/runtime/test/conversation.test.ts 'l3-money-engine, run L3: a chat call its timeout cuts off > a typed turn its timeout cuts off before any token records no time to first token' (failed under load: 'the chat turn had not answered after 60 s of simulated time')",
+   "how": "The test now waits on a 'started' promise that resolves when the model call begins, then moves the clock. It is deterministic rather than using more ticks, and it asserts the same things.",
+   "check_in_the_app": "Not visible in the app. It is CI stability only."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "The plan share (Claude subscription share) is not a cap level in chatRoom, so the Claude-plan form of the footer and ask line is only exercised by the words tests.",
+   "why": "The words (askLine/handOverStep plan form) exist and are tested, but compose's chatRoom reads only the month cap and the project's budget. The plan-share read belongs with d1109-cred-engine/C5's credential policy. The cut line allows the Claude-plan footer wording."
+  },
+  {
+   "problem": "Settings, Advanced, Models has no 'Chat, thorough answers' row in ModelSettingsSection, although the mode is in MODE_DEFAULTS, MODE_VALUES, AGENT_SETTING_MODES and the daemon's model settings view.",
+   "why": "Models row is in the allowed cut line; the daemon side and commands label ('chat's thorough answers') are done."
+  },
+  {
+   "problem": "Inbox, Overview and Changes do not read ?answered=, ?request=, ?decision= or ?projectId=, so the From line names those records with no link.",
+   "why": "The spec allows 'opens the record or draws no link'. This build draws no link. Making those pages open the record is another area's page work."
+  },
+  {
+   "problem": "No separate voice-bridge test file case for barge-in.",
+   "why": "It is covered by the composed test 'the request's own signal (voice's barge-in) now reaches the run' on ConversationAgent.chat, the path the voice bridge calls."
+  },
+  {
+   "problem": "Not separately asserted: a composed case on a Claude subscription, the Costs 'Planning and chat' growth, and the token size of three lookups on a 10k context.",
+   "why": "Ledger booking is asserted (the turn's rows sum to the reply's cost, and a stopped call is booked). The subscription path uses the same API-equivalent figures, and it is waiting on C5's credential policy."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm check (lint, lint:paths, typecheck, pnpm test, node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0, docs:links, secrets:scan) at 1a0b619",
+   "result": "exit 0: 507 test files, 5471 passed, 7 skipped; check-paths ok (1523 files); docs-check ok (57 files); link-check ok (210 files); secret-scan clean (2144 files). Lint: warnings only (39, all pre-existing)."
+  },
+  {
+   "command": "pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 78 skipped"
+  },
+  {
+   "command": "pnpm test:e2e",
+   "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "pnpm test:injection",
+   "result": "exit 0: Failures: None"
+  },
+  {
+   "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+   "result": "92 of 93 files passed, 1198 of 1199 tests. The one failure is sessions-tab.test.tsx 'says the count, the working session on top…'. That test is not touched by this branch and fails only in the hours after local midnight (it expected '^\\d\\d:\\d\\d ·' and got '15 Nov, 22:40 ·' at 00:45 UTC). With TZ=Etc/GMT-12 the file passes 11/11."
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 36 passed (after updating palette.spec.ts to count the new 'Chat asks first' row: 22 to 23)"
+  },
+  {
+   "command": "npx vitest run --project unit packages/runtime/test/chat-depth.test.ts",
+   "result": "27 passed"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "empty"
+  },
+  {
+   "command": "git status --short; git rev-parse HEAD fix/d1109-chat-depth",
+   "result": "clean; both 1a0b619368c3c493b038c3de0708dca71abc2a0f"
+  },
+  {
+   "command": "bench fix-d1109-chat-depth (--provider bench) BEFORE/AFTER walks",
+   "result": "Stopped (daemon 27670, ui 27746, node 27677 gone); its home /tmp/frbench/fix-d1109-chat-depth/home is deleted"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-d1109-chat-depth/before-steps/01-before-why-failing-waiting.png",
+   "/tmp/frbench/fix-d1109-chat-depth/before-steps/02-before-why-failing-answered.png",
+   "/tmp/frbench/fix-d1109-chat-depth/before-steps/03-before-think-it-through-waiting.png",
+   "/tmp/frbench/fix-d1109-chat-depth/before-steps/04-before-think-it-through-answered.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-d1109-chat-depth/after-steps/01-after-why-failing-waiting.png",
+   "/tmp/frbench/fix-d1109-chat-depth/after-steps/02-after-why-failing-ask-line.png",
+   "/tmp/frbench/fix-d1109-chat-depth/after-steps/03-after-go-ahead-waiting.png",
+   "/tmp/frbench/fix-d1109-chat-depth/after-steps/04-after-go-ahead-answered.png",
+   "/tmp/frbench/fix-d1109-chat-depth/after-steps/05-after-think-it-through-waiting.png",
+   "/tmp/frbench/fix-d1109-chat-depth/after-steps/06-after-think-it-through-answered.png",
+   "/tmp/frbench/fix-d1109-chat-depth/after-steps/07-after-quick-answer.png",
+   "/tmp/frbench/fix-d1109-chat-depth/after-steps/08-after-stop-visible.png",
+   "/tmp/frbench/fix-d1109-chat-depth/after-steps/09-after-stopped.png",
+   "/tmp/frbench/fix-d1109-chat-depth/after-steps/10-after-settings-basics.png"
+  ]
+ },
+ "new_problems": [
+  "apps/ui/test/sessions-tab.test.tsx 'says the count, the working session on top…' (d1109-sessions, not this area) depends on the time of day. In the hours after local midnight, a session started earlier is drawn as '15 Nov, 22:40 · …' and the test's /^\\d\\d:\\d\\d · …/ fails. Seen at 00:45 UTC on 2026-11-16 and again earlier in this run; it passes with TZ=Etc/GMT-12. Fix: pin the clock (vi.setSystemTime) or build the rows' startedAt from a fixed local noon.",
+  "The bench stand-in (testenv role-player) produces mechanics only. Its thorough answer is 'Thought it through after N lookups…', not a cause named from the run's report. The 'names the cause from the run's report' part of U-094 needs the live check with a real model."
+ ],
+ "notes_for_other_areas": [
+  "New exports in packages/runtime/src/conversation/depth.ts: Rung, Depth, WHY_VALUES, rungOfWhy, depthWords, askLine, handOverStep, footerWords, stoppedWords, closerLookWords, capWords, CLOSED_WORDS, FAILED_WORDS, TIMEOUT_REPLY, ANSWER_THOROUGHLY_TOOL/DESCRIPTION, ASK_RESULT, notNowResult, NOT_NOW, CHAT_THOROUGH_RULES, CHAT_WRAP_UP, chfUp/chfSpent/atMostOf, DEFAULT_ASK_ABOVE_CHF.",
+  "New ChatTurns registry (src/conversation/chat-turns.ts), shared through ConversationDeps.turns. ConversationAgent.turnsOf() gives the daemon the registry for /events conversation.changed and the stop and answer-now routes.",
+  "ConversationDeps gains chatRoom(scope) → {usdMicro, level}|null and chatCredential() → {first:boolean, words}. C5 / d1109-cred-engine should replace compose's chatCredential (routed.peek against personOrderOf) with the credential policy. The owner's open question (should chat's spend count against the project's budget?) changes one place: drop the project's budget from compose's chatRoom.",
+  "ChatRequest gains onStep(line, {reset}), onTurn, depth: 'longer' and offer. ChatReply gains depth, footer and offer. The chat.reply row gains depth, passes, why, offer, capLine, closer, footer, footerFacts and stopped (readTranscript reads them).",
+  "api-types.ts (append only) adds ChatRequestBody.depth/offer, ChatOfferView, ChatTurnFrame, ChatStepFrame, ChatStopView, ChatAnswerNowView, ConversationTurnView reply depth/footer/offer plus interrupted/failed, ConversationView.answering, and DAEMON_ROUTES chatStop/chatAnswerNow. The fake daemon mirrors them, and __test/next-chat-turn holds a turn.",
+  "SSE frames on /chat/stream are now: turn, step (with optional reset), token, reply. Any test that asserts only token frames before reply must allow turn and step (daemon.test.ts was updated).",
+  "SessionBudget.wrapUpNow(runId) forces the wrap-up line on the next precheck; Answer now uses it.",
+  "The new mode chat_thorough is in MODE_DEFAULTS, MODE_VALUES, AGENT_SETTING_MODES, views MODE_LABELS ('Chat, thorough answers'), STANDARD_SPEED_MODES and commands MODE_LABELS. Whole-list tests of modes (performance 8 to 9 modes, run-settings modes) were re-baselined.",
+  "SETTING_SPECS gains chat_ask_above, appended last (run C order: start_by_itself, chat_ask_above, credential_policy). The settings_set definition gains its line last, and w15-chat's key-line count is now 22. settings-view adds the human.chat_ask_above row after the monthly cap, and SettingsPage BASIC_SETTING_KEYS / SETTING_KEYS append it. Settings now lists 23 rows in the fixtures (settings.test.tsx and palette.spec.ts).",
+  "The conversation tool list now includes answer_thoroughly after the read and recall tools on every quick typed turn. Whole-list tool tests and the chat-recall token bound (CR-9) subtract this area's measured growth, so re-baseline at merge if another area adds tools.",
+  "evals/registry/principals/conversation-agent.md is now 1.4.0 ('Thinking longer'). Sync it to forerunner-registry at release.",
+  "Suggested design text for §3.9/§6 and U-094's text are in the spec's u_entries. The live check needs 4 steps with a real model: the failure question's ask line and Go ahead, think it through on the same model, Stop, and reload."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/daemon.test.ts 'local daemon > follows the UI conventions (ADR 0025)…'",
+   "why": "/chat/stream now sends a turn frame first and step frames (ADR 0025 amended 2026-11-16). The test asserted that only token frames come before the reply; it now asserts turn first, then token or step."
+  },
+  {
+   "test": "apps/ui/e2e/palette.spec.ts 'keyboard shortcuts navigate and the theme override applies'",
+   "why": "Settings has one more row ('Chat asks first'): 22 to 23."
+  },
+  {
+   "test": "apps/ui/test/settings.test.tsx (row count) and apps/ui/test/settings-basics.test.tsx (Basics row order)",
+   "why": "Same new Basics row, placed after the monthly cap: the row count is now 23 and the order includes it."
+  },
+  {
+   "test": "packages/commands/test/w15-chat.test.ts (settings_set definition key lines)",
+   "why": "chat_ask_above's line is appended last to settings_set's definition (21 to 22 key lines; the last line changed)."
+  },
+  {
+   "test": "packages/runtime/test/performance-view.test.ts and performance-route.test.ts (mode list and caps)",
+   "why": "The new chat_thorough mode adds a ninth Performance mode, and its effort cap is listed."
+  },
+  {
+   "test": "packages/runtime/test/run-settings.test.ts (agent setting modes)",
+   "why": "chat_thorough joins AGENT_SETTING_MODES (planning, text_chat, chat_thorough)."
+  },
+  {
+   "test": "packages/runtime/test/conversation.test.ts (tool lists; timeout reply)",
+   "why": "answer_thoroughly is in the quick turn's tool list, and the timeout reply is now TIMEOUT_REPLY (L3-left-11). The pastTimeout helper waits for the model call to start (C2-left-8)."
+  },
+  {
+   "test": "packages/runtime/test/chat-recall.test.ts (CR-9 token bound) and conversation-memory.test.ts (prompt version)",
+   "why": "The role prompt is now 1.4.0, and the fast request grows by answer_thoroughly's definition, the thinking_longer fact, the prompt section and settings_set's chat_ask_above line. The bound subtracts that measured growth."
+  }
+ ]
+}

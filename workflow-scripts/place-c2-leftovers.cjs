@@ -87,7 +87,7 @@ const adds = {
 };
 const l = p.live_check_4;
 for (const s of l.steps) {
-  s.step = s.step.replace(/ C2 adds[^]*$/, "");
+  s.step = s.step.replace(/ C2 adds(?:(?! C\d adds)[^])*/, "");
   if (adds[s.id]) s.step = `${s.step} ${adds[s.id]}`;
 }
 for (const id of Object.keys(adds)) if (!l.steps.find((s) => s.id === id)) throw new Error(`no step ${id}`);
