@@ -853,10 +853,24 @@ const createParams = z.object({
   specialist: z.string().trim().min(1).max(80).nullable().optional(),
   milestone_id: z.string().optional(),
   project: z.string().optional(),
+  /**
+   * d1109-selftasks-run (ADR 0119): the tasks (ids or titles of this project) that wait for the
+   * new one: a step added before them ("Added "Check the links" before "Publish"."). Each of them
+   * must be a draft or ready; the new task may not also wait for one of them.
+   */
+  before: z.array(z.string()).default([]),
+  /** The agent's one-sentence why, kept with the change (ADR 0119); never shown as an id. */
+  why: z.string().trim().max(300).optional(),
 });
 export type TaskCreateParams = z.infer<typeof createParams>;
 
-function createSentence(p: TaskCreateParams, projectName: string): string {
+function createSentence(
+  p: TaskCreateParams,
+  projectName: string,
+  before?: readonly string[],
+): string {
+  // d1109-selftasks-run: a step added before other tasks says where it goes.
+  if (before?.length) return `Added ${quote(p.title)} before ${namesList(before)}.`;
   const parts: string[] = [];
   if (p.priority !== DEFAULT_TASK_PRIORITY) parts.push(`${p.priority} priority`);
   if (p.specialist === PERSON_SPECIALIST) parts.push("it asks you in the Inbox");
@@ -894,6 +908,7 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
   async plan(params, ctx) {
     const { project, usedActive } = await resolveProject(ctx, params.project);
     const count = await ctx.store.task.count({ project_id: project.id });
+    const beforeTitles = (await stepBefore(ctx, project, params)).map((t) => t.title);
     return buildCard({
       command: "task.create",
       what: `the tasks of ${project.name}`,
@@ -901,9 +916,11 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       newValue: `+ ${quote(params.title)}`,
       scope: "project",
       risk: "low",
-      sentence: createSentence(params, project.name),
+      sentence: createSentence(params, project.name, beforeTitles),
       // The one-line read-back when it waits for a yes (d1109-chat-guard: after a record).
-      ask: `Add ${quote(params.title)} to ${project.name}?`,
+      ask: beforeTitles.length
+        ? `Add ${quote(params.title)} before ${namesList(beforeTitles)}?`
+        : `Add ${quote(params.title)} to ${project.name}?`,
       reversible: true,
       projectId: project.id,
       projectName: project.name,
@@ -919,6 +936,8 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       null,
       await resolveDependencies(ctx, project.id, params.depends_on),
     );
+    // d1109-selftasks-run: the tasks it comes before, checked before anything is written.
+    const comesBefore = await stepBefore(ctx, project, params, dependsOn);
     const task = await ctx.store.task.insert({
       project_id: project.id,
       milestone_id: params.milestone_id ?? null,
@@ -939,10 +958,32 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
           : `created by ${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`,
       ...authorOf(ctx),
     });
+    // Each task it comes before waits for it too (what it waited for before is kept for Undo).
+    const waitedBefore: JsonObject[] = [];
+    for (const next of comesBefore) {
+      await ctx.store.task.setDependencies(
+        next.id,
+        next.version,
+        [...next.depends_on, task.id],
+        `waits for ${quote(task.title)}, added before it`,
+        actorOf(ctx),
+      );
+      waitedBefore.push({ task_id: next.id, title: next.title, depends_on: next.depends_on });
+    }
     const created: CommandOutcome = {
       before: { task_id: null, project_id: project.id },
-      after: { task_id: task.id, project_id: project.id, status: task.status, title: task.title },
-      sentence: createSentence(params, project.name),
+      after: {
+        task_id: task.id,
+        project_id: project.id,
+        status: task.status,
+        title: task.title,
+        ...(waitedBefore.length ? { before_tasks: waitedBefore } : {}),
+      },
+      sentence: createSentence(
+        params,
+        project.name,
+        comesBefore.map((t) => t.title),
+      ),
       projectId: project.id,
     };
     // S-9: a task made ready (Make this a task too, ADR 0093) is prepared and its line says so.
@@ -958,7 +999,13 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
     }
     return null;
   },
-  undoSentence: (params) => `Undone: cancelled the task ${quote(params.title)} you created.`,
+  undoSentence: (params, _before, after) => {
+    // d1109-selftasks-run: the step's Undo also says the tasks after it wait as before.
+    const next = beforeTasksOf(after).map((t) => t.title);
+    return next.length
+      ? `Undone: cancelled ${quote(params.title)}; ${namesList(next)} ${next.length === 1 ? "waits" : "wait"} for what ${next.length === 1 ? "it" : "they"} waited for before.`
+      : `Undone: cancelled the task ${quote(params.title)} you created.`;
+  },
   async undo(params, _before, after, ctx) {
     const task = await createdTask(after, ctx);
     if (!task || !canTransition(TASK_TRANSITIONS, task.status, "cancelled")) {
@@ -966,6 +1013,19 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       throw new ForerunnerError(
         "validation",
         `the task ${quote(params.title)} cannot be cancelled any more, so its creation cannot be undone`,
+      );
+    }
+    // d1109-selftasks-run: the tasks it came before stop waiting for it first (a cancelled task
+    // is no dependency), keeping whatever else they wait for now.
+    for (const next of beforeTasksOf(after)) {
+      const row = await ctx.store.task.get(next.task_id);
+      if (!row || !row.depends_on.includes(task.id)) continue;
+      await ctx.store.task.setDependencies(
+        row.id,
+        row.version,
+        row.depends_on.filter((d) => d !== task.id),
+        "undo of a step added before it",
+        actorOf(ctx),
       );
     }
     await ctx.store.task.transition(
@@ -983,15 +1043,146 @@ async function createdTask(after: JsonValue, ctx: CommandContext): Promise<TaskR
   return typeof a.task_id === "string" ? ctx.store.task.get(a.task_id) : undefined;
 }
 
+/** The tasks a created step came before (`after.before_tasks`), as recorded. */
+function beforeTasksOf(after: JsonValue): { task_id: string; title: string }[] {
+  const list = asObject(after).before_tasks;
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((x) => asObject(x))
+    .filter((x) => typeof x.task_id === "string")
+    .map((x) => ({
+      task_id: String(x.task_id),
+      title: typeof x.title === "string" ? x.title : "",
+    }));
+}
+
+/** The tasks a project's task waits for, directly or through others (the cycle check). */
+async function waitsOnAll(
+  ctx: CommandContext,
+  projectId: string,
+  start: readonly string[],
+): Promise<Set<string>> {
+  const all = await ctx.store.task.forProject(projectId, {}, { limit: 10_000 });
+  const depsOf = new Map(all.map((t) => [t.id, t.depends_on]));
+  const seen = new Set<string>();
+  const stack = [...start];
+  while (stack.length) {
+    const id = stack.pop() as string;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    stack.push(...(depsOf.get(id) ?? []));
+  }
+  return seen;
+}
+
+/**
+ * d1109-selftasks-run (ADR 0119): the tasks a new step comes before (`task.create`'s `before`),
+ * each a draft or ready task of the project; refused in words when one is not, or when the new
+ * task would also wait for one of them (a cycle). `dependsOn`: what the new task waits for.
+ */
+async function stepBefore(
+  ctx: CommandContext,
+  project: { id: string; name: string },
+  params: Pick<TaskCreateParams, "before" | "title" | "depends_on">,
+  dependsOn?: readonly string[],
+): Promise<TaskRow[]> {
+  if (!params.before.length) return [];
+  const out: TaskRow[] = [];
+  for (const named of params.before) {
+    const next = await findTask({ task: named, project: project.id }, ctx);
+    if (next.project_id !== project.id)
+      throw new ForerunnerError(
+        "validation",
+        `${quote(next.title)} is not a task of ${project.name}. Nothing was added.`,
+        { details: { reason: "other_project" } },
+      );
+    if (next.status !== "draft" && next.status !== "ready")
+      throw new ForerunnerError(
+        "validation",
+        `${quote(next.title)} is ${statusWords(next.status)}, so nothing is added before it.`,
+        { details: { taskId: next.id, status: next.status, reason: "not_offered" } },
+      );
+    if (!out.some((t) => t.id === next.id)) out.push(next);
+  }
+  const waits = await waitsOnAll(
+    ctx,
+    project.id,
+    dependsOn ?? (await resolveDependencies(ctx, project.id, params.depends_on)),
+  );
+  const looped = out.find((t) => waits.has(t.id));
+  if (looped)
+    throw new ForerunnerError(
+      "validation",
+      `${quote(params.title)} cannot both wait for ${quote(looped.title)} and come before it. Nothing was added.`,
+      { details: { reason: "cycle" } },
+    );
+  return out;
+}
+
 // --- task.transition -------------------------------------------------------------------------
 
-const transitionParams = z.object({
-  ...taskRef,
-  to: z.enum(TASK_STATUSES),
-  reason: z.string().default(""),
-  note: noteParam,
-});
+const transitionParams = z
+  .object({
+    ...taskRef,
+    to: z.enum(TASK_STATUSES),
+    reason: z.string().default(""),
+    note: noteParam,
+    /**
+     * d1109-selftasks-run (ADR 0119): with `to: cancelled`, the task (id or title of this project)
+     * this one is the same as: a duplicate dropped. Only a task that never ran is dropped so (low
+     * risk); the tasks that waited for it wait for that task instead.
+     */
+    duplicate_of: z.string().trim().min(1).max(200).optional(),
+  })
+  .refine((p) => p.duplicate_of === undefined || p.to === "cancelled", {
+    message: "duplicate_of drops a task: it goes with to: cancelled",
+  });
 export type TaskTransitionParams = z.infer<typeof transitionParams>;
+
+/** Whether a task has never run: a draft or ready task with no try and no run (ADR 0119). */
+async function neverRan(ctx: CommandContext, task: TaskRow): Promise<boolean> {
+  if (task.status !== "draft" && task.status !== "ready") return false;
+  if (task.attempt > 0) return false;
+  const runs = await ctx.store.run.list({ task_id: task.id } as never, { limit: 1 });
+  return runs.length === 0;
+}
+
+/**
+ * d1109-selftasks-run (ADR 0119): the task a duplicate is dropped for, checked in words: the
+ * dropped task never ran, the named one is another task of the same project that is not
+ * cancelled.
+ */
+async function duplicateOf(ctx: CommandContext, task: TaskRow, named: string): Promise<TaskRow> {
+  const project = await ctx.store.project.mustGet(task.project_id);
+  if (!(await neverRan(ctx, task)))
+    throw new ForerunnerError(
+      "validation",
+      `${quote(task.title)} has run, so it is not dropped as a duplicate.`,
+      { details: { taskId: task.id, reason: "ran" } },
+    );
+  const same = await findTask({ task: named, project: project.id }, ctx);
+  const notDropped = `so ${quote(task.title)} is not dropped as the same.`;
+  if (same.project_id !== project.id)
+    throw new ForerunnerError(
+      "validation",
+      `${quote(same.title)} is not a task of ${project.name}, ${notDropped}`,
+      { details: { reason: "other_project" } },
+    );
+  if (same.id === task.id)
+    throw new ForerunnerError("validation", `A task is not the same as itself; nothing changed.`, {
+      details: { reason: "self" },
+    });
+  if (same.status === "cancelled")
+    throw new ForerunnerError("validation", `${quote(same.title)} is cancelled, ${notDropped}`, {
+      details: { reason: "cancelled" },
+    });
+  return same;
+}
+
+/** The sentence of a dropped duplicate (ADR 0119). */
+export function droppedSentence(title: string, same: string): string {
+  return `Dropped ${quote(title)}: same as ${quote(same)}.`;
+}
 
 /** The reason a person's move leaves on the row when none was given. */
 function movedByYou(from: TaskStatus, to: TaskStatus): string {
@@ -1016,13 +1207,23 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
   description:
     "Move a task along its workflow: ready (make ready, try again; it joins the running session if it fits, else waits for the person's next Start), needs_human (pause), cancelled; agents also use in_progress, in_review, done and failed. Prefer task.pause, task.resume and task.reopen for those moves.",
   params: transitionParams,
-  risk: (params) => (params.to === "cancelled" || params.to === "done" ? "medium" : "low"),
+  async risk(params, ctx) {
+    // d1109-selftasks-run: a duplicate that never ran is dropped at low risk (its Undo brings it
+    // back as it was); any other cancel or close is medium, as before.
+    if (params.duplicate_of) {
+      const task = await findTask(params, ctx).catch(() => null);
+      return task && (await neverRan(ctx, task)) ? "low" : "medium";
+    }
+    return params.to === "cancelled" || params.to === "done" ? "medium" : "low";
+  },
   maxRisk: "medium",
   askFromChat: true,
   scope: "project",
   reversible: true,
   undoStrategy: "put the task back to the status it had",
   async redirect(params, ctx) {
+    // A duplicate dropped is no card's answer: it names the task it is the same as.
+    if (params.duplicate_of) return null;
     const option = cardOptionFor(params.to);
     // A person's note goes with the move; a card's answer has no room for it: as said.
     return option && !params.note?.trim() ? moveAsCardAnswer(ctx, params, option) : null;
@@ -1031,6 +1232,23 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
     const task = await findTask(params, ctx);
     assertMove(task, params.to);
     const project = await ctx.store.project.mustGet(task.project_id);
+    if (params.duplicate_of) {
+      const same = await duplicateOf(ctx, task, params.duplicate_of);
+      return buildCard({
+        command: "task.transition",
+        what: `the task ${quote(task.title)}`,
+        oldValue: statusWords(task.status),
+        newValue: statusWords("cancelled"),
+        scope: "project",
+        risk: "low",
+        sentence: droppedSentence(task.title, same.title),
+        reversible: true,
+        projectId: project.id,
+        projectName: project.name,
+        usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
+        ask: `Drop ${quote(task.title)} as the same as ${quote(same.title)}?`,
+      });
+    }
     return buildCard({
       command: "task.transition",
       what: `the task ${quote(task.title)}`,
@@ -1059,6 +1277,7 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
     const task = await findTask(params, ctx);
     // The task may have moved on between the read-back and the yes (C-38).
     assertMove(task, params.to);
+    if (params.duplicate_of) return dropDuplicate(ctx, task, params);
     const moved = await personMove(ctx, task, params.to, {
       reason:
         params.reason ||
@@ -1072,8 +1291,84 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
   },
   undoBlocked: (_params, before, after, ctx) => moveUndoBlocked(before, after, ctx),
   undoSentence: (_params, before, after) => undoMoveSentence(before, after),
-  undo: (_params, before, after, ctx) => undoMove(before, after, ctx),
+  async undo(_params, before, after, ctx) {
+    const said = await undoMove(before, after, ctx);
+    // d1109-selftasks-run: the tasks that waited for a dropped duplicate wait for it again (it is
+    // back first: a cancelled task is no dependency).
+    await restoreRepointed(ctx, after);
+    return said;
+  },
 };
+
+/**
+ * d1109-selftasks-run (ADR 0119): drop a duplicate that never ran. It is cancelled with the
+ * reason that names the task it is the same as, and every task that waited for it waits for that
+ * task instead (what each waited for before is kept for Undo).
+ */
+async function dropDuplicate(
+  ctx: CommandContext,
+  task: TaskRow,
+  params: TaskTransitionParams,
+): Promise<CommandOutcome> {
+  const same = await duplicateOf(ctx, task, params.duplicate_of as string);
+  const waiting = (await waitingOn(ctx, task)).filter((t) => t.id !== same.id);
+  // A task that waits for the dropped one and that the kept one waits for would close a cycle.
+  const keptWaits = await waitsOnAll(ctx, task.project_id, [same.id]);
+  const looped = waiting.find((t) => keptWaits.has(t.id));
+  if (looped)
+    throw new ForerunnerError(
+      "validation",
+      `${quote(looped.title)} waits for ${quote(task.title)} and ${quote(same.title)} waits for it, so ${quote(task.title)} is not dropped as the same.`,
+      { details: { reason: "cycle" } },
+    );
+  const by = ctx.actor.kind === "agent" ? "the agent" : "you";
+  const moved = await personMove(ctx, task, "cancelled", {
+    reason: `Dropped by ${by}: same as ${quote(same.title)}`,
+    note: params.note,
+  });
+  const repointed: JsonObject[] = [];
+  for (const w of waiting) {
+    const row = await ctx.store.task.get(w.id);
+    if (!row || !row.depends_on.includes(task.id)) continue;
+    const next = [...new Set(row.depends_on.map((d) => (d === task.id ? same.id : d)))];
+    await ctx.store.task.setDependencies(
+      row.id,
+      row.version,
+      next,
+      `waits for ${quote(same.title)}: ${quote(task.title)} was the same`,
+      actorOf(ctx),
+    );
+    repointed.push({ task_id: row.id, depends_on: row.depends_on });
+  }
+  return {
+    ...moved,
+    after: {
+      ...asObject(moved.after),
+      duplicate_of: same.id,
+      ...(repointed.length ? { repointed } : {}),
+    },
+    sentence: droppedSentence(task.title, same.title),
+  };
+}
+
+/** The undo's half of `dropDuplicate`: what each waiting task waited for before. */
+async function restoreRepointed(ctx: CommandContext, after: JsonValue): Promise<void> {
+  const list = asObject(after).repointed;
+  if (!Array.isArray(list)) return;
+  for (const item of list) {
+    const r = asObject(item);
+    if (typeof r.task_id !== "string" || !Array.isArray(r.depends_on)) continue;
+    const row = await ctx.store.task.get(r.task_id);
+    if (!row) continue;
+    await ctx.store.task.setDependencies(
+      row.id,
+      row.version,
+      r.depends_on.filter((d): d is string => typeof d === "string"),
+      "undo of a dropped duplicate",
+      actorOf(ctx),
+    );
+  }
+}
 
 // --- task.pause, task.resume -----------------------------------------------------------------
 
@@ -1707,3 +2002,282 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
     await dismissNotes(ctx, after);
   },
 };
+
+// --- task.split (d1109-selftasks-run, ADR 0119) ----------------------------------------------
+
+const splitPart = z.object({
+  title: z.string().trim().min(3).max(200),
+  /** Absent on the first part: the task keeps its own; absent on a new part: none. */
+  outcome: z.string().trim().max(2000).optional(),
+  acceptance_criteria: z.array(z.string()).default([]),
+  /** Absent: the task's own specialist (the fence asks before a part reaches further). */
+  specialist: z.string().trim().min(1).max(80).optional(),
+});
+
+const splitParams = z.object({
+  ...taskRef,
+  /**
+   * The parts, two to four: the first is the task itself (its id, folder, branch and earlier
+   * work carry on with it), the rest are new tasks. Every acceptance criterion of the task goes
+   * word for word into one of them.
+   */
+  parts: z.array(splitPart).min(1).max(8),
+  /** `in_turn`: each part waits for the one before; `side_by_side`: they run apart. */
+  order: z.enum(["in_turn", "side_by_side"]).default("in_turn"),
+  /** The agent's one-sentence why, kept with the change; never shown as an id. */
+  why: z.string().trim().max(300).optional(),
+});
+export type TaskSplitParams = z.infer<typeof splitParams>;
+
+/** The fields a split changes on the task it keeps as its first part (and its Undo restores). */
+const SPLIT_FIELDS = [
+  "title",
+  "outcome",
+  "acceptance_criteria",
+  "budget_usd_micro",
+  "est_cost_usd_micro",
+  "specialist",
+] as const;
+
+/** 'Split "Style the page" into "Style the layout" and "Style the colours".' */
+export function splitSentence(title: string, parts: readonly string[]): string {
+  return `Split ${quote(title)} into ${namesList(parts)}.`;
+}
+
+/**
+ * Why a task cannot be split as asked, in words (ADR 0119): only a draft or ready task; two to
+ * four parts; every criterion of the task word for word in a part.
+ */
+function assertSplit(task: TaskRow, params: TaskSplitParams): void {
+  if (task.status !== "draft" && task.status !== "ready")
+    throw new ForerunnerError(
+      "validation",
+      `${quote(task.title)} is ${statusWords(task.status)}, so it is not split.`,
+      { details: { taskId: task.id, status: task.status, reason: "not_offered" } },
+    );
+  if (params.parts.length < 2 || params.parts.length > 4)
+    throw new ForerunnerError(
+      "validation",
+      `A split makes two to four parts of ${quote(task.title)}; nothing was split.`,
+      { details: { taskId: task.id, reason: "parts" } },
+    );
+  const carried = new Set(params.parts.flatMap((p) => p.acceptance_criteria.map((c) => c.trim())));
+  const left = task.acceptance_criteria.filter((c) => !carried.has(c.trim()));
+  if (left.length)
+    throw new ForerunnerError(
+      "validation",
+      `The parts leave out ${left.length === 1 ? "a criterion" : "criteria"} of ${quote(task.title)}: ${namesList(left)}. Nothing was split.`,
+      { details: { taskId: task.id, reason: "criteria", left } },
+    );
+}
+
+/**
+ * Shares of a whole for the parts, by their criteria (at least one each), the remainder on the
+ * first part so they add up exactly: a task's budget and estimate are shared, never raised.
+ */
+function shares(whole: number, parts: readonly { acceptance_criteria: string[] }[]): number[] {
+  const weights = parts.map((p) => Math.max(1, p.acceptance_criteria.length));
+  const total = weights.reduce((s, x) => s + x, 0);
+  const out = weights.map((w) => Math.floor((whole * w) / total));
+  out[0] = (out[0] ?? 0) + (whole - out.reduce((s, x) => s + x, 0));
+  return out;
+}
+
+export const taskSplit: CommandDef<TaskSplitParams> = {
+  name: "task.split",
+  description:
+    "Split a draft or ready task that is two or more jobs: the task stays as its first part (its folder, branch and earlier work carry on) and one to three new tasks hold the rest; every acceptance criterion goes word for word into one part; the parts wait for each other in turn or run side by side; the tasks that waited for it wait for all its parts; its own budget is shared, never raised.",
+  params: splitParams,
+  risk: "low",
+  askFromChat: true,
+  // d1109-selftasks-chat gives chat its own task_split tool (with its exact definition).
+  chatTool: false,
+  scope: "project",
+  reversible: true,
+  undoStrategy: "put the task back as it was and cancel the new parts",
+  async plan(params, ctx) {
+    const task = await findTask(params, ctx);
+    assertSplit(task, params);
+    const project = await ctx.store.project.mustGet(task.project_id);
+    const titles = params.parts.map((p) => p.title);
+    return buildCard({
+      command: "task.split",
+      what: `the task ${quote(task.title)}`,
+      oldValue: "one task",
+      newValue: `${params.parts.length} tasks`,
+      scope: "project",
+      risk: "low",
+      sentence: splitSentence(task.title, titles),
+      reversible: true,
+      projectId: project.id,
+      projectName: project.name,
+      usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
+      ask: `Split ${quote(task.title)} into ${namesList(titles)}?`,
+    });
+  },
+  async run(params, ctx) {
+    const task = await findTask(params, ctx);
+    assertSplit(task, params);
+    const [first, ...rest] = params.parts as [
+      TaskSplitParams["parts"][number],
+      ...TaskSplitParams["parts"],
+    ];
+    const by = ctx.actor.kind === "agent" ? "the agent" : "you";
+    // The budget left (never raised) and the estimate, shared by the parts' criteria.
+    const budgetLeft =
+      task.budget_usd_micro > 0
+        ? Math.max(0, task.budget_usd_micro - task.actual_cost_usd_micro)
+        : 0;
+    const budgets = shares(budgetLeft, params.parts);
+    const estimates = shares(task.est_cost_usd_micro, params.parts);
+    const waiting = await waitingOn(ctx, task);
+    const titles = params.parts.map((p) => p.title);
+    const reason = `Split into ${namesList(titles)} by ${by}`;
+    const beforeFields = fieldsOf(task, SPLIT_FIELDS);
+    let kept = await ctx.store.task.edit(
+      task.id,
+      task.version,
+      {
+        title: first.title,
+        ...(first.outcome !== undefined ? { outcome: first.outcome } : {}),
+        acceptance_criteria: first.acceptance_criteria.map((c) => c.trim()).filter(Boolean),
+        ...(first.specialist !== undefined ? { specialist: first.specialist } : {}),
+        ...(task.budget_usd_micro > 0
+          ? { budget_usd_micro: task.actual_cost_usd_micro + (budgets[0] ?? 0) }
+          : {}),
+      },
+      reason,
+      actorOf(ctx),
+    );
+    kept = await ctx.store.task.update(kept.id, kept.version, {
+      est_cost_usd_micro: estimates[0] ?? 0,
+    });
+    const made: TaskRow[] = [];
+    for (const [i, part] of rest.entries()) {
+      const specialist = part.specialist ?? task.specialist ?? null;
+      const previous = made.at(-1)?.id ?? task.id;
+      made.push(
+        await ctx.store.task.insert({
+          project_id: task.project_id,
+          milestone_id: task.milestone_id,
+          title: part.title,
+          outcome: part.outcome ?? "",
+          acceptance_criteria: part.acceptance_criteria.map((c) => c.trim()).filter(Boolean),
+          // A part is reviewed as the task was, raised for a deploy or a migration (C-2).
+          risk_tier: riskTierFor(specialist, task.risk_tier),
+          status: task.status,
+          priority: task.priority,
+          depends_on: params.order === "in_turn" ? [previous] : [...task.depends_on],
+          budget_usd_micro: budgets[i + 1] ?? 0,
+          est_cost_usd_micro: estimates[i + 1] ?? 0,
+          specialist,
+          reason: `Split from ${quote(task.title)} by ${by}`,
+          ...authorOf(ctx),
+        }),
+      );
+    }
+    // The tasks that waited for the task wait for all its parts.
+    const waited: JsonObject[] = [];
+    for (const w of waiting) {
+      const row = await ctx.store.task.mustGet(w.id);
+      await ctx.store.task.setDependencies(
+        row.id,
+        row.version,
+        [...new Set([...row.depends_on, ...made.map((m) => m.id)])],
+        `waits for every part of ${quote(task.title)}`,
+        actorOf(ctx),
+      );
+      waited.push({ task_id: row.id, depends_on: row.depends_on });
+    }
+    return {
+      before: { task_id: task.id, title: task.title, fields: beforeFields },
+      after: {
+        task_id: task.id,
+        title: kept.title,
+        fields: fieldsOf(kept, SPLIT_FIELDS),
+        attempt: kept.attempt,
+        parts: made.map((m) => ({ task_id: m.id, title: m.title, attempt: m.attempt })),
+        ...(waited.length ? { waited } : {}),
+      },
+      sentence: splitSentence(task.title, titles),
+      projectId: task.project_id,
+      reversible: true,
+    };
+  },
+  async undoBlocked(_params, _before, after, ctx) {
+    const a = asObject(after);
+    if (typeof a.task_id !== "string") return "this change does not name the task it split";
+    const task = await ctx.store.task.get(a.task_id);
+    if (!task) return "the task no longer exists";
+    for (const part of splitPartsOf(after)) {
+      const row = await ctx.store.task.get(part.task_id);
+      if (!row) continue;
+      if ((row.status !== "draft" && row.status !== "ready") || row.attempt !== part.attempt)
+        return `${quote(row.title)} has run since, so the split cannot be undone`;
+    }
+    if ((task.status !== "draft" && task.status !== "ready") || task.attempt !== a.attempt)
+      return `${quote(task.title)} has run since, so the split cannot be undone`;
+    if (JSON.stringify(fieldsOf(task, SPLIT_FIELDS)) !== JSON.stringify(asObject(a.fields)))
+      return `${quote(task.title)} was changed again since; undo would not put it back as it was`;
+    return null;
+  },
+  undoSentence(_params, before) {
+    const b = asObject(before);
+    return `Undone: ${typeof b.title === "string" ? quote(b.title) : "the task"} is one task again.`;
+  },
+  async undo(_params, before, after, ctx) {
+    const a = asObject(after);
+    const parts = splitPartsOf(after).map((p) => p.task_id);
+    // What waited for the task waits as before (no part is a dependency once cancelled).
+    const waited = Array.isArray(a.waited) ? a.waited : [];
+    for (const item of waited) {
+      const w = asObject(item);
+      if (typeof w.task_id !== "string" || !Array.isArray(w.depends_on)) continue;
+      const row = await ctx.store.task.get(w.task_id);
+      if (!row) continue;
+      await ctx.store.task.setDependencies(
+        row.id,
+        row.version,
+        w.depends_on.filter((d): d is string => typeof d === "string"),
+        "undo of a split",
+        actorOf(ctx),
+      );
+    }
+    for (const id of parts) {
+      const row = await ctx.store.task.get(id);
+      if (!row || !canTransition(TASK_TRANSITIONS, row.status, "cancelled")) continue;
+      await ctx.store.task.transition(
+        row.id,
+        row.version,
+        "cancelled",
+        "undo of a split",
+        actorOf(ctx),
+      );
+    }
+    const task = await ctx.store.task.mustGet(String(a.task_id));
+    const fields = asObject(asObject(before).fields);
+    const { est_cost_usd_micro: est, ...edit } = fields as Record<string, JsonValue>;
+    const edited = await ctx.store.task.edit(
+      task.id,
+      task.version,
+      edit as Parameters<typeof ctx.store.task.edit>[2],
+      "undo of a split",
+      actorOf(ctx),
+    );
+    if (typeof est === "number")
+      await ctx.store.task.update(edited.id, edited.version, { est_cost_usd_micro: est });
+  },
+};
+
+/** The new parts a split made (`after.parts`), with the try each had then. */
+function splitPartsOf(after: JsonValue): { task_id: string; attempt: number }[] {
+  const list = asObject(after).parts;
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((x) => asObject(x))
+    .filter((x) => typeof x.task_id === "string")
+    .map((x) => ({
+      task_id: String(x.task_id),
+      attempt: typeof x.attempt === "number" ? x.attempt : 0,
+    }));
+}

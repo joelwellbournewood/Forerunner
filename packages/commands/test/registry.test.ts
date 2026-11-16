@@ -87,7 +87,7 @@ describe("CommandRegistry", () => {
     expect(actionClassFor(reg.mustGet("device.revoke"))).toBe("permission_change");
   });
 
-  it("generates one ToolSpec per command with tool-safe names", () => {
+  it("generates one ToolSpec per command the chat may call, with tool-safe names", () => {
     const reg = defaultRegistry();
     const specs = toToolSpecs(reg, {
       execute: async () => ({ status: "done", sentence: "ok" }),
@@ -95,7 +95,10 @@ describe("CommandRegistry", () => {
         throw new Error("unused");
       },
     });
-    expect(specs.length).toBe(COMMAND_NAMES.length);
+    // d1109-selftasks-run: task.split is the session's task check's (chatTool: false) until
+    // d1109-selftasks-chat gives chat its own task_split tool.
+    expect(specs.length).toBe(COMMAND_NAMES.length - 1);
+    expect(specs.map((s) => s.name)).not.toContain("task_split");
     expect(specs.map((s) => s.name)).toContain("budget_set");
     expect(toolNameFor("email.mode.set")).toBe("email_mode_set");
     const budget = specs.find((s) => s.name === "budget_set");

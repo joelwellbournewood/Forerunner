@@ -60,6 +60,7 @@ export const COMMAND_NAMES = [
   "specialist.propose",
   "repo.create",
   "repo.take_over",
+  "task.split",
 ] as const;
 export type CommandName = (typeof COMMAND_NAMES)[number];
 

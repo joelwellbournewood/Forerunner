@@ -7,7 +7,7 @@ import {
   type ExecuteResult,
   toToolSpecs,
 } from "../src/index.ts";
-import { type World, world } from "./helpers.ts";
+import { RATE, type World, world } from "./helpers.ts";
 
 /**
  * d1109-selftasks-run, run C (ADR 0119; D7, the owner, 2026-11-09: "if I say set this up and I
@@ -24,6 +24,12 @@ function done(r: ExecuteResult): Extract<ExecuteResult, { status: "done" }> {
   if (r.status !== "done") throw new Error(`expected done, got ${r.status}: ${JSON.stringify(r)}`);
   return r;
 }
+function refusedReason(r: ExecuteResult): string {
+  if (r.status !== "refused") throw new Error(`expected refused, got ${r.status}`);
+  return r.reason;
+}
+
+const usdOfChf = (chf: number) => Math.round((chf / RATE) * 1_000_000);
 
 /** A session of the project that runs now: its log receives the change lines. */
 async function runningSession(w: World) {
@@ -176,5 +182,278 @@ describe("d1109-selftasks-run, run C: the agent's own changes through the execut
     });
     expect(specs.map((s) => s.name)).not.toContain("task_split");
     expect(specs.map((s) => s.name)).toContain("task_create");
+  });
+});
+
+describe("d1109-selftasks-run, run C: task.split (ST-2)", () => {
+  /** "Style the page" (a, b, c; own budget CHF 1.00, CHF 0.20 spent), "Publish" waits for it. */
+  async function splitWorld() {
+    const w = await world();
+    const s = await runningSession(w);
+    const style = await seed(w, "Style the page", {
+      acceptance_criteria: ["a", "b", "c"],
+      budget_usd_micro: usdOfChf(1),
+      actual_cost_usd_micro: usdOfChf(0.2),
+      est_cost_usd_micro: 600_000,
+      branch: "fr/style-the-page",
+      specialist: "coder",
+    });
+    const publish = await seed(w, "Publish", { depends_on: [style.id] });
+    return { w, s, style, publish };
+  }
+  const splitParams = (task: string) => ({
+    task,
+    parts: [
+      { title: "Style the layout", acceptance_criteria: ["a", "b"] },
+      { title: "Style the colours", acceptance_criteria: ["c"] },
+    ],
+    order: "in_turn" as const,
+  });
+
+  it("keeps the task as its first part, adds the rest waiting for it, makes the tasks after it wait for both and shares its budget", async () => {
+    const { w, s, style, publish } = await splitWorld();
+    const r = done(
+      await w.executor.execute({
+        name: "task.split",
+        params: splitParams("Style the page"),
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    expect(r.sentence).toBe(
+      'Split "Style the page" into "Style the layout" and "Style the colours".',
+    );
+    const first = await w.store.task.mustGet(style.id);
+    expect(first).toMatchObject({
+      title: "Style the layout",
+      acceptance_criteria: ["a", "b"],
+      branch: "fr/style-the-page",
+      status: "ready",
+    });
+    const tasks = await w.store.task.forProject(w.pharma.id);
+    const colours = tasks.find((t) => t.title === "Style the colours") as TaskRow;
+    expect(colours).toMatchObject({
+      acceptance_criteria: ["c"],
+      depends_on: [style.id],
+      status: "ready",
+      specialist: "coder",
+      risk_tier: 1,
+    });
+    expect((await w.store.task.mustGet(publish.id)).depends_on.sort()).toEqual(
+      [style.id, colours.id].sort(),
+    );
+    // The budget is shared, never raised: what the parts have left adds up to what the task had
+    // left (CHF 0.80), and their budgets to its CHF 1.00.
+    const left = (t: TaskRow) => t.budget_usd_micro - t.actual_cost_usd_micro;
+    expect(left(first) + left(colours)).toBe(usdOfChf(0.8));
+    expect(first.budget_usd_micro + colours.budget_usd_micro).toBe(usdOfChf(1));
+    expect(first.est_cost_usd_micro + colours.est_cost_usd_micro).toBe(600_000);
+    await w.store.close();
+  });
+
+  it("is refused in words for a running, in-review, failed, done or cancelled task, for parts that leave out a criterion, and for one part", async () => {
+    const { w, s } = await splitWorld();
+    for (const status of ["in_progress", "in_review", "failed", "done", "cancelled"] as const) {
+      const t = await seed(w, `Task ${status}`, { status, acceptance_criteria: ["a", "b", "c"] });
+      const reason = refusedReason(
+        await w.executor.execute({
+          name: "task.split",
+          params: splitParams(t.id),
+          ctx: sessionCtx(w, s.id),
+        }),
+      );
+      expect(reason).toMatch(new RegExp(`^"Task ${status}" is .+, so it is not split\\.$`));
+    }
+    expect(
+      refusedReason(
+        await w.executor.execute({
+          name: "task.split",
+          params: {
+            task: "Style the page",
+            parts: [
+              { title: "Style the layout", acceptance_criteria: ["a", "b"] },
+              { title: "Style the colours", acceptance_criteria: [] },
+            ],
+          },
+          ctx: sessionCtx(w, s.id),
+        }),
+      ),
+    ).toBe('The parts leave out a criterion of "Style the page": "c". Nothing was split.');
+    expect(
+      refusedReason(
+        await w.executor.execute({
+          name: "task.split",
+          params: {
+            task: "Style the page",
+            parts: [{ title: "Style the layout", acceptance_criteria: ["a", "b", "c"] }],
+          },
+          ctx: sessionCtx(w, s.id),
+        }),
+      ),
+    ).toMatch(/two to four parts/);
+    await w.store.close();
+  });
+
+  it("Undo, also after a restart, puts back the title, outcome, criteria, budget and what the next task waited for, and cancels the new part", async () => {
+    const { w, s, style, publish } = await splitWorld();
+    const r = done(
+      await w.executor.execute({
+        name: "task.split",
+        params: splitParams("Style the page"),
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    const colours = (await w.store.task.forProject(w.pharma.id)).find(
+      (t) => t.title === "Style the colours",
+    ) as TaskRow;
+    const u = done(await restarted(w).undo(r.changeLogId, w.ctx({ source: "ui" })));
+    expect(u.sentence).toBe('Undone: "Style the page" is one task again.');
+    expect(await w.store.task.mustGet(style.id)).toMatchObject({
+      title: "Style the page",
+      outcome: "Style the page is done",
+      acceptance_criteria: ["a", "b", "c"],
+      budget_usd_micro: usdOfChf(1),
+      est_cost_usd_micro: 600_000,
+    });
+    expect((await w.store.task.mustGet(publish.id)).depends_on).toEqual([style.id]);
+    expect((await w.store.task.mustGet(colours.id)).status).toBe("cancelled");
+    await w.store.close();
+  });
+
+  it("once the new part ran, the Undo says why it cannot", async () => {
+    const { w, s } = await splitWorld();
+    const r = done(
+      await w.executor.execute({
+        name: "task.split",
+        params: splitParams("Style the page"),
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    const colours = (await w.store.task.forProject(w.pharma.id)).find(
+      (t) => t.title === "Style the colours",
+    ) as TaskRow;
+    await w.store.task.transition(colours.id, colours.version, "claimed", "session", {
+      agentId: w.agent.id,
+    });
+    const fresh = restarted(w);
+    const row = await w.store.changeLog.mustGet(r.changeLogId);
+    expect(await fresh.undoBlockedReason(row, w.ctx({ source: "ui" }))).toBe(
+      '"Style the colours" has run since, so the split cannot be undone',
+    );
+    await w.store.close();
+  });
+});
+
+describe("d1109-selftasks-run, run C: a step before a task and a dropped duplicate (ST-3)", () => {
+  it("task.create with before adds a step before a task; its Undo cancels it and leaves the task waiting for what it waited for before", async () => {
+    const w = await world();
+    const s = await runningSession(w);
+    const page = await seed(w, "Create the page");
+    const publish = await seed(w, "Publish", { depends_on: [page.id] });
+    const r = done(
+      await w.executor.execute({
+        name: "task.create",
+        params: {
+          title: "Check the links",
+          outcome: "Every link on the page opens",
+          acceptance_criteria: ["no link answers 404"],
+          depends_on: ["Create the page"],
+          before: ["Publish"],
+          specialist: "coder",
+        },
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    expect(r.sentence).toBe('Added "Check the links" before "Publish".');
+    const check = (await w.store.task.forProject(w.pharma.id)).find(
+      (t) => t.title === "Check the links",
+    ) as TaskRow;
+    expect(check.depends_on).toEqual([page.id]);
+    expect((await w.store.task.mustGet(publish.id)).depends_on.sort()).toEqual(
+      [page.id, check.id].sort(),
+    );
+    const u = done(await restarted(w).undo(r.changeLogId, w.ctx({ source: "ui" })));
+    expect(u.sentence).toBe(
+      'Undone: cancelled "Check the links"; "Publish" waits for what it waited for before.',
+    );
+    expect((await w.store.task.mustGet(check.id)).status).toBe("cancelled");
+    expect((await w.store.task.mustGet(publish.id)).depends_on).toEqual([page.id]);
+    await w.store.close();
+  });
+
+  it("a step that would close a cycle is refused and nothing is written", async () => {
+    const w = await world();
+    const s = await runningSession(w);
+    await seed(w, "Publish");
+    const before = (await w.store.task.forProject(w.pharma.id)).length;
+    const reason = refusedReason(
+      await w.executor.execute({
+        name: "task.create",
+        params: { title: "Check the links", depends_on: ["Publish"], before: ["Publish"] },
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    expect(reason).toBe(
+      '"Check the links" cannot both wait for "Publish" and come before it. Nothing was added.',
+    );
+    expect((await w.store.task.forProject(w.pharma.id)).length).toBe(before);
+    await w.store.close();
+  });
+
+  it("task.transition to cancelled with duplicate_of on a task that never ran is low risk and names the task it is the same as; its Undo, after a restart too, reopens it", async () => {
+    const w = await world();
+    const s = await runningSession(w);
+    await seed(w, "Add the README");
+    const dup = await seed(w, "Write README", { status: "draft" });
+    const r = done(
+      await w.executor.execute({
+        name: "task.transition",
+        params: { task: "Write README", to: "cancelled", duplicate_of: "Add the README" },
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    expect(r.card.impact.risk).toBe("low");
+    expect(r.sentence).toBe('Dropped "Write README": same as "Add the README".');
+    expect((await w.store.task.mustGet(dup.id)).status).toBe("cancelled");
+    const u = done(await restarted(w).undo(r.changeLogId, w.ctx({ source: "ui" })));
+    expect(u.status).toBe("done");
+    expect((await w.store.task.mustGet(dup.id)).status).toBe("draft");
+    await w.store.close();
+  });
+
+  it("a duplicate drop is refused in words when the task ran, or the named task is cancelled or of another project", async () => {
+    const w = await world();
+    const s = await runningSession(w);
+    await seed(w, "Add the README");
+    const gone = await seed(w, "Old README", { status: "cancelled" });
+    const elsewhere = await w.store.task.insert({
+      project_id: w.supplement.id,
+      title: "Supplement README",
+      outcome: "x",
+      acceptance_criteria: [],
+      status: "ready",
+      reason: "seed",
+    });
+    const ran = await seed(w, "Write README", { attempt: 1 });
+    const drop = (task: string, of: string) =>
+      w.executor.execute({
+        name: "task.transition",
+        params: { task, to: "cancelled", duplicate_of: of },
+        ctx: sessionCtx(w, s.id),
+      });
+    expect(refusedReason(await drop(ran.id, "Add the README"))).toBe(
+      '"Write README" has run, so it is not dropped as a duplicate.',
+    );
+    const fresh = await seed(w, "Write the README");
+    expect(refusedReason(await drop(fresh.id, gone.id))).toBe(
+      '"Old README" is cancelled, so "Write the README" is not dropped as the same.',
+    );
+    expect(refusedReason(await drop(fresh.id, "Supplement README"))).toBe(
+      'no task matches "Supplement README" in PharmaWatch',
+    );
+    expect(refusedReason(await drop(fresh.id, elsewhere.id))).toBe(
+      '"Supplement README" is not a task of PharmaWatch, so "Write the README" is not dropped as the same.',
+    );
+    expect((await w.store.task.mustGet(fresh.id)).status).toBe("ready");
+    await w.store.close();
   });
 });
