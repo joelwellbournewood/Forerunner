@@ -811,6 +811,19 @@ run C").
 Tests: `test/selftasks-run.test.ts` (ST-2, ST-3, ST-5), `test/registry.test.ts` (no
 `task_split` tool).
 
+### Fix the tasks and the agent's reason words (d1109-selftasks-chat, ADR 0119)
+
+`intent.ts` `fixTasksAskOf(line)`: "fix/tidy up/clean up/check the tasks (task list)", German
+"räum die Aufgaben auf", "korrigiere die Aufgaben"; never a line that names one task; returns the
+project a line names. `task.split` is a chat tool again (read back first). The executor reads back
+every change of a `planFix` context below Standard or with `askFirst`, keeps `planFix` on a stored
+card for a restart, and reads a composed card as one question (`oneQuestion` in change-card.ts;
+`compose(..., { ask })` gives it its own). An agent's change says so where it is stored: "Added
+by the agent: <why>", "Changed by the agent: …", "What it waits for changed by the agent",
+"Paused/Cancelled/Made ready by the agent" (never an id or the channel).
+
+Tests: `test/intent.test.ts`, `test/selftasks-chat.test.ts`.
+
 ### credential_policy ([ADR 0120](../decisions/0120-which-claude-does-the-work.md))
 
 `settings.set credential_policy` takes one of the five presets; it is the person's alone (an agent

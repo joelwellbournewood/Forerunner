@@ -109,3 +109,30 @@ This ADR is run C's sub-run C4 (`d1109-selftasks-run`, the run). Chat's own task
 
 A split shares what is left of the task's budget after its work and its reviews (its figure holds
 both), and the task check stays the session's spend: its Run row and ledger rows name no task.
+
+## Amendment 2026-11-16 (d1109-selftasks-chat, run C sub-run C6: the chat part)
+
+The owner, verbatim (D7, 2026-11-09): "I would also like that being talking to the agent would
+also allow the agent to have dynamic control over its tasks"; confirmed: "the agent changes its
+own tasks, the autonomy level deciding when it asks first".
+
+- "fix the tasks" (the parser's pattern, English and German, no model call before it) and the
+  chat model's `fix_tasks` tool (its only parameter the project) run this ADR's check with the
+  person's line of the turn as the request (verbatim, at most 500 characters, in its own data
+  envelope) and the notes kept on the project as the evidence. The rules' first paragraph has a
+  chat variant (prompt `task-check@1.1.0`).
+- Point 7 in chat: from Standard up each change is made at once as the agent's (source `chat`,
+  one Changes row and one Undo each, no Inbox line); at Advisor and Assisted, when the fence
+  asks first, or in a turn whose lookups returned records, the set is one read-back with Yes and
+  No (one card in the Inbox), whose Yes after a restart makes it with no second check.
+- Changes the person names in their own words stay their instruction and are read back; several
+  in one turn are one question and one card.
+- The check from chat is booked to the project, refused before the call when its cap does not fit
+  the room the project's budget and the month cap leave, held by the credential policy (ADR 0120:
+  no call, nothing booked, one sentence), one at a time per project; it starts no session.
+- Where a change is stored and shown it says the agent made it; the session page has an Undo on
+  each change line; Changes reads "In a session"; the suggestion card lists its changes open.
+- The check's model is chosen as the intake's (the planning row, the principal's override, the
+  project's highest model). An added step marks only itself as written by the agent.
+- Open owner question (default built): "Fix the tasks" is chat only (and the agent's own check
+  during a run), no button on the Tasks tab.

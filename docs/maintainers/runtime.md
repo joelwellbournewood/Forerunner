@@ -7801,6 +7801,33 @@ Tests: `autonomy.test.ts` (ST-1), `selftasks-run.test.ts` in commands (ST-2, ST-
 "d1109-selftasks-run, run C" and `selftasks.test.tsx` (ST-11), and the injection suite's report
 channel (ST-13).
 
+### Fix the tasks from chat (d1109-selftasks-chat, [ADR 0119](../decisions/0119-the-agent-keeps-its-task-list-right.md))
+
+`conversation/task-fix-tool.ts` runs the session's own task check from chat: `fixTasksInChat`
+calls `runTaskCheck` (the same deps as the runner's, `ConversationDeps.taskCheck`; the chat
+variant of the rules' first paragraph, prompt `task-check@1.1.0`), `fenceTaskChanges`, then by
+the project's level either `applyTaskChanges` through `CommandLoop.planFix` (Standard and up:
+each change one change log row, source `chat`, the agent as actor, the person's words as the
+words used, no Inbox line) or one composed read-back (`planFix(..., { readBack: true })`) at
+Advisor and Assisted, when the fence asks first (`planFix.askFirst`), or when the turn read a
+record (`CommandTurn.recordsRead`). The request is the person's line of the turn, verbatim, at
+most 500 characters; the `fix_tasks` tool takes only `project`. The parser's `fixTasksAskOf`
+runs it before any chat-model call; `CHAT_TASK_RULES` is in the stable system part. Its replies
+are in `sentences.ts` (`fix*`). The check is booked to the project (the conversation session's
+spend), refused before the call when its cap does not fit `chatRoom`, held by the credential
+policy (SC-14), and one check of a project runs at a time (`withTaskCheckLock`).
+
+The results loop composes several pending task changes of one model turn into one card
+(`CommandLoop.recompose`): the separate cards are marked `chat_only` and cancelled, so the Inbox
+holds one. GET /sessions/:id/events gives each `change` line `changeId`, `undoable`,
+`undoBlocked` and `undone` (`withUndo` in server.ts, from the change log row and
+`CommandLoop.undoBlocked`); `ChangeLogView.byAgent` marks the agent's own changes; the task
+check's model is chosen as the intake's (C5-left-7). An added step marks only itself as written
+by the agent (C4-left-1).
+
+Tests: `test/chat-fix-tasks.test.ts`, `test/credential-policy.test.ts` (SC-14),
+`test/executor-brief.test.ts` (C4-left-1).
+
 ### One credential policy for every call (d1109-cred-engine, [ADR 0120](../decisions/0120-which-claude-does-the-work.md))
 
 - **The policy** (`@forerunner/billing` `policy.ts`, read by `RouterTaskBilling.pick` through
