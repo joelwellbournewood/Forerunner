@@ -20911,6 +20911,9 @@ describe("d1109-cred-engine, run C", () => {
     const home = mkdtempSync(join(tmpdir(), "fr-ui-real-credengine-"));
     const onKey = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
     const sdkCalls: string[] = [];
+    // No injected provider (the fix-up of d1109-cred-engine): the key is the Messages API
+    // stand-in, so the critic's reviews and chat go through the person's policy as in the app.
+    const standIn = messagesApiStandIn({ model: new AcceptingCriticProvider(onKey), clock });
     const rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
       dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
@@ -20918,7 +20921,9 @@ describe("d1109-cred-engine, run C", () => {
       clock,
       stateUrl: "sqlite::memory:",
       vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
-      provider: new AcceptingCriticProvider(onKey),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
       sdkQuery: claudeCode(sdkCalls),
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
@@ -20939,7 +20944,7 @@ describe("d1109-cred-engine, run C", () => {
       (input, init) => Promise.resolve(app.request(input, init)),
     );
     const work = () =>
-      onKey.calls.filter((c) => !(c.tools ?? []).some((t) => t.name === "submit_review"));
+      standIn.requests.filter((r) => r.method === "POST" && r.path === "/v1/messages");
     try {
       // CE-13: from the default ('then wait') to 'then ask me' moves more money: it asks a yes.
       const asked = await client.executeCommands({

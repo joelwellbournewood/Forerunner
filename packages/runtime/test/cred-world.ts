@@ -97,23 +97,21 @@ async function* providerReply(call: SdkCall): AsyncIterable<SdkMessage> {
   yield { type: "result", subtype: "success", is_error: false, result: text };
 }
 
+/** The report of a task run on the subscription, unless a test gives its own. */
+export const SUBSCRIPTION_REPORT = "Done on the subscription. Lesson: none.";
+
 /** A task run on the subscription (the SDK driver). */
-async function* runReply(n: number): AsyncIterable<SdkMessage> {
+async function* runReply(n: number, text = SUBSCRIPTION_REPORT): AsyncIterable<SdkMessage> {
   yield { type: "system", subtype: "init", session_id: `sdk-world-${n}` };
   yield {
     type: "assistant",
     message: {
       id: `m${n}`,
-      content: [{ type: "text", text: "Done on the subscription. Lesson: none." }],
+      content: [{ type: "text", text }],
       usage: { input_tokens: 10, output_tokens: 5 },
     },
   };
-  yield {
-    type: "result",
-    subtype: "success",
-    is_error: false,
-    result: "Done on the subscription. Lesson: none.",
-  };
+  yield { type: "result", subtype: "success", is_error: false, result: text };
 }
 
 /** Claude Code when the subscription's limit is reached (Agent SDK 0.3.304's messages). */
@@ -162,6 +160,10 @@ export interface CredWorld {
   keyModel: ScriptedProvider;
   /** The subscription is at its limit until `ms` (epoch), or serves again (null). */
   limitSubscription(untilMs: number | null): void;
+  /** The subscription serves `calls` more Claude Code calls, then is at its limit until `ms`. */
+  limitSubscriptionAfter(calls: number, untilMs: number): void;
+  /** The report the subscription's task runs give (a "For the task list:" line, CE-3). */
+  setRunReport(text: string): void;
   /** Anthropic refuses the sign-in from now on. */
   refuseSubscription(on?: boolean): void;
   /** The key is at its limit until `ms`, refused, or served. */
@@ -194,6 +196,8 @@ export function credWorld(opts: {
   let subRefused = false;
   let keyAnswer: "ok" | "refused" | { limitUntilMs: number } = "ok";
   let runs = 0;
+  let limitAfter: { at: number; untilMs: number } | null = null;
+  let runReport = SUBSCRIPTION_REPORT;
   const sdkQuery: QueryLike = ({ prompt, options }) => {
     const o = (options ?? {}) as {
       maxTurns?: number;
@@ -210,9 +214,13 @@ export function credWorld(opts: {
       system,
     };
     sdkCalls.push(call);
+    if (limitAfter && sdkCalls.length > limitAfter.at) {
+      subLimitUntil = limitAfter.untilMs;
+      limitAfter = null;
+    }
     if (subRefused) return refusedReply();
     if (subLimitUntil !== null && clock.now() < subLimitUntil) return limitReply(subLimitUntil);
-    return provider ? providerReply(call) : runReply(++runs);
+    return provider ? providerReply(call) : runReply(++runs, runReport);
   };
   const keyModel = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
   const answerFor = (_key: string, nowMs: number): KeyAnswer => {
@@ -284,6 +292,12 @@ export function credWorld(opts: {
     keyModel,
     limitSubscription: (untilMs) => {
       subLimitUntil = untilMs;
+    },
+    limitSubscriptionAfter: (calls, untilMs) => {
+      limitAfter = { at: sdkCalls.length + calls, untilMs };
+    },
+    setRunReport: (text) => {
+      runReport = text;
     },
     refuseSubscription: (on = true) => {
       subRefused = on;

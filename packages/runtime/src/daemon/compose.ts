@@ -1757,6 +1757,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             check.workBudgetUsdMicro,
           );
       }
+      // "Use API key" is offered only when the caps have room for it: with the month cap
+      // reached, the key could do nothing, so no card asks (the work waits as under 'wait').
+      const monthCap = (await store.human.get(human.id).catch(() => undefined))
+        ?.monthly_cap_usd_micro;
+      if (monthCap && monthCap > 0) {
+        const room = await checker
+          .room(
+            { humanId: human.id },
+            {
+              phase: "work",
+              caps: { monthUsdMicro: monthCap, sessionUsdMicro: Number.MAX_SAFE_INTEGER },
+            },
+          )
+          .catch(() => null);
+        if (typeof room === "number" && room <= 0) return;
+      }
       const filed = await ensureAskCard(
         { store, clock, humanId: human.id, estimateUsdMicro, chfPerUsd: chfPerUsd() },
         stop,
@@ -4088,6 +4104,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         humanId: human.id,
         currentStop: (sourceId) => taskBilling.currentStopOf(sourceId),
         rule: async () => (await policyOf(store, human.id)).rule.whenStopped,
+        // An open card whose other credential cannot serve any more (refused, at its own limit
+        // or cap) closes: its yes could move nothing.
+        otherServes: async (sourceId) => {
+          const other = await taskBilling
+            .pick({
+              agentId: agent.id,
+              agentOwnerHumanId: human.id,
+              runner: "pc",
+              modelTier: "sonnet",
+              purpose: "session",
+              allowSwitch: true,
+            })
+            .catch(() => null);
+          return !!other && other.source.id !== sourceId;
+        },
       }).catch((e: unknown) =>
         logger.warn("the ask cards were not settled", { error: errorMessage(e) }),
       );

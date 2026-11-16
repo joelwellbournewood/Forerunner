@@ -163,3 +163,144 @@ describe("d1109-cred-engine, run C: the ask form only while its card is open", (
     await rt.close();
   }, 90_000);
 });
+
+/** The ask card's row and what the Inbox shows of it now (Needs you or Answered). */
+async function askCardNow(
+  rt: RuntimeApp,
+  req: Awaited<ReturnType<ReturnType<typeof credWorld>["compose"]>>["req"],
+  id: string,
+) {
+  const row = await rt.store.humanRequest.mustGet(id);
+  const inbox = (await req<InboxView & { answered?: HumanRequestView[] }>("/inbox")).body;
+  const shown = [...inbox.requests, ...(inbox.answered ?? [])].find((r) => r.id === id);
+  return { row, shown };
+}
+
+describe("d1109-cred-engine, run C: an open ask card closes when it no longer applies (CE-7)", () => {
+  it("its stop ended while Forerunner was closed: the first wake closes it and the person's session goes on, on the subscription", async () => {
+    const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+    const world = credWorld({ clock, prefix: "fr-ask-down-" });
+    homes.push(world.home);
+    world.limitSubscription(Date.parse("2026-10-31T14:00:00Z"));
+    let { rt, req } = await world.compose();
+    await setPolicy(rt, "subscription_then_ask");
+    const { project, tasks } = await seedProject(rt, "Quote page", [
+      "Style the page",
+      "Write the copy",
+    ]);
+    await startSession(rt, project.id);
+    await settleSessions(rt);
+    const [card] = await askCards(rt);
+    expect(card).toBeDefined();
+    // Closed before the reset; opened again after it.
+    await rt.close();
+    clock.set(Date.parse("2026-10-31T14:01:00Z"));
+    world.limitSubscription(null);
+    ({ rt, req } = await world.compose());
+    await rt.billing.waits.wake();
+    const { row, shown } = await askCardNow(rt, req, card?.id ?? "");
+    expect(row.status).toBe("withdrawn");
+    expect((row.change_card as { closed_why?: unknown }).closed_why).toBe("stop_ended");
+    if (shown) expect(shown.outcome).toBe("Closed: your Claude subscription can work again.");
+    await until("the person's session to go on on the subscription", async () => {
+      const s = await Promise.all(tasks.map((t) => rt.store.task.mustGet(t.id)));
+      return s.every((t) => t.status === "done") ? null : s.map((t) => t.status).join(",");
+    });
+    expect(world.keyCalls()).toHaveLength(0);
+    await settleSessions(rt);
+    await rt.close();
+  }, 90_000);
+
+  it("a change to 'then wait' closes it, and the next pick waits", async () => {
+    const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+    const world = credWorld({ clock, prefix: "fr-ask-policy-" });
+    homes.push(world.home);
+    world.limitSubscription(Date.parse("2026-10-31T14:00:00Z"));
+    const { rt, req } = await world.compose();
+    await setPolicy(rt, "subscription_then_ask");
+    const { project } = await seedProject(rt, "Quote page", ["Style the page"]);
+    await startSession(rt, project.id);
+    await settleSessions(rt);
+    const [card] = await askCards(rt);
+    await setPolicy(rt, "subscription_then_wait");
+    await rt.billing.waits.wake();
+    const { row, shown } = await askCardNow(rt, req, card?.id ?? "");
+    expect(row.status).toBe("withdrawn");
+    if (shown)
+      expect(shown.outcome).toBe(
+        'Closed: "Which Claude does the work" changed, so this question no longer applies.',
+      );
+    await expect(
+      rt.billing.pick.pick({
+        agentId: rt.agent.id,
+        agentOwnerHumanId: rt.human.id,
+        runner: "pc",
+        modelTier: "sonnet",
+        purpose: "session",
+      }),
+    ).rejects.toMatchObject({ code: "unavailable" });
+    expect(world.keyCalls()).toHaveLength(0);
+    await settleSessions(rt);
+    await rt.close();
+  }, 90_000);
+
+  it("the API key cannot do the work either (at its own limit): the card closes, its yes could move nothing", async () => {
+    const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+    const world = credWorld({ clock, prefix: "fr-ask-othercannot-" });
+    homes.push(world.home);
+    world.limitSubscription(Date.parse("2026-10-31T14:00:00Z"));
+    const { rt, req } = await world.compose();
+    await setPolicy(rt, "subscription_then_ask");
+    const { project } = await seedProject(rt, "Quote page", ["Style the page"]);
+    await startSession(rt, project.id);
+    await settleSessions(rt);
+    const [card] = await askCards(rt);
+    const key = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
+      (s) => s.kind === "api_key",
+    );
+    await rt.billing.pick.rest?.(key?.id ?? "", "2026-10-31T13:00:00.000Z", "usage limit");
+    await rt.billing.waits.wake();
+    const { row, shown } = await askCardNow(rt, req, card?.id ?? "");
+    expect(row.status).toBe("withdrawn");
+    expect((row.change_card as { closed_why?: unknown }).closed_why).toBe("other_cannot");
+    if (shown) expect(shown.outcome).toBe("Closed: your API key cannot do the work now either.");
+    expect(world.keyCalls()).toHaveLength(0);
+    await settleSessions(rt);
+    await rt.close();
+  }, 90_000);
+
+  it("with the month cap reached no card is filed: Use API key could spend nothing", async () => {
+    const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+    const world = credWorld({ clock, prefix: "fr-ask-cap-" });
+    homes.push(world.home);
+    world.limitSubscription(Date.parse("2026-10-31T14:00:00Z"));
+    const { rt } = await world.compose();
+    await setPolicy(rt, "subscription_then_ask");
+    // A month cap already spent on the key this month.
+    await rt.store.human.patch(rt.human.id, { monthly_cap_usd_micro: 1_000_000 } as never);
+    const key = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
+      (s) => s.kind === "api_key",
+    );
+    await rt.store.costLedger.insert({
+      human_id: rt.human.id,
+      billing_source_id: key?.id ?? null,
+      kind: "api",
+      usd_micro: 1_200_000,
+      model: "claude-sonnet-5-5",
+      occurred_at: clock.nowIso(),
+    } as never);
+    // The subscription rests; the person presses Start during the stop (kept for its end).
+    const sub = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
+      (s) => s.kind === "subscription",
+    );
+    await rt.billing.pick.rest?.(sub?.id ?? "", "2026-10-31T14:00:00.000Z", "usage limit");
+    const { project } = await seedProject(rt, "Quote page", ["Style the page"]);
+    expect(await rt.continuations.keepStart(project.id, rt.agent.id, {})).toBe(
+      "A session of Quote page starts at 15:00.",
+    );
+    expect(await askCards(rt)).toHaveLength(0);
+    expect(world.keyCalls()).toHaveLength(0);
+    await settleSessions(rt);
+    await rt.close();
+  }, 90_000);
+});

@@ -1365,6 +1365,11 @@ export class IntakeService {
                     sourceId: wait.sourceId,
                     kind: wait.kind,
                     until: wait.until,
+                    // d1109-cred-engine: the stop it waits for and whether the person is asked
+                    // (the plan's words name the one ask card while it is open).
+                    ...(wait.stopKey ? { stopKey: wait.stopKey } : {}),
+                    ...(wait.ask ? { ask: true } : {}),
+                    ...(wait.stop ? { stop: wait.stop } : {}),
                   },
                 }
               : {}),

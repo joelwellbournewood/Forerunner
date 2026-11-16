@@ -13,6 +13,7 @@ import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../injection/scan.ts";
 import { TASK_CHECK_RUN_SPECIALIST } from "../models/ladder.ts";
 import type { ModelProvider } from "../provider/types.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
+import type { CredentialWait } from "./credential-wait.ts";
 import { type TaskChangeFact, taskCheckedLine } from "./result.ts";
 import { markAgentWritten, readsLikeInstruction, type TaskListNote } from "./task-list-notes.ts";
 
@@ -402,8 +403,18 @@ export type TaskCheckRun =
       system: string;
       message: string;
     }
-  /** No call: no Claude, or its cap does not fit the room (the notes are kept). */
-  | { status: "not_made"; reason: "no_provider" | "no_room"; capUsdMicro: number }
+  /**
+   * No call: no Claude, its cap does not fit the room, or the person's credential policy holds
+   * the call (`held`, d1109-cred-engine CE-3: the first choice is stopped and the rule waits or
+   * asks; nothing is booked, no Run row, and under 'ask' the stop's one card is filed). The notes
+   * are kept for the next boundary.
+   */
+  | {
+      status: "not_made";
+      reason: "no_provider" | "no_room" | "held";
+      capUsdMicro: number;
+      wait?: CredentialWait;
+    }
   /** The call ended without a reply (it is booked; the notes are kept). */
   | { status: "failed"; costUsdMicro: number; runId: string; reason: string };
 
@@ -468,6 +479,21 @@ export async function runTaskCheck(
   const capUsdMicro = Math.max(1, pricing.estimate(inputTokens, TASK_CHECK_MAX_TOKENS));
   if (capUsdMicro > input.roomUsdMicro)
     return { status: "not_made", reason: "no_room", capUsdMicro };
+  // d1109-cred-engine CE-3 (ADR 0120; the owner's answer 4: one order for every call, the task
+  // check included): a call the person's policy holds now is not made. Before, the routed call
+  // met the hold, its Run row read 'failed' and the session log said the call did not answer.
+  const routed = provider as unknown as HoldingProvider;
+  const held = routed.holdNow ? await routed.holdNow(model).catch(() => null) : null;
+  if (held) {
+    // The project waits on the stopped source like its tasks: under 'ask' its one card is filed.
+    if (held.wait.sourceId)
+      await routed
+        .noteWait?.(held.wait.sourceId, input.project.id, input.agentId)
+        .catch((e: unknown) =>
+          logger.warn("the task check's wait was not kept", { error: errorMessage(e) }),
+        );
+    return { status: "not_made", reason: "held", capUsdMicro, wait: held.wait };
+  }
   // One Run row per check (a second check in the same millisecond gets its own id).
   const runId = newId(clock.now());
   const token = deps.tokens.issue({
@@ -555,6 +581,12 @@ export async function runTaskCheck(
     system,
     message,
   };
+}
+
+/** What the routed provider says of a held call (CE-3); another provider says nothing. */
+interface HoldingProvider {
+  holdNow?(model?: string): Promise<{ wait: CredentialWait } | null>;
+  noteWait?(sourceId: string, projectId: string, agentId: string): Promise<void>;
 }
 
 /** The role prompt when the registry has none (a test world). */

@@ -19,7 +19,7 @@ import { unappliedAnswers } from "./findings.ts";
  *   person's waiting session goes on by itself at the stop's end (d1109-starts-engine).
  * - A second or late answer changes nothing; an answer after the stop ended grants nothing.
  * - The wake (`settleAsks`) ends grants whose stop is over and withdraws open cards whose stop
- *   ended or whose preset is no longer 'ask'.
+ *   ended, whose preset is no longer 'ask', or whose other credential cannot serve any more.
  */
 
 /** The ask card's key. */
@@ -227,6 +227,12 @@ export async function settleAsks(deps: {
   currentStop(sourceId: string): Promise<{ stopKey: string } | null>;
   /** The person's rule at a stop now. */
   rule(): Promise<"wait" | "ask" | "next">;
+  /**
+   * Whether another credential can do the waiting work now (the card's Use API key): absent, it
+   * is taken to; false closes an open card ("Closed: your API key cannot do the work now
+   * either."), since its yes could move nothing.
+   */
+  otherServes?(sourceId: string): Promise<boolean>;
 }): Promise<number> {
   for (const row of await deps.store.billingSource.list(
     { human_id: deps.humanId },
@@ -265,7 +271,9 @@ export async function settleAsks(deps: {
         ? "stop_ended"
         : rule !== "ask"
           ? "policy_changed"
-          : null;
+          : deps.otherServes && !(await deps.otherServes(sourceId).catch(() => true))
+            ? "other_cannot"
+            : null;
     if (!why) continue;
     await deps.store.humanRequest
       .patch(r.id, { change_card: { ...card, closed_why: why } })
