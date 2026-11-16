@@ -9,17 +9,17 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { builtinModules } from "node:module";
-import path from "node:path";
+import { dirname, join, relative, resolve } from "@forerunner/platform/paths";
 import { describe, expect, it } from "vitest";
 
-const ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
-const UI_SRC = path.join(ROOT, "apps", "ui", "src");
+const ROOT = resolve(import.meta.dirname, "..", "..", "..");
+const UI_SRC = join(ROOT, "apps", "ui", "src");
 const BUILTINS = new Set(builtinModules);
 
 function filesOf(dir: string): string[] {
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
-    const p = path.join(dir, name);
+    const p = join(dir, name);
     if (statSync(p).isDirectory()) out.push(...filesOf(p));
     else if (/\.(ts|tsx)$/.test(name) && !/\.d\.ts$/.test(name)) out.push(p);
   }
@@ -38,7 +38,7 @@ function valueImports(file: string): string[] {
 }
 
 function resolveFile(base: string): string | null {
-  for (const c of [base, `${base}.ts`, `${base}.tsx`, path.join(base, "index.ts")])
+  for (const c of [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")])
     if (existsSync(c) && statSync(c).isFile()) return c;
   return null;
 }
@@ -47,8 +47,8 @@ function resolveFile(base: string): string | null {
 function resolvePackage(spec: string): string | null {
   const m = /^@forerunner\/([^/]+)(?:\/(.+))?$/.exec(spec);
   if (!m) return null;
-  const dir = path.join(ROOT, "packages", m[1] as string, "src");
-  return resolveFile(m[2] ? path.join(dir, m[2]) : path.join(dir, "index"));
+  const dir = join(ROOT, "packages", m[1] as string, "src");
+  return resolveFile(m[2] ? join(dir, m[2]) : join(dir, "index"));
 }
 
 /** The first chain from `file` to a Node built-in, or null. */
@@ -58,12 +58,12 @@ function nodeChain(file: string, seen: Set<string>, trail: string[]): string[] |
   for (const spec of valueImports(file)) {
     const bare = spec.replace(/^node:/, "");
     if (spec.startsWith("node:") || BUILTINS.has(bare.split("/")[0] as string))
-      return [...trail, path.relative(ROOT, file), spec];
+      return [...trail, relative(ROOT, file), spec];
     const next = spec.startsWith(".")
-      ? resolveFile(path.resolve(path.dirname(file), spec))
+      ? resolveFile(resolve(dirname(file), spec))
       : resolvePackage(spec);
     if (!next) continue;
-    const chain = nodeChain(next, seen, [...trail, path.relative(ROOT, file)]);
+    const chain = nodeChain(next, seen, [...trail, relative(ROOT, file)]);
     if (chain) return chain;
   }
   return null;
@@ -77,7 +77,7 @@ describe("the browser build reaches no Node module (d1109-run-visible)", () => {
         if (!spec.startsWith("@forerunner/")) continue;
         const target = resolvePackage(spec);
         if (!target) continue;
-        const chain = nodeChain(target, new Set(), [`${path.relative(ROOT, file)} (${spec})`]);
+        const chain = nodeChain(target, new Set(), [`${relative(ROOT, file)} (${spec})`]);
         if (chain) found.push(chain.join(" -> "));
       }
     }
@@ -86,7 +86,7 @@ describe("the browser build reaches no Node module (d1109-run-visible)", () => {
 
   it("the walk finds a Node module where there is one (the check itself)", () => {
     const chain = nodeChain(
-      path.join(ROOT, "packages", "runtime", "src", "daemon", "task-words.ts"),
+      join(ROOT, "packages", "runtime", "src", "daemon", "task-words.ts"),
       new Set(),
       [],
     );
