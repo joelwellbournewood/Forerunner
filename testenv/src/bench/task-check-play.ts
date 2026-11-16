@@ -62,8 +62,31 @@ export function readCheckRequest(req: ModelRequest): CheckMessageSeen {
   const lines = message.split("\n");
   const tasks: CheckTaskSeen[] = [];
   const notes: CheckNoteSeen[] = [];
-  let part: "none" | "tasks" | "evidence" = "none";
+  let part: "none" | "tasks" | "evidence" | "request" = "none";
   for (const raw of lines) {
+    // d1109-selftasks-chat: chat's "fix the tasks" adds the person's words in an envelope of
+    // their own; the stand-in reads their sentences as it reads a report's lines.
+    if (raw === "The person asked, in their words:") {
+      part = "request";
+      notes.push({ taskTitle: "", specialist: null, lines: [] });
+      continue;
+    }
+    if (part === "request") {
+      if (raw.startsWith("<<<UNTRUSTED_CONTENT")) continue;
+      if (raw.endsWith("UNTRUSTED_CONTENT>>>")) {
+        part = "none";
+        continue;
+      }
+      const note = notes.at(-1);
+      // "fix the tasks: X is two jobs; nothing checks Y" reads as two lines after the colon.
+      const said = raw.includes(":") ? raw.slice(raw.indexOf(":") + 1) : raw;
+      for (const l of said
+        .split(/\s*;\s*|(?<=[.!?])\s+/)
+        .map((x) => x.trim())
+        .filter(Boolean))
+        note?.lines.push(l);
+      continue;
+    }
     if (raw === "Tasks, in run order:") {
       part = "tasks";
       continue;

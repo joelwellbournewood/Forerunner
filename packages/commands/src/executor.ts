@@ -7,7 +7,7 @@ import {
   log,
   shortToken,
 } from "@forerunner/platform";
-import { decideAutonomy, isYes } from "@forerunner/runtime";
+import { type AutonomyLevel, decideAutonomy, isYes } from "@forerunner/runtime";
 import { OPEN_ON_A_CLOSED_PROJECT } from "@forerunner/runtime/daemon/join-words";
 import type { ChangeLogRow, DeviceRow, JsonValue, StateStore } from "@forerunner/state";
 import {
@@ -15,6 +15,7 @@ import {
   type ChangeCard,
   cardToJson,
   mergeCards,
+  oneQuestion,
   renderChangeCard,
 } from "./change-card.ts";
 import {
@@ -148,6 +149,12 @@ export interface StoredCardContext {
   wordsUsed: string;
   deviceId: string | null;
   sessionId: string | null;
+  /**
+   * d1109-selftasks-chat: the agent's own fix of its task list (`CommandContext.planFix`), kept so
+   * a card armed again after a restart is decided and told as before (no Inbox line after its
+   * yes). Written by the daemon only; a request body never sets it.
+   */
+  planFix?: { level: AutonomyLevel; askFirst?: boolean };
 }
 
 /**
@@ -159,7 +166,7 @@ export interface StoredCardContext {
  */
 function questionOf(card: ChangeCard): string {
   if (card.ask) return card.ask;
-  if (card.parts && card.parts.length > 1) return card.parts.map(questionOf).join(" ");
+  if (card.parts && card.parts.length > 1) return oneQuestion(card.parts.map(questionOf));
   const what = card.what.trim().replace(/\.$/, "");
   const to = card.newValue.trim();
   if (/^[[{]/.test(to)) return `${what}?`;
@@ -227,7 +234,11 @@ const CHANGES_NOTHING: ReadonlySet<string> = new Set(["summary.speak"]);
  * runtime) at a level whose autonomy frees `plan_fix` (Standard, Trusted, Autopilot).
  */
 function freesPlanFix(ctx: CommandContext): boolean {
-  return !!ctx.planFix && decideAutonomy("plan_fix", { level: ctx.planFix.level }) === "allow";
+  return (
+    !!ctx.planFix &&
+    !ctx.planFix.askFirst &&
+    decideAutonomy("plan_fix", { level: ctx.planFix.level }) === "allow"
+  );
 }
 
 /** What still acts at once in a turn that read a record: a read, or a stop of the running work. */
@@ -398,6 +409,10 @@ export class CommandExecutor {
     // changes nothing (summary.speak) answers at once as before.
     if (decision === "act" && ctx.recordsRead && !steps.every(actsAtOnceAfterRecords))
       return "needs_yes";
+    // d1109-selftasks-chat (ADR 0119 point 7): the agent's own fix of its task list at a level
+    // that does not free it (Advisor, Assisted) asks first whatever the commands, a new task
+    // included (task.create acts at once when the person says it).
+    if (decision === "act" && ctx.planFix && !freesPlanFix(ctx)) return "needs_yes";
     return decision;
   }
 
@@ -408,7 +423,14 @@ export class CommandExecutor {
   async compose(
     calls: CommandCall[],
     ctx: CommandContext,
-    opts: { confirmation?: ConfirmationAnswer } = {},
+    opts: {
+      confirmation?: ConfirmationAnswer;
+      /**
+       * d1109-selftasks-chat: the one question a composed card is read back with ("Make these 3
+       * changes to the tasks of Quote page? …"), kept on its row for a restart.
+       */
+      ask?: string;
+    } = {},
   ): Promise<ExecuteResult> {
     this.sweepPending();
     let steps: Step[];
@@ -419,6 +441,7 @@ export class CommandExecutor {
     }
     const card =
       steps.length === 1 ? (steps[0] as Step).card : mergeCards(steps.map((s) => s.card));
+    if (opts.ask?.trim() && steps.length > 1) card.ask = opts.ask.trim();
     return this.gate({
       decision: this.decideSteps(steps, ctx),
       card,
@@ -514,6 +537,14 @@ export class CommandExecutor {
       wordsUsed: ctx.wordsUsed,
       deviceId: ctx.deviceId ?? null,
       sessionId: ctx.sessionId ?? null,
+      ...(ctx.planFix
+        ? {
+            planFix: {
+              level: ctx.planFix.level,
+              ...(ctx.planFix.askFirst ? { askFirst: true } : {}),
+            },
+          }
+        : {}),
     };
     // Design §3.8, §3.9: an Inbox card answered in chat or voice is read back there, once, and
     // the yes is said there; the card itself stays the one card about it in the Inbox. Its
@@ -603,6 +634,9 @@ export class CommandExecutor {
         const steps = await this.prepareAll(commandCalls, ctx);
         const card =
           steps.length === 1 ? (steps[0] as Step).card : mergeCards(steps.map((s) => s.card));
+        // d1109-selftasks-chat: a composed card's own question, as it was read back.
+        if (steps.length > 1 && typeof json.ask === "string" && json.ask.trim())
+          card.ask = json.ask;
         const id = row.id;
         const cancelTimer = this.clock.setTimeout(
           () => {

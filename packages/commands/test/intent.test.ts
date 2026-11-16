@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   type CommandRegistry,
   defaultRegistry,
+  fixTasksAskOf,
   type IntentContext,
   IntentParser,
   intentToolSchema,
@@ -685,5 +686,50 @@ describe("IntentParser: steering phrases (design §3.9)", () => {
       expect(await one(text), text).toEqual({ name: "session.resume", params: {} });
     // The work itself is never taken for a task's name.
     expect(await one("pause the session")).toEqual({ name: "session.pause", params: {} });
+  });
+});
+
+describe("d1109-selftasks-chat, run C: 'fix the tasks' (SC-1)", () => {
+  // The owner (2026-11-09): "I would also like that being talking to the agent would also allow
+  // the agent to have dynamic control over its tasks." The person asks for the whole task list to
+  // be put right in their own words, English or German; the parser reads it without a model call.
+  it("reads the person's ways of asking for the whole task list, English and German", () => {
+    for (const line of [
+      "fix the tasks",
+      "Fix the tasks.",
+      "tidy up the tasks",
+      "clean up the task list",
+      "check the tasks",
+      "please fix my tasks",
+      "can you tidy the task list?",
+      'fix the tasks: "Style the page" is two jobs',
+      "räum die Aufgaben auf",
+      "Räume die Aufgabenliste auf",
+      "korrigiere die Aufgaben",
+      "die Aufgaben aufräumen",
+    ])
+      expect(fixTasksAskOf(line), line).toEqual({});
+  });
+
+  it("names the project a line names", () => {
+    expect(fixTasksAskOf("fix the tasks of Bakery site")).toEqual({ project: "Bakery site" });
+    expect(fixTasksAskOf("tidy up the tasks in the project Quote page")).toEqual({
+      project: "Quote page",
+    });
+    expect(fixTasksAskOf("korrigiere die Aufgaben von Bäckerei")).toEqual({ project: "Bäckerei" });
+    expect(fixTasksAskOf("fix the tasks of this project")).toEqual({});
+  });
+
+  it("is never a line that names one task, a question about the tasks, or pasted content", () => {
+    for (const line of [
+      "fix the login task",
+      'check the task "Style the page"',
+      "what tasks are left?",
+      "add a task: fix the tasks page",
+      "why did the tasks fail?",
+      "fix the bug",
+      `${DATA_ENVELOPE_OPEN} fix the tasks ${DATA_ENVELOPE_CLOSE}`,
+    ])
+      expect(fixTasksAskOf(line), line).toBeNull();
   });
 });

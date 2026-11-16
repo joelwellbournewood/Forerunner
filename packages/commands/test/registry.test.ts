@@ -95,10 +95,10 @@ describe("CommandRegistry", () => {
         throw new Error("unused");
       },
     });
-    // d1109-selftasks-run: task.split is the session's task check's (chatTool: false) until
-    // d1109-selftasks-chat gives chat its own task_split tool.
-    expect(specs.length).toBe(COMMAND_NAMES.length - 1);
-    expect(specs.map((s) => s.name)).not.toContain("task_split");
+    // d1109-selftasks-chat: every command is a chat tool again, task.split included (the
+    // person's own split, read back first).
+    expect(specs.length).toBe(COMMAND_NAMES.length);
+    expect(specs.map((s) => s.name)).toContain("task_split");
     expect(specs.map((s) => s.name)).toContain("budget_set");
     expect(toolNameFor("email.mode.set")).toBe("email_mode_set");
     const budget = specs.find((s) => s.name === "budget_set");

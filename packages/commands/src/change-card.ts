@@ -184,8 +184,24 @@ export function mergeCards(parts: readonly ChangeCard[]): ChangeCard {
     reversible,
     parts: [...parts],
     // One question per part, when every part has one.
-    ...(parts.every((p) => p.ask) ? { ask: parts.map((p) => p.ask).join(" ") } : {}),
+    // d1109-selftasks-chat (SC-5): one question naming them all, never one after another.
+    ...(parts.every((p) => p.ask) ? { ask: oneQuestion(parts.map((p) => p.ask as string)) } : {}),
   };
+}
+
+/**
+ * d1109-selftasks-chat (SC-5, design §3.9: a change is read back once, in one line): the parts'
+ * questions as one question ('Make "A" wait for "B" and set "C" to high priority?'). Before,
+ * every part's question was said one after another, each with its own question mark.
+ */
+export function oneQuestion(questions: readonly string[]): string {
+  const parts = questions.map((q) => q.trim().replace(/[?.]+$/, "")).filter(Boolean);
+  if (parts.length <= 1) return parts[0] ? `${parts[0]}?` : "";
+  const lower = (q: string) => (/^[A-Z][a-z]/.test(q) ? `${q[0]?.toLowerCase()}${q.slice(1)}` : q);
+  const [first, ...rest] = parts as [string, ...string[]];
+  const tail = rest.map(lower);
+  const last = tail.pop() as string;
+  return `${[first, ...tail].join(", ")}${tail.length ? "," : ""} and ${last}?`;
 }
 
 export interface RenderOptions {

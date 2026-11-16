@@ -2089,9 +2089,8 @@ export const taskSplit: CommandDef<TaskSplitParams> = {
     "Split a draft or ready task that is two or more jobs: the task stays as its first part (its folder, branch and earlier work carry on) and one to three new tasks hold the rest; every acceptance criterion goes word for word into one part; the parts wait for each other in turn or run side by side; the tasks that waited for it wait for all its parts; its own budget is shared, never raised.",
   params: splitParams,
   risk: "low",
+  // d1109-selftasks-chat: the person's own split in chat, read back first (askFromChat).
   askFromChat: true,
-  // d1109-selftasks-chat gives chat its own task_split tool (with its exact definition).
-  chatTool: false,
   scope: "project",
   reversible: true,
   undoStrategy: "put the task back as it was and cancel the new parts",

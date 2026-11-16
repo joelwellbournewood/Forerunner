@@ -44,7 +44,7 @@ export function stoppedPhrase(
 }
 
 /** "your subscription is at its limit until 15:40" (the short, lower-case form for a note). */
-function shortStopped(
+export function shortStoppedPhrase(
   wait: Pick<CredentialWait, "reason" | "kind" | "stop">,
   until: string | null,
 ) {
@@ -256,7 +256,7 @@ export function switchLogLine(
   wait: Pick<CredentialWait, "reason" | "kind" | "stop">,
   until: string | null,
 ): string {
-  return `"${title}" goes on with ${yourCredential(to)} from where it stopped: ${shortStopped(wait, until)}.`;
+  return `"${title}" goes on with ${yourCredential(to)} from where it stopped: ${shortStoppedPhrase(wait, until)}.`;
 }
 
 /** The line when the first choice serves again in a session that moved (once per stop). */
@@ -300,7 +300,7 @@ export function chatSwitchNote(
   wait: Pick<CredentialWait, "reason" | "kind" | "stop">,
   until: string | null,
 ): string {
-  return `Answered with ${yourCredential(to)}: ${shortStopped(wait, until)}.`;
+  return `Answered with ${yourCredential(to)}: ${shortStoppedPhrase(wait, until)}.`;
 }
 
 // ── CE-13: the setting ───────────────────────────────────────────────────────────────────────

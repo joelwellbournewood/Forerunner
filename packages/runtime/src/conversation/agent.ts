@@ -1,8 +1,14 @@
 import { type BillingSourceKind, DEFAULT_CHF_PER_USD } from "@forerunner/billing";
-import { isStopLine } from "@forerunner/commands";
+import {
+  fixTasksAskOf,
+  isStopLine,
+  matchProjects,
+  normaliseProjectName,
+  removedProjectRefusal,
+} from "@forerunner/commands";
 import { loadDocChunks, selectDocHits } from "@forerunner/memory";
 import { type Clock, errorMessage, log, newId } from "@forerunner/platform";
-import type { AgentRow, SessionRow, StateStore } from "@forerunner/state";
+import type { AgentRow, ProjectRow, SessionRow, StateStore } from "@forerunner/state";
 import { z } from "zod";
 import {
   CUT_OFF_STOP_REASON,
@@ -49,6 +55,7 @@ import {
 } from "../provider/types.ts";
 import type { CredentialWait } from "../session/credential-wait.ts";
 import { chatHoldReply, chatOneOffExplain, chatSwitchNote } from "../session/credential-words.ts";
+import type { TaskCheckDeps } from "../session/task-check.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { NO_MODEL_CHAT_REPLY } from "../setup/no-model.ts";
 import { isChatOnlyCard } from "../wiring/request-answers.ts";
@@ -127,7 +134,8 @@ import {
 } from "./recall.ts";
 import { stepLine } from "./recall-steps.ts";
 import { scopeOf } from "./scope.ts";
-import { completeSentencesOf, SentenceGate } from "./sentences.ts";
+import { completeSentencesOf, FIX_NO_PROJECT, fixWhichProject, SentenceGate } from "./sentences.ts";
+import { type ChatTaskFixResult, fixTasksInChat, fixTasksTool } from "./task-fix-tool.ts";
 import {
   DEFAULT_CHAT_HISTORY_TOKENS,
   historyMessages,
@@ -288,6 +296,13 @@ export interface ConversationDeps {
     humanId: string;
     projectId: string | null;
   }) => Promise<{ usdMicro: number; level: CapLevel } | null>;
+  /**
+   * d1109-selftasks-chat (ADR 0119): the agent's task check, as the runner's (the planning call
+   * routed as the intake's, its fence and commands): "fix the tasks" and the fix_tasks tool run
+   * it on the project's tasks with the person's message as the request. Absent (no Claude): the
+   * reply is "Fixing the tasks needs Claude.".
+   */
+  taskCheck?: TaskCheckDeps;
   /**
    * The Claude credential chat would use now and whether it is the person's first choice
    * (d1109-chat-depth's first-credential rule; d1109-cred-engine, C5, answers it from the policy).
@@ -645,6 +660,14 @@ Write plain sentences. No markdown: no asterisks for bold, no headings, no table
 list may use lines that start with "- ".`;
 
 /**
+ * d1109-selftasks-chat (SC-2, ADR 0119): when the person asks for the task list to be put right,
+ * the agent's own check does it (fix_tasks, the autonomy deciding); changes the person names are
+ * their own instruction, read back together. In the stable system part beside the rules above.
+ */
+export const CHAT_TASK_RULES = `# The task list
+When the person asks you to fix, tidy, clean up or check the task list, call fix_tasks once with their words. For changes the person names themselves, call each change's tool; they are read back together. Never say a task changed unless a tool said so.`;
+
+/**
  * A pause this long ends a conversation: the next turn starts a new one, in which an open
  * request is mentioned once more.
  */
@@ -664,6 +687,8 @@ const ASKS_PENDING_RE =
 interface ConversationState {
   mentioned: Set<string>;
   lastTurnAt: number;
+  /** d1109-selftasks-chat (SC-11): "fix the tasks" asked which project; the line it asked about. */
+  fixWhich?: { names: string[]; line: string };
   /** CE-9: the stops whose "Answered with your API key" note this conversation said. */
   notedStops?: Set<string>;
 }
@@ -1124,6 +1149,7 @@ export class ConversationAgent {
           : {}),
         ...(extra.ttftMs !== undefined ? { ttftMs: extra.ttftMs } : {}),
         ...(extra.costUsdMicro ? { costUsdMicro: extra.costUsdMicro } : {}),
+        ...(extra.footer ? { footer: extra.footer } : {}),
       } as never);
       return {
         reply,
@@ -1210,6 +1236,50 @@ export class ConversationAgent {
         key: pendingKey,
         earlier: pending,
       });
+    }
+
+    // d1109-selftasks-chat (SC-1, ADR 0119): "fix the tasks" asks the agent to check the whole
+    // task list. Read by the parser's pattern, with no chat-model call before the check's own
+    // planning call; the person's message is the check's request, word for word.
+    // SC-11: the answer to "Which project: …?" (a project's name alone) is that project's fix,
+    // with the line that asked for it as the request.
+    const askedWhich = conv.fixWhich;
+    conv.fixWhich = undefined;
+    const named = askedWhich?.names.find(
+      (n) => normaliseProjectName(n) === normaliseProjectName(req.text.replace(/[.!?]+$/, "")),
+    );
+    const fixAsk =
+      this.deps.commands && !accepted
+        ? named
+          ? { project: named }
+          : fixTasksAskOf(req.text)
+        : null;
+    if (fixAsk) {
+      const request = named && askedWhich ? askedWhich.line : req.text;
+      const target = await this.fixTarget(fixAsk.project, projectId, req.humanId);
+      if ("reply" in target) {
+        if (target.question) conv.fixWhich = { names: target.question.options, line: request };
+        return finish(target.reply, [], target.question ? { question: target.question } : {}, {
+          notice: true,
+        });
+      }
+      const r = await this.fixTasks(target.project, request, turn, human.timezone, step);
+      const asked = r.results.find((x) => x.status === "pending" && x.pendingId);
+      if (asked) {
+        const card = cardOf(asked, asked.commands);
+        const dropped = await this.replacePending(pendingKey, pending, card, turn);
+        return finish(`${dropped}${r.reply}`, [], {
+          pendingConfirmation: card,
+          costUsdMicro: r.costUsdMicro,
+          footer: r.footer,
+        });
+      }
+      return finish(
+        r.reply,
+        r.results.flatMap((x) => this.actionsOf(x, x.commands)),
+        { costUsdMicro: r.costUsdMicro, footer: r.footer },
+        { notice: r.notice },
+      );
     }
 
     // Understanding (spec Q.2): deterministic patterns first; a combined request is one card.
@@ -1346,6 +1416,9 @@ export class ConversationAgent {
     // not write, a flagged excerpt, lesson or task line) read back every change of this turn.
     if (context.recordsRead) turn.recordsRead = true;
     const results: CommandResultView[] = [];
+    // d1109-selftasks-chat: what the turn's task check cost, and its line under the reply.
+    let fixCost = 0;
+    let fixFooter: string | null = null;
     // d1109-chat-recall: recall and recall_open share one scope per turn (the candidates read
     // once, the references of this turn's search, the records opened for the reply's sources).
     const recallScope = new RecallScope();
@@ -1367,6 +1440,24 @@ export class ConversationAgent {
       const tools = new ToolRegistry();
       for (const t of this.deps.commands?.tools(turn, (r) => results.push(r)) ?? [])
         tools.register(withStep(t));
+      // d1109-selftasks-chat (SC-2): the agent's own check of the task list; the request is the
+      // person's line of this turn (`req.text`), never text the model writes.
+      if (this.deps.commands)
+        tools.register(
+          fixTasksTool({
+            project: async (named) => {
+              const target = await this.fixTarget(named, projectId, req.humanId);
+              return "reply" in target ? { ask: target.reply } : target.project;
+            },
+            run: async (project) => {
+              const r = await this.fixTasks(project, req.text, turn, human.timezone, step);
+              results.push(...r.results);
+              fixCost += r.costUsdMicro;
+              if (r.footer) fixFooter = r.footer;
+              return r;
+            },
+          }),
+        );
       // d1109-chat-guard: a record read sets the turn's read-back for the changes after it.
       for (const t of readTools({
         store,
@@ -1428,7 +1519,7 @@ export class ConversationAgent {
       effortWithOffset(baseEffort, speedQualityOffsetOf(projectRow?.settings)),
       this.deps.maxEffort,
     );
-    const instructions = `${CHAT_RETRIEVAL_RULES}\n\n${CHAT_RECALL_RULES}\n\n${CHAT_OPEN_REQUEST_RULES}\n\n${CHAT_PLAN_RULES}`;
+    const instructions = `${CHAT_RETRIEVAL_RULES}\n\n${CHAT_RECALL_RULES}\n\n${CHAT_OPEN_REQUEST_RULES}\n\n${CHAT_PLAN_RULES}\n\n${CHAT_TASK_RULES}`;
     const system = layoutSystem({
       registryPrompt: this.deps.prompt ?? DEFAULT_PROMPT,
       projectBrief: context.stable,
@@ -2016,7 +2107,9 @@ export class ConversationAgent {
       });
     const costUsdMicro =
       (quick && !deep ? (result?.costUsdMicro ?? 0) : (quick?.result.costUsdMicro ?? 0)) +
-      (deep ? (result?.costUsdMicro ?? deep.result.costUsdMicro) : 0);
+      (deep ? (result?.costUsdMicro ?? deep.result.costUsdMicro) : 0) +
+      // d1109-selftasks-chat: the task check fix_tasks made in this turn.
+      fixCost;
     const durationMs = (quick ? quick.result.durationMs : 0) + (deep ? deep.durationMs : 0);
     // A reply cut off at max_tokens ends at its last complete sentence, spoken or typed, and
     // the turn is recorded as truncated (never as a completed answer).
@@ -2056,6 +2149,37 @@ export class ConversationAgent {
         keptChars: reply.length,
         generatedChars: result.finalText.length,
       });
+    }
+    // d1109-selftasks-chat (SC-5): the task changes of this turn that each wait for a yes are
+    // read back as ONE question: the separate cards are cancelled before they reach the Inbox
+    // and their calls composed into one card (before, the first was read back and the others
+    // waited as Yes/No cards in the Inbox).
+    const waitingTasks = results.filter(
+      (r) =>
+        r.status === "pending" &&
+        !!r.pendingId &&
+        r.decision !== "needs_device" &&
+        r.commands.length > 0 &&
+        r.commands.every((c) => c.startsWith("task.")),
+    );
+    if (waitingTasks.length > 1 && this.deps.commands?.recompose) {
+      const one = await this.deps.commands
+        .recompose(
+          waitingTasks.map((r) => r.pendingId as string),
+          turn,
+        )
+        .catch((e: unknown) => {
+          this.logger.warn("the turn's read-backs were not composed into one", {
+            transcriptId,
+            error: errorMessage(e),
+          });
+          return null;
+        });
+      if (one) {
+        const first = results.indexOf(waitingTasks[0] as CommandResultView);
+        for (const w of waitingTasks) results.splice(results.indexOf(w), 1);
+        results.splice(Math.max(0, first), 0, one);
+      }
     }
     const actions: ChatAction[] = [];
     let pendingCard: PendingConfirmation | null = null;
@@ -2151,7 +2275,9 @@ export class ConversationAgent {
               chfPerUsd: chf,
               subscription: credential?.kind === "subscription",
             })
-          : null) ?? switchNote;
+          : null) ??
+      switchNote ??
+      fixFooter;
     const lineUnder: ChatOffer | null = offer
       ? ownAsk
         ? { line: (offer as StoredOffer).line, action: "go_ahead" }
@@ -2319,6 +2445,81 @@ export class ConversationAgent {
       return s[Math.floor((s.length - 1) / 2)] ?? 0;
     };
     return { costUsdMicro: median(costs), durationMs: median(times) };
+  }
+
+  /**
+   * d1109-selftasks-chat: the project "fix the tasks" is about: the one the line names among the
+   * person's own, else the one on screen; with none on screen, the person's only open project, or
+   * the question which (SC-11). A project closed into another (or removed) is refused in its own
+   * words before any call.
+   */
+  private async fixTarget(
+    named: string | undefined,
+    projectId: string | null,
+    humanId: string,
+  ): Promise<
+    { project: ProjectRow } | { reply: string; question?: { text: string; options: string[] } }
+  > {
+    const mine = (await scopeOf(this.deps.store, humanId)).filter((p) => p.active);
+    const open = mine.filter((p) => !removedProjectRefusal(p));
+    const which = (list: readonly ProjectRow[]) => {
+      const names = list.map((p) => p.name);
+      const text = fixWhichProject(names);
+      return { reply: text, question: { text, options: names.slice(0, 6) } };
+    };
+    let project: ProjectRow | undefined;
+    if (named) {
+      const found = matchProjects(mine, named);
+      if (found.length > 1) return which(found);
+      if (!found.length) return { reply: `There is no project called "${named.slice(0, 80)}".` };
+      project = found[0];
+    } else if (projectId) project = await this.deps.store.project.get(projectId);
+    if (!project) {
+      if (!open.length) return { reply: FIX_NO_PROJECT };
+      if (open.length > 1) return which(open);
+      project = open[0] as ProjectRow;
+    }
+    const refusal = removedProjectRefusal(project);
+    if (refusal) return { reply: refusal };
+    return { project };
+  }
+
+  /** One fix of a project's task list from this turn (`task-fix-tool.ts`). */
+  private fixTasks(
+    project: ProjectRow,
+    line: string,
+    turn: CommandTurn,
+    timezone: string | null | undefined,
+    step: (line: string) => void,
+  ): Promise<ChatTaskFixResult> {
+    const commands = this.deps.commands ?? {};
+    const check = this.deps.taskCheck;
+    return fixTasksInChat({
+      store: this.deps.store,
+      clock: this.deps.clock,
+      commands,
+      deps: check
+        ? {
+            check,
+            ...(this.deps.chatRoom
+              ? {
+                  room: async (scope) => {
+                    const r = await (
+                      this.deps.chatRoom as NonNullable<ConversationDeps["chatRoom"]>
+                    )(scope);
+                    return r ? { usdMicro: r.usdMicro, level: r.level } : null;
+                  },
+                }
+              : {}),
+            ...(this.deps.chfPerUsd ? { chfPerUsd: this.deps.chfPerUsd } : {}),
+          }
+        : undefined,
+      project,
+      request: line,
+      turn,
+      timezone: timezone?.trim() || "UTC",
+      onStep: step,
+    });
   }
 
   /** The first of these change log rows that can still be undone. */

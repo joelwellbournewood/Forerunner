@@ -11,6 +11,8 @@ import {
   seedBillingSources,
   updateSourceLimits,
 } from "../src/wiring/billing-pick.ts";
+import { credWorld, seedProject, setPolicy } from "./cred-world.ts";
+import { removeHomes, settleSessions } from "./helpers.ts";
 
 const API_KEY = ["sk-ant-api03-", "policykey", "5".repeat(40)].join(""); // not-a-secret
 const OAUTH = ["sk-ant-oat01-", "policytoken", "6".repeat(40)].join(""); // not-a-secret
@@ -215,4 +217,92 @@ describe("d1109-cred-engine, run C: RouterTaskBilling.pick follows the one polic
     probe.set(subId, { available: true });
     expect(ForerunnerError).toBeDefined();
   });
+});
+
+// d1109-selftasks-chat, run C (SC-14; D5 with D7, the owner of 2026-11-09: "It should definitely
+// not automatically do something even when told to wait or showing that it is waiting."): the
+// table's row for chat's "fix the tasks". The daemon composed with no injected provider
+// (cred-world.ts). Under "then wait" and an unanswered "then ask me", with the subscription at its
+// limit, the check makes no call (no request to the Messages API stand-in, no ledger row), no task
+// changes and chat says why; under "then the API key" it runs once on the key and its cost shows
+// in CHF.
+describe("d1109-selftasks-chat, run C: 'fix the tasks' follows the one policy (SC-14)", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+  const RESET = Date.parse("2026-10-31T14:40:00Z");
+
+  async function fixTasks(policy: string) {
+    const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+    const world = credWorld({ clock, prefix: "fr-policy-fix-" });
+    homes.push(world.home);
+    const { rt, req } = await world.compose();
+    try {
+      await setPolicy(rt, policy);
+      world.limitSubscription(RESET);
+      const { project } = await seedProject(rt, "Quote page", ["Style the page", "Publish"]);
+      // A question first meets the limit, so the app knows the subscription rests (as a session's
+      // call would); what follows is measured from here.
+      await req("/chat", {
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        projectId: project.id,
+        projectTab: true,
+        text: "what is next?",
+      });
+      const before = (await rt.store.task.forProject(project.id, {}, { limit: 50 })).map((t) => [
+        t.title,
+        t.status,
+        t.version,
+      ]);
+      const ledger = (await rt.store.costLedger.list({} as never, { limit: 1000 })).length;
+      const keyCalls = world.keyCalls().length;
+      const sdkCalls = world.sdkCalls.length;
+      const reply = (
+        await req<{ reply: string; footer?: string | null }>("/chat", {
+          humanId: rt.human.id,
+          agentId: rt.agent.id,
+          projectId: project.id,
+          projectTab: true,
+          text: "fix the tasks",
+        })
+      ).body;
+      const after = (await rt.store.task.forProject(project.id, {}, { limit: 50 })).map((t) => [
+        t.title,
+        t.status,
+        t.version,
+      ]);
+      return {
+        reply,
+        changed: JSON.stringify(after) !== JSON.stringify(before),
+        booked: (await rt.store.costLedger.list({} as never, { limit: 1000 })).length - ledger,
+        keyCalls: world.keyCalls().slice(keyCalls),
+        sdkCalls: world.sdkCalls.length - sdkCalls,
+      };
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }
+
+  for (const policy of ["subscription_then_wait", "subscription_then_ask"])
+    it(`${policy}: no call, nothing booked, no task changed, one sentence that says why`, async () => {
+      const r = await fixTasks(policy);
+      expect(r.reply.reply).toBe(
+        "Fixing the tasks waits for Claude: your subscription is at its limit until 15:40. Nothing changed.",
+      );
+      expect(r.keyCalls).toEqual([]);
+      expect(r.sdkCalls).toBe(0);
+      expect(r.booked).toBe(0);
+      expect(r.changed).toBe(false);
+    }, 60_000);
+
+  it("subscription_then_key: the check runs once on the key and its cost shows in CHF", async () => {
+    const r = await fixTasks("subscription_then_key");
+    expect(r.keyCalls).toHaveLength(1);
+    expect(r.sdkCalls).toBe(0);
+    expect(r.booked).toBeGreaterThan(0);
+    expect(r.reply.footer).toMatch(
+      /^Checking the tasks cost (CHF \d+\.\d\d|less than CHF 0\.01)\.$/,
+    );
+  }, 60_000);
 });

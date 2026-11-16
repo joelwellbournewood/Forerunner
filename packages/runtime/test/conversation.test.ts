@@ -20,6 +20,7 @@ import {
 } from "../src/conversation/agent.ts";
 import { ANSWER_THOROUGHLY_TOOL, TIMEOUT_REPLY } from "../src/conversation/depth.ts";
 import { READ_TOOL_NAMES } from "../src/conversation/read-tools.ts";
+import { FIX_TASKS_TOOL } from "../src/conversation/task-fix-tool.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import type { CapsPort } from "../src/enforcement/ports.ts";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../src/injection/scan.ts";
@@ -218,7 +219,9 @@ describe("conversation agent over the command registry", () => {
             .includes(n) ||
           (READ_TOOL_NAMES as readonly string[]).includes(n) ||
           // d1109-chat-depth: the fast model's one way to ask for a longer answer, gated in code.
-          n === ANSWER_THOROUGHLY_TOOL,
+          n === ANSWER_THOROUGHLY_TOOL ||
+          // d1109-selftasks-chat: the agent's own check of the task list, decided in code.
+          n === FIX_TASKS_TOOL,
       ),
     ).toBe(true);
     expect(names).toEqual(expect.arrayContaining([...READ_TOOL_NAMES]));
@@ -357,7 +360,7 @@ describe("conversation agent over the command registry", () => {
     // switch had no question, so the plan read back as the rendered card with "Say yes to
     // confirm, or reply yes to the email." (review of d1109-chat-guard).
     expect(r1.reply).toBe(
-      "Switch to PharmaWatch? Raise tonight's session budget for PharmaWatch to CHF 20.00 until 06:00? Say yes or no.",
+      "Switch to PharmaWatch and raise tonight's session budget for PharmaWatch to CHF 20.00 until 06:00? Say yes or no.",
     );
     expect(r1.actions).toEqual([]);
     // Nothing changed yet.

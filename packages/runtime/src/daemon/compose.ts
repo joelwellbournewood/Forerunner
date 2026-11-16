@@ -138,13 +138,14 @@ import { RepoCreator, RepoProposals } from "../loop/repo-create.ts";
 import { TaskTakeOut } from "../loop/take-out.ts";
 import { evidenceRootOf, keepOnlyThisTry, type TryItPort } from "../loop/try-it.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
-import { modelIdFor } from "../models/ladder.ts";
+import { DEFAULT_CEILING, modelIdFor } from "../models/ladder.ts";
 import {
   FetchPriceListSource,
   type PriceListSource,
   priceListUrlFromEnv,
   UnconfiguredPriceListSource,
 } from "../models/price-list.ts";
+import { modeOverride, parseAgentModelConfig, resolveRunSettings } from "../models/run-settings.ts";
 import { type EffectiveModelConfig, FileModelSettingsStore } from "../models/settings.ts";
 import {
   type EvalRunnerPort,
@@ -292,7 +293,7 @@ import {
 import { syncSessionReviewAnswers } from "../session/session-review-answers.ts";
 import { type StartCheck, startCheck } from "../session/start-check.ts";
 import { taskReasonForStop } from "../session/stop-words.ts";
-import { callsOf as taskChangeCalls } from "../session/task-check.ts";
+import { type TaskCheckDeps, callsOf as taskChangeCalls } from "../session/task-check.ts";
 import { fileTaskProposal, syncTaskProposals } from "../session/task-proposal.ts";
 import { fileFiredKeys, Scheduler, type StartRequest, startByOf } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
@@ -2846,6 +2847,46 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
    * handle, and prepared work asks it whether it may join (option C).
    */
   const liveSessions = new LiveSessions();
+  /**
+   * d1109-selftasks-run (ADR 0119): the agent's task check, one planning call routed as the
+   * intake's (purpose interactive). The session's boundary and chat's "fix the tasks"
+   * (d1109-selftasks-chat) use these same deps. C5-left-7: its model is chosen as the intake's is:
+   * the planning mode's row, the principal's own planning override, under the project's highest
+   * model (before, the planning row's tier alone).
+   */
+  const taskCheckDeps: TaskCheckDeps | null =
+    intakeProvider && provider
+      ? {
+          store,
+          clock,
+          tokens,
+          driver,
+          provider: () => intakeProvider,
+          model: async (project: ProjectRow, p: ModelProvider) => {
+            const config = modelConfig.get();
+            const planning = resolveRunSettings({
+              mode: "planning",
+              modeDefaults: config.modeDefaults,
+              override: modeOverride(
+                parseAgentModelConfig((await store.agent.get(principal.id))?.model_config).config,
+                "planning",
+              ),
+              capabilities: providerCapabilities(p),
+              ceiling: criticSettingsOf(project.settings).ceiling ?? DEFAULT_CEILING,
+            });
+            return modelIdFor(planning.tier, p.name, config.ladder);
+          },
+          pricing: (model: string) => livePricing(provider, () => model),
+          billingSourceId,
+          ...(registry.principals.get("project-manager")?.prompt
+            ? { rolePrompt: registry.principals.get("project-manager")?.prompt as string }
+            : {}),
+          specialists: () =>
+            registry
+              .runnableSpecialists()
+              .map((d) => ({ name: d.name, tools: [...(d.allowed_tools ?? [])] })),
+        }
+      : null;
   const runnerDeps: Omit<SessionRunnerDeps, "planner"> = {
     store,
     clock,
@@ -2857,27 +2898,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // planning call routed as the intake's (purpose interactive), changes through the command
     // registry as the agent's own (source 'session'), or one suggestion card. `commands` is
     // made below; these run only once a session runs.
-    ...(intakeProvider && provider
+    ...(taskCheckDeps
       ? {
           taskCheck: {
-            deps: {
-              store,
-              clock,
-              tokens,
-              driver,
-              provider: () => intakeProvider,
-              model: (_project: ProjectRow, p: ModelProvider) =>
-                rungModelFor(p, modelConfig.get().modeDefaults.planning.tier),
-              pricing: (model: string) => livePricing(provider, () => model),
-              billingSourceId,
-              ...(registry.principals.get("project-manager")?.prompt
-                ? { rolePrompt: registry.principals.get("project-manager")?.prompt as string }
-                : {}),
-              specialists: () =>
-                registry
-                  .runnableSpecialists()
-                  .map((d) => ({ name: d.name, tools: [...(d.allowed_tools ?? [])] })),
-            },
+            deps: taskCheckDeps,
             changes: {
               run: async (calls, ctx) => {
                 const base = await commands.contextFor({
@@ -5095,6 +5119,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // line), and the credential chat would use now (the first-credential rule; d1109-cred-engine
     // answers it from the policy in C5).
     turns: chatTurns,
+    // d1109-selftasks-chat (ADR 0119): "fix the tasks" runs the session's own task check.
+    ...(taskCheckDeps ? { taskCheck: taskCheckDeps } : {}),
     chatRoom: async (scope) => {
       const who = await store.human.get(scope.humanId);
       const project = scope.projectId ? await store.project.get(scope.projectId) : undefined;

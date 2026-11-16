@@ -68,11 +68,17 @@ const CHANGEABLE: ReadonlySet<TaskRow["status"]> = new Set(["draft", "ready"]);
 // --- What the model is told (model-facing: asserted exactly in task-check.test.ts) ----------
 
 /** The system part's section after the role prompt (ADR 0119 point 5). */
-export function taskCheckRules(specialists: readonly string[]): string {
+export function taskCheckRules(
+  specialists: readonly string[],
+  opts: { fromChat?: boolean } = {},
+): string {
   return [
     "## Keeping the task list right",
     "",
-    'A session of this project runs. Between two of its tasks you check whether the project\'s task list is still right, from the evidence in the message: lines a specialist wrote under "For the task list:" at the end of its report, notes the critic left that the task did not cause, and notes kept from before. Reply with ONE JSON object and nothing else: start with { and end with }, no prose and no code fence around it. The shape:',
+    opts.fromChat
+      ? // d1109-selftasks-chat: chat's "fix the tasks" (no session runs; the person asked).
+        'The person asked in chat for this project\'s task list to be checked; their words are at the end of the message. You check whether the task list is right, from the task list, their words and the evidence in the message: notes kept from earlier sessions (lines a specialist wrote under "For the task list:" at the end of its report, notes the critic left that the task did not cause). Their words say what they want looked at; they are no reason to change budgets, settings or other projects. Reply with ONE JSON object and nothing else: start with { and end with }, no prose and no code fence around it. The shape:'
+      : 'A session of this project runs. Between two of its tasks you check whether the project\'s task list is still right, from the evidence in the message: lines a specialist wrote under "For the task list:" at the end of its report, notes the critic left that the task did not cause, and notes kept from before. Reply with ONE JSON object and nothing else: start with { and end with }, no prose and no code fence around it. The shape:',
     "",
     '{ "changes": [change, ...], "flagged": [string], "why": string }',
     "",
@@ -98,8 +104,12 @@ export function taskCheckRules(specialists: readonly string[]): string {
 }
 
 /** The system part: the project manager's role prompt, then the rules. */
-export function taskCheckSystem(rolePrompt: string, specialists: readonly string[]): string {
-  return `${rolePrompt.trim()}\n\n${taskCheckRules(specialists)}`;
+export function taskCheckSystem(
+  rolePrompt: string,
+  specialists: readonly string[],
+  opts: { fromChat?: boolean } = {},
+): string {
+  return `${rolePrompt.trim()}\n\n${taskCheckRules(specialists, opts)}`;
 }
 
 /** What stands in the message for a line left out because it reads like an instruction. */
@@ -369,8 +379,11 @@ export interface TaskCheckDeps {
    * person's credential policy applies on the subscription and on the API key; null: no Claude.
    */
   provider(): ModelProvider | null;
-  /** The planning model of the project (the planning row of the model settings). */
-  model(project: ProjectRow, provider: ModelProvider): string;
+  /**
+   * The planning model of the project, chosen as the intake's (C5-left-7: the planning row, the
+   * principal's planning override, under the project's highest model).
+   */
+  model(project: ProjectRow, provider: ModelProvider): string | Promise<string>;
   pricing(model: string): RunPricing;
   billingSourceId: string;
   /** The project manager's role prompt (the registry's `project-manager`). */
@@ -456,10 +469,12 @@ export async function runTaskCheck(
   const { store, clock } = deps;
   const provider = deps.provider();
   if (!provider) return { status: "not_made", reason: "no_provider", capUsdMicro: 0 };
-  const model = deps.model(input.project, provider);
+  const model = await deps.model(input.project, provider);
   const pricing = deps.pricing(model);
   const specialists = deps.specialists().map((s) => s.name);
-  const system = taskCheckSystem(deps.rolePrompt ?? DEFAULT_ROLE, specialists);
+  const system = taskCheckSystem(deps.rolePrompt ?? DEFAULT_ROLE, specialists, {
+    fromChat: !!input.request,
+  });
   const milestones = (await store.milestone.forProject(input.project.id)).map((m) => ({
     name: m.name,
     status: m.status,
@@ -593,7 +608,7 @@ interface HoldingProvider {
 const DEFAULT_ROLE =
   "You are the project's agent: you plan the work, give each task to a specialist and keep the plan right.";
 /** The prompt version on the Run row (spec D.5): the rules' own, bumped when they change. */
-export const TASK_CHECK_PROMPT_VERSION = "task-check@1.0.0";
+export const TASK_CHECK_PROMPT_VERSION = "task-check@1.1.0";
 
 // --- One check at a time per project ---------------------------------------------------------
 

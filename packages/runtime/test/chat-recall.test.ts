@@ -11,6 +11,7 @@ import {
   CHAT_MAX_MODEL_CALLS,
   CHAT_RECALL_RULES,
   CHAT_RETRIEVAL_RULES,
+  CHAT_TASK_RULES,
   CHAT_TURN_CALL_ROOM,
   ConversationAgent,
   type ConversationDeps,
@@ -675,8 +676,17 @@ describe("d1109-chat-recall, run C: CR-9 the prompt and the turn's room", () => 
       JSON.stringify(req?.tools?.filter((t) => t.name === "project_join")),
     );
     expect(join).toBeGreaterThan(0);
-    expect(sent - BASE_STATUS_TOKENS - depth - join).toBeLessThanOrEqual(fixed + 160);
-    expect(sent - BASE_STATUS_TOKENS - depth - join).toBeLessThanOrEqual(1000);
+    // d1109-selftasks-chat (C6): fix_tasks and task_split ride on every turn's tools and
+    // CHAT_TASK_RULES on the stable system part; measured as sent and taken off as well.
+    const tasks =
+      w.provider.countTokens(
+        JSON.stringify(
+          req?.tools?.filter((t) => t.name === "fix_tasks" || t.name === "task_split"),
+        ),
+      ) + w.provider.countTokens(CHAT_TASK_RULES);
+    expect(tasks).toBeGreaterThan(0);
+    expect(sent - BASE_STATUS_TOKENS - depth - join - tasks).toBeLessThanOrEqual(fixed + 160);
+    expect(sent - BASE_STATUS_TOKENS - depth - join - tasks).toBeLessThanOrEqual(1000);
     await w.store.close();
   });
 });
