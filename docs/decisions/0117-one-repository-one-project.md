@@ -152,3 +152,112 @@ the app with a note that blamed the setting.
   file, and only a marker naming a project elsewhere asks GitHub, cached.
 - **Fail closed when GitHub cannot be read at creation.** A person offline could not make a
   project; the Overview's line catches the case later.
+
+## Amendment 2026-11-16: Make one project (d1109-onerepo-join, run C sub-run C4)
+
+The owner's words for it (D1, 2026-11-09): "There should not be 2 projects in one repo. If there
+are multiple people and agents, and even if they are working on different parts of a bigger
+project, they should be working on one project. Make it such that multiple projects are not done
+on one repo, in an intelligent way." Projects that already share a repository or folder on this
+computer (made before this decision, or by a bench) become one when the person chooses which to
+keep.
+
+1. **Shown, not stopped.** Each project of such a set has one Overview line, '"Site" and "Kite
+   club" both work in o/site.' (the oldest project's spelling, so every Overview says the same),
+   with Make one project and its line 'You choose which to keep; the other's tasks, plan and
+   cards move into it.' (`ProjectCard.sharesRepositoryWith`, `join-preview.ts` `sharedLinkOf`
+   through this decision's index). Both keep working meanwhile; W15-01 keeps their pull requests
+   apart. The owner question (hold the newer project's sessions until joined) is not decided:
+   nothing is held.
+2. **The dialog** (`GET /projects/:id/join-preview`, `JoinProjectsDialog`) lists each project
+   with its open and done tasks, open pull requests, spent so far in CHF, budget per session,
+   project budget, who merges (a repository project) and what research reads. No project is
+   chosen at first; Make one project stays disabled until one is, and while something holds the
+   join (its sentence shows). Each setting of the kept project that differs has its line ('Who
+   merges: "Site"'s setting applies to the moved work: you press Merge.'). The press is the yes
+   (`project.join`, source ui, medium risk); chat reads it back with one question ('Make one
+   project: move the tasks, plan and cards of "Kite club" into "Site"? Changes has its Undo.').
+3. **What moves, in one store transaction** (`packages/commands/src/commands/project-join.ts`,
+   SQLite and Postgres through the one store API): the closing project's tasks of every status
+   (ids, dependencies, branches and `pr_url` kept), its milestones after the kept project's
+   (`order_index` offset, a reason on each), the cards about its tasks and its open cards, its
+   queued notes, merge records, decisions and accepted source proposals; its data assets add the
+   kept project. What stays on the closed project, readable: its sessions, its cost-ledger rows
+   (the truth the caps are measured on, never rewritten), its changes, its chat, its lessons and
+   its answered project cards. The closed project is archived with `joined_into {project, name,
+   at}`, never renamed or deleted; its `repos` is emptied and kept as `was_linked`; the kept
+   project's `joined_from` gains its id, so `projectIdsOf` (this decision's docs paths, the pull
+   request list) reads the closed project's status, scaffold and intake docs pull requests as the
+   kept one's (one status pull request again), and its task pull requests merge from the kept
+   project's Overview. Nothing on GitHub is edited.
+4. **Refused in words, nothing moved**, while: a session works on either project ('A session is
+   working on "Kite club". Make one project when it ends.'); the plan of either is being drafted;
+   a session of either waits to go on after its Claude credential or a Start is kept for the
+   reset ('A session of "Kite club" waits to go on at 15:40. Make one project after it ran, or
+   cancel it first.', read through d1109-starts-engine's `keptContinuationOf` and `keptStartOf`
+   with the time `continuations.waiting` names); a hands-off start is held ('A session of "Kite
+   club" waits to start by itself. ...'); a closing project's plan waits for its answer ('The
+   plan of "Kite club" waits for your answer. Answer it first.'); one of its merges is under way
+   ('A pull request of "Kite club" is being merged. Try again in a minute.'); the projects share
+   no repository or folder; a project is not the person's own ('Only your own projects can be
+   made one.'); a project was removed or joined before.
+5. **Money**: no cap, budget or ledger row changes; the kept project's cap keeps measuring its
+   own ledger; the kept project's Costs says 'Spent in "Kite club" before it joined: CHF 3.20'
+   (`CostView.joinedSpend`), and its Sessions list ends with '"Kite club" had 3 sessions before it
+   joined.' with Open (ADR 0116 amended).
+6. **The closed project's page** reads 'Joined into "Site" on 9 Nov.' with Open it (project
+   status's first rule, `ProjectCard.joinedInto`), offers no start, plan or repository, and never
+   says 'This project was removed.'; its sessions, changes, costs and chat answer. It starts
+   nothing ('"Kite club" joined "Site", so its work runs there.'), leaves Home (only active
+   projects are listed), counts as the kept project in the index (decision 2), and its own old
+   changes say where it went instead of an Undo ('Cannot be undone now: "Kite club" joined
+   "Site".'). The kept project's Overview says 'Includes the work of "Kite club".' linking to it;
+   its creation cannot be undone while it includes another project's work ('Cannot be undone
+   now: this project includes the work of "Kite club".'). Chat's recall in the kept project
+   reads the closed project's records too (`scope.ts` `withJoined`), each hit named as the closed
+   project's.
+7. **Undo** (Changes, also after a restart) moves every moved row back, and the cards and merge
+   records made on the kept project since for a moved task (a moved task merged from the kept
+   project since goes back still merged with its record); reopens the closed project with its
+   link and drops it from `joined_from`. Refused while a session runs on the kept project ('a
+   session is working on "Site". Undo when it ends'), while a moved task's merge is under way,
+   and while a task of the kept project that was not moved waits for a moved one ('"Shop page"
+   waits for "Cart", which came from "Kite club": change that first'), or the other way round:
+   Undo never leaves a dependency across two projects.
+8. **Archiving is used only for a join** here: W5-40 (removing a project: none, archive or
+   delete) stays open for every other case.
+
+Consequences of the amendment:
+
+- Lessons are not moved: a lesson's file is canonical (ADR 0002) and carries its project, so
+  moving the index row alone would be undone by the next mirror; the closed project's lessons
+  stay its own and chat's recall in the kept project reads them through `withJoined`. Sessions
+  of the kept project do not get them in their memory yet.
+- A GitHub that hangs is now bounded (C2-left-10): `GitHubHost` gives every request a timeout
+  (30 s) and the link check waits on GitHub at most 8 s (`READ_WAIT_MS`), after which the read
+  counts as failed (decision 9's rule: creation goes on, Work together and Take it over are
+  refused). A pull request whose author GitHub does not name counts as another account's
+  (decision 6: no Take it over on it within the 14 days).
+- A marker's name is scanned as written and once cleaned (C2-left-9): a role line after a line
+  break no longer loses its match when the break becomes a space; the injection suite covers
+  this channel (`record.where: "repo_marker"`, record-008 to record-010, controls record-103 and
+  record-104).
+- `project_join` is a new chat tool (the tool list grows by one definition on every turn).
+- Every entry point answers a link refusal the same way (C2-left-12): the Data tab's import now
+  answers 409 `conflict` with `details.cause`, as `POST /projects` and Sources do.
+- Take it over says what it could not do (C2-left-11): when its docs pull request could not be
+  opened, the sentence and the Changes row say that GitHub still names the other project. A
+  take-over after this project's own `fr/docs-scaffold` pull request was opened still leaves
+  that pull request without the take-over line (not done; it needs the docs loop to rebuild that
+  branch on the default branch).
+- A together project's Docs rows (C2-left-13) say who writes a doc it does not have, never "not
+  written yet", and carry no missing mark (`DocView.notWrittenHere`).
+- A closed project takes no new work (amended on review, 2026-11-16): a joined project's page,
+  its chat and its routes accepted a task, a note for the next session and a setting, which then
+  waited on a project where nothing runs. Every command but reading its summary, a stop, the
+  answer to a card left on it and Make one project is refused with '"Kite club" joined "Site",
+  so its work runs there.' (a removed project with its own sentence), a note through
+  `POST /projects/:id/queue` too; its Tasks tab says 'Its tasks are in "Site".' with Open it, its
+  Chat is kept to read and points to the kept project's Chat, and its Overview has no note box,
+  research setting or (joined) decisions. Undo of a join gives the closed project back with the
+  status and `active` it had.

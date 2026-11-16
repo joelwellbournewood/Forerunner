@@ -183,6 +183,19 @@ describe("d1109-onerepo-link, run C: two Forerunners on one repository (OR-15)",
       expect((await docsRow(b.call))?.note).toBe(
         'Kept in the app: you work on "Kite club" together, so GitHub\'s copy is left as it is.',
       );
+      // C2-left-13: a together project never writes docs, so a doc it does not have is not
+      // "not written yet": the row says who writes it, with no missing mark.
+      const bCall = b.call;
+      const missingB = async () =>
+        ((await bCall("GET", `/projects/${kiteId}/docs`)).body as unknown as Json[]).filter(
+          (d) => d.exists === false,
+        );
+      expect((await missingB()).length).toBeGreaterThan(0);
+      for (const d of await missingB())
+        expect({ note: d.note, notWrittenHere: d.notWrittenHere }).toEqual({
+          note: 'The other Forerunner of "Kite club" writes this doc on GitHub; this project does not write docs.',
+          notWrittenHere: true,
+        });
       // B starts again: still the same project, still together, still nothing written.
       await b.rt.close();
       closing.pop();

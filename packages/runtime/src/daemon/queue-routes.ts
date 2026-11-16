@@ -1,4 +1,5 @@
 import type { EventEmitter } from "node:events";
+import { joinedProjectRefusal, removedProjectRefusal } from "@forerunner/commands";
 import { ForerunnerError } from "@forerunner/platform";
 import type { ProjectRow, QueueItemRow, StateStore } from "@forerunner/state";
 import { Hono } from "hono";
@@ -75,6 +76,18 @@ export function createQueueRoutes(deps: QueueRoutesDeps): Hono {
   app.post("/projects/:id/queue", async (c) => {
     const project = await projectOf(c.req.param("id"));
     if (!ownsProject(project, deps.who())) return c.json(forbidden("not your project"), 403);
+    // OJ-06 (d1109-onerepo-join): a project closed into another (or removed) has no next session,
+    // so a note for it is refused in the executor's words ('"Kite club" joined "Site", so its work
+    // runs there.'), as `note.add` is; before, the note was kept where nothing reads it.
+    const closed = removedProjectRefusal(project);
+    if (closed) {
+      throw new ForerunnerError("validation", closed, {
+        details: {
+          cause: joinedProjectRefusal(project) ? "project_joined" : "project_removed",
+          projectId: project.id,
+        },
+      });
+    }
     const parsed = EnqueueBody.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) {
       throw new ForerunnerError(

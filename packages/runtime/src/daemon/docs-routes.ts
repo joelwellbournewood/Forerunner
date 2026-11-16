@@ -13,7 +13,12 @@ import {
 import type { ProjectRow, StateStore } from "@forerunner/state";
 import { Hono } from "hono";
 import { type CopyView, type DocInPullRequest, WORKSPACE_DIR } from "../loop/docs.ts";
-import { heldStatusNote, togetherOf, togetherStatusNote } from "../sources/repository-words.ts";
+import {
+  heldStatusNote,
+  togetherDocNote,
+  togetherOf,
+  togetherStatusNote,
+} from "../sources/repository-words.ts";
 import type {
   DocContentView,
   DocView,
@@ -275,6 +280,18 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
           drift: false,
           note: `waiting in pull request #${pr.number}: merge it to add it`,
           pullRequest: { number: pr.number, url: pr.url },
+        };
+      // C2-left-13: a together project writes no docs; one it does not have is the other's.
+      if (together && !found && !finding)
+        return {
+          path: rel,
+          title: TITLES[doc],
+          exists: false,
+          sizeBytes: 0,
+          updatedAt: null,
+          drift: false,
+          note: togetherDocNote(together.name),
+          notWrittenHere: true,
         };
       return {
         path: rel,

@@ -82,6 +82,8 @@ import {
   IntakeProposalView as IntakeProposalViewSchema,
   type IntakeStatusView,
   IntakeStatusView as IntakeStatusViewSchema,
+  type JoinPreviewView,
+  JoinPreviewView as JoinPreviewViewSchema,
   type KillBody as KillBodySchema,
   type LessonOfferView,
   LessonOfferView as LessonOfferViewSchema,
@@ -316,6 +318,7 @@ export type {
   ImportResultView,
   InboxView,
   IntakeStatusView,
+  JoinPreviewView,
   LessonOfferView,
   LessonView,
   MemoryScopeView,
@@ -671,6 +674,16 @@ export interface DaemonClient {
   ): Promise<ProjectSessionsView>;
   /** `GET /sessions/:id/tasks`: the session page's "Tasks in this session" (d1109-sessions). */
   sessionTasks(id: string, signal?: AbortSignal): Promise<SessionTasksView>;
+  /**
+   * `GET /projects/:id/join-preview` (d1109-onerepo-join OJ-05): the Make one project dialog's
+   * facts for the projects that share the project's repository or folder (`withIds`: the others
+   * to show; all of them when empty).
+   */
+  joinPreview(
+    projectId: string,
+    withIds?: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<JoinPreviewView>;
   kill(body: KillBody): Promise<KillResult>;
   resume(): Promise<KillResult>;
   /** `GET /desktop/status`: desktop control's state, with what the indicator shows (S.32). */
@@ -1152,6 +1165,13 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       ),
     sessionTasks: (id, signal) =>
       get(routePath("sessionTasks", { id }), SessionTasksViewSchema, undefined, signal),
+    joinPreview: (projectId, withIds, signal) =>
+      get(
+        routePath("joinPreview", { id: projectId }),
+        JoinPreviewViewSchema,
+        { with: withIds?.length ? withIds.join(",") : undefined },
+        signal,
+      ),
     kill: (body) => post(routePath("kill"), KillResult, body),
     resume: () => post(routePath("resume"), KillResult, {}),
     desktopStatus: (signal) =>

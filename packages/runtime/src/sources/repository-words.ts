@@ -227,6 +227,16 @@ export function togetherStatusNote(name: string): string {
   return `Kept in the app: you work on "${name}" together, so GitHub's copy is left as it is.`;
 }
 
+/**
+ * The Docs row of a doc a together project does not have (D9, C2-left-13): a together project
+ * never writes docs, so the row says who does, not "not written yet".
+ */
+export function togetherDocNote(name: string): string {
+  return name
+    ? `The other Forerunner of "${name}" writes this doc on GitHub; this project does not write docs.`
+    : "Another Forerunner writes this doc on GitHub; this project does not write docs.";
+}
+
 /** Why a link was refused (`details.cause` of the 409): the UI's offer reads it. */
 export type LinkRefusalCause =
   | "repository_in_use"
@@ -296,6 +306,18 @@ export const ONLY_YOU_TAKE_OVER = "Only you can take over a repository.";
 /** OR-07: repo.take_over's change sentence, also the Changes row: 'Took over o/kite from "Kite club".' */
 export function tookOverSentence(locator: string, e: Pick<Elsewhere, "ids" | "name">): string {
   return `Took over ${locator} from ${projectFromWords(e)}.`;
+}
+
+/**
+ * C2-left-11: repo.take_over's sentence when its docs pull request could not be opened: what it
+ * did (here) and what it could not do (GitHub still names the other project).
+ */
+export function tookOverNoPullRequestSentence(
+  locator: string,
+  e: Pick<Elsewhere, "ids" | "name">,
+): string {
+  const from = projectFromWords(e);
+  return `Took over ${locator} from ${from} here, but the docs pull request that names this project could not be opened, so GitHub still names ${from}.`;
 }
 
 /** OR-07: repo.take_over's read-back question. */

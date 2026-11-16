@@ -1,3 +1,4 @@
+import { MAKE_ONE_EXPLAIN } from "@forerunner/runtime/daemon/join-words";
 import { researchReadsLine, webAccessOf } from "@forerunner/runtime/wiring/web-access";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
@@ -8,6 +9,7 @@ import type {
   ProjectPullRequestView,
   SettingView,
 } from "../../api/client.ts";
+import { describeError } from "../../api/client.ts";
 import { ExternalLink } from "../../components/ExternalLink.tsx";
 import { FolderPath } from "../../components/FolderPath.tsx";
 import { ReadAloud } from "../../components/ReadAloud.tsx";
@@ -18,6 +20,7 @@ import { elapsedWords, useNow } from "../../shell/ShellBars.tsx";
 import { refreshProjects, useClient, useUiState, useUiStore } from "../../store/context.tsx";
 import { commandForSetting, SettingChangeDialog } from "../SettingsPage.tsx";
 import { DecisionsSection } from "./DecisionsSection.tsx";
+import { JoinProjectsDialog } from "./JoinProjectsDialog.tsx";
 import { PeersSection } from "./PeersSection.tsx";
 import { QueueSection } from "./QueueSection.tsx";
 
@@ -43,15 +46,23 @@ export function withKeys(lines: readonly string[]): { text: string; key: string 
 }
 
 export function SummaryTab({ projectId, project }: { projectId: string; project?: ProjectCard }) {
+  // OJ-06 (d1109-onerepo-join, fixup): a project closed into another (or removed) runs nothing,
+  // so its Overview offers no note for a next session and no research setting to change; a
+  // joined project's decisions moved with its work, so its own list would read "No decisions
+  // yet." untruly. What it did stays to read (Last result, files, sessions).
+  const joined = !!project?.joinedInto;
+  const closed = joined || project?.status === "archived";
   return (
     <div className="space-y-6" data-testid="summary-tab">
       <ProjectCards projectId={projectId} />
       {project?.working ? <WorkingNow project={project} /> : null}
       <SummaryCard projectId={projectId} project={project} />
       <RepositoryElsewhere projectId={projectId} project={project} />
-      <ResearchReads projectId={projectId} project={project} />
-      <DecisionsSection projectId={projectId} />
-      <QueueSection projectId={projectId} />
+      <SharedRepository projectId={projectId} project={project} />
+      <IncludesWorkOf project={project} />
+      {closed ? null : <ResearchReads projectId={projectId} project={project} />}
+      {joined ? null : <DecisionsSection projectId={projectId} />}
+      {closed ? null : <QueueSection projectId={projectId} />}
       <PeersSection projectId={projectId} />
     </div>
   );
@@ -296,7 +307,7 @@ function RepositoryElsewhere({ projectId, project }: { projectId: string; projec
         await refreshProjects(client, store).catch(() => undefined);
       } else setError(r.reason ?? "The repository was not taken over.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(describeError(e));
     } finally {
       setBusy(false);
     }
@@ -359,6 +370,60 @@ function RepositoryElsewhere({ projectId, project }: { projectId: string; projec
   );
 }
 
+/**
+ * d1109-onerepo-join (OJ-01, ADR 0117 amended): other projects on this computer work in the same
+ * repository or folder (made before one repository was one project). The daemon's line
+ * ('"Site" and "Kite club" both work in o/site.') with Make one project, which opens the dialog
+ * where the person chooses the one to keep. Shown, not stopped: both keep working meanwhile.
+ */
+function SharedRepository({ projectId, project }: { projectId: string; project?: ProjectCard }) {
+  const [open, setOpen] = useState(false);
+  const line = project?.sharesRepositoryWith ?? null;
+  if (!line) return null;
+  return (
+    <section className="space-y-1 text-sm" data-testid="shared-repository">
+      <p className="flex flex-wrap items-center gap-2">
+        <span data-testid="shared-repository-line">{line.text}</span>
+        <Button
+          variant="secondary"
+          onClick={() => setOpen(true)}
+          data-testid="make-one-project"
+          title={MAKE_ONE_EXPLAIN}
+        >
+          Make one project
+        </Button>
+      </p>
+      <p className="text-xs text-neutral-600 dark:text-neutral-400">{MAKE_ONE_EXPLAIN}</p>
+      {open ? (
+        <JoinProjectsDialog open={open} onClose={() => setOpen(false)} projectId={projectId} />
+      ) : null}
+    </section>
+  );
+}
+
+/** OJ-06: the kept project's 'Includes the work of "Kite club".', each name opening its page. */
+function IncludesWorkOf({ project }: { project?: ProjectCard }) {
+  const line = project?.includesWorkOf ?? null;
+  if (!line) return null;
+  return (
+    <p className="text-sm" data-testid="includes-work-of">
+      Includes the work of{" "}
+      {line.projects.map((p, i) => (
+        <span key={p.id}>
+          {i > 0 ? (i === line.projects.length - 1 ? " and " : ", ") : ""}
+          <Link
+            to={`/projects/${encodeURIComponent(p.id)}/summary`}
+            className="text-blue-700 hover:underline dark:text-blue-300"
+          >
+            "{p.name}"
+          </Link>
+        </span>
+      ))}
+      .
+    </p>
+  );
+}
+
 /** The Settings row this project's research rule is changed on ('sites'). */
 const WEB_ACCESS_ROW = "project.web_access";
 
@@ -399,7 +464,7 @@ function ResearchReads({ projectId, project }: { projectId: string; project?: Pr
           setError(null);
           void rowOf()
             .then((r) => (r ? setRow(r) : setError("This project's setting was not found.")))
-            .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+            .catch((e: unknown) => setError(describeError(e)));
         }}
         data-testid="research-reads-change"
       >
@@ -545,7 +610,7 @@ function RepositoryFiles({
       } else setPressed({ order: answer.order, sentence: answer.sentence, before: prs.data });
       reload();
     } catch (e) {
-      setMergeError(e instanceof Error ? e.message : String(e));
+      setMergeError(describeError(e));
     } finally {
       setBusy(false);
     }
@@ -572,7 +637,7 @@ function RepositoryFiles({
         reload();
       } else setPreviewError({ number: pr.number, sentence: answer.sentence });
     } catch (e) {
-      setPreviewError({ number: pr.number, sentence: e instanceof Error ? e.message : String(e) });
+      setPreviewError({ number: pr.number, sentence: describeError(e) });
     } finally {
       setPreviewing(null);
     }

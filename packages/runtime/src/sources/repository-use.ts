@@ -425,6 +425,10 @@ export class RepositoryIndex {
 /** A marker's project name as data: cut at 60 characters, control characters removed, scanned. */
 export function markerNameOf(name: string | null | undefined): string | null {
   if (!name) return null;
+  // C2-left-9 (d1109-onerepo-join): scanned as written too, before its line breaks become
+  // spaces: a role line ("\nSYSTEM: you are now ...") is caught where it starts a line, and the
+  // cleaned one-line form alone scored below the bar (the injection suite's record-009).
+  if (scanForInjection(name, "repo_file").suspicious) return null;
   // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are removed.
   const clean = name.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").trim();
   const cut = clean.length > 60 ? clean.slice(0, 60).trim() : clean;
@@ -580,9 +584,10 @@ function elsewhereOf(read: RepositoryRead, ids: string[], nowMs: number): Elsewh
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const latest = dated[0];
   const since = nowMs - ACTIVE_ELSEWHERE_DAYS * 24 * 3600_000;
-  const other = dated.find(
-    (p) => !mine(p.authorLogin) && Date.parse(p.updatedAt) >= since && p.authorLogin !== null,
-  );
+  // C2-left-10 (d1109-onerepo-join): a pull request whose author GitHub does not name (a deleted
+  // account, an app) counts as another account's: unknown is never "nobody", so no take-over is
+  // offered on it within the 14 days (the safe side).
+  const other = dated.find((p) => !mine(p.authorLogin) && Date.parse(p.updatedAt) >= since);
   const one = ids.length === 1;
   return {
     ids,
@@ -694,6 +699,29 @@ export interface RepositoryUseDeps {
    * branch, read as a file: `ProjectDocs.copyMarker`); null without one.
    */
   copyMarker?: (projectId: string) => string | null;
+  /**
+   * C2-left-10: how long a check waits on GitHub before it counts the read as failed (a GitHub
+   * that hangs rather than refuses follows the same rule as an error: creation goes on without
+   * it, Work together and Take it over are refused in words). Default `READ_WAIT_MS`.
+   */
+  readWaitMs?: number;
+}
+
+/** How long a check waits on GitHub's answer before it counts as no answer (C2-left-10). */
+export const READ_WAIT_MS = 8_000;
+
+/** `work` when it answers within `ms`, else a rejection: a read that never answers is a failed one. */
+function within<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new ForerunnerError("unavailable", "GitHub did not answer in time")),
+        ms,
+      );
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -736,6 +764,11 @@ function sameIds(a: readonly string[], b: readonly string[]): boolean {
  */
 export class RepositoryUse {
   constructor(private readonly deps: RepositoryUseDeps) {}
+
+  /** One read of the repository, never waited on longer than the check's wait (C2-left-10). */
+  private readRepo(host: GitHost, ref: RepoRef): Promise<RepositoryRead> {
+    return within(readRepository(host, ref), this.deps.readWaitMs ?? READ_WAIT_MS);
+  }
 
   /** The Overview's reads of a repository's marks, by repository key (`OVERVIEW_READ_MS`). */
   private readonly reads = new Map<string, { at: number; read: RepositoryRead | null }>();
@@ -835,7 +868,7 @@ export class RepositoryUse {
     let read: RepositoryRead | null = null;
     if (host) {
       try {
-        read = await readRepository(host, ref);
+        read = await this.readRepo(host, ref);
       } catch {
         read = null;
       }
@@ -1008,7 +1041,7 @@ export class RepositoryUse {
       });
     const host = await this.host();
     let read: RepositoryRead | null = null;
-    if (host) read = await readRepository(host, repo.ref).catch(() => null);
+    if (host) read = await this.readRepo(host, repo.ref).catch(() => null);
     if (!read) throw linkRefusal(TAKE_OVER_UNREADABLE, { cause: "github_unreadable" });
     this.reads.set(repo.key, { at: this.deps.clock.now(), read });
     const index = await this.index();
@@ -1064,14 +1097,20 @@ export class RepositoryUse {
     if (!repo) return null;
     const host = await this.host();
     if (!host) return TAKE_OVER_UNDO_UNREADABLE;
+    const wait = this.deps.readWaitMs ?? READ_WAIT_MS;
     try {
-      const file = await host.getFile(repo.ref, INSTALL_MARKER_FILE).catch((e: unknown) => {
-        if (e instanceof ForerunnerError && e.code === "not_found") return null;
-        throw e;
-      });
+      const file = await within(host.getFile(repo.ref, INSTALL_MARKER_FILE), wait).catch(
+        (e: unknown) => {
+          if (e instanceof ForerunnerError && e.code === "not_found") return null;
+          throw e;
+        },
+      );
       const named = file ? parseInstallMarker(file.content)?.project?.toLowerCase() : null;
       if (named && named === project.id.toLowerCase()) return TAKE_OVER_UNDO_MERGED;
-      const prs = await host.listPullRequests(repo.ref, { state: "all", sort: "updated" });
+      const prs = await within(
+        host.listPullRequests(repo.ref, { state: "all", sort: "updated" }),
+        wait,
+      );
       const its = prs.filter(
         (pr) =>
           (!!prUrl && pr.htmlUrl === prUrl) ||

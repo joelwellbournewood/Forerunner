@@ -148,6 +148,12 @@ export function CostsTab({ projectId }: { projectId: string }) {
           {periodWords(data.from, data.to)}
         </span>
       </div>
+      {/* OJ-07 (d1109-onerepo-join): what each project joined into this one spent before. */}
+      {(data.joinedSpend ?? []).map((j) => (
+        <p key={j.projectId} className="text-sm" data-testid="cost-joined">
+          {j.words}
+        </p>
+      ))}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <BucketTable title="By model" rows={data.byModel} testId="cost-by-model" />
         <BucketTable title="By specialist" rows={data.bySpecialist} testId="cost-by-specialist" />

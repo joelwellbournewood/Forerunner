@@ -659,8 +659,15 @@ describe("d1109-chat-recall, run C: CR-9 the prompt and the turn's room", () => 
     const fixed = w.provider.countTokens(
       `${CHAT_RECALL_RULES}${JSON.stringify(req?.tools?.filter((t) => t.name.startsWith("recall")))}`,
     );
-    expect(sent - BASE_STATUS_TOKENS - depth).toBeLessThanOrEqual(fixed + 160);
-    expect(sent - BASE_STATUS_TOKENS - depth).toBeLessThanOrEqual(1000);
+    // d1109-onerepo-join (C4): project_join's definition rides on every turn's tools (Make one
+    // project said in chat, OJ-08); measured as it is sent and taken off, as depth's are, so this
+    // area's bounds hold as before for every other growth.
+    const join = w.provider.countTokens(
+      JSON.stringify(req?.tools?.filter((t) => t.name === "project_join")),
+    );
+    expect(join).toBeGreaterThan(0);
+    expect(sent - BASE_STATUS_TOKENS - depth - join).toBeLessThanOrEqual(fixed + 160);
+    expect(sent - BASE_STATUS_TOKENS - depth - join).toBeLessThanOrEqual(1000);
     await w.store.close();
   });
 });

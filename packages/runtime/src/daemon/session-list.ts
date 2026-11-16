@@ -24,6 +24,7 @@ import type {
   SessionTasksView,
   SessionTaskView,
 } from "./api-types.ts";
+import { joinedFromOf, joinedIntoOf, sessionsBeforeJoinSentence } from "./join-words.ts";
 import { type ProjectWorking, projectStatusLine } from "./project-status.ts";
 import { loadTaskDisplayContext, taskDisplay } from "./task-display.ts";
 import { shortTitle, withoutIds } from "./task-words.ts";
@@ -731,6 +732,22 @@ export async function projectSessionsView(
   for (const r of workingRows) working.push(await view(r));
   const ended: ProjectSessionRowView[] = [];
   for (const r of rows) ended.push(await view(r));
+  // OJ-10 (d1109-onerepo-join): the sessions of the projects closed into this one stayed where
+  // they ran (no session or ledger row moves); the list ends with one line each, first page only.
+  const joined: NonNullable<ProjectSessionsView["joined"]> = [];
+  if (!before)
+    for (const id of joinedFromOf(project)) {
+      const row = await store.project.get(id);
+      if (!row || joinedIntoOf(row)?.project !== project.id) continue;
+      const n = await store.session.listedCountForProject(row.id);
+      if (n > 0)
+        joined.push({
+          projectId: row.id,
+          name: row.name,
+          count: n,
+          words: sessionsBeforeJoinSentence(row.name, n),
+        });
+    }
   const chatSpend = before ? null : await store.costLedger.chatSpendForProject(projectId);
   const chat =
     chatSpend && chatSpend.entries > 0 && chatSpend.chf_micro > 0
@@ -739,7 +756,7 @@ export async function projectSessionsView(
           words: `Chat about this project: ${moneyWords(formatChf(chatSpend.chf_micro), chatSpend.chf_micro)}.`,
         }
       : null;
-  return { projectId, count, working, rows: ended, next, chat };
+  return { projectId, count, working, rows: ended, next, chat, joined };
 }
 
 // --- Tasks in this session -------------------------------------------------------------------

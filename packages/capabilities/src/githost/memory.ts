@@ -45,6 +45,11 @@ interface Repo extends RepoInfo {
   rules: Map<string, Partial<BranchRules>>;
 }
 
+/** GitHub's owner and repository names are case-insensitive; the stand-in agrees (C2-left-12). */
+function sameName(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 interface MemoryProject extends ProjectInfo {
   owner: string;
   fields: ProjectFieldInfo[];
@@ -115,8 +120,13 @@ export class MemoryGitHost implements GitHost {
     return `${r.owner}/${r.name}`;
   }
 
+  /** Where a repository is kept: GitHub reads owner and name whatever their case (C2-left-12). */
+  private slot(r: RepoRef): string {
+    return this.key(r).toLowerCase();
+  }
+
   private repo(r: RepoRef): Repo {
-    const repo = this.repos.get(this.key(r));
+    const repo = this.repos.get(this.slot(r));
     if (!repo) throw new ForerunnerError("not_found", `repo ${this.key(r)} not found`);
     return repo;
   }
@@ -143,7 +153,11 @@ export class MemoryGitHost implements GitHost {
 
   async listRepos(opts: { org?: string; user?: string } = {}): Promise<RepoInfo[]> {
     return [...this.repos.values()]
-      .filter((r) => (!opts.org || r.owner === opts.org) && (!opts.user || r.owner === opts.user))
+      .filter(
+        (r) =>
+          (!opts.org || sameName(r.owner, opts.org)) &&
+          (!opts.user || sameName(r.owner, opts.user)),
+      )
       .map((r) => ({
         owner: r.owner,
         name: r.name,
@@ -188,7 +202,7 @@ export class MemoryGitHost implements GitHost {
       rules: new Map(),
       id: this.nextRepoId++,
     };
-    this.repos.set(fullName, repo);
+    this.repos.set(fullName.toLowerCase(), repo);
     return this.getRepo(repo);
   }
 

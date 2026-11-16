@@ -78,6 +78,7 @@ export function Conversation({
   onMakeTask,
   inputRef,
   hideVoiceSince,
+  readOnly = false,
 }: {
   /** The project this conversation is about; null for the one outside any project. */
   projectId: string | null;
@@ -90,6 +91,11 @@ export function Conversation({
    * (ISO time) are left to it, so a spoken turn is not shown twice.
    */
   hideVoiceSince?: string;
+  /**
+   * OJ-06 (d1109-onerepo-join): the conversation of a closed project, kept to read: its turns
+   * without the message box and the examples (the Chat tab says where to ask instead).
+   */
+  readOnly?: boolean;
 }) {
   const client = useClient();
   const store = useUiStore();
@@ -267,9 +273,11 @@ export function Conversation({
       >
         {turns.length === 0 && !state.live ? (
           <p className="text-sm text-neutral-500" data-testid={`${testIds}-empty`}>
-            {projectId
-              ? "Ask what is going on, or tell me what to change."
-              : "Ask about your projects, or tell me what to change."}
+            {readOnly
+              ? "Nothing was said here."
+              : projectId
+                ? "Ask what is going on, or tell me what to change."
+                : "Ask about your projects, or tell me what to change."}
           </p>
         ) : null}
         {state.error ? (
@@ -288,7 +296,8 @@ export function Conversation({
           <Turn
             key={t.id}
             turn={t}
-            newest={i === turns.length - 1}
+            newest={!readOnly && i === turns.length - 1}
+            readOnly={readOnly}
             testIds={testIds}
             onMakeTask={onMakeTask}
             undoNotes={undoNotes}
@@ -338,68 +347,72 @@ export function Conversation({
           </>
         ) : null}
       </div>
-      <form onSubmit={submit} className="flex gap-2">
-        <input
-          ref={inputRef}
-          className={INPUT_CLASS}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={identity ? "Message your agent…" : "Waiting for the daemon…"}
-          disabled={!identity}
-          aria-label="Chat message"
-          data-testid={`${testIds}-input`}
-        />
-        {busy && deep !== "quick" && !stopping ? (
-          <Button
-            type="button"
-            className="whitespace-nowrap"
-            onClick={() => void answerNow()}
-            disabled={!turnId}
-            title={ANSWER_NOW_EXPLAIN}
-            data-testid={`${testIds}-answer-now`}
-          >
-            Answer now
-          </Button>
-        ) : null}
-        {busy ? (
-          <Button
-            variant="primary"
-            type="button"
-            className="whitespace-nowrap"
-            onClick={() => void stop()}
-            disabled={!turnId || stopping}
-            title={STOP_EXPLAIN}
-            data-testid={`${testIds}-stop`}
-          >
-            Stop
-          </Button>
-        ) : (
-          <Button
-            variant="primary"
-            type="submit"
-            disabled={!identity || !input.trim()}
-            data-testid={`${testIds}-send`}
-          >
-            Send
-          </Button>
-        )}
-      </form>
-      <div className="flex flex-wrap gap-2 text-xs" data-testid={`${testIds}-examples`}>
-        <span className="text-neutral-500">Try:</span>
-        {EXAMPLE_PHRASES.map((p) => (
-          <button
-            key={p}
-            type="button"
-            className="rounded-full border border-neutral-300 px-2 py-0.5 text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-            onClick={() => {
-              setInput(p.replace("…", ""));
-              inputRef?.current?.focus();
-            }}
-          >
-            {p}
-          </button>
-        ))}
-      </div>
+      {readOnly ? null : (
+        <form onSubmit={submit} className="flex gap-2">
+          <input
+            ref={inputRef}
+            className={INPUT_CLASS}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={identity ? "Message your agent…" : "Waiting for the daemon…"}
+            disabled={!identity}
+            aria-label="Chat message"
+            data-testid={`${testIds}-input`}
+          />
+          {busy && deep !== "quick" && !stopping ? (
+            <Button
+              type="button"
+              className="whitespace-nowrap"
+              onClick={() => void answerNow()}
+              disabled={!turnId}
+              title={ANSWER_NOW_EXPLAIN}
+              data-testid={`${testIds}-answer-now`}
+            >
+              Answer now
+            </Button>
+          ) : null}
+          {busy ? (
+            <Button
+              variant="primary"
+              type="button"
+              className="whitespace-nowrap"
+              onClick={() => void stop()}
+              disabled={!turnId || stopping}
+              title={STOP_EXPLAIN}
+              data-testid={`${testIds}-stop`}
+            >
+              Stop
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={!identity || !input.trim()}
+              data-testid={`${testIds}-send`}
+            >
+              Send
+            </Button>
+          )}
+        </form>
+      )}
+      {readOnly ? null : (
+        <div className="flex flex-wrap gap-2 text-xs" data-testid={`${testIds}-examples`}>
+          <span className="text-neutral-500">Try:</span>
+          {EXAMPLE_PHRASES.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className="rounded-full border border-neutral-300 px-2 py-0.5 text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+              onClick={() => {
+                setInput(p.replace("…", ""));
+                inputRef?.current?.focus();
+              }}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -446,6 +459,7 @@ function isOwnRequest(turn: ConversationTurnView): boolean {
 function Turn({
   turn,
   newest,
+  readOnly,
   testIds,
   onMakeTask,
   undoNotes,
@@ -460,6 +474,8 @@ function Turn({
 }: {
   turn: ConversationTurnView;
   newest: boolean;
+  /** OJ-06: kept to read (a closed project): no answer, Yes or No, Undo or question options. */
+  readOnly: boolean;
   testIds: string;
   onMakeTask: ((text: string) => void) | undefined;
   undoNotes: Record<string, string>;
@@ -563,7 +579,7 @@ function Turn({
                   Open the session
                 </Link>
               ) : null}
-              {a.canUndo && a.changeId && !undoNotes[a.changeId] ? (
+              {!readOnly && a.canUndo && a.changeId && !undoNotes[a.changeId] ? (
                 <Button
                   variant="ghost"
                   className="px-2 py-0.5 text-xs"
@@ -581,7 +597,7 @@ function Turn({
               ) : null}
             </div>
           ))}
-          {r.question?.options.length ? (
+          {!readOnly && r.question?.options.length ? (
             <div className="mt-2 flex flex-wrap gap-2">
               {r.question.options.map((o) => (
                 <Button
@@ -596,7 +612,7 @@ function Turn({
             </div>
           ) : null}
           {r.readback ? (
-            r.waiting ? (
+            r.waiting && !readOnly ? (
               <div
                 className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-neutral-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
                 data-testid="pending-confirmation"

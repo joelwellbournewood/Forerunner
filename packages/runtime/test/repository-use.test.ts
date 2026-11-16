@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import nodePath from "node:path"; // path-ok: path.win32 builds the Windows form the identity compares
+import { type GitHost, MemoryGitHost } from "@forerunner/capabilities";
 import { join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore, silenceSqliteExperimentalWarning } from "@forerunner/state";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -10,6 +11,7 @@ import {
   type LinkIdentity,
   projectIdsOf,
   RepositoryIndex,
+  RepositoryUse,
   sameLink,
 } from "../src/sources/repository-use.ts";
 
@@ -251,5 +253,70 @@ describe("d1109-onerepo-link, run C: the projects that use a link (OR-01)", () =
     expect(index.projectsUsing(identity("o/kite")).map((u) => u.project.id)).toEqual([club.id]);
     expect(projectIdsOf(club)).toEqual([club.id, kite.id]);
     expect(index.soleUser({ owner: "o", name: "site" })?.id).toBe(site.id);
+  });
+});
+
+describe("d1109-onerepo-join, run C: a GitHub that does not answer, and an unknown author (C2-left-10)", () => {
+  const KITE = "01a1a000-0000-7000-8000-00000000c1ab";
+  const clock = new SimulatedClock("2026-03-05T08:00:00.000Z");
+  const daysAgo = (n: number) => new Date(clock.now() - n * 24 * 3600_000).toISOString();
+  let store: StateStore;
+  beforeAll(async () => {
+    store = await openStore({ url: "sqlite::memory:", clock });
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  /** A host whose every call never answers (GitHub that hangs rather than refuses). */
+  const hanging = (): GitHost =>
+    new Proxy({} as GitHost, {
+      // Not a thenable itself (`then` is no method), so the host can be awaited.
+      get: (_t, key) => (key === "then" ? undefined : () => new Promise<never>(() => undefined)),
+    });
+
+  it("a read that never answers counts as one that failed: creation goes on without it, Work together and Take it over are refused in words, each within the wait", async () => {
+    const use = new RepositoryUse({ store, clock, host: async () => hanging(), readWaitMs: 50 });
+    const started = Date.now();
+    expect(await use.check(["o/kite"])).toEqual({ repository: { owner: "o", name: "kite" } });
+    await expect(use.check(["o/kite"], { together: { project: KITE } })).rejects.toThrow(
+      "GitHub did not answer, so the project cannot be checked. Try again.",
+    );
+    const project = await store.project.insert({ name: "Kite here", repos: ["o/kite"] });
+    await expect(use.takeOverFacts(project.id)).rejects.toThrow(
+      "GitHub did not answer, so the repository cannot be checked. Try again.",
+    );
+    expect(await use.takeOverUndoBlocked(project.id, "", null)).toBe(
+      "GitHub did not answer, so the repository cannot be checked. Try again",
+    );
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it("a pull request whose author GitHub does not name counts as another account's: no Take it over within the 14 days", async () => {
+    const host = new MemoryGitHost("alice");
+    host.now = () => clock.nowIso();
+    const repo = { owner: "o", name: "unknown-author" };
+    await host.createRepo({ ...repo, private: true });
+    await host.putFile(repo, {
+      path: ".forerunner/project.json",
+      content: JSON.stringify({ schema: 1, project: KITE, name: "Kite club" }),
+      message: "marker",
+      branch: "main",
+    });
+    const pr = await host.openPullRequestAs(repo, "bob", {
+      title: "Work",
+      body: `Work.\n\n<!-- forerunner:pr project=${KITE} task=t1 -->`,
+      head: "fr/work",
+      updatedAt: daysAgo(3),
+    });
+    // GitHub gave no author (a deleted account, an app): unknown is never "nobody".
+    const list = host.listPullRequests.bind(host);
+    host.listPullRequests = async (...args) =>
+      (await list(...args)).map((p) => (p.number === pr.number ? { ...p, authorLogin: null } : p));
+    const use = new RepositoryUse({ store, clock, host: async () => host });
+    const refused = await use.check(["o/unknown-author"]).catch((e: unknown) => e);
+    expect(refused).toMatchObject({
+      details: { cause: "repository_used_elsewhere", canWorkTogether: true, canTakeOver: false },
+    });
   });
 });

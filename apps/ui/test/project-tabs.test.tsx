@@ -294,6 +294,25 @@ describe("Docs tab", () => {
     expect(within(runbook).getByTestId("doc-pr-link")).toHaveTextContent("Open pull request #1");
   });
 
+  it("a together project's doc it does not have says who writes it, with no missing mark (C2-left-13)", async () => {
+    // A together project never writes docs; its rows read "missing · not written yet".
+    const harness = createHarness();
+    const note =
+      'The other Forerunner of "Kite club" writes this doc on GitHub; this project does not write docs.';
+    harness.daemon.state.docs.proj_atlas = (harness.daemon.state.docs.proj_atlas ?? []).map((d) =>
+      d.path === "docs/runbook.md" ? { ...d, note, notWrittenHere: true } : d,
+    );
+    renderApp("/projects/proj_atlas/docs", harness);
+    const docs = await screen.findByTestId("docs");
+    const runbook = within(docs)
+      .getAllByTestId("doc-row")
+      .find((r) => r.dataset.path === "docs/runbook.md");
+    if (!runbook) throw new Error("no runbook row");
+    expect(runbook).not.toHaveTextContent("missing");
+    expect(runbook).not.toHaveTextContent("not written yet");
+    expect(runbook).toHaveTextContent(note);
+  });
+
   it("degrades when the docs route is missing", async () => {
     renderApp(
       "/projects/proj_atlas/docs",

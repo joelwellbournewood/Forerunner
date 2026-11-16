@@ -1,5 +1,7 @@
 import type { ProjectRow, StateStore } from "@forerunner/state";
+import { joinedIntoOf } from "../daemon/join-words.ts";
 import { ownsProject } from "../daemon/ownership.ts";
+import { projectIdsOf } from "../sources/repository-words.ts";
 
 /**
  * Whose records chat may read (d1109-chat-guard, ADR 0114; AGENTS.md privacy): the projects of
@@ -22,4 +24,16 @@ export async function scopeOf(
       ownsProject(p, { humanId, agentId: null }) ||
       agents.some((a) => ownsProject(p, { humanId, agentId: a.id })),
   );
+}
+
+/**
+ * d1109-onerepo-join (OJ-10): the asked project with the projects closed into it by Make one
+ * project (its `joined_from`, `projectIdsOf`), among this person's projects only (`mine`, from
+ * `scopeOf`): their sessions, answered cards and decisions stayed where they were, so recall in
+ * the kept project's chat reads them too, each hit named as the closed project's.
+ */
+export function withJoined(mine: readonly ProjectRow[], project: ProjectRow): ProjectRow[] {
+  const ids = projectIdsOf(project).filter((id) => id !== project.id);
+  const joined = mine.filter((p) => ids.includes(p.id) && joinedIntoOf(p)?.project === project.id);
+  return [project, ...joined];
 }

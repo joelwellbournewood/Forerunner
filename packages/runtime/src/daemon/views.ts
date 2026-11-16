@@ -1,4 +1,4 @@
-import { CostLedger, DEFAULT_CHF_PER_USD, FixedRateSource } from "@forerunner/billing";
+import { CostLedger, DEFAULT_CHF_PER_USD, FixedRateSource, formatChf } from "@forerunner/billing";
 import type { CommandDef } from "@forerunner/commands";
 import { spokenProjectSummary, staticRisk } from "@forerunner/commands";
 import { NO_ACTION_GIVEN, saidByName } from "@forerunner/critic";
@@ -98,6 +98,13 @@ import {
   skipReason,
   verdictWords,
 } from "./event-lines.ts";
+import {
+  includesWorkSentence,
+  joinedFromOf,
+  joinedIntoOf,
+  joinedIntoSentence,
+  spentBeforeJoinSentence,
+} from "./join-words.ts";
 import { projectHealth } from "./project-health.ts";
 import {
   blockedTaskIds,
@@ -180,6 +187,8 @@ export interface ProjectCardFacts {
   } | null>;
   /** OR-07: the Overview's line about the repository (`RepositoryUse.overviewOf`). */
   repositoryElsewhere?: (project: ProjectRow) => Promise<ProjectCard["repositoryElsewhere"]>;
+  /** OJ-01 (d1109-onerepo-join): the projects here on the same link (`sharesRepositoryWith`). */
+  sharesRepositoryWith?: (project: ProjectRow) => Promise<ProjectCard["sharesRepositoryWith"]>;
 }
 
 export async function projectCard(
@@ -222,6 +231,10 @@ export async function projectCard(
   const repository = facts?.repository ? facts.repository(p) : null;
   const folder = !repository && facts?.folder ? facts.folder(p) : null;
   const working = await workingOn(store, p.id);
+  // OJ-06 (d1109-onerepo-join): a project closed into another says where its work went, and the
+  // kept one which projects' work it includes, both read from the rows now.
+  const joined = await joinedIntoView(store, p, humanId);
+  const includes = await includesWorkView(store, p);
   // W15-67: the wait now, whether a Start kept it or not, only while a task is ready.
   const waitNow =
     facts?.credentialWaitNow && tasks.some((t) => displays.get(t.id)?.key === "ready")
@@ -241,6 +254,7 @@ export async function projectCard(
     stopped: facts?.stopped ?? null,
     working,
     folder,
+    joinedInto: joined ? { text: joined.text, projectId: joined.projectId } : null,
   });
   return {
     id: p.id,
@@ -278,7 +292,50 @@ export async function projectCard(
     ...(facts?.repositoryElsewhere
       ? { repositoryElsewhere: await facts.repositoryElsewhere(p).catch(() => null) }
       : {}),
+    // OJ-01: other projects here on the same repository or folder (made before the rule).
+    ...(facts?.sharesRepositoryWith
+      ? { sharesRepositoryWith: await facts.sharesRepositoryWith(p).catch(() => null) }
+      : {}),
+    joinedInto: joined,
+    includesWorkOf: includes,
   };
+}
+
+/**
+ * OJ-06: where a project closed into another went ('Joined into "Site" on 9 Nov.'), the kept
+ * project's name as it is now and the day in the person's time zone; null for any other project.
+ */
+async function joinedIntoView(
+  store: StateStore,
+  p: ProjectRow,
+  humanId: string,
+): Promise<ProjectCard["joinedInto"]> {
+  const into = joinedIntoOf(p);
+  if (!into) return null;
+  const kept = await store.project.get(into.project).catch(() => undefined);
+  const zone = (await store.human.get(humanId).catch(() => undefined))?.timezone ?? null;
+  const name = kept?.name ?? into.name;
+  return {
+    projectId: into.project,
+    name,
+    at: into.at,
+    text: joinedIntoSentence({ ...into, name }, zone),
+  };
+}
+
+/** OJ-06: the kept project's 'Includes the work of "Kite club".', each closed project by name. */
+async function includesWorkView(
+  store: StateStore,
+  p: ProjectRow,
+): Promise<ProjectCard["includesWorkOf"]> {
+  if (p.status === "archived") return null;
+  const projects: { id: string; name: string }[] = [];
+  for (const id of joinedFromOf(p)) {
+    const row = await store.project.get(id).catch(() => undefined);
+    if (row && joinedIntoOf(row)?.project === p.id) projects.push({ id: row.id, name: row.name });
+  }
+  if (!projects.length) return null;
+  return { text: includesWorkSentence(projects.map((x) => x.name)), projects };
 }
 
 export function milestoneView(m: MilestoneRow): MilestoneView {
@@ -1074,6 +1131,27 @@ export async function costView(
     ...(f.from ? { from: f.from } : {}),
     ...(f.to ? { to: f.to } : {}),
   });
+  // OJ-07 (d1109-onerepo-join): each project closed into this one keeps its spend booked to it
+  // (the ledger is never rewritten); the kept project's Costs names it, as booked, in CHF.
+  const joinedSpend: NonNullable<CostView["joinedSpend"]> = [];
+  if (filter.projectId) {
+    const kept = await store.project.get(filter.projectId);
+    for (const id of kept ? joinedFromOf(kept) : []) {
+      const row = await store.project.get(id);
+      if (!row || joinedIntoOf(row)?.project !== kept?.id) continue;
+      const spent = await store.costLedger.sum({ projectId: row.id });
+      if (spent.entries === 0) continue;
+      joinedSpend.push({
+        projectId: row.id,
+        name: row.name,
+        spent: { usdMicro: spent.usd_micro, chfMicro: spent.chf_micro },
+        words: spentBeforeJoinSentence(
+          row.name,
+          moneyWords(formatChf(spent.chf_micro), spent.chf_micro),
+        ),
+      });
+    }
+  }
   return {
     totals: money(totals.usd_micro, chfPerUsd),
     planUsageShare: (totals as { plan_usage_share?: number | null }).plan_usage_share ?? null,
@@ -1093,6 +1171,7 @@ export async function costView(
     // The period the figures cover: the filter's, else the first and the last entry's.
     from: filter.from ?? facts.first ?? "",
     to: filter.to ?? facts.last ?? "",
+    ...(joinedSpend.length ? { joinedSpend } : {}),
   };
 }
 

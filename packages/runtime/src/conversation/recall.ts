@@ -52,7 +52,7 @@ import {
   type StepRecord,
   stepLine,
 } from "./recall-steps.ts";
-import { scopeOf } from "./scope.ts";
+import { scopeOf, withJoined } from "./scope.ts";
 
 export { RECALL_KINDS, type RecallKind } from "./recall-steps.ts";
 
@@ -1339,14 +1339,17 @@ async function projectsOf(
     return { projects: mine, all: true };
   if (n) {
     const hits = matchProjects(mine, n);
-    if (hits.length === 1) return { projects: [hits[0] as ProjectRow], all: false };
+    // OJ-10: a project includes the work of the projects joined into it.
+    if (hits.length === 1) return { projects: withJoined(mine, hits[0] as ProjectRow), all: false };
     return hits.length
       ? `Several projects match "${n}": ${hits.map((p) => p.name).join(", ")}.`
       : `No project is called "${n}".`;
   }
   if (!deps.projectId) return { projects: mine, all: true };
   const own = mine.find((p) => p.id === deps.projectId);
-  return own ? { projects: [own], all: false } : "This conversation's project is not one of yours.";
+  return own
+    ? { projects: withJoined(mine, own), all: false }
+    : "This conversation's project is not one of yours.";
 }
 
 /** The candidates of one kind, read once per turn. */

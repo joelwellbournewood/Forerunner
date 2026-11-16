@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Link } from "react-router";
 import type { TaskView } from "../../api/client.ts";
 import { Conversation } from "../../components/Conversation.tsx";
+import { buttonClassName } from "../../components/ui.tsx";
 import type { MoneyLike } from "../../lib/money.ts";
 import { NewTaskDialog, seedFromMessage, type TaskSeed } from "./NewTaskDialog.tsx";
 
@@ -14,15 +15,44 @@ export function ChatTab({
   projectId,
   reference,
   defaultRiskTier,
+  closed = null,
 }: {
   projectId: string;
   reference?: MoneyLike;
   /** The project card's default tier for a new task, named on the dialog's default option. */
   defaultRiskTier?: number;
+  /**
+   * OJ-06 (d1109-onerepo-join): a project closed into another (or removed) takes no new work, so
+   * its conversation is kept to read: no message box, no examples, no Make this a task, and one
+   * line says where to ask ('This chat is kept to read; ask about its work in the Chat of
+   * "Site".'), with Open it to that Chat.
+   */
+  closed?: { text: string; to: string | null } | null;
 }) {
   const [seed, setSeed] = useState<TaskSeed | null>(null);
   const [created, setCreated] = useState<TaskView | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  if (closed) {
+    return (
+      <div className="flex h-full min-h-[24rem] flex-col gap-2">
+        <p
+          className="flex flex-wrap items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400"
+          data-testid="chat-closed"
+        >
+          {closed.text}
+          {closed.to ? (
+            <Link to={closed.to} className={buttonClassName("secondary")}>
+              Open it
+            </Link>
+          ) : null}
+        </p>
+        <div className="min-h-0 flex-1">
+          <Conversation projectId={projectId} testIds="chat" readOnly />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-[24rem] flex-col gap-2">

@@ -141,7 +141,45 @@ the docs pull request that names your project is on GitHub: while it is open the
 first.', and once it is merged 'Cannot be undone now: the repository already names this project
 on GitHub.' In chat,
 "take over o/kite" is read back with Yes and No first; an agent never takes a repository over by
-itself.
+itself. When the docs pull request that names your project could not be opened (GitHub
+refused it, or this computer's copy could not be made), the take-over says so: 'Took over
+o/kite from "Kite club" here, but the docs pull request that names this project could not be
+opened, so GitHub still names "Kite club".' A project you work on together never writes docs:
+a doc it does not have reads 'The other Forerunner of "Kite club" writes this doc on GitHub;
+this project does not write docs.' on the Docs tab, with no "missing" mark.
+
+**When two projects use one repository.** Projects made before one repository was one project
+(or two folders inside each other) can share a repository. The Overview of each says so, for
+example '"Site" and "Kite club" both work in o/site.', with **Make one project** and the line
+"You choose which to keep; the other's tasks, plan and cards move into it." Both keep working
+until you choose; nothing is stopped or held. The dialog shows each project's tasks, open pull
+requests, what it spent, its budgets, who merges and what research may read, and you pick
+**Keep "Site"** (or the other). It says what moves ('The tasks, plan, cards and pull requests
+of "Kite club" move into "Site".') and what stays ('"Kite club" keeps its sessions, changes and
+spending to read; no budget changes.'), and which setting applies to the moved work. **Make one
+project** moves everything in one step: Changes lists 'Made one project: "Kite club" joined
+"Site".' with **Undo** ('"Kite club" is its own project again.'). Open pull requests of the
+moved tasks keep working: Merge and the reviews go on from "Site".
+
+A project that joined another is closed: its page says 'Joined into "Site" on 9 Nov.' with
+**Open it**, and nothing starts from it. It takes no new work: its Tasks tab has no New task
+and says 'Its tasks are in "Site".' with **Open it**, its Chat is kept to read ('This chat is
+kept to read; ask about its work in the Chat of "Site".'), and its Overview has no note for a
+next session. A task, a note or a change asked for it anyway is answered '"Kite club" joined
+"Site", so its work runs there.' and nothing is written. "Site"'s Overview says 'Includes the work of "Kite
+club".', its Sessions tab '"Kite club" had 3 sessions before it joined.' with Open, and its
+Costs tab 'Spent in "Kite club" before it joined: CHF 3.20'. Chat answers about "Site" with
+what "Kite club" did before it joined. In chat, "make Site and Kite club one project, keep
+Site" is read back with Yes and No first; chat never chooses the project to keep for you.
+
+Making one project waits while something of either project is under way, and says what to do
+first: 'A session is working on "Kite club". Make one project when it ends.', 'The plan of
+"Kite club" waits for your answer. Answer it first.', 'A pull request of "Kite club" is being
+merged. Try again in a minute.', 'A session of "Kite club" waits to go on at 15:40. Make one
+project after it ran, or cancel it first.' Undo waits the same way while a session works on the
+kept project, while a moved pull request is being merged, or when a task depends on one that
+came from the other project ('"Shop page" waits for "Cart", which came from "Kite club":
+change that first').
 
 The header names the project you are looking at. The active project (the one chat, voice and
 the phone talk about outside a project page) is what you pick in the header's list, the

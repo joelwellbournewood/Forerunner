@@ -164,6 +164,7 @@ import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
 import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
+import { joinPreview, sharesRepositoryWith } from "./join-preview.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
 import { overBudgetView, oversizedView } from "./oversize-view.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
@@ -906,6 +907,8 @@ export function createDaemonApp(
       credentialWaitNow: (projectId) => rt.billing.waits.now(projectId),
       // OR-07 (d1109-onerepo-link): the repository is also a project not on this computer.
       repositoryElsewhere: (project) => rt.repositoryUse.overviewOf(project),
+      // OJ-01 (d1109-onerepo-join): other projects here on the same repository or folder.
+      sharesRepositoryWith: (project) => sharesRepositoryWith(rt.joinDeps, project),
     });
   app.get("/projects", async (c) => {
     const rows = await rt.store.project.active({ limit: 100 });
@@ -1066,6 +1069,15 @@ export function createDaemonApp(
   });
 
   app.get("/projects/:id", async (c) => c.json(await projectCardOf(c.req.param("id"))));
+  // OJ-05 (d1109-onerepo-join): the Make one project dialog's facts, read only.
+  app.get("/projects/:id/join-preview", async (c) => {
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    const withIds = (c.req.query("with") ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return c.json(await joinPreview(rt.joinDeps, project, withIds));
+  });
   app.get("/projects/:id/summary", async (c) =>
     c.json(
       await projectSummary(rt.store, c.req.param("id"), chf(), { sandboxReady: sandboxNow() }),

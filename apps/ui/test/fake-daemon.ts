@@ -24,6 +24,7 @@ import type {
   EventView,
   HumanRequestView,
   IntakeStatusView,
+  JoinPreviewView,
   LessonOfferView,
   LessonView,
   MemoryScopeView,
@@ -88,6 +89,16 @@ import {
 } from "@forerunner/runtime/daemon/audit-export";
 import { cancelWorkLine } from "@forerunner/runtime/daemon/cancel-words";
 import { duplicateProjectSentence } from "@forerunner/runtime/daemon/create-project";
+import {
+  includesWorkSentence,
+  joinAsk,
+  joinedIntoSentence,
+  joinedRefusalSentence,
+  joinSentence,
+  joinUndoneSentence,
+  OPEN_ON_A_CLOSED_PROJECT,
+  sessionsBeforeJoinSentence,
+} from "@forerunner/runtime/daemon/join-words";
 import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
 import {
   type Elsewhere,
@@ -569,6 +580,23 @@ export interface FakeDaemonState {
    * Undo works. A test sets it.
    */
   takeOverUndoBlocked: string | null;
+  /**
+   * d1109-onerepo-join (OJ-01): per project id, the Overview's line about the other projects here
+   * on its repository or folder, as the daemon's `sharesRepositoryWith` gives it. A test sets it;
+   * `project.join` clears it for the projects it made one (its Undo puts it back).
+   */
+  sharedRepository: Record<string, NonNullable<ProjectCard["sharesRepositoryWith"]>>;
+  /** OJ-05: per project id, `GET /projects/:id/join-preview` as the daemon answers it. */
+  joinPreviews: Record<string, JoinPreviewView>;
+  /**
+   * OJ-06: per closed project id, where Make one project put its work (`ProjectCard.joinedInto`);
+   * `project.join` writes it, its Undo removes it. A joined project leaves `GET /projects`.
+   */
+  joined: Record<string, NonNullable<ProjectCard["joinedInto"]>>;
+  /** OJ-02: the sentence that holds `project.join` now, as the daemon's `joinRefusal`. */
+  joinRefusal: string | null;
+  /** OJ-04: why the join's Undo would not work now, as `project.join`'s `undoBlocked`. */
+  joinUndoBlocked: string | null;
   /**
    * R-startcred (leftovers7-web): per project, the wait every ready task's credential meets now
    * (as `RuntimeApp.billing.waits.now`): the Start check says it in one sentence
@@ -1256,6 +1284,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     repositoryElsewhere: {},
     repositoryOverview: {},
     takeOverUndoBlocked: null,
+    sharedRepository: {},
+    joinPreviews: {},
+    joined: {},
+    joinRefusal: null,
+    joinUndoBlocked: null,
     credentialWaitNow: {},
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
@@ -1411,6 +1444,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return { ...r, ...words };
   };
 
+  /**
+   * OJ-06 (d1109-onerepo-join), as the daemon's executor and queue route: a project closed into
+   * another takes no new work: '"Beacon" joined "Atlas", so its work runs there.'; null for any
+   * other project.
+   */
+  const joinedRefusalOf = (projectId: string | null | undefined): string | null => {
+    const into = projectId ? state.joined[projectId] : undefined;
+    const row = into ? state.projects.find((p) => p.id === projectId) : undefined;
+    return into && row ? joinedRefusalSentence(row.name, into.name) : null;
+  };
+
   const app = new Hono();
   app.use(
     "*",
@@ -1486,6 +1530,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.repositoryElsewhere = {};
     state.repositoryOverview = {};
     state.takeOverUndoBlocked = null;
+    state.sharedRepository = {};
+    state.joinPreviews = {};
+    state.joined = {};
+    state.joinRefusal = null;
+    state.joinUndoBlocked = null;
     state.messages = clone(MESSAGES);
     state.killActive = false;
     state.calls = [];
@@ -1844,7 +1893,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       stopped: state.killActive,
       working,
       folder,
+      // OJ-06, as the daemon: a project closed into another reads where its work went.
+      joinedInto: state.joined[p.id]
+        ? { text: state.joined[p.id]?.text ?? "", projectId: state.joined[p.id]?.projectId ?? "" }
+        : null,
     });
+    const includes = Object.entries(state.joined)
+      .filter(([, j]) => j.projectId === p.id)
+      .flatMap(([id]) => {
+        const row = state.projects.find((x) => x.id === id);
+        return row ? [{ id: row.id, name: row.name }] : [];
+      });
     return {
       ...p,
       statusLine,
@@ -1856,11 +1915,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       researchReads: researchReadsLine(webAccessFake(p.id)),
       // OR-07: the repository is also a project that is not on this computer (or together).
       repositoryElsewhere: state.repositoryOverview[p.id] ?? null,
+      // OJ-01 and OJ-06 (d1109-onerepo-join), as the daemon's card.
+      sharesRepositoryWith: state.sharedRepository[p.id] ?? null,
+      joinedInto: state.joined[p.id] ?? null,
+      includesWorkOf: includes.length
+        ? { text: includesWorkSentence(includes.map((x) => x.name)), projects: includes }
+        : null,
     };
   };
   app.get("/projects", (c) => {
     state.projectListReads += 1;
-    return c.json(state.projects.map(projectCardOf));
+    // As the daemon (active projects only): a project closed into another leaves Home.
+    return c.json(state.projects.filter((p) => !state.joined[p.id]).map(projectCardOf));
   });
   app.post("/projects", async (c) => {
     const parsed = CreateProjectBody.safeParse(await c.req.json());
@@ -2007,6 +2073,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.get("/projects/:id", (c) => {
     const p = state.projects.find((x) => x.id === c.req.param("id"));
     return p ? c.json(projectCardOf(p)) : errorBody(c, 404, "not_found", "no such project");
+  });
+  // OJ-05 (d1109-onerepo-join): the Make one project dialog's facts, as the test set them.
+  app.get("/projects/:id/join-preview", (c) => {
+    const p = state.projects.find((x) => x.id === c.req.param("id"));
+    if (!p) return errorBody(c, 404, "not_found", "no such project");
+    return c.json(
+      state.joinPreviews[p.id] ?? {
+        projectId: p.id,
+        shared: null,
+        projects: [],
+        ifKept: {},
+        keepOnly: null,
+        keepOnlyLine: null,
+      },
+    );
   });
   // The plan from the brief (U-046), as the daemon's intake status and Retry answer it.
   const intakeOf = (projectId: string): IntakeStatusView =>
@@ -2385,6 +2466,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!project) {
       return errorBody(c, 404, "not_found", "no such project");
     }
+    // OJ-06, as the daemon's executor: a project closed into another takes no new task.
+    const closed = joinedRefusalOf(id);
+    if (closed) return errorBody(c, 409, "conflict", closed);
     const parsed = CreateTaskBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
     // Like the daemon (U-040): an unknown or cancelled dependency is refused, nothing written.
@@ -3094,6 +3178,23 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         rows,
         next,
         chat: before ? null : (state.projectSessionsChat[id] ?? null),
+        // OJ-10, as the daemon: the projects joined into this one kept their sessions.
+        joined: before
+          ? []
+          : Object.entries(state.joined)
+              .filter(
+                ([closedId, j]) => j.projectId === id && state.projectSessions[closedId]?.length,
+              )
+              .map(([closedId]) => {
+                const name = state.projects.find((p) => p.id === closedId)?.name ?? "";
+                const count = state.projectSessions[closedId]?.length ?? 0;
+                return {
+                  projectId: closedId,
+                  name,
+                  count,
+                  words: sessionsBeforeJoinSentence(name, count),
+                };
+              }),
       }),
     );
   });
@@ -5783,6 +5884,65 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         },
       };
     }
+    if (name === "project.join") {
+      // OJ-02, as the daemon's `project.join` (medium: the dialog's press is the yes): the
+      // closed projects' tasks move into the kept one and they leave Home; Undo puts them back.
+      const keep = projectByRef(typeof params.keep === "string" ? params.keep : undefined);
+      const closeRefs = Array.isArray(params.close) ? params.close.map(String) : [];
+      const close = closeRefs.flatMap((ref) => {
+        const row = projectByRef(ref);
+        return row ? [row] : [];
+      });
+      if (!keep || !close.length) return refuse("no such project", "not_found");
+      if (state.joinRefusal) return refuse(state.joinRefusal);
+      const names = close.map((x) => x.name);
+      return {
+        name,
+        params,
+        risk: "medium",
+        card: {
+          ...card(
+            {
+              command: "project.join",
+              what: "the projects on one repository",
+              oldValue: [keep.name, ...names].map((n) => `"${n}"`).join(", "),
+              newValue: `"${keep.name}"`,
+              scope: "project",
+              sentence: joinSentence(keep.name, names),
+              projectId: keep.id,
+              projectName: keep.name,
+            },
+            "medium",
+          ),
+          ask: joinAsk(keep.name, names),
+        },
+        apply: () => {
+          const at = new Date().toISOString();
+          const moved: Record<string, string[]> = {};
+          const lines: Record<string, unknown> = {};
+          for (const p of [keep, ...close]) {
+            lines[p.id] = state.sharedRepository[p.id] ?? null;
+            delete state.sharedRepository[p.id];
+          }
+          for (const p of close) {
+            moved[p.id] = state.tasks.filter((t) => t.projectId === p.id).map((t) => t.id);
+            for (const t of state.tasks) if (t.projectId === p.id) t.projectId = keep.id;
+            state.joined[p.id] = {
+              projectId: keep.id,
+              name: keep.name,
+              at,
+              text: joinedIntoSentence({ project: keep.id, name: keep.name, at }, "UTC"),
+            };
+            emit("project.changed", { id: p.id });
+          }
+          emit("project.changed", { id: keep.id });
+          return {
+            before: { lines, closed: close.map((p) => ({ id: p.id, name: p.name })) },
+            after: { keep: { id: keep.id, name: keep.name }, moved },
+          };
+        },
+      };
+    }
     if (name === "repo.take_over") {
       // OR-07, as the daemon's `repo.take_over`: the Overview's Take it over (medium: the press
       // is the yes); the line goes, and the Undo puts it back.
@@ -6610,7 +6770,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         call.params && typeof call.params === "object"
           ? (call.params as Record<string, unknown>)
           : {};
-      const outcome = plan(call.name, params);
+      const planned = plan(call.name, params);
+      // OJ-06, as the daemon's executor (`refuseClosedProject`): a command for a project closed
+      // into another is new work for it and is refused, except the ones it still answers.
+      const closed =
+        !("refused" in planned) && !OPEN_ON_A_CLOSED_PROJECT.has(call.name)
+          ? joinedRefusalOf(planned.card.projectId)
+          : null;
+      const outcome: PlanOutcome = closed ? refuse(closed, "validation") : planned;
       if ("refused" in outcome) {
         const result: CommandResultJson = {
           status: "refused",
@@ -6785,6 +6952,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       return `the project ${leftRemoved.was} was removed`;
     // OR-07: as `RepositoryUse.takeOverUndoBlocked` (its docs pull request open or merged).
     if (name === "repo.take_over") return state.takeOverUndoBlocked;
+    // OJ-04: as `project.join`'s undoBlocked (a session on the kept project, a merge, a task).
+    if (name === "project.join") return state.joinUndoBlocked;
     const after = (ch.after ?? {}) as {
       task_id?: string;
       status?: string;
@@ -6983,6 +7152,24 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       if (project.active) for (const p of state.projects) p.active = p.id === back;
       emit("project.changed", { id: project.id });
     }
+    // OJ-04: Make one project's Undo: the tasks go back, the closed projects come back on Home
+    // with their Overview lines.
+    if (first?.name === "project.join") {
+      const after = (Array.isArray(entry.after) ? entry.after[0] : entry.after) as {
+        moved?: Record<string, string[]>;
+      } | null;
+      const lines = (before?.lines ?? {}) as Record<
+        string,
+        NonNullable<ProjectCard["sharesRepositoryWith"]> | null
+      >;
+      for (const [closedId, ids] of Object.entries(after?.moved ?? {})) {
+        for (const t of state.tasks) if (ids.includes(t.id)) t.projectId = closedId;
+        delete state.joined[closedId];
+        emit("project.changed", { id: closedId });
+      }
+      for (const [id, line] of Object.entries(lines)) if (line) state.sharedRepository[id] = line;
+      if (entry.projectId) emit("project.changed", { id: entry.projectId });
+    }
     // OR-07: repo.take_over's Undo: the Overview's line comes back.
     if (first?.name === "repo.take_over" && project && before?.line) {
       state.repositoryOverview[project.id] = before.line as NonNullable<
@@ -7038,6 +7225,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       }
     }
     let sentence = `Undone: ${entry.sentence.replace(/ Undo\.$/, ".")}`;
+    // OJ-04, as `project.join`'s undoSentence.
+    if (first?.name === "project.join") {
+      const closed = ((before?.closed ?? []) as { name?: string }[]).map((c) => c.name ?? "");
+      sentence = joinUndoneSentence(closed);
+    }
     // As the daemon (U-061): a cancel is undone by reopening, a creation by cancelling.
     const after = (entry.after ?? {}) as {
       task_id?: string;
@@ -7176,6 +7368,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!state.projects.some((p) => p.id === id)) {
       return errorBody(c, 404, "not_found", "no such project");
     }
+    // OJ-06, as the daemon: a project closed into another has no next session to note for.
+    const closed = joinedRefusalOf(id);
+    if (closed) return errorBody(c, 409, "conflict", closed);
     const body = (await c.req.json()) as { kind?: string; text?: string; priority?: number };
     if (
       !body.text?.trim() ||

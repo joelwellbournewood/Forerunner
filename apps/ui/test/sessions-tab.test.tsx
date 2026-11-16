@@ -1,7 +1,7 @@
 import type { ProjectSessionRowView, SessionView } from "@forerunner/runtime/daemon/api-types";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createClient } from "../src/api/client.ts";
 import type { EventSourceLike, StreamOptions } from "../src/api/sse.ts";
 import { formatClock } from "../src/lib/time.ts";
@@ -14,6 +14,22 @@ import { createHarness, fetchFromApp, type Harness, renderApp, testConfig } from
  * session was anywhere on screen.
  */
 const HOUR = 60 * 60_000;
+
+/**
+ * The file's clock, pinned (C3-left-1). Rows are built from Date.now(), and a row of today shows
+ * its time while an older row shows its day: between 00:00 and 03:00 the rows of one to three
+ * hours ago were yesterday's, and CI failed at those hours. Only Date is faked; it goes on with
+ * real time, so the waits and the once-a-second read behave as before.
+ */
+function pinClock(at: Date) {
+  vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true });
+  vi.setSystemTime(at);
+}
+beforeEach(() => pinClock(new Date(2026, 10, 16, 12, 0, 0)));
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 const money = (chfMicro: number) => ({ usdMicro: Math.round(chfMicro / 0.8), chfMicro });
 
 function row(over: Partial<ProjectSessionRowView> & { id: string }): ProjectSessionRowView {
@@ -190,6 +206,27 @@ describe("d1109-sessions, run C: the Sessions tab (SL-7)", () => {
     await waitFor(() =>
       expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Atlas · session at /),
     );
+  });
+
+  it("just after midnight, a row of today shows its time and a row of yesterday its day", async () => {
+    // C3-left-1: what the row lines above assert, at the hour CI used to fail.
+    pinClock(new Date(2026, 10, 16, 0, 30, 0));
+    const t = Date.now();
+    const harness = createHarness();
+    harness.daemon.state.projectSessions.proj_atlas = [
+      row({ id: "sess_today", startedAt: new Date(t - 20 * 60_000).toISOString() }),
+      row({ id: "sess_yesterday", startedAt: new Date(t - 2 * HOUR).toISOString() }),
+    ];
+    renderApp("/projects/proj_atlas/sessions", harness);
+    const tab = await screen.findByTestId("sessions-tab");
+    await waitFor(() => expect(within(tab).getAllByTestId("session-row")).toHaveLength(2));
+    const lines = within(tab)
+      .getAllByTestId("session-row-line")
+      .map((l) => l.textContent);
+    expect(lines).toEqual([
+      "00:10 · 12 min · Done · CHF 0.05 on your API key",
+      "15 Nov, 22:30 · 12 min · Done · CHF 0.05 on your API key",
+    ]);
   });
 
   it("Show older sessions asks for the page after with its cursor, appends it, and is gone on the last", async () => {

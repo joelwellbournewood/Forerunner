@@ -181,7 +181,39 @@ covered candidate as 'Already the project "Site"' with Open. The plan card of a 
 `IntakeCardView.planOnly`) says its cost alone: `intakeTotalLine` adds "the docs go to the
 project's repository as a pull request" only for a first plan to a repository (the review of
 the fix saw it on cards whose approval writes no document). Test: `test/onerepo-link.test.tsx`
-and the real-daemon 'd1109-onerepo-link, run C' Add to it case.
+and the real-daemon 'd1109-onerepo-link, run C' Add to it case. Every error path of the
+Overview (Take it over, Research reads' Change, Merge, the preview) shows `describeError` (a
+background service that does not answer reads "Forerunner's background service does not
+answer.", never the raw request error; C2-left-13). The Docs tab shows no "missing" mark for a
+row with `notWrittenHere` (a together project's doc, which the other Forerunner writes).
+
+d1109-onerepo-join (Make one project, ADR 0117 amended 2026-11-16): the Overview's
+`SharedRepository` (`SummaryTab.tsx`) shows `ProjectCard.sharesRepositoryWith` ('"Site" and
+"Kite club" both work in o/site.', testids `shared-repository`, `shared-repository-line`) with
+**Make one project** and the line `MAKE_ONE_EXPLAIN` from `@forerunner/runtime/daemon/join-words`;
+shown, not stopped. The press opens `JoinProjectsDialog.tsx`: it reads `client.joinPreview(id,
+withIds)` (`GET /projects/:id/join-preview?with=...`), lists each project's facts with a
+**Keep "Name"** radio, the moves line, the stays line and the setting that applies; a refusal
+shows instead of the button, and **Make one project** (disabled until a project is chosen)
+sends `project.join` with `source: "ui"`, `confirm: "tap"`, then opens the kept project; the
+line under it says Changes has its Undo. A joined project's page (`ProjectPage.tsx`) says
+'Joined into "Site" on 9 Nov.' with **Open it** (`project-joined`, `project-joined-open`) and
+shows no Start, repository or intake; the kept project's Overview lists 'Includes the work of
+"Kite club".' with links (`includes-work-of`), its Sessions tab the joined line with Open
+(`sessions-joined`), its Costs tab the spend before the join (`cost-joined`). A closed project
+(joined, or removed: `ProjectPage`'s `closed`) offers no new work: its Tasks tab has no **New
+task** and, with no task, says 'Its tasks are in "Site".' with **Open it** (`TasksTab`'s
+`closed`; a removed project: "No tasks: this project was removed."); its Chat tab
+(`ChatTab`'s `closed`) keeps the conversation to read (`Conversation`'s `readOnly`: no message
+box, no examples, no Make this a task, no Yes and No, Undo, question options or Go ahead; an
+empty one says "Nothing was said here.") under
+'This chat is kept to read; ask about its work in the Chat of "Site".' with **Open it**
+(`chat-closed`); its Overview shows no Research reads line and no Note for the next session,
+and a joined project no Decisions (they moved with its work). The words are `joinedTasksSentence`
+and `joinedChatSentence` in `join-words.ts`. Tests:
+`test/onerepo-join.test.tsx` and the real-daemon 'd1109-onerepo-join, run C' cases; the fake
+daemon mirrors the route, the command, its Undo and the lines (`state.sharedRepository`,
+`joinPreviews`, `joined`, `joinRefusal`, `joinUndoBlocked`).
 
 
 The email page's mode picker is a client of the registry too (ADR 0066, amended 2026-10-25

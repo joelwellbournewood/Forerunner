@@ -1,4 +1,5 @@
 import type { ChangeLogRow, StateStore } from "@forerunner/state";
+import { joinedIntoOf } from "./join-words.ts";
 import { changeLogView } from "./views.ts";
 
 /**
@@ -25,7 +26,9 @@ export async function changeRowViews(
   const projectOf = (id: string) =>
     lookup(`p:${id}`, async () => {
       const p = await store.project.get(id);
-      return p ? { name: p.name, removed: p.status === "archived" } : null;
+      // d1109-onerepo-join: a project closed into another is no removed one; its rows keep their
+      // link to its page, which says where its work went.
+      return p ? { name: p.name, removed: p.status === "archived" && !joinedIntoOf(p) } : null;
     });
   const humanOf = (id: string) =>
     lookup(`h:${id}`, async () => {
