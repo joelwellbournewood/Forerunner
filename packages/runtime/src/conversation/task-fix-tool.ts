@@ -221,10 +221,12 @@ export async function fixTasksInChat(input: ChatTaskFixInput): Promise<ChatTaskF
       if (!r) return nothing(fixNoChangeReply(now.name), { costUsdMicro: cost, footer });
       if (r.status === "pending")
         return {
-          reply: joined(r.readback ?? ask, reasons[0] ? `I ask first: ${reasons[0]}.` : ""),
+          // The read-back once (the card shows it with Yes and No); why it asks at a level that
+          // would make the changes at once goes under it, with the check's cost.
+          reply: r.readback ?? ask,
           results: [{ ...r, readback: r.readback ?? ask }],
           costUsdMicro: cost,
-          footer,
+          footer: joined(reasons[0] ? `Asks you first: ${reasons[0]}.` : "", footer ?? "") || null,
           notice: false,
         };
       if (r.status === "done" || r.status === "partial")
