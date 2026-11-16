@@ -74,7 +74,7 @@ import { streamChat } from "../src/api/chat-stream.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { readSseStream } from "../src/api/sse.ts";
-import { chfToMicro, formatChf, formatMoney } from "../src/lib/money.ts";
+import { chfToMicro, formatMoney } from "../src/lib/money.ts";
 import { currentFromLog, taskStepsFromLog } from "../src/lib/session-steps.ts";
 import {
   actionExplain,
