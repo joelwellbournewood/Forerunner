@@ -83,7 +83,7 @@ describe("Inbox", () => {
       "Anthropic refused your API key",
     );
     expect(within(card).getByTestId("request-body")).toHaveTextContent(
-      "Save a new one in Settings. The work that needs it waits until then.",
+      "Anthropic did not accept it. Save a new one in Settings; until then the work waits.",
     );
     // Nothing to answer: no options and no text box, one link to where a new key is pasted.
     expect(within(card).queryAllByTestId("option")).toHaveLength(0);
@@ -94,6 +94,61 @@ describe("Inbox", () => {
     expect(card).toHaveTextContent("The setup assistant checks it with Anthropic and saves it.");
     await user.click(link);
     expect(await screen.findByTestId("setup-page")).toBeInTheDocument();
+  });
+
+  it("the ask card's Done line reads one 'Done:' after Use API key and after Wait (d1109-cred-engine, run C)", async () => {
+    for (const [index, done] of [
+      [0, "Done: Your API key does the work until 15:00; your session goes on now."],
+      [1, "Done: Nothing moves until 15:00; then your session goes on."],
+    ] as const) {
+      const user = userEvent.setup();
+      const harness = createHarness();
+      harness.daemon.state.requests.unshift({
+        id: "req_ask",
+        projectId: null,
+        projectName: null,
+        taskId: null,
+        taskTitle: null,
+        sessionId: null,
+        kind: "approval",
+        why: "Use your API key until your Claude subscription can work again?",
+        steps: [],
+        options: ["Use API key", "Wait"],
+        blocking: true,
+        risk: "medium",
+        changeCard: {
+          key: "credential:ask",
+          source_id: "bs_subscription_1",
+          stop_key: "limit:bs_subscription_1:2026-10-31T14:00:00.000Z",
+          credential_kind: "subscription",
+          reason: "limit",
+          until: "2026-10-31T14:00:00.000Z",
+          estimate_usd_micro: 400_000,
+          chf_per_usd: 0.8,
+          filed_at: "2026-10-31T09:00:00.000Z",
+          applied_at: null,
+        },
+        status: "open",
+        answer: null,
+        createdAt: "2026-10-31T09:00:00.000Z",
+        version: 1,
+      });
+      const { unmount } = renderApp("/inbox", harness);
+      const requests = await screen.findAllByTestId("request");
+      const card = requests.find(
+        (r) => r.getAttribute("data-request-id") === "req_ask",
+      ) as HTMLElement;
+      expect(within(card).getByTestId("request-title")).toHaveTextContent(
+        "Use your API key until 15:00?",
+      );
+      const options = within(card).getAllByTestId("option");
+      expect(options.map((b) => b.textContent)).toEqual(["Use API key", "Wait"]);
+      await user.click(options[index] as HTMLElement);
+      const line = await screen.findByTestId("done-line");
+      expect(line.textContent).toBe(done);
+      expect(line.textContent).not.toMatch(/Done: Done:/);
+      unmount();
+    }
   });
 
   it("a text box only where free text is accepted: a question takes words, an approval only its options (design §3.8)", async () => {

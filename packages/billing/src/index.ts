@@ -3,6 +3,7 @@ export * from "./defaults.ts";
 export * from "./estimates.ts";
 export * from "./ledger.ts";
 export * from "./money.ts";
+export * from "./policy.ts";
 export * from "./pricing.ts";
 export * from "./rates.ts";
 export * from "./router.ts";

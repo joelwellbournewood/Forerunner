@@ -570,27 +570,36 @@ describe("the subscription path (ADR 0044)", () => {
         const [view] = await requestViews(rt.store, cards);
         expect(view?.title).toBe("Anthropic refused your Claude sign-in");
         expect(view?.body).toBe(
-          "Save a new one in Settings. The work that needs it waits until then.",
+          "The sign-in has expired or was signed out. Save a new one in Settings; until then the work waits.",
         );
         expect(view?.links?.[0]?.label).toBe("Save a new sign-in");
-        // A task pick under 'Wait' waits for the sign-in; a non-task pick (chat, planning,
-        // reviews) skips it: the API key, on the loop driver.
-        await expect(
-          rt.billing.pick.pick({
-            agentId: rt.agent.id,
-            agentOwnerHumanId: rt.human.id,
-            runner: "pc",
-            modelTier: "sonnet",
-            waitOnRest: true,
-          }),
-        ).rejects.toMatchObject({ details: { waitFor: { reason: "refused" } } });
+        // A task pick under 'Wait' waits for the sign-in, and so does every other call (CE-3,
+        // ADR 0120: one policy for chat, planning and reviews too; before, they moved to the
+        // API key, money the person did not choose).
+        for (const purpose of ["session", "chat", "interactive", "critic"] as const)
+          await expect(
+            rt.billing.pick.pick({
+              agentId: rt.agent.id,
+              agentOwnerHumanId: rt.human.id,
+              runner: "pc",
+              modelTier: "sonnet",
+              purpose,
+            }),
+          ).rejects.toMatchObject({ details: { waitFor: { reason: "refused" } } });
+        // Under 'subscription first, then the API key' the key serves, on the loop driver.
+        const prefs = (await rt.store.human.get(rt.human.id))?.notify_prefs ?? {};
+        await rt.store.human.patch(rt.human.id, {
+          notify_prefs: { ...prefs, credential_policy: "subscription_then_key" },
+        });
         const pick = await rt.billing.pick.pick({
           agentId: rt.agent.id,
           agentOwnerHumanId: rt.human.id,
           runner: "pc",
           modelTier: "sonnet",
+          purpose: "chat",
         });
         expect(pick.source.kind).toBe("api_key");
+        await rt.store.human.patch(rt.human.id, { notify_prefs: prefs });
       } finally {
         // A new sign-in saved (the setup assistant): the mark and the card go.
         await rt.billing.waits.credentialSaved("subscription");
@@ -634,7 +643,7 @@ describe("the subscription path (ADR 0044)", () => {
       );
       const [view] = await requestViews(rt.store, cards);
       expect(view?.body).toBe(
-        "Save a new one in Settings. Until then your tasks go on with your API key, which costs money.",
+        "The sign-in has expired or was signed out. Save a new one in Settings; until then your API key does the work, at a cost per use.",
       );
     } finally {
       await rt.billing.waits.credentialSaved("subscription");
@@ -693,7 +702,13 @@ describe("the subscription path (ADR 0044)", () => {
     expect(JSON.parse(pick?.input_summary ?? "{}")).toMatchObject({ driver: "loop" });
   });
 
-  it("at the plan share cap the router picks the API key and the task runs on the loop driver", async () => {
+  it("at the plan share cap the router picks the API key under 'then the API key', and the task runs on the loop driver", async () => {
+    // CE-2 (ADR 0120): the share is a stop; under the default 'then wait' the task waits for
+    // it (credential-policy tests), under 'then the API key' the key takes over.
+    const prefs = (await rt.store.human.get(rt.human.id))?.notify_prefs ?? {};
+    await rt.store.human.patch(rt.human.id, {
+      notify_prefs: { ...prefs, credential_policy: "subscription_then_key" },
+    });
     const sources = await rt.billing.sources();
     const sub = sources.find((s) => s.kind === "subscription");
     const key = sources.find((s) => s.kind === "api_key");
@@ -726,6 +741,7 @@ describe("the subscription path (ADR 0044)", () => {
     );
     expect(pick?.result_summary).toMatch(/^api_key "Anthropic API key"/);
     expect(pick?.result_summary).toMatch(/plan usage 95% is at or above the cap 95%/);
+    await rt.store.human.patch(rt.human.id, { notify_prefs: prefs });
   });
 });
 
@@ -900,6 +916,10 @@ describe("billing sources from the vault", () => {
       default_autonomy: 2,
       monthly_cap_usd_micro: 1,
       locale: "en",
+    });
+    // CE-2: under 'then the API key' the share is passed over, as this test reads it.
+    await store.human.patch(human.id, {
+      notify_prefs: { credential_policy: "subscription_then_key" },
     });
     // An install that started without credentials (a fake row) and then got both.
     await seedBillingSources({ store, vault: new MemoryVault({}), humanId: human.id });

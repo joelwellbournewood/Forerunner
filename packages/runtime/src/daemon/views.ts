@@ -1,4 +1,10 @@
-import { CostLedger, DEFAULT_CHF_PER_USD, FixedRateSource, formatChf } from "@forerunner/billing";
+import {
+  CostLedger,
+  credentialPolicyOf,
+  DEFAULT_CHF_PER_USD,
+  FixedRateSource,
+  formatChf,
+} from "@forerunner/billing";
 import type { CommandDef } from "@forerunner/commands";
 import { spokenProjectSummary, staticRisk } from "@forerunner/commands";
 import { NO_ACTION_GIVEN, saidByName } from "@forerunner/critic";
@@ -35,12 +41,13 @@ import {
   tierOfModel,
 } from "../models/ladder.ts";
 import { type AgentModelConfig, modeOverride, specialistOverride } from "../models/run-settings.ts";
+import { chfText } from "../money-words.ts";
 import { priorityLevel } from "../priority.ts";
 import type { EffortLevel } from "../provider/types.ts";
 import type { Registry } from "../registry/types.ts";
-import { MID_SESSION_LIMIT_SETTING, midSessionLimitOf } from "../session/billing.ts";
 import { countsList } from "../session/counts.ts";
-import { CREDENTIAL_REFUSED_KEY } from "../session/credential-wait.ts";
+import { CREDENTIAL_ASK_KEY } from "../session/credential-ask.ts";
+import { CREDENTIAL_REFUSED_KEY, goesOnAtWords } from "../session/credential-wait.ts";
 import { runCapOf } from "../session/executor.ts";
 import { aboutWords, moneyWords } from "../session/money-words.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
@@ -55,6 +62,7 @@ import {
   planningStatusText,
   stopReasonOfHandoff,
 } from "../session/stop-words.ts";
+import { waitingOf } from "../wiring/billing-pick.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import { ANSWER_CARD_KEYS, isChatOnlyCard, optionLabel } from "../wiring/request-answers.ts";
 import { researchReadsLine, webAccessOf } from "../wiring/web-access.ts";
@@ -1010,7 +1018,10 @@ export async function requestContexts(
       taskTitle: null,
       ...(r.project_id && onRepository.get(r.project_id) ? { projectRepository: true } : {}),
       ...(r.status === "open"
-        ? { credentialGoesOn: await credentialGoesOnFor(store, r).catch(() => null) }
+        ? { credentialRefused: await credentialRefusedFor(store, r).catch(() => null) }
+        : {}),
+      ...((r.change_card as { key?: unknown } | null)?.key === CREDENTIAL_ASK_KEY
+        ? { credentialAsk: await credentialAskFor(store, r).catch(() => null) }
         : {}),
     });
   }
@@ -1018,18 +1029,53 @@ export async function requestContexts(
 }
 
 /**
- * A refused credential's card (U-078): the credential its task work goes on with now, read when
- * the card is shown. Under "When my first choice runs out mid-session: use the other one", an
- * enabled credential of the person that is not refused; under 'Wait' (the default) none, since
- * the task work waits for a new one (the session lead's default of 2026-11-03).
+ * CE-7: an ask card's facts read when it is shown: the person's time zone, whether their own
+ * session waits for this stop (a continuation kept on a wait of the stopped source: it goes on
+ * by itself after a Wait), and when, if their quiet hours end later than the stop.
  */
-async function credentialGoesOnFor(store: StateStore, r: HumanRequestRow): Promise<string | null> {
+async function credentialAskFor(
+  store: StateStore,
+  r: HumanRequestRow,
+): Promise<RequestWordsContext["credentialAsk"]> {
+  const card = (r.change_card ?? {}) as {
+    source_id?: unknown;
+    until?: unknown;
+    filed_at?: unknown;
+  };
+  const human = r.human_id ? await store.human.get(r.human_id) : undefined;
+  const source =
+    typeof card.source_id === "string" ? await store.billingSource.get(card.source_id) : undefined;
+  const sessionWaits = waitingOf((source?.limits ?? {}) as Record<string, unknown>).some(
+    (w) => w.kept?.by === "continuation" || w.kept?.by === "person",
+  );
+  const until = typeof card.until === "string" ? card.until : null;
+  const filed = typeof card.filed_at === "string" ? Date.parse(card.filed_at) : Number.NaN;
+  return {
+    ...(human?.timezone ? { timezone: human.timezone } : {}),
+    nowMs: Number.isFinite(filed) ? filed : Date.parse(r.created_at),
+    sessionWaits,
+    ...(sessionWaits ? goesOnAtWords(human, until) : {}),
+  };
+}
+
+/**
+ * A refused credential's card (U-078, d1109-cred-engine CE-8): what it says, read when it is
+ * shown: the refusal's category (never the provider's words), the person's rule at a stop (their
+ * credential policy, ADR 0120) and the credential that can take the work (an enabled one of the
+ * person that is not refused; none under 'wait', where the work waits for a new one).
+ */
+async function credentialRefusedFor(
+  store: StateStore,
+  r: HumanRequestRow,
+): Promise<RequestWordsContext["credentialRefused"]> {
   const card = r.change_card as { key?: unknown; source_id?: unknown } | null;
   if (card?.key !== CREDENTIAL_REFUSED_KEY || !r.human_id) return null;
   const human = await store.human.get(r.human_id);
-  if (midSessionLimitOf(human?.notify_prefs?.[MID_SESSION_LIMIT_SETTING]) !== "use_other")
-    return null;
+  const rule = credentialPolicyOf(human?.notify_prefs as Record<string, unknown> | null | undefined)
+    .rule.whenStopped;
   const rows = await store.billingSource.list({ human_id: r.human_id }, { limit: 100 });
+  const refused = rows.find((s) => s.id === card.source_id);
+  const category = (refused?.limits as { refusedCategory?: unknown } | undefined)?.refusedCategory;
   const other = rows.find(
     (s) =>
       s.enabled &&
@@ -1037,7 +1083,47 @@ async function credentialGoesOnFor(store: StateStore, r: HumanRequestRow): Promi
       s.id !== card.source_id &&
       typeof (s.limits as { refusedAt?: unknown }).refusedAt !== "string",
   );
-  return other?.kind ?? null;
+  const known =
+    category === "signed_out" ||
+    category === "invalid_key" ||
+    category === "not_allowed" ||
+    category === "other"
+      ? category
+      : null;
+  // CE-8 under 'ask': the refusal is asked about on its one ask card (Use API key / Wait). While
+  // that card is open the refused card names the choice and its figure; after Use API key (the
+  // grant stands until a new one is saved) it says the key does the work; after Wait, or with no
+  // card (no other credential can serve), that the work waits.
+  if (rule === "ask") {
+    const limits = (refused?.limits ?? {}) as {
+      grant?: { to?: unknown } | undefined;
+      asking?: { requestId?: unknown; answer?: unknown } | undefined;
+    };
+    if (limits.grant?.to === "api_key" && other?.kind === "api_key")
+      return { category: known, rule: "next", other: "api_key" };
+    const askId = typeof limits.asking?.requestId === "string" ? limits.asking.requestId : null;
+    const ask = askId ? await store.humanRequest.get(askId).catch(() => undefined) : undefined;
+    const askCard = (ask?.change_card ?? {}) as {
+      estimate_usd_micro?: unknown;
+      chf_per_usd?: unknown;
+    };
+    if (ask?.status === "open" && typeof askCard.estimate_usd_micro === "number")
+      return {
+        category: known,
+        rule: "ask",
+        other: "api_key",
+        estimateChf: chfText(
+          askCard.estimate_usd_micro,
+          typeof askCard.chf_per_usd === "number" ? askCard.chf_per_usd : undefined,
+        ),
+      };
+    return { category: known, rule: "wait", other: null };
+  }
+  return {
+    category: known,
+    rule,
+    other: rule === "wait" ? null : (other?.kind ?? null),
+  };
 }
 
 /**

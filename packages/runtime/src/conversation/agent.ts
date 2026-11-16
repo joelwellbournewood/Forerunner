@@ -1,3 +1,4 @@
+import { type BillingSourceKind, DEFAULT_CHF_PER_USD } from "@forerunner/billing";
 import { isStopLine } from "@forerunner/commands";
 import { loadDocChunks, selectDocHits } from "@forerunner/memory";
 import { type Clock, errorMessage, log, newId } from "@forerunner/platform";
@@ -46,6 +47,8 @@ import {
   type ModelTier,
   providerCapabilities,
 } from "../provider/types.ts";
+import type { CredentialWait } from "../session/credential-wait.ts";
+import { chatHoldReply, chatOneOffExplain, chatSwitchNote } from "../session/credential-words.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { NO_MODEL_CHAT_REPLY } from "../setup/no-model.ts";
 import { isChatOnlyCard } from "../wiring/request-answers.ts";
@@ -291,6 +294,28 @@ export interface ConversationDeps {
    * Absent or null: the person's first, on an API key.
    */
   chatCredential?: () => Promise<CredentialWords | null>;
+  /**
+   * d1109-cred-engine CE-9 (ADR 0120): whether the person's credential policy holds chat now
+   * (`held`: no model call, no ledger row, the hold reply written by code, with the one-off
+   * "Use API key" when another credential serves now and the caps have room), or lets another
+   * credential answer (`answersOn`: a standing grant or "then the API key"; the reply's note
+   * says so once per stop per conversation). `oneOff` is the person's press for this question:
+   * nothing is held then. Absent or null: nothing stops the person's first choice.
+   */
+  credentialHold?: (opts: { oneOff: boolean }) => Promise<ChatCredentialHold | null>;
+}
+
+/** What the person's credential policy does with a chat question now (CE-9). */
+export interface ChatCredentialHold {
+  held: boolean;
+  /** What stopped the person's first choice. */
+  wait: CredentialWait;
+  /** When it ends, in the person's clock ("15:40"), or null (a refusal). */
+  untilText: string | null;
+  /** Held: the credential a one-off press would answer on, and what that question costs. */
+  oneOff?: { kind: BillingSourceKind; estimateUsdMicro: number } | null;
+  /** Not held: the credential that answers in place of the first choice. */
+  answersOn?: BillingSourceKind | null;
 }
 
 /** Docs search results in one chat turn's context at most (tokens, envelope included). */
@@ -330,6 +355,11 @@ export interface ChatRequest {
   projectTab?: boolean;
   text: string;
   source?: "text" | "voice" | "phone";
+  /**
+   * CE-9: the person pressed "Use API key" under a hold reply: this one question may answer on
+   * the next credential (no grant, no card); the next question holds again.
+   */
+  oneOffSwitch?: boolean;
   /** The paired device the request came from (a phone routes session commands remotely). */
   deviceId?: string;
   signal?: AbortSignal;
@@ -386,6 +416,11 @@ export interface ChatReply {
   footer?: string | null;
   /** What the app offers under the answer: Go ahead on an ask line, Think it through, a cap line. */
   offer?: ChatOffer | null;
+  /**
+   * CE-9: under a hold reply, the one-off press ("Use API key") and its consequence line; the
+   * press sends the same question again with `oneOffSwitch`.
+   */
+  oneOff?: { label: string; explain: string } | null;
 }
 
 /** An offer under a chat answer (d1109-chat-depth): its line and the action that takes it. */
@@ -629,6 +664,22 @@ const ASKS_PENDING_RE =
 interface ConversationState {
   mentioned: Set<string>;
   lastTurnAt: number;
+  /** CE-9: the stops whose "Answered with your API key" note this conversation said. */
+  notedStops?: Set<string>;
+}
+
+/** The model call's error codes a credential's stop gives (a limit, a refusal, no source). */
+const CREDENTIAL_HOLD_CODES: ReadonlySet<string> = new Set([
+  "provider_usage_limit",
+  "provider_auth",
+  "unavailable",
+]);
+
+/** A provider that can answer one question with a switch at a stop (`RoutedProvider`). */
+function hasOneOffSwitch(
+  p: ModelProvider,
+): p is ModelProvider & { withOneOffSwitch(): ModelProvider } {
+  return typeof (p as { withOneOffSwitch?: unknown }).withOneOffSwitch === "function";
 }
 
 type OpenRequest = Awaited<ReturnType<StateStore["humanRequest"]["open"]>>[number];
@@ -1205,8 +1256,8 @@ export class ConversationAgent {
 
     // U-047: without a model the line cannot be answered; the commands above ran without one.
     // The reply says what is missing and where the setup assistant is (never `fr setup`).
-    const provider = this.deps.provider;
-    if (!provider)
+    const given = this.deps.provider;
+    if (!given)
       return finish(
         NO_MODEL_CHAT_REPLY,
         [],
@@ -1214,6 +1265,48 @@ export class ConversationAgent {
         // Not content: "make this a task" after it takes the line before it.
         { notice: true },
       );
+    // d1109-cred-engine CE-9 (ADR 0120): the person's credential policy holds chat too. A held
+    // question makes no model call and books nothing; the reply says why, with the one-off
+    // "Use API key" when another credential could answer now. Commands above ran without a model.
+    const credHold = await this.deps
+      .credentialHold?.({ oneOff: req.oneOffSwitch === true })
+      .catch(() => null);
+    if (credHold?.held) {
+      const chfRate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
+      return finish(
+        chatHoldReply(credHold.wait, credHold.untilText),
+        [],
+        credHold.oneOff
+          ? {
+              oneOff: {
+                label: "Use API key",
+                explain: chatOneOffExplain(
+                  credHold.oneOff.kind,
+                  chfText(credHold.oneOff.estimateUsdMicro, chfRate),
+                ),
+              },
+            }
+          : {},
+        { notice: true },
+      );
+    }
+    // The one-off press: this question's calls may move to the next credential at a stop.
+    const provider = req.oneOffSwitch && hasOneOffSwitch(given) ? given.withOneOffSwitch() : given;
+    // The note under an answer another credential gave: once per stop per conversation.
+    const switchedTo = credHold && !credHold.held ? (credHold.answersOn ?? null) : null;
+    const stopNoted = credHold?.wait.stopKey ?? credHold?.wait.sourceId ?? "";
+    const switchNote =
+      switchedTo && (req.oneOffSwitch || !conv.notedStops?.has(stopNoted))
+        ? chatSwitchNote(
+            switchedTo,
+            credHold?.wait ?? { reason: "limit", kind: "subscription" },
+            credHold?.untilText ?? null,
+          )
+        : null;
+    if (switchNote && !req.oneOffSwitch) {
+      conv.notedStops = conv.notedStops ?? new Set();
+      conv.notedStops.add(stopNoted);
+    }
 
     // The model path: a fast model with the registry's command tools, the read-only tools and
     // nothing else. d1109-chat-depth (ADR 0114): a longer pass when it helps, on the same model
@@ -1990,6 +2083,23 @@ export class ConversationAgent {
       result.modelCalls === 0
     )
       reply = budgetRefusedReply(quickBudget);
+    // CE-9 (ADR 0120): a call the credential policy held on the way (the first choice stopped on
+    // this very call, and the rule waits) is no failure: the hold reply, with the one-off press,
+    // never "I could not answer (...)".
+    let heldAfter: ChatCredentialHold | null = null;
+    if (
+      !reply &&
+      !stopped &&
+      result &&
+      result.outcome !== "completed" &&
+      CREDENTIAL_HOLD_CODES.has(result.error?.code ?? "")
+    ) {
+      const after = await this.deps.credentialHold?.({ oneOff: false }).catch(() => null);
+      if (after?.held) {
+        heldAfter = after;
+        reply = chatHoldReply(after.wait, after.untilText);
+      }
+    }
     // "Done." only when a command of the turn did something (l3-chat-claims: a reply with no
     // text and no command claimed a change that never happened). L3-left-11: a turn its time
     // limit cut off says so in one sentence with what to do, never "(run timeout)".
@@ -2029,18 +2139,19 @@ export class ConversationAgent {
             model: longerRoute.model,
           }
         : null;
-    const footer = stopped
-      ? stoppedWords(costUsdMicro, chf)
-      : deep
-        ? footerWords({
-            tier: deep.route.tier,
-            sameModel: deep.route.sameModel,
-            durationMs: deep.durationMs,
-            costUsdMicro: deep.result.costUsdMicro,
-            chfPerUsd: chf,
-            subscription: credential?.kind === "subscription",
-          })
-        : null;
+    const footer =
+      (stopped
+        ? stoppedWords(costUsdMicro, chf)
+        : deep
+          ? footerWords({
+              tier: deep.route.tier,
+              sameModel: deep.route.sameModel,
+              durationMs: deep.durationMs,
+              costUsdMicro: deep.result.costUsdMicro,
+              chfPerUsd: chf,
+              subscription: credential?.kind === "subscription",
+            })
+          : null) ?? switchNote;
     const lineUnder: ChatOffer | null = offer
       ? ownAsk
         ? { line: (offer as StoredOffer).line, action: "go_ahead" }
@@ -2151,6 +2262,17 @@ export class ConversationAgent {
       depth,
       footer,
       offer: lineUnder,
+      ...(heldAfter?.oneOff
+        ? {
+            oneOff: {
+              label: "Use API key",
+              explain: chatOneOffExplain(
+                heldAfter.oneOff.kind,
+                chfText(heldAfter.oneOff.estimateUsdMicro, chf),
+              ),
+            },
+          }
+        : {}),
     };
   }
 

@@ -128,7 +128,7 @@ describe("RoutedProvider (U-078)", () => {
     expect(w.picks.map((p) => p.exclude)).toEqual([[], ["sub"]]);
     expect(w.picks.every((p) => p.purpose === "chat")).toBe(true);
     expect(w.sentences).toEqual([
-      "The Claude subscription reached its usage limit and rests until 2026-10-31 11:00 UTC; the API key answered instead.",
+      "The Claude subscription reached its usage limit and rests until 11:00; the API key answered instead.",
     ]);
   });
 
@@ -143,7 +143,7 @@ describe("RoutedProvider (U-078)", () => {
     expect([a.calls, b.calls]).toEqual([1, 1]);
     expect(w.rests).toEqual(["sub", "key"]);
     expect(w.sentences.at(-1)).toBe(
-      "The API key reached its usage limit and rests until 2026-10-31 11:00 UTC; no other Claude credential can be used now.",
+      "The API key reached its usage limit and rests until 11:00; no other Claude credential can be used now.",
     );
   });
 
@@ -207,8 +207,12 @@ describe("RoutedProvider (U-078)", () => {
   });
 
   it("names the sources in the sentence the session log shows", () => {
-    expect(fallbackSentence(key, sub, "2026-11-01T00:00:00Z")).toBe(
-      "The API key reached its usage limit and rests until 2026-11-01 00:00 UTC; the Claude subscription answered instead.",
+    expect(
+      fallbackSentence(key, sub, "2026-11-01T00:00:00Z", {
+        nowMs: Date.parse("2026-11-01T00:00:00Z"),
+      }),
+    ).toBe(
+      "The API key reached its usage limit and rests until 00:00; the Claude subscription answered instead.",
     );
   });
 });

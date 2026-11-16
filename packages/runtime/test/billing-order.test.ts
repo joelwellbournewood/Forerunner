@@ -206,7 +206,24 @@ describe("which Claude credential is used first (U-078)", () => {
     await rt?.close();
   });
 
-  it("without a chosen order, chat uses the API key first as before (ADR 0098)", async () => {
+  /** The person's credential policy, as `settings.set credential_policy` stores it (CE-1). */
+  const setPolicy = async (policy: string | null) => {
+    const human = await rt.store.human.mustGet(rt.human.id);
+    const { credential_policy: _p, ...rest } = (human.notify_prefs ?? {}) as Record<
+      string,
+      unknown
+    >;
+    await rt.store.human.patch(rt.human.id, {
+      notify_prefs: (policy ? { ...rest, credential_policy: policy } : rest) as never,
+    });
+  };
+  const HOLD_12 =
+    "Your Claude subscription is at its limit until 12:00, so I have not answered. I can still add, move and start tasks.";
+
+  // CE-1, CE-4 (the owner's answer 4 of 2026-11-09: "it should use the order that the user
+  // specifies"): with nothing chosen, chat follows the default preset like the tasks: the
+  // subscription first. Before (ADR 0098's CALL_FALLBACK_ORDER), chat went to the API key first.
+  it("without a chosen order, chat uses the subscription first, like the tasks (one order)", async () => {
     const v = await view();
     expect(v.chosen).toBe(false);
     // The rows in the order task runs use by default: the subscription first.
@@ -215,12 +232,12 @@ describe("which Claude credential is used first (U-078)", () => {
       ["api_key", "api", true],
     ]);
     const before = await ledgerCount();
-    expect(await chat("hello")).toBe("From the API.");
-    expect(apiCalls).toEqual([KEY]);
-    expect(sdkCalls).toHaveLength(0);
+    expect(await chat("hello")).toBe("From Claude Code.");
+    expect(apiCalls).toEqual([]);
+    expect(sdkCalls).toHaveLength(1);
     const rows = await ledgerSince(before);
-    expect(rows.map((r) => r.kind)).toEqual(["api"]);
-    expect(rows[0]?.billing_source_id).toBe((await sourceOf("api_key"))?.id);
+    expect(rows.map((r) => r.kind)).toEqual(["subscription"]);
+    expect(rows[0]?.billing_source_id).toBe((await sourceOf("subscription"))?.id);
   });
 
   it("with the API key first, a chat turn reaches the Messages API and its row is kind api", async () => {
@@ -236,10 +253,11 @@ describe("which Claude credential is used first (U-078)", () => {
       "Set which Claude credential is used first from not chosen (the defaults) to the API key, then the Claude subscription: every model call uses them in this order, and when one cannot be used the next one is. Undo.",
     );
     const apiBefore = apiCalls.length;
+    const sdkBefore = sdkCalls.length;
     const before = await ledgerCount();
     expect(await chat("what is next?")).toBe("From the API.");
     expect(apiCalls.slice(apiBefore)).toEqual([KEY]);
-    expect(sdkCalls).toHaveLength(0);
+    expect(sdkCalls).toHaveLength(sdkBefore);
     const rows = await ledgerSince(before);
     expect(rows.map((r) => [r.kind, r.billing_source_id])).toEqual([
       ["api", (await sourceOf("api_key"))?.id],
@@ -250,12 +268,13 @@ describe("which Claude credential is used first (U-078)", () => {
     const v = await setOrder(["subscription", "api_key"]);
     expect(v.sources.map((s) => s.kind)).toEqual(["subscription", "api_key"]);
     const apiBefore = apiCalls.length;
+    const sdkBefore = sdkCalls.length;
     const before = await ledgerCount();
     expect(await chat("and now?")).toBe("From Claude Code.");
     expect(apiCalls.length).toBe(apiBefore);
-    expect(sdkCalls).toHaveLength(1);
-    expect(sdkCalls[0]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(OAUTH);
-    expect(sdkCalls[0]?.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(sdkCalls).toHaveLength(sdkBefore + 1);
+    expect(sdkCalls.at(-1)?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(OAUTH);
+    expect(sdkCalls.at(-1)?.env.ANTHROPIC_API_KEY).toBeUndefined();
     const rows = await ledgerSince(before);
     expect(rows.map((r) => [r.kind, r.billing_source_id])).toEqual([
       ["subscription", (await sourceOf("subscription"))?.id],
@@ -267,46 +286,61 @@ describe("which Claude credential is used first (U-078)", () => {
     expect(sub?.monthSpent.usdMicro).toBeGreaterThan(0);
   });
 
-  it("a usage limit in Claude Code falls back to the API key within the call; the next call skips the resting subscription", async () => {
+  // CE-4, CE-9 (the owner's 7b: "It should definitely not automatically do something even when
+  // told to wait"): under 'then wait' a usage limit met on this very call ends it with the
+  // wait; the API key gets no request, and chat says why in its own words, with a one-off press.
+  it("a usage limit in Claude Code under 'then wait' holds chat: no request to the API key, the hold reply, and the next question holds before any call", async () => {
     claudeCode = "limit";
     const apiBefore = apiCalls.length;
+    const sdkBefore = sdkCalls.length;
     const before = await ledgerCount();
-    expect(await chat("one more thing")).toBe("From the API.");
-    expect(sdkCalls).toHaveLength(2);
-    expect(apiCalls.slice(apiBefore)).toEqual([KEY]);
-    const rows = await ledgerSince(before);
-    expect(rows.map((r) => r.kind)).toEqual(["api"]);
-    // The session log says it in a plain sentence.
-    const sessionId = rows[0]?.session_id as string;
-    const events = EventView.array().parse(
-      await (await call(`/sessions/${sessionId}/events`)).json(),
+    // The agent's chat entry (POST /chat answers the same reply; its view of the one-off press
+    // is d1109-cred-screens', C6).
+    const conversation = rt.conversation;
+    if (!conversation) throw new Error("no conversation");
+    const body = await conversation.chat({
+      humanId: rt.human.id,
+      agentId: rt.agent.id,
+      text: "one more thing",
+    });
+    expect(body.reply).toBe(HOLD_12);
+    expect(body.reply).not.toContain("I could not answer (");
+    expect(body.oneOff?.label).toBe("Use API key");
+    expect(body.oneOff?.explain).toMatch(
+      /^Answers this question on your API key: about CHF \d+\.\d\d\.$/,
     );
-    const fallback = events.filter((e) => e.type === "billing.fallback");
-    expect(fallback.map((e) => [e.text, e.level])).toEqual([
-      [
-        "The Claude subscription reached its usage limit and rests until 2026-10-31 11:00 UTC; the API key answered instead.",
-        "warning",
-      ],
-    ]);
+    expect(sdkCalls).toHaveLength(sdkBefore + 1);
+    expect(apiCalls.length).toBe(apiBefore);
+    expect(await ledgerSince(before)).toEqual([]);
     // Settings says why the subscription cannot be used now, and until when.
     const sub = (await view()).sources.find((s) => s.kind === "subscription");
     expect(sub).toMatchObject({ usable: false, blocked: "resting", restingUntil: resetAt });
-
-    // The next call does not try the subscription while it rests, even if it would answer.
+    // The next question holds before any call: neither Claude Code nor the API is asked.
     claudeCode = "reply";
-    expect(await chat("thanks")).toBe("From the API.");
-    expect(sdkCalls).toHaveLength(2);
-    expect(apiCalls.length).toBe(apiBefore + 2);
+    expect(await chat("thanks")).toBe(HOLD_12);
+    expect(sdkCalls).toHaveLength(sdkBefore + 1);
+    expect(apiCalls.length).toBe(apiBefore);
+    expect(await ledgerSince(before)).toEqual([]);
   });
 
-  it("the order and the rest survive a restart; after the reset the subscription serves again", async () => {
+  it("under 'then the API key' the resting subscription is passed over, with the note once; the policy and the rest survive a restart; after the reset the subscription serves again", async () => {
+    await setPolicy("subscription_then_key");
+    const apiBefore = apiCalls.length;
+    const sdkBefore = sdkCalls.length;
+    const res = await call("/chat", {
+      method: "POST",
+      body: JSON.stringify({ humanId: rt.human.id, agentId: rt.agent.id, text: "status?" }),
+    });
+    const first = (await res.json()) as { reply: string; footer?: string | null };
+    expect(first.reply).toBe("From the API.");
+    expect(first.footer).toBe(
+      "Answered with your API key: your subscription is at its limit until 12:00.",
+    );
+    expect(apiCalls.length).toBe(apiBefore + 1);
+    expect(sdkCalls.length).toBe(sdkBefore);
+
     await rt.close();
     await start();
-    const v = await view();
-    expect(v.chosen).toBe(true);
-    expect(v.order).toEqual(["subscription", "api_key"]);
-    expect(v.sources.find((s) => s.kind === "subscription")).toMatchObject({ blocked: "resting" });
-    const sdkBefore = sdkCalls.length;
     expect(await chat("after the restart")).toBe("From the API.");
     expect(sdkCalls.length).toBe(sdkBefore);
 
@@ -317,8 +351,29 @@ describe("which Claude credential is used first (U-078)", () => {
     expect(sdkCalls.length).toBe(sdkBefore + 1);
   });
 
-  it("a refused key in a chat call: the next credential answers, the key reads Refused with one card, and a new key ends it (U-078)", async () => {
-    await setOrder(["api_key", "subscription"]);
+  it("under 'then the API key' a usage limit met on the call moves it to the key within the call, said in the person's time zone", async () => {
+    claudeCode = "limit";
+    const apiBefore = apiCalls.length;
+    const before = await ledgerCount();
+    expect(await chat("one more")).toBe("From the API.");
+    expect(apiCalls.length).toBe(apiBefore + 1);
+    const rows = await ledgerSince(before);
+    expect(rows.map((r) => r.kind)).toEqual(["api"]);
+    const sessionId = rows[0]?.session_id as string;
+    const events = EventView.array().parse(
+      await (await call(`/sessions/${sessionId}/events`)).json(),
+    );
+    const fallback = events.filter((e) => e.type === "billing.fallback").at(-1);
+    expect(fallback?.text).toMatch(
+      /^The Claude subscription reached its usage limit and rests until \d\d:\d\d; the API key answered instead\.$/,
+    );
+    expect(fallback?.text).not.toContain("UTC");
+    claudeCode = "reply";
+    clock.advance(2 * 60 * 60 * 1000 + 1000);
+  });
+
+  it("a refused key in a chat call under 'API key first, then the subscription': the subscription answers, the key reads Refused with one card, and a new key ends it (U-078)", async () => {
+    await setPolicy("key_then_subscription");
     apiRefuses = true;
     const apiBefore = apiCalls.length;
     const sdkBefore = sdkCalls.length;
@@ -349,7 +404,7 @@ describe("which Claude credential is used first (U-078)", () => {
     expect((await view()).sources.find((s) => s.kind === "api_key")?.blocked).toBeNull();
     expect(await cards()).toHaveLength(0);
     expect(await chat("back on the key")).toBe("From the API.");
-    await setOrder(["subscription", "api_key"]);
+    await setPolicy(null);
   });
 
   it("refuses an order that names a credential twice or an unknown one", async () => {

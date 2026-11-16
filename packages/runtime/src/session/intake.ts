@@ -72,6 +72,8 @@ import { intakeAnswer, intakeChangeText } from "../wiring/request-answers.ts";
 import { webAccessOf } from "../wiring/web-access.ts";
 import { markAnswer } from "./answer-mark.ts";
 import {
+  askShown,
+  asStopWait,
   type CredentialWait,
   credentialWaitFrom,
   planWaitWords,
@@ -365,7 +367,8 @@ export type IntakeState =
  * plan is drafted by itself once the credential serves (`RuntimeApp.billing.waits`).
  */
 export interface IntakeWaitView {
-  reason: CredentialWait["reason"];
+  /** A refusal, or a wait until a time (a limit, the share, a key's month cap: `limit`). */
+  reason: "limit" | "refused";
   kind: CredentialWait["kind"];
   /** When the credential serves again (a limit); null for a refusal. */
   until: string | null;
@@ -1141,14 +1144,17 @@ export class IntakeService {
   }
 
   /** A planning wait in the person's words, in their time zone (U-078). */
-  private async waitView(wait: CredentialWait): Promise<IntakeWaitView> {
+  private async waitView(kept: CredentialWait): Promise<IntakeWaitView> {
     const human = await this.deps.store.human.get(this.deps.human.id).catch(() => undefined);
+    // d1109-cred-engine fix-up: "Planning waits for your answer" only while the stop's one ask
+    // card is open; once it is answered (or none was filed) the plain wait.
+    const wait = await askShown(this.deps.store, kept).catch(() => kept);
     const words = planWaitWords(wait, {
       ...(human?.timezone ? { timezone: human.timezone } : {}),
       nowMs: this.deps.clock.now(),
     });
     return {
-      reason: wait.reason,
+      reason: asStopWait(wait).reason === "refused" ? "refused" : "limit",
       kind: wait.kind,
       until: wait.until,
       ...words,
@@ -1359,6 +1365,11 @@ export class IntakeService {
                     sourceId: wait.sourceId,
                     kind: wait.kind,
                     until: wait.until,
+                    // d1109-cred-engine: the stop it waits for and whether the person is asked
+                    // (the plan's words name the one ask card while it is open).
+                    ...(wait.stopKey ? { stopKey: wait.stopKey } : {}),
+                    ...(wait.ask ? { ask: true } : {}),
+                    ...(wait.stop ? { stop: wait.stop } : {}),
                   },
                 }
               : {}),
@@ -1471,8 +1482,8 @@ export class IntakeService {
       kind: "approval",
       why: cut(
         planOnly
-          ? `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} new task(s) and a first-session plan of ${n.firstSessionTasks} task(s). Approve to add them to the project; nothing is written until then.`
-          : `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s) and a first-session plan of ${n.firstSessionTasks} task(s). Approve to write the plan and the docs${
+          ? `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} new task(s) and a first-session plan of ${tasksWords(n.firstSessionTasks)}. Approve to add them to the project; nothing is written until then.`
+          : `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s) and a first-session plan of ${tasksWords(n.firstSessionTasks)}. Approve to write the plan and the docs${
               repo ? ` (the docs as a pull request on ${repo.owner}/${repo.name})` : ""
             }; nothing is written until then.`,
         4000,
@@ -2750,4 +2761,9 @@ function withBoundedEstimates(p: IntakeProposal): IntakeProposal {
 
 function estimateOf(p: IntakeProposal): number {
   return p.firstSession.items.reduce((s, i) => s + i.estimateUsdMicro, 0);
+}
+
+/** C4b-left-2 (design section 5, rule 6): "1 task", "3 tasks", never "task(s)". */
+function tasksWords(n: number): string {
+  return `${n} ${n === 1 ? "task" : "tasks"}`;
 }

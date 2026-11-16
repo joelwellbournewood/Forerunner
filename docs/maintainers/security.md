@@ -432,6 +432,16 @@ Chromium or the static extractor, and the redirect rule), runs in the "Phase 3 a
 harnesses and the nine scenarios" step. `docs/status/gates.md` cites the step for the phase
 6 gate "Injection suite passes" and for release criterion 5.
 
+### Refused Claude credentials ([ADR 0120](../decisions/0120-which-claude-does-the-work.md))
+
+A refused credential gets no second request from any path (a switch, a grant, a continuation,
+chat, a job, the routed provider's model list and output limit) until a different one is saved:
+the router holds it under every rule, `RoutedProvider`'s `apiProvider` skips a source whose refusal
+stands (`credential-refused-once.test.ts` counts one 401 per key in the stand-in's log), and the
+one card per refusal is filed only by the writer that set the mark. `limits.refusedWhy` stays redacted
+and only its category (`refusedCategory`) is shown; the asking, grant and switchNotified marks
+hold no credential value.
+
 ## How to change it
 
 - **Add a backend.** Implement `Vault` from `types.ts`, validate names with

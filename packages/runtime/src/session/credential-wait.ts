@@ -23,14 +23,30 @@ import { quietHoursEndAt, resolvePrefs } from "../notifications/prefs.ts";
 
 /** Why the work waits. */
 export interface CredentialWait {
-  /** `limit`: until the credential's reset; `refused`: until a new credential is saved. */
-  reason: "limit" | "refused";
-  /** The billing source the work waits for. */
+  /**
+   * `limit`: until the credential's reset; `refused`: until a new credential is saved; `share`:
+   * the subscription reached the share Forerunner may use (until the next month's start, or a
+   * raised allowance); `key_month`: an API key reached its monthly cap (until the next month);
+   * `needs`: only a credential that cannot serve now (or that the person's policy leaves out)
+   * can do the task here (CE-3; `stop` names what stopped it, absent when the policy leaves it
+   * out).
+   */
+  reason: "limit" | "refused" | "share" | "key_month" | "needs";
+  /** The billing source the work waits for ("" for `needs` when the policy leaves it out). */
   sourceId: string;
   kind: BillingSourceKind;
-  /** `limit`: when the credential may serve again (ISO); null for `refused`. */
+  /** When the credential may serve again (ISO); null for `refused` (and a `needs` with no end). */
   until: string | null;
+  /** CE-2: the stop's key (one ask card and one grant per stop). */
+  stopKey?: string;
+  /** CE-7: the person's policy asks first: one card for this stop. */
+  ask?: boolean;
+  /** `needs`: what stopped the credential that can do the task. */
+  stop?: "limit" | "refused" | "share" | "key_month";
 }
+
+const WAIT_REASONS: readonly string[] = ["limit", "refused", "share", "key_month", "needs"];
+const STOPS: readonly string[] = ["limit", "refused", "share", "key_month"];
 
 /** The session's stop reason when nothing it may run can be billed now. */
 export const CREDENTIAL_WAIT_STOP = "credential_wait";
@@ -64,7 +80,20 @@ interface SkipLike {
 export function credentialWaitOf(error: unknown): CredentialWait | null {
   if (!(error instanceof ForerunnerError) || error.code !== "unavailable") return null;
   const d = (error.details ?? {}) as { waitFor?: SkipLike; skipped?: SkipLike[] };
-  const w = d.waitFor as (SkipLike & { reason?: unknown }) | undefined;
+  const w = d.waitFor as
+    | (SkipLike & { reason?: unknown; stopKey?: unknown; ask?: unknown; stop?: unknown })
+    | undefined;
+  // CE-2: the router's wait names its reason, the stop's key and whether the person is asked.
+  if (w && typeof w.sourceId === "string" && WAIT_REASONS.includes(String(w.reason)))
+    return {
+      reason: w.reason as CredentialWait["reason"],
+      sourceId: w.sourceId,
+      kind: (w.kind as BillingSourceKind) ?? "api_key",
+      until: typeof w.until === "string" ? w.until : null,
+      ...(typeof w.stopKey === "string" ? { stopKey: w.stopKey } : {}),
+      ...(w.ask === true ? { ask: true } : {}),
+      ...(STOPS.includes(String(w.stop)) ? { stop: w.stop as CredentialWait["stop"] } : {}),
+    };
   if (w && typeof w.sourceId === "string" && typeof w.until === "string")
     return {
       reason: "limit",
@@ -124,6 +153,40 @@ function limitOf(kind: BillingSourceKind | string): string {
     default:
       return "your API key's limit";
   }
+}
+
+/**
+ * CE-2: the stop a wait names, in the words after its time: "your subscription's limit", "your
+ * subscription's allowance" (the share Forerunner may use), "your API key's monthly cap".
+ */
+function stopWordsOf(wait: Pick<CredentialWait, "reason" | "kind" | "stop">): string {
+  const r = wait.reason === "needs" ? wait.stop : wait.reason;
+  if (r === "share") return "your subscription's allowance";
+  if (r === "key_month") return `${yourCredential(wait.kind)}'s monthly cap`;
+  return limitOf(wait.kind);
+}
+
+/**
+ * A `needs` wait read as the stop that holds it (CE-3): the credential that can do the task is
+ * stopped, so the words are that stop's; a `needs` wait the policy alone makes stays as it is.
+ */
+export function asStopWait(wait: CredentialWait): CredentialWait {
+  return wait.reason === "needs" && wait.stop ? { ...wait, reason: wait.stop } : wait;
+}
+
+/** The stop a wait names, as the session log's stopped-run sentence reads it. */
+export function stopReasonOf(wait: CredentialWait): "limit" | "refused" | "share" {
+  const w = asStopWait(wait);
+  return w.reason === "refused" || w.reason === "share" ? w.reason : "limit";
+}
+
+/**
+ * CE-3: the task only a credential the person's policy leaves out can do here: "Only your Claude
+ * subscription can do this task here, and "Which Claude does the work" leaves it out."
+ */
+function leftOutSentence(wait: CredentialWait, title?: string): string {
+  const who = title ? `"${title}" waits` : "Waits";
+  return `${who}: only ${yourCredential(wait.kind)} can do it here, and "Which Claude does the work" in Settings leaves it out.`;
 }
 
 /** What a refused credential's replacement is called: "a new API key", "a new Claude sign-in". */
@@ -216,16 +279,21 @@ export function goesOnAtWords(
  * "Waits until 07:00 (after your quiet hours); then your session goes on.".
  */
 export function waitSentence(
-  wait: CredentialWait,
+  given: CredentialWait,
   opts: { timezone?: string; nowMs: number; title?: string; goesOn?: boolean; goesOnAt?: string },
 ): string {
+  const wait = asStopWait(given);
+  if (wait.reason === "needs") return leftOutSentence(wait, opts.title);
   const who = opts.title ? `"${opts.title}" waits` : "Waits";
+  // CE-7: under 'ask' the work waits for the person's answer on the one card.
+  if (wait.ask && wait.reason !== "refused")
+    return `${who} for your answer: use ${otherCredentialOf(wait.kind)}? The card is in the Inbox.`;
   if (wait.reason === "refused")
     return `${who} for ${newCredential(wait.kind)}: save one in Settings${opts.goesOn ? `; ${afterWaitClause(true)}` : ""}.`;
   if (opts.goesOn && opts.goesOnAt)
     return `${who} until ${clockTime(opts.goesOnAt, opts.timezone, opts.nowMs)} (after your quiet hours); ${afterWaitClause(true)}.`;
   const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
-  return `${who} until ${at} (${limitOf(wait.kind)}); ${afterWaitClause(opts.goesOn)}.`;
+  return `${who} until ${at} (${stopWordsOf(wait)}); ${afterWaitClause(opts.goesOn)}.`;
 }
 
 /**
@@ -240,7 +308,7 @@ export function startKeepsWaitSentence(
   opts: { timezone?: string; nowMs: number },
 ): string {
   const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
-  return `Nothing can run until ${at} (${limitOf(wait.kind)}). ${PRESS_START_THEN}`;
+  return `Nothing can run until ${at} (${stopWordsOf(wait)}). ${PRESS_START_THEN}`;
 }
 
 const PRESS_START_THEN = "Press Start and the work starts then.";
@@ -254,8 +322,8 @@ export function keptStartLine(
   wait: CredentialWait,
   opts: { timezone?: string; nowMs: number },
 ): string | null {
-  if (wait.reason !== "limit" || !wait.until) return null;
-  return `Starts at ${clockTime(wait.until, opts.timezone, opts.nowMs)} (${limitOf(wait.kind)})`;
+  if (wait.reason === "refused" || wait.reason === "needs" || !wait.until) return null;
+  return `Starts at ${clockTime(wait.until, opts.timezone, opts.nowMs)} (${stopWordsOf(wait)})`;
 }
 
 /**
@@ -269,9 +337,10 @@ export function waitThenStartSentence(
   wait: CredentialWait,
   opts: { timezone?: string; nowMs: number },
 ): string {
-  if (wait.reason === "refused") return waitSentence(wait, opts);
-  const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
-  return `Waits until ${at} (${limitOf(wait.kind)}). ${PRESS_START_THEN}`;
+  const w = asStopWait(wait);
+  if (w.reason === "refused" || w.reason === "needs") return waitSentence(w, opts);
+  const at = w.until ? clockTime(w.until, opts.timezone, opts.nowMs) : "its reset";
+  return `Waits until ${at} (${stopWordsOf(w)}). ${PRESS_START_THEN}`;
 }
 
 /**
@@ -324,7 +393,7 @@ export function refusedCredentialWords(kind: string | null | undefined): string 
  * "Waiting until 15:40 (your subscription's limit)") and the link that unblocks a refusal.
  */
 export function waitRowWords(
-  wait: CredentialWait,
+  given: CredentialWait,
   opts: {
     timezone?: string;
     nowMs: number;
@@ -334,6 +403,24 @@ export function waitRowWords(
     startKept?: boolean;
   },
 ): CredentialWaitWords {
+  const wait = asStopWait(given);
+  // CE-7: under 'ask' the row says the work waits for the person's answer on the one card.
+  if (wait.ask && wait.reason !== "refused")
+    return {
+      label: `Waits for your answer: use ${otherCredentialOf(wait.kind)}?`,
+      detail: "Answer the card in the Inbox.",
+      line: "Waiting for your answer",
+      save: null,
+    };
+  if (wait.reason === "needs")
+    return {
+      label: `Waits for ${yourCredential(wait.kind)}`,
+      detail: leftOutSentence(wait)
+        .replace(/^Waits: /, "")
+        .replace(/^o/, "O"),
+      line: `Waiting for ${yourCredential(wait.kind)}`,
+      save: null,
+    };
   if (wait.reason === "refused")
     return {
       label: `Waits for ${newCredential(wait.kind)}`,
@@ -353,12 +440,12 @@ export function waitRowWords(
   }
   const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
   return {
-    label: `Waits until ${at}, ${limitOf(wait.kind)}`,
+    label: `Waits until ${at}, ${stopWordsOf(wait)}`,
     detail: opts.goesOn ? "Then your session goes on." : "Then it runs at your next Start.",
     // S-10: "Starts at 15:40 (your subscription's limit)" while the person's Start is kept.
     line:
       (opts.startKept ? keptStartLine(wait, opts) : null) ??
-      `Waiting until ${at} (${limitOf(wait.kind)})`,
+      `Waiting until ${at} (${stopWordsOf(wait)})`,
     save: null,
   };
 }
@@ -390,9 +477,21 @@ export function saveLink(kind: BillingSourceKind | string): { label: string; to:
  * is drafted by itself once the credential serves (`RuntimeApp.billing.waits`).
  */
 export function planWaitWords(
-  wait: CredentialWait,
+  given: CredentialWait,
   opts: { timezone?: string; nowMs: number },
 ): { text: string; short: string } {
+  const wait = asStopWait(given);
+  // CE-7: under 'ask' the plan waits for the person's answer on the one card.
+  if (wait.ask && wait.reason !== "refused")
+    return {
+      text: `Planning waits for your answer: use ${otherCredentialOf(wait.kind)}? The card is in the Inbox.`,
+      short: "Planning waits for your answer",
+    };
+  if (wait.reason === "needs")
+    return {
+      text: `Planning ${leftOutSentence(wait).replace(/^Waits/, "waits")}`,
+      short: `Planning waits for ${yourCredential(wait.kind)}`,
+    };
   if (wait.reason === "refused")
     return {
       text: `Planning waits for ${newCredential(wait.kind)}: save one in Settings.`,
@@ -400,8 +499,8 @@ export function planWaitWords(
     };
   const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
   return {
-    text: `Planning waits until ${at} (${limitOf(wait.kind)}) and starts by itself.`,
-    short: `Planning waits until ${at}, ${limitOf(wait.kind)}`,
+    text: `Planning waits until ${at} (${stopWordsOf(wait)}) and starts by itself.`,
+    short: `Planning waits until ${at}, ${stopWordsOf(wait)}`,
   };
 }
 
@@ -409,14 +508,68 @@ export function planWaitWords(
 export function credentialWaitFrom(value: unknown): CredentialWait | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  if (v.reason !== "limit" && v.reason !== "refused") return null;
+  if (!WAIT_REASONS.includes(String(v.reason))) return null;
   if (typeof v.sourceId !== "string" || typeof v.kind !== "string") return null;
   return {
-    reason: v.reason,
+    reason: v.reason as CredentialWait["reason"],
     sourceId: v.sourceId,
     kind: v.kind as BillingSourceKind,
     until: typeof v.until === "string" ? v.until : null,
+    ...(typeof v.stopKey === "string" ? { stopKey: v.stopKey } : {}),
+    ...(v.ask === true ? { ask: true } : {}),
+    ...(STOPS.includes(String(v.stop)) ? { stop: v.stop as CredentialWait["stop"] } : {}),
   };
+}
+
+/**
+ * d1109-cred-engine fix-up (design §5: a sentence promises only what the app does): whether the
+ * one ask card of this stop is open now: the stopped source's `limits.asking` names a card filed
+ * for this stop (`stopKey`, when given), the person has not answered Wait without one, and the
+ * card is still open (not answered, not closed). False when no card was filed (no other
+ * credential can serve, or the stop was asked about before), so the words say the plain wait.
+ */
+export async function askCardOpen(
+  store: {
+    billingSource: Pick<StateStore["billingSource"], "get">;
+    humanRequest?: Pick<StateStore["humanRequest"], "get">;
+  },
+  sourceId: string,
+  stopKey?: string,
+): Promise<boolean> {
+  if (!store.humanRequest || !sourceId) return false;
+  const row = await store.billingSource.get(sourceId).catch(() => undefined);
+  const asking = (row?.limits as { asking?: unknown } | undefined)?.asking as
+    | { stopKey?: unknown; requestId?: unknown; answer?: unknown }
+    | undefined;
+  if (!asking || asking.answer === "wait" || typeof asking.requestId !== "string") return false;
+  if (stopKey && asking.stopKey !== stopKey) return false;
+  const card = await store.humanRequest.get(asking.requestId).catch(() => undefined);
+  return card?.status === "open";
+}
+
+/**
+ * The wait as the person may be told it (d1109-cred-engine fix-up): its 'ask' form ("Waits for
+ * your answer: use your API key? The card is in the Inbox.") only while the one card of its stop
+ * is open (`askCardOpen`); else the plain wait ("Waits until 15:40 (your subscription's limit);
+ * then your session goes on."). Before, every wait under 'Subscription first, then ask' said a
+ * card was in the Inbox, also when none was filed or the person had answered it.
+ */
+export async function askShown(
+  store: {
+    billingSource: Pick<StateStore["billingSource"], "get">;
+    humanRequest?: Pick<StateStore["humanRequest"], "get">;
+  },
+  wait: CredentialWait,
+): Promise<CredentialWait> {
+  if (!wait.ask) return wait;
+  if (await askCardOpen(store, wait.sourceId, wait.stopKey).catch(() => false)) return wait;
+  const { ask: _ask, ...plain } = wait;
+  return plain;
+}
+
+/** The credential the person is asked to go on with: "your API key" for a subscription's stop. */
+export function otherCredentialOf(kind: BillingSourceKind | string): string {
+  return kind === "subscription" ? "your API key" : "your Claude subscription";
 }
 
 /**
@@ -425,7 +578,7 @@ export function credentialWaitFrom(value: unknown): CredentialWait | null {
  * scheduled. `next` is the credential that takes over now, or the wait.
  */
 export function stoppedRunSentence(
-  stop: { reason: "limit" | "refused"; kind: BillingSourceKind | string },
+  stop: { reason: "limit" | "refused" | "share"; kind: BillingSourceKind | string },
   title: string,
   next: { continuesOn: BillingSourceKind | string } | { wait: CredentialWait },
   opts: { timezone?: string; nowMs: number; goesOn?: boolean },
@@ -433,7 +586,9 @@ export function stoppedRunSentence(
   const head =
     stop.reason === "refused"
       ? `Anthropic refused ${yourCredential(stop.kind).replace("your Claude subscription", "your Claude sign-in")}`
-      : `${capital(yourCredential(stop.kind))} reached its usage limit`;
+      : stop.reason === "share"
+        ? `${capital(yourCredential(stop.kind))} reached the share Forerunner may use`
+        : `${capital(yourCredential(stop.kind))} reached its usage limit`;
   const then =
     "wait" in next
       ? waitSentence(next.wait, { ...opts, title })

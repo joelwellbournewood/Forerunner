@@ -7,6 +7,7 @@ import { pausedSentences, sessionResultLines } from "../src/session/result.ts";
 import {
   taskContextBlock,
   WHERE_LAST_RUN_STOPPED,
+  whereTheCredentialStopped,
   whereTheLastRunStopped,
 } from "../src/session/task-context.ts";
 
@@ -244,5 +245,85 @@ describe("the session result's line of a paused task (budget-resume)", () => {
     ).toEqual([
       '"Write the guide" and "Write the notes" paused at a budget: see their cards in the Inbox.',
     ]);
+  });
+});
+
+/**
+ * d1109-cred-engine CE-5 (ADR 0120; the owner's 7a: "allow the task to be completed by the API,
+ * but in a transparent way"): the run that continues a task its Claude credential stopped is
+ * briefed from where it stopped, never "## The previous attempt" / "It failed". The brief is
+ * model-facing text: asserted exactly.
+ */
+describe("d1109-cred-engine, run C: the brief after a credential stopped the run (CE-5)", () => {
+  it("a run that changed files: its work is in the folder, continue from it; refused and share name their stop", () => {
+    expect(whereTheCredentialStopped("limit", null, ["index.html"])).toEqual([
+      WHERE_LAST_RUN_STOPPED,
+      "The last run of this task stopped when its Claude credential reached its limit, before its work was done. Its work so far is in the folder you work in (kept as a commit of its own): continue from it, do not start again.",
+      "It left no note: its Claude credential stopped it before it could write one. Read the files it changed to see where the work stands.",
+      'Files it changed: "index.html"',
+    ]);
+    expect(whereTheCredentialStopped("refused", null, ["index.html"])[1]).toBe(
+      "The last run of this task stopped when its Claude credential was refused, before its work was done. Its work so far is in the folder you work in (kept as a commit of its own): continue from it, do not start again.",
+    );
+    expect(whereTheCredentialStopped("share", null, [])[1]).toBe(
+      "The last run of this task stopped when its Claude credential reached the share of the subscription Forerunner may use, before it changed any file.",
+    );
+    for (const reason of ["limit", "refused", "share"] as const) {
+      const text = whereTheCredentialStopped(reason, null, ["a.md"]).join("\n");
+      expect(text).not.toContain("stopped at its budget");
+      expect(text).not.toContain("It failed");
+    }
+  });
+
+  it("the composed brief after a usage limit that wrote a file, and after a refusal", async () => {
+    const clock = new SimulatedClock("2026-11-08T09:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    const human = await store.human.insert({ name: "J", email: "j@x.test" } as never);
+    const agent = await store.agent.insert({
+      name: "Alice",
+      owner_human_id: human.id,
+      kind: "principal",
+    } as never);
+    const project = await store.project.insert({ name: "Quote page", goal: "A page" } as never);
+    for (const [outcome, what] of [
+      ["usage_limit", "reached its limit"],
+      ["credential_refused", "was refused"],
+    ] as const) {
+      const task = await store.task.insert({
+        project_id: project.id,
+        title: `Style the page (${outcome})`,
+        outcome: "index.html is styled",
+        status: "ready",
+      } as never);
+      const session = await store.session.insert({
+        agent_id: agent.id,
+        project_id: project.id,
+        trigger: "manual",
+        status: "completed",
+        runner: "pc",
+      } as never);
+      await store.run.insert({
+        session_id: session.id,
+        task_id: task.id,
+        specialist: "coder",
+        model: "claude-sonnet-5-5",
+        provider: "anthropic",
+        effort: "medium",
+        outcome,
+      } as never);
+      await store.event.append(session.id, TASK_FILES_EVENT, {
+        taskId: task.id,
+        files: ["index.html"],
+      });
+      const block = await taskContextBlock(store, await store.task.mustGet(task.id));
+      expect(block.startsWith(WHERE_LAST_RUN_STOPPED)).toBe(true);
+      expect(block).toContain(
+        `The last run of this task stopped when its Claude credential ${what}, before its work was done. Its work so far is in the folder you work in (kept as a commit of its own): continue from it, do not start again.`,
+      );
+      expect(block).toContain('Files it changed: "index.html"');
+      expect(block).not.toContain("## The previous attempt");
+      expect(block).not.toContain("It failed");
+    }
+    await store.close();
   });
 });

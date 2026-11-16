@@ -1,7 +1,7 @@
 import type { BillingSourceKind } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
 import type { StateStore } from "@forerunner/state";
-import { type CredentialWait, credentialWaitFrom } from "./credential-wait.ts";
+import { askShown, type CredentialWait, credentialWaitFrom } from "./credential-wait.ts";
 
 /**
  * A task review that a limit or a credential refused before the critic gave a verdict (the
@@ -91,7 +91,7 @@ export async function withReviewWait(
   e: unknown,
   opts: {
     provider: unknown;
-    store: Pick<StateStore, "billingSource">;
+    store: Pick<StateStore, "billingSource"> & Partial<Pick<StateStore, "humanRequest">>;
     nowMs: number;
     projectId: string;
     agentId: string;
@@ -132,7 +132,9 @@ export async function withReviewWait(
   } catch (err) {
     opts.onError?.("the review's credential wait was not kept", err);
   }
+  // The 'ask' form only while the stop's one card is open (d1109-cred-engine fix-up).
+  const shown = await askShown(opts.store, wait).catch(() => wait as CredentialWait);
   return new ForerunnerError(e.code, e.message, {
-    details: { ...(e.details ?? {}), wait: { ...wait } },
+    details: { ...(e.details ?? {}), wait: { ...shown } },
   });
 }

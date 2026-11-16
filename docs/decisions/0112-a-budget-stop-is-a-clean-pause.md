@@ -586,3 +586,9 @@ No budget, wrap-up line, monthly cap or plan-share cap is passed: every call is 
 its worst case before it is made. Tests: `packages/runtime/test/task-budget-all.test.ts`,
 `task-budget-room.test.ts`, `packages/critic/test/review-price.test.ts`, the session review's,
 the estimates', the state suite's `byTaskOf` and the UI's "d1116-budget-all, run C" cases.
+
+## Amendment 2026-11-16 (d1109-cred-engine, [ADR 0120](0120-which-claude-does-the-work.md))
+
+A run its Claude credential stopped keeps its work like a paused one, and the run that continues
+it is briefed from it ("## Where the last run stopped", `whereTheCredentialStopped`), never as a
+failed attempt.

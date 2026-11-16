@@ -380,3 +380,12 @@ for whatever work waited:
 ## Amendment 2026-11-16 (ADR 0119, d1109-selftasks-run): the task check is a planning call
 
 The session's task check is one planning call (the intake's model and route, purpose interactive), not a specialist's run; on a resting credential its held branch is C5's (`d1109-cred-engine`).
+
+## Amendment 2026-11-16 (d1109-cred-engine, [ADR 0120](0120-which-claude-does-the-work.md))
+
+Points 2, 4, 10 and 15 are replaced by one credential policy for every call: the person's order
+and rule at a stop apply to chat, planning, the critic's reviews, the task check and the background
+jobs as to task runs (the owner's answer 4 of 2026-11-09: "it should use the order that the user
+specifies"); with nothing chosen, the default preset (subscription first, then wait) for every
+call. The share and a key's monthly cap are stops like a limit and a refusal (the owner's 7b, 7c).
+Point 13 holds: at a stop a task is never dropped to a credential that can do less of it.

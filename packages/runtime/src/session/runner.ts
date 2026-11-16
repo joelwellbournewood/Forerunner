@@ -98,6 +98,7 @@ import {
   clockTime,
   goesOnAtWords,
   stoppedRunSentence,
+  stopReasonOf,
   waitSentence,
 } from "./credential-wait.ts";
 import {
@@ -3051,7 +3052,7 @@ export class SessionRunner {
                   title: task.title,
                   review: true,
                   sentence: stoppedRunSentence(
-                    { reason: wait.reason, kind: wait.kind },
+                    { reason: stopReasonOf(wait), kind: wait.kind },
                     task.title,
                     { wait },
                     {

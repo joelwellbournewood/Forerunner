@@ -47,15 +47,17 @@ describe("w15-chat, wave 15", () => {
     );
     // d1109-starts-engine S-5: the project's "When work is ready" key, then d1109-chat-depth's
     // chat_ask_above after it (run C3's merge order: start_by_itself, chat_ask_above).
-    expect(lines.at(-2)).toBe(
+    expect(lines.at(-3)).toBe(
       "- start_by_itself (per project): When work is ready: false (the default) waits for the person's Start; true starts a session by itself when work the person made ready can run, never in quiet hours or while sessions are stopped, never for the agent's own tasks. Only the person sets it. Value: true | false.",
     );
-    // d1109-chat-depth (run C3): the amount above which chat asks first, appended last.
-    expect(lines.at(-1)).toBe(
+    // d1109-chat-depth (run C3): the amount above which chat asks first, then d1109-cred-engine's
+    // credential_policy (run C5) appended last (its line: credential-policy.test.ts).
+    expect(lines.at(-2)).toBe(
       "- chat_ask_above (for the person): The CHF above which one chat answer asks first before it thinks longer (a stronger model always asks first). 0: chat asks before every longer answer. Unset: CHF 0.10. Value: number. For example 0.1 or 0.",
     );
-    // Every key has its line (run C3's merge: start_by_itself and chat_ask_above, 21 + 2).
-    expect(lines.filter((l) => l.startsWith("- "))).toHaveLength(23);
+    // Every key has its line (run C3's merge: start_by_itself and chat_ask_above, 21 + 2; run C5:
+    // credential_policy added, billing_order and mid_session_limit no longer offered: 23 + 1 - 2).
+    expect(lines.filter((l) => l.startsWith("- "))).toHaveLength(22);
     // What the model's tool schema says of `value` (before: `{}`).
     const schema = z.toJSONSchema(settingsSet.params) as {
       properties: Record<string, { description?: string }>;

@@ -1,4 +1,12 @@
-import { formatChf, type PricingTable } from "@forerunner/billing";
+import {
+  CREDENTIAL_POLICIES,
+  CREDENTIAL_POLICY_SETTING,
+  type CredentialPolicyId,
+  credentialPolicyOf,
+  formatChf,
+  moneyRank,
+  type PricingTable,
+} from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
 // The module path, not the package index: the index imports this package back (a cycle).
 import { AUTONOMY_NAMES, type AutonomyLevel } from "@forerunner/runtime/enforcement/autonomy";
@@ -85,6 +93,58 @@ export interface SettingSpec {
    * and voice with their yes); a change an agent asks for is refused in words.
    */
   personOnly?: boolean;
+  /**
+   * d1109-cred-engine (CE-1, CE-13): the value in force for a global key, when it is not only the
+   * stored key (credential_policy: an earlier choice, or the default preset, read as one).
+   */
+  currentOfPrefs?: (prefs: HumanRow["notify_prefs"]) => JsonValue;
+  /**
+   * CE-13: an older key the named key replaced: once that key is stored, settings.set and an
+   * Undo of this key's old rows answer that it was replaced (it stays for the legacy reader).
+   */
+  replacedBy?: string;
+  /** CE-13: the key is not offered to the chat model in settings_set's definition. */
+  hiddenFromTool?: boolean;
+}
+
+/** CE-13: the answer to a legacy credential key once credential_policy is stored. */
+export const CREDENTIAL_KEY_REPLACED =
+  'This was replaced by "Which Claude does the work"; change it there.';
+
+/** The presets as a person reads them in Settings and in the change log (CE-1). */
+export function credentialPolicyWords(v: unknown): string {
+  switch (v) {
+    case "subscription_then_wait":
+      return "Subscription first, then wait";
+    case "subscription_then_ask":
+      return "Subscription first, then ask me";
+    case "subscription_then_key":
+      return "Subscription first, then the API key";
+    case "key_then_subscription":
+      return "API key first, then the subscription";
+    case "key_only":
+      return "API key only";
+    case "earlier":
+      return "your earlier choice";
+    default:
+      return "Subscription first, then wait";
+  }
+}
+
+/** What a preset does when the first credential stops, for the card and the change log. */
+export function credentialPolicyEffect(v: unknown): string {
+  switch (v) {
+    case "subscription_then_ask":
+      return "when your subscription runs out, you are asked first before your API key does any work";
+    case "subscription_then_key":
+      return "when your subscription runs out, work goes on with your API key at once, at a cost per use";
+    case "key_then_subscription":
+      return "your API key does the work first, at a cost per use; when it stops, your subscription goes on";
+    case "key_only":
+      return "only your API key does the work, at a cost per use; when it stops, the work waits";
+    default:
+      return "when your subscription runs out, nothing moves until it can work again";
+  }
 }
 
 /** What an effect sentence may read besides the value: the prices in force (ADR 0057). */
@@ -460,6 +520,9 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     key: "billing_order",
     label: "which Claude credential is used first",
     scope: "global",
+    // CE-13: read only as an earlier choice once credential_policy exists (ADR 0120).
+    replacedBy: CREDENTIAL_POLICY_SETTING,
+    hiddenFromTool: true,
     // Low risk (ADR 0100): it changes which of the person's own credentials pays first, never
     // a cap; Settings -> Claude: which to use first sets it without a card, and Undo puts the
     // previous order back.
@@ -480,6 +543,9 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     key: "mid_session_limit",
     label: "what tasks do when your first Claude credential runs out mid-session",
     scope: "global",
+    // CE-13: read only as an earlier choice once credential_policy exists (ADR 0120).
+    replacedBy: CREDENTIAL_POLICY_SETTING,
+    hiddenFromTool: true,
     risk: "medium",
     schema: z.enum(["wait", "use_other"]),
     narrows: (to) => to !== "use_other",
@@ -673,6 +739,30 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     display: chatAskAboveWords,
     examples: [0.1, 0],
   },
+  // d1109-cred-engine (CE-1, CE-13, ADR 0120; the owner's answer 4 of 2026-11-09: "it should
+  // use the order that the user specifies ... There should be a nice clean options menu"): one
+  // credential policy for every call. A change that moves less money without the person acts at
+  // once; one that moves more asks their yes; only the person sets it (never an agent).
+  [CREDENTIAL_POLICY_SETTING]: {
+    key: CREDENTIAL_POLICY_SETTING,
+    label: "which Claude does the work",
+    scope: "global",
+    risk: "medium",
+    schema: z.enum(CREDENTIAL_POLICIES) as unknown as z.ZodType<JsonValue>,
+    narrowingActsAtOnce: true,
+    narrows: (to, from) =>
+      typeof to === "string" &&
+      moneyRank(to as CredentialPolicyId) <=
+        moneyRank(
+          typeof from === "string" ? (from as CredentialPolicyId) : "subscription_then_wait",
+        ),
+    personOnly: true,
+    currentOfPrefs: (prefs) => credentialPolicyOf(prefs as Record<string, unknown>).id,
+    description:
+      "Which of the person's Claude credentials does the work, for every call, and what happens when the first one stops: subscription_then_wait (the default), subscription_then_ask, subscription_then_key, key_then_subscription or key_only. Only the person sets it.",
+    display: credentialPolicyWords,
+    effect: (value) => credentialPolicyEffect(value),
+  },
 };
 
 /** The default of `chat_ask_above` (CHF): the session lead's reading of "expensive". */
@@ -783,7 +873,9 @@ export function settingDefinitionLine(spec: SettingSpec): string {
 export function settingsSetDescription(): string {
   return [
     "Change a setting by key: a rule the app enforces, such as what research may read on the web (web_access), who merges accepted work, fast mode or quiet hours. Such a rule is a setting: change it here, never record it as a lesson instead (a lesson changes no setting). value takes the shape given for its key. A change that narrows what the app may do acts at once; one that widens it waits for the person's yes. Keys:",
-    ...Object.values(SETTING_SPECS).map(settingDefinitionLine),
+    ...Object.values(SETTING_SPECS)
+      .filter((s) => !s.hiddenFromTool)
+      .map(settingDefinitionLine),
   ].join("\n");
 }
 
@@ -922,10 +1014,22 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
       effect,
     };
   }
+  // CE-13: a person-only global key changed by an agent is refused in words.
+  if (spec.personOnly && ctx.actor.kind === "agent")
+    throw new ForerunnerError("validation", `Only you can change ${spec.label}.`, {
+      details: { key: spec.key, cause: "person_only" },
+    });
+  // CE-13: an older credential key once credential_policy is stored.
+  if (spec.replacedBy && human.notify_prefs[spec.replacedBy] != null)
+    throw new ForerunnerError("validation", CREDENTIAL_KEY_REPLACED, {
+      details: { key: spec.key, cause: "replaced", by: spec.replacedBy },
+    });
   const effect = spec.effect?.(parsed.data, await effectContext(spec, ctx));
   const current = spec.column
     ? ((human[spec.column as keyof HumanRow] as JsonValue | undefined) ?? null)
-    : (human.notify_prefs[spec.key] ?? null);
+    : spec.currentOfPrefs
+      ? spec.currentOfPrefs(human.notify_prefs)
+      : (human.notify_prefs[spec.key] ?? null);
   return {
     spec,
     value: parsed.data,
@@ -1077,8 +1181,14 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
     const t = await target(p, ctx);
     refuseNoChange(t);
     await write(ctx, t.spec, t.project?.id ?? null, t.value);
+    // CE-13: an Undo puts the stored value back (unset: the reading in force before), never the
+    // value read from older settings.
+    const before =
+      t.spec.currentOfPrefs && t.spec.scope === "global"
+        ? (t.human.notify_prefs[t.spec.key] ?? null)
+        : t.current;
     return {
-      before: { key: t.spec.key, project_id: t.project?.id ?? null, value: t.current },
+      before: { key: t.spec.key, project_id: t.project?.id ?? null, value: before },
       after: { key: t.spec.key, project_id: t.project?.id ?? null, value: t.value },
       sentence: sentenceOf(t),
       projectId: t.project?.id ?? null,
@@ -1086,6 +1196,15 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
   },
   // U-057: the value the undo puts back asks for what setting it would (process sandbox for
   // the evals: the paired device; a medium key: a yes); the safe side (`narrows`) acts at once.
+  // CE-13: an Undo of an older credential key's row once credential_policy is stored.
+  async undoBlocked(_p, before, _after, ctx) {
+    const b = asObject(before);
+    if (typeof b.key !== "string" || !Object.hasOwn(SETTING_SPECS, b.key)) return null;
+    const spec = settingSpec(b.key);
+    if (!spec.replacedBy) return null;
+    const human = await ctx.store.human.get(ctx.humanId);
+    return human?.notify_prefs[spec.replacedBy] != null ? CREDENTIAL_KEY_REPLACED : null;
+  },
   async undoRisk(_p, before, after) {
     const b = asObject(before);
     if (typeof b.key !== "string" || !Object.hasOwn(SETTING_SPECS, b.key)) return "low";

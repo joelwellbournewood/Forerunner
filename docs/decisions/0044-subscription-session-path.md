@@ -182,3 +182,10 @@ the provider reports no plan usage, and what the SDK subprocess may do outside a
 - **Keep the fake row enabled beside real sources.** Rejected: the router was never meant to
   pick it when a credential exists; with `BillingRouter.pick` in use it became a live
   candidate behind the subscription and the API key.
+
+## Amendment 2026-11-16 (d1109-cred-engine, [ADR 0120](0120-which-claude-does-the-work.md))
+
+The subscription's share is a credential stop at the pick: under the person's 'wait' or 'ask' a
+task whose next pick meets it waits (until the next month's start, or a raised allowance) instead
+of moving to the API key. The share reached mid-run is still the hooks' plan-level pause (named
+as not built in ADR 0120).

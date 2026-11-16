@@ -6,10 +6,15 @@ import {
   type BillingSourceProbe,
   type BillingSourceStatus,
   billingOrderOf,
+  type CredentialPolicy,
+  credentialPolicyOf,
   DEFAULT_ROUTING_POLICY,
   monthWindow,
   type RouteSkip,
   type RoutingPolicy,
+  type StopReason,
+  stopOf,
+  type WhenStopped,
 } from "@forerunner/billing";
 import type { Clock } from "@forerunner/platform";
 import { errorMessage, ForerunnerError, log, redact } from "@forerunner/platform";
@@ -31,7 +36,9 @@ import {
   BILLING_REFUSED_AUDIT_TOOL,
   closeRefusedCards,
   fileRefusedCard,
+  openRefusedCards,
 } from "../session/credential-wait.ts";
+import { refusalCategoryOf } from "../session/credential-words.ts";
 import {
   PLAN_USD_MONTHLY_ENV,
   type PlanAllowance,
@@ -261,15 +268,19 @@ export async function personOrderOf(
 }
 
 /**
- * The order the non-task calls (chat, intake, the critic, the model watch, the monthly jobs) use
- * when the person chose none: ADR 0098's choice kept, the API key when there is one, else the
- * subscription (ADR 0100). Task runs keep the policy's per-purpose order.
+ * The person's credential policy (CE-1, ADR 0120), read at every pick so a change in Settings
+ * applies to the next call: the stored preset, else their earlier choice read as one, else the
+ * default preset (subscription first, then wait) for every call. There is no other order: the
+ * non-task calls' own order (`CALL_FALLBACK_ORDER`, ADR 0098's API key first) is gone (the
+ * owner's answer 4 of 2026-11-09).
  */
-export const CALL_FALLBACK_ORDER: readonly BillingSourceKind[] = Object.freeze([
-  "api_key",
-  "plan_credits",
-  "subscription",
-]);
+export async function policyOf(
+  store: Pick<StateStore, "human">,
+  humanId: string,
+): Promise<CredentialPolicy> {
+  const human = await store.human.get(humanId).catch(() => null);
+  return credentialPolicyOf(human?.notify_prefs as Record<string, unknown> | null | undefined);
+}
 
 /** The audit row a rest after a usage limit writes (ADR 0100). */
 export const BILLING_REST_AUDIT_TOOL = "billing.rest";
@@ -506,6 +517,19 @@ export interface RouterTaskBillingOptions {
    * composition passes its page reader and host-commands flags. Absent: `DEFAULT_CHOOSER_FACTS`.
    */
   facts?: () => ChooserFacts;
+  /**
+   * CE-7 (ADR 0120): under 'Subscription first, then ask', work that waits on a stopped first
+   * choice while another credential can serve now asks the person once per stop: the
+   * composition files the one card (`ensureAskCard`, behind `limits.asking`).
+   */
+  ask?: (stop: {
+    sourceId: string;
+    stopKey: string;
+    kind: BillingSourceKind;
+    reason: StopReason;
+    until: string | null;
+    projectId: string;
+  }) => Promise<void>;
 }
 
 /**
@@ -537,21 +561,11 @@ export class RouterTaskBilling implements TaskBillingPort {
     const all = await this.sources(this.opts.humanId);
     const withheld: RouteSkip[] = [];
     const ownAgent = req.agentOwnerHumanId === this.opts.humanId;
-    const excluded = new Set(req.exclude ?? []);
     // A `fake` row is the stand-in of an install without credentials: beside a real source it
     // is never a candidate, so a subscription at its cap and an API key at its limit end in
     // "no source" rather than real work billed to a row that is no credential.
     const realSource = all.some((s) => s.kind !== "fake");
     const candidates = all.filter((s) => {
-      if (excluded.has(s.id)) {
-        withheld.push({
-          sourceId: s.id,
-          kind: s.kind,
-          code: "cooldown",
-          reason: "it just met its usage limit on this call",
-        });
-        return false;
-      }
       if (s.kind === "subscription" && !ownAgent) {
         withheld.push({
           sourceId: s.id,
@@ -574,21 +588,34 @@ export class RouterTaskBilling implements TaskBillingPort {
       }
       return true;
     });
-    // The person's order (U-078, ADR 0100), read at every pick so a change in Settings applies
-    // to the next call; without one, the caller's fallback order, else the purpose's own.
-    const order = (await personOrderOf(this.opts.store, this.opts.humanId)) ?? req.fallbackOrder;
+    // The person's credential policy (CE-1, CE-3, ADR 0120), read at every pick so a change in
+    // Settings applies to the next call: one order and one rule at a stop for every purpose
+    // (task runs, the critic, planning, the task check, chat, the background jobs).
+    const policy = await policyOf(this.opts.store, this.opts.humanId);
+    const order = policy.rule.order;
     const purpose = req.purpose ?? "session";
+    // The rule at a stop: the request's own (a one-off "Use API key" in chat moves that one call,
+    // never a background job's), else the person's; an older caller's `waitOnRest` reads as wait.
+    const whenStopped: WhenStopped =
+      req.allowSwitch && purpose !== "batch"
+        ? "next"
+        : (req.whenStopped ?? (req.waitOnRest ? "wait" : policy.rule.whenStopped));
+    // CE-3: a source this very call saw stop goes to the router as held (it waits under 'wait'
+    // and 'ask'), never withheld before it, so the hold can see it.
+    const heldNow = [...(req.exclude ?? [])];
     // The chooser (U-078, the owner's decision of 2026-11-02): what the task needs against what
     // each credential can do here. The credentials that meet every hard need come first and the
     // person's order decides among them; another group only when none of the first can serve now
-    // (a 'wait' for a first choice that rests holds, as in one group). This replaced C-64's
-    // "research on the API key first" (`firstKinds`), a default the owner's decision superseded.
+    // for a reason that is no stop (none saved, one turned off). At a stop the work waits for it,
+    // under every rule (CE-3: before, 'use the other one' dropped a research task onto a
+    // credential that cannot read pages here, against what the plan card said), and a group the
+    // person's policy does not let serve makes the work wait too, with reason `needs`.
     const facts = this.facts();
     const groups = groupByNeeds(candidates, (s) => s.kind, req.needs, facts);
     const passed: RouteSkip[] = [];
     let decision: Awaited<ReturnType<BillingRouter["pick"]>> | null = null;
     let failed: ForerunnerError | null = null;
-    for (const group of groups) {
+    for (const [i, group] of groups.entries()) {
       const router = new BillingRouter({ probe: this.probe, sources: group, policy: this.policy });
       try {
         decision = await router.pick({
@@ -597,17 +624,48 @@ export class RouterTaskBilling implements TaskBillingPort {
           runner: req.runner,
           purpose,
           modelTier: req.modelTier,
-          ...(order?.length ? { order } : {}),
-          ...(req.waitOnRest ? { waitOnRest: true } : {}),
+          order,
+          kinds: policy.rule.kinds,
+          whenStopped,
+          heldNow,
+          nowMs: this.opts.clock.now(),
         });
         break;
       } catch (e) {
         if (!(e instanceof ForerunnerError) || e.code !== "unavailable") throw e;
         const details = (e.details ?? {}) as { waitFor?: unknown; skipped?: RouteSkip[] };
-        // 'Wait' holds to the first choice that can do the task: nothing moves to a group that
-        // can do less of it.
+        // 'Wait' and 'Ask' hold to the first choice that can do the task: nothing moves to a
+        // group that can do less of it.
         if (details.waitFor) throw withSkipped(e, [...passed, ...(details.skipped ?? [])]);
-        passed.push(...(details.skipped ?? []));
+        const skips = details.skipped ?? [];
+        // CE-3: a group that cannot do less only when nothing in this one is stopped, or left out
+        // by the person's policy: the work waits with reason `needs` (the plan card's "only it
+        // can" stays true).
+        const more = groups.length > i + 1 && req.needs && req.needs.hard.length > 0;
+        const stopped = skips.find((s) => STOP_CODES.has(s.code));
+        const left = skips.find((s) => s.code === "policy");
+        if (more && (stopped || left)) {
+          const at = stopped ?? left;
+          throw new ForerunnerError(
+            "unavailable",
+            `the credential that can do this ${purpose} work cannot serve now; waiting for it`,
+            {
+              details: {
+                skipped: [...passed, ...skips] as never,
+                waitFor: {
+                  sourceId: stopped ? at?.sourceId : "",
+                  kind: at?.kind ?? "api_key",
+                  reason: "needs",
+                  until: stopped?.until ?? null,
+                  stopKey: stopped ? `needs:${stopped.sourceId}:${stopped.until ?? ""}` : "needs",
+                  ask: false,
+                  ...(stopped ? { stop: STOP_REASON_OF[stopped.code] } : {}),
+                } as never,
+              },
+            },
+          );
+        }
+        passed.push(...skips);
         failed = e;
       }
     }
@@ -662,11 +720,53 @@ export class RouterTaskBilling implements TaskBillingPort {
       if (s.kind === "fake" || kinds.includes(s.kind) || !s.credentialRef) continue;
       if (await this.opts.vault.has(s.credentialRef).catch(() => false)) kinds.push(s.kind);
     }
-    const order = await personOrderOf(this.opts.store, this.opts.humanId);
+    const order = (await policyOf(this.opts.store, this.opts.humanId)).rule.order;
     return kinds.sort(
       (a, b) =>
         kindRank(a, order, this.policy, "session") - kindRank(b, order, this.policy, "session"),
     );
+  }
+
+  /**
+   * CE-2: the stop a source is at now (its usage limit, a refusal, the share, a key's monthly
+   * cap) with its key, as the router reads it; null when it is not stopped (or gone).
+   */
+  async currentStopOf(
+    sourceId: string,
+  ): Promise<{ reason: StopReason; until: string | null; stopKey: string } | null> {
+    const source = (await this.sources(this.opts.humanId)).find((s) => s.id === sourceId);
+    if (!source) return null;
+    const status = await this.probe.status(source);
+    if (!status.available) return null;
+    return stopOf(source, status, this.opts.clock.now(), this.policy.planShareCap);
+  }
+
+  /**
+   * CE-9, CE-11: the person's first choice (the first saved kind of their policy's order) when it
+   * is stopped now, as a wait (whatever a grant or 'next' lets serve meanwhile); null when it
+   * serves, or nothing is saved.
+   */
+  async firstChoiceStop(): Promise<CredentialWait | null> {
+    const policy = await policyOf(this.opts.store, this.opts.humanId);
+    const sources = (await this.sources(this.opts.humanId)).filter((s) => s.kind !== "fake");
+    for (const kind of policy.rule.order) {
+      const [first] = sources
+        .filter((s) => s.kind === kind)
+        .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
+      if (!first || !(await this.opts.vault.has(first.credentialRef).catch(() => false))) continue;
+      const stop = await this.currentStopOf(first.id);
+      return stop
+        ? {
+            reason: stop.reason,
+            sourceId: first.id,
+            kind: first.kind,
+            until: stop.until,
+            stopKey: stop.stopKey,
+            ...(policy.rule.whenStopped === "ask" ? { ask: true } : {}),
+          }
+        : null;
+    }
+    return null;
   }
 
   /**
@@ -739,17 +839,24 @@ export class RouterTaskBilling implements TaskBillingPort {
       typeof limits.refusedAt === "string" &&
       (fingerprint === undefined || limits.refusedKey === fingerprint);
     const words = redact(current ? why.split(current).join("[REDACTED]") : why).slice(0, 300);
+    // CE-8: the refusal's category, never the provider's words, is what the card shows.
+    const category = refusalCategoryOf(row.kind, why);
     let marked = false;
     if (!known(row.limits as JsonObject))
       await updateSourceLimits(this.opts.store, row.id, (limits) => {
         // Another refusal of the same credential may have marked it meanwhile.
         marked = !known(limits);
+        const at = this.opts.clock.nowIso();
         return marked
           ? {
               ...limits,
-              refusedAt: this.opts.clock.nowIso(),
+              refusedAt: at,
               ...(fingerprint ? { refusedKey: fingerprint } : {}),
               refusedWhy: words,
+              refusedCategory: category,
+              // CE-8: the one card is filed by the writer that set this mark, so two refusals
+              // at the same instant (a task run and a chat call on one key) file one card.
+              refusedCard: { refusedAt: at, open: true },
             }
           : null;
       });
@@ -769,7 +876,7 @@ export class RouterTaskBilling implements TaskBillingPort {
         })
         .catch(() => undefined);
     }
-    if (this.opts.store.humanRequest && row.kind !== "fake")
+    if (marked && this.opts.store.humanRequest && row.kind !== "fake")
       await fileRefusedCard(this.opts.store as Pick<StateStore, "humanRequest">, {
         humanId: this.opts.humanId,
         agentId: null,
@@ -826,20 +933,79 @@ export class RouterTaskBilling implements TaskBillingPort {
         ] as never,
       };
     });
+    // CE-7: under 'ask', work that waits on a stopped first choice asks the person once per stop,
+    // when another credential can serve it now. CE-8 (the owner's 7c: "as if it has run out"): a
+    // refusal is such a stop too, asked about once until a new credential is saved; its refused
+    // card below stays the notification with the link to save one.
+    if (row && this.opts.ask) await this.askFor(row, projectId, agentId);
     // TR-10: work waits on a refused credential again after its card was closed (another
-    // credential had taken the work): the card that asks for a new one is filed again.
+    // credential had taken the work): the card that asks for a new one is filed again, once
+    // (CE-8: only by the writer that opens `limits.refusedCard`, version-checked, so two waits
+    // at the same instant file one card, after a restart too).
     if (row && this.opts.store.humanRequest && row.kind !== "fake") {
       const source = {
         limits: row.limits as BillingSource["limits"],
         credentialRef: row.credential_ref ?? "",
       };
-      if (await refusedSince(source, this.opts.vault).catch(() => null))
-        await fileRefusedCard(this.opts.store as Pick<StateStore, "humanRequest">, {
-          humanId: this.opts.humanId,
-          agentId: null,
-          sourceId: row.id,
-          kind: row.kind,
-        }).catch(() => undefined);
+      if (await refusedSince(source, this.opts.vault).catch(() => null)) {
+        // A mark written before CE-8 has no `refusedCard`: its open card, if any, stands for it.
+        const openCard = (
+          await openRefusedCards(
+            this.opts.store as Pick<StateStore, "humanRequest">,
+            this.opts.humanId,
+          )
+        ).some((r) => (r.change_card as { source_id?: unknown }).source_id === row.id);
+        let opened = false;
+        await updateSourceLimits(this.opts.store, row.id, (limits) => {
+          const card = limits.refusedCard as { open?: unknown } | undefined;
+          opened = card ? card.open !== true : !openCard;
+          return opened
+            ? {
+                ...limits,
+                refusedCard: {
+                  refusedAt: typeof limits.refusedAt === "string" ? limits.refusedAt : "",
+                  open: true,
+                },
+              }
+            : null;
+        });
+        if (opened)
+          await fileRefusedCard(this.opts.store as Pick<StateStore, "humanRequest">, {
+            humanId: this.opts.humanId,
+            agentId: null,
+            sourceId: row.id,
+            kind: row.kind,
+          }).catch(() => undefined);
+      }
+    }
+  }
+
+  /** CE-7: the one ask card for the stop `row` is at, when the policy asks and another serves. */
+  private async askFor(row: BillingSourceRow, projectId: string, agentId: string): Promise<void> {
+    try {
+      const policy = await policyOf(this.opts.store, this.opts.humanId);
+      if (policy.rule.whenStopped !== "ask") return;
+      const stop = await this.currentStopOf(row.id);
+      if (!stop) return;
+      const other = await this.pick({
+        agentId,
+        agentOwnerHumanId: this.opts.humanId,
+        runner: "pc",
+        modelTier: "sonnet",
+        purpose: "session",
+        allowSwitch: true,
+      }).catch(() => null);
+      if (!other || other.source.id === row.id) return;
+      await this.opts.ask?.({
+        sourceId: row.id,
+        stopKey: stop.stopKey,
+        kind: row.kind as BillingSourceKind,
+        reason: stop.reason,
+        until: stop.until,
+        projectId,
+      });
+    } catch (e) {
+      this.logger.warn("the ask card was not filed", { error: errorMessage(e) });
     }
   }
 
@@ -903,12 +1069,32 @@ export class RouterTaskBilling implements TaskBillingPort {
         const kept = free ? [] : waiting.filter((w) => !servedElsewhere.has(w.projectId));
         nothingWaits = refusedHere && taken.length > 0 && kept.length === 0;
         if (!stale && !taken.length) return null;
-        const { refusedAt: _a, refusedKey: _k, refusedWhy: _w, waiting: _l, ...rest } = limits;
+        const {
+          refusedAt: _a,
+          refusedKey: _k,
+          refusedWhy: _w,
+          refusedCategory: _c,
+          refusedCard: _r,
+          waiting: _l,
+          ...rest
+        } = limits;
         return {
           ...rest,
           ...(refusedHere && limits.refusedAt ? { refusedAt: limits.refusedAt } : {}),
           ...(refusedHere && limits.refusedKey ? { refusedKey: limits.refusedKey } : {}),
           ...(refusedHere && limits.refusedWhy ? { refusedWhy: limits.refusedWhy } : {}),
+          ...(refusedHere && limits.refusedCategory
+            ? { refusedCategory: limits.refusedCategory }
+            : {}),
+          // CE-8: the card closes below when nothing waits any more; a later wait files it again.
+          ...(refusedHere && limits.refusedCard
+            ? {
+                refusedCard: {
+                  ...(limits.refusedCard as JsonObject),
+                  ...(nothingWaits ? { open: false } : {}),
+                },
+              }
+            : {}),
           ...(kept.length ? { waiting: kept } : {}),
         } as JsonObject;
       });
@@ -937,7 +1123,14 @@ export class RouterTaskBilling implements TaskBillingPort {
       if (row.kind !== kind || typeof row.limits.refusedAt !== "string") continue;
       await updateSourceLimits(this.opts.store, row.id, (limits) => {
         if (typeof limits.refusedAt !== "string") return null;
-        const { refusedAt: _a, refusedKey: _k, refusedWhy: _w, ...rest } = limits;
+        const {
+          refusedAt: _a,
+          refusedKey: _k,
+          refusedWhy: _w,
+          refusedCategory: _c,
+          refusedCard: _r,
+          ...rest
+        } = limits;
         return rest;
       });
       if (this.opts.store.humanRequest)
@@ -949,6 +1142,20 @@ export class RouterTaskBilling implements TaskBillingPort {
     }
   }
 }
+
+/** The router's skip codes of a stopped source (CE-3), and the stop each one is. */
+const STOP_CODES: ReadonlySet<string> = new Set([
+  "cooldown",
+  "refused",
+  "plan_share",
+  "monthly_limit",
+]);
+const STOP_REASON_OF: Record<string, "limit" | "refused" | "share" | "key_month"> = {
+  cooldown: "limit",
+  refused: "refused",
+  plan_share: "share",
+  monthly_limit: "key_month",
+};
 
 /** The router's "no source" again, with every group's skipped sources (the wait words read them). */
 function withSkipped(e: ForerunnerError, skipped: readonly RouteSkip[]): ForerunnerError {

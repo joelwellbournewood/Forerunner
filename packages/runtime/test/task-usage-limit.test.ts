@@ -265,3 +265,59 @@ describe("a task run that meets the subscription's usage limit, under 'Use the o
     );
   }, 60_000);
 });
+
+// d1109-cred-engine CE-5 (ADR 0120; the owner's 7a: "allow the task to be completed by the API,
+// but in a transparent way"): the run that continues a task its credential stopped is told to
+// continue from the kept work, never that the last attempt failed.
+describe("d1109-cred-engine, run C: the run that continues a credential-stopped task", () => {
+  let rt: RuntimeApp;
+  const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+  const sdkCalls: string[] = [];
+  let provider: ScriptedProvider;
+
+  beforeAll(async () => {
+    provider = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
+    ({ rt } = await compose(
+      clock,
+      limitedClaudeCode("2026-10-31T14:00:00.000Z", sdkCalls),
+      provider,
+    ));
+    await rt.store.human.patch(rt.human.id, {
+      notify_prefs: { credential_policy: "subscription_then_key" } as never,
+    });
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("under 'then the API key' the key's run is briefed from where the subscription's run stopped", async () => {
+    const { project, task } = await changelogTask(rt);
+    await start(rt, project.id, []);
+    expect(sdkCalls).toHaveLength(1);
+    expect((await rt.store.task.mustGet(task.id)).status).toBe("done");
+    const work = provider.calls.filter(
+      (c) => !(c.tools ?? []).some((t) => t.name === "submit_review"),
+    );
+    expect(work.length).toBeGreaterThan(0);
+    const brief = JSON.stringify(work[0]?.messages ?? []);
+    expect(brief).toContain("## Where the last run stopped");
+    expect(brief).toContain(
+      "The last run of this task stopped when its Claude credential reached its limit, before it changed any file.",
+    );
+    expect(brief).toContain(
+      "It left no note: its Claude credential stopped it before it could write one.",
+    );
+    expect(brief).toContain("Files it changed: none.");
+    expect(brief).not.toContain("## The previous attempt");
+    expect(brief).not.toContain("It failed");
+    expect(brief).not.toContain("stopped at its budget");
+    // The run rows: the first stopped at the limit on the subscription, the second on the key.
+    const runs = (await rt.store.run.forTask(task.id))
+      .filter((r) => r.specialist !== "critic")
+      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+    const sources = await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 });
+    const key = sources.find((s) => s.kind === "api_key");
+    expect(runs[0]?.outcome).toBe("usage_limit");
+    expect(runs[1]?.billing_source_id).toBe(key?.id);
+  }, 60_000);
+});

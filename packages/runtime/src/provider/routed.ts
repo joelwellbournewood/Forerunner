@@ -14,7 +14,7 @@ import {
   type TaskBillingPick,
   type TaskBillingRequest,
 } from "../session/billing.ts";
-import { type CredentialWait, credentialWaitOf } from "../session/credential-wait.ts";
+import { type CredentialWait, clockTime, credentialWaitOf } from "../session/credential-wait.ts";
 import { tierFromId } from "./anthropic.ts";
 import {
   type CallBilling,
@@ -37,17 +37,21 @@ import { USAGE_LIMIT_CODE } from "./usage-limit.ts";
  * token (ADR 0098: the token never reaches the Messages API; ADR 0100: a key never reaches
  * Claude Code). One instance per purpose (`withPurpose`) shares the rest.
  *
- * - **Which source.** `RouterTaskBilling.pick` with the purpose of the caller, the person's
- *   order when they chose one, else `fallbackOrder` (ADR 0098's choice: the API key first), and
- *   the router's rules (caps, plan share, monthly limit, the rest after a usage limit, the
- *   credential in the vault).
+ * - **Which source.** `RouterTaskBilling.pick` with the purpose of the caller under the person's
+ *   credential policy (CE-1, CE-4, ADR 0120: one order and one rule at a stop for every call; the
+ *   non-task calls' own order, ADR 0098's API key first, is gone), and the router's rules (caps,
+ *   plan share, monthly limit, the rest after a usage limit, the credential in the vault).
  * - **Who paid.** `message_end` carries `billing` (`CallBilling`): the source, its ledger kind
  *   and, for a subscription, the plan share after the call. The loop driver books the call's
  *   ledger row to it, so the plan share and the key's monthly spend stay right.
- * - **Fallback.** A call that meets `provider_usage_limit` before it streamed anything rests the
- *   source (`rest`: until the reported reset, else an hour), is written to the session log and
- *   the audit log as a plain sentence, and is made once more on the next source. A second limit,
- *   or a limit after the reply began, is the call's error.
+ * - **Fallback.** A call that meets `provider_usage_limit` (or a refusal) before it streamed
+ *   anything rests (or marks) the source and picks again under the person's rule: under `next`
+ *   it is made once more on the next source, written to the session log and the audit log as a
+ *   plain sentence; under `wait` and `ask` the pick holds (the stopped source goes to the router
+ *   as held), so the call ends with the limit and no other credential is asked (CE-4: before,
+ *   every non-task call moved, so a subscription at its limit sent chat, planning and the
+ *   critic's reviews to the API key while the app said the work waits). A second limit, or a
+ *   limit after the reply began, is the call's error.
  */
 export interface RoutedProviderDeps {
   /** The router over the person's sources (`RouterTaskBilling`). */
@@ -72,12 +76,18 @@ export interface RoutedProviderDeps {
   store?: Pick<StateStore, "event" | "auditLog">;
   /** The call's price, for the plan share a subscription row carries after the call. */
   pricing?: (modelId: string) => RunPricing;
-  /** The order when the person chose none (`CALL_FALLBACK_ORDER`). */
-  fallbackOrder?: readonly BillingSourceKind[];
   /** True when an API-style source exists: fast mode can apply (API only, spec D.20). */
   fastMode?: boolean;
   /** Each fallback as the session log words it (tests and the daemon's own log). */
   onFallback?: (sentence: string, info: FallbackInfo) => void;
+  /** CE-11: the person's time zone, so the session log names the time in their clock. */
+  timezone?: () => Promise<string | undefined>;
+  /**
+   * CE-8: whether Anthropic's refusal of this source stands (its credential was not replaced
+   * since): such a source is asked nothing, not even the model list or a model's output limit,
+   * until a different credential is saved.
+   */
+  refused?: (source: BillingSource) => Promise<boolean>;
 }
 
 export interface FallbackInfo {
@@ -101,11 +111,21 @@ export class RoutedProvider implements ModelProvider {
   constructor(
     private readonly deps: RoutedProviderDeps,
     readonly purpose: Purpose = "chat",
+    /** CE-9: this instance's calls may move to the next credential at a stop (one chat turn). */
+    private readonly allowSwitch = false,
   ) {}
 
   /** The same routing for another purpose (the critic, the intake, the model watch). */
   withPurpose(purpose: Purpose): RoutedProvider {
     return new RoutedProvider(this.deps, purpose);
+  }
+
+  /**
+   * CE-9: the same routing for one chat question the person pressed "Use API key" for: its calls
+   * may move to the next credential at a stop (no grant, no card, never a background job).
+   */
+  withOneOffSwitch(): RoutedProvider {
+    return new RoutedProvider(this.deps, this.purpose, this.purpose !== "batch");
   }
 
   /** Fast mode is API only: offered when an API-style source exists; a subscription call drops it. */
@@ -163,6 +183,33 @@ export class RoutedProvider implements ModelProvider {
   }
 
   /**
+   * CE-4, CE-9: whether a call of this purpose would be held now under the person's rule (the
+   * wait), and whether a one-off switch could serve it (`switchTo`: the source that would; null
+   * when none could). Null when the call would be made. Nothing is spent: the picks only read.
+   */
+  async holdNow(
+    model = "claude-sonnet-5-5",
+  ): Promise<{ wait: CredentialWait; switchTo: BillingSource | null } | null> {
+    if (this.allowSwitch) return null;
+    let wait: CredentialWait | null = null;
+    try {
+      await this.pick(model, []);
+      return null;
+    } catch (e) {
+      wait = credentialWaitOf(e);
+    }
+    if (!wait) return null;
+    let switchTo: BillingSource | null = null;
+    if (wait.reason !== "needs")
+      try {
+        switchTo = (await this.pick(model, [], true)).source;
+      } catch {
+        switchTo = null;
+      }
+    return { wait, switchTo };
+  }
+
+  /**
    * A project's work waits for this source (U-078): kept on it (`limits.waiting`), so the
    * project's session starts by itself once the source serves again. The critic's review of a
    * task that no credential could serve asks it (the task runs again then and is reviewed).
@@ -182,8 +229,9 @@ export class RoutedProvider implements ModelProvider {
         pick = await this.pick(req.model, tried);
       } catch (e) {
         if (last) {
-          // The fallback found nothing: the limit is the call's error, and the log says so.
-          await this.recordFallback(req, last.source, null, last.event);
+          // The fallback found nothing, or the person's rule holds (CE-4: no other credential is
+          // asked under 'wait' and 'ask'): the limit is the call's error, and the log says so.
+          await this.recordFallback(req, last.source, null, last.event, heldByRule(e));
           yield { ...last.event, sourceId: last.source.id };
           return;
         }
@@ -279,7 +327,12 @@ export class RoutedProvider implements ModelProvider {
     );
   }
 
-  private pick(model: string, exclude: readonly string[]): Promise<TaskBillingPick> {
+  private pick(
+    model: string,
+    exclude: readonly string[],
+    allowSwitch = this.allowSwitch,
+  ): Promise<TaskBillingPick> {
+    // One order for every call (CE-4): the person's policy, read in the pick; no order of its own.
     return this.deps.billing.pick({
       agentId: this.deps.agentId,
       agentOwnerHumanId: this.deps.humanId,
@@ -287,7 +340,7 @@ export class RoutedProvider implements ModelProvider {
       modelTier: tierFromId(model) ?? "sonnet",
       purpose: this.purpose,
       exclude: [...exclude],
-      ...(this.deps.fallbackOrder ? { fallbackOrder: this.deps.fallbackOrder } : {}),
+      ...(allowSwitch ? { allowSwitch: true } : {}),
     });
   }
 
@@ -343,9 +396,15 @@ export class RoutedProvider implements ModelProvider {
     from: BillingSource,
     to: BillingSource | null,
     failed: StreamEvent & { type: "error" },
+    held = false,
   ): Promise<void> {
     const until = failed.resetAt ?? null;
-    const sentence = fallbackSentence(from, to, until);
+    const timezone = await this.deps.timezone?.().catch(() => undefined);
+    const sentence = fallbackSentence(from, to, until, {
+      ...(timezone ? { timezone } : {}),
+      nowMs: this.deps.clock.now(),
+      held,
+    });
     const sessionId = req.origin?.sessionId ?? null;
     const info: FallbackInfo = {
       from: { sourceId: from.id, kind: from.kind, label: from.label },
@@ -386,10 +445,16 @@ export class RoutedProvider implements ModelProvider {
       .catch(() => undefined);
   }
 
+  /**
+   * The first API-style source's provider, for the model list and a model's output limit; never
+   * one whose refusal stands (CE-8: a refused key gets no second request from any path; before,
+   * the model list asked it again after its 401).
+   */
   private async apiProvider(): Promise<ModelProvider | null> {
     const sources = await this.deps.sources().catch(() => [] as BillingSource[]);
     for (const s of sources) {
       if (s.kind !== "api_key" && s.kind !== "plan_credits") continue;
+      if (await this.deps.refused?.(s).catch(() => true)) continue;
       const p = await this.deps.providerFor(s).catch(() => null);
       if (p) return p;
     }
@@ -420,16 +485,32 @@ export function plainTime(iso: string | null | undefined): string {
   return `${d.slice(0, 10)} ${d.slice(11, 16)} UTC`;
 }
 
-/** The session log's sentence for a fallback (U-078): what ran out, until when, what answered. */
+/**
+ * The session log's sentence for a fallback (U-078): what ran out, until when (CE-11: in the
+ * person's clock, never UTC), what answered, or that the person's rule holds the work for it.
+ */
 export function fallbackSentence(
   from: Pick<BillingSource, "kind" | "label">,
   to: Pick<BillingSource, "kind" | "label"> | null,
   restingUntil: string | null,
+  opts: { timezone?: string; nowMs?: number; held?: boolean } = {},
 ): string {
-  const head = `${capital(labelOf(from))} reached its usage limit and rests until ${plainTime(restingUntil)}`;
-  return to
-    ? `${head}; ${labelOf(to)} answered instead.`
+  const at =
+    restingUntil && Number.isFinite(Date.parse(restingUntil))
+      ? clockTime(restingUntil, opts.timezone, opts.nowMs ?? Date.parse(restingUntil))
+      : "later";
+  const head = `${capital(labelOf(from))} reached its usage limit and rests until ${at}`;
+  if (to) return `${head}; ${labelOf(to)} answered instead.`;
+  return opts.held
+    ? `${head}; the work waits for it, as you chose.`
     : `${head}; no other Claude credential can be used now.`;
+}
+
+/** Whether a pick's "no source" is the person's rule holding to a stopped first choice (CE-4). */
+function heldByRule(e: unknown): boolean {
+  return (
+    e instanceof ForerunnerError && !!(e.details as { waitFor?: unknown } | undefined)?.waitFor
+  );
 }
 
 /** Why no source can serve, from the router's skips, in plain words. */

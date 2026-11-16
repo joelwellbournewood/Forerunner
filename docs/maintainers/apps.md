@@ -937,6 +937,13 @@ also answers the main window's permission requests (`media.rs`): the microphone 
 the shell's own pages only, so the conversation panel's `getUserMedia({ audio })` works
 without a webview prompt (WebKitGTK would otherwise deny it).
 
+### The credential policy in the fake daemon ([ADR 0120](../decisions/0120-which-claude-does-the-work.md))
+
+The fake daemon rates `credential_policy` medium (as SETTING_SPECS) and records an ask card's
+answer (`credential:ask`: Use API key granted, Wait waited) as the daemon's `syncAskAnswers` does,
+so the card's Done line reads the same; the UI's real-daemon describe "d1109-cred-engine, run C"
+answers the card with the option it shows.
+
 ## How to change it
 
 - **Add a page**: create `src/pages/XPage.tsx`, add a `<Route>` in `src/routes.tsx`, a nav entry

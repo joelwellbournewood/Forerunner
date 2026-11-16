@@ -235,3 +235,9 @@ and a failure is the stronger rung's first use.
   amount within the outer room (as decided above; the build had also capped it at twice the
   median). A typed "yes" after a newer ask line answers that line, not an older read-back card
   still waiting. Think it through is never offered under a turn whose command tools ran.
+
+## Amendment 2026-11-16 (d1109-cred-engine, [ADR 0120](0120-which-claude-does-the-work.md))
+
+A longer pass that goes ahead without asking runs on the credential the person's policy serves
+chat now; the ask line names it when it is not the person's first (the policy's first saved kind),
+which replaces the first-credential rule of run C3.

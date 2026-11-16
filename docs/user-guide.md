@@ -1052,6 +1052,23 @@ usage, so it estimates against this amount and stops subscription work at 95% of
 key takes over when you have one. The default (about CHF 40) is low on purpose: enter
 what your plan covers, or a Max plan's work stops early.
 
+### One rule for every call (Which Claude does the work)
+
+Forerunner uses one rule for everything it asks Claude: your tasks, the critic's reviews,
+planning, chat and its own monthly checks. Until you pick one, the rule is **Subscription first,
+then wait**: everything uses your Claude subscription first, and when it is at its limit, at the
+share Forerunner may use, or Anthropic refuses it, nothing moves to your API key; the work waits,
+and a session you started goes on by itself when the subscription can work again. Under
+**Subscription first, then ask me** you get one card in the Inbox per stop ("Use your API key
+until 15:40?"): **Use API key** lets your work and chat use the key until the stop ends (about
+the amount the card names for what waits now; Forerunner's own monthly checks still wait), and
+**Wait** moves nothing. Under **Subscription first, then the API key** work goes on with the key
+at once, at a cost per use. While chat waits it says why, and it can still add, move and start
+tasks. A refused key or sign-in gets one card that says why and what the work does until you
+save a new one; Forerunner never sends it another request meanwhile. Under **Subscription first,
+then ask me** a refused sign-in also gets one card asking whether your API key does the work until
+you save a new one. Changing the rule to one that can spend more asks your yes first.
+
 ### Which Claude credential is used first
 
 With both a Claude subscription and an API key saved, Settings → **Claude: which to use first**

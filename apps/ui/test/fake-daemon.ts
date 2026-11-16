@@ -1459,6 +1459,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         // that prepare work say what pressing them does now (a session of the project running,
         // another one running, "Start a session by itself" on).
         ...(r.status === "open" && r.projectId ? preparedOfFake(r.projectId) : {}),
+        // d1109-cred-engine, as the daemon's `credentialAskFor`: the ask card is worded in the
+        // person's clock at the time it was filed; the fake keeps every stop's session waiting.
+        ...((r.changeCard as { key?: unknown } | null)?.key === "credential:ask"
+          ? {
+              credentialAsk: {
+                timezone: me.timezone,
+                nowMs: Date.parse(
+                  String((r.changeCard as { filed_at?: unknown }).filed_at ?? r.createdAt),
+                ),
+                sessionWaits: true,
+              },
+            }
+          : {}),
       },
     );
     return { ...r, ...words };
@@ -2168,8 +2181,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         sessionId: null,
         kind: "approval",
         why: planOnly
-          ? `Intake for "${project.name}": 1 milestone(s), 1 new task(s) and a first-session plan of 1 task(s). Approve to add them to the project; nothing is written until then.`
-          : `Intake for "${project.name}": 1 milestone(s), 1 task(s), 0 doc(s) and a first-session plan of 1 task(s). Approve to write the plan and the docs; nothing is written until then.`,
+          ? `Intake for "${project.name}": 1 milestone(s), 1 new task(s) and a first-session plan of 1 task. Approve to add them to the project; nothing is written until then.`
+          : `Intake for "${project.name}": 1 milestone(s), 1 task(s), 0 doc(s) and a first-session plan of 1 task. Approve to write the plan and the docs; nothing is written until then.`,
         steps: [],
         options: ["Approve and start", "Change the plan", "Reject"],
         blocking: true,
@@ -3855,6 +3868,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         outcome:
           read?.kind === "cancel" ? "cancelled" : read?.kind === "without" ? "without" : "answered",
         ...(read?.kind !== "cancel" && runnable ? { start: "waits_start" } : {}),
+      };
+    }
+    // d1109-cred-engine CE-7, as the daemon's `syncAskAnswers`: Use API key grants this stop
+    // (the waiting work goes on), Wait moves nothing; the card keeps the outcome its Done line
+    // reads. The fake runs nothing for the grant.
+    const askCard = r.changeCard as { key?: unknown } | null;
+    if (askCard?.key === "credential:ask") {
+      const use = String(parsed.data.answer).trim().toLowerCase() === "use api key";
+      r.changeCard = {
+        ...askCard,
+        applied_at: new Date().toISOString(),
+        outcome: use ? "granted" : "waited",
+        session_goes_on: true,
       };
     }
     // As the daemon's `syncSignoffAnswers` (design §3.8): Try again / Send it back sends the task
@@ -5974,6 +6000,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     web_access: "medium",
     // d1109-starts-engine S-5: medium, as SETTING_SPECS.start_by_itself (turning on asks a yes).
     start_by_itself: "medium",
+    // d1109-cred-engine CE-13: medium, as SETTING_SPECS.credential_policy (more money asks a yes).
+    credential_policy: "medium",
   };
   /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
   const settingSlot = (key: string, projectId: string | null) =>
