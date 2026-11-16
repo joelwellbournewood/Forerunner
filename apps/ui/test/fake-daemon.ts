@@ -147,6 +147,10 @@ import {
   takeOutConflictSentence,
   takeOutOpenedSentence,
 } from "@forerunner/runtime/daemon/take-out-words";
+import {
+  TASK_PROPOSAL_KEY,
+  TASK_PROPOSAL_OPTIONS,
+} from "@forerunner/runtime/daemon/task-proposal-words";
 import { ACTION_WORDS } from "@forerunner/runtime/daemon/task-words";
 import { ImportResultView } from "@forerunner/runtime/data/types";
 import {
@@ -3503,6 +3507,186 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       key.fill(0);
     }
   });
+  /**
+   * As the daemon's `syncTaskProposals` (d1109-selftasks-run, ADR 0119 point 7): the agent's
+   * suggested task changes, approved with "Make these changes", are made as ONE change with one
+   * Undo, each checked on the tasks now (a split of a task that is no longer Draft or Ready is
+   * left out and named). The person answered in the app, so the row's source is `ui`. Nothing
+   * starts a session.
+   */
+  const applyTaskProposal = (r: HumanRequestView, card: Record<string, unknown>) => {
+    const project = state.projects.find((p) => p.id === r.projectId);
+    const changes = (Array.isArray(card.changes) ? card.changes : []) as {
+      line: string;
+      calls: { name: string; params: Record<string, unknown> }[];
+    }[];
+    const leftOut: string[] = [];
+    const said: string[] = [];
+    const undoWords: string[] = [];
+    const restore: { id: string; title: string; acceptanceCriteria: string[] }[] = [];
+    const created: string[] = [];
+    const added: string[] = [];
+    const waited: { id: string; dependsOn: string[] }[] = [];
+    const calls: { name: string; params: Record<string, unknown> }[] = [];
+    let changed = 0;
+    const statusWord = (s: string) => (s === "needs_human" ? "paused" : s.replace(/_/g, " "));
+    const newTask = (
+      from: Partial<TaskView> & Pick<TaskView, "title" | "outcome" | "acceptanceCriteria">,
+      reason: string,
+    ): TaskView => {
+      const task: TaskView = {
+        id: nextId("task"),
+        projectId: r.projectId ?? "",
+        milestoneId: from.milestoneId ?? null,
+        title: from.title,
+        outcome: from.outcome,
+        acceptanceCriteria: from.acceptanceCriteria,
+        riskTier: from.riskTier ?? 1,
+        status: "ready",
+        priority: from.priority ?? "medium",
+        claimedBy: null,
+        claimExpires: null,
+        dependsOn: from.dependsOn ?? [],
+        budget: money(0),
+        estimate: money(0),
+        actual: money(0),
+        spent: money(0),
+        cap: money(3_000_000),
+        capSource: "specialist_limit",
+        specialist: from.specialist ?? null,
+        attempt: 0,
+        prUrl: null,
+        branch: null,
+        reason,
+        updatedAt: new Date().toISOString(),
+        version: 1,
+      };
+      state.tasks.push(task);
+      state.taskMeta.added.set(task.id, state.taskMeta.added.size + 1000);
+      created.push(task.id);
+      return task;
+    };
+    for (const change of changes) {
+      const split = change.calls.find((x) => x.name === "task.split");
+      const target = split ? state.tasks.find((t) => t.id === split.params.task) : undefined;
+      if (split && (!target || !["draft", "ready"].includes(target.status))) {
+        leftOut.push(
+          `${change.line.replace(/\.$/, "")}: ${target ? `"${target.title}" is ${statusWord(target.status)}, so it is not split.` : "the task is gone."}`,
+        );
+        continue;
+      }
+      for (const call of change.calls) {
+        calls.push(call);
+        if (call.name === "task.split" && target) {
+          const parts = (call.params.parts ?? []) as {
+            title: string;
+            acceptance_criteria?: string[];
+          }[];
+          const was = target.title;
+          restore.push({
+            id: target.id,
+            title: target.title,
+            acceptanceCriteria: [...target.acceptanceCriteria],
+          });
+          for (const t of state.tasks)
+            if (t.dependsOn.includes(target.id))
+              waited.push({ id: t.id, dependsOn: [...t.dependsOn] });
+          target.title = parts[0]?.title ?? target.title;
+          target.acceptanceCriteria = parts[0]?.acceptance_criteria ?? target.acceptanceCriteria;
+          touch(target);
+          let previous = target;
+          const madeIds: string[] = [];
+          for (const part of parts.slice(1)) {
+            const made = newTask(
+              {
+                ...target,
+                title: part.title,
+                acceptanceCriteria: part.acceptance_criteria ?? [],
+                dependsOn:
+                  call.params.order === "side_by_side" ? [...target.dependsOn] : [previous.id],
+              },
+              `Split from "${was}" by the agent`,
+            );
+            madeIds.push(made.id);
+            previous = made;
+          }
+          for (const w of waited)
+            if (w.dependsOn.includes(target.id)) {
+              const t = state.tasks.find((x) => x.id === w.id);
+              if (t) t.dependsOn = [...new Set([...t.dependsOn, ...madeIds])];
+            }
+          said.push(change.line);
+          undoWords.push(`"${was}" is one task again`);
+        }
+        if (call.name === "task.create") {
+          const p = call.params;
+          const made = newTask(
+            {
+              title: String(p.title),
+              outcome: String(p.outcome ?? ""),
+              acceptanceCriteria: (p.acceptance_criteria as string[] | undefined) ?? [],
+              specialist: typeof p.specialist === "string" ? p.specialist : null,
+              dependsOn: (p.depends_on as string[] | undefined) ?? [],
+            },
+            "Added by the agent",
+          );
+          added.push(made.id);
+          said.push(
+            `Added "${made.title}" to ${project?.name ?? "the project"}${made.specialist ? `, for the ${made.specialist}` : ""}.`,
+          );
+          undoWords.push(`cancelled the task "${made.title}" you created`);
+        }
+      }
+      changed += 1;
+    }
+    const at = new Date().toISOString();
+    if (!changed) {
+      r.changeCard = { ...card, outcome: "not_applied", left_out: leftOut };
+      return;
+    }
+    const entry: ChangeLogView = {
+      id: nextId("chg"),
+      humanId: ME.id,
+      agentId: "agent_alice",
+      wordsUsed: TASK_PROPOSAL_OPTIONS[0],
+      commands: calls,
+      before: { tasks: restore, waited } as never,
+      after: {
+        task_proposal: {
+          restore,
+          created,
+          added,
+          waited,
+          words: `Undone: ${undoWords.join("; ")}.`,
+        },
+      } as never,
+      scope: "project",
+      projectId: r.projectId ?? null,
+      expiresAt: null,
+      undoState: "undoable",
+      undoneAt: null,
+      source: "ui",
+      sentence: said.join(" "),
+      undoable: true,
+      createdAt: at,
+      version: 1,
+    };
+    state.changes.unshift(entry);
+    const running = state.sessions.some(
+      (x) => x.projectId === r.projectId && (x.status === "running" || x.status === "planned"),
+    );
+    r.changeCard = {
+      ...card,
+      outcome: "applied",
+      changed,
+      change_log_id: entry.id,
+      approved_task_ids: created,
+      running,
+      ...(leftOut.length ? { left_out: leftOut } : {}),
+    };
+    if (r.projectId) emit("project.changed", { id: r.projectId });
+  };
+
   app.post("/requests/:id/answer", async (c) => {
     const r = state.requests.find((x) => x.id === c.req.param("id"));
     if (!r) return errorBody(c, 404, "not_found", "no such request");
@@ -3662,6 +3846,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         outcome: moved ? "task_moved_on" : read,
         ...(!moved && read === "retry" ? { start: "waits_start" } : {}),
       };
+    }
+    const proposal = r.changeCard as { key?: unknown } | null;
+    if (proposal?.key === TASK_PROPOSAL_KEY) {
+      if (parsed.data.answer === TASK_PROPOSAL_OPTIONS[0])
+        applyTaskProposal(r, proposal as Record<string, unknown>);
+      else r.changeCard = { ...proposal, outcome: "kept" };
     }
     if (r.kind === "capability_grant") {
       const ext = state.extensions.find((e) => `req_${e.id}` === r.id);
@@ -6803,6 +6993,23 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ? "the session this start began has already ended; there is nothing to undo"
         : null;
     }
+    // d1109-selftasks-run: as the daemon's split and create, the approved set is undone while
+    // none of its tasks has run since.
+    const proposal = (
+      ch.after as {
+        task_proposal?: { restore: { id: string }[]; created: string[]; added: string[] };
+      } | null
+    )?.task_proposal;
+    if (proposal) {
+      for (const id of [...proposal.restore.map((r) => r.id), ...proposal.created]) {
+        const t = state.tasks.find((x) => x.id === id);
+        if (!t || ["draft", "ready", "cancelled"].includes(t.status)) continue;
+        return proposal.added.includes(t.id)
+          ? `the task "${t.title}" is ${t.status}; a ${t.status} task cannot be cancelled, so its creation cannot be undone`
+          : `"${t.title}" has run since, so the split cannot be undone`;
+      }
+      return null;
+    }
     if (!name?.startsWith("task.")) return null;
     const task = state.tasks.find((t) => t.id === after.task_id);
     if (!task) return "the task no longer exists";
@@ -7128,6 +7335,41 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       task.status = "cancelled";
       task.version += 1;
       sentence = `Undone: cancelled the task "${task.title}" you created.`;
+    }
+    // d1109-selftasks-run (ADR 0119): the agent's task changes approved on one card are undone
+    // together, each in its own words in one sentence, as the daemon's composed Undo says them.
+    const proposal = (
+      entry.after as {
+        task_proposal?: {
+          restore: { id: string; title: string; acceptanceCriteria: string[] }[];
+          created: string[];
+          waited: { id: string; dependsOn: string[] }[];
+          words: string;
+        };
+      } | null
+    )?.task_proposal;
+    if (proposal) {
+      for (const w of proposal.waited) {
+        const t = state.tasks.find((x) => x.id === w.id);
+        if (t) t.dependsOn = [...w.dependsOn];
+      }
+      for (const id of proposal.created) {
+        const t = state.tasks.find((x) => x.id === id);
+        if (t) {
+          t.status = "cancelled";
+          touch(t);
+        }
+      }
+      for (const back of proposal.restore) {
+        const t = state.tasks.find((x) => x.id === back.id);
+        if (t) {
+          t.title = back.title;
+          t.acceptanceCriteria = [...back.acceptanceCriteria];
+          touch(t);
+        }
+      }
+      sentence = proposal.words;
+      if (entry.projectId) emit("project.changed", { id: entry.projectId });
     }
     entry.undoState = "undone";
     entry.undoneAt = now;

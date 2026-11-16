@@ -7,6 +7,11 @@ import type {
   ProjectRow,
   StateStore,
 } from "@forerunner/state";
+import {
+  proposalOutcome,
+  TASK_PROPOSAL_KEY,
+  TASK_PROPOSAL_OPTIONS,
+} from "../daemon/task-proposal-words.ts";
 import type { CommandCallLike, FencedChange, FenceResult } from "./task-check.ts";
 import type { TaskListNote } from "./task-list-notes.ts";
 
@@ -23,8 +28,7 @@ import type { TaskListNote } from "./task-list-notes.ts";
 
 const logger = log("task-proposal");
 
-export const TASK_PROPOSAL_KEY = "task_proposal";
-export const TASK_PROPOSAL_OPTIONS = ["Make these changes", "Keep the tasks"] as const;
+export { proposalOutcome, TASK_PROPOSAL_KEY, TASK_PROPOSAL_OPTIONS };
 
 /** One suggested change as the card lists it and as it is applied. */
 export interface ProposedChange {
@@ -65,6 +69,15 @@ function fingerprintOf(lines: readonly string[]): string {
 /** What showed the agent the changes, as the card's first sentence (data, quoted). */
 export function proposalBody(notes: readonly TaskListNote[], quotes: readonly string[]): string {
   const cut = (s: string) => (s.length > 100 ? `${s.slice(0, 99).replace(/\s+\S*$/, "")}…` : s);
+  // Quoted once: the line's own double quotes become single ones and its end mark goes, so the
+  // card reads 'says: "'Style the page' is two jobs".' and never '""Style…".".'.
+  const quoted = (s: string) =>
+    `"${cut(
+      s
+        .trim()
+        .replace(/"/g, "'")
+        .replace(/[.;:,!]+$/, ""),
+    )}"`;
   const first = notes[0];
   const whose = first
     ? first.source === "review"
@@ -72,11 +85,11 @@ export function proposalBody(notes: readonly TaskListNote[], quotes: readonly st
       : `the ${first.specialist ?? "specialist"}'s report on "${first.taskTitle}"`
     : "the agent's check";
   const why = quotes[0]
-    ? `A line of ${whose} reads like an instruction: "${cut(quotes[0])}".`
+    ? `A line of ${whose} reads like an instruction: ${quoted(quotes[0])}.`
     : (() => {
         const line = first?.lines.find((l) => !l.flagged)?.text;
         return line
-          ? `${whose.charAt(0).toUpperCase()}${whose.slice(1)} says: "${cut(line)}".`
+          ? `${whose.charAt(0).toUpperCase()}${whose.slice(1)} says: ${quoted(line)}.`
           : `${whose.charAt(0).toUpperCase()}${whose.slice(1)} found the task list needs changes.`;
       })();
   return `${why} Nothing changes until you say yes.`;
@@ -304,36 +317,4 @@ export async function syncTaskProposals(
     out.applied++;
   }
   return out;
-}
-
-/**
- * The card's Done line (design §3.8: what happens next): 'Changed 3 tasks; the session takes them
- * if they fit.' while a session runs, 'Changed 3 tasks; your next Start runs them.' with none; a
- * change that no longer applied is named; Keep says nothing changed; a replaced card says so.
- */
-export function proposalOutcome(card: JsonObject): string | null {
-  if (card.replaced === true) return "A newer suggestion of the agent replaced this one.";
-  const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
-  const left = Array.isArray(card.left_out)
-    ? card.left_out.filter((x): x is string => typeof x === "string")
-    : [];
-  const leftWords = left.length
-    ? ` Left out: ${left[0]}${left.length > 1 ? ` and ${left.length - 1} more` : ""}.`
-    : "";
-  switch (card.outcome) {
-    case "kept":
-      return "Kept the tasks as they are; nothing changed.";
-    case "applied": {
-      const n = typeof card.changed === "number" ? card.changed : 0;
-      const next =
-        card.running === true ? "the session takes them if they fit" : "your next Start runs them";
-      return `Changed ${n} ${plural(n, "task", "tasks")}; ${next}.${leftWords}`;
-    }
-    case "not_applied":
-      return `Nothing changed: none of the changes applies now.${leftWords}`;
-    case "applying":
-      return "Making the changes…";
-    default:
-      return null;
-  }
 }

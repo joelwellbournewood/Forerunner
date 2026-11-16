@@ -1147,12 +1147,19 @@ export class CommandExecutor {
     const steps = stepsOf(row);
     const single = steps.length === 1 ? (steps[0] as UndoStep) : null;
     const own = single ? this.registry.get(single.name)?.undoSentence : undefined;
+    // d1109-selftasks-run: a set of changes whose every command words its own Undo (the agent's
+    // task-list fixes the person approved on one card) says each, in one sentence: 'Undone:
+    // "Style the page" is one task again; cancelled the task "Check the links" you created.'
+    // ("<what> is back to <old value>" joined the cards' values into no sentence at all).
+    const each = steps.length > 1 ? stepWords(steps, (n) => this.registry.get(n)) : null;
     const sentence = [
       single && own
         ? own(single.params, single.before, single.after)
-        : card
-          ? `Undone: ${card.what} is back to ${card.oldValue}.`
-          : `Undone: ${row.sentence.replace(/\s*Undo\.$/, "")}`,
+        : each
+          ? each
+          : card
+            ? `Undone: ${card.what} is back to ${card.oldValue}.`
+            : `Undone: ${row.sentence.replace(/\s*Undo\.$/, "")}`,
       ...added,
     ].join(" ");
     const undoRow = await this.store.changeLog.record({
@@ -1352,6 +1359,30 @@ function stepsOf(row: ChangeLogRow): UndoStep[] {
     before: (befores[i] ?? null) as JsonValue,
     after: (afters[i] ?? null) as JsonValue,
   }));
+}
+
+/**
+ * The Undo of a set of changes in one sentence, when every command words its own Undo: the
+ * first sentence whole, the rest without their "Undone: ", joined by semicolons. Null when one
+ * of them has no words of its own (the card's "<what> is back to <old value>" then).
+ */
+function stepWords(
+  steps: readonly UndoStep[],
+  defOf: (name: string) => CommandDef | undefined,
+): string | null {
+  const said: string[] = [];
+  for (const s of steps) {
+    const own = defOf(s.name)?.undoSentence;
+    if (!own) return null;
+    said.push(
+      own(s.params as never, s.before, s.after)
+        .trim()
+        .replace(/[.\s]+$/, ""),
+    );
+  }
+  const [first, ...rest] = said;
+  if (!first) return null;
+  return `${[first, ...rest.map((r) => r.replace(/^Undone:\s*/, ""))].join("; ")}.`;
 }
 
 /**
