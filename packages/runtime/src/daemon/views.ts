@@ -92,6 +92,7 @@ import type {
   TaskView,
 } from "./api-types.ts";
 import { PERFORMANCE_DEFAULT_DAYS, PERFORMANCE_MAX_DAYS } from "./api-types.ts";
+import { costByCredentialWords } from "./credential-policy-view.ts";
 import {
   autonomyWords,
   chfOf,
@@ -1306,9 +1307,44 @@ export async function costView(
       });
     }
   }
+  // CS-9 (CE-11): the spend by the kind of credential that paid it, at the totals' rate, so the
+  // rows add up to the total; a subscription's row is an estimate with its share of the
+  // allowance (the highest share the window's rows reached).
+  const kinds = new Map(
+    (await store.billingSource.list({} as never, { limit: 100 }).catch(() => [])).map((b) => [
+      b.id,
+      b.kind as string,
+    ]),
+  );
+  const perKind = new Map<string, { usd: number; share: number | null }>();
+  for (const b of await store.costLedger.breakdown("billing_source_id", f)) {
+    const kind = (b.key ? kinds.get(b.key) : undefined) ?? "other";
+    const cur = perKind.get(kind) ?? { usd: 0, share: null };
+    cur.usd += b.usd_micro;
+    const share = b.plan_usage_share;
+    if (typeof share === "number") cur.share = Math.max(cur.share ?? 0, share);
+    perKind.set(kind, cur);
+  }
+  const byCredential = [...perKind.entries()]
+    .filter(([, v]) => v.usd > 0)
+    .sort((a, b) => b[1].usd - a[1].usd || a[0].localeCompare(b[0]))
+    .map(([kind, v]) => {
+      const cost = money(v.usd, chfPerUsd);
+      const share = kind === "subscription" ? v.share : null;
+      return {
+        kind,
+        cost,
+        share,
+        words:
+          kind === "other"
+            ? `Not tied to a credential: ${formatChf(cost.chfMicro)}`
+            : costByCredentialWords(kind, formatChf(cost.chfMicro), share),
+      };
+    });
   return {
     totals: money(totals.usd_micro, chfPerUsd),
     planUsageShare: (totals as { plan_usage_share?: number | null }).plan_usage_share ?? null,
+    byCredential,
     byModel,
     bySpecialist,
     byTask,

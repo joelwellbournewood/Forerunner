@@ -60,3 +60,41 @@ describe("d1109-cred-screens, run C: the switch on the session page and the draw
     ]);
   });
 });
+
+describe("d1109-cred-screens, run C: Costs by credential (CS-9)", () => {
+  it("Costs shows By credential with the daemon's rows; none when the daemon sends none", async () => {
+    const harness = createHarness();
+    const costs = harness.daemon.state.costs.proj_atlas;
+    if (!costs) throw new Error("no proj_atlas costs fixture");
+    costs.byCredential = [
+      {
+        kind: "subscription",
+        cost: { usdMicro: 2_625_000, chfMicro: 2_100_000 },
+        share: 0.12,
+        words: "Your Claude subscription: CHF 2.10 (estimate, 12% of its allowance)",
+      },
+      {
+        kind: "api_key",
+        cost: { usdMicro: 1_500_000, chfMicro: 1_200_000 },
+        share: null,
+        words: "Your API key: CHF 1.20",
+      },
+    ];
+    const { unmount } = renderApp("/projects/proj_atlas/costs", harness);
+    const section = await screen.findByTestId("cost-by-credential");
+    expect(within(section).getByText("By credential")).toBeInTheDocument();
+    expect(
+      within(section)
+        .getAllByTestId("cost-credential")
+        .map((l) => l.textContent),
+    ).toEqual([
+      "Your Claude subscription: CHF 2.10 (estimate, 12% of its allowance)",
+      "Your API key: CHF 1.20",
+    ]);
+    unmount();
+    costs.byCredential = [];
+    renderApp("/projects/proj_atlas/costs", harness);
+    await screen.findByTestId("cost-total");
+    expect(screen.queryByTestId("cost-by-credential")).toBeNull();
+  });
+});

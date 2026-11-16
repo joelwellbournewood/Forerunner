@@ -22502,4 +22502,46 @@ describe("d1109-cred-screens, run C", () => {
       await rt.close();
     }
   }, 120_000);
+
+  // CS-9 (CE-11's CostView.byCredential): Costs splits the spend by the credential that paid it,
+  // from the ledger, the rows adding up to the total; the subscription's row is an estimate with
+  // its share of the allowance.
+  it("CS-9: GET /costs carries By credential: the key's CHF, the subscription's estimate and share, adding up to the total", async () => {
+    const { rt, client, clock } = await composeCs();
+    try {
+      const sources = await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 });
+      const key = sources.find((s) => s.kind === "api_key");
+      const sub = sources.find((s) => s.kind === "subscription");
+      await rt.store.costLedger.insert({
+        human_id: rt.human.id,
+        billing_source_id: key?.id ?? null,
+        kind: "api",
+        usd_micro: 1_500_000,
+        chf_micro: 1_200_000,
+        model: "claude-sonnet-5-5",
+        occurred_at: clock.nowIso(),
+      } as never);
+      await rt.store.costLedger.insert({
+        human_id: rt.human.id,
+        billing_source_id: sub?.id ?? null,
+        kind: "subscription",
+        usd_micro: 2_625_000,
+        chf_micro: 2_100_000,
+        plan_usage_share: 0.12,
+        model: "claude-sonnet-5-5",
+        occurred_at: clock.nowIso(),
+      } as never);
+      const costs = await client.costs({});
+      const rows = costs.byCredential ?? [];
+      expect(rows.map((r) => r.kind)).toEqual(["subscription", "api_key"]);
+      expect(rows.reduce((a, r) => a + r.cost.usdMicro, 0)).toBe(costs.totals.usdMicro);
+      expect(rows[0]?.words).toMatch(
+        /^Your Claude subscription: CHF \d+\.\d\d \(estimate, 12% of its allowance\)$/,
+      );
+      expect(rows[1]?.words).toMatch(/^Your API key: CHF \d+\.\d\d$/);
+      expect(rows[0]?.share).toBe(0.12);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
 });

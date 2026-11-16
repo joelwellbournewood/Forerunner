@@ -1094,6 +1094,22 @@ export const CostView = z.object({
   joinedSpend: z
     .array(z.object({ projectId: z.string(), name: z.string(), spent: Money, words: z.string() }))
     .optional(),
+  /**
+   * CS-9 (d1109-cred-screens, CE-11's CostView.byCredential): the window's spend by the kind of
+   * credential that paid it, largest first, adding up to `totals`: 'Your API key: CHF 1.20',
+   * 'Your Claude subscription: CHF 2.10 (estimate, 12% of its allowance)'. Absent from an older
+   * daemon.
+   */
+  byCredential: z
+    .array(
+      z.object({
+        kind: z.string(),
+        cost: Money,
+        share: z.number().nullable(),
+        words: z.string(),
+      }),
+    )
+    .optional(),
 });
 export type CostView = z.infer<typeof CostView>;
 

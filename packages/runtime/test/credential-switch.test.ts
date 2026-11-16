@@ -1,7 +1,7 @@
 import { formatChf } from "@forerunner/billing";
 import { SimulatedClock } from "@forerunner/platform";
 import { afterAll, describe, expect, it } from "vitest";
-import type { EventView, SessionView, TaskDetailView } from "../src/daemon/api-types.ts";
+import type { CostView, EventView, SessionView, TaskDetailView } from "../src/daemon/api-types.ts";
 import type { RuntimeApp } from "../src/daemon/compose.ts";
 import { credWorld, type Req, seedProject, setPolicy, startSession } from "./cred-world.ts";
 import { removeHomes, settleSessions } from "./helpers.ts";
@@ -153,6 +153,18 @@ describe("d1109-cred-screens, run C: the switch's data and its session log line 
     const line = await page(req);
     expect(line).toBe(
       `Your API key took over at 14:00 (your subscription's limit): ${formatChf(onKey.chf_micro)} of ${formatChf(total.chf_micro)}.`,
+    );
+
+    // CS-9: Costs by credential, from the ledger: the key's row and the subscription's, adding
+    // up to the total.
+    const cost = (await req<CostView>(`/costs?projectId=${project.id}`)).body;
+    const rows = cost.byCredential ?? [];
+    expect(rows.map((r) => r.kind).sort()).toEqual(["api_key", "subscription"]);
+    expect(rows.reduce((a, r) => a + r.cost.usdMicro, 0)).toBe(cost.totals.usdMicro);
+    const keyRow = rows.find((r) => r.kind === "api_key");
+    expect(keyRow?.words).toBe(`Your API key: ${formatChf(keyRow?.cost.chfMicro ?? -1)}`);
+    expect(rows.find((r) => r.kind === "subscription")?.words).toMatch(
+      /^Your Claude subscription: (CHF \d+\.\d\d|less than CHF 0\.01) \(estimate(, \d+% of its allowance)?\)$/,
     );
 
     // Composed again on the same home: the log, the Run rows and the page's line are as they
