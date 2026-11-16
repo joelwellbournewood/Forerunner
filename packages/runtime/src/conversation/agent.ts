@@ -11,7 +11,7 @@ import {
   type RunResult,
   wholeMs,
 } from "../agent/loop.ts";
-import { ToolRegistry } from "../agent/tools.ts";
+import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
 import { layoutSystem, volatilePreamble } from "../context/cache-layout.ts";
 import { LOCAL_BUDGET_SOURCE, SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
@@ -26,11 +26,14 @@ import type {
   ParsedIntent,
 } from "../loop/ports.ts";
 import {
+  CHAT_THOROUGH_MAX_TOKENS,
   capEffort,
+  compareTiers,
   DEFAULT_CEILING,
   effortWithOffset,
   MODE_DEFAULTS,
   modelIdFor,
+  projectCeilingOf,
   speedQualityOffsetOf,
 } from "../models/ladder.ts";
 import { modeOverride, parseAgentModelConfig, resolveRunSettings } from "../models/run-settings.ts";
@@ -40,6 +43,7 @@ import {
   type ChatMessage,
   type EffortLevel,
   type ModelProvider,
+  type ModelTier,
   providerCapabilities,
 } from "../provider/types.ts";
 import type { StartRequest } from "../session/triggers.ts";
@@ -48,6 +52,7 @@ import { isChatOnlyCard } from "../wiring/request-answers.ts";
 import { isYes } from "../wiring/state-ports.ts";
 import { researchReadsLine, webAccessOf } from "../wiring/web-access.ts";
 import { cardFate } from "./card-fate.ts";
+import { ChatTurns } from "./chat-turns.ts";
 import {
   claimNudge,
   claimOf,
@@ -56,6 +61,43 @@ import {
   type ReplyClaim,
   type TurnDid,
 } from "./claims.ts";
+import {
+  ANSWER_THOROUGHLY_DESCRIPTION,
+  ANSWER_THOROUGHLY_TOOL,
+  ASK_RESULT,
+  askLine,
+  atMostOf,
+  type CapLevel,
+  CHAT_THOROUGH_RULES,
+  CHAT_WRAP_UP,
+  type CredentialWords,
+  capWords,
+  chfToUsdMicroAt,
+  closerLookWords,
+  DEFAULT_ASK_ABOVE_CHF,
+  DEFAULT_THOROUGH_SECONDS,
+  type Depth,
+  type DepthAsk,
+  depthWords,
+  FAILED_WORDS,
+  footerWords,
+  HANDED_OVER_RESULT,
+  handOverStep,
+  NOT_NOW,
+  notNowResult,
+  type PassFigures,
+  type Rung,
+  rungOfWhy,
+  stoppedWords,
+  THINK_THROUGH_WHAT,
+  TIMEOUT_REPLY,
+  thinkItThroughExplain,
+  thinkingLongerFact,
+  VOICE_THOROUGH_NOTICE,
+  WHY_VALUES,
+  type Why,
+  WRAP_UP_STEP,
+} from "./depth.ts";
 import {
   cardLine,
   cardNames,
@@ -72,7 +114,14 @@ import {
   workingNowBlock,
 } from "./project-facts.ts";
 import { readTools } from "./read-tools.ts";
-import { namedSources, RecallScope, type RecordSource, STATUS_DOC_RE } from "./recall.ts";
+import {
+  localDate,
+  namedSources,
+  RecallScope,
+  type RecordSource,
+  STATUS_DOC_RE,
+} from "./recall.ts";
+import { stepLine } from "./recall-steps.ts";
 import { scopeOf } from "./scope.ts";
 import { completeSentencesOf, SentenceGate } from "./sentences.ts";
 import {
@@ -220,6 +269,27 @@ export interface ConversationDeps {
    * and the doc set `docsDirs` gives; nothing else.
    */
   recallSizes?: { searchTokens?: number; openTokens?: number };
+  /**
+   * The chat turns in flight (d1109-chat-depth): the daemon's registry, which serves the
+   * conversation's answering line and Stop. Absent: a private one (tests, a CLI one-shot).
+   */
+  turns?: ChatTurns;
+  /**
+   * The outer room for a chat answer now (d1109-chat-depth: the caps port's room over the month
+   * cap, the plan share and the project's budget, as the hooks read it per call) and the cap that
+   * binds it; null when nothing bounds it. A longer pass's budget never passes it. Absent: no
+   * outer cap is read (the hooks still check every call).
+   */
+  chatRoom?: (scope: {
+    humanId: string;
+    projectId: string | null;
+  }) => Promise<{ usdMicro: number; level: CapLevel } | null>;
+  /**
+   * The Claude credential chat would use now and whether it is the person's first choice
+   * (d1109-chat-depth's first-credential rule; d1109-cred-engine, C5, answers it from the policy).
+   * Absent or null: the person's first, on an API key.
+   */
+  chatCredential?: () => Promise<CredentialWords | null>;
 }
 
 /** Docs search results in one chat turn's context at most (tokens, envelope included). */
@@ -268,7 +338,22 @@ export interface ChatRequest {
    * words, recall-steps.ts: "Looking through last week's sessions…"); d1109-chat-depth sends
    * them to the screen.
    */
-  onStep?: (line: string) => void;
+  onStep?: (line: string, opts?: { reset?: boolean }) => void;
+  /**
+   * The turn has started (d1109-chat-depth): its id and when, before any step or token, so a
+   * screen can stop it (`POST /chat/turns/:id/stop`).
+   */
+  onTurn?: (turn: { turnId: string; startedAt: string }) => void;
+  /**
+   * The person asked this answer to think longer (Think it through: "longer"), outside their
+   * words. With `offer`, the newest answer whose figures the press accepts.
+   */
+  depth?: "longer";
+  /**
+   * The answer whose offer the person accepts (Go ahead, Think it through): its turn id. The
+   * offer runs once on that turn's question; any other line drops it.
+   */
+  offer?: string;
 }
 
 export interface ChatAction {
@@ -294,6 +379,22 @@ export interface ChatReply {
   activeProjectId: string | null;
   /** The doc sections and lessons retrieved into the model turn (spec J.1, O.2); model path only. */
   sources?: ChatSources;
+  /** How deep the answer went (d1109-chat-depth): quick, or a longer pass's rung. */
+  depth?: Depth;
+  /** The muted line under a longer answer, or the stopped line ("You stopped this answer: …"). */
+  footer?: string | null;
+  /** What the app offers under the answer: Go ahead on an ask line, Think it through, a cap line. */
+  offer?: ChatOffer | null;
+}
+
+/** An offer under a chat answer (d1109-chat-depth): its line and the action that takes it. */
+export interface ChatOffer {
+  /** The line the person reads ("This needs a stronger model: …. Go ahead?"). */
+  line: string;
+  /** go_ahead: the ask line's Go ahead; think: Think it through; null: a cap line, nothing to press. */
+  action: "go_ahead" | "think" | null;
+  /** Think it through's consequence line (design §3), when the action is think. */
+  explain?: string;
 }
 
 export interface PendingConfirmation {
@@ -652,6 +753,153 @@ export interface RecordFlag {
   rules: string[];
 }
 
+/** A chat turn while it runs: what `chat` needs to write a failed reply and to end the turn. */
+interface TurnHold {
+  turnId: string | null;
+  sessionId: string | null;
+  conversationProject: string | null;
+  replied: boolean;
+}
+
+/** A longer pass's model calls at most (the wrap-up included). */
+export const THOROUGH_MAX_MODEL_CALLS = 8;
+/** A longer pass's wall clock (the chat_thorough mode's default; the longer rung's too). */
+export const CHAT_THOROUGH_TIMEOUT_MS = 120_000;
+/** The history a longer pass carries, in tokens (the quick pass carries 3,000). */
+export const THOROUGH_HISTORY_TOKENS = 8000;
+/** Recall's result sizes on a longer pass (d1109-chat-recall's parameter; 1,500 and 2,000 quick). */
+export const THOROUGH_RECALL_SIZES = { searchTokens: 3000, openTokens: 4000 } as const;
+/** A pass's budget below this many of its first call's worst case is refused before any call. */
+export const PASS_FLOOR_CALLS = 3;
+/** Without measured answers, a pass is estimated at this many of its first call's worst case. */
+export const PASS_ESTIMATE_CALLS = 5;
+/** Measured answers a rung's estimate and time are the median of. */
+export const PASS_MEDIAN_OF = 20;
+
+/** "go ahead" typed as the line after an ask line (the person's yes in words). */
+const GO_AHEAD_RE = /^\s*(?:go ahead|go on|do it|yes,? go ahead|mach weiter)\s*[.!]?\s*$/i;
+
+/** An offer that no longer stands (another line came after it). */
+export const OFFER_GONE_REPLY =
+  "That offer was for an earlier answer, so nothing ran. Ask the question again.";
+
+/** The way a longer pass runs: its rung, model and effort, and what it may take per call. */
+interface ChatRoute {
+  rung: Rung;
+  tier: ModelTier;
+  model: string;
+  effort: EffortLevel;
+  /** The fast pass's own model (thinking longer, no switch). */
+  sameModel: boolean;
+  pricing: RunPricing;
+  maxTokens: number;
+  timeoutMs: number;
+}
+
+/** A pass's figures on this turn's context, with its floor and model. */
+type ChatPassFigures = PassFigures & { floorUsdMicro: number; model: string };
+
+/** An offer kept on the chat.reply row: its line, what it runs and what the yes covers. */
+export interface StoredOffer {
+  line: string;
+  action: "go_ahead" | "think";
+  rung: Rung;
+  /** The question the pass answers (the person's line of the offered turn). */
+  question: string;
+  estimateUsdMicro: number;
+  atMostUsdMicro: number;
+  model: string;
+}
+
+/** The newest turn of the conversation when it offers Go ahead. */
+function liveOffer(earlier: readonly TranscriptTurn[]): TranscriptTurn | null {
+  const newest = earlier.at(-1);
+  return newest?.reply?.offer?.action === "go_ahead" ? newest : null;
+}
+
+/** What an accepted offer runs. */
+interface AcceptedOffer {
+  rung: Rung;
+  question: string;
+  atMostUsdMicro: number;
+  /** The model the yes was for; another one now asks again. */
+  model?: string;
+}
+
+/**
+ * The offer a line takes (d1109-chat-depth): Go ahead or Think it through on the newest answer
+ * (`req.offer` names its turn), or "yes" or "go ahead" typed as the next line after an ask line.
+ * "gone": a press on an answer that is no longer the newest; null: no offer taken.
+ */
+function acceptedOffer(
+  req: ChatRequest,
+  earlier: readonly TranscriptTurn[],
+): AcceptedOffer | "gone" | null {
+  const newest = earlier.at(-1);
+  const r = newest?.reply;
+  if (req.offer) {
+    if (!newest || !r || newest.transcriptId !== req.offer) return "gone";
+    if (req.depth === "longer") {
+      if (!r.closer) return "gone";
+      return {
+        rung: "longer",
+        question: newest.human.text,
+        atMostUsdMicro: r.closer.atMostUsdMicro,
+      };
+    }
+    if (r.offer?.action !== "go_ahead") return "gone";
+    return {
+      rung: r.offer.rung,
+      question: r.offer.question,
+      atMostUsdMicro: r.offer.atMostUsdMicro,
+      model: r.offer.model,
+    };
+  }
+  if (req.depth) return null;
+  if (r?.offer?.action === "go_ahead" && (isYes(req.text) || GO_AHEAD_RE.test(req.text)))
+    return {
+      rung: r.offer.rung,
+      question: r.offer.question,
+      atMostUsdMicro: r.offer.atMostUsdMicro,
+      model: r.offer.model,
+    };
+  return null;
+}
+
+/**
+ * The person's question a phrase alone re-asks ("think harder", Think it through): their newest
+ * line in this conversation that the model answered (not a yes, a no, an undo, a command or
+ * another phrase alone).
+ */
+function previousQuestion(earlier: readonly TranscriptTurn[]): string | null {
+  for (const t of [...earlier].reverse()) {
+    const text = t.human.text.trim();
+    if (!text || isYes(text) || NO_RE.test(text) || UNDO_RE.test(text) || GO_AHEAD_RE.test(text))
+      continue;
+    if (depthWords(text).bare) continue;
+    const r = t.reply;
+    if (!r || r.notice || r.actions.length || r.pendingId || r.question) continue;
+    return text;
+  }
+  return null;
+}
+
+/** The facts' "# Now" block with one more line (the facts' first block is always "# Now"). */
+function withNowFact(volatile: string, key: string, value: string): string {
+  const line = `- ${key}: ${value}`;
+  if (!volatile.startsWith("# Now\n")) return `# Now\n${line}\n\n${volatile}`;
+  const end = volatile.indexOf("\n\n");
+  return end < 0
+    ? `${volatile}\n${line}`
+    : `${volatile.slice(0, end)}\n${line}${volatile.slice(end)}`;
+}
+
+/** The person's amount above which one chat answer asks first (chat_ask_above, CHF). */
+export function askAboveOf(prefs: Readonly<Record<string, unknown>> | null | undefined): number {
+  const v = prefs?.chat_ask_above;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : DEFAULT_ASK_ABOVE_CHF;
+}
+
 const UNDO_RE = /^\s*(undo|rückgängig|r[üu]ckg[äa]ngig machen)\s*[.!]?\s*$/i;
 const NO_RE = /^\s*(no|nope|cancel|stop|nein|non|abbrechen)\b/i;
 /** Said before the stop's own sentence when the stop cancelled a card waiting for a yes. */
@@ -664,6 +912,7 @@ export class ConversationAgent {
   private conversationSessions = new Map<string, string>();
   /** Per human and agent: which open requests this conversation has listed (CHAT_OPEN_REQUEST_RULES). */
   private readonly conversations = new Map<string, ConversationState>();
+  private ownTurns: ChatTurns | undefined;
 
   constructor(private readonly deps: ConversationDeps) {}
 
@@ -676,7 +925,47 @@ export class ConversationAgent {
     return this.activeProject.get(humanId) ?? null;
   }
 
+  /** The turns in flight: the daemon's registry, or this agent's own. */
+  turnsOf(): ChatTurns {
+    this.ownTurns ??= this.deps.turns ?? new ChatTurns(this.deps.clock.nowIso());
+    return this.ownTurns;
+  }
+
+  /**
+   * One chat turn (design §3.9). d1109-chat-depth: the turn is in flight in `turnsOf()` from its
+   * line to its reply (the conversation's answering line and Stop), and a turn that throws writes
+   * "I could not answer this." as its reply, so the person's line never stays without one.
+   */
   async chat(req: ChatRequest): Promise<ChatReply> {
+    const hold: TurnHold = {
+      turnId: null,
+      sessionId: null,
+      conversationProject: null,
+      replied: false,
+    };
+    try {
+      return await this.chatTurn(req, hold);
+    } catch (e) {
+      if (hold.turnId && hold.sessionId && !hold.replied) {
+        await this.deps.store.event
+          .append(hold.sessionId, "chat.reply", {
+            transcriptId: hold.turnId,
+            text: FAILED_WORDS,
+            conversationProjectId: hold.conversationProject,
+            notice: true,
+            failed: true,
+            outcome: "failed",
+            error: errorMessage(e).slice(0, 300),
+          } as never)
+          .catch(() => undefined);
+      }
+      throw e;
+    } finally {
+      if (hold.turnId) this.turnsOf().end(hold.turnId);
+    }
+  }
+
+  private async chatTurn(req: ChatRequest, hold: TurnHold): Promise<ChatReply> {
     const { store, clock } = this.deps;
     const human = await store.human.mustGet(req.humanId);
     const agent = await store.agent.mustGet(req.agentId);
@@ -721,6 +1010,27 @@ export class ConversationAgent {
       source: req.source ?? "text",
       conversationProjectId: conversationProject,
     } as never);
+    // d1109-chat-depth: the turn is in flight from here (its line is written) to its reply; Stop
+    // aborts its controller, which every run of the turn gets as its signal (voice's barge-in too).
+    const entry = this.turnsOf().begin({
+      turnId: transcriptId,
+      humanId: req.humanId,
+      conversationProjectId: conversationProject,
+      since: clock.nowIso(),
+    });
+    hold.turnId = transcriptId;
+    hold.sessionId = sessionId;
+    hold.conversationProject = conversationProject;
+    req.onTurn?.({ turnId: transcriptId, startedAt: entry.since });
+    const signal = req.signal
+      ? AbortSignal.any([req.signal, entry.controller.signal])
+      : entry.controller.signal;
+    /** What chat is doing now: to the waiting line (the stream) and the conversation view. */
+    const step = (line: string, opts?: { reset?: boolean }) => {
+      this.turnsOf().step(transcriptId, line);
+      req.onStep?.(line, opts);
+    };
+    let quickBudget = 0;
     const turn: CommandTurn = {
       humanId: req.humanId,
       agentId: agent.id,
@@ -744,6 +1054,7 @@ export class ConversationAgent {
       meta: { notice?: boolean } = {},
     ): Promise<ChatReply> => {
       const reply = cancelledForStop ? `${CARD_CANCELLED_SENTENCE} ${text}` : text;
+      hold.replied = true;
       await store.event.append(sessionId, "chat.reply", {
         transcriptId,
         text: reply,
@@ -815,12 +1126,19 @@ export class ConversationAgent {
       }
       // Anything else leaves the card waiting: the line is answered below, and the card's Yes
       // and No stay until it is answered or another change read back replaces it.
-    } else if (this.deps.commands && isYes(req.text)) {
+    } else if (this.deps.commands && isYes(req.text) && !liveOffer(earlier)) {
       // A "yes" with nothing waiting (design §3.9) is never handed to the model as a bare word,
       // and what it says is true now: "Yes to what?" unless the last card read back here was
       // answered somewhere else or expired, which it then says.
       return finish(await this.nothingWaitingReply(earlier), [], {}, { notice: true });
     }
+
+    // d1109-chat-depth: an offer the person takes (Go ahead, Think it through, or "yes" or "go
+    // ahead" typed as the next line) runs once on the question it answers; any other line drops
+    // it, with nothing spent.
+    const taken = acceptedOffer(req, earlier);
+    if (taken === "gone") return finish(OFFER_GONE_REPLY, [], {}, { notice: true });
+    const accepted = taken;
 
     // "undo" undoes the latest change this conversation made that can still be undone (spec
     // Q.11, design §3.9), else the latest of its project: never a change in another project
@@ -838,7 +1156,7 @@ export class ConversationAgent {
     }
 
     // Understanding (spec Q.2): deterministic patterns first; a combined request is one card.
-    if (this.deps.commands) {
+    if (this.deps.commands && !accepted) {
       let parsed: ParsedIntent | null = null;
       try {
         parsed = await this.deps.commands.parse(req.text, turn);
@@ -892,12 +1210,35 @@ export class ConversationAgent {
       );
 
     // The model path: a fast model with the registry's command tools, the read-only tools and
-    // nothing else.
+    // nothing else. d1109-chat-depth (ADR 0114): a longer pass when it helps, on the same model
+    // as needed and after the person's yes before a stronger one; every run of the turn gets its
+    // signal (Stop), every step reaches the waiting line.
+    const spoken = req.source === "voice" || req.source === "phone";
+    const zone = human.timezone?.trim() || "UTC";
+    const chf = this.deps.chfPerUsd?.() ?? 1;
+    // What the person asked of this answer's depth (a line the parser understood ran above).
+    const asked: DepthAsk = accepted
+      ? { ask: null, bare: false }
+      : req.depth === "longer"
+        ? { ask: "longer", bare: true }
+        : depthWords(req.text);
+    // A longer answer is a typed one: a spoken "think harder" is told where (design §3.9).
+    if (spoken && asked.ask && asked.ask !== "quick")
+      return finish(VOICE_THOROUGH_NOTICE, [], {}, { notice: true });
+    // The question a longer pass answers: the line, an accepted offer's, or for a phrase alone
+    // ("think harder") the person's previous line in this conversation.
+    let question = req.text.trim() || req.text;
+    if (accepted) question = accepted.question;
+    else if (asked.ask && asked.ask !== "quick" && asked.bare) {
+      const prev = previousQuestion(earlier);
+      if (!prev) return finish(THINK_THROUGH_WHAT, [], {}, { notice: true });
+      question = prev;
+    }
     const context = await this.context(
       req.humanId,
       agent,
       projectId,
-      req.text,
+      question,
       conv,
       provider,
       conversationProject,
@@ -906,58 +1247,75 @@ export class ConversationAgent {
     // not write, a flagged excerpt, lesson or task line) read back every change of this turn.
     if (context.recordsRead) turn.recordsRead = true;
     const results: CommandResultView[] = [];
-    const tools = new ToolRegistry();
-    for (const t of this.deps.commands?.tools(turn, (r) => results.push(r)) ?? [])
-      tools.register(t);
     // d1109-chat-recall: recall and recall_open share one scope per turn (the candidates read
     // once, the references of this turn's search, the records opened for the reply's sources).
     const recallScope = new RecallScope();
-    const zone = human.timezone?.trim() || "UTC";
-    // d1109-chat-guard: a record read sets the turn's read-back for the changes after it.
-    for (const t of readTools({
-      store,
-      projectId,
-      // d1109-chat-guard: a project a call names is one of this person's (`scopeOf`).
-      humanId: req.humanId,
-      ...(this.deps.sandboxReady ? { sandboxReady: this.deps.sandboxReady } : {}),
-      ...(this.deps.chfPerUsd ? { chfPerUsd: this.deps.chfPerUsd } : {}),
-      folderOf: (id) => this.folderOf(id),
-      // d1109-chat-guard: files_list asks the host for the open pull requests when called.
-      ...(this.deps.openPullRequests ? { openPullRequests: this.deps.openPullRequests } : {}),
-      // d1109-chat-recall: the person's records on demand, every result untrusted (the mark
-      // noteRecordsRead reads), each call's step line through onStep.
-      recall: {
-        scope: recallScope,
-        agent,
-        timeZone: zone,
-        nowMs: clock.now(),
-        line: req.text,
-        transcriptId,
-        countTokens: (t) => provider.countTokens(t),
-        ...(this.deps.chfPerUsd ? { chfPerUsd: this.deps.chfPerUsd } : {}),
-        ...(this.deps.memory ? { memory: this.deps.memory } : {}),
-        ...(this.deps.docsDirs ? { docsDirs: this.deps.docsDirs } : {}),
-        ...(this.deps.recallSizes ? { sizes: this.deps.recallSizes } : {}),
-        ...(req.onStep ? { onStep: req.onStep } : {}),
+    const today = localDate(clock.now(), zone);
+    // C2-left-6: the command tools say what they do too ("Preparing the change…").
+    const withStep = <T extends ToolSpec>(t: T): T => ({
+      ...t,
+      async execute(input, ctx) {
+        step(stepLine(t.name, input, { line: question, today }));
+        return t.execute(input, ctx);
       },
-    }))
-      tools.register(noteRecordsRead(t, turn));
+    });
+    /**
+     * A pass's tools: the registry's commands, the read tools and recall (sized for the pass), and
+     * answer_thoroughly on the fast pass only (after the recall tools, gated in code, so the fast
+     * request's tools are the same bytes whatever the gate says: R-chatcache).
+     */
+    const toolsFor = (sizes: ConversationDeps["recallSizes"], extra?: ToolSpec): ToolRegistry => {
+      const tools = new ToolRegistry();
+      for (const t of this.deps.commands?.tools(turn, (r) => results.push(r)) ?? [])
+        tools.register(withStep(t));
+      // d1109-chat-guard: a record read sets the turn's read-back for the changes after it.
+      for (const t of readTools({
+        store,
+        projectId,
+        // d1109-chat-guard: a project a call names is one of this person's (`scopeOf`).
+        humanId: req.humanId,
+        ...(this.deps.sandboxReady ? { sandboxReady: this.deps.sandboxReady } : {}),
+        ...(this.deps.chfPerUsd ? { chfPerUsd: this.deps.chfPerUsd } : {}),
+        folderOf: (id) => this.folderOf(id),
+        // d1109-chat-guard: files_list asks the host for the open pull requests when called.
+        ...(this.deps.openPullRequests ? { openPullRequests: this.deps.openPullRequests } : {}),
+        // d1109-chat-recall: the person's records on demand, every result untrusted (the mark
+        // noteRecordsRead reads), each call's step line through onStep.
+        recall: {
+          scope: recallScope,
+          agent,
+          timeZone: zone,
+          nowMs: clock.now(),
+          line: question,
+          transcriptId,
+          countTokens: (t) => provider.countTokens(t),
+          ...(this.deps.chfPerUsd ? { chfPerUsd: this.deps.chfPerUsd } : {}),
+          ...(this.deps.memory ? { memory: this.deps.memory } : {}),
+          ...(this.deps.docsDirs ? { docsDirs: this.deps.docsDirs } : {}),
+          ...(sizes ? { sizes } : {}),
+          onStep: (l: string) => step(l),
+        },
+      }))
+        tools.register(noteRecordsRead(t, turn));
+      if (extra) tools.register(extra);
+      return tools;
+    };
     // The chat mode's tier, effort and target from the tables in force (ADR 0039).
     const modelConfig = this.deps.modelConfig?.();
+    const agentConfig = parseAgentModelConfig(agent.model_config).config;
     // Then the principal's own chat settings (spec D.4, ADR 0072: `model_config.modes.text_chat`).
     // Speed mode stays standard on a chat turn: it has no fast-mode price (ADR 0072).
     const textChat = resolveRunSettings({
       mode: "text_chat",
       modeDefaults: modelConfig?.modeDefaults ?? MODE_DEFAULTS,
-      override: modeOverride(parseAgentModelConfig(agent.model_config).config, "text_chat"),
+      override: modeOverride(agentConfig, "text_chat"),
       capabilities: providerCapabilities(provider),
       // A chat turn is no project's work: the default ceiling (Opus), never the top rung.
       ceiling: DEFAULT_CEILING,
     });
-    // The turn's wall clock: the run's timeout plus room for the command tools around it.
-    const turnMs = Math.max(60_000, textChat.timeoutMs + 30_000);
     const model =
       this.deps.modelId ?? modelIdFor(textChat.tier, provider.name, modelConfig?.ladder);
+    const projectRow = projectId ? await store.project.get(projectId) : undefined;
     // The effort (spec D.16): a spoken turn takes the voice mode's default, a typed one the
     // chat mode's (the principal's `modes.text_chat.effort` when set, spec D.4), shifted by the
     // active project's speed-versus-quality slider as its row reads now, so a slider change
@@ -968,19 +1326,73 @@ export class ConversationAgent {
         ? (modelConfig?.modeDefaults.voice_chat ?? MODE_DEFAULTS.voice_chat).effort
         : textChat.effort;
     const effort = capEffort(
-      effortWithOffset(
-        baseEffort,
-        speedQualityOffsetOf(
-          projectId ? (await store.project.get(projectId))?.settings : undefined,
-        ),
-      ),
+      effortWithOffset(baseEffort, speedQualityOffsetOf(projectRow?.settings)),
       this.deps.maxEffort,
     );
+    const instructions = `${CHAT_RETRIEVAL_RULES}\n\n${CHAT_RECALL_RULES}\n\n${CHAT_OPEN_REQUEST_RULES}\n\n${CHAT_PLAN_RULES}`;
     const system = layoutSystem({
       registryPrompt: this.deps.prompt ?? DEFAULT_PROMPT,
       projectBrief: context.stable,
-      instructions: `${CHAT_RETRIEVAL_RULES}\n\n${CHAT_RECALL_RULES}\n\n${CHAT_OPEN_REQUEST_RULES}\n\n${CHAT_PLAN_RULES}`,
+      instructions,
     });
+    const pricing = this.deps.pricingFor?.(model) ?? this.deps.pricing;
+    // d1109-chat-depth: what a longer pass may take now. The rungs (the owner's answer 2: "Model:
+    // whatever is appropriate", never above the project's highest), the person's amount
+    // (chat_ask_above), the outer room and the credential chat would use.
+    const ceiling = projectCeilingOf(projectRow?.settings) ?? DEFAULT_CEILING;
+    const thoroughMode = resolveRunSettings({
+      mode: "chat_thorough",
+      modeDefaults: modelConfig?.modeDefaults ?? MODE_DEFAULTS,
+      override: modeOverride(agentConfig, "chat_thorough"),
+      capabilities: providerCapabilities(provider),
+      ceiling,
+    });
+    const routeOf = (rung: Rung): ChatRoute => {
+      const longer: ChatRoute = {
+        rung: "longer",
+        tier: textChat.tier,
+        model,
+        effort: capEffort(effortWithOffset(effort, 1), this.deps.maxEffort ?? "medium"),
+        sameModel: true,
+        pricing,
+        maxTokens: CHAT_THOROUGH_MAX_TOKENS,
+        timeoutMs: CHAT_THOROUGH_TIMEOUT_MS,
+      };
+      if (rung === "longer") return longer;
+      const tier =
+        rung === "best"
+          ? ceiling
+          : compareTiers(thoroughMode.tier, ceiling) > 0
+            ? ceiling
+            : thoroughMode.tier;
+      // At or below the fast pass's model: the stronger rung is the longer one.
+      if (compareTiers(tier, textChat.tier) <= 0) return longer;
+      let id: string;
+      try {
+        id = modelIdFor(tier, provider.name, modelConfig?.ladder);
+      } catch {
+        return longer;
+      }
+      return {
+        rung: rung === "best" && compareTiers(ceiling, thoroughMode.tier) > 0 ? "best" : "stronger",
+        tier,
+        model: id,
+        effort: capEffort(thoroughMode.effort, this.deps.maxEffort),
+        sameModel: false,
+        pricing: this.deps.pricingFor?.(id) ?? this.deps.pricing,
+        maxTokens: thoroughMode.maxTokens,
+        timeoutMs: thoroughMode.timeoutMs,
+      };
+    };
+    const askAboveChf = askAboveOf(human.notify_prefs);
+    const amountUsdMicro = chfToUsdMicroAt(askAboveChf, chf);
+    const credential = spoken
+      ? null
+      : ((await this.deps.chatCredential?.().catch(() => null)) ?? null);
+    const room = spoken
+      ? null
+      : ((await this.deps.chatRoom?.({ humanId: req.humanId, projectId }).catch(() => null)) ??
+        null);
     // The conversation so far (design §3.9: "what it knows on every turn: the recent
     // conversation"), then this turn: the person's line, then the facts of now. The line is the
     // message's stable start (`stableChars`): the cache entry this turn writes ends there, and
@@ -988,83 +1400,23 @@ export class ConversationAgent {
     // wave 7: with the facts in front of the line every turn wrote its whole history again at
     // the cache-write price and read only the system prompt and the tools).
     const historyBudget = this.deps.historyMaxTokens ?? DEFAULT_CHAT_HISTORY_TOKENS;
-    const line = req.text.trim() || req.text;
-    const history =
-      historyBudget > 0
-        ? historyMessages(earlier, (t) => provider.countTokens(t), historyBudget)
-        : [];
+    const historyOf = (budget: number) =>
+      budget > 0 ? historyMessages(earlier, (t) => provider.countTokens(t), budget) : [];
+    const history = historyOf(historyBudget);
     // l3-chat-claims: the history's replies now carry what each turn changed ("The app did: …",
     // whose sentences quote task titles and values agents may have written), and a reply may
     // quote a record it read. Scanned like the facts' records (d1109-chat-guard): instruction-
     // like text there makes this turn read back every change and is kept on its row.
-    const historyScan = scanForInjection(
-      history
-        .filter((m) => m.role === "assistant")
-        .map((m) => m.content)
-        .join("\n\n"),
-      "agent_output",
-    );
-    if (historyScan.suspicious) turn.recordsRead = true;
-    const messages: ChatMessage[] = [
-      ...history,
-      { role: "user", content: `${line}\n\n${context.volatile}`, stableChars: line.length },
-    ];
-    const pricing = this.deps.pricingFor?.(model) ?? this.deps.pricing;
-    // The turn's budget: the configured one, or by default USD 0.05 raised to room for
-    // `CHAT_TURN_CALL_ROOM` calls priced as the loop prices the first one (its input as sent,
-    // the whole output cap), so a realistic turn on an expensive chat model (Opus 5.5, which
-    // cannot turn thinking off) is not refused before it starts; never above
-    // `CHAT_TURN_BUDGET_CEILING_USD_MICRO` (ADR 0091).
-    const turnBudgetUsdMicro =
-      this.deps.turnBudgetUsdMicro ??
-      Math.min(
-        CHAT_TURN_BUDGET_CEILING_USD_MICRO,
-        Math.max(
-          DEFAULT_TURN_BUDGET_USD_MICRO,
-          CHAT_TURN_CALL_ROOM *
-            pricing.estimate(
-              provider.countTokens(
-                system +
-                  JSON.stringify(messages) +
-                  JSON.stringify(
-                    tools.definitions(
-                      tools.names(),
-                      (s) => z.toJSONSchema(s) as Record<string, unknown>,
-                    ),
-                  ),
-              ),
-              textChat.maxTokens,
-            ),
-        ),
+    const scanHistory = (h: { role: string; content: string }[]) =>
+      scanForInjection(
+        h
+          .filter((m) => m.role === "assistant")
+          .map((m) => m.content)
+          .join("\n\n"),
+        "agent_output",
       );
-    const budget = new SessionBudget({
-      sessionId,
-      budgetUsdMicro: turnBudgetUsdMicro,
-      stepCap: 12,
-      deadlineMs: clock.now() + turnMs,
-      reserveShare: 0.15,
-    });
-    const token = this.deps.tokens.issue({
-      runId: transcriptId,
-      sessionId,
-      agentId: agent.id,
-      ownerHumanId: human.id,
-      projectId: projectId ?? undefined,
-      allowedTools: tools.names(),
-      allowedPaths: [],
-      allowedDomains: [],
-      grantedSecrets: [],
-      budgetUsdMicro: turnBudgetUsdMicro,
-      depth: 0,
-      maxDepth: 0,
-      // The human is giving instructions directly: routine actions run; the registry's
-      // confirmation policy guards the rest by risk.
-      autonomy: 4,
-      planApproved: true,
-      expiresAt: new Date(clock.now() + turnMs).toISOString(),
-    });
-    let ttft: number | null = null;
-    const events: RunEvent[] = [];
+    const historyScan = scanHistory(history);
+    if (historyScan.suspicious) turn.recordsRead = true;
     // d1109-chat-guard: what read like instructions in the records this turn was shown (the
     // facts' lessons and excerpts, then each tool result the hooks scanned), kept on its row.
     const injection: RecordFlag[] = [
@@ -1073,11 +1425,107 @@ export class ConversationAgent {
         ? [{ where: "history", rules: historyScan.matches.map((m) => m.rule) }]
         : []),
     ];
+    /** The thorough pass's request: its own system part, tools and wider history (no second context build). */
+    const thoroughRequest = (volatile: string) => {
+      const tools = toolsFor(THOROUGH_RECALL_SIZES);
+      const longHistory = historyOf(Math.max(historyBudget, THOROUGH_HISTORY_TOKENS));
+      const scan = scanHistory(longHistory);
+      if (scan.suspicious) {
+        turn.recordsRead = true;
+        if (!historyScan.suspicious)
+          injection.push({ where: "history", rules: scan.matches.map((m) => m.rule) });
+      }
+      const tSystem = layoutSystem({
+        registryPrompt: this.deps.prompt ?? DEFAULT_PROMPT,
+        projectBrief: context.stable,
+        instructions: `${instructions}\n\n${CHAT_THOROUGH_RULES}`,
+      });
+      const messages: ChatMessage[] = [
+        ...longHistory,
+        { role: "user", content: `${question}\n\n${volatile}`, stableChars: question.length },
+      ];
+      return { tools, system: tSystem, messages };
+    };
+    const countRequest = (sys: string, msgs: ChatMessage[], tools: ToolRegistry) =>
+      provider.countTokens(
+        sys +
+          JSON.stringify(msgs) +
+          JSON.stringify(
+            tools.definitions(tools.names(), (s) => z.toJSONSchema(s) as Record<string, unknown>),
+          ),
+      );
+    /** A rung's figures on this context: the estimate, the "at most", the time and the floor. */
+    const figuresOf = async (route: ChatRoute): Promise<ChatPassFigures> => {
+      const probe = thoroughRequest(context.volatile);
+      const worst = route.pricing.estimate(
+        countRequest(probe.system, probe.messages, probe.tools),
+        route.maxTokens,
+      );
+      const floorUsdMicro = PASS_FLOOR_CALLS * worst;
+      const recent = await this.recentPasses(sessionId, route.rung, route.model);
+      const estimateUsdMicro = recent?.costUsdMicro ?? PASS_ESTIMATE_CALLS * worst;
+      return {
+        rung: route.rung,
+        tier: route.tier,
+        sameModel: route.sameModel,
+        estimateUsdMicro,
+        atMostUsdMicro: atMostOf(estimateUsdMicro, floorUsdMicro, chf),
+        seconds: recent ? recent.durationMs / 1000 : DEFAULT_THOROUGH_SECONDS,
+        chfPerUsd: chf,
+        credential,
+        floorUsdMicro,
+        model: route.model,
+      };
+    };
+    /** The ask rule: a switch of model, an estimate above the person's amount, another credential. */
+    const asksFirst = (f: ChatPassFigures): boolean =>
+      !f.sameModel ||
+      f.estimateUsdMicro > amountUsdMicro ||
+      f.floorUsdMicro > amountUsdMicro ||
+      !!f.credential?.notFirst;
+    /** The cap line when the room leaves less than the pass's floor; null when it fits. */
+    const capFor = (f: ChatPassFigures, budgetUsdMicro: number): CapLevel | null =>
+      room &&
+      Math.min(budgetUsdMicro, room.usdMicro) < f.floorUsdMicro &&
+      room.usdMicro < budgetUsdMicro
+        ? room.level
+        : room && room.usdMicro < f.floorUsdMicro
+          ? room.level
+          : null;
+    const offerOf = (f: ChatPassFigures, q: string): StoredOffer => ({
+      line: askLine(f),
+      action: "go_ahead",
+      rung: f.rung,
+      question: q,
+      estimateUsdMicro: f.estimateUsdMicro,
+      atMostUsdMicro: f.atMostUsdMicro,
+      model: f.model,
+    });
+    // The facts' thinking_longer line (volatile, so the cached prefix holds).
+    const longerRoute = routeOf("longer");
+    const longerFigures = spoken ? null : await figuresOf(longerRoute);
+    const thinkingLonger = spoken
+      ? thinkingLongerFact({ state: "spoken" })
+      : longerFigures && capFor(longerFigures, longerFigures.atMostUsdMicro)
+        ? thinkingLongerFact({ state: "room" })
+        : longerFigures && !asksFirst(longerFigures)
+          ? thinkingLongerFact({
+              state: "goes_ahead",
+              amountUsdMicro: Math.min(amountUsdMicro, room?.usdMicro ?? amountUsdMicro),
+              chfPerUsd: chf,
+            })
+          : thinkingLongerFact({ state: "asks" });
+    const volatile = withNowFact(context.volatile, "thinking_longer", thinkingLonger);
+
+    // The turn's runs: their events, the streamed text of the pass now speaking, the time to the
+    // first token (the quick pass's).
+    let ttft: number | null = null;
+    const events: RunEvent[] = [];
+    let streamed = "";
     // A spoken turn's text reaches the speaker one complete sentence at a time: the unfinished
     // rest of a model call is held until the call ends, and dropped when the call was cut off
     // at max_tokens, so a broken sentence is never spoken (the real-audio run of 2026-10-26).
     // A typed turn streams as it comes; its final reply is trimmed below.
-    const spoken = req.source === "voice" || req.source === "phone";
     const gate = spoken && req.onToken ? new SentenceGate((t) => req.onToken?.(t)) : null;
     /** The turn's run events; `stream`: its text goes to the person as it comes. */
     const onEvent = (ev: RunEvent, stream: boolean) => {
@@ -1085,6 +1533,7 @@ export class ConversationAgent {
       if (ev.type === "injection_flagged")
         injection.push({ where: ev.tool, rules: ev.report.matches.map((m) => m.rule) });
       if (ev.type === "text_delta" && stream) {
+        streamed += ev.text;
         if (gate) gate.push(ev.text);
         else req.onToken?.(ev.text);
       }
@@ -1096,51 +1545,289 @@ export class ConversationAgent {
         if (stream) gate?.end(ev.stopReason === "max_tokens");
         if (ttft === null) ttft = ev.ttftMs;
       }
+      if (ev.type === "wrap_up_sent") step(WRAP_UP_STEP);
     };
-    const run = {
-      token,
-      budget,
-      provider,
-      model,
-      billingSourceId: this.deps.billingSourceId,
-      system,
-      messages,
-      tools,
-      pricing,
-      timeoutMs: textChat.timeoutMs,
-      maxTokensPerCall: textChat.maxTokens,
-      effort,
-      // At low effort (the chat modes' default, spec principle 8: answer in about a second)
-      // the turn asks thinking off where the model allows it, so thinking cannot eat the
-      // reply's cap; Haiku 5.5 otherwise thinks adaptively even at low effort. Above low the
-      // model thinks as the effort says (spec D: effort sets thinking depth).
-      ...(effort === "low" ? { thinking: "off" as const } : {}),
-      ...(textChat.temperature !== null ? { temperature: textChat.temperature } : {}),
-      maxTurns: CHAT_MAX_MODEL_CALLS,
-      label: "conversation",
-      protected: true,
+    /** One run of the turn (the quick pass, a thorough pass, the claim guard's nudge). */
+    const runOf = (o: {
+      runId: string;
+      budgetUsdMicro: number;
+      tools: ToolRegistry;
+      system: string;
+      messages: ChatMessage[];
+      model: string;
+      pricing: RunPricing;
+      effort: EffortLevel;
+      maxTokens: number;
+      timeoutMs: number;
+      maxTurns: number;
+      wrapUp?: string;
+    }) => {
+      const budget = new SessionBudget({
+        sessionId,
+        budgetUsdMicro: o.budgetUsdMicro,
+        stepCap: 12 + 4 * o.maxTurns,
+        deadlineMs: clock.now() + o.timeoutMs + 30_000,
+        reserveShare: 0.15,
+      });
+      if (o.wrapUp) entry.answerNow = () => budget.wrapUpNow(o.runId);
+      const token = this.deps.tokens.issue({
+        runId: o.runId,
+        sessionId,
+        agentId: agent.id,
+        ownerHumanId: human.id,
+        projectId: projectId ?? undefined,
+        allowedTools: o.tools.names(),
+        allowedPaths: [],
+        allowedDomains: [],
+        grantedSecrets: [],
+        budgetUsdMicro: o.budgetUsdMicro,
+        depth: 0,
+        maxDepth: 0,
+        // The human is giving instructions directly: routine actions run; the registry's
+        // confirmation policy guards the rest by risk.
+        autonomy: 4,
+        planApproved: true,
+        expiresAt: new Date(clock.now() + o.timeoutMs + 30_000).toISOString(),
+      });
+      return {
+        token,
+        budget,
+        provider,
+        model: o.model,
+        billingSourceId: this.deps.billingSourceId,
+        system: o.system,
+        messages: o.messages,
+        tools: o.tools,
+        pricing: o.pricing,
+        timeoutMs: o.timeoutMs,
+        maxTokensPerCall: o.maxTokens,
+        effort: o.effort,
+        // At low effort (the chat modes' default, spec principle 8: answer in about a second)
+        // the turn asks thinking off where the model allows it, so thinking cannot eat the
+        // reply's cap; Haiku 5.5 otherwise thinks adaptively even at low effort. Above low the
+        // model thinks as the effort says (spec D: effort sets thinking depth).
+        ...(o.effort === "low" ? { thinking: "off" as const } : {}),
+        ...(textChat.temperature !== null ? { temperature: textChat.temperature } : {}),
+        maxTurns: o.maxTurns,
+        label: "conversation",
+        protected: true,
+        signal,
+        ...(o.wrapUp ? { wrapUp: o.wrapUp } : {}),
+      };
     };
-    let result = await this.deps.hooksDriver.run({ ...run, onEvent: (ev) => onEvent(ev, true) });
+    /** A thorough pass on `route` within `budgetUsdMicro` (its figures for the step line). */
+    const thoroughPass = async (route: ChatRoute, f: ChatPassFigures, budgetUsdMicro: number) => {
+      this.turnsOf().setDepth(transcriptId, route.rung);
+      // The hand-over: text the quick pass streamed before it is dropped (the step's reset).
+      streamed = "";
+      gate?.end(true);
+      step(handOverStep({ ...f, budgetUsdMicro }), { reset: true });
+      const t = thoroughRequest(volatile);
+      const r = runOf({
+        runId: `${transcriptId}:thorough`,
+        budgetUsdMicro,
+        tools: t.tools,
+        system: t.system,
+        messages: t.messages,
+        model: route.model,
+        pricing: route.pricing,
+        effort: route.effort,
+        maxTokens: route.maxTokens,
+        timeoutMs: route.timeoutMs,
+        maxTurns: THOROUGH_MAX_MODEL_CALLS,
+        wrapUp: CHAT_WRAP_UP,
+      });
+      const started = clock.now();
+      const result = await this.deps.hooksDriver.run({ ...r, onEvent: (ev) => onEvent(ev, true) });
+      return {
+        run: r,
+        result,
+        route,
+        figures: f,
+        budgetUsdMicro,
+        durationMs: clock.now() - started,
+      };
+    };
+
+    // What the turn decided about depth, for the reply's lines and its row.
+    let why: Why | null = null;
+    let offer: StoredOffer | null = null;
+    let capLevel: CapLevel | null = null;
+    let refusedFor: string | null = null;
+    let fast: { run: ReturnType<typeof runOf>; result: RunResult } | null = null;
+    let thorough: Awaited<ReturnType<typeof thoroughPass>> | null = null;
+    /** Decide a pass the person asked for (their words, Think it through, an accepted offer). */
+    const personsPass = async (
+      route: ChatRoute,
+      yes: { atMostUsdMicro: number; model?: string } | null,
+    ): Promise<ReturnType<typeof thoroughPass> | null> => {
+      const f = await figuresOf(route);
+      // A yes covers its own "at most" on its own model: a Go ahead after a restart, or after the
+      // price or the model changed so that it no longer covers the pass, asks again with the new
+      // figures (nothing spends past a figure the person was not shown).
+      if (yes && ((yes.model && yes.model !== f.model) || yes.atMostUsdMicro < f.floorUsdMicro)) {
+        offer = offerOf(f, question);
+        return null;
+      }
+      const budgetUsdMicro = yes ? yes.atMostUsdMicro : Math.min(amountUsdMicro, f.atMostUsdMicro);
+      const level = capFor(f, budgetUsdMicro);
+      if (level) {
+        capLevel = level;
+        return null;
+      }
+      if (!yes && asksFirst(f)) {
+        offer = offerOf(f, question);
+        return null;
+      }
+      if (budgetUsdMicro < f.floorUsdMicro) {
+        offer = offerOf(f, question);
+        return null;
+      }
+      return thoroughPass(route, f, Math.min(budgetUsdMicro, room?.usdMicro ?? budgetUsdMicro));
+    };
+    if (accepted) {
+      thorough = await personsPass(routeOf(accepted.rung), {
+        atMostUsdMicro: accepted.atMostUsdMicro,
+        ...(accepted.model ? { model: accepted.model } : {}),
+      });
+    } else if (asked.ask && asked.ask !== "quick") {
+      why = "asked";
+      thorough = await personsPass(routeOf(asked.ask), null);
+    } else {
+      // The quick pass, with answer_thoroughly gated in code (the gate, then the ask rule).
+      let handOver: { route: ChatRoute; figures: ChatPassFigures } | null = null;
+      let lookedUp = false;
+      let decided: string | null = null;
+      const answerTool: ToolSpec<{ why: Why }> = {
+        name: ANSWER_THOROUGHLY_TOOL,
+        description: ANSWER_THOROUGHLY_DESCRIPTION,
+        schema: z.object({ why: z.enum(WHY_VALUES) }),
+        actionClass: "read",
+        risk: "low",
+        execute: async (input) => {
+          if (decided) return { content: decided };
+          why = input.why;
+          const route = routeOf(rungOfWhy(input.why));
+          const refuse = (reason: string) => {
+            refusedFor = reason;
+            decided = notNowResult(reason);
+            return { content: decided };
+          };
+          // The gate, in order: a typed turn; no quick ask; no record read yet; the room; a rung.
+          if (spoken) return refuse(NOT_NOW.spoken);
+          if (asked.ask === "quick") return refuse(NOT_NOW.quick);
+          if (turn.recordsRead || lookedUp || results.length) return refuse(NOT_NOW.records);
+          const f = await figuresOf(route);
+          const level = capFor(
+            f,
+            asksFirst(f) ? f.atMostUsdMicro : Math.min(amountUsdMicro, f.atMostUsdMicro),
+          );
+          if (level) {
+            capLevel = level;
+            return refuse(NOT_NOW.room);
+          }
+          if (route.sameModel && route.effort === effort && effort !== "low")
+            return refuse(NOT_NOW.rung);
+          if (asksFirst(f) || Math.min(amountUsdMicro, f.atMostUsdMicro) < f.floorUsdMicro) {
+            offer = offerOf(f, question);
+            decided = ASK_RESULT;
+            return { content: decided };
+          }
+          handOver = { route, figures: f };
+          decided = HANDED_OVER_RESULT;
+          return { content: decided, endRun: true };
+        },
+      };
+      const tools = toolsFor(this.deps.recallSizes, answerTool as ToolSpec);
+      const messages: ChatMessage[] = [
+        ...history,
+        { role: "user", content: `${question}\n\n${volatile}`, stableChars: question.length },
+      ];
+      // The turn's budget: the configured one, or by default USD 0.05 raised to room for
+      // `CHAT_TURN_CALL_ROOM` calls priced as the loop prices the first one (its input as sent,
+      // the whole output cap), so a realistic turn on an expensive chat model (Opus 5.5, which
+      // cannot turn thinking off) is not refused before it starts; never above
+      // `CHAT_TURN_BUDGET_CEILING_USD_MICRO` (ADR 0091).
+      const turnBudgetUsdMicro =
+        this.deps.turnBudgetUsdMicro ??
+        Math.min(
+          CHAT_TURN_BUDGET_CEILING_USD_MICRO,
+          Math.max(
+            DEFAULT_TURN_BUDGET_USD_MICRO,
+            CHAT_TURN_CALL_ROOM *
+              pricing.estimate(countRequest(system, messages, tools), textChat.maxTokens),
+          ),
+        );
+      quickBudget = turnBudgetUsdMicro;
+      const r = runOf({
+        runId: transcriptId,
+        budgetUsdMicro: turnBudgetUsdMicro,
+        tools,
+        system,
+        messages,
+        model,
+        pricing,
+        effort,
+        maxTokens: textChat.maxTokens,
+        timeoutMs: textChat.timeoutMs,
+        maxTurns: CHAT_MAX_MODEL_CALLS,
+      });
+      const result = await this.deps.hooksDriver.run({
+        ...r,
+        onEvent: (ev) => {
+          if (ev.type === "tool_call" && ev.name !== ANSWER_THOROUGHLY_TOOL) lookedUp = true;
+          onEvent(ev, true);
+        },
+      });
+      fast = { run: r, result };
+      const go = handOver as { route: ChatRoute; figures: ChatPassFigures } | null;
+      if (go && !signal.aborted)
+        thorough = await thoroughPass(
+          go.route,
+          go.figures,
+          Math.min(
+            amountUsdMicro,
+            go.figures.atMostUsdMicro,
+            room?.usdMicro ?? Number.POSITIVE_INFINITY,
+          ),
+        );
+      // A refusal that is no cap offers Think it through with what a closer look takes.
+      if (!offer && refusedFor && !capLevel && !spoken && longerFigures)
+        offer = {
+          line: closerLookWords(longerFigures),
+          action: "think",
+          rung: "longer",
+          question,
+          estimateUsdMicro: longerFigures.estimateUsdMicro,
+          atMostUsdMicro: longerFigures.atMostUsdMicro,
+          model: longerRoute.model,
+        };
+    }
+    const quick = fast as { run: ReturnType<typeof runOf>; result: RunResult } | null;
+    const deep = thorough as Awaited<ReturnType<typeof thoroughPass>> | null;
+    // The run whose text is the answer: the thorough pass when one ran, else the quick pass.
+    const last = deep
+      ? { run: deep.run, result: deep.result, maxTurns: THOROUGH_MAX_MODEL_CALLS }
+      : quick
+        ? { run: quick.run, result: quick.result, maxTurns: CHAT_MAX_MODEL_CALLS }
+        : null;
+    const stopped = entry.stopped;
+    let result: RunResult | null = last?.result ?? null;
     // l3-chat-claims (live check 3, L3-run-1): a reply that says it changed something or asked
     // for the person's yes when no command of this turn did (`claimOf`, judged by `didNow`: what
     // the turn's commands did, the nudge step's included) gets one more model step with
-    // `claimNudge` (what the turn did, in words), inside the turn's model calls, budget and
+    // `claimNudge` (what the turn did, in words), inside the run's model calls, budget and
     // deadline; its text is not streamed. A claim still made then, or with no call left, is
-    // replaced with what is true (`trueLine`): the turn's change sentences, the read-back of its
-    // card alone, or a "Nothing changed" line that says whether an earlier card still waits.
-    // Live, "I've asked for confirmation. Once you approve, ..." reached the person with no card,
-    // nothing in the Inbox and the rule unchanged. The guard's review: it knew one answer only,
-    // and wrote "Nothing changed, and nothing waits for your yes" above the turn's own Yes/No
-    // card and above a change the turn made.
+    // replaced with what is true (`trueLine`). d1109-chat-depth: it runs after the last pass.
     const didNow = (): TurnDid => {
-      const asked = results.some((r) => r.status === "pending" && !!r.pendingId);
+      const askedCard = results.some((r) => r.status === "pending" && !!r.pendingId);
       return {
         changed: results.some((r) => r.status === "done" || r.status === "partial"),
-        asked,
+        asked: askedCard,
         // The card an earlier turn read back still waits (a card of this turn replaces it). A
         // card waiting from before backs no "asked" claim of this turn: the claim may be about
         // another change, and its Yes would answer the earlier card.
-        waiting: !asked && pending !== null && !cancelledForStop,
+        waiting: !askedCard && pending !== null && !cancelledForStop,
       };
     };
     const falseClaim = (text: string): ReplyClaim | null => {
@@ -1151,16 +1838,20 @@ export class ConversationAgent {
     };
     let claimGuard: (ReplyClaim & { nudged: boolean; replaced: boolean }) | null = null;
     const claimed =
-      result.outcome === "completed" && result.stopReason !== "max_tokens"
+      last &&
+      result &&
+      !stopped &&
+      result.outcome === "completed" &&
+      result.stopReason !== "max_tokens"
         ? falseClaim(result.finalText)
         : null;
-    if (claimed) {
-      const left = CHAT_MAX_MODEL_CALLS - result.modelCalls;
-      const nudged = left > 0 && !req.signal?.aborted;
+    if (claimed && last && result) {
+      const left = last.maxTurns - result.modelCalls;
+      const nudged = left > 0 && !signal.aborted;
       let replaced = true;
       if (nudged) {
         const again = await this.deps.hooksDriver.run({
-          ...run,
+          ...last.run,
           messages: [
             ...result.messages,
             { role: "user", content: [{ type: "text", text: claimNudge(claimed, didNow()) }] },
@@ -1183,31 +1874,68 @@ export class ConversationAgent {
         replaced,
       });
     }
+    // What the whole turn cost and took: every pass, the nudge included.
+    const passes: {
+      depth: Depth;
+      model: string;
+      effort: string;
+      durationMs: number;
+      costUsdMicro: number;
+    }[] = [];
+    if (quick)
+      passes.push({
+        depth: "quick",
+        model,
+        effort,
+        durationMs: wholeMs(quick.result.durationMs) ?? 0,
+        costUsdMicro: quick.result.costUsdMicro,
+      });
+    if (deep)
+      passes.push({
+        depth: deep.route.rung,
+        model: deep.route.model,
+        effort: deep.route.effort,
+        durationMs: wholeMs(deep.durationMs) ?? 0,
+        costUsdMicro: (result ?? deep.result).costUsdMicro,
+      });
+    const costUsdMicro =
+      (quick && !deep ? (result?.costUsdMicro ?? 0) : (quick?.result.costUsdMicro ?? 0)) +
+      (deep ? (result?.costUsdMicro ?? deep.result.costUsdMicro) : 0);
+    const durationMs = (quick ? quick.result.durationMs : 0) + (deep ? deep.durationMs : 0);
     // A reply cut off at max_tokens ends at its last complete sentence, spoken or typed, and
     // the turn is recorded as truncated (never as a completed answer).
-    const truncated = !claimGuard?.replaced && result.stopReason === "max_tokens";
+    const truncated =
+      !!result && !stopped && !claimGuard?.replaced && result.stopReason === "max_tokens";
     // What the turn did once its runs are over (the nudge step's commands count), for the true
     // line and its notice: a "Nothing changed" line is about the app, not an answer.
     const didAll = didNow();
     const guardNotice = !!claimGuard?.replaced && !didAll.changed && !didAll.asked;
-    let reply = claimGuard?.replaced
-      ? this.trueLine(results, didAll)
-      : truncated
-        ? completeSentencesOf(result.finalText)
-        : result.finalText.trim();
+    let reply = stopped
+      ? completeSentencesOf(streamed)
+      : claimGuard?.replaced
+        ? this.trueLine(results, didAll)
+        : !result
+          ? ""
+          : truncated
+            ? completeSentencesOf(result.finalText)
+            : result.finalText.trim();
+    // An ask the person's own words made (no model call): the reply is the ask line alone.
+    const ownAsk = !result && offer !== null;
+    if (ownAsk && offer) reply = (offer as StoredOffer).line;
+    if (!result && !offer && capLevel) reply = capWords(capLevel);
     // A card counts as mentioned only when the reply names it (its task, or the start of its
     // question): an answer about something else leaves it "not yet mentioned" for the next
     // turn, and an aborted or failed turn mentions nothing.
-    if (result.outcome === "completed" || truncated)
+    if (result && (result.outcome === "completed" || truncated))
       for (const shown of context.shownRequests)
         if (replyNames(reply, shown.names)) conv.mentioned.add(shown.id);
-    if (truncated) {
+    if (truncated && result) {
       this.logger.warn("chat reply cut off at max_tokens; trimmed to its last full sentence", {
         transcriptId,
-        maxTokens: textChat.maxTokens,
+        maxTokens: deep ? deep.route.maxTokens : textChat.maxTokens,
         outputTokens: result.usage.output_tokens,
-        effort,
-        model,
+        effort: deep ? deep.route.effort : effort,
+        model: deep ? deep.route.model : model,
         keptChars: reply.length,
         generatedChars: result.finalText.length,
       });
@@ -1231,27 +1959,77 @@ export class ConversationAgent {
     // ("month cap reached"): a shorter question would not get past it.
     if (
       !reply &&
+      result &&
+      !deep &&
       result.error?.code === "budget_exceeded" &&
       result.error.source === LOCAL_BUDGET_SOURCE &&
       result.modelCalls === 0
     )
-      reply = budgetRefusedReply(turnBudgetUsdMicro);
+      reply = budgetRefusedReply(quickBudget);
     // "Done." only when a command of the turn did something (l3-chat-claims: a reply with no
-    // text and no command claimed a change that never happened).
-    if (!reply)
+    // text and no command claimed a change that never happened). L3-left-11: a turn its time
+    // limit cut off says so in one sentence with what to do, never "(run timeout)".
+    if (!reply && !stopped)
       reply =
-        result.outcome !== "completed"
-          ? `I could not answer (${result.error?.message ?? result.outcome}).`
+        result && result.outcome !== "completed"
+          ? result.outcome === "timeout" || result.error?.code === "timeout"
+            ? TIMEOUT_REPLY
+            : `I could not answer (${result.error?.message ?? result.outcome}).`
           : results.some((r) => r.status === "done" || r.status === "partial")
             ? "Done."
             : NO_ANSWER_REPLY;
+    // d1109-chat-depth: under a longer answer that reached its wrap-up, the next rung's ask line
+    // (the stronger, or the strongest when the project's highest model is above it).
+    if (deep && !stopped && result?.wrapUpSent && !offer) {
+      const next = routeOf(deep.route.rung === "longer" ? "stronger" : "best");
+      if (next.rung !== deep.route.rung && next.model !== deep.route.model)
+        offer = offerOf(await figuresOf(next), question);
+    }
+    // Think it through under a quick model answer of a typed turn (never under a command's
+    // sentence, a notice, a read-back, a voice turn or a longer answer).
+    const closer =
+      !deep && !spoken && result && longerFigures && !pendingCard && !guardNotice && !stopped
+        ? {
+            estimateUsdMicro: longerFigures.estimateUsdMicro,
+            atMostUsdMicro: longerFigures.atMostUsdMicro,
+            seconds: longerFigures.seconds,
+            model: longerRoute.model,
+          }
+        : null;
+    const footer = stopped
+      ? stoppedWords(costUsdMicro, chf)
+      : deep
+        ? footerWords({
+            tier: deep.route.tier,
+            sameModel: deep.route.sameModel,
+            durationMs: deep.durationMs,
+            costUsdMicro: deep.result.costUsdMicro,
+            chfPerUsd: chf,
+            subscription: credential?.kind === "subscription",
+          })
+        : null;
+    const lineUnder: ChatOffer | null = offer
+      ? ownAsk
+        ? { line: (offer as StoredOffer).line, action: "go_ahead" }
+        : {
+            line: (offer as StoredOffer).line,
+            action: (offer as StoredOffer).action,
+            ...((offer as StoredOffer).action === "think" && longerFigures
+              ? { explain: thinkItThroughExplain(longerFigures) }
+              : {}),
+          }
+      : capLevel && result
+        ? { line: capWords(capLevel), action: null }
+        : null;
     // d1109-chat-recall: the records the reply rests on, among those it opened (at most three).
     const records = namedSources(reply, recallScope.opened, zone, clock.now());
-    if (ttft !== null && ttft > textChat.targetMs)
+    if (ttft !== null && !deep && ttft > textChat.targetMs)
       this.logger.warn("chat first token over target", {
         ttftMs: ttft,
         target: textChat.targetMs,
       });
+    const depth: Depth = deep ? deep.route.rung : "quick";
+    hold.replied = true;
     await store.event.append(
       sessionId,
       "chat.reply",
@@ -1260,10 +2038,10 @@ export class ConversationAgent {
         text: reply,
         // Spec D.19: the turn's time to first token and total time, with what produced them;
         // the Performance view reads text-chat measurements from these rows.
-        ttftMs: ttft,
-        durationMs: wholeMs(result.durationMs),
-        model,
-        effort,
+        ttftMs: deep ? null : ttft,
+        durationMs: wholeMs(durationMs),
+        model: deep ? deep.route.model : model,
+        effort: deep ? deep.route.effort : effort,
         source: req.source ?? "text",
         // The turn's active project: the conversation session is one per agent and keeps the
         // project of its first turn, so the Performance view scopes a turn by this field.
@@ -1272,13 +2050,13 @@ export class ConversationAgent {
         conversationProjectId: conversationProject,
         ...(pendingCard ? { pendingId: pendingCard.id, readback: pendingCard.readback } : {}),
         ...(answeredHere ? { answeredId: answeredHere } : {}),
-        costUsdMicro: result.costUsdMicro,
+        costUsdMicro,
         // "truncated": the model stopped at max_tokens and the reply was trimmed to its last
-        // full sentence; the stop reason of the turn's last model call says why it ended.
-        outcome: truncated ? "truncated" : result.outcome,
-        stopReason: result.stopReason ?? null,
-        // What the turn was allowed to spend (ADR 0091).
-        turnBudgetUsdMicro,
+        // full sentence; "stopped": the person pressed Stop.
+        outcome: stopped ? "stopped" : truncated ? "truncated" : (result?.outcome ?? "completed"),
+        stopReason: result?.stopReason ?? null,
+        // What the turn was allowed to spend (ADR 0091): the quick pass's, then the longer one's.
+        turnBudgetUsdMicro: quickBudget + (deep?.budgetUsdMicro ?? 0),
         actions: actions.map((a) => a.kind),
         actionDetails: actions,
         sources: {
@@ -1303,20 +2081,89 @@ export class ConversationAgent {
         // A "Nothing changed" line put in for a claim is about the app, not an answer ("make this
         // a task" skips it); a true line of changes or a read-back is the turn's own reply.
         ...(guardNotice ? { notice: true } : {}),
+        // d1109-chat-depth: how deep it went, each pass, why the model asked, what is offered.
+        depth,
+        passes,
+        ...(why ? { why } : {}),
+        ...(offer ? { offer } : {}),
+        ...(lineUnder && !offer ? { capLine: lineUnder.line } : {}),
+        ...(closer ? { closer } : {}),
+        ...(footer ? { footer } : {}),
+        ...(deep
+          ? {
+              footerFacts: {
+                tier: deep.route.tier,
+                sameModel: deep.route.sameModel,
+                durationMs: wholeMs(deep.durationMs),
+                costUsdMicro: deep.result.costUsdMicro,
+                subscription: credential?.kind === "subscription",
+              },
+            }
+          : {}),
+        ...(stopped ? { stopped: true } : {}),
+        ...(ownAsk ? { notice: true } : {}),
       } as never,
-      result.costUsdMicro,
+      costUsdMicro,
     );
     return {
       reply,
       actions,
       pendingConfirmation: pendingCard,
       question: null,
-      ttftMs: ttft,
-      costUsdMicro: result.costUsdMicro,
+      ttftMs: deep ? null : ttft,
+      costUsdMicro,
       transcriptId,
       activeProjectId: await this.currentProject(req.humanId, activeFallback),
       sources: { ...context.sources, ...(records.length ? { records } : {}) },
+      depth,
+      footer,
+      offer: lineUnder,
     };
+  }
+
+  /**
+   * The median cost and time of the last answers on this rung and model (d1109-chat-depth: the
+   * ask line's "about"), from the conversation's own rows; null when none was measured.
+   */
+  private async recentPasses(
+    sessionId: string,
+    rung: Rung,
+    model: string,
+  ): Promise<{ costUsdMicro: number; durationMs: number } | null> {
+    let rows: Awaited<ReturnType<StateStore["event"]["ofTypes"]>>;
+    try {
+      rows = await this.deps.store.event.ofTypes(sessionId, ["chat.reply"], { limit: 200 });
+    } catch {
+      return null;
+    }
+    const costs: number[] = [];
+    const times: number[] = [];
+    for (const row of rows) {
+      const p = row.payload as { passes?: unknown; stopped?: unknown };
+      if (p.stopped === true || !Array.isArray(p.passes)) continue;
+      for (const pass of p.passes as {
+        depth?: unknown;
+        model?: unknown;
+        costUsdMicro?: unknown;
+        durationMs?: unknown;
+      }[])
+        if (
+          pass.depth === rung &&
+          pass.model === model &&
+          typeof pass.costUsdMicro === "number" &&
+          typeof pass.durationMs === "number"
+        ) {
+          costs.push(pass.costUsdMicro);
+          times.push(pass.durationMs);
+        }
+      if (costs.length >= PASS_MEDIAN_OF) break;
+    }
+    if (!costs.length) return null;
+    const median = (v: number[]) => {
+      const s = [...v].sort((a, b) => a - b);
+      return s[Math.floor((s.length - 1) / 2)] ?? 0;
+    };
+    return { costUsdMicro: median(costs), durationMs: median(times) };
   }
 
   /** The first of these change log rows that can still be undone. */

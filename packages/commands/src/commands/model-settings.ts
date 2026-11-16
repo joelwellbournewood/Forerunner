@@ -39,6 +39,7 @@ export const MODEL_SETTING_LABELS: Record<RunSettingField, string> = {
 const MODE_LABELS: Record<AgentSettingMode, string> = {
   planning: "planning",
   text_chat: "chat",
+  chat_thorough: "chat's thorough answers",
 };
 
 const params = z

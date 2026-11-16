@@ -46,6 +46,33 @@ export interface TranscriptReply {
    * at most three); empty for a reply that opened none.
    */
   sources: { kind: string; title: string; date: string; link: string | null }[];
+  /** How deep the answer went (d1109-chat-depth): "quick", or a longer pass's rung. */
+  depth?: string;
+  /** The line under a longer answer, or the stopped line; null for none. */
+  footer?: string | null;
+  /** The offer under the answer (an ask line with Go ahead, or a closer look with Think it through). */
+  offer?: {
+    line: string;
+    action: "go_ahead" | "think";
+    rung: "longer" | "stronger" | "best";
+    question: string;
+    estimateUsdMicro: number;
+    atMostUsdMicro: number;
+    model: string;
+  } | null;
+  /** Think it through's figures under a quick model answer of a typed turn; null otherwise. */
+  closer?: {
+    estimateUsdMicro: number;
+    atMostUsdMicro: number;
+    seconds: number;
+    model: string;
+  } | null;
+  /** A cap line under the answer ("A closer look would pass this month's cap, …"). */
+  capLine?: string | null;
+  /** The person stopped this answer. */
+  stopped?: boolean;
+  /** The answer failed while Forerunner ran ("I could not answer this."). */
+  failed?: boolean;
 }
 
 export interface TranscriptTurn {
@@ -111,6 +138,43 @@ function replyOf(p: Record<string, unknown>): TranscriptReply {
     notice: p.notice === true,
     costUsdMicro: typeof p.costUsdMicro === "number" ? p.costUsdMicro : 0,
     sources: sourcesOf(obj(p.sources).records),
+    depth: str(p.depth) || "quick",
+    footer: typeof p.footer === "string" && p.footer ? p.footer : null,
+    offer: offerOf(p.offer),
+    closer: closerOf(p.closer),
+    capLine: typeof p.capLine === "string" && p.capLine ? p.capLine : null,
+    stopped: p.stopped === true,
+    failed: p.failed === true,
+  };
+}
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/** The offer a chat.reply row keeps (d1109-chat-depth), or null when it is not whole. */
+function offerOf(v: unknown): NonNullable<TranscriptReply["offer"]> | null {
+  const o = obj(v);
+  const rung = o.rung === "longer" || o.rung === "stronger" || o.rung === "best" ? o.rung : null;
+  const action = o.action === "go_ahead" || o.action === "think" ? o.action : null;
+  if (!rung || !action || typeof o.line !== "string") return null;
+  return {
+    line: o.line,
+    action,
+    rung,
+    question: str(o.question),
+    estimateUsdMicro: num(o.estimateUsdMicro),
+    atMostUsdMicro: num(o.atMostUsdMicro),
+    model: str(o.model),
+  };
+}
+
+function closerOf(v: unknown): NonNullable<TranscriptReply["closer"]> | null {
+  const o = obj(v);
+  if (typeof o.atMostUsdMicro !== "number") return null;
+  return {
+    estimateUsdMicro: num(o.estimateUsdMicro),
+    atMostUsdMicro: num(o.atMostUsdMicro),
+    seconds: num(o.seconds),
+    model: str(o.model),
   };
 }
 

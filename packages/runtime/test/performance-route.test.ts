@@ -77,7 +77,8 @@ describe("GET /performance on the daemon", () => {
 
   it("serves every mode from the store: a chat turn and the Run rows, per project, in the window", async () => {
     const empty = await view(`/performance?projectId=${projectId}`);
-    expect(empty.modes).toHaveLength(8);
+    // d1109-chat-depth: "Chat, thorough answers" is the ninth.
+    expect(empty.modes).toHaveLength(9);
     expect(empty.modes.every((m) => m.samples === 0)).toBe(true);
     expect(empty).toMatchObject({ projectId, days: 7, effortOffset: -1 });
     // The slider (-1) reaches every mode a run reads it in (spec D.16): the critic's medium

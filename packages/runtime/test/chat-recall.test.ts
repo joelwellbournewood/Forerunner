@@ -630,11 +630,23 @@ describe("d1109-chat-recall, run C: CR-9 the prompt and the turn's room", () => 
     // prompt 1.2.2, four read tools) on d706e76, 7aa7add with d1109-onerepo-link merged (C2's merge
     // step: its repo_take_over tool and project_create's longer definition add 199 tokens to every
     // turn's tools; 7aa7add itself measures 8156 with this seed).
+    // d1109-chat-depth (C3): answer_thoroughly's definition and the facts' thinking_longer line
+    // ride on every turn too (the fast request's tools are the same bytes whatever the gate says);
+    // they are counted with the fixed texts, so the bound still holds every other growth.
+    const longer =
+      /\n- thinking_longer: [^\n]*/.exec(String(req?.messages.at(-1)?.content))?.[0] ?? "";
     const fixed = w.provider.countTokens(
-      `${CHAT_RECALL_RULES}${JSON.stringify(req?.tools?.filter((t) => t.name.startsWith("recall")))}`,
+      `${CHAT_RECALL_RULES}${JSON.stringify(
+        req?.tools?.filter((t) => t.name.startsWith("recall") || t.name === "answer_thoroughly"),
+      )}${longer}`,
     );
     expect(sent - BASE_STATUS_TOKENS).toBeLessThanOrEqual(fixed + 160);
-    expect(sent - BASE_STATUS_TOKENS).toBeLessThanOrEqual(1000);
+    // d1109-chat-recall's own growth stays within 1000 tokens; d1109-chat-depth's tool and fact
+    // come on top (counted apart).
+    const depth = w.provider.countTokens(
+      `${JSON.stringify(req?.tools?.filter((t) => t.name === "answer_thoroughly"))}${longer}`,
+    );
+    expect(sent - BASE_STATUS_TOKENS - depth).toBeLessThanOrEqual(1000);
     await w.store.close();
   });
 });

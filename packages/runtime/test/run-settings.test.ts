@@ -286,7 +286,15 @@ describe("the settings screen's view (GET /settings/models)", () => {
     expect(v.provider).toEqual({ name: "fake", acceptsTemperature: false, fastMode: false });
     const alice = v.agents[0];
     expect(alice?.editable).toBe(true);
-    expect(alice?.modes.map((m) => m.mode)).toEqual(["planning", "text_chat"]);
+    // d1109-chat-depth: chat's thorough answers are the principal's third mode (Sonnet, medium).
+    expect(alice?.modes.map((m) => m.mode)).toEqual(["planning", "text_chat", "chat_thorough"]);
+    expect(alice?.modes[2]).toMatchObject({
+      model: "fake-sonnet",
+      effort: { value: "medium" },
+      maxTokens: { value: 4096, default: 4096, source: "table" },
+      timeoutMinutes: { value: 2, source: "table" },
+      speedMode: { value: "standard" },
+    });
     expect(alice?.modes[1]).toMatchObject({
       model: "fake-haiku",
       maxTokens: { value: 1024, default: 1024, source: "table" },
