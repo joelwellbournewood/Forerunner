@@ -358,6 +358,7 @@ export function Conversation({
         {busy && deep !== "quick" && !stopping ? (
           <Button
             type="button"
+            className="whitespace-nowrap"
             onClick={() => void answerNow()}
             disabled={!turnId}
             title={ANSWER_NOW_EXPLAIN}
@@ -370,6 +371,7 @@ export function Conversation({
           <Button
             variant="primary"
             type="submit"
+            className="whitespace-nowrap"
             disabled={!turnId || stopping}
             title={STOP_EXPLAIN}
             data-testid={`${testIds}-stop`}

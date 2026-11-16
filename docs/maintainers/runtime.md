@@ -4356,7 +4356,8 @@ no id (`withoutIds`) and no credential's shape (`hasSecretShape`) in any result.
 marked untrusted (`agent_output`, origin `record:recall` for a search and `record:<kind>` for an
 open; documents `repo_file`), so the hooks wrap and scan it and `noteRecordsRead` sets the turn's
 read-back. `CHAT_RECALL_RULES` follows `CHAT_RETRIEVAL_RULES` in the stable system part; the role
-prompt is `conversation-agent.md` 1.3.0 ("What you look up"). A turn may make 6 model calls
+prompt is `conversation-agent.md` 1.4.0 ("What you look up", and since d1109-chat-depth "Thinking
+longer"). A turn may make 6 model calls
 (`CHAT_MAX_MODEL_CALLS`, 4 before) and its default budget has room for 5 (`CHAT_TURN_CALL_ROOM`, 3
 before; the USD 0.25 ceiling stays, a Haiku turn keeps USD 0.05). `findTask` (task_get) also finds
 a task by an earlier title and, failing every title, by letter patterns (`titleSimilarity`: at
@@ -4364,9 +4365,9 @@ least 0.5 and 0.08 clearer than the next); several of one title are listed apart
 words. Each read and recall tool says what it does through `ChatRequest.onStep`
 (`src/conversation/recall-steps.ts`, `stepLine`: "Looking through last week's sessions…",
 "Reading the decision of 4 Nov…"; at most 80 characters, record names from the store cut at 40,
-search words quoted only when the person said each of them); d1109-chat-depth shows them. The
-command tools do not call `onStep` yet: `stepLine` has their words ("Preparing the change…",
-"Keeping that for later…"), and wiring them is d1109-chat-depth's. The
+search words quoted only when the person said each of them); d1109-chat-depth shows them, and
+the command tools say theirs too ("Preparing the change…", "Keeping that for later…": the
+agent wraps each command tool with `withStep`, C2-left-6). The
 records a reply names among those it opened are kept on its `chat.reply` row as
 `sources.records` (`namedSources`, at most three, `{kind, title, date, link}`), read by
 `readTranscript` and served as `ChatReplyView.sources` and `ConversationTurnView.reply.sources`.
@@ -4381,6 +4382,91 @@ one `STATUS_DOC_RE` (recall.ts).
 Tests: `chat-recall.test.ts` (composed, every kind, the restart), `recall-rank.test.ts` (the
 golden set), `recall-steps.test.ts`, the record channel's record-005 and record-006, and
 `real-daemon.test.ts` "d1109-chat-recall, run C".
+
+**Thinking longer, the waiting line and Stop (d1109-chat-depth, [ADR 0114](../decisions/0114-chat-answers-from-now-looks-up-and-thinks-longer.md)).**
+The owner's words of 2026-11-09: "Chat should also be able to use more effort or a better model,
+selectively and transparently, … knowing that this will take more time to reply. There should be
+something indicating what the chat is doing when waiting", and answer 2: "as much as needed, but
+if it will switch models and do an expensive task, it should warn/ask first."
+- *The rungs* (`src/conversation/depth.ts`, the agent's `routeOf`): the quick pass is today's
+  (text_chat, low effort, thinking off, 1,024 tokens, 6 calls). The longer rung is the same model
+  one effort step up (medium, adaptive thinking, held at the registry's `max_effort`), 4,096
+  tokens a call, 8 calls (`THOROUGH_MAX_MODEL_CALLS`), 120 s (`CHAT_THOROUGH_TIMEOUT_MS`). The
+  stronger rung is the `chat_thorough` mode (sonnet, medium; ADR 0072's tables, so the person can
+  move it), its tier held at the project's highest model (`projectCeilingOf`, opus outside a
+  project or unset); at or below the quick model it is the longer rung. The best rung is the
+  project's highest model, run only on the person's words ("use the best model", "use Opus") or
+  their Go ahead under a stronger answer that reached its wrap-up. `rungOfWhy`: many records and
+  "asked" think longer; a failure, a plan, a comparison or a review takes the stronger model.
+- *Who asks.* The person's words at the start or end of a line, outside quotes (`depthWords`:
+  "think it through", "take your time", "be thorough", "use a stronger model", "use Sonnet",
+  "use the best model", "denk gründlich nach"; "quick", "briefly", "in one line", "kurz" keep it
+  quick; a phrase alone re-asks the previous line, `THINK_THROUGH_WHAT` when there is none), the
+  Think it through button (`ChatRequest.depth: "longer"` with `offer`: the newest answer's
+  `closer` figures), or the fast model's one tool `answer_thoroughly {why}` (an enum; its
+  definition `ANSWER_THOROUGHLY_DESCRIPTION`), registered after the read and recall tools on every
+  quick turn so the fast request's tools and system are the same bytes whatever the gate says.
+  A spoken ask gets `VOICE_THOROUGH_NOTICE` and no model call.
+- *The gate* (answer_thoroughly's execute), in order, each refused with `notNowResult(reason)`:
+  a spoken turn; a "quick" line; a turn that read a record (`turn.recordsRead`, d1109-chat-guard's
+  flag, a card listed in full included) or made any lookup or command first; the outer room
+  below the pass's floor (`ConversationDeps.chatRoom`: the month cap and the project's budget as
+  the caps checker reads them, the binding one names the cap line); no rung above the quick
+  pass. What passes follows the ask rule; a refusal that is no cap offers Think it through with
+  `closerLookWords`.
+- *The ask rule* (`asksFirst`): a switch of model, an estimate (or the floor) above the person's
+  amount (`chat_ask_above`, CHF 0.10 unset, 0 asks always; read from `notify_prefs`), or a chat
+  credential that is not the person's first (`ConversationDeps.chatCredential`; the compose reads
+  the routed provider's `peek` against the person's order) asks first: the model hears
+  `ASK_RESULT` and answers briefly, and the reply keeps an offer (`StoredOffer` on the
+  `chat.reply` row: the line, the rung, the question, the estimate, the "at most", the model). Go
+  ahead (`POST /chat` with `offer`), or "yes" / "go ahead" typed as the next line, runs it once on
+  that question; any other line drops it; a press on an older answer gets `OFFER_GONE_REPLY`. A Go
+  ahead after a restart, a price or a model change that no longer covers the floor asks again with
+  the new figures.
+- *Money.* A pass that goes ahead without asking is budgeted at min(the person's amount, its "at
+  most", the outer room); one after a yes at min(the line's "at most", the room). "At most" is
+  twice the estimate rounded up to the centime (`atMostOf`), never below the floor. The floor is
+  three worst cases of the pass's first call (`PASS_FLOOR_CALLS`, the loop's own estimate: input
+  as sent plus the whole cap); below it nothing runs. The estimate is the median of the last 20
+  answers on that rung and model (`recentPasses`, from the conversation session's rows), else
+  five worst cases (`PASS_ESTIMATE_CALLS`); the time likewise, else 30 seconds. No daily sum. The
+  pass hears `CHAT_WRAP_UP` once through the loop's `wrapUp` option (its run id
+  `<turn id>:thorough`, phase work, its own `SessionBudget`); Answer now calls
+  `SessionBudget.wrapUpNow(runId)`. Every call goes through the hooks and the ledger as before.
+- *The thorough pass* reuses the facts the quick pass built (the user message is the question
+  plus the same volatile part), widens the history to 8,000 tokens (`THOROUGH_HISTORY_TOKENS`),
+  sizes recall 3,000 and 4,000 (`THOROUGH_RECALL_SIZES`), appends `CHAT_THOROUGH_RULES` to the
+  system part and has the quick pass's tools without `answer_thoroughly`, the same token
+  restrictions and no fetch tool. Text the quick pass streamed before the hand-over is dropped
+  (the hand-over step carries `reset`). The claim guard runs after the last pass with that pass's
+  calls left.
+- *Turns in flight* (`src/conversation/chat-turns.ts`, `ChatTurns`): one entry per turn from its
+  line to its reply (step, since, depth, the controller, Answer now); the daemon's registry
+  (`ConversationDeps.turns`, its `startedAt` the daemon's start) or the agent's own. Every run of
+  the turn gets `AbortSignal.any([req.signal, controller.signal])`, so Stop and voice's barge-in
+  end the model call (D3-12: before, `ChatRequest.signal` never reached `hooksDriver.run`); the
+  loop books the cut-off call (l3-money-engine). A stopped reply keeps its complete sentences and
+  its footer is `stoppedWords`. A turn that throws writes `FAILED_WORDS` as its reply (`failed:
+  true`), so a person's line never stays without one while the daemon runs; one with no reply
+  that is older than the daemon's start is "Forerunner closed before answering this.".
+- *The row* (`chat.reply`): `depth`, `passes [{depth, model, effort, durationMs, costUsdMicro}]`,
+  `why`, `offer`, `capLine`, `closer` (Think it through's figures under a quick typed model
+  answer), `footer` (`footerWords`: "Thought it through with Sonnet · 34 s · CHF 0.06"), `stopped`,
+  `ttftMs: null` for a longer answer; `readTranscript` reads them back. Performance measures a
+  longer answer as "Chat, thorough answers" on its total time (`eventSample`).
+- *The facts* gain `thinking_longer` in `# Now` (volatile): "goes ahead up to CHF 0.10 on this
+  model", "asks the person first", "not on a spoken turn" or "not now (the caps leave too
+  little)".
+- A timed-out turn says `TIMEOUT_REPLY` ("I ran out of time before I could answer. Ask again, or
+  ask for a shorter answer."; L3-left-11: was "I could not answer (run timeout).").
+Tests: `chat-depth.test.ts` (composed: Stop with the stand-in holding the call, the barge-in
+signal, the explicit pass's exact request, the ask line and Go ahead, the gate's refusals, the
+card listed in full, the first-credential rule, the cap line, the byte-identical fast request,
+Go ahead after composing again, no daily sum, the wrap-up heard once and the ledger, the
+medians, the failed reply, caching with the prompt-cache stand-in, the exact role prompt),
+`chat-depth-words.test.ts`, `conversation.test.ts` (the timeout reply), `real-daemon.test.ts`
+"d1109-chat-depth, run C".
 
 **The history leaves out a quoted record's words (L3-left-6).** An earlier reply whose own words
 the injection scan flags (a reply that quoted a report, a card or a recall hit) is sent in the
@@ -4772,7 +4858,17 @@ definition gives (commands.md, "Wave 15"), never recorded as a lesson, and no se
 have changed unless `settings_set` said so. The registry's `conversation-agent` prompt (1.2.0, 1.2.1 for W15-30)
 says the same in its action list. `# Now` carries the project's rule in force, in the
 Overview's words (`- Research reads: only developer.mozilla.org`, `researchReadsLine`).
-`POST /chat` and `/chat/stream` say what a turn changed to the screens as `POST
+d1109-chat-depth: `POST /chat/stream` sends a `turn` frame `{turnId, startedAt}` first, a `step`
+frame `{text, at, reset?}` at each step (`reset`: the streamed text is dropped, a hand-over),
+then the tokens and the reply; a dropped stream never stops a turn (every write is
+`.catch`ed). `POST /chat` and `/chat/stream` take `depth: "longer"` and `offer` (Think it through,
+Go ahead). `POST /chat/turns/:id/stop` (`ChatStopView`; another human 403, an ended turn
+`{stopped: false}`) and `POST /chat/turns/:id/answer-now` (`ChatAnswerNowView`) act on the
+registry. The conversation view serves `answering {turnId, step, since, depth}`, each reply's
+`depth`, `footer` and `offer` (only the newest answer's keeps its action; Think it through's
+line from its kept figures), and a line with no reply as `interrupted` (older than the daemon's
+start) or `failed`. `/events` sends `conversation.changed {projectId}` when a turn starts, takes
+a step or ends. `POST /chat` and `/chat/stream` say what a turn changed to the screens as `POST
 /commands/execute` does (`heardChat`: `project.changed` for each change's project,
 `inbox.changed` for a card waiting for a yes), so the Overview's line follows a change made in
 Talk without a reload. Tests: `conversation-memory.test.ts` ("w15-chat, wave 15": the

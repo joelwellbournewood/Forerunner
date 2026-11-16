@@ -1668,7 +1668,7 @@ function chatAnswer(req: ModelRequest): Answer {
   if ((req.system ?? "").includes("# Thinking it through")) return thoroughAnswer(req, calls);
   // d1109-chat-depth: a question that needs a closer look is handed over first, before any
   // lookup; after the app's answer ("Not now: ...", "Not yet: ...") a short answer from the facts.
-  const why = thoroughWhy(chatLine(req));
+  const why = thoroughWhy(turnLine(req));
   if (why && (req.tools ?? []).some((t) => t.name === "answer_thoroughly")) {
     if (!calls.length)
       return { text: "", toolCalls: [{ name: "answer_thoroughly", input: { why } }] };

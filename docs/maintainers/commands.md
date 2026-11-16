@@ -631,6 +631,21 @@ among them.
   month a fresh agent runs the seeded change …" and "each month the critic grades the eval
   sets".
 
+### Chat asks first (d1109-chat-depth, `chat_ask_above`)
+
+The CHF above which one chat answer asks first (the owner's answer 2 of 2026-11-09: "if it will
+switch models and do an expensive task, it should warn/ask first"), global, in
+`human.notify_prefs.chat_ask_above`, CHF 0.10 when unset (`CHAT_ASK_ABOVE_DEFAULT_CHF`); 0 asks
+before every longer answer; a stronger model always asks whatever the amount. Medium risk with
+`narrowingActsAtOnce`: a lower amount (or 0) acts at once with its Undo, a higher one is read
+back. A negative amount is refused in one sentence ("The amount is in CHF, 0 or more: 0 makes
+chat ask before every longer answer."), at most CHF 100. Its words: `chatAskAboveWords` ("asks
+first above CHF 0.10", "asks before every longer answer"). It is appended last to
+`SETTING_SPECS` (run C's order: start_by_itself, chat_ask_above, credential_policy), so
+`settings_set`'s definition gains its line last. `model-settings.ts` names the `chat_thorough`
+mode "chat's thorough answers". Tests: `commands.test.ts` and `w15-chat.test.ts` ("d1109-chat-depth,
+run C").
+
 ### Wave 15 (w15-words): on, off and CHF 0.00
 
 - **A yes/no setting reads "on" or "off" (W15B-16).** `showFor` says a `z.boolean()` key

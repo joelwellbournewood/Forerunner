@@ -173,3 +173,42 @@ anything that has been recorded". Built:
 - **The history.** An earlier reply whose own words read like instructions (it quoted a record)
   is left out of the history in one line, so a record's words reach no later call and later
   turns are not all read back; its "The app did:" lines stay and are scanned as before.
+
+## Amendment 2026-11-16: thinking longer, asking first, the waiting line and Stop (d1109-chat-depth)
+
+The owner's words of 2026-11-09: "Chat should also be able to use more effort or a better model,
+selectively and transparently, in order to be more useful, knowing that this will take more time
+to reply. There should be something indicating what the chat is doing when waiting", and answer
+2: "as much as needed, but if it will switch models and do an expensive task, it should
+warn/ask first. Model: whatever is appropriate."
+
+- **Three rungs above the quick answer, chosen by the need, in code.** The longer rung is the
+  same model one effort step up with adaptive thinking (no switch, no yes needed). The stronger
+  rung is the new mode `chat_thorough` (sonnet, medium; ADR 0072), held at the project's highest
+  model and at the conversation agent's `max_effort`. The best rung is the project's highest
+  model, only on the person's words or their yes under a stronger answer that ran out of room: the
+  need alone never starts on it (a deliberate limit, no classifier). A failure, a plan, a
+  comparison or a review takes the stronger rung; many records and the person's plain ask think
+  longer.
+- **Who decides.** The person's words at the start or end of a line, outside quotes, and the
+  Think it through button; the fast model's one tool `answer_thoroughly {why}` (an enum, called
+  before any lookup); code picks the rung, the model, the effort and the money and whether to ask.
+- **The gate.** A typed turn, no quick ask, no record read or lookup first (the turn's
+  `recordsRead`, a card listed in full included: a record never starts a spend by itself), room
+  over the outer caps, a rung above; each refusal is a sentence the model hears and, where no cap
+  is the reason, Think it through under the answer.
+- **The ask rule.** A switch of model, an estimate above the person's amount (`chat_ask_above`,
+  CHF 0.10 by default) or a credential that is not the person's first (until d1109-cred-engine)
+  asks in one line with the cost and the time, and goes on only on Go ahead or a typed yes as the
+  next line; any other line drops it; nothing is spent before the yes.
+- **Money** (ADR 0091 amended): a pass that goes ahead is held at the person's amount, one after
+  a yes at the "at most" its line named, both within the outer room; below three first-call worst
+  cases nothing runs. No daily amount of chat's own.
+- **The waiting line and Stop** (ADR 0025 amended): turn and step frames, Stop and Answer now
+  routes, the turn in flight on the conversation view, `conversation.changed`, and a line
+  Forerunner closed on says so with Ask again.
+- **The open owner question** (runC-plan owner_questions): chat's spend counts against the
+  project's budget as well as the monthly cap, as all chat spend does today; the build keeps
+  that (`ConversationDeps.chatRoom` reads both). Should longer answers count only against the
+  monthly cap? The answer changes one place: drop the project's budget from the compose's
+  `chatRoom`.

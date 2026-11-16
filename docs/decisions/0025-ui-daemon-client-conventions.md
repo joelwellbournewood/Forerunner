@@ -84,3 +84,13 @@ owns. The daemon implementation must follow the same choices, so they are record
   graph) will define it; until then milestones are derived from the card and the tasks.
 - Keeping the dark-mode override in the daemon's settings: it is a device preference, not a
   setting the agent should see or sync.
+
+## Amendment 2026-11-16: turn and step frames, Stop, conversation.changed (d1109-chat-depth)
+
+`POST /chat/stream` sends a `turn` frame `{turnId, startedAt}` before anything else and a `step`
+frame `{text, at, reset?}` at each step (code-written words, at most 80 characters, no id;
+`reset` drops the text streamed so far), then the tokens and the reply. A client keeps ignoring
+frames it does not know, so the phone and older shells still get their reply. A dropped stream
+never stops a turn: `POST /chat/turns/:id/stop` does (and `/answer-now` for a longer answer).
+`/events` sends `conversation.changed {projectId}` when a turn starts, takes a step or ends, and a
+screen that shows that conversation reads it again.
