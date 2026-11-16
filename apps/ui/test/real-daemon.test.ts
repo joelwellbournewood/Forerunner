@@ -8349,7 +8349,7 @@ describe("the UI client against the real daemon: a Claude credential at its limi
         (r) => r.status === "open" && r.title === "Anthropic refused your Claude sign-in",
       );
       expect(card?.body).toBe(
-        "Save a new one in Settings. The work that needs it waits until then.",
+        "The sign-in has expired or was signed out. Save a new one in Settings; until then the work waits.",
       );
       // "Use the other one", as Settings sends it (a yes): the card says where the tasks go on,
       // and what it costs, and the next session runs the task on the API key.
@@ -8364,7 +8364,7 @@ describe("the UI client against the real daemon: a Claude credential at its limi
       await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" });
       const moved = (await client.inbox(me.id)).requests.find((r) => r.id === card?.id);
       expect(moved?.body).toBe(
-        "Save a new one in Settings. Until then your tasks go on with your API key, which costs money.",
+        "The sign-in has expired or was signed out. Save a new one in Settings; until then your API key does the work, at a cost per use.",
       );
       // d1109-starts-engine S-10: the API key can serve the work now, so the person's session
       // that waited for a new sign-in goes on by itself (once), on the API key.
@@ -20863,4 +20863,157 @@ describe("d1116-budget-all, run C", () => {
       await rt.close();
     }
   }, 60_000);
+});
+
+// d1109-cred-engine (run C5, ADR 0120; the owner's 7a: "use subscription until runs out --> go
+// to API after asking human"): "Which Claude does the work" set through the client, then one ask
+// card per stop in the Inbox, answered with the option the card shows.
+describe("d1109-cred-engine, run C", () => {
+  const oauth = ["sk-ant-oat01-", "credengine", "8".repeat(40)].join(""); // not-a-secret
+  const apiKey = ["sk-ant-api03-", "credengine", "9".repeat(40)].join(""); // not-a-secret
+  const resetAt = "2026-03-05T10:40:00.000Z";
+
+  /** Claude Code at the plan's limit on its first turn, then answering. */
+  const claudeCode =
+    (calls: string[]): NonNullable<ComposeOptions["sdkQuery"]> =>
+    ({ prompt }) => {
+      calls.push(prompt);
+      const atLimit = calls.length <= 1;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        if (atLimit) {
+          yield {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt: Date.parse(resetAt) / 1000 },
+          };
+          yield {
+            type: "assistant",
+            error: "rate_limit",
+            message: { content: [{ type: "text", text: "You've hit your limit" }] },
+          };
+          yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+          return;
+        }
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${calls.length}`,
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+
+  it("CE-7, CE-13: 'Subscription first, then ask me' set with a yes; one ask card per stop; Use API key, as the card shows it, runs the waiting work on the key", async () => {
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-credengine-"));
+    const onKey = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
+    const sdkCalls: string[] = [];
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      provider: new AcceptingCriticProvider(onKey),
+      sdkQuery: claudeCode(sdkCalls),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const work = () =>
+      onKey.calls.filter((c) => !(c.tools ?? []).some((t) => t.name === "submit_review"));
+    try {
+      // CE-13: from the default ('then wait') to 'then ask me' moves more money: it asks a yes.
+      const asked = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "credential_policy", value: "subscription_then_ask" },
+          },
+        ],
+        wordsUsed: "Settings: Which Claude does the work to Subscription first, then ask me",
+        source: "ui",
+      });
+      expect(asked.status, JSON.stringify(asked)).toBe("pending");
+      const yes = await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" });
+      expect(yes.status, JSON.stringify(yes)).toBe("done");
+
+      const project = await client.createProject({ name: "Quote page", goal: "A quote page" });
+      for (const title of ["Style the page", "Write the copy"])
+        await client.createTask(project.id, {
+          title,
+          outcome: `${title} is done`,
+          acceptanceCriteria: ["it is done"],
+          priority: "medium",
+          status: "ready",
+          dependsOn: [],
+          budgetUsdMicro: 0,
+          specialist: "coder",
+          riskTier: 0,
+        });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end (at least 10 s of real time)",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      // Nothing on the API key while the card waits; the rows say so.
+      expect(work()).toHaveLength(0);
+      expect((await client.tasks(project.id)).map((t) => t.display?.label)).toEqual([
+        "Waits for your answer: use your API key?",
+        "Waits for your answer: use your API key?",
+      ]);
+      const me = await client.me();
+      const open = (await client.inbox(me.id)).requests.filter(
+        (r) => r.status === "open" && (r.title ?? "").startsWith("Use your API key"),
+      );
+      expect(open).toHaveLength(1);
+      const card = open[0];
+      expect(card?.title).toBe("Use your API key until 11:40?");
+      expect(card?.choices?.map((c) => c.label)).toEqual(["Use API key", "Wait"]);
+      expect(card?.choices?.[1]?.explain).toBe(
+        "Nothing moves until 11:40; then your session goes on with your subscription.",
+      );
+      // Answered with the option the card shows (validation rule 1).
+      const answered = await client.answerRequest(card?.id ?? "", {
+        version: card?.version ?? 0,
+        answer: card?.choices?.[0]?.label ?? "",
+      });
+      expect(answered.outcome).toBe(
+        "Done: your API key does the work until 11:40; your session goes on now.",
+      );
+      await eventually(
+        async () => (await client.tasks(project.id)).every((t) => t.status === "done"),
+        "the waiting tasks to run on the API key (at least 10 s of real time)",
+        async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+        20_000,
+      );
+      expect(work().length).toBeGreaterThan(0);
+      expect(sdkCalls).toHaveLength(1);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

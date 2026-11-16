@@ -3857,6 +3857,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ...(read?.kind !== "cancel" && runnable ? { start: "waits_start" } : {}),
       };
     }
+    // d1109-cred-engine CE-7, as the daemon's `syncAskAnswers`: Use API key grants this stop
+    // (the waiting work goes on), Wait moves nothing; the card keeps the outcome its Done line
+    // reads. The fake runs nothing for the grant.
+    const askCard = r.changeCard as { key?: unknown } | null;
+    if (askCard?.key === "credential:ask") {
+      const use = String(parsed.data.answer).trim().toLowerCase() === "use api key";
+      r.changeCard = {
+        ...askCard,
+        applied_at: new Date().toISOString(),
+        outcome: use ? "granted" : "waited",
+        session_goes_on: true,
+      };
+    }
     // As the daemon's `syncSignoffAnswers` (design §3.8): Try again / Send it back sends the task
     // back to ready, prepared for the person's next Start (S-2); Mark done anyway closes it
     // "accepted without review"; Cancel task cancels it.
@@ -5974,6 +5987,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     web_access: "medium",
     // d1109-starts-engine S-5: medium, as SETTING_SPECS.start_by_itself (turning on asks a yes).
     start_by_itself: "medium",
+    // d1109-cred-engine CE-13: medium, as SETTING_SPECS.credential_policy (more money asks a yes).
+    credential_policy: "medium",
   };
   /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
   const settingSlot = (key: string, projectId: string | null) =>

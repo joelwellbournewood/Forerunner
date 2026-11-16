@@ -83,7 +83,7 @@ describe("Inbox", () => {
       "Anthropic refused your API key",
     );
     expect(within(card).getByTestId("request-body")).toHaveTextContent(
-      "Save a new one in Settings. The work that needs it waits until then.",
+      "Anthropic did not accept it. Save a new one in Settings; until then the work waits.",
     );
     // Nothing to answer: no options and no text box, one link to where a new key is pasted.
     expect(within(card).queryAllByTestId("option")).toHaveLength(0);
