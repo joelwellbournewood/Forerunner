@@ -404,9 +404,9 @@ import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart
 import {
   isCalibrationSession,
   RUN_CHANGED_EVENT,
-  type RunFold,
   type RunIndicatorDeps,
   type RunWait,
+  runFoldsOf,
   runViews,
   type WaitingContinuation,
 } from "./run-indicator.ts";
@@ -4058,7 +4058,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // session, and the person's sessions kept to go on after a credential wait. `run.changed` is
   // emitted on the events stream when the list changes, at most once a second, after every
   // session event, project change and start the scheduler queued or dropped.
-  const runFolds = new Map<string, RunFold>();
+  const runFolds = runFoldsOf(store);
   const runIndicatorDeps: RunIndicatorDeps = {
     store,
     criticAgentId: criticAgent.id,

@@ -7,9 +7,11 @@ import {
   emptyRunFold,
   foldRunEvents,
   RUN_TEXT_MAX,
+  runFoldsOf,
   runText,
   runViews,
   runWhat,
+  sessionRunText,
   startOfferOf,
   stopChoices,
 } from "../src/daemon/run-indicator.ts";
@@ -393,6 +395,56 @@ describe("runViews (V-1)", () => {
       expect(v.text).not.toContain(s.id);
       expect(v.text).not.toMatch(/USD|\$/);
     }
+  });
+
+  // Review of d1109-run-visible (blocking 1): the Sessions list's working row read only the newest
+  // 50 events of the fold's types, task.step among them (one per tool call), so a task past about
+  // 49 steps lost its task.started and the row said 'plans the session' while the bar said the
+  // coder works on it. The row folds the whole log, as the bar does, and says the same sentence.
+  it("says in the Sessions list's working row what the bar says, however many steps the task took", async () => {
+    const s = await session({});
+    await store.event.append(s.id, "session.started", {} as never, 0);
+    await store.event.append(s.id, "session.planned", {} as never, 0);
+    await store.event.append(
+      s.id,
+      "task.started",
+      { taskId: "t1", title: "Style the page", specialist: "coder" } as never,
+      0,
+    );
+    const row = await store.session.mustGet(s.id);
+    expect(await sessionRunText(store, row, critic)).toBe(
+      'Quote page · the coder works on "Style the page"',
+    );
+    for (let i = 0; i < 60; i += 1)
+      await store.event.append(
+        s.id,
+        "task.step",
+        { taskId: "t1", text: `Ran step ${i}` } as never,
+        0,
+      );
+    const working = 'Quote page · the coder works on "Style the page"';
+    expect(await sessionRunText(store, row, critic)).toBe(working);
+    expect((await runViews(deps()))[0]?.text).toBe(working);
+    // The wrap-up line stays said after many more steps.
+    await store.event.append(
+      s.id,
+      "task.step",
+      { taskId: "t1", text: "Told the coder to wrap up: it spent CHF 0.40 of CHF 0.50." } as never,
+      0,
+    );
+    for (let i = 0; i < 60; i += 1)
+      await store.event.append(
+        s.id,
+        "task.step",
+        { taskId: "t1", text: `Ran more ${i}` } as never,
+        0,
+      );
+    const wrapping = 'Quote page · wraps up "Style the page" at its budget';
+    expect(await sessionRunText(store, row, critic)).toBe(wrapping);
+    expect((await runViews(deps()))[0]?.text).toBe(wrapping);
+    // A row read with no fold kept (a fresh daemon, the list read first) folds the whole log too.
+    runFoldsOf(store).clear();
+    expect(await sessionRunText(store, row, critic)).toBe(wrapping);
   });
 });
 

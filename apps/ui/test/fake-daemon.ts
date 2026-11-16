@@ -8976,8 +8976,8 @@ function fakeSessionsCursorId(cursor: string): string | null {
 }
 
 /**
- * A working session's row, as the daemon writes it (`workingWords`): the project's own working
- * sentence ('Working on "X" (2 of 4 done)'), "CHF … so far", no length while it works.
+ * A working session's row, as the daemon writes it (`workingWords`): the run indicator's sentence
+ * ('Atlas · the coder works on "X"'), "CHF … so far", no length while it works.
  */
 function fakeWorkingRow(s: SessionView, gist: string): ProjectSessionRowView {
   const text = gist;

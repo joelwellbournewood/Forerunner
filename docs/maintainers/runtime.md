@@ -7674,8 +7674,11 @@ shows the same words later from the same route). `daemon/run-words.ts` holds the
 of a session's log with nothing that needs the store (the UI's fake daemon says the same
 sentences from it); `daemon/run-indicator.ts` reads the store and re-exports them.
 
-- **The fold** (`foldRunEvents`, `RUN_EVENT_TYPES`): the session's log read incrementally by
-  `seq` (`runFolds` in compose, one fold per active session) into planning, working, reviewing,
+- **The fold** (`foldRunEvents`, `RUN_EVENT_TYPES`): the session's whole log read incrementally
+  by `seq` (`runFoldsOf(store)`, one fold per active session, shared by compose's indicator and
+  the Sessions list's working row, so both say the same sentence however many steps a task took:
+  a window of the newest events lost a long task's `task.started` among its `task.step`s) into
+  planning, working, reviewing,
   between, wrapping, stopping or waiting, with the task and the specialist in flight. A plan
   being drafted and the chat's conversation row are not sessions here (`isIntakeSession`); the
   critic's monthly calibration (a session on no project) is: "Forerunner · the critic's monthly
@@ -7702,7 +7705,7 @@ sentences from it); `daemon/run-indicator.ts` reads the store and re-exports the
   wait list); `/health` gains `running {projectName, what, text, waiting}` (append-only, null
   when nothing runs) and its `activeSessions` stops counting a plan being drafted.
 - **Elsewhere**: the Sessions list's working row says `sessionRunText` (d1109-sessions'
-  `workingWords` re-pointed); the project status line gains rule 2b from `startsWaitOf`
+  `workingWords` re-pointed; the same kept fold as the bar); the project status line gains rule 2b from `startsWaitOf`
   (`ProjectCardFacts.startsWait`): "Waiting until 15:40 (your subscription's limit), then it
   goes on" with Cancel (action kind `cancel`), "Starts at 15:40 (your subscription's limit)"
   with Cancel (a kept Start), "Starts after your quiet hours" (a held hands-off start), 'Starts

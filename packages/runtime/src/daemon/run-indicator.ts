@@ -7,7 +7,6 @@ import {
   calibrationExplain,
   emptyRunFold,
   foldRunEvents,
-  RUN_EVENT_TYPES,
   type RunFold,
   type RunState,
   type RunWait,
@@ -95,16 +94,39 @@ export function isCalibrationSession(
   return typeof summary === "string" && summary.startsWith("critic calibration");
 }
 
-/** A session's fold, reading only the events after the one kept (`deps.folds`). */
-async function foldOf(deps: RunIndicatorDeps, sessionId: string): Promise<RunFold> {
-  let fold = deps.folds.get(sessionId) ?? emptyRunFold();
+/** A session's fold over its whole log, reading only the events after the one kept (`folds`). */
+async function foldOf(
+  store: StateStore,
+  folds: Map<string, RunFold>,
+  sessionId: string,
+): Promise<RunFold> {
+  let fold = folds.get(sessionId) ?? emptyRunFold();
   for (;;) {
-    const page = await deps.store.event.list(sessionId, fold.afterSeq, 500);
+    const page = await store.event.list(sessionId, fold.afterSeq, 500);
     fold = foldRunEvents(fold, page);
     if (page.length < 500) break;
   }
-  deps.folds.set(sessionId, fold);
+  folds.set(sessionId, fold);
   return fold;
+}
+
+/** The folds kept for a store, so the bar and the Sessions list read each log once (in order). */
+const storeFolds = new WeakMap<StateStore, Map<string, RunFold>>();
+/** Kept folds at most: the oldest goes first (`runViews` drops the ended sessions' folds). */
+const FOLDS_KEPT = 200;
+
+/**
+ * The run folds kept for this store: compose's run indicator (`RunIndicatorDeps.folds`) and the
+ * Sessions list's working row (`sessionRunText`) share them, so both fold the same whole log
+ * and say the same sentence however many steps a task has taken.
+ */
+export function runFoldsOf(store: StateStore): Map<string, RunFold> {
+  let folds = storeFolds.get(store);
+  if (!folds) {
+    folds = new Map();
+    storeFolds.set(store, folds);
+  }
+  return folds;
 }
 
 /**
@@ -151,7 +173,7 @@ export async function runViews(deps: RunIndicatorDeps): Promise<RunningView[]> {
     const projectName = await nameOf(row.project_id);
     if (!row.project_id || !projectName) continue;
     busy.add(row.project_id);
-    const fold = await foldOf(deps, row.id);
+    const fold = await foldOf(deps.store, deps.folds, row.id);
     const stopping = row.status === "paused";
     const state: RunState = stopping ? "stopping" : fold.phase;
     // A person start of another project waits behind this session: named once, the first.
@@ -218,10 +240,12 @@ export function runningHealth(views: readonly RunningView[]): RunningHealth | nu
 }
 
 /**
- * One working session's words, as the indicator says them, read from the newest events of its
- * log (the Sessions list's working row, d1109-sessions' `workingWords`): '<project> · <what>'.
- * The session's own row decides Stop after this task (paused); the critic's monthly check reads
- * its own words.
+ * One working session's words, as the indicator says them (the Sessions list's working row,
+ * d1109-sessions' `workingWords`): '<project> · <what>'. It folds the session's whole log, as the
+ * bar does, through the store's kept folds (`runFoldsOf`): a window of the newest events lost a
+ * long task's task.started among its steps (one task.step per tool call) and said 'plans the
+ * session' (the review of d1109-run-visible). The session's own row decides Stop after this task
+ * (paused); the critic's monthly check reads its own words.
  */
 export async function sessionRunText(
   store: StateStore,
@@ -233,8 +257,15 @@ export async function sessionRunText(
   const projectName = row.project_id
     ? ((await store.project.get(row.project_id).catch(() => undefined))?.name ?? "")
     : "";
-  const newest = await store.event.ofTypes(row.id, RUN_EVENT_TYPES, { limit: 50 });
-  const fold = foldRunEvents(emptyRunFold(), [...newest].reverse());
+  const folds = runFoldsOf(store);
+  const fold = await foldOf(store, folds, row.id);
+  // The one read now goes last, so the oldest kept is the one dropped.
+  folds.delete(row.id);
+  folds.set(row.id, fold);
+  for (const oldest of folds.keys()) {
+    if (folds.size <= FOLDS_KEPT) break;
+    folds.delete(oldest);
+  }
   const state: RunState = row.status === "paused" ? "stopping" : fold.phase;
   return runText({
     projectName: projectName || "Your project",
