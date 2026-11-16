@@ -81,7 +81,10 @@ export class ExtensionGate {
     if (perms.tools.length > 0 && !perms.tools.includes(tool.name)) {
       return deny("tool_not_allowed", `tool ${tool.name} is not granted to ${row.name}`);
     }
-    if (perms.actionClasses.length > 0 && !perms.actionClasses.includes(tool.actionClass)) {
+    if (
+      perms.actionClasses.length > 0 &&
+      !(perms.actionClasses as readonly string[]).includes(tool.actionClass)
+    ) {
       return deny(
         "tool_not_allowed",
         `tool ${tool.name} is ${tool.actionClass}; ${row.name} is granted ${perms.actionClasses.join(", ")} only`,

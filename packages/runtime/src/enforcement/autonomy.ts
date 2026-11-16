@@ -9,6 +9,13 @@ export type ActionClass =
   | "read" // reading files, state, docs, web pages inside the allowlist
   | "routine_reversible" // edits in a worktree, running tests, opening a PR, comments, notes, drafts
   | "non_routine" // creating or editing tasks and docs outside the worktree, sending a message to a peer, costly session start
+  /**
+   * d1109-selftasks-run (ADR 0119, owner-confirmed 2026-11-09): the agent's bounded fixes of its
+   * own task list (wording, a split, a missing step, the order, a duplicate dropped), each
+   * through the command registry and fenced in code (`session/task-check.ts`). Free from
+   * Standard up; asked first on one card at Advisor and Assisted.
+   */
+  | "plan_fix"
   | "merge_pr" // merging a reviewed PR
   | "deploy_staging"
   | "deploy_production"
@@ -39,6 +46,8 @@ const FREE_AT: Record<
 > = {
   read: 0,
   routine_reversible: 2,
+  // ADR 0119: "the agent changes its own tasks without asking from Standard up" (owner-confirmed).
+  plan_fix: 2,
   non_routine: 3,
   // Free at no level (the owner's decision of 2026-11-02, merge-in-app): a merge is freed by the
   // project's merge mode or the person's Merge, which approve exactly that call (`mayMerge`).
@@ -67,7 +76,8 @@ export function decideAutonomy(action: ActionClass, ctx: AutonomyContext): Auton
     return "approval_required";
   }
   if (ctx.level === 1) {
-    // Assisted: routine actions run once the plan is approved; everything else asks.
+    // Assisted: routine actions run once the plan is approved; everything else asks (a fix of
+    // the agent's own task list too: it is suggested on one card, ADR 0119).
     if (action === "routine_reversible") return ctx.planApproved ? "allow" : "approval_required";
     return "approval_required";
   }
