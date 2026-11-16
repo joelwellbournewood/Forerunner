@@ -1414,8 +1414,10 @@ function refusedCredentialCard(card: JsonObject, ctx: RequestWordsContext = {}):
   const subscription = card.credential_kind === "subscription";
   // CE-8 (the owner's 7c: "follow the frameowrk for a) or b) as if it has run out, but also give
   // the user some kind of notification or information"): why it was refused (its category),
-  // then what the work does under the person's rule until a new one is saved; under 'ask' the
-  // card offers Use API key and Wait, and stays open as the fix-it card after an answer.
+  // then what the work does under the person's rule until a new one is saved. Under 'ask' the
+  // refusal is a stop asked about on its own ask card ("Use your API key until a new sign-in is
+  // saved?"); this card stays the notification with its link, and names the choice while that
+  // card is open. It never carries options of its own (its row has none to answer).
   const refused = ctx.credentialRefused ?? {
     category: null,
     rule: ctx.credentialGoesOn ? ("next" as const) : ("wait" as const),
@@ -1427,32 +1429,12 @@ function refusedCredentialCard(card: JsonObject, ctx: RequestWordsContext = {}):
     other: refused.other,
     ...(refused.estimateChf ? { estimateChf: refused.estimateChf } : {}),
   });
-  const answered = typeof card.ask_answer === "string";
-  const asks =
-    refused.rule === "ask" && refused.other === "api_key" && !!refused.estimateChf && !answered;
   return {
     title:
       str(card.title) ??
       (subscription ? "Anthropic refused your Claude sign-in" : "Anthropic refused your API key"),
     body,
-    choices: asks
-      ? [
-          {
-            label: "Use API key",
-            explain: `Your work and chat use your API key until a new sign-in is saved: about ${refused.estimateChf}.`,
-            tone: "primary",
-            confirm: null,
-            input: null,
-          },
-          {
-            label: "Wait",
-            explain: "Nothing moves until a new sign-in is saved.",
-            tone: "secondary",
-            confirm: null,
-            input: null,
-          },
-        ]
-      : [],
+    choices: [],
     links: [
       {
         label: subscription ? "Save a new sign-in" : "Save a new key",

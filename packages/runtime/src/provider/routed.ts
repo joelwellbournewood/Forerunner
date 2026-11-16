@@ -82,6 +82,12 @@ export interface RoutedProviderDeps {
   onFallback?: (sentence: string, info: FallbackInfo) => void;
   /** CE-11: the person's time zone, so the session log names the time in their clock. */
   timezone?: () => Promise<string | undefined>;
+  /**
+   * CE-8: whether Anthropic's refusal of this source stands (its credential was not replaced
+   * since): such a source is asked nothing, not even the model list or a model's output limit,
+   * until a different credential is saved.
+   */
+  refused?: (source: BillingSource) => Promise<boolean>;
 }
 
 export interface FallbackInfo {
@@ -439,10 +445,16 @@ export class RoutedProvider implements ModelProvider {
       .catch(() => undefined);
   }
 
+  /**
+   * The first API-style source's provider, for the model list and a model's output limit; never
+   * one whose refusal stands (CE-8: a refused key gets no second request from any path; before,
+   * the model list asked it again after its 401).
+   */
   private async apiProvider(): Promise<ModelProvider | null> {
     const sources = await this.deps.sources().catch(() => [] as BillingSource[]);
     for (const s of sources) {
       if (s.kind !== "api_key" && s.kind !== "plan_credits") continue;
+      if (await this.deps.refused?.(s).catch(() => true)) continue;
       const p = await this.deps.providerFor(s).catch(() => null);
       if (p) return p;
     }

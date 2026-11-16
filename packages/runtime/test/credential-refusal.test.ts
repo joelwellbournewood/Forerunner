@@ -157,9 +157,7 @@ describe("d1109-cred-engine, run C: every sentence of the policy (credential-wor
     expect(w.details).toEqual([
       "Forerunner's own monthly checks wait for your subscription; they cost nothing meanwhile.",
     ]);
-    expect(w.done.use).toBe(
-      "Your API key does the work until 15:40; your session goes on now.",
-    );
+    expect(w.done.use).toBe("Your API key does the work until 15:40; your session goes on now.");
     expect(w.closed).toBe("Closed: your Claude subscription can work again.");
     const none = askCardWords({
       wait: { ...limit, until: "2026-11-16T14:40:00Z" },
@@ -173,6 +171,56 @@ describe("d1109-cred-engine, run C: every sentence of the policy (credential-wor
     );
     for (const o of [...w.options, ...none.options])
       expect(o.explain.length).toBeLessThanOrEqual(100);
+  });
+
+  it("a refusal's ask card under 'then ask me': until a new sign-in is saved (CE-8, the owner's 7c)", () => {
+    const refused = { reason: "refused" as const, kind: "subscription" as const, until: null };
+    const w = askCardWords({
+      wait: refused,
+      timezone: "Europe/Zurich",
+      nowMs: now,
+      estimateChf: "CHF 0.90",
+      sessionWaits: true,
+    });
+    expect(w.title).toBe("Use your API key until a new sign-in is saved?");
+    expect(w.body).toBe(
+      "Anthropic refused your Claude sign-in. Your API key can do the waiting work now: about CHF 0.90.",
+    );
+    expect(w.options).toEqual([
+      {
+        label: "Use API key",
+        explain:
+          "Your work and chat use your API key until a new sign-in is saved: about CHF 0.90 for what waits now.",
+      },
+      {
+        label: "Wait",
+        explain:
+          "Nothing moves until a new sign-in is saved; then your session goes on with your subscription.",
+      },
+    ]);
+    expect(w.done).toEqual({
+      use: "Your API key does the work until a new sign-in is saved; your session goes on now.",
+      wait: "Nothing moves until a new sign-in is saved; then your session goes on.",
+    });
+    expect(w.closed).toBe("Closed: your Claude subscription can work again.");
+    const none = askCardWords({
+      wait: refused,
+      timezone: "Europe/Zurich",
+      nowMs: now,
+      estimateChf: "CHF 0.90",
+      sessionWaits: false,
+    });
+    expect(none.options[1]?.explain).toBe(
+      "Nothing moves. Once a new sign-in is saved, the work runs at your next Start.",
+    );
+    expect(none.done.use).toBe(
+      "Your API key does the work until a new sign-in is saved; the waiting work runs at your next Start.",
+    );
+    // No "Done:" of their own: the Inbox adds it (design §3.8's Done line).
+    for (const line of [w.done.use, w.done.wait, none.done.use, none.done.wait])
+      expect(line.startsWith("Done:")).toBe(false);
+    for (const o of [...w.options, ...none.options])
+      expect(o.explain.length).toBeLessThanOrEqual(110);
   });
 
   it("the share's two Wait lines and its title (CE-6)", () => {

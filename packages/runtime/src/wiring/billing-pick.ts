@@ -934,7 +934,9 @@ export class RouterTaskBilling implements TaskBillingPort {
       };
     });
     // CE-7: under 'ask', work that waits on a stopped first choice asks the person once per stop,
-    // when another credential can serve it now (never for a refusal: its own card asks).
+    // when another credential can serve it now. CE-8 (the owner's 7c: "as if it has run out"): a
+    // refusal is such a stop too, asked about once until a new credential is saved; its refused
+    // card below stays the notification with the link to save one.
     if (row && this.opts.ask) await this.askFor(row, projectId, agentId);
     // TR-10: work waits on a refused credential again after its card was closed (another
     // credential had taken the work): the card that asks for a new one is filed again, once
@@ -984,7 +986,7 @@ export class RouterTaskBilling implements TaskBillingPort {
       const policy = await policyOf(this.opts.store, this.opts.humanId);
       if (policy.rule.whenStopped !== "ask") return;
       const stop = await this.currentStopOf(row.id);
-      if (!stop || stop.reason === "refused") return;
+      if (!stop) return;
       const other = await this.pick({
         agentId,
         agentOwnerHumanId: this.opts.humanId,

@@ -41,6 +41,7 @@ import {
   tierOfModel,
 } from "../models/ladder.ts";
 import { type AgentModelConfig, modeOverride, specialistOverride } from "../models/run-settings.ts";
+import { chfText } from "../money-words.ts";
 import { priorityLevel } from "../priority.ts";
 import type { EffortLevel } from "../provider/types.ts";
 import type { Registry } from "../registry/types.ts";
@@ -1082,14 +1083,44 @@ async function credentialRefusedFor(
       s.id !== card.source_id &&
       typeof (s.limits as { refusedAt?: unknown }).refusedAt !== "string",
   );
+  const known =
+    category === "signed_out" ||
+    category === "invalid_key" ||
+    category === "not_allowed" ||
+    category === "other"
+      ? category
+      : null;
+  // CE-8 under 'ask': the refusal is asked about on its one ask card (Use API key / Wait). While
+  // that card is open the refused card names the choice and its figure; after Use API key (the
+  // grant stands until a new one is saved) it says the key does the work; after Wait, or with no
+  // card (no other credential can serve), that the work waits.
+  if (rule === "ask") {
+    const limits = (refused?.limits ?? {}) as {
+      grant?: { to?: unknown } | undefined;
+      asking?: { requestId?: unknown; answer?: unknown } | undefined;
+    };
+    if (limits.grant?.to === "api_key" && other?.kind === "api_key")
+      return { category: known, rule: "next", other: "api_key" };
+    const askId = typeof limits.asking?.requestId === "string" ? limits.asking.requestId : null;
+    const ask = askId ? await store.humanRequest.get(askId).catch(() => undefined) : undefined;
+    const askCard = (ask?.change_card ?? {}) as {
+      estimate_usd_micro?: unknown;
+      chf_per_usd?: unknown;
+    };
+    if (ask?.status === "open" && typeof askCard.estimate_usd_micro === "number")
+      return {
+        category: known,
+        rule: "ask",
+        other: "api_key",
+        estimateChf: chfText(
+          askCard.estimate_usd_micro,
+          typeof askCard.chf_per_usd === "number" ? askCard.chf_per_usd : undefined,
+        ),
+      };
+    return { category: known, rule: "wait", other: null };
+  }
   return {
-    category:
-      category === "signed_out" ||
-      category === "invalid_key" ||
-      category === "not_allowed" ||
-      category === "other"
-        ? category
-        : null,
+    category: known,
     rule,
     other: rule === "wait" ? null : (other?.kind ?? null),
   };

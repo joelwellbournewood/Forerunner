@@ -81,8 +81,50 @@ export interface AskCardWords {
 /** The Ask card's option labels, in their order (Use API key first). */
 export const ASK_OPTIONS = ["Use API key", "Wait"] as const;
 
+/**
+ * The ask card of a refusal (CE-8, the owner's 7c: "follow the framework for a) or b) as if it has
+ * run out, but also give the user some kind of notification"): under "then ask me" a refused
+ * first choice is a stop like a limit, asked about once, until a new one is saved; the refused
+ * card stays the notification with its link to save one.
+ */
+function refusedAskWords(input: AskCardInput): AskCardWords {
+  const saved =
+    input.wait.kind === "subscription" ? "a new sign-in is saved" : "a new key is saved";
+  const est = input.estimateChf;
+  return {
+    title: `Use your API key until ${saved}?`,
+    body: `${stoppedPhrase(input.wait, null)}. Your API key can do the waiting work now: about ${est}.`,
+    options: [
+      {
+        label: "Use API key",
+        explain: `Your work and chat use your API key until ${saved}: about ${est} for what waits now.`,
+      },
+      {
+        label: "Wait",
+        explain: input.sessionWaits
+          ? `Nothing moves until ${saved}; then your session goes on with your subscription.`
+          : `Nothing moves. Once ${saved}, the work runs at your next Start.`,
+      },
+    ],
+    details: [
+      "Forerunner's own monthly checks wait for your subscription; they cost nothing meanwhile.",
+    ],
+    done: {
+      use: input.sessionWaits
+        ? `Your API key does the work until ${saved}; your session goes on now.`
+        : `Your API key does the work until ${saved}; the waiting work runs at your next Start.`,
+      wait: input.sessionWaits
+        ? `Nothing moves until ${saved}; then your session goes on.`
+        : `Nothing moves until ${saved}; then the work runs at your next Start.`,
+    },
+    closed: `Closed: ${yourCredential(input.wait.kind)} can work again.`,
+  };
+}
+
 /** The card's words, computed when it is shown (CE-7, CE-6). */
 export function askCardWords(input: AskCardInput): AskCardWords {
+  if ((input.wait.reason === "needs" ? input.wait.stop : input.wait.reason) === "refused")
+    return refusedAskWords(input);
   const opts = { ...(input.timezone ? { timezone: input.timezone } : {}), nowMs: input.nowMs };
   const w = stopWordsOf(input.wait, opts);
   const share = (input.wait.reason === "needs" ? input.wait.stop : input.wait.reason) === "share";

@@ -342,6 +342,7 @@ import {
   planUsageOf,
   policyOf,
   RouterTaskBilling,
+  refusedSince,
   restingUntilOf,
   sdkHostCommandsEnabled,
   seedBillingSources,
@@ -1820,6 +1821,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             fastMode: hasKey,
             // CE-11: the session log names a reset in the person's clock.
             timezone: async () => (await store.human.get(human.id).catch(() => null))?.timezone,
+            // CE-8: a refused key is asked nothing (the model list, an output limit) until a
+            // different one is saved.
+            refused: async (source) => !!(await refusedSince(source, vault).catch(() => null)),
           },
           "chat",
         )
