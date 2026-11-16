@@ -17967,6 +17967,11 @@ describe("d1109-onerepo-link, run C", () => {
       expect(imported.message).toBe(
         'o/site is already the project "Site". Open it, or add this to it as new work.',
       );
+      // C2-left-12: one answer at every entry point: 409 with the cause, as POST /projects and
+      // Sources answer (the import said 400).
+      expect(imported.status).toBe(409);
+      expect(imported.details).toMatchObject({ cause: "repository_in_use" });
+      expect(imported.details).not.toHaveProperty("untrusted");
       expect((await rt.store.project.mustGet(shop.id)).repos).toEqual([]);
       expect(existsSync(join(rt.dirs.data, "projects", shop.id, "repos", "o", "site"))).toBe(false);
       // Sources: a candidate the project covers, then a marked one.

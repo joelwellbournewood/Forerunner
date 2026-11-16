@@ -1,6 +1,7 @@
 import { errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
+import { isLinkRefusalCause } from "../sources/repository-words.ts";
 import { type DataAssets, normalizeKind } from "./assets.ts";
 import type { DataImporter } from "./import.ts";
 import {
@@ -81,6 +82,8 @@ export interface DataRoutesDeps {
 
 function statusFor(err: ForerunnerError): 400 | 403 | 404 | 409 | 413 | 500 | 503 {
   if (err.code === "validation" && err.details.tooLarge === true) return 413;
+  // C2-left-12: a repository link's refusal answers as POST /projects and Sources do.
+  if (isLinkRefusalCause(err.details.cause)) return 409;
   switch (err.code) {
     case "not_found":
       return 404;
@@ -135,6 +138,12 @@ export function createDataRoutes(deps: DataRoutesDeps): Hono {
 
   app.onError((err, c) => {
     if (err instanceof ForerunnerError) {
+      if (isLinkRefusalCause(err.details.cause)) {
+        // d1109-onerepo-link's one answer (C2-left-12): 409 "conflict" with the cause the offer
+        // reads, and without the untrusted mark, which is for chat.
+        const { untrusted: _data, ...details } = err.details;
+        return c.json({ code: "conflict", message: err.message, details }, 409);
+      }
       return c.json({ code: err.code, message: err.message, details: err.details }, statusFor(err));
     }
     logger.error("unhandled", { error: errorMessage(err) });

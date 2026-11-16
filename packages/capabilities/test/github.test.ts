@@ -367,3 +367,23 @@ describe("d1109-onerepo-join, run C: a GitHub that never answers (C2-left-10)", 
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 });
+
+describe("d1109-onerepo-join, run C: the stand-in reads owner and name as GitHub does (C2-left-12)", () => {
+  it("finds a repository and its files whatever the letters' case, and keeps the name as made", async () => {
+    // GitHub's owner and name are case-insensitive; the stand-in answered "repo O/Kite not
+    // found" for o/kite, so a check through it disagreed with one through GitHub.
+    const host = new MemoryGitHost("alice");
+    await host.createRepo({ owner: "o", name: "kite", private: true });
+    await host.putFile(
+      { owner: "o", name: "kite" },
+      { path: ".forerunner/project.json", content: "{}", message: "marker", branch: "main" },
+    );
+    const upper = { owner: "O", name: "Kite" };
+    expect((await host.getRepo(upper)).fullName).toBe("o/kite");
+    expect((await host.getFile(upper, ".forerunner/project.json"))?.content).toBe("{}");
+    expect((await host.listRepos({ user: "O" })).map((r) => r.fullName)).toEqual(["o/kite"]);
+    await expect(host.getRepo({ owner: "o", name: "kites" })).rejects.toThrow(
+      "repo o/kites not found",
+    );
+  });
+});
