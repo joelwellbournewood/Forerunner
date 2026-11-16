@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isNewsLine, sessionResultLines, sessionUpdateLine } from "../src/session/result.ts";
+import {
+  isNewsLine,
+  leftForNextStartLine,
+  sessionResultLines,
+  sessionUpdateLine,
+  taskCheckedLine,
+  tasksChangedLine,
+} from "../src/session/result.ts";
 import { closingReply, doneExecutor, loopWorld, submitReply } from "./loop-helpers.ts";
 
 /**
@@ -198,6 +205,111 @@ describe("a session's Update", () => {
       expect(await updates()).toHaveLength(1);
     } finally {
       await w.close();
+    }
+  });
+});
+
+/**
+ * d1109-selftasks-run, run C (ST-12, ADR 0119; design §3.8 "What becomes an Update: one line per
+ * session", §5's lengths). The sentences of the agent's own task changes: the result line, the
+ * Update's count, the Details line of a check; CHF with two decimals, no id, no raw state, no
+ * markdown.
+ */
+describe("d1109-selftasks-run, run C: the words of the agent's own task changes (ST-12)", () => {
+  const changes = [
+    { kind: "split" as const, title: "Style the page" },
+    { kind: "added" as const, title: "Check the links" },
+  ];
+
+  it("the result line names three changes at most, then 'and N more'", () => {
+    expect(tasksChangedLine(changes)).toBe(
+      'Changed 2 tasks: split "Style the page"; added "Check the links".',
+    );
+    expect(
+      tasksChangedLine([
+        ...changes,
+        { kind: "dropped", title: "Write README" },
+        { kind: "reworded", title: "Publish" },
+        { kind: "reordered", title: "Deploy" },
+      ]),
+    ).toBe(
+      'Changed 5 tasks: split "Style the page"; added "Check the links"; dropped "Write README" and 2 more.',
+    );
+    expect(tasksChangedLine([])).toBeNull();
+  });
+
+  it("the session's one Update counts the changes", () => {
+    const lines = sessionResultLines({
+      outcome: {
+        done: [
+          { id: "1", title: "Create the page" },
+          { id: "2", title: "Style the layout" },
+          { id: "3", title: "Style the colours" },
+        ],
+        failed: [],
+        needsYou: [],
+        leftOver: [],
+        waiting: [],
+        waitingForDocker: [],
+        stopReason: "completed",
+        spentChfMicro: 120_000,
+      },
+      inReview: [],
+      leftOutForBudget: [],
+      tasksChanged: changes,
+      sessionCapChfMicro: 3_000_000,
+      openTasks: 0,
+    });
+    expect(lines.join("\n")).toContain(
+      'Changed 2 tasks: split "Style the page"; added "Check the links".',
+    );
+    expect(sessionUpdateLine("Quote page", lines, [], changes)).toBe(
+      "Quote page: did 3 tasks; changed 2 tasks.",
+    );
+    // Without changes the Update is as before.
+    expect(sessionUpdateLine("Quote page", lines.slice(0, 1), [])).toMatch(
+      /^Quote page: did 3 tasks: /,
+    );
+  });
+
+  it("the Details line of a check says how it ended and what it cost, in CHF", () => {
+    expect(taskCheckedLine("Create the page", { kind: "no_change" }, 30_000)).toBe(
+      'Checked the task list after "Create the page": no change (CHF 0.03).',
+    );
+    expect(taskCheckedLine("Create the page", { kind: "changed", count: 2 }, 40_000)).toBe(
+      'Checked the task list after "Create the page": changed 2 tasks (CHF 0.04).',
+    );
+    expect(taskCheckedLine("Create the page", { kind: "suggested", count: 3 }, 30_000)).toBe(
+      'Checked the task list after "Create the page": suggested 3 changes in the Inbox (CHF 0.03).',
+    );
+    expect(taskCheckedLine(null, { kind: "unreadable" }, 2_000)).toBe(
+      "Checked the task list: its reply could not be read, so nothing changed (less than CHF 0.01).",
+    );
+  });
+
+  it("the left-for-next-Start line names a promised task after the step it waits for", () => {
+    expect(
+      leftForNextStartLine([
+        { id: "s", title: "Check the links", estimateChfMicro: 200_000 },
+        { id: "p", title: "Publish", estimateChfMicro: 300_000, waitsFor: "Check the links" },
+      ]),
+    ).toBe(
+      'Left for your next Start: "Check the links" (about CHF 0.20) and "Publish", which waits for it.',
+    );
+    expect(leftForNextStartLine([{ id: "d", title: "D", estimateChfMicro: 500_000 }])).toBe(
+      'Left for your next Start: "D" (about CHF 0.50).',
+    );
+  });
+
+  it("every sentence keeps design §5's lengths and words", () => {
+    const all = [
+      tasksChangedLine(changes) ?? "",
+      sessionUpdateLine("Quote page", ['Did 3 tasks: "A", "B" and "C".'], [], changes) ?? "",
+      taskCheckedLine("Create the page", { kind: "no_change" }, 30_000),
+    ];
+    for (const s of all) {
+      expect(s.length).toBeLessThanOrEqual(160);
+      expect(s).not.toMatch(/[*_`#]|\b[0-9a-f]{8}-|needs_human|in_progress|USD/);
     }
   });
 });

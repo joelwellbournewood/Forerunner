@@ -141,6 +141,7 @@ import {
   type NamedTask,
   sessionResultLines,
   sessionUpdateLine,
+  type TaskChangeFact,
   waitingOf,
 } from "./result.ts";
 import {
@@ -168,7 +169,20 @@ import {
   stopLimitWords,
   taskReasonForStop,
 } from "./stop-words.ts";
-import type { TaskListLine } from "./task-list-notes.ts";
+import {
+  checkAtBoundary,
+  TASK_CHECKS_PER_SESSION,
+  type TaskCheckRunnerPort,
+} from "./task-check.ts";
+import {
+  isCriticNote,
+  keepNotes,
+  keptNotesOf,
+  reviewNoteLines,
+  type TaskListLine,
+  type TaskListNote,
+  takeNotes,
+} from "./task-list-notes.ts";
 import { type StartBy, startByOf } from "./triggers.ts";
 import type { WebSource } from "./web-sources.ts";
 
@@ -211,6 +225,8 @@ export const PROMISED_EVENT = "session.promised";
 export const JOINED_EVENT = "session.joined";
 /** S-7: work that asked to join and did not fit, at the session's end (`{ tasks }`). */
 export const LEFT_FOR_NEXT_START_EVENT = "session.left_for_next_start";
+/** d1109-selftasks-run (ADR 0119): one task check at a boundary; its Details line. */
+export const TASK_CHECKED_EVENT = "session.task_checked";
 /** S-10: the session goes on with the person's earlier one (`{ continues, at }`). */
 export const CONTINUES_EVENT = "session.continues";
 
@@ -813,6 +829,14 @@ export interface SessionRunnerDeps {
    */
   keptWorkCheck?: KeptWorkCheckPort;
   /**
+   * d1109-selftasks-run (ADR 0119; the owner, 2026-11-09: "I want it to be able to fix its tasks.
+   * Like as part of a run"): the task check at a task boundary, on evidence only (a report's "For
+   * the task list:" lines, the critic's notes the task did not cause, notes kept from before), at
+   * most three a session, never after the wrap-up line, paid only from the room the session's
+   * promise leaves. Absent: no check runs (a test world, a one-shot).
+   */
+  taskCheck?: TaskCheckRunnerPort;
+  /**
    * How often the runner re-reads a running task's row (U-039), default
    * `DEFAULT_TASK_WATCH_MS`: a person's move made where no route of this process sees it (the
    * phone through the state service, Chat) stops the task's run within this time. The daemon's
@@ -1198,6 +1222,17 @@ export class SessionRunner {
      */
     let inboxTakenIn = false;
     const lessonCandidates: LessonCandidate[] = [];
+    /**
+     * d1109-selftasks-run (ADR 0119): the evidence the task check reads at the next boundary
+     * (gathered beside the lessons), the checks made, the notes kept from before that this
+     * session took, the changes the agent made and the new tasks it added.
+     */
+    const taskListNotes: TaskListNote[] = [];
+    let taskChecks = 0;
+    let keptLoaded = false;
+    const fromProject = new Set<TaskListNote>();
+    const tasksChanged: TaskChangeFact[] = [];
+    let addedByChecks = 0;
     /** Lesson proposals the critic port refused as instruction-shaped (quoted to the human). */
     const quarantinedByCritic: RejectedLesson[] = [];
     const resolvedFindingTitles: string[] = [];
@@ -1241,7 +1276,7 @@ export class SessionRunner {
     const own = new Set<string>();
     const ownEstimate = new Map<string, number>();
     const joined = new Map<string, number>();
-    const asked = new Map<string, { title: string; estimateUsdMicro: number }>();
+    const asked = new Map<string, { title: string; estimateUsdMicro: number; waitsFor?: string }>();
     /** Promised tasks a step added before them took out of the promise (D7). */
     const leftPromise = new Set<string>();
     /** The run in flight and what the session had spent when it began (its remaining estimate). */
@@ -1868,6 +1903,9 @@ export class SessionRunner {
                   const left = partRoom.get(whole) ?? ownEstimate.get(whole) ?? 0;
                   if (est <= left) {
                     partRoom.set(whole, left - est);
+                    // d1109-selftasks-run: the part's room comes out of the whole's estimate, so
+                    // the promise is counted once (before, both were counted in full).
+                    ownEstimate.set(whole, Math.max(0, (ownEstimate.get(whole) ?? 0) - est));
                     own.add(row.id);
                     ownEstimate.set(row.id, est);
                     if (onlyThese && by !== "agent") onlyThese.add(row.id);
@@ -1893,6 +1931,8 @@ export class SessionRunner {
                       asked.set(next, {
                         title: nextRow.title,
                         estimateUsdMicro: ownEstimate.get(next) ?? 0,
+                        // D7: named after the step it waits for ("which waits for it").
+                        waitsFor: row.title,
                       });
                   }
                   continue;
@@ -2169,9 +2209,94 @@ export class SessionRunner {
           });
           return taken;
         };
+        /**
+         * d1109-selftasks-run (ADR 0119 point 3): the check at a task boundary (no task of the
+         * session runs now). Answers true when the agent changed the task list: the queue is
+         * dropped and planned again from the tasks as they are now, through the admit rule.
+         */
+        const checkTaskList = async (): Promise<boolean> => {
+          const port = this.deps.taskCheck;
+          if (!project || !port) return false;
+          if (!keptLoaded) {
+            keptLoaded = true;
+            const kept = keptNotesOf(await store.project.get(project.id));
+            for (const n of kept) fromProject.add(n);
+            taskListNotes.unshift(...kept);
+          }
+          if (!taskListNotes.length) return false;
+          // At most three a session; none after the wrap-up line or once the session takes no
+          // new work: the notes stay and are kept on the project at its end.
+          if (taskChecks >= TASK_CHECKS_PER_SESSION || (await takesNothingNew())) return false;
+          const notes = taskListNotes.splice(0);
+          const fresh = await store.project.mustGet(project.id);
+          const after = [...notes].reverse().find((n) => !fromProject.has(n))?.taskTitle ?? null;
+          const done = await checkAtBoundary(port, {
+            session: await store.session.mustGet(session.id),
+            budget,
+            agentId: agent.id,
+            ownerHumanId: agent.owner_human_id,
+            project: fresh,
+            notes,
+            // The check is paid only from what the promise and what joined leave.
+            roomUsdMicro: await roomForNewcomers(),
+            level: autonomy,
+            addedThisSession: addedByChecks,
+            after,
+            chfPerUsd: this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD,
+          }).catch((e: unknown) => {
+            this.logger.warn("the task check failed", {
+              sessionId: session.id,
+              error: errorMessage(e),
+            });
+            return null;
+          });
+          if (!done || done.keep) {
+            taskListNotes.unshift(...notes);
+            if (done?.called) taskChecks++;
+            if (done?.line)
+              await emit(TASK_CHECKED_EVENT, {
+                sentence: done.line,
+                costUsdMicro: done.costUsdMicro,
+              });
+            return false;
+          }
+          if (done.called) taskChecks++;
+          // Notes kept from before are checked once: they leave the project now.
+          if (notes.some((n) => fromProject.has(n))) await takeNotes(store, project.id);
+          if (done.line)
+            await emit(TASK_CHECKED_EVENT, {
+              sentence: done.line,
+              costUsdMicro: done.costUsdMicro,
+              changed: done.applied.length,
+              ...(done.proposalId ? { proposed: true } : {}),
+              ...(done.refused.length
+                ? { refused: done.refused.map((r) => `${r.what}: ${r.reason}`) }
+                : {}),
+            });
+          if (!done.applied.length) return false;
+          tasksChanged.push(...done.facts);
+          // The new tasks join only by the admit rule (D6, option C): a part of a promised task
+          // within its room, a step before a promised task only if the room after the promise
+          // covers it; the agent's preparation never starts a session.
+          for (const a of done.applied) {
+            addedByChecks += a.made.length;
+            for (const m of a.made)
+              await liveHandle?.admit(
+                [m.taskId],
+                "agent",
+                m.partOf ? { partOf: m.partOf } : m.before ? { before: m.before } : undefined,
+              );
+          }
+          return true;
+        };
         for (;;) {
           if (controller.signal.aborted) throw new ForerunnerError("killed", "session stopped");
           budget.checkWallClock(clock.now());
+          // d1109-selftasks-run: the task boundary; after a change the session plans again.
+          if (await checkTaskList()) {
+            queue.length = 0;
+            continue;
+          }
           if (queue.length === 0) {
             // "Stop after this task" (the pause port marks the row `paused`): nothing more.
             if ((await store.session.get(session.id))?.status === "paused") break;
@@ -2686,6 +2811,17 @@ export class SessionRunner {
             continue;
           }
           lessonCandidates.push(...(result.lessons ?? []));
+          // d1109-selftasks-run: the report's "For the task list:" lines, for the next boundary.
+          if (result.taskListNotes?.length)
+            taskListNotes.push({
+              source: "report",
+              taskId: task.id,
+              taskTitle: task.title,
+              specialist: result.specialist ?? runItem.specialist,
+              runId: result.runId ?? null,
+              lines: result.taskListNotes,
+              at: clock.nowIso(),
+            });
           // A runner composed without a critic (an engine test world; the daemon always
           // composes one) closes a tier 0 task on its run. With a critic, nothing is Done
           // before the critic reviewed it (ADR 0104): tier 0 is reviewed as the light review.
@@ -3011,6 +3147,29 @@ export class SessionRunner {
                 retry: reviewed.retry,
                 attempt: reviewed.attempt,
               });
+              // d1109-selftasks-run: the critic's notes the task did not cause, for the next
+              // boundary's task check (data, flagged where they read like an instruction).
+              if (reviewed.reviewId && this.deps.taskCheck) {
+                const notes = reviewNoteLines(
+                  (
+                    await store.finding.list({ review_id: reviewed.reviewId } as never, {
+                      limit: 50,
+                    })
+                  )
+                    .filter(isCriticNote)
+                    .map((f) => f.description),
+                );
+                if (notes.length)
+                  taskListNotes.push({
+                    source: "review",
+                    taskId: task.id,
+                    taskTitle: task.title,
+                    specialist: null,
+                    runId: result.runId ?? null,
+                    lines: notes,
+                    at: clock.nowIso(),
+                  });
+              }
               // A resolved finding always comes from an earlier review, so its row is loaded:
               // the lesson says what was wrong and what fixed it, not that something was.
               for (const id of reviewed.resolvedFindingIds) {
@@ -3420,6 +3579,18 @@ export class SessionRunner {
     const spentChf = spentTotals.chf_micro;
     // The result (design §5): read from the tasks as they stand now, at most three lines.
     const rate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
+    // d1109-selftasks-run (ADR 0119 point 9): evidence no check handled (its cap, the wrap-up
+    // line, three checks done, the session's end) is kept on the project for the next session's
+    // first boundary and chat's "fix the tasks"; notes it took from the project and did not
+    // check are still there.
+    if (project && taskListNotes.length)
+      await keepNotes(
+        store,
+        project.id,
+        taskListNotes.filter((n) => !fromProject.has(n)),
+      ).catch((e: unknown) =>
+        this.logger.warn("the task list notes were not kept", { error: errorMessage(e) }),
+      );
     const endState = await collectEndState(store, project?.id ?? null, [
       ...completed,
       ...inReview,
@@ -3548,8 +3719,18 @@ export class SessionRunner {
         : {}),
       spentChfMicro: spentChf,
     };
+    const readyAtEnd = (id: string) =>
+      endState.readyNow.some((r) => r.id === id) && !completed.includes(id);
+    // D7 (d1109-selftasks-run): a promised task a step added before it took out of the promise
+    // is not runnable while it waits for that step; it is named with it ("which waits for it").
     const leftForNext = [...asked]
-      .filter(([id]) => endState.readyNow.some((r) => r.id === id) && !completed.includes(id))
+      .filter(
+        ([id, t]) =>
+          readyAtEnd(id) ||
+          (!!t.waitsFor &&
+            !completed.includes(id) &&
+            [...asked].some(([sid, s]) => s.title === t.waitsFor && readyAtEnd(sid))),
+      )
       .map(([id, t]) => ({ id, ...t }));
     if (leftForNext.length)
       await emit(LEFT_FOR_NEXT_START_EVENT, {
@@ -3579,9 +3760,12 @@ export class SessionRunner {
               id: t.id,
               title: t.title,
               estimateChfMicro: usdToChfMicro(Math.max(0, Math.round(t.estimateUsdMicro)), rate),
+              ...(t.waitsFor ? { waitsFor: t.waitsFor } : {}),
             })),
           }
         : {}),
+      // d1109-selftasks-run: what the agent changed in its own task list.
+      ...(tasksChanged.length ? { tasksChanged } : {}),
       sessionCapChfMicro: usdToChfMicro(opts.budgetCapUsdMicro, rate),
       ...(plan?.workBudgetUsdMicro !== undefined
         ? { workBudgetChfMicro: usdToChfMicro(plan.workBudgetUsdMicro, rate) }
@@ -3898,6 +4082,8 @@ export class SessionRunner {
       project?.name ?? null,
       news,
       outcome.needsYou.map((t) => t.title),
+      // d1109-selftasks-run: the one Update counts the agent's changes to its tasks.
+      tasksChanged,
     );
     if (
       update &&

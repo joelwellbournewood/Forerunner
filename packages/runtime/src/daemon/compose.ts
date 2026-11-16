@@ -37,7 +37,7 @@ import {
   scheduleMirror,
   web,
 } from "@forerunner/capabilities";
-import { removedProjectRefusal } from "@forerunner/commands";
+import { type CommandCall, removedProjectRefusal } from "@forerunner/commands";
 import { criticSettingsOf } from "@forerunner/critic";
 import {
   type AppDirs,
@@ -289,6 +289,8 @@ import {
 import { syncSessionReviewAnswers } from "../session/session-review-answers.ts";
 import { type StartCheck, startCheck } from "../session/start-check.ts";
 import { taskReasonForStop } from "../session/stop-words.ts";
+import { callsOf as taskChangeCalls } from "../session/task-check.ts";
+import { fileTaskProposal, syncTaskProposals } from "../session/task-proposal.ts";
 import { fileFiredKeys, Scheduler, type StartRequest, startByOf } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
 import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
@@ -1192,6 +1194,8 @@ export interface RuntimeApp {
     specialists: SpecialistSyncResult;
     /** Answered repository proposals (U-037, ADR 0097): created, declined, failed. */
     repos?: { created: number; declined: number; failed: number };
+    /** d1109-selftasks-run: the agent's suggested task changes answered (ADR 0119). */
+    taskProposals?: { applied: number; kept: number; failed: number };
     /** Docker cards answered with Cancel task (design §3.8): the task cancelled. */
     sandbox?: { cancelled: number };
   }>;
@@ -2749,6 +2753,76 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     kill,
     executor,
     live: liveSessions,
+    // d1109-selftasks-run (ADR 0119): the agent keeps its task list right between tasks: one
+    // planning call routed as the intake's (purpose interactive), changes through the command
+    // registry as the agent's own (source 'session'), or one suggestion card. `commands` is
+    // made below; these run only once a session runs.
+    ...(intakeProvider && provider
+      ? {
+          taskCheck: {
+            deps: {
+              store,
+              clock,
+              tokens,
+              driver,
+              provider: () => intakeProvider,
+              model: (_project: ProjectRow, p: ModelProvider) =>
+                rungModelFor(p, modelConfig.get().modeDefaults.planning.tier),
+              pricing: (model: string) => livePricing(provider, () => model),
+              billingSourceId,
+              ...(registry.principals.get("project-manager")?.prompt
+                ? { rolePrompt: registry.principals.get("project-manager")?.prompt as string }
+                : {}),
+              specialists: () =>
+                registry
+                  .runnableSpecialists()
+                  .map((d) => ({ name: d.name, tools: [...(d.allowed_tools ?? [])] })),
+            },
+            changes: {
+              run: async (calls, ctx) => {
+                const base = await commands.contextFor({
+                  humanId: human.id,
+                  agentId: principal.id,
+                  activeProjectId: ctx.projectId,
+                  sessionId: ctx.sessionId ?? "",
+                  source: "ui",
+                  wordsUsed: "",
+                });
+                // The session admits what it made itself (the admit rule, D7); nothing here
+                // prepares or starts work.
+                const { prepareWork: _p, previewWork: _v, ...ports } = base.ports;
+                const r = await commands.executor.compose(calls as CommandCall[], {
+                  ...base,
+                  actor: { kind: "agent", id: principal.id },
+                  source: "session",
+                  sessionId: ctx.sessionId,
+                  planFix: { level: ctx.level },
+                  ports,
+                });
+                if (r.status === "done" || r.status === "partial")
+                  return {
+                    status: "done" as const,
+                    changeLogId: r.changeLogId,
+                    sentence: r.sentence,
+                  };
+                if (r.status === "pending") {
+                  await commands.executor.cancel(r.pendingId, { kind: "agent", id: principal.id });
+                  return { status: "refused" as const, reason: "it would wait for your yes" };
+                }
+                return {
+                  status: "refused" as const,
+                  reason: r.status === "refused" ? r.reason : "it was cancelled",
+                };
+              },
+            },
+            propose: (input) =>
+              fileTaskProposal(store, {
+                ...input,
+                callsOf: (f) => taskChangeCalls(store, input.project, f),
+              }),
+          },
+        }
+      : {}),
     // S-10: a person's session that ended to wait for its Claude credential keeps its
     // continuation on the project's wait; the wake makes it once at the stop's end.
     continuation: { keep: (projectId, kept) => keepContinuation(store, projectId, kept) },
@@ -4361,6 +4435,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     syncChain = run.catch(() => undefined);
     return run;
   };
+  /** The person's answer to a suggestion card, as a command turn (the Inbox's own source). */
+  const proposalTurn = (projectId: string | null) => ({
+    humanId: human.id,
+    agentId: principal.id,
+    activeProjectId: projectId,
+    sessionId: "",
+    source: "ui" as const,
+    wordsUsed: "Make these changes",
+  });
   const syncApprovalsOnce = async () => {
     await schemaSync.assertCanSync("approvals.sync");
     // S-2: an answer prepares the work it made runnable (`prepare`); only the person's own
@@ -4511,6 +4594,44 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // A repository proposal answered in the Inbox (U-037): created through `repo.create`
       // with the answer as the confirmation, or "Not now" remembered on the project.
       repos: repoProposals ? await repoProposals.sync() : { created: 0, declined: 0, failed: 0 },
+      // d1109-selftasks-run (ADR 0119): the agent's suggested task changes answered in the Inbox:
+      // "Make these changes" as one change of the person's with one Undo; nothing starts.
+      taskProposals: await syncTaskProposals({
+        store,
+        clock,
+        humanId: human.id,
+        check: async (calls) => {
+          try {
+            await commands.executor.planCompose(
+              calls as CommandCall[],
+              await commands.contextFor(proposalTurn(null)),
+            );
+            return null;
+          } catch (e) {
+            return errorMessage(e);
+          }
+        },
+        apply: async (calls, ctx) => {
+          const base = await commands.contextFor(proposalTurn(ctx.projectId));
+          const { prepareWork: _p, previewWork: _v, ...ports } = base.ports;
+          const r = await commands.executor.compose(
+            calls as CommandCall[],
+            { ...base, ports },
+            { confirmation: { kind: "tap", by: { kind: "human", id: human.id } } },
+          );
+          return r.status === "done" || r.status === "partial"
+            ? { changeLogId: r.changeLogId }
+            : { refused: r.status === "refused" ? r.reason : "it was not made" };
+        },
+        // The approved tasks are the person's preparation: they join the running session by the
+        // admit rule (added to what it may run); with none running they wait for the next Start.
+        admit: async (projectId, taskIds) => {
+          const handle = liveSessions.forProject(projectId);
+          if (!handle) return false;
+          await handle.admit(taskIds, "person");
+          return true;
+        },
+      }),
       // A project's Docker card answered with Cancel task (design §3.8): the task is cancelled.
       sandbox: await sandbox.syncAnswers(),
     };

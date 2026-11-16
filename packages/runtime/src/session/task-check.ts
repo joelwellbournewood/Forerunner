@@ -1,5 +1,5 @@
 import type { Clock } from "@forerunner/platform";
-import { errorMessage, log } from "@forerunner/platform";
+import { errorMessage, log, newId } from "@forerunner/platform";
 import type { JsonValue, ProjectRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
 import type { RunPricing, RunRequest, RunResult } from "../agent/loop.ts";
@@ -13,6 +13,7 @@ import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../injection/scan.ts";
 import { TASK_CHECK_RUN_SPECIALIST } from "../models/ladder.ts";
 import type { ModelProvider } from "../provider/types.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
+import { type TaskChangeFact, taskCheckedLine } from "./result.ts";
 import { markAgentWritten, readsLikeInstruction, type TaskListNote } from "./task-list-notes.ts";
 
 /**
@@ -456,7 +457,8 @@ export async function runTaskCheck(
   const capUsdMicro = Math.max(1, pricing.estimate(inputTokens, TASK_CHECK_MAX_TOKENS));
   if (capUsdMicro > input.roomUsdMicro)
     return { status: "not_made", reason: "no_room", capUsdMicro };
-  const runId = `task-check_${input.session.id}_${clock.now()}`;
+  // One Run row per check (a second check in the same millisecond gets its own id).
+  const runId = newId(clock.now());
   const token = deps.tokens.issue({
     runId,
     sessionId: input.session.id,
@@ -1134,4 +1136,168 @@ export async function applyTaskChanges(
       await markAgentWritten(store, project.id, [...fenced.taskIds, ...madeIds]);
   }
   return { applied, refused, proposed: false };
+}
+
+// --- The session's boundary (runner.ts calls it between two tasks) ---------------------------
+
+/** What the runner gives the check (compose builds it). */
+export interface TaskCheckRunnerPort {
+  deps: TaskCheckDeps;
+  changes: TaskChangePort;
+  /** Files the set as one suggestion card (`task-proposal.ts`); its id, or null when not filed. */
+  propose(input: {
+    project: ProjectRow;
+    sessionId: string | null;
+    agentId: string;
+    humanId: string;
+    fence: FenceResult;
+    notes: readonly TaskListNote[];
+  }): Promise<string | null>;
+}
+
+/** What one boundary check did, for the runner's books and its Details line. */
+export interface BoundaryCheck {
+  /** A model call was made (it counts towards the three a session). */
+  called: boolean;
+  /** The notes were not checked (no room, no Claude): the runner keeps them. */
+  keep: boolean;
+  costUsdMicro: number;
+  applied: AppliedChange[];
+  /** The changes in the result's words (`TaskChangeFact`). */
+  facts: TaskChangeFact[];
+  /** The Details line of the check, or null when no check ran. */
+  line: string | null;
+  /** The fence's and the commands' refusals, for Details. */
+  refused: RefusedChange[];
+  /** The suggestion card filed, if any. */
+  proposalId: string | null;
+}
+
+/** A change as the session's result names it. */
+function factOf(c: TaskChange): TaskChangeFact {
+  switch (c.kind) {
+    case "split":
+      return { kind: "split", title: c.task };
+    case "add":
+      return { kind: "added", title: c.title };
+    case "drop":
+      return { kind: "dropped", title: c.task };
+    case "order":
+      return { kind: "reordered", title: c.task };
+    case "edit":
+      return { kind: "reworded", title: c.task };
+  }
+}
+
+/**
+ * One check at a task boundary (ADR 0119 point 3): the call (no call when every line is flagged,
+ * when no Claude can serve or when its cap does not fit the room), the fence, then by autonomy
+ * the changes as the agent's own or one suggestion card. One check of a project at a time.
+ */
+export async function checkAtBoundary(
+  port: TaskCheckRunnerPort,
+  input: TaskCheckInput & {
+    level: AutonomyLevel;
+    addedThisSession: number;
+    /** The task whose report or review it follows, for the Details line. */
+    after: string | null;
+    chfPerUsd: number;
+  },
+): Promise<BoundaryCheck> {
+  const none: BoundaryCheck = {
+    called: false,
+    keep: false,
+    costUsdMicro: 0,
+    applied: [],
+    facts: [],
+    line: null,
+    refused: [],
+    proposalId: null,
+  };
+  // Nothing but lines that read like instructions: no call (they never reach a model); the
+  // Details line quotes that one was left out, the person sees it there.
+  if (!input.notes.some((n) => n.lines.some((l) => !l.flagged))) {
+    const flagged = input.notes.flatMap((n) => n.lines.filter((l) => l.flagged).map((l) => l.text));
+    return {
+      ...none,
+      line: flagged.length
+        ? `Left out of the task check: a line that reads like an instruction ("${flagged[0]?.slice(0, 100) ?? ""}").`
+        : null,
+    };
+  }
+  return withTaskCheckLock(input.project.id, async () => {
+    const run = await runTaskCheck(port.deps, input);
+    const chf = (usd: number) => Math.round(usd * input.chfPerUsd);
+    if (run.status === "not_made") return { ...none, keep: true };
+    if (run.status === "failed")
+      return {
+        ...none,
+        called: true,
+        keep: true,
+        costUsdMicro: run.costUsdMicro,
+        line: taskCheckedLine(input.after, { kind: "failed" }, chf(run.costUsdMicro)),
+      };
+    const cost = run.costUsdMicro;
+    if (!run.reply.ok)
+      return {
+        ...none,
+        called: true,
+        costUsdMicro: cost,
+        line: taskCheckedLine(input.after, { kind: "unreadable" }, chf(cost)),
+      };
+    const { store } = port.deps;
+    const project = (await store.project.get(input.project.id)) ?? input.project;
+    const fence = await fenceTaskChanges(store, {
+      project,
+      reply: run.reply,
+      notes: input.notes,
+      addedThisSession: input.addedThisSession,
+      specialists: port.deps.specialists(),
+    });
+    const applied = await applyTaskChanges(store, port.changes, {
+      project,
+      fence,
+      level: input.level,
+      sessionId: input.session.id,
+      fromReport: true,
+    });
+    if (applied.proposed) {
+      const proposalId = await port.propose({
+        project,
+        sessionId: input.session.id,
+        agentId: input.agentId,
+        humanId: input.ownerHumanId,
+        fence,
+        notes: input.notes,
+      });
+      return {
+        ...none,
+        called: true,
+        costUsdMicro: cost,
+        refused: fence.refused,
+        proposalId,
+        line: taskCheckedLine(
+          input.after,
+          proposalId ? { kind: "suggested", count: fence.changes.length } : { kind: "no_change" },
+          chf(cost),
+        ),
+      };
+    }
+    const refused = [...fence.refused, ...applied.refused];
+    return {
+      ...none,
+      called: true,
+      costUsdMicro: cost,
+      applied: applied.applied,
+      facts: applied.applied.map((a) => factOf(a.fenced.change)),
+      refused,
+      line: taskCheckedLine(
+        input.after,
+        applied.applied.length
+          ? { kind: "changed", count: applied.applied.length }
+          : { kind: "no_change" },
+        chf(cost),
+      ),
+    };
+  });
 }

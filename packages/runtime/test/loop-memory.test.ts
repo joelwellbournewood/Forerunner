@@ -367,7 +367,9 @@ describe("memory in the loop", () => {
     const user = String(w.provider.calls[0]?.request.messages[0]?.content);
     expect(user).toContain(WINDOWS);
     expect(user).toContain("Lesson: ...");
-    const block = user.slice(user.indexOf("notes"));
+    // The memory block from its heading (d1109-selftasks-run: the brief's task-list line comes
+    // after the lessons line, so the first "notes" no longer starts the block).
+    const block = user.slice(user.indexOf("# Lessons from memory"));
     expect(estimateTokens(block)).toBeLessThanOrEqual(DEFAULT_TASK_MEMORY_TOKEN_BUDGET);
     // A task budget too small for the line: the brief goes without it.
     await run(8);

@@ -573,6 +573,9 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
   const n = (k: string) => num(p, k);
   const chf = (k: string) => chfOf(n(k), chfPerUsd);
   switch (type) {
+    // d1109-selftasks-run (ADR 0119): a task check at a boundary, as its Details line.
+    case "session.task_checked":
+      return s("sentence") || "Checked the task list.";
     // U-078 (ADR 0100): a credential met its usage limit; the sentence says what took over.
     case "billing.fallback":
       return s("sentence") || "A Claude credential reached its usage limit; the next one is used.";

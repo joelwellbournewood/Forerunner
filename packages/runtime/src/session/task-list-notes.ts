@@ -1,3 +1,4 @@
+import { NOT_CAUSED_BY_TASK } from "@forerunner/critic";
 import { ForerunnerError } from "@forerunner/platform";
 import type { JsonObject, JsonValue, StateStore } from "@forerunner/state";
 import { scanForInjection } from "../injection/scan.ts";
@@ -119,6 +120,14 @@ export function parseTaskListNotes(report: string): TaskListLine[] {
     if (out.length >= TASK_LIST_LINES_MAX) break;
   }
   return out;
+}
+
+/**
+ * A critic's finding that is a note, not an order (L-4, as the brief reads it): marked `info`,
+ * or a problem the runtime measured that the task's files cannot have caused.
+ */
+export function isCriticNote(f: { severity: string; description: string }): boolean {
+  return f.severity === "info" || f.description.endsWith(NOT_CAUSED_BY_TASK);
 }
 
 /** The critic's notes on a task that the task did not cause, as evidence lines. */
