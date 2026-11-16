@@ -791,7 +791,7 @@ describe("d1109-selftasks-chat, run C: an added step marks only itself as the ag
     const step = await w.store.task.mustGet((made as TaskRow | null)?.id ?? "");
     const p1 = new ScriptedProvider([{ text: "Checked." }], w.h.clock);
     await run(w, { ...step, status: "in_progress" }, p1);
-    expect((p1.calls[0]?.messages[0]?.content as string).split(AGENT_WROTE).length).toBe(2);
+    expect(String(p1.calls[0]?.messages[0]?.content ?? "").split(AGENT_WROTE).length).toBe(2);
     const after = await w.store.task.mustGet(behaviour.id);
     const p2 = new ScriptedProvider([{ text: "Made it." }], w.h.clock);
     await run(w, { ...after, status: "in_progress" }, p2);
