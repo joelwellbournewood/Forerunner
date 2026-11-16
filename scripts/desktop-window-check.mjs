@@ -1863,6 +1863,28 @@ async function main() {
       .getByTestId("open-project")
       .click();
     await shot("project while the session runs");
+    // d1109-run-visible (V-2, V-7): while the session runs the bar under the header names the
+    // project, and the page's title says it runs ('● <project> · Forerunner'). Read while it
+    // still runs; a session that already ended says so instead of failing the check.
+    const runBar = await (async () => {
+      const s = await api("GET", `/sessions/${encodeURIComponent(session.id)}`);
+      if (!["running", "paused", "planned"].includes(s.status)) return { ran: false };
+      const text = await page
+        .getByTestId("run-indicator-bar")
+        .innerText({ timeout: 10_000 })
+        .catch(() => "");
+      const title = String(await page.evaluate("document.title"));
+      return { ran: true, text, title };
+    })();
+    check(
+      "while the session runs, the bar under the header and the title name its project",
+      !runBar.ran ||
+        (runBar.text.includes(`${projectName} · `) &&
+          runBar.title === `● ${projectName} · Forerunner`),
+      runBar.ran
+        ? `bar: ${oneLine(runBar.text, 120)}; title: ${runBar.title}`
+        : "the session had ended",
+    );
     const ended = await until("the session to end", left(900_000), 2_000, async () => {
       const s = await api("GET", `/sessions/${encodeURIComponent(session.id)}`);
       return ["completed", "stopped", "failed", "killed"].includes(s.status) ? s : null;

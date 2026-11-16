@@ -78,6 +78,8 @@ pub struct DaemonStatus {
     pub version: String,
     pub kill_active: bool,
     pub active_sessions: u64,
+    /// d1109-run-visible (V-7): what runs now (`/health.running`), for the tray and the title.
+    pub running: Option<crate::daemon::RunningHealth>,
     pub blocking_count: u64,
     pub last_error: Option<String>,
     /// Consecutive failed health probes.
@@ -264,6 +266,9 @@ pub fn lock(state: &SharedState) -> MutexGuard<'_, ShellState> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrayView {
     pub tooltip: String,
+    /// d1109-run-visible (V-7): the menu's first item, disabled: what runs now in the daemon's
+    /// words ('Quote page: the coder works on "A"'), or that no session runs.
+    pub running_text: String,
     /// The text next to the tray icon where the platform shows one (Linux app indicators):
     /// set only while desktop control is active, so it cannot be missed.
     pub title: Option<String>,
@@ -293,6 +298,31 @@ pub fn needs_external_watch(child_pid: Option<u32>, busy: Option<Busy>) -> bool 
     child_pid.is_none() && busy.is_none()
 }
 
+/// d1109-run-visible (V-7): what runs now as the tray says it: 'Quote page: the coder works on
+/// "A"' (the daemon's words; a person's session waiting to go on reads 'Quote page: waiting
+/// until 15:40, then it goes on').
+pub fn running_words(status: &DaemonStatus) -> Option<String> {
+    let r = status.running.as_ref()?;
+    Some(format!("{}: {}", r.project_name, r.what))
+}
+
+/// d1109-run-visible (V-7): the main window's title: 'Forerunner — Quote page is working' while a
+/// session runs, 'Forerunner' otherwise (a session that only waits to go on does not change it,
+/// as the UI's tab title).
+pub fn window_title(status: &DaemonStatus) -> String {
+    match status.running.as_ref() {
+        Some(r) if status.reachable && !r.waiting => {
+            format!("Forerunner — {} is working", r.project_name)
+        }
+        _ => "Forerunner".to_string(),
+    }
+}
+
+/// d1109-run-visible (V-8): whether the tray icon carries the running dot.
+pub fn icon_dot(status: &DaemonStatus) -> bool {
+    status.reachable && status.running.as_ref().is_some_and(|r| !r.waiting)
+}
+
 pub fn tray_view(s: &ShellState) -> TrayView {
     let reachable = s.status.reachable;
     let tooltip = if let Some(Busy::Starting) = s.busy {
@@ -306,21 +336,20 @@ pub fn tray_view(s: &ShellState) -> TrayView {
             "Forerunner — daemon not reachable".to_string()
         }
     } else {
-        let mut t = format!(
-            "Forerunner {} — {} running session{}",
-            s.status.version,
-            s.status.active_sessions,
-            if s.status.active_sessions == 1 {
-                ""
-            } else {
-                "s"
-            }
-        );
+        let mut t = match s.status.active_sessions {
+            0 => format!("Forerunner {} — no session runs", s.status.version),
+            1 => format!("Forerunner {} — 1 running session", s.status.version),
+            n => format!("Forerunner {} — {n} running sessions", s.status.version),
+        };
         if s.status.blocking_count > 0 {
             t.push_str(&format!(", {} waiting on you", s.status.blocking_count));
         }
         if s.status.kill_active {
-            t.push_str("; kill switch active");
+            t.push_str("; sessions are stopped");
+        }
+        // d1109-run-visible (V-7): what runs now is the tooltip's first line.
+        if let Some(words) = running_words(&s.status) {
+            t = format!("{words}\n{t}");
         }
         if s.email.paused == Some(true) {
             t.push_str("; email paused");
@@ -374,27 +403,34 @@ pub fn tray_view(s: &ShellState) -> TrayView {
             )
         };
 
+    // d1109-run-visible (V-7; design §3.1, §5 plain words): Stop all sessions and Allow sessions
+    // again, as the app's header says them (before: "Kill switch: stop everything", "Resume").
     let (kill_text, kill_enabled, resume_text, resume_enabled) = if !reachable {
         (
-            "Kill switch: stop everything (daemon not reachable)".to_string(),
+            "Stop all sessions (daemon not reachable)".to_string(),
             false,
-            "Resume".to_string(),
+            "Allow sessions again".to_string(),
             false,
         )
     } else if s.status.kill_active {
         (
-            "Kill switch: active".to_string(),
+            "Sessions are stopped".to_string(),
             false,
-            "Resume".to_string(),
+            "Allow sessions again".to_string(),
             true,
         )
     } else {
         (
-            "Kill switch: stop everything".to_string(),
+            "Stop all sessions".to_string(),
             true,
-            "Resume (nothing is stopped)".to_string(),
+            "Allow sessions again (nothing is stopped)".to_string(),
             false,
         )
+    };
+    let running_text = if reachable {
+        running_words(&s.status).unwrap_or_else(|| "No session runs".to_string())
+    } else {
+        "No session runs (daemon not reachable)".to_string()
     };
 
     let (email_text, email_enabled, email_action) = if !reachable {
@@ -435,6 +471,7 @@ pub fn tray_view(s: &ShellState) -> TrayView {
 
     TrayView {
         tooltip,
+        running_text,
         title,
         desktop_text,
         desktop_enabled,
@@ -494,7 +531,8 @@ mod tests {
         let s = reachable();
         let v = tray_view(&s);
         assert!(v.kill_enabled);
-        assert_eq!(v.kill_text, "Kill switch: stop everything");
+        // d1109-run-visible (V-7): the header's words (it read "Kill switch: stop everything").
+        assert_eq!(v.kill_text, "Stop all sessions");
         assert!(!v.resume_enabled);
         assert_eq!(v.tooltip, "Forerunner 0.1.0 — 2 running sessions");
         let mut frozen = reachable();
@@ -504,10 +542,11 @@ mod tests {
         let v = tray_view(&frozen);
         assert!(!v.kill_enabled);
         assert!(v.resume_enabled);
-        assert_eq!(v.resume_text, "Resume");
+        assert_eq!(v.resume_text, "Allow sessions again");
+        assert_eq!(v.kill_text, "Sessions are stopped");
         assert_eq!(
             v.tooltip,
-            "Forerunner 0.1.0 — 1 running session, 3 waiting on you; kill switch active"
+            "Forerunner 0.1.0 — 1 running session, 3 waiting on you; sessions are stopped"
         );
     }
 
@@ -740,5 +779,74 @@ mod tests {
         t.push_str("y_0123456789abcdefghijklmnopqrstuvwxyz"); // not-a-secret
         s.injected = Some(("http://127.0.0.1:1".into(), Secret::new(t.clone())));
         assert!(!format!("{s:?}").contains(&t));
+    }
+
+    fn running(waiting: bool) -> crate::daemon::RunningHealth {
+        crate::daemon::RunningHealth {
+            project_name: "Quote page".into(),
+            what: if waiting {
+                "waiting until 15:40, then it goes on".into()
+            } else {
+                "the coder works on \"A\"".into()
+            },
+            text: String::new(),
+            waiting,
+        }
+    }
+
+    /// d1109-run-visible V-7 (D8, the owner: "very visually clear no matter where the person
+    /// is"): the tray's tooltip and first item say what runs, and the window title names it.
+    #[test]
+    fn a_running_session_is_said_by_the_tooltip_the_first_item_and_the_title() {
+        let mut s = reachable();
+        s.status.active_sessions = 1;
+        s.status.running = Some(running(false));
+        let v = tray_view(&s);
+        assert_eq!(
+            v.tooltip,
+            "Quote page: the coder works on \"A\"\nForerunner 0.1.0 — 1 running session"
+        );
+        assert_eq!(v.running_text, "Quote page: the coder works on \"A\"");
+        assert_eq!(v.kill_text, "Stop all sessions");
+        assert_eq!(v.resume_text, "Allow sessions again (nothing is stopped)");
+        assert_eq!(
+            window_title(&s.status),
+            "Forerunner — Quote page is working"
+        );
+        assert!(icon_dot(&s.status));
+    }
+
+    #[test]
+    fn with_none_running_the_title_is_forerunner_and_the_tooltip_says_no_session_runs() {
+        let mut s = reachable();
+        s.status.active_sessions = 0;
+        let v = tray_view(&s);
+        assert_eq!(v.tooltip, "Forerunner 0.1.0 — no session runs");
+        assert_eq!(v.running_text, "No session runs");
+        assert_eq!(window_title(&s.status), "Forerunner");
+        assert!(!icon_dot(&s.status));
+    }
+
+    #[test]
+    fn a_session_that_only_waits_to_go_on_is_said_but_leaves_the_title_and_the_icon() {
+        let mut s = reachable();
+        s.status.active_sessions = 0;
+        s.status.running = Some(running(true));
+        let v = tray_view(&s);
+        assert_eq!(
+            v.tooltip.lines().next(),
+            Some("Quote page: waiting until 15:40, then it goes on")
+        );
+        assert_eq!(
+            v.running_text,
+            "Quote page: waiting until 15:40, then it goes on"
+        );
+        assert_eq!(window_title(&s.status), "Forerunner");
+        assert!(!icon_dot(&s.status));
+        // An unreachable daemon names no session as running.
+        s.status.reachable = false;
+        s.status.running = Some(running(false));
+        assert_eq!(window_title(&s.status), "Forerunner");
+        assert!(!icon_dot(&s.status));
     }
 }

@@ -215,6 +215,7 @@ async fn run_monitor(app: AppHandle) {
                     s.status.version = h.version;
                     s.status.kill_active = h.kill_active;
                     s.status.active_sessions = h.active_sessions;
+                    s.status.running = h.running;
                     s.status.last_error = None;
                     s.status.failures = 0;
                     let since = *s.restart.healthy_since.get_or_insert_with(Instant::now);
