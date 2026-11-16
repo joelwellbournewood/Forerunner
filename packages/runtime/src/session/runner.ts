@@ -168,6 +168,7 @@ import {
   stopLimitWords,
   taskReasonForStop,
 } from "./stop-words.ts";
+import type { TaskListLine } from "./task-list-notes.ts";
 import { type StartBy, startByOf } from "./triggers.ts";
 import type { WebSource } from "./web-sources.ts";
 
@@ -381,6 +382,12 @@ export interface TaskExecutionResult {
   finalReport?: string;
   /** Lessons the specialist spelled out ("Lesson: ..."), recorded at session end. */
   lessons?: LessonCandidate[];
+  /**
+   * d1109-selftasks-run (ADR 0119): the lines the specialist wrote under its report's "For the
+   * task list:" heading, data only; a line that reads like an instruction is `flagged` (never
+   * sent to the model, quoted on the card). The session's task check reads them.
+   */
+  taskListNotes?: TaskListLine[];
   /**
    * Set on a `paused` result (ADR 0112; before, a `needs_human` one at the task's own cap,
    * U-042): the limit the run paused at. The runner files the budget card
