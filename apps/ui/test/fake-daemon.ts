@@ -95,6 +95,7 @@ import {
   joinedIntoSentence,
   joinSentence,
   joinUndoneSentence,
+  sessionsBeforeJoinSentence,
 } from "@forerunner/runtime/daemon/join-words";
 import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
 import {
@@ -3161,6 +3162,23 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         rows,
         next,
         chat: before ? null : (state.projectSessionsChat[id] ?? null),
+        // OJ-10, as the daemon: the projects joined into this one kept their sessions.
+        joined: before
+          ? []
+          : Object.entries(state.joined)
+              .filter(
+                ([closedId, j]) => j.projectId === id && state.projectSessions[closedId]?.length,
+              )
+              .map(([closedId]) => {
+                const name = state.projects.find((p) => p.id === closedId)?.name ?? "";
+                const count = state.projectSessions[closedId]?.length ?? 0;
+                return {
+                  projectId: closedId,
+                  name,
+                  count,
+                  words: sessionsBeforeJoinSentence(name, count),
+                };
+              }),
       }),
     );
   });

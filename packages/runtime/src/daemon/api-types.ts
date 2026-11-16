@@ -789,6 +789,21 @@ export const ProjectSessionsView = z.object({
   next: z.string().nullable(),
   /** "Chat about this project: CHF 0.30." when chat about it cost anything; first page only. */
   chat: z.object({ spent: Money, words: z.string() }).nullable(),
+  /**
+   * d1109-onerepo-join (OJ-10): the projects closed into this one by Make one project, whose
+   * sessions stayed where they ran: '"Kite club" had 3 sessions before it joined.' with Open (its
+   * own Sessions list); first page only, none without sessions. Absent from an older daemon.
+   */
+  joined: z
+    .array(
+      z.object({
+        projectId: z.string(),
+        name: z.string(),
+        count: z.number().int(),
+        words: z.string(),
+      }),
+    )
+    .optional(),
 });
 export type ProjectSessionsView = z.infer<typeof ProjectSessionsView>;
 
@@ -1007,6 +1022,14 @@ export const CostView = z.object({
   }),
   from: z.string(),
   to: z.string(),
+  /**
+   * d1109-onerepo-join (OJ-07): for a project's costs, what each project closed into it spent
+   * before it joined, as booked (its rows stay booked to it): 'Spent in "Kite club" before it
+   * joined: CHF 3.20'. Absent without one.
+   */
+  joinedSpend: z
+    .array(z.object({ projectId: z.string(), name: z.string(), spent: Money, words: z.string() }))
+    .optional(),
 });
 export type CostView = z.infer<typeof CostView>;
 

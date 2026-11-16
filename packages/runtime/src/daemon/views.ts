@@ -1,4 +1,4 @@
-import { CostLedger, DEFAULT_CHF_PER_USD, FixedRateSource } from "@forerunner/billing";
+import { CostLedger, DEFAULT_CHF_PER_USD, FixedRateSource, formatChf } from "@forerunner/billing";
 import type { CommandDef } from "@forerunner/commands";
 import { spokenProjectSummary, staticRisk } from "@forerunner/commands";
 import { NO_ACTION_GIVEN, saidByName } from "@forerunner/critic";
@@ -103,6 +103,7 @@ import {
   joinedFromOf,
   joinedIntoOf,
   joinedIntoSentence,
+  spentBeforeJoinSentence,
 } from "./join-words.ts";
 import { projectHealth } from "./project-health.ts";
 import {
@@ -1130,6 +1131,27 @@ export async function costView(
     ...(f.from ? { from: f.from } : {}),
     ...(f.to ? { to: f.to } : {}),
   });
+  // OJ-07 (d1109-onerepo-join): each project closed into this one keeps its spend booked to it
+  // (the ledger is never rewritten); the kept project's Costs names it, as booked, in CHF.
+  const joinedSpend: NonNullable<CostView["joinedSpend"]> = [];
+  if (filter.projectId) {
+    const kept = await store.project.get(filter.projectId);
+    for (const id of kept ? joinedFromOf(kept) : []) {
+      const row = await store.project.get(id);
+      if (!row || joinedIntoOf(row)?.project !== kept?.id) continue;
+      const spent = await store.costLedger.sum({ projectId: row.id });
+      if (spent.entries === 0) continue;
+      joinedSpend.push({
+        projectId: row.id,
+        name: row.name,
+        spent: { usdMicro: spent.usd_micro, chfMicro: spent.chf_micro },
+        words: spentBeforeJoinSentence(
+          row.name,
+          moneyWords(formatChf(spent.chf_micro), spent.chf_micro),
+        ),
+      });
+    }
+  }
   return {
     totals: money(totals.usd_micro, chfPerUsd),
     planUsageShare: (totals as { plan_usage_share?: number | null }).plan_usage_share ?? null,
@@ -1149,6 +1171,7 @@ export async function costView(
     // The period the figures cover: the filter's, else the first and the last entry's.
     from: filter.from ?? facts.first ?? "",
     to: filter.to ?? facts.last ?? "",
+    ...(joinedSpend.length ? { joinedSpend } : {}),
   };
 }
 

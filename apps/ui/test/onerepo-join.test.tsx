@@ -173,3 +173,44 @@ describe("d1109-onerepo-join, run C: Make one project on the Overview (OJ-01, OJ
     );
   });
 });
+
+describe("d1109-onerepo-join, run C: the kept project's Sessions and Costs (OJ-10, OJ-07)", () => {
+  it("the kept project's Sessions list ends with the joined project's line and Open; its Costs names what the joined project spent before it joined", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.joined.proj_beacon = {
+      projectId: "proj_atlas",
+      name: "Atlas",
+      at: "2026-11-09T10:00:00.000Z",
+      text: 'Joined into "Atlas" on 9 Nov.',
+    };
+    const rows = harness.daemon.state.projectSessions.proj_atlas ?? [];
+    harness.daemon.state.projectSessions.proj_beacon = rows.slice(0, 1);
+    harness.daemon.state.costs.proj_atlas = {
+      ...(harness.daemon.state.costs.proj_atlas as NonNullable<
+        (typeof harness.daemon.state.costs)[string]
+      >),
+      joinedSpend: [
+        {
+          projectId: "proj_beacon",
+          name: "Beacon",
+          spent: { usdMicro: 4_000_000, chfMicro: 3_200_000 },
+          words: 'Spent in "Beacon" before it joined: CHF 3.20',
+        },
+      ],
+    };
+    renderApp("/projects/proj_atlas/sessions", harness);
+    const line = await screen.findByTestId("sessions-joined");
+    expect(line).toHaveTextContent('"Beacon" had 1 session before it joined. Open');
+    renderApp("/projects/proj_atlas/costs", harness);
+    expect(await screen.findByTestId("cost-joined")).toHaveTextContent(
+      'Spent in "Beacon" before it joined: CHF 3.20',
+    );
+    await user.click(within(line).getByTestId("sessions-joined-open"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("project-joined")[0]).toHaveTextContent(
+        'Joined into "Atlas" on 9 Nov.',
+      ),
+    );
+  });
+});

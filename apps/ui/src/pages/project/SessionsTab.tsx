@@ -286,6 +286,23 @@ export function SessionsTab({ projectId, project }: { projectId: string; project
           </Link>
         </p>
       ) : null}
+      {/* OJ-10 (d1109-onerepo-join): the projects joined into this one kept their sessions. */}
+      {(first.joined ?? []).map((j) => (
+        <p
+          key={j.projectId}
+          className="text-sm text-neutral-600 dark:text-neutral-400"
+          data-testid="sessions-joined"
+        >
+          {j.words}{" "}
+          <Link
+            to={`/projects/${encodeURIComponent(j.projectId)}/sessions`}
+            className="text-blue-700 hover:underline dark:text-blue-300"
+            data-testid="sessions-joined-open"
+          >
+            Open
+          </Link>
+        </p>
+      ))}
     </div>
   );
 }

@@ -74,7 +74,18 @@ interface Pair {
   site: ProjectRow;
   kite: ProjectRow;
   alone: ProjectRow;
-  ids: Record<string, string>;
+  ids: Record<
+    | "cart"
+    | "signup"
+    | "cardAbout"
+    | "openProjectCard"
+    | "answeredProjectCard"
+    | "note"
+    | "asset"
+    | "m1"
+    | "m2",
+    string
+  >;
 }
 
 /** "Site" and "Kite club" on one repository, made through the store, with work and history. */
@@ -258,6 +269,13 @@ describe("d1109-onerepo-join, run C: project.join (OJ-02, OJ-04, OJ-06, OJ-08)",
     w.ports.projectJoin = joinPort(w);
     const { site, kite, ids } = await seedPair(w);
     const before = { site: await counts(w.store, site.id), kite: await counts(w.store, kite.id) };
+    // OJ-07: the sums every cap check reads (month, project, session) before the join.
+    const sums = async () => ({
+      month: (await w.store.costLedger.sum({ humanId: w.human.id })).usd_micro,
+      site: (await w.store.costLedger.sum({ projectId: site.id })).usd_micro,
+      kite: (await w.store.costLedger.sum({ projectId: kite.id })).usd_micro,
+    });
+    const sumsBefore = await sums();
     const r = await join(w, site.id, [kite.id]);
     expect(r.status).toBe("done");
     const done = r as Extract<ExecuteResult, { status: "done" }>;
@@ -287,6 +305,8 @@ describe("d1109-onerepo-join, run C: project.join (OJ-02, OJ-04, OJ-06, OJ-08)",
       expect(after.site[t], t).toBe(before.site[t]);
     }
     expect((await w.store.humanRequest.mustGet(ids.answeredProjectCard)).project_id).toBe(kite.id);
+    expect(await sums()).toEqual(sumsBefore);
+    expect(sumsBefore).toEqual({ month: 4_000_000, site: 0, kite: 4_000_000 });
     // Ids, dependencies, branches and pull requests kept; milestones after Site's.
     const signup = await w.store.task.mustGet(ids.signup);
     expect(signup.depends_on).toEqual([ids.cart]);
@@ -325,7 +345,7 @@ describe("d1109-onerepo-join, run C: project.join (OJ-02, OJ-04, OJ-06, OJ-08)",
     expect(back.site).toEqual({ ...before.site, change_log: back.site.change_log });
     expect(back.kite).toEqual({
       ...before.kite,
-      human_request: before.kite.human_request + 1,
+      human_request: (before.kite.human_request ?? 0) + 1,
     });
     expect((await w.store.humanRequest.mustGet(since.id)).project_id).toBe(kite.id);
     expect((await w.store.milestone.mustGet(ids.m1)).order_index).toBe(0);
