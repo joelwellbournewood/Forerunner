@@ -1,8 +1,10 @@
 import { errorMessage, ForerunnerError, log } from "@forerunner/platform";
+import { joinedIntoOf } from "@forerunner/runtime/daemon/join-words";
 import type { JsonValue, ProjectRow, StateStore } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
 import type { CommandContext, CommandDef, CommandOutcome } from "../types.ts";
+import { joinedCreateUndoBlocked } from "./project-join.ts";
 import { asObject, authorOf, patchHumanPrefs, resolveProject } from "./shared.ts";
 
 /**
@@ -49,9 +51,14 @@ function historyAfterSwitch(
  */
 const REMOVED_NAME_KEY = "removed_name";
 
-/** The name a project had before its creation was undone, or null for a project still there. */
+/**
+ * The name a project had before its creation was undone, or null for a project still there. A
+ * project closed into another by Make one project (d1109-onerepo-join) was not removed: its page
+ * and records stay readable under its name, so it is null here too (`joinedProjectRefusal`).
+ */
 export function removedProjectName(project: ProjectRow): string | null {
   if (project.status !== "archived") return null;
+  if (joinedIntoOf(project)) return null;
   const kept = project.settings[REMOVED_NAME_KEY];
   return typeof kept === "string" && kept ? kept : project.name;
 }
@@ -62,8 +69,25 @@ export function removedProjectName(project: ProjectRow): string | null {
  * there. A removed project starts nothing, by itself or by a press (fail closed: money).
  */
 export function removedProjectRefusal(project: ProjectRow): string | null {
+  const joined = joinedProjectRefusal(project);
+  if (joined) return joined;
   const name = removedProjectName(project);
   return name === null ? null : `The project "${name}" was removed, so nothing of it runs.`;
+}
+
+/**
+ * d1109-onerepo-join (OJ-06): a project closed into another starts nothing of its own; its work
+ * runs in the kept project. Null for any other project.
+ */
+export function joinedProjectRefusal(project: ProjectRow): string | null {
+  const words = joinedProjectWords(project);
+  return words ? `${words}, so its work runs there.` : null;
+}
+
+/** '"Kite club" joined "Site"': where a closed project's work went (a fragment), or null. */
+export function joinedProjectWords(project: ProjectRow): string | null {
+  const into = joinedIntoOf(project);
+  return into ? `"${project.name}" joined "${into.name}"` : null;
 }
 
 /**
@@ -352,10 +376,16 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
     const createdId = typeof a.project_id === "string" ? a.project_id : null;
     if (!createdId) return null;
     const row = await ctx.store.project.get(createdId);
+    // d1109-onerepo-join: a project closed into another is no removed one; its creation is not
+    // undone while its work is in the kept project (Make one project's Undo comes first).
+    const joined = row ? joinedProjectWords(row) : null;
+    if (joined) return joined;
     if (!row || row.status === "archived") return null;
     const state = await runningSessionOf(ctx.store, createdId);
-    if (!state) return null;
-    return `a session of ${row.name || params.name} ${SESSION_STATE_WORDS[state]}`;
+    if (state) return `a session of ${row.name || params.name} ${SESSION_STATE_WORDS[state]}`;
+    // OJ-06 (d1109-onerepo-join): undoing it would archive the kept project with the closed
+    // project's moved work inside.
+    return joinedCreateUndoBlocked(ctx.store, row);
   },
   /**
    * W15-36: the project goes. It is archived (its tasks, cards and changes keep their rows) and

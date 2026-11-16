@@ -16,7 +16,7 @@ import {
   mergeCards,
   renderChangeCard,
 } from "./change-card.ts";
-import { removedProjectName } from "./commands/project.ts";
+import { joinedProjectWords, removedProjectName } from "./commands/project.ts";
 import {
   type ConfirmationAnswer,
   type ConfirmationDecision,
@@ -996,6 +996,10 @@ export class CommandExecutor {
       const project = await this.store.project.get(row.project_id);
       const removed = project ? removedProjectName(project) : null;
       if (removed !== null) return `the project ${removed} was removed`;
+      // d1109-onerepo-join: a project closed into another keeps its rows readable, but its own
+      // changes are not undone while its work is in the kept project (the join's Undo first).
+      const joined = project ? joinedProjectWords(project) : null;
+      if (joined) return joined;
     }
     for (const step of stepsOf(row)) {
       const def = this.registry.get(step.name);

@@ -101,10 +101,15 @@ export function ProjectPage() {
   // W15B-02: a project whose creation was undone (GET /projects/:id says `archived`) starts
   // nothing: its page says so and offers no start, no repository and no plan's Retry (an old
   // notification or a bookmark still opens it; the daemon refuses any start of it anyway).
-  const removed = view.status === "archived";
+  // OJ-06 (d1109-onerepo-join): a project closed into another by Make one project is no removed
+  // one: its page reads where its work went ('Joined into "Site" on 9 Nov.') with Open it, and
+  // offers no start; its sessions, changes, costs and chat stay readable here.
+  const joined = view.joinedInto ?? null;
+  const removed = view.status === "archived" && !joined;
+  const closed = removed || !!joined;
   // The plan banner says "Drafting the plan…" / "Waiting for you: approve the plan" itself.
   const planBanner =
-    !removed &&
+    !closed &&
     (view.progress?.total ?? 0) === 0 &&
     (intake === "drafting" ||
       intake === "pending" ||
@@ -137,7 +142,21 @@ export function ProjectPage() {
           {/* The status sentence with its one button, except a start: Start session beside it
               is the one start button (later #56: "Continue" and "Start session" opened the same
               dialog). */}
-          {removed ? (
+          {joined ? (
+            <p
+              className="flex flex-wrap items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400"
+              data-testid="project-joined"
+            >
+              {joined.text}
+              <Link
+                to={`/projects/${encodeURIComponent(joined.projectId)}/summary`}
+                className={buttonClassName("secondary")}
+                data-testid="project-joined-open"
+              >
+                Open it
+              </Link>
+            </p>
+          ) : removed ? (
             <p
               className="text-sm text-neutral-600 dark:text-neutral-400"
               data-testid="project-removed"
@@ -148,7 +167,7 @@ export function ProjectPage() {
             <ProjectStatus project={view} testId="project-status" showAction={!view.working} />
           )}
           <div className="ml-auto flex gap-2">
-            {!removed && view.repos && view.repos.length === 0 ? (
+            {!closed && view.repos && view.repos.length === 0 ? (
               <Button
                 variant="ghost"
                 onClick={() => setRepoOpen(true)}
@@ -166,7 +185,7 @@ export function ProjectPage() {
               >
                 Open running session
               </Link>
-            ) : removed ? null : (
+            ) : closed ? null : (
               <Button
                 variant="primary"
                 onClick={() => setStartOpen(true)}
@@ -184,7 +203,7 @@ export function ProjectPage() {
         ) : null}
       </header>
       {/* U-046: the plan from the brief, drafting, waiting in the Inbox or failed with a Retry. */}
-      {removed ? null : <IntakeBanner projectId={id} />}
+      {closed ? null : <IntakeBanner projectId={id} />}
       <nav
         className="mb-3 flex items-end gap-1 overflow-x-auto border-b border-neutral-200 dark:border-neutral-800"
         aria-label="Project tabs"
@@ -230,7 +249,7 @@ export function ProjectPage() {
           <ChatTab projectId={id} reference={view.budget} defaultRiskTier={view.defaultRiskTier} />
         ) : null}
       </div>
-      {repoOpen && !removed ? (
+      {repoOpen && !closed ? (
         <CreateRepoDialog
           open={repoOpen}
           onClose={() => setRepoOpen(false)}
@@ -240,7 +259,7 @@ export function ProjectPage() {
         />
       ) : null}
       <StartSessionDialog
-        open={startOpen && !removed}
+        open={startOpen && !closed}
         onClose={() => setStartOpen(false)}
         projectId={id}
         reference={view.budget}

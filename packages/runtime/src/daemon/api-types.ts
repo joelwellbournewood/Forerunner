@@ -182,6 +182,7 @@ export const ProjectCard = z.object({
         "done",
         "empty",
         "paused",
+        "joined",
       ]),
       text: z.string(),
       action: z
@@ -239,6 +240,36 @@ export const ProjectCard = z.object({
       canTakeOver: z.boolean(),
       takeOverLine: z.string().nullable(),
       details: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
+  /**
+   * d1109-onerepo-join (ADR 0117 amended, OJ-01): other projects on this computer work in the
+   * same repository or folder (made before one repository was one project): the Overview's line
+   * '"Site" and "Kite club" both work in o/site.' with Make one project, and the others by name.
+   * Null for a project alone on its link; absent on a card the state service serves.
+   */
+  sharesRepositoryWith: z
+    .object({
+      text: z.string(),
+      projects: z.array(z.object({ id: z.string(), name: z.string() })),
+    })
+    .nullable()
+    .optional(),
+  /**
+   * OJ-06: a project closed into another by Make one project: where its work went and when,
+   * with the status sentence 'Joined into "Site" on 9 Nov.' (its sessions, changes, costs and
+   * chat stay readable here). Null for any other project.
+   */
+  joinedInto: z
+    .object({ projectId: z.string(), name: z.string(), at: z.string(), text: z.string() })
+    .nullable()
+    .optional(),
+  /** OJ-06: the kept project's line 'Includes the work of "Kite club".', with each one's page. */
+  includesWorkOf: z
+    .object({
+      text: z.string(),
+      projects: z.array(z.object({ id: z.string(), name: z.string() })),
     })
     .nullable()
     .optional(),
@@ -3306,6 +3337,43 @@ export const RunnerUnlockAnswerView = z.object({
 });
 export type RunnerUnlockAnswerView = z.infer<typeof RunnerUnlockAnswerView>;
 
+/**
+ * d1109-onerepo-join (OJ-05): the Make one project dialog's facts (GET /projects/:id/join-preview):
+ * the projects that share the link with their figures, and, for each as the kept one, what moves,
+ * what stays, the kept project's settings that differ and what holds the join now (null when
+ * nothing does). `keepOnly`: a project worked on together with another Forerunner, which is the
+ * one kept (OJ-11), with its line.
+ */
+export const JoinPreviewView = z.object({
+  projectId: z.string(),
+  shared: z
+    .object({
+      text: z.string(),
+      projects: z.array(z.object({ id: z.string(), name: z.string() })),
+    })
+    .nullable(),
+  projects: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      together: z.boolean(),
+      lines: z.array(z.string()),
+    }),
+  ),
+  ifKept: z.record(
+    z.string(),
+    z.object({
+      moves: z.string(),
+      stays: z.string(),
+      settings: z.array(z.string()),
+      refusal: z.string().nullable(),
+    }),
+  ),
+  keepOnly: z.string().nullable(),
+  keepOnlyLine: z.string().nullable(),
+});
+export type JoinPreviewView = z.infer<typeof JoinPreviewView>;
+
 export const DAEMON_ROUTES = {
   health: "GET /health",
   me: "GET /me",
@@ -3564,6 +3632,8 @@ export const DAEMON_ROUTES = {
     "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, agent.changed ({ id, name }: an agent was renamed; re-read /me and /agents), extension.changed, restart.requested, notification, desktop.indicator, speak.started, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts; ?speech=play marks a stream whose client plays the speak.started utterances)",
   projectSessions:
     "GET /projects/:id/sessions?before=&limit= (ProjectSessionsView: the project's Sessions list, d1109-sessions, ADR 0116: the sessions that ran a task, spent money or work now, planning calls included, never the conversation; the working ones on top (first page), then the ended ones newest first by start, `limit` a page (20, at most 50), `next` the opaque cursor of the page after (null on the last; it stays valid across a restart); `count` in all, no money total; each row's words are the daemon's and its figure the cost ledger's as booked, read when shown; `chat` 'Chat about this project: CHF 0.30.' when above zero; 404 'No such project.'; 400 for a cursor it cannot read)",
+  joinPreview:
+    "GET /projects/:id/join-preview?with= (JoinPreviewView: d1109-onerepo-join OJ-05, the Make one project dialog's facts for the projects on this computer that share the project's repository or folder, `with` a comma-separated list of the other ids to show (all of them when empty): each with its open and done tasks, open pull requests, spent so far in CHF, budget per session, project budget, who merges and what research reads; per project as the kept one what moves, what stays, each of its settings that differs and the sentence that holds the join now (null when nothing does); read only; 404 for an unknown project)",
   sessionTasks:
     "GET /sessions/:id/tasks (SessionTasksView: the tasks a session worked on, in the order it first ran them, each with what happened to it there, what it is now when that differs and what the session spent on it (the ledger's rows for the session and the task, reviews included); none for a planning call; 404 for an unknown session; d1109-sessions)",
 } as const;

@@ -393,6 +393,7 @@ import {
   installIdentitySelectors,
   pickPrincipal,
 } from "./identity.ts";
+import { type JoinDeps, joinRefusal } from "./join-preview.ts";
 import { oversizedWarning } from "./oversize-view.ts";
 import { ProjectPullRequests } from "./pull-requests.ts";
 import { changeNotAppliedWords } from "./request-words.ts";
@@ -1051,6 +1052,12 @@ export interface RuntimeApp {
    * repository itself; every creation checks it before anything is written.
    */
   repositoryUse: RepositoryUse;
+  /**
+   * d1109-onerepo-join (ADR 0117 amended): what Make one project reads (the shared link, the
+   * dialog's facts, why a join waits): `join-preview.ts`'s deps, the same for the routes and
+   * `project.join`'s port.
+   */
+  joinDeps: JoinDeps;
   /** One-way GitHub Projects mirror. */
   mirror: ProjectsMirror;
   /**
@@ -3850,23 +3857,34 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
    * on (the later of the stop's end and the end of their quiet hours, in their time zone), and
    * Cancel.
    */
+  /**
+   * The kept continuation or person start of a project and when it goes on ("at 15:40", or once
+   * its Claude credential is back), the later of the stop's end and the quiet hours' end for a
+   * continuation; null when none is kept. d1109-onerepo-join's refusal reads the same "when".
+   */
+  const keptWait = async (projectId: string) => {
+    await quietHours.refresh();
+    const found =
+      (await keptContinuationOf(store, projectId)) ?? (await keptStartOf(store, projectId));
+    if (!found) return null;
+    const source = await store.billingSource.get(found.sourceId).catch(() => undefined);
+    const until = source ? restingUntilOf({ limits: source.limits as never }, clock.now()) : null;
+    let at = until ?? null;
+    if (found.kept.by === "continuation" && at) {
+      const ends = quietHours.endsAt(Date.parse(at));
+      if (ends) at = ends;
+    }
+    const words = { timezone: human.timezone, nowMs: clock.now() };
+    const when = at
+      ? `at ${clockTime(at, words.timezone, words.nowMs)}`
+      : "once its Claude credential is back";
+    return { found, when, words, at };
+  };
   const continuations: RuntimeApp["continuations"] = {
     waiting: async (projectId) => {
-      await quietHours.refresh();
-      const found =
-        (await keptContinuationOf(store, projectId)) ?? (await keptStartOf(store, projectId));
-      if (!found) return null;
-      const source = await store.billingSource.get(found.sourceId).catch(() => undefined);
-      const until = source ? restingUntilOf({ limits: source.limits as never }, clock.now()) : null;
-      let at = until ?? null;
-      if (found.kept.by === "continuation" && at) {
-        const ends = quietHours.endsAt(Date.parse(at));
-        if (ends) at = ends;
-      }
-      const words = { timezone: human.timezone, nowMs: clock.now() };
-      const when = at
-        ? `at ${clockTime(at, words.timezone, words.nowMs)}`
-        : "once its Claude credential is back";
+      const kept = await keptWait(projectId);
+      if (!kept) return null;
+      const { found, when, words } = kept;
       if (found.kept.by === "continuation") {
         const earlier = found.kept.continues
           ? await store.session.get(found.kept.continues).catch(() => undefined)
@@ -3906,6 +3924,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       events.emit("project", { id: projectId });
       return continuations.waiting(projectId);
     },
+  };
+  // d1109-onerepo-join (ADR 0117 amended): what Make one project reads, for its routes and for
+  // `project.join`'s port: the one index of links, and when a kept session of a project goes on
+  // (read only: a join waits for it, d1109-starts-engine's accessors).
+  const joinDeps: JoinDeps = {
+    store,
+    humanId: human.id,
+    agentId: agent.id,
+    index: () => repositoryUse.index(),
+    identities: (repos) => {
+      try {
+        return repositoryUse.identities(repos);
+      } catch {
+        return [];
+      }
+    },
+    keptWaitWhen: async (projectId) => {
+      const kept = await keptWait(projectId);
+      if (!kept) return undefined;
+      return kept.at ? kept.when : null;
+    },
+    chfPerUsd: () => chfPerUsd(),
   };
   const credentialWaits: RuntimeApp["billing"]["waits"] = {
     wake: async () => {
@@ -4270,6 +4310,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         },
         undoBlocked: (projectId, since, prUrl) =>
           repositoryUse.takeOverUndoBlocked(projectId, since, prUrl),
+      },
+      // d1109-onerepo-join (ADR 0117 amended): project.join asks what holds a join now, in the
+      // dialog's words (`join-preview.ts`), before anything moves.
+      projectJoin: {
+        refusal: async (keepId, closeIds) => {
+          const keep = await store.project.mustGet(keepId);
+          const close = [];
+          for (const id of closeIds) close.push(await store.project.mustGet(id));
+          return joinRefusal(joinDeps, { keep, close });
+        },
       },
       // memory.record (spec O.2, ADR 0061): a lesson stated in chat or voice goes into the
       // principal's private memory through the same loop the sessions use.
@@ -5217,6 +5267,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     data: { assets: dataAssets, importer: dataImporter },
     sources,
     repositoryUse,
+    joinDeps,
     mirror,
     sandbox: { ...sandbox, port: sandboxPort },
     notifier,

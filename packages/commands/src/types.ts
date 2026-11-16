@@ -59,6 +59,7 @@ export const COMMAND_NAMES = [
   "specialist.propose",
   "repo.create",
   "repo.take_over",
+  "project.join",
 ] as const;
 export type CommandName = (typeof COMMAND_NAMES)[number];
 
@@ -394,6 +395,21 @@ export interface CommandPorts {
    * `session.start` answers it and starts nothing.
    */
   startWaits?(projectId: string): Promise<string | null>;
+  /**
+   * d1109-onerepo-join (ADR 0117 amended): Make one project's checks, read by `project.join` in
+   * its plan and again at its run. Absent: the command is refused as unavailable.
+   */
+  projectJoin?: ProjectJoinPort;
+}
+
+/** What `project.join` asks the daemon before anything moves (`join-preview.ts`). */
+export interface ProjectJoinPort {
+  /**
+   * Why the projects cannot be made one now, in one sentence (a session working or waiting to go
+   * on, a plan waiting for its answer, a merge under way, no shared repository or folder, a
+   * project that is not the person's own); null when nothing holds the join.
+   */
+  refusal(keepId: string, closeIds: readonly string[]): Promise<string | null>;
 }
 
 /** What `repo.take_over` takes, read from GitHub at the press (never from the model). */

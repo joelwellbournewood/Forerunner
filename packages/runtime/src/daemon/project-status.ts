@@ -98,6 +98,12 @@ export interface ProjectStatusInput {
   working: ProjectWorking | null;
   /** The project's folder (its workspace, or the linked folder or repository checkout). */
   folder: string | null;
+  /**
+   * d1109-onerepo-join (OJ-06): the project was closed into another by Make one project: its
+   * sentence ('Joined into "Site" on 9 Nov.') with Open it, before every other rule (nothing of
+   * it runs; its sessions, changes and costs stay readable).
+   */
+  joinedInto?: { text: string; projectId: string } | null;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -230,6 +236,18 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
   const { done, total } = progressOf(input.tasks);
   const byId = new Map(input.tasks.map((t) => [t.id, t]));
   const keyOf = (t: { id: string }) => input.displays.get(t.id)?.key;
+
+  // OJ-06: a project closed into another reads where its work is, with Open it.
+  if (input.joinedInto)
+    return {
+      kind: "joined",
+      text: input.joinedInto.text,
+      action: {
+        kind: "link",
+        label: "Open it",
+        to: `/projects/${encodeURIComponent(input.joinedInto.projectId)}/summary`,
+      },
+    };
 
   // 1. What needs the person first (design §5 rule 2). The Docker card asks nothing of a task:
   // it is "Waiting for Docker" below.

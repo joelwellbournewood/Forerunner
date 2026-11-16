@@ -19447,3 +19447,245 @@ describe("d1109-chat-depth, run C", () => {
     }
   }, 60_000);
 });
+
+describe("d1109-onerepo-join, run C", () => {
+  /** A daemon on its own home with a memory git host, composed again on the same home. */
+  const onHome = (host: MemoryGitHost) => {
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-onerepo-join-"));
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    return {
+      work,
+      compose: () =>
+        composeWithRolePlayer(
+          {},
+          {
+            gitHost: host,
+            tryIt: false,
+            env,
+            dirs: appDirs({ env }),
+            stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          },
+        ),
+    };
+  };
+  /** Two projects on one repository, made through the store as before the rule (and one alone). */
+  const pair = async (rt: RuntimeApp) => {
+    const site = await rt.store.project.insert({
+      name: "Site",
+      goal: "A site",
+      repos: ["o/site"],
+    });
+    const kite = await rt.store.project.insert({
+      name: "Kite club",
+      goal: "Kites",
+      repos: ["https://github.com/O/site.git"],
+    });
+    const alone = await rt.store.project.insert({ name: "Alone", goal: "Alone", repos: [] });
+    return { site, kite, alone };
+  };
+
+  it("OJ-01: two projects on one repository made before the rule: each card names the other with the Overview's line; a project alone has none; the same after the daemon starts again", async () => {
+    const host = new MemoryGitHost("alice");
+    await host.createRepo({ owner: "o", name: "site", private: true });
+    const { compose } = onHome(host);
+    let { rt, client } = await compose();
+    try {
+      const { site, kite, alone } = await pair(rt);
+      const check = async (c: DaemonClient) => {
+        const a = await c.project(site.id);
+        expect(a.sharesRepositoryWith).toEqual({
+          text: '"Site" and "Kite club" both work in o/site.',
+          projects: [{ id: kite.id, name: "Kite club" }],
+        });
+        const b = await c.project(kite.id);
+        expect(b.sharesRepositoryWith).toEqual({
+          text: '"Site" and "Kite club" both work in o/site.',
+          projects: [{ id: site.id, name: "Site" }],
+        });
+        expect((await c.project(alone.id)).sharesRepositoryWith ?? null).toBeNull();
+        // Home's list carries the same line.
+        const listed = await c.projects();
+        expect(listed.find((p) => p.id === site.id)?.sharesRepositoryWith?.text).toBe(
+          '"Site" and "Kite club" both work in o/site.',
+        );
+      };
+      await check(client);
+      await rt.close();
+      ({ rt, client } = await compose());
+      await check(client);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("OJ-05, OJ-02, OJ-06, OJ-04: the dialog's facts with the kept project's differing settings; Make one project through POST /commands moves Kite club's work into Site, Kite club reads 'Joined into \"Site\" on 5 Mar.' with Open it and leaves Home, Site says it includes it, Site's creation cannot be undone; after the daemon starts again Undo from Changes puts it back", async () => {
+    const host = new MemoryGitHost("alice");
+    await host.createRepo({ owner: "o", name: "site", private: true });
+    const { compose } = onHome(host);
+    let { rt, client } = await compose();
+    try {
+      // Site is made through New project (its creation row has an Undo); Kite club through the
+      // store, as before the rule.
+      const site = await client.createProject({
+        name: "Site",
+        goal: "A site",
+        repos: ["o/site"],
+        switch: true,
+      });
+      const kite = await rt.store.project.insert({
+        name: "Kite club",
+        goal: "Kites",
+        repos: ["https://github.com/O/site.git"],
+      });
+      await rt.store.project.patch(site.id, {
+        settings: {
+          ...(await rt.store.project.mustGet(site.id)).settings,
+          merge_mode: "after_review",
+        },
+      });
+      await rt.store.task.insert({ project_id: site.id, title: "Home page", status: "ready" });
+      const cart = await rt.store.task.insert({
+        project_id: kite.id,
+        title: "Cart",
+        status: "done",
+        pr_url: "https://github.com/o/site/pull/7",
+        branch: "fr/task-cart",
+      });
+      const signup = await rt.store.task.insert({
+        project_id: kite.id,
+        title: "Signup form",
+        status: "ready",
+        depends_on: [cart.id],
+      });
+      await rt.store.costLedger.record({
+        human_id: rt.human.id,
+        project_id: kite.id,
+        kind: "api",
+        usd_micro: 4_000_000,
+        chf_micro: 3_200_000,
+        model: "claude-sonnet",
+      });
+      const preview = await client.joinPreview(site.id, [kite.id]);
+      expect(preview.shared?.text).toBe('"Site" and "Kite club" both work in o/site.');
+      expect(preview.projects).toEqual([
+        {
+          id: site.id,
+          name: "Site",
+          together: false,
+          lines: [
+            "1 open task",
+            "Spent so far: CHF 0.00",
+            "Budget per session: CHF 5.00",
+            "Project budget: no project budget",
+            "Who merges: Merge automatically after review",
+            "Research reads: any public website",
+          ],
+        },
+        {
+          id: kite.id,
+          name: "Kite club",
+          together: false,
+          lines: [
+            "1 open task, 1 done",
+            "1 open pull request",
+            "Spent so far: CHF 3.20",
+            "Budget per session: CHF 5.00",
+            "Project budget: no project budget",
+            "Who merges: You press Merge",
+            "Research reads: any public website",
+          ],
+        },
+      ]);
+      expect(preview.ifKept[site.id]).toEqual({
+        moves: 'The tasks, plan, cards and pull requests of "Kite club" move into "Site".',
+        stays: '"Kite club" keeps its sessions, changes and spending to read; no budget changes.',
+        settings: [
+          'Who merges: "Site"\'s setting applies to the moved work: merge automatically after review.',
+        ],
+        refusal: null,
+      });
+      expect(preview.ifKept[kite.id]?.settings).toEqual([
+        'Who merges: "Kite club"\'s setting applies to the moved work: you press Merge.',
+      ]);
+      expect(preview.keepOnly).toBeNull();
+      // A session working on Kite club holds the join, in the dialog and at the press.
+      const running = await rt.store.session.insert({
+        agent_id: rt.agent.id,
+        project_id: kite.id,
+        status: "running",
+        started_at: rt.clock.nowIso(),
+      });
+      expect((await client.joinPreview(site.id)).ifKept[site.id]?.refusal).toBe(
+        'A session is working on "Kite club". Make one project when it ends.',
+      );
+      const press = () =>
+        client.executeCommands({
+          commands: [{ name: "project.join", params: { keep: site.id, close: [kite.id] } }],
+          wordsUsed: "Make one project (Overview)",
+          source: "ui",
+          projectId: site.id,
+          confirm: "tap",
+        });
+      const held = await press();
+      expect(held).toMatchObject({
+        status: "refused",
+        reason: 'A session is working on "Kite club". Make one project when it ends.',
+      });
+      expect((await rt.store.task.mustGet(cart.id)).project_id).toBe(kite.id);
+      await rt.store.session.patch(running.id, {
+        status: "completed",
+        ended_at: rt.clock.nowIso(),
+      });
+      const joined = await press();
+      expect(joined.status).toBe("done");
+      expect(joined.sentence).toBe('Made one project: "Kite club" joined "Site".');
+      const check = async (c: DaemonClient) => {
+        expect((await rt.store.task.mustGet(signup.id)).project_id).toBe(site.id);
+        const k = await c.project(kite.id);
+        expect(k.joinedInto).toMatchObject({ projectId: site.id, name: "Site" });
+        expect(k.statusLine).toEqual({
+          kind: "joined",
+          text: 'Joined into "Site" on 5 Mar.',
+          action: { kind: "link", label: "Open it", to: `/projects/${site.id}/summary` },
+        });
+        const s = await c.project(site.id);
+        expect(s.includesWorkOf).toEqual({
+          text: 'Includes the work of "Kite club".',
+          projects: [{ id: kite.id, name: "Kite club" }],
+        });
+        expect(s.sharesRepositoryWith ?? null).toBeNull();
+        // Home lists Site only; Kite club's sessions, changes and costs routes still answer.
+        expect((await c.projects()).map((p) => p.name)).not.toContain("Kite club");
+        expect((await c.projectSessions(kite.id)).projectId).toBe(kite.id);
+        expect((await c.costs({ projectId: kite.id })).totals.usdMicro).toBe(4_000_000);
+        // Site's creation is not undone while it includes Kite club's work.
+        const created = (await c.changes()).find((r) =>
+          r.sentence.startsWith("Created the project Site"),
+        );
+        expect(created?.undoBlockedReason).toBe('this project includes the work of "Kite club"');
+      };
+      await check(client);
+      await rt.close();
+      ({ rt, client } = await compose());
+      await check(client);
+      const row = (await client.changes()).find((r) =>
+        r.sentence.startsWith('Made one project: "Kite club" joined "Site".'),
+      );
+      expect(row?.undoBlockedReason ?? null).toBeNull();
+      const undone = await client.undoChange(row?.id ?? "");
+      expect(undone.status).toBe("done");
+      expect(undone.sentence).toBe('"Kite club" is its own project again.');
+      expect((await rt.store.task.mustGet(signup.id)).project_id).toBe(kite.id);
+      const back = await client.project(kite.id);
+      expect(back.joinedInto ?? null).toBeNull();
+      expect(back.repos).toEqual(["https://github.com/O/site.git"]);
+      expect((await client.project(site.id)).sharesRepositoryWith?.text).toBe(
+        '"Site" and "Kite club" both work in o/site.',
+      );
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
