@@ -94,6 +94,7 @@ export const SETTING_KEYS = [
   "status_pull_request",
   "merge_mode",
   "push_unfinished_work",
+  "start_by_itself",
   "shared_with",
   "quiet_hours",
   "notify_channel",

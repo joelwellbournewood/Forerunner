@@ -1130,8 +1130,25 @@ export const StartSessionBody = z.object({
    * the session it starts and is kept on its handoff. Up to 2,000 characters.
    */
   note: z.string().max(2_000).optional(),
+  /**
+   * d1109-starts-engine (S-10): a session's Continue: the ended session this one goes on with,
+   * with the rest of its promise and its budget left (its cap less its booked spend; refused in
+   * words when nothing is left). The budget sent, if any, is ignored for it.
+   */
+  continues: z.string().optional(),
 });
 export type StartSessionBody = z.infer<typeof StartSessionBody>;
+
+/**
+ * `POST /projects/:id/continuation/cancel` (d1109-starts-engine S-10): the person's session that
+ * waits to go on after its Claude credential, or a Start kept for the credential's reset, is
+ * dropped; its tasks wait for the next Start. `cancelled` false: none was waiting.
+ */
+export const ContinuationCancelView = z.object({
+  cancelled: z.boolean(),
+  sentence: z.string(),
+});
+export type ContinuationCancelView = z.infer<typeof ContinuationCancelView>;
 
 /**
  * The answer of `POST /sessions` (U-003): the scheduler's outcome, the start's id (what its
@@ -3250,6 +3267,8 @@ export const DAEMON_ROUTES = {
   startSession:
     "POST /sessions (StartSessionBody -> 202 StartSessionView: started, queued behind the agent's running session, or deferred by quiet hours; a started one waits up to 15 s for its session and carries it; a waiting one carries `ahead`, the number of the agent's waiting starts before it, which run in order and are never replaced (U-043); a run that fails before its session begins answers that error)",
   session: "GET /sessions/:id",
+  cancelContinuation:
+    "POST /projects/:id/continuation/cancel (-> ContinuationCancelView: d1109-starts-engine S-10, the person's session that waits to go on after its Claude credential, or a Start kept for the reset, is dropped and nothing starts at the reset; its tasks wait for the next Start; cancelled false when none waited; 404 for an unknown project)",
   sessionEvents: "GET /sessions/:id/events?afterSeq= (JSON) | Accept: text/event-stream (SSE)",
   stopSession:
     "POST /sessions/:id/stop (SessionView; Stop now: ends the session's runs and freezes nothing, a kill in force stays; the task goes back to ready with 'Stopped by you'; a session nothing in this process runs is ended there, design §4.10)",

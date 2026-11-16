@@ -788,13 +788,42 @@ export class RouterTaskBilling implements TaskBillingPort {
    * source (`limits.waiting`), so `takeReady` starts its session by itself once the source can
    * serve again, after a restart too. One entry per project.
    */
-  async noteWait(sourceId: string, projectId: string, agentId: string): Promise<void> {
+  async noteWait(
+    sourceId: string,
+    projectId: string,
+    agentId: string,
+    /** S-10: the session whose task met the wait (its continuation is kept on the entry). */
+    sessionId?: string,
+    /** S-10: a kept continuation or person start going back on the entry (the wake's keep). */
+    kept?: KeptStart,
+  ): Promise<void> {
     const row = await updateSourceLimits(this.opts.store, sourceId, (limits) => {
       const waiting = waitingOf(limits);
-      if (waiting.some((w) => w.projectId === projectId)) return null;
+      const at = waiting.findIndex((w) => w.projectId === projectId);
+      if (at >= 0) {
+        const entry = waiting[at] as WaitEntry;
+        // One wait per project: a later session's id or a kept start is added, never a second
+        // entry; a kept start already there stays.
+        const next: WaitEntry = {
+          ...entry,
+          ...(sessionId && !entry.sessionId ? { sessionId } : {}),
+          ...(kept && !entry.kept ? { kept } : {}),
+        };
+        if (next.sessionId === entry.sessionId && next.kept === entry.kept) return null;
+        return { ...limits, waiting: waiting.map((w, i) => (i === at ? next : w)) as never };
+      }
       return {
         ...limits,
-        waiting: [...waiting, { projectId, agentId, since: this.opts.clock.nowIso() }],
+        waiting: [
+          ...waiting,
+          {
+            projectId,
+            agentId,
+            since: this.opts.clock.nowIso(),
+            ...(sessionId ? { sessionId } : {}),
+            ...(kept ? { kept } : {}),
+          },
+        ] as never,
       };
     });
     // TR-10: work waits on a refused credential again after its card was closed (another
@@ -826,17 +855,17 @@ export class RouterTaskBilling implements TaskBillingPort {
    */
   async takeReady(
     servesNow?: (projectId: string) => Promise<boolean>,
-  ): Promise<{ projectId: string; agentId: string; sourceId: string }[]> {
+  ): Promise<(WaitEntry & { sourceId: string })[]> {
     const rows = await this.opts.store.billingSource.list(
       { human_id: this.opts.humanId },
       { limit: 100 },
     );
-    const out: { projectId: string; agentId: string; sourceId: string }[] = [];
+    const out: (WaitEntry & { sourceId: string })[] = [];
     const now = this.opts.clock.now();
     for (const listed of rows) {
       // Read and written with the version check (R-limitsrmw): a wait noted, a rest or a
       // refusal written meanwhile is read again, so it is either taken here or kept.
-      let taken: { projectId: string; agentId: string; since: string }[] = [];
+      let taken: WaitEntry[] = [];
       let stale = false;
       // TR-10: the source stays refused and another credential took all the work that waited on
       // it: nothing waits on it any more, so its card ("The work that needs it waits ...") is
@@ -881,7 +910,7 @@ export class RouterTaskBilling implements TaskBillingPort {
           ...(refusedHere && limits.refusedKey ? { refusedKey: limits.refusedKey } : {}),
           ...(refusedHere && limits.refusedWhy ? { refusedWhy: limits.refusedWhy } : {}),
           ...(kept.length ? { waiting: kept } : {}),
-        };
+        } as JsonObject;
       });
       const row = listed;
       if ((stale || nothingWaits) && this.opts.store.humanRequest)
@@ -986,18 +1015,176 @@ export async function updateSourceLimits(
 /** How often a limits write that another write beat is tried again (`updateSourceLimits`). */
 const LIMITS_TRIES = 8;
 
+/**
+ * A start kept on a project's wait (d1109-starts-engine S-10, ADR 0118): the person's own session
+ * that ended to wait for its Claude credential goes on by itself once (`continuation`), or a
+ * Start the person pressed while the credential was out runs at the stop's end (`person`).
+ * The budget is what the session it continues has left (its cap less its booked spend).
+ */
+export interface KeptStart {
+  by: "continuation" | "person";
+  /** The session it goes on with. */
+  continues?: string;
+  budgetUsdMicro?: number;
+  /** When it was kept (ISO). */
+  at: string;
+}
+
+/** One project's wait on a source (`limits.waiting`, U-078; S-10's session and kept start). */
+export interface WaitEntry {
+  projectId: string;
+  agentId: string;
+  since: string;
+  /** The session whose task met the wait (S-10). */
+  sessionId?: string;
+  /** The continuation or person start kept for the stop's end (S-10). */
+  kept?: KeptStart;
+}
+
+function keptOf(v: unknown): KeptStart | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const k = v as Record<string, unknown>;
+  if (k.by !== "continuation" && k.by !== "person") return undefined;
+  return {
+    by: k.by,
+    ...(typeof k.continues === "string" ? { continues: k.continues } : {}),
+    ...(typeof k.budgetUsdMicro === "number" && k.budgetUsdMicro > 0
+      ? { budgetUsdMicro: k.budgetUsdMicro }
+      : {}),
+    at: typeof k.at === "string" ? k.at : "",
+  };
+}
+
 /** The projects that wait for a source (`limits.waiting`, U-078), well-formed entries only. */
-export function waitingOf(
-  limits: Record<string, unknown>,
-): { projectId: string; agentId: string; since: string }[] {
+export function waitingOf(limits: Record<string, unknown>): WaitEntry[] {
   const list = Array.isArray(limits.waiting) ? limits.waiting : [];
   return list.flatMap((w) => {
     if (!w || typeof w !== "object") return [];
-    const { projectId, agentId, since } = w as Record<string, unknown>;
+    const { projectId, agentId, since, sessionId, kept } = w as Record<string, unknown>;
+    const k = keptOf(kept);
     return typeof projectId === "string" && typeof agentId === "string"
-      ? [{ projectId, agentId, since: typeof since === "string" ? since : "" }]
+      ? [
+          {
+            projectId,
+            agentId,
+            since: typeof since === "string" ? since : "",
+            ...(typeof sessionId === "string" ? { sessionId } : {}),
+            ...(k ? { kept: k } : {}),
+          },
+        ]
       : [];
   });
+}
+
+/**
+ * The kept start of a project's wait, read-only (S-10; d1109-onerepo-join and d1109-run-visible
+ * read it): the source it waits on, the entry and its kept start; null when none is kept.
+ */
+async function keptOn(
+  store: { billingSource: Pick<StateStore["billingSource"], "list"> },
+  projectId: string,
+  by: KeptStart["by"],
+): Promise<{ sourceId: string; entry: WaitEntry; kept: KeptStart } | null> {
+  const rows = await store.billingSource.list({}, { limit: 100 });
+  for (const row of rows)
+    for (const w of waitingOf(row.limits as Record<string, unknown>))
+      if (w.projectId === projectId && w.kept?.by === by)
+        return { sourceId: row.id, entry: w, kept: w.kept };
+  return null;
+}
+
+/** The person's session kept to go on by itself for this project (S-10), read-only. */
+export function keptContinuationOf(
+  store: { billingSource: Pick<StateStore["billingSource"], "list"> },
+  projectId: string,
+) {
+  return keptOn(store, projectId, "continuation");
+}
+
+/** A Start the person pressed while the credential was out, kept for its stop's end (S-10). */
+export function keptStartOf(
+  store: { billingSource: Pick<StateStore["billingSource"], "list"> },
+  projectId: string,
+) {
+  return keptOn(store, projectId, "person");
+}
+
+/**
+ * Keep the person's session's continuation on the project's wait (S-10, version-checked): on every
+ * source the project waits on; false when it waits on none (nothing to go on after). One per
+ * project: a continuation already kept stays.
+ */
+export async function keepContinuation(
+  store: { billingSource: Pick<StateStore["billingSource"], "list" | "get" | "update"> },
+  projectId: string,
+  kept: Omit<KeptStart, "by">,
+): Promise<boolean> {
+  return keepOnWait(store, projectId, { ...kept, by: "continuation" });
+}
+
+/** Keep a person start for the stop's end (S-10's "Start at 15:40", C6 presses it). */
+export async function keepStartAtReset(
+  store: { billingSource: Pick<StateStore["billingSource"], "list" | "get" | "update"> },
+  projectId: string,
+  kept: Omit<KeptStart, "by">,
+): Promise<boolean> {
+  return keepOnWait(store, projectId, { ...kept, by: "person" });
+}
+
+async function keepOnWait(
+  store: { billingSource: Pick<StateStore["billingSource"], "list" | "get" | "update"> },
+  projectId: string,
+  kept: KeptStart,
+): Promise<boolean> {
+  let any = false;
+  for (const row of await store.billingSource.list({}, { limit: 100 })) {
+    if (!waitingOf(row.limits as Record<string, unknown>).some((w) => w.projectId === projectId))
+      continue;
+    await updateSourceLimits(store, row.id, (limits) => {
+      const waiting = waitingOf(limits);
+      const at = waiting.findIndex((w) => w.projectId === projectId);
+      if (at < 0 || waiting[at]?.kept) return null;
+      return {
+        ...limits,
+        waiting: waiting.map((w, i) => (i === at ? { ...w, kept } : w)) as never,
+      };
+    });
+    any = true;
+  }
+  return any;
+}
+
+/**
+ * Drop a project's kept continuation or start (S-10: Cancel, Stop all, the project's removal);
+ * the wait itself stays (its work is prepared at the stop's end). True when one was kept.
+ */
+export async function dropKeptStart(
+  store: { billingSource: Pick<StateStore["billingSource"], "list" | "get" | "update"> },
+  projectId: string,
+): Promise<boolean> {
+  let dropped = false;
+  for (const row of await store.billingSource.list({}, { limit: 100 })) {
+    if (
+      !waitingOf(row.limits as Record<string, unknown>).some(
+        (w) => w.projectId === projectId && w.kept,
+      )
+    )
+      continue;
+    await updateSourceLimits(store, row.id, (limits) => {
+      const waiting = waitingOf(limits);
+      if (!waiting.some((w) => w.projectId === projectId && w.kept)) return null;
+      dropped = true;
+      return {
+        ...limits,
+        waiting: waiting.map((w) => {
+          if (w.projectId !== projectId) return w;
+          const { kept: _k, ...rest } = w;
+          return rest;
+        }) as never,
+      };
+    });
+  }
+  return dropped;
 }
 
 /** `FORERUNNER_SDK_HOST_COMMANDS`: "1" grants `cc:Bash` on the SDK path (see `SdkExecutorDeps.hostCommands`). */

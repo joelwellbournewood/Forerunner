@@ -174,6 +174,7 @@ import {
   VoiceChannel,
 } from "../notifications/index.ts";
 import { isQuietAt, resolvePrefs } from "../notifications/prefs.ts";
+import type { QuietHours } from "../notifications/types.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ClaudeCodeProvider } from "../provider/claude-code.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
@@ -228,6 +229,7 @@ import {
 } from "../session/credential-choice.ts";
 import {
   type CredentialWait,
+  clockTime,
   credentialWaitOf,
   saveLink,
   startKeepsWaitSentence,
@@ -250,6 +252,7 @@ import {
 } from "../session/githost-watcher.ts";
 import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
 import { type LateApprovalSyncResult, syncLateApprovals } from "../session/late-approval.ts";
+import { LiveSessions } from "../session/live-sessions.ts";
 import {
   askPersonTool,
   type PersonQuestionsSyncResult,
@@ -261,6 +264,15 @@ import {
   syncPlanApprovals,
 } from "../session/plan-approval.ts";
 import { syncPrAnswers } from "../session/pr-answers.ts";
+import {
+  dropStartPending,
+  type PrepareDeps,
+  type PrepareRequest,
+  prepareWork,
+  previewWork,
+  startPendingOf,
+  startsByItself,
+} from "../session/prepared-work.ts";
 import { pushUnfinishedOf } from "../session/push-unfinished.ts";
 import { recoverInterruptedSessions } from "../session/recovery.ts";
 import {
@@ -273,7 +285,7 @@ import {
 import { syncSessionReviewAnswers } from "../session/session-review-answers.ts";
 import { type StartCheck, startCheck } from "../session/start-check.ts";
 import { taskReasonForStop } from "../session/stop-words.ts";
-import { fileFiredKeys, Scheduler, type StartRequest } from "../session/triggers.ts";
+import { fileFiredKeys, Scheduler, type StartRequest, startByOf } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
 import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
 import {
@@ -315,8 +327,13 @@ import {
 import {
   CALL_FALLBACK_ORDER,
   type ChooserFacts,
+  dropKeptStart,
+  keepContinuation,
+  keptContinuationOf,
+  keptStartOf,
   planUsageOf,
   RouterTaskBilling,
+  restingUntilOf,
   sdkHostCommandsEnabled,
   seedBillingSources,
   waitingOf,
@@ -808,6 +825,26 @@ export interface RuntimeApp {
    */
   specialistApprovals: SpecialistApprovals;
   scheduler: Scheduler;
+  /**
+   * The person's quiet hours as the scheduler holds starts by them (d1109-starts-engine S-1):
+   * `refresh` after a settings change, `endsAt` for a line that says when a held start runs.
+   */
+  quietHours: {
+    refresh(): Promise<void>;
+    isQuiet(now: number): boolean;
+    endsAt(now: number): string | null;
+  };
+  /**
+   * d1109-starts-engine (S-10): the person's session kept to go on after its Claude credential
+   * wait, or a Start kept for the reset. `waiting` says when it goes on ("Your session of 14:05
+   * goes on by itself at 15:40."), null when none waits; `cancel` drops it (Cancel).
+   */
+  continuations: {
+    waiting(projectId: string): Promise<string | null>;
+    cancel(projectId: string): Promise<boolean>;
+    /** Stop all: every kept continuation and start is dropped. */
+    dropAll(): Promise<void>;
+  };
   conversation: ConversationAgent | null;
   gitHost: GitHost;
   human: { id: string; name: string; timezone: string };
@@ -2670,12 +2707,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     return out;
   };
   // The runner's ports; the handover job builds a second runner over the same ones (below).
+  /**
+   * The sessions running now, one per project (d1109-starts-engine S-7): the runner registers a
+   * handle, and prepared work asks it whether it may join (option C).
+   */
+  const liveSessions = new LiveSessions();
   const runnerDeps: Omit<SessionRunnerDeps, "planner"> = {
     store,
     clock,
     tokens,
     kill,
     executor,
+    live: liveSessions,
+    // S-10: a person's session that ended to wait for its Claude credential keeps its
+    // continuation on the project's wait; the wake makes it once at the stop's end.
+    continuation: { keep: (projectId, kept) => keepContinuation(store, projectId, kept) },
     // The plan's estimates on its approval card are shown in CHF (U-074).
     chfPerUsd,
     context,
@@ -3330,6 +3376,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         agentId,
         projectId,
         trigger: "schedule",
+        // S-10: a schedule the person set: its session goes on after a credential wait.
+        by: "schedule",
+        personSchedule: true,
         budgetCapUsdMicro,
         appVersion,
         grant: sessionGrant(project, await sharedSecretNamesFor(store, agentId)),
@@ -3385,6 +3434,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     if (isCalibrationRequest(req)) return calibrationJob.run();
     await refuseRemovedProject(req.projectId);
     if (isHandoverRequest(req)) return handoverJob.run(req.projectId as string);
+    // S-10: a kept continuation or person start that starts now leaves the wait, so it is made
+    // once; a start that then fails puts it back (the wake's `keep`).
+    if (req.projectId && req.trigger === "budget_reset" && req.by)
+      await dropKeptStart(store, req.projectId).catch(() => undefined);
     return runSession(req);
   };
   // The scheduler runs a start in the background and only logs a rejection: one bound to an
@@ -3411,6 +3464,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         agentId: req.agentId,
         projectId: req.projectId,
         trigger: req.trigger,
+        // S-1: who asked is on the session's event and plan (the Sessions list words it).
+        ...(startByOf(req) ? { by: startByOf(req) } : {}),
+        ...(req.continues ? { continues: req.continues } : {}),
         budgetCapUsdMicro: budgetUsdMicro,
         // The approved plan's id from the inbox answer (`syncPlanApprovals`); never a bare true.
         ...(req.planApproved ? { planApproved: req.planApproved } : {}),
@@ -3477,13 +3533,50 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       return mirror.sync(projectId, o);
     },
   };
+  /**
+   * The person's quiet hours as the scheduler reads them (d1109-starts-engine S-1): the window and
+   * the time zone of `notify_prefs`, cached, refreshed before every tick and by a settings change
+   * (`refresh`), so the scheduler's synchronous port holds every start the person did not ask for
+   * in them ("No notifications and no sessions that start on their own between these times").
+   */
+  const quietHours = (() => {
+    let window: { quiet: QuietHours | null; timezone: string } = {
+      quiet: null,
+      timezone: human.timezone,
+    };
+    return {
+      refresh: async () => {
+        const h = await store.human.get(human.id).catch(() => undefined);
+        if (!h) return;
+        const prefs = resolvePrefs(h);
+        window = { quiet: prefs.quiet_hours, timezone: prefs.timezone };
+      },
+      isQuiet: (now: number) => isQuietAt(window.quiet, window.timezone, now),
+      /** When the window holding now ends, as an ISO time; null outside it. */
+      endsAt: (now: number): string | null => {
+        if (!isQuietAt(window.quiet, window.timezone, now)) return null;
+        // The first minute after `now` outside the window (at most a day ahead).
+        for (let m = 1; m <= 24 * 60; m++) {
+          const at = now + m * 60_000;
+          if (!isQuietAt(window.quiet, window.timezone, at))
+            return new Date(Math.floor(at / 60_000) * 60_000).toISOString();
+        }
+        return null;
+      },
+    };
+  })();
+  await quietHours.refresh();
   const scheduler = new Scheduler({
     clock,
     start: mirrorStartHandler(gatedMirror, startSession, { agentId: agent.id }),
     // The fired day or month of every schedule survives a restart (a monthly job on a live
     // model must not run twice because the daemon came back after its time, ADR 0060).
     fired: fileFiredKeys(join(dirs.data, "scheduler-fired.json")),
+    // S-1: quiet hours hold every start the person did not ask for (a schedule, the hands-off
+    // setting, a continuation); a person's own start runs at once.
+    isQuietHours: (_agentId, now) => quietHours.isQuiet(now),
     refresh: async (target) => {
+      await quietHours.refresh();
       await refreshJobSchedules(target);
       // U-078: work that waited for a Claude credential starts by itself once it can serve
       // (its rest ended, a new key was saved), within a tick, after a restart too.
@@ -3517,12 +3610,68 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             "allow"
           );
         },
-        start: (req) => scheduler.request(req),
+        // S-3 (ADR 0118 amending 0112): the work made ready again is prepared; a raised or
+        // reset limit starts no session by itself.
+        prepare: (req) => prepareWorkPort(req),
       }).catch((e: unknown) =>
-        logger.warn("paused work at a limit not started again", { error: errorMessage(e) }),
+        logger.warn("paused work at a limit not made ready again", { error: errorMessage(e) }),
+      );
+      // S-5: a hands-off start that could not start (quiet hours, another session) is kept on
+      // its project and asked again here once nothing holds it, after a restart too.
+      await sweepStartPending().catch((e: unknown) =>
+        logger.warn("a kept hands-off start was not asked again", { error: errorMessage(e) }),
       );
     },
   });
+  /**
+   * Prepared work (d1109-starts-engine S-2, ADR 0118): every answer, Tasks-row action, chat
+   * change, raised or reset limit and late approval that makes work runnable comes here. It joins
+   * the project's running session if it fits (option C), else it waits for the person's next
+   * Start; with the project's "Start a session by itself" on, a session starts (`hands_off`).
+   */
+  const prepareDeps: PrepareDeps = {
+    store,
+    live: liveSessions,
+    start: (req) => scheduler.requestStart(req),
+    frozen: (agentId) => kill.isFrozen({ agentId }),
+    startedFor: (agentId, projectId) => scheduler.activeStart(agentId)?.req.projectId === projectId,
+    // S-10: the person's session waits to go on: it takes the prepared work then, if it fits.
+    continuationWaits: async (projectId) => !!(await keptContinuationOf(store, projectId)),
+    now: () => clock.nowIso(),
+  };
+  const prepareWorkPort = (req: PrepareRequest) => prepareWork(prepareDeps, req);
+  /**
+   * S-5: the hands-off starts kept on their projects (`summary_cache.start_pending`): each is asked
+   * again once quiet hours ended, sessions are allowed and no session of the agent runs or
+   * waits; dropped when the setting was turned off, the project removed, or nothing can run.
+   */
+  const sweepStartPending = async () => {
+    const projects = await store.project.list({ status: "active" }, { limit: 1000 });
+    for (const p of projects) {
+      if (!startPendingOf(p)) continue;
+      if (!startsByItself(p) || removedProjectRefusal(p)) {
+        await dropStartPending(store, p.id);
+        continue;
+      }
+      const now = clock.now();
+      if (quietHours.isQuiet(now) || kill.isFrozen({ agentId: agent.id })) continue;
+      if (scheduler.activeStart(agent.id) || scheduler.pendingStarts(agent.id).length) continue;
+      if (scheduler.isHeld(agent.id)) continue;
+      const work = await store.task.readyTasks(p.id, { limit: 1 }).catch(() => []);
+      if (!work.length) {
+        await dropStartPending(store, p.id);
+        continue;
+      }
+      const entry = await scheduler.requestStart({
+        agentId: agent.id,
+        projectId: p.id,
+        trigger: "message",
+        by: "hands_off",
+        reason: "work you made ready can run (kept while it could not start)",
+      });
+      if (entry.result === "started") await dropStartPending(store, p.id);
+    }
+  };
   /**
    * Work waiting for a Claude credential (U-078, ADR 0100 amended): the waits are kept on the
    * billing sources (`limits.waiting`), so they survive a restart; each project whose wait is
@@ -3635,6 +3784,60 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   const credentialWaitNow = async (projectId: string): Promise<CredentialWait | null> =>
     (await runNowProbe(projectId)).wait;
+  /**
+   * S-10: when a kept continuation goes on, if the person's quiet hours hold it past the stop's
+   * end: the end of the quiet hours (every sentence names the later time).
+   */
+  const goesOnAtOf = (
+    wait: CredentialWait,
+    kept: { by: string } | undefined,
+  ): { goesOnAt?: string } => {
+    if (kept?.by !== "continuation" || !wait.until) return {};
+    const at = Date.parse(wait.until);
+    if (!Number.isFinite(at)) return {};
+    const ends = quietHours.endsAt(at);
+    return ends ? { goesOnAt: ends } : {};
+  };
+  /**
+   * S-10: one wait per project: the sentence that says when the person's waiting session goes
+   * on (the later of the stop's end and the end of their quiet hours, in their time zone), and
+   * Cancel.
+   */
+  const continuations: RuntimeApp["continuations"] = {
+    waiting: async (projectId) => {
+      const found =
+        (await keptContinuationOf(store, projectId)) ?? (await keptStartOf(store, projectId));
+      if (!found) return null;
+      const source = await store.billingSource.get(found.sourceId).catch(() => undefined);
+      const until = source ? restingUntilOf({ limits: source.limits as never }, clock.now()) : null;
+      let at = until ?? null;
+      if (found.kept.by === "continuation" && at) {
+        const ends = quietHours.endsAt(Date.parse(at));
+        if (ends) at = ends;
+      }
+      const words = { timezone: human.timezone, nowMs: clock.now() };
+      const when = at
+        ? `at ${clockTime(at, words.timezone, words.nowMs)}`
+        : "once its Claude credential is back";
+      if (found.kept.by === "continuation") {
+        const earlier = found.kept.continues
+          ? await store.session.get(found.kept.continues).catch(() => undefined)
+          : undefined;
+        const of = earlier?.started_at
+          ? ` of ${clockTime(earlier.started_at, words.timezone, words.nowMs)}`
+          : "";
+        return `Your session${of} goes on by itself ${when}.`;
+      }
+      const name =
+        (await store.project.get(projectId).catch(() => undefined))?.name ?? "the project";
+      return `A session of ${name} starts ${when}.`;
+    },
+    cancel: async (projectId) => dropKeptStart(store, projectId),
+    dropAll: async () => {
+      for (const p of await store.project.list({}, { limit: 1000 }))
+        await dropKeptStart(store, p.id);
+    },
+  };
   const credentialWaits: RuntimeApp["billing"]["waits"] = {
     wake: async () => {
       // R-refusedstays: a project kept on a source that cannot serve is taken too when another
@@ -3661,25 +3864,47 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           continue;
         }
         const work = await store.task.readyTasks(projectId, { limit: 1 }).catch(() => []);
+        const kept = entry.kept;
+        // d1109-starts-engine (S-10, ADR 0118 amending 0100; the owner, 2026-11-09: "A session the
+        // person started keeps going by itself until its work is done, including after a
+        // credential wait inside it"): only the person's own session that waited goes on by
+        // itself (a continuation), or a Start they pressed while the credential was out; every
+        // other wait prepares its work (it joins a running session if it fits, else it waits
+        // for the person's next Start, or the hands-off setting starts one).
+        if (!kept) {
+          if (work.length)
+            await prepareWorkPort({
+              agentId: entry.agentId,
+              projectId,
+              reason: "a Claude credential it waited for can serve again",
+              by: "system",
+            });
+          continue;
+        }
         if (!work.length) continue;
-        // With Stop all on, no session starts: the wait is kept, so the start comes once the
-        // person allows sessions again and the next tick finds the credential serving.
+        // The continuation or start goes back on the wait (R-wakeorder): it leaves the source
+        // only once its start is known to run, so it comes again after a restart, never twice.
+        const keep = () =>
+          taskBilling
+            .noteWait(entry.sourceId, projectId, entry.agentId, entry.sessionId, kept)
+            .catch((e: unknown) =>
+              logger.warn("the wait for a credential was not kept", { error: errorMessage(e) }),
+            );
+        // Stop all drops a kept continuation; the work stays ready for the person's next Start.
         if (kill.isFrozen({ agentId: entry.agentId })) {
           await taskBilling.noteWait(entry.sourceId, projectId, entry.agentId);
           continue;
         }
-        // R-wakeorder: the wait leaves the source only once its start is known to run. A start
-        // that fails (the runner refused it) or only waits in the scheduler's queue (memory,
-        // lost when the app quits) puts it back, so the rows keep saying what they wait for
-        // and the start comes again, after a restart too. A session of this project that runs
-        // now takes the work itself (its own pick notes a new wait if it must wait).
-        const keep = () =>
-          taskBilling
-            .noteWait(entry.sourceId, projectId, entry.agentId)
-            .catch((e: unknown) =>
-              logger.warn("the wait for a credential was not kept", { error: errorMessage(e) }),
-            );
-        if (scheduler.activeStart(entry.agentId)?.req.projectId === projectId) continue;
+        // Quiet hours hold a continuation (no session starts on its own in them); it goes on
+        // once they end. A person's kept Start runs at the time they chose.
+        if (kept.by === "continuation" && quietHours.isQuiet(clock.now())) {
+          await keep();
+          continue;
+        }
+        if (scheduler.activeStart(entry.agentId)?.req.projectId === projectId) {
+          await keep();
+          continue;
+        }
         if (scheduler.pendingStarts(entry.agentId).some((p) => p.req.projectId === projectId)) {
           await keep();
           continue;
@@ -3688,7 +3913,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           agentId: entry.agentId,
           projectId,
           trigger: "budget_reset",
-          reason: "a Claude credential it waited for can serve again",
+          by: kept.by,
+          ...(kept.continues ? { continues: kept.continues } : {}),
+          ...(kept.budgetUsdMicro ? { budgetUsdMicro: kept.budgetUsdMicro } : {}),
+          reason:
+            kept.by === "continuation"
+              ? "your session goes on: the Claude credential it waited for can serve again"
+              : "the Start you pressed while the Claude credential was out",
         });
         if (start.result === "started")
           void scheduler.runOutcome(start.id)?.then((o) => (o.ok ? undefined : keep()));
@@ -3743,11 +3974,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // session meets the wait and keeps it (the executor's `noteWait`).
       const words = { timezone: human.timezone, nowMs: clock.now() };
       const source = await store.billingSource.get(wait.sourceId).catch(() => undefined);
-      const kept = !!source && waitingOf(source.limits).some((w) => w.projectId === projectId);
+      // S-10: only a kept continuation or person start goes on by itself; a Start pressed now
+      // meets the wait and keeps the person's session's continuation.
+      const kept = source
+        ? waitingOf(source.limits).find((w) => w.projectId === projectId)?.kept
+        : undefined;
       if (wait.reason !== "refused" && !kept)
         return { text: startKeepsWaitSentence(wait, words), save: null, startable: true };
       return {
-        text: waitSentence(wait, words),
+        text: waitSentence(wait, { ...words, goesOn: !!kept, ...goesOnAtOf(wait, kept) }),
         save: wait.reason === "refused" ? saveLink(wait.kind) : null,
       };
     },
@@ -3773,6 +4008,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     kill: {
       stop: async (scope, reason, opts) => {
         const report = await kill.stop(scope, reason, opts);
+        // S-10 (ADR 0118): Stop all drops every session kept to go on after its credential wait.
+        if (opts?.by === "stop_all") await continuations.dropAll().catch(() => undefined);
         if (opts?.by === "stop_all") {
           const sessions = kill.stoppedSessions();
           writeKillRequest(
@@ -3868,6 +4105,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
                   : "";
         return `${blocked.sentence}${next}`;
       },
+      // d1109-starts-engine (S-9, S-10): a command that made a task ready prepares it and says
+      // what happens next; chat's read-back previews it; a start while the person's session
+      // waits to go on says when it does and starts nothing.
+      prepareWork: async ({ projectId, taskIds, by }) =>
+        (
+          await prepareWorkPort({
+            agentId: agent.id,
+            projectId,
+            taskIds,
+            reason: "a task change made it ready",
+            by,
+          })
+        )?.line ?? null,
+      previewWork: ({ projectId, by }) =>
+        previewWork(prepareDeps, { agentId: agent.id, projectId, by }),
+      startWaits: (projectId) => continuations.waiting(projectId),
       // D4 (d1109-oversize-start): the chat's start reads back the Start dialog's warning when
       // the session would take a task larger than its work budget; it never refuses it.
       startWarning: async (projectId, budgetUsdMicro) =>
@@ -4023,9 +4276,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   const syncApprovalsOnce = async () => {
     await schemaSync.assertCanSync("approvals.sync");
+    // S-2: an answer prepares the work it made runnable (`prepare`); only the person's own
+    // starts on a card (Continue on a budget card) use the scheduler (`start`).
     const resumeStart =
       opts.startServices !== false
-        ? { start: (req: StartRequest) => scheduler.requestStart(req) }
+        ? {
+            start: (req: StartRequest) => scheduler.requestStart(req),
+            prepare: (req: PrepareRequest) => prepareWorkPort(req),
+          }
         : {};
     const out = {
       // A change card from Chat, voice, the palette or the phone answered in the Inbox (U-029):
@@ -4134,7 +4392,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               clock,
               humanId: human.id,
               agentId: agent.id,
-              start: (req) => scheduler.requestStart(req),
+              // S-2 (ADR 0118 amending 0088): a late approval prepares its task.
+              prepare: (req) => prepareWorkPort(req),
             })
           : { started: 0, refused: 0, skipped: 0 },
       intake: await intake.syncAnswers(),
@@ -4149,7 +4408,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         agentId: agent.id,
         workspaceDir: (projectId) => intake.workspaceDir(projectId),
         ...(opts.startServices !== false
-          ? { start: (req: StartRequest) => scheduler.requestStart(req) }
+          ? { prepare: (req: PrepareRequest) => prepareWorkPort(req) }
           : {}),
       }),
       // Proposed specialists (ADR 0071): the daemon claims an approved proposal's answer here
@@ -4417,10 +4676,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       pollMs: positiveMs(opts.remote?.pollMs ?? env.FORERUNNER_REMOTE_POLL_MS, 500),
     });
   }
-  // CI results and PR comments start sessions (spec E.1, ADR 0075): the agent's open PRs (the
-  // task rows' `pr_url`) are polled on the clock; a failed check or a green head fires `ci`,
-  // a comment or review by anyone but the agent fires `pr_comment`, through the scheduler (one
-  // active session per agent). The comment reaches the agent's inbox quoted as data; an
+  // CI results and PR comments reach the next session (spec E.1, ADR 0075 amended by 0118): the
+  // agent's open PRs (the task rows' `pr_url`) are polled on the clock; a failed check or a
+  // green head, a comment or review by anyone but the agent, is delivered to the agent's inbox
+  // and audited (`waits_start`); none starts a session. The comment reaches the agent's inbox quoted as data; an
   // instruction-like one is audited and reported like any flagged content. Quiet hours are the
   // human's notification window (`notify_prefs.quiet_hours`): the PRs wait until it ends.
   const githostWatcher = githostWatchEnabled(
@@ -4435,7 +4694,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         host: gitHost,
         agentIds: [agent.id],
         humanId: human.id,
-        start: (req) => scheduler.requestStart(req),
+        // S-4 (ADR 0118): CI results and pull request comments reach the agent's inbox and the
+        // next session; they start none.
         cursorStore: fileCursorStore(
           opts.githostWatch?.cursorPath ??
             join(dirs.data, "githost", `cursor-${safeSegment(agent.id, "agent")}.json`),
@@ -4761,6 +5021,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       );
     },
     scheduler,
+    quietHours,
+    continuations,
     conversation,
     gitHost,
     human: { id: human.id, name: human.name, timezone: human.timezone },

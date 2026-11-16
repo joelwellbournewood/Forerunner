@@ -837,7 +837,7 @@ describe("polish-words, wave 13: money, budget lines, the log's lines", () => {
     expect(all).toMatch(/Less than CHF 0\.01\.$/);
     // A project's budget never resets.
     expect(all).toContain(
-      '"Write the guide" paused at the project\'s budget of CHF 0.01: it goes on by itself once you raise that budget.',
+      '"Write the guide" paused at the project\'s budget of CHF 0.01: it is ready again once you raise that budget, for your next Start.',
     );
     expect(all).not.toMatch(/resets/);
   });

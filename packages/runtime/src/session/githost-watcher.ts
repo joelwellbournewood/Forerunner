@@ -52,10 +52,10 @@ import type { StartEntry, StartRequest } from "./triggers.ts";
  * history. A PR first seen after the baseline counts everything on it.
  *
  * Quiet hours (`isQuietHours`) defer: the agent's PRs are not read and the cursor does not
- * move, so the events fire at the first poll after the window. The one-active-session rule
- * is the scheduler's (`Scheduler.requestStart` queues behind a running session); a refused
- * request is logged and audited, never thrown. Every firing is one `audit_log` row
- * (`githost.trigger`).
+ * move, so the events fire at the first poll after the window. Since run C (d1109-starts-engine
+ * S-4, ADR 0118 amending 0075) a firing starts no session, with "Start a session by itself" on or
+ * off: the events wait in the agent's inbox for the next session the person starts. Every
+ * firing is one `audit_log` row (`githost.trigger`, outcome `waits_start`).
  */
 export const GITHOST_TRIGGER_AUDIT_TOOL = "githost.trigger";
 export const DEFAULT_GITHOST_POLL_MS = 60_000;
@@ -288,7 +288,13 @@ export interface GitHostFiring {
   projectId: string | null;
   reason: string;
   keys: string[];
-  outcome: StartEntry["result"] | "error";
+  /**
+   * `waits_start` (d1109-starts-engine S-4, ADR 0118 amending 0075): a CI result or a pull
+   * request comment starts no session, with "Start a session by itself" on or off; it reached the
+   * agent's inbox and the next session's brief reads it. The other values are of audit rows
+   * written before run C.
+   */
+  outcome: StartEntry["result"] | "error" | "waits_start";
   startId?: string;
   error?: string;
 }
@@ -323,8 +329,6 @@ export interface GitHostWatcherDeps {
   agentIds: readonly string[];
   /** The human the audit rows are recorded for. */
   humanId?: string;
-  /** The scheduler's request with its entry (`Scheduler.requestStart`). */
-  start: (req: StartRequest) => Promise<Pick<StartEntry, "id" | "result">>;
   cursorStore?: GitHostCursorStore;
   /** True while the agent's quiet hours hold: its PRs wait for the next poll. */
   isQuietHours?: (agentId: string, now: number) => boolean | Promise<boolean>;
@@ -803,19 +807,12 @@ export class GitHostWatcher {
       reason: req.reason,
       keys,
     };
-    let fired: GitHostFiring;
-    try {
-      const entry = await this.deps.start(req);
-      fired = { ...base, outcome: entry.result, startId: entry.id };
-      this.logger.info("git host trigger", { trigger: group.trigger, outcome: entry.result });
-    } catch (e) {
-      // One active session per agent and every other refusal: logged and audited, not thrown.
-      fired = { ...base, outcome: "error", error: errorMessage(e) };
-      this.logger.warn("git host trigger not started", {
-        trigger: group.trigger,
-        error: fired.error,
-      });
-    }
+    // S-4 (ADR 0118 amending 0075; the owner, 2026-11-09: "fine" to CI results and pull request
+    // comments starting no session, also with "Start a session by itself" on): text a third
+    // party wrote never starts paid work. The events reached the agent's inbox (`deliver`), and
+    // the next session the person starts reads them.
+    const fired: GitHostFiring = { ...base, outcome: "waits_start" };
+    this.logger.info("git host event waits for the next session", { trigger: group.trigger });
     try {
       await this.deps.store.auditLog.append({
         agent_id: group.agentId,

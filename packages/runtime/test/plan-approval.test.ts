@@ -256,6 +256,8 @@ describe("syncPlanApprovals", () => {
         agentId: w.alice,
         projectId: w.project,
         trigger: "message",
+        // d1109-starts-engine (S-1): Approve and start on a session plan is the person's start.
+        by: "person",
         reason: `plan approved (request ${req.id})`,
         planApproved: planId,
         // The cap of the session that filed the plan: the follow-up cuts it as the human saw.

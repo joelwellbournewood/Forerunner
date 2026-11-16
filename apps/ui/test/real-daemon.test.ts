@@ -8256,7 +8256,7 @@ describe("the UI client against the real daemon: a Claude credential at its limi
         (r) => r.status === "open" && r.title === "Anthropic refused your Claude sign-in",
       );
       expect(card?.body).toBe(
-        "Save a new one in Settings. The work that needs it waits and starts by itself then.",
+        "Save a new one in Settings. The work that needs it waits until then.",
       );
       // "Use the other one", as Settings sends it (a yes): the card says where the tasks go on,
       // and what it costs, and the next session runs the task on the API key.
@@ -18689,6 +18689,87 @@ describe("d1109-oversize-pause, run C", () => {
       expect(closed?.outcome).toMatch(/^Your session of \d\d:\d\d went on with it\.$/);
       expect(after.find((r) => r.id === own.card.id)?.status).toBe("open");
       expect((await rt.store.task.mustGet(own.task.id)).status).toBe("needs_human");
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});
+
+describe("d1109-starts-engine, run C", () => {
+  /** A coder task of the project, ready, priced at `usd` (its own estimate). */
+  const readyTask = async (
+    rt: RuntimeApp,
+    client: DaemonClient,
+    projectId: string,
+    title: string,
+    usd: number,
+  ) => {
+    const t = await client.createTask(projectId, {
+      title,
+      outcome: `${title} is done`,
+      acceptanceCriteria: [],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    await rt.store.task.patch(t.id, { est_cost_usd_micro: Math.round(usd * 1_000_000) });
+    return t;
+  };
+  /** Wait for a session to end (its row leaves planned, running and paused). */
+  const ended = async (client: DaemonClient, sessionId: string) =>
+    eventually(
+      async () =>
+        !["planned", "running", "paused"].includes((await client.session(sessionId)).status),
+      "the session to end (at least 10 s of real time)",
+      async () => `${(await client.session(sessionId)).status}`,
+      60_000,
+    );
+
+  it("S-1: with quiet hours on now POST /sessions starts at once and its session says the person asked; a hands_off start is held", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Quote page", goal: "A quote page" });
+      await readyTask(rt, client, project.id, "Write the intro", 0.05);
+      const quiet = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "quiet_hours", value: { start: "00:00", end: "23:59" } },
+          },
+        ],
+        source: "ui",
+      });
+      expect(quiet.status).toBe("done");
+      // The settings route's change applies at the scheduler's next tick.
+      await rt.scheduler.tick();
+      expect(rt.quietHours.isQuiet(rt.clock.now())).toBe(true);
+      const held = await rt.scheduler.requestStart({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        trigger: "message",
+        by: "hands_off",
+        reason: "work was made ready",
+      });
+      expect(held.result).toBe("deferred");
+      rt.scheduler.cancelPending(rt.agent.id, "test", held.id);
+      const started = await client.startSession({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+      });
+      expect(started.result).toBe("started");
+      const sessionId = started.session?.id ?? "";
+      expect(sessionId, JSON.stringify(started)).toBeTruthy();
+      await ended(client, sessionId);
+      const first = (await rt.store.event.list(sessionId)).find(
+        (e) => e.type === "session.started",
+      );
+      expect(first?.payload).toMatchObject({ trigger: "manual", by: "person" });
+      const row = await rt.store.session.mustGet(sessionId);
+      expect((row.plan as { startedBy?: unknown }).startedBy).toEqual({ by: "person" });
     } finally {
       await rt.close();
     }

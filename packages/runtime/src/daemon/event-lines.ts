@@ -12,7 +12,15 @@ import { quotedWords, saidByName } from "@forerunner/critic";
 import { AUTONOMY_NAMES } from "../enforcement/autonomy.ts";
 import { aboutWords, moneyWords, moneyWordsFirst } from "../session/money-words.ts";
 import { sessionStatusText } from "../session/stop-words.ts";
-import { REVIEW_RESUMED_EVENT, TASK_CONTINUES_EVENT, TOOK_LARGER_EVENT } from "./event-audience.ts";
+import {
+  CONTINUES_EVENT_TYPE,
+  JOINED_EVENT_TYPE,
+  LEFT_FOR_NEXT_START_EVENT_TYPE,
+  PROMISED_EVENT_TYPE,
+  REVIEW_RESUMED_EVENT,
+  TASK_CONTINUES_EVENT,
+  TOOK_LARGER_EVENT,
+} from "./event-audience.ts";
 import { continuesLine, takenLine } from "./oversize-words.ts";
 import { balancedCut } from "./quoted-title.ts";
 
@@ -563,6 +571,7 @@ export function prNumberWords(url: string): string {
 export function moreEventLines(type: string, p: Payload, chfPerUsd: number): string | null {
   const s = (k: string) => str(p, k);
   const n = (k: string) => num(p, k);
+  const chf = (k: string) => chfOf(n(k), chfPerUsd);
   switch (type) {
     // U-078 (ADR 0100): a credential met its usage limit; the sentence says what took over.
     case "billing.fallback":
@@ -606,6 +615,37 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
       const chfMicro = usdToChfMicro(room, chfPerUsd);
       return takenLine(s("title") || "the task", { chfMicro, text: formatChf(chfMicro) });
     }
+    // d1109-starts-engine (S-6, S-7, S-10): the promise, what joined, what is left for the next
+    // Start, and a session that goes on with the person's earlier one.
+    case PROMISED_EVENT_TYPE: {
+      const count = Array.isArray(p.taskIds) ? p.taskIds.length : 0;
+      return count
+        ? `It promised ${count === 1 ? "1 task" : `${count} tasks`}, about ${chf("estimateUsdMicro")}.`
+        : null;
+    }
+    case JOINED_EVENT_TYPE:
+      return `Took "${s("title") || "a task"}", made ready while it ran (about ${chf("estimateUsdMicro")}).`;
+    case LEFT_FOR_NEXT_START_EVENT_TYPE: {
+      const tasks = Array.isArray(p.tasks)
+        ? (p.tasks as { title?: unknown; estimateUsdMicro?: unknown }[])
+        : [];
+      if (!tasks.length) return null;
+      const named = tasks
+        .slice(0, 3)
+        .map((t) => {
+          const micro = usdToChfMicro(
+            Math.max(0, Math.round(Number(t.estimateUsdMicro) || 0)),
+            chfPerUsd,
+          );
+          return `"${String(t.title ?? "a task")}" (${aboutWords(formatChf(micro), micro)})`;
+        })
+        .join(", ");
+      return `Left for your next Start: ${named}${tasks.length > 3 ? ` and ${tasks.length - 3} more` : ""}.`;
+    }
+    case CONTINUES_EVENT_TYPE:
+      return s("at")
+        ? `Goes on with your session of ${s("at")}.`
+        : "Goes on with your earlier session.";
     // d1109-oversize-pause (OP-5): the run again in the session, from where it stopped.
     case TASK_CONTINUES_EVENT:
       return continuesLine(saidByName(s("specialist")) ?? "specialist", s("title") || "the task");

@@ -160,7 +160,8 @@ describe("a task run that meets the subscription's usage limit, under 'Wait' (U-
     await rt?.close();
   });
 
-  it("waits for the reset with nothing on the API key, says so, and starts by itself at the reset", async () => {
+  // d1109-starts-engine (S-10, ADR 0118): the person's own session goes on by itself at the reset.
+  it("waits for the reset with nothing on the API key, says so, and the person's session goes on by itself at the reset", async () => {
     const { project, task } = await changelogTask(rt);
     expect(task.attempt).toBe(0);
 
@@ -181,10 +182,10 @@ describe("a task run that meets the subscription's usage limit, under 'Wait' (U-
     // The session log's sentence, as the person reads it: what is really scheduled.
     const fallback = first.find((e) => e.type === "billing.fallback");
     expect(describeEvent("billing.fallback", fallback?.payload ?? {})).toBe(
-      'Your Claude subscription reached its usage limit; "Write the changelog" waits until 15:00 (your subscription\'s limit) and starts by itself.',
+      'Your Claude subscription reached its usage limit; "Write the changelog" waits until 15:00 (your subscription\'s limit); then your session goes on.',
     );
     expect(result.summary.split("\n")[0]).toBe(
-      "Waits until 15:00 (your subscription's limit) and starts by itself.",
+      "Waits until 15:00 (your subscription's limit); then your session goes on.",
     );
     // The row says the same.
     const rows = await req<TaskView[]>(`/projects/${project.id}/tasks`);

@@ -31,11 +31,49 @@ export interface Schedule {
   enabled: boolean;
 }
 
+/**
+ * Who asked for a start (d1109-starts-engine S-1, ADR 0118): the person (Start, Approve and start,
+ * Continue, Use API key, a chat or voice start they said yes to, the phone), a schedule, the
+ * project's "Start a session by itself" setting (`hands_off`), or the person's own session going
+ * on after a wait for its Claude credential (`continuation`, S-10). Only a start by `person`
+ * runs inside the person's quiet hours. Append-only.
+ */
+export type StartBy = "person" | "schedule" | "hands_off" | "continuation";
+
+/**
+ * Who asked for a start: `req.by`, else what its trigger says for a request made before `by`
+ * existed (a press or the phone is the person's, a schedule is the schedule's); anything else
+ * is no person's and is held by quiet hours.
+ */
+export function startByOf(req: Pick<StartRequest, "by" | "trigger">): StartBy | undefined {
+  if (req.by) return req.by;
+  if (req.trigger === "manual" || req.trigger === "remote") return "person";
+  if (req.trigger === "schedule") return "schedule";
+  return undefined;
+}
+
 export interface StartRequest {
   agentId: string;
   projectId?: string;
   trigger: SessionTriggerKind;
   reason: string;
+  /**
+   * Who asked (S-1): written on the session's `session.started` event and its plan
+   * (`plan.startedBy`). Absent on an old caller: `startByOf` reads the trigger.
+   */
+  by?: StartBy;
+  /**
+   * The session this start goes on with (S-10): a continuation after a credential wait, or a
+   * person's Continue of an ended session (its remaining promise and budget).
+   */
+  continues?: string;
+  /**
+   * The schedule this start comes from and the day, month or time key it fires for: the key is
+   * written to the fired store only when the start leaves the waiting line (it starts, or waits
+   * behind a running session), never while quiet hours hold it (S-1), so a job held in the night
+   * runs once after it, after a restart too.
+   */
+  schedule?: { id: string; key: string };
   /**
    * The approved plan this start runs (spec J.6, J.7; ADR 0053): the `plan_id` of the answered
    * plan request (`plan:<session>#<hash>`, `plan-approval.ts`). The runner runs the plan only
@@ -62,7 +100,10 @@ export interface SchedulerDeps {
   clock: Clock;
   /** Starts a session and resolves when it ends. Throws claim_conflict when one is active. */
   start: (req: StartRequest) => Promise<unknown>;
-  /** Quiet hours: when true, non-manual triggers are deferred to the next check. */
+  /**
+   * Quiet hours: when true, every start not asked by the person (`startByOf`: a schedule, the
+   * hands-off setting, a continuation) is held until they end (S-1).
+   */
   isQuietHours?: (agentId: string, now: number) => boolean;
   /**
    * Where the last fired day (daily, weekdays) or month (monthly) of each schedule is kept.
@@ -197,7 +238,9 @@ function sameStart(a: StartRequest, b: StartRequest): boolean {
     a.trigger === b.trigger &&
     a.planApproved === b.planApproved &&
     a.approvalRequestId === b.approvalRequestId &&
-    a.budgetUsdMicro === b.budgetUsdMicro
+    a.budgetUsdMicro === b.budgetUsdMicro &&
+    startByOf(a) === startByOf(b) &&
+    a.continues === b.continues
   );
 }
 
@@ -298,12 +341,14 @@ export class Scheduler {
         }
         if (now - last >= (s.everyMinutes ?? 60) * 60_000) {
           this.lastEvery.set(s.id, now);
-          if (s.persist) this.fired.set(s.id, new Date(now).toISOString());
           await this.request({
             agentId: s.agentId,
             projectId: s.projectId,
             trigger: "schedule",
+            by: "schedule",
             reason: `every ${s.everyMinutes} min`,
+            // S-1: kept as fired once the start leaves the waiting line.
+            ...(s.persist ? { schedule: { id: s.id, key: new Date(now).toISOString() } } : {}),
           });
         }
         continue;
@@ -328,24 +373,29 @@ export class Scheduler {
           this.fired.set(s.id, lp.day >= day ? lp.monthKey : "");
           continue;
         }
-        if (due && last !== lp.monthKey) {
-          this.fired.set(s.id, lp.monthKey);
+        // S-1: the month's key is written when its start leaves the waiting line, so a start
+        // quiet hours hold is asked once (its entry waits) and, after a restart inside them,
+        // again: it runs exactly once after them.
+        if (due && last !== lp.monthKey && !this.scheduleWaits(s)) {
           await this.request({
             agentId: s.agentId,
             projectId: s.projectId,
             trigger: "schedule",
+            by: "schedule",
             reason: `monthly on day ${s.dayOfMonth ?? 1} at ${s.time ?? "06:00"} ${s.timezone}`,
+            schedule: { id: s.id, key: lp.monthKey },
           });
         }
         continue;
       }
-      if (timePassed && this.fired.get(s.id) !== lp.dayKey) {
-        this.fired.set(s.id, lp.dayKey);
+      if (timePassed && this.fired.get(s.id) !== lp.dayKey && !this.scheduleWaits(s)) {
         await this.request({
           agentId: s.agentId,
           projectId: s.projectId,
           trigger: "schedule",
+          by: "schedule",
           reason: `${s.kind} at ${s.time} ${s.timezone}`,
+          schedule: { id: s.id, key: lp.dayKey },
         });
       }
     }
@@ -370,21 +420,42 @@ export class Scheduler {
     return this.requestStart(next.req, now, next.id);
   }
 
-  /** True while quiet hours hold a non-manual start back. */
+  /**
+   * True while quiet hours hold a start back: every start the person did not ask for (S-1: a
+   * schedule, the hands-off setting, a continuation). A person's own start runs at once.
+   */
   private deferredNow(req: StartRequest, now: number): boolean {
-    return req.trigger !== "manual" && (this.deps.isQuietHours?.(req.agentId, now) ?? false);
+    return startByOf(req) !== "person" && (this.deps.isQuietHours?.(req.agentId, now) ?? false);
+  }
+
+  /** Whether quiet hours hold a start of the agent now that the person did not ask for (S-1). */
+  quietNow(agentId: string, now: number = this.deps.clock.now()): boolean {
+    return this.deps.isQuietHours?.(agentId, now) ?? false;
+  }
+
+  /** A start of this schedule already waits in its agent's line (held by quiet hours). */
+  private scheduleWaits(s: Schedule): boolean {
+    return (this.pending.get(s.agentId) ?? []).some((e) => e.req.schedule?.id === s.id);
+  }
+
+  /** S-1: the schedule's key is fired once its start left the waiting line. */
+  private markFired(req: StartRequest): void {
+    if (req.schedule) this.fired.set(req.schedule.id, req.schedule.key);
   }
 
   /**
    * Put a request at the end of the agent's waiting line, unless the same automatic start
    * already waits there (the same project, trigger, approved plan, answered approval and cap):
    * then that one answers for both and the log records it, since running the same work twice
-   * in a row does nothing more. A person's own start is always kept.
+   * in a row does nothing more. A person's own start and a continuation are always kept (S-1).
    */
   private enqueue(entry: StartEntry): StartEntry {
     const line = this.pending.get(entry.req.agentId) ?? [];
+    const by = startByOf(entry.req);
     const same =
-      entry.req.trigger === "manual" ? undefined : line.find((e) => sameStart(e.req, entry.req));
+      by === "person" || by === "continuation"
+        ? undefined
+        : line.find((e) => sameStart(e.req, entry.req));
     if (same) {
       this.log.push({
         id: same.id,
@@ -398,6 +469,7 @@ export class Scheduler {
     line.push(entry);
     this.pending.set(entry.req.agentId, line);
     this.log.push(entry);
+    if (entry.result !== "deferred") this.markFired(entry.req);
     return entry;
   }
 
@@ -437,6 +509,7 @@ export class Scheduler {
     this.active.add(req.agentId);
     const entry: StartEntry = { id, at, req, result: "started" };
     this.log.push(entry);
+    this.markFired(req);
     this.activeStarts.set(req.agentId, entry);
     const run = this.deps
       .start(req)

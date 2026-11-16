@@ -17,7 +17,8 @@ import {
   type ReviewedPrMerge,
 } from "../loop/merge.ts";
 import { redoneMergeCard } from "../loop/merge-mode.ts";
-import { recordStart, resumeWork, type StartPort } from "./resume-work.ts";
+import type { PreparePort } from "./prepared-work.ts";
+import { prepareAnswer, recordStart } from "./resume-work.ts";
 
 /**
  * The answers of the pull-request cards (U-028), applied from `RuntimeApp.syncApprovals` (the
@@ -68,8 +69,12 @@ export interface PrAnswersDeps {
    * Absent: the record is approved and queued, and the watcher's retry pass merges it.
    */
   merge?: Pick<ReviewedPrMerge, "approveInOrder" | "mergeApproved">;
-  /** Starts (or queues) a session: a rebuild card's Redo resumes work (`resumeWork`). */
-  start?: StartPort;
+  /**
+   * Answering prepares work (d1109-starts-engine S-2, ADR 0118): the work the answer made
+   * runnable joins the project's running session if it fits, else it waits for the person's next
+   * Start; the daemon's `prepareWork`, absent in a one-shot.
+   */
+  prepare?: PreparePort;
 }
 
 const PAGE = 200;
@@ -234,7 +239,8 @@ async function applyRebaseAnswer(deps: PrAnswersDeps, row: HumanRequestRow): Pro
     await recordStart(
       store,
       row.id,
-      await resumeWork(store, deps.start, {
+      await prepareAnswer(deps.prepare, {
+        by: "person",
         agentId: deps.agentId,
         projectId: task.project_id,
         reason:
@@ -352,8 +358,9 @@ async function mergedAlready(
 
 /**
  * A rebuild card's Redo (R-rebuildcard): the done task is ready again, with the card's sentence
- * as why, and a session starts (or queues) for it, as every answer that makes a task runnable
- * does (design 3.8). Its next run does the task again from main, as the card's line says: the
+ * as why, and prepared like every answer (d1109-starts-engine S-2, ADR 0118): it joins the
+ * project's running session if it fits, else it waits for the person's next Start; the card
+ * keeps what became of it (`change_card.start`) for its Done line. Its next run does the task again from main, as the card's line says: the
  * card carries `REDO_FROM_BASE_FIELD`, which `PrTaskExecutor` reads as "Drop the branch and
  * retry from scratch" (the branch starts again from main, the open pull request gets the new
  * work). Before (the review's fix-up), the run resumed the open pull request's branch and
@@ -379,10 +386,15 @@ async function applyRedo(
       change_card: redoneMergeCard(row.change_card, deps.clock.nowIso()) as JsonObject,
     });
   });
-  await resumeWork(store, deps.start, {
-    agentId: deps.agentId,
-    projectId: task.project_id,
-    reason: `Redo of "${task.title}" asked on its card`,
-  });
+  await recordStart(
+    store,
+    row.id,
+    await prepareAnswer(deps.prepare, {
+      by: "person",
+      agentId: deps.agentId,
+      projectId: task.project_id,
+      reason: `Redo of "${task.title}" asked on its card`,
+    }),
+  );
   return "redone";
 }

@@ -351,6 +351,8 @@ export interface StartedBy {
   by: "person" | "schedule" | "hands_off" | "continuation";
   /** The session a continuation goes on with. */
   continues?: string;
+  /** That session's start time in the person's zone ("14:05"), written at the start. */
+  continuesAt?: string;
 }
 
 function startedByOf(plan: unknown): StartedBy | null {
@@ -379,8 +381,15 @@ export function startedByWords(row: Pick<SessionRow, "plan" | "trigger">): strin
         return "started on its schedule";
       case "person":
         return row.trigger === "remote" ? "started from your phone" : null;
+      case "hands_off":
+        // S-5: the project's "Start a session by itself" setting started it.
+        return "started by itself when work was ready";
+      case "continuation":
+        // S-10: the person's own session going on after a wait for its Claude credential.
+        return who.continuesAt
+          ? `goes on with your session of ${who.continuesAt}`
+          : "goes on with your earlier session";
       default:
-        // `hands_off` and `continuation`: d1109-starts-engine's words (run C3).
         return null;
     }
   }

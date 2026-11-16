@@ -16,7 +16,8 @@ import type {
 } from "@forerunner/state";
 import { plainReason } from "../daemon/task-words.ts";
 import { answerNote, blockedFindingsAnswer, signoffAnswer } from "../wiring/request-answers.ts";
-import { noteAboutTask, recordStart, resumeWork, type StartPort } from "./resume-work.ts";
+import type { PreparePort } from "./prepared-work.ts";
+import { noteAboutTask, prepareAnswer, recordStart } from "./resume-work.ts";
 
 /**
  * A close blocked by open findings (spec B.4). The store refuses `in_review -> done` while a
@@ -119,8 +120,12 @@ interface InReviewSyncDeps {
   humanId: string;
   /** Actor of the transitions (the principal agent); the human's id is recorded with it. */
   agentId?: string | null;
-  /** Answering resumes work (design §3.8): the daemon's scheduler; absent in a one-shot. */
-  start?: StartPort;
+  /**
+   * Answering prepares work (d1109-starts-engine S-2, ADR 0118): the work the answer made
+   * runnable joins the project's running session if it fits, else it waits for the person's next
+   * Start; the daemon's `prepareWork`, absent in a one-shot.
+   */
+  prepare?: PreparePort;
 }
 
 /** The reasons an in-review card's answer records on the task (spec B.5). */
@@ -225,7 +230,8 @@ async function syncInReviewCards(
         await recordStart(
           store,
           row.id,
-          await resumeWork(store, deps.start, {
+          await prepareAnswer(deps.prepare, {
+            by: "person",
             agentId: deps.agentId,
             projectId: task.project_id,
             reason:
@@ -547,11 +553,11 @@ export async function syncSignoffAnswers(deps: {
   /** Actor of the transitions (the principal agent); the human's id is recorded with it. */
   agentId?: string | null;
   /**
-   * Answering resumes work (design §3.8): Try again, Send it back and Mark done anyway start a
-   * session of the project (or queue one) when a task of it can run. The daemon's scheduler;
-   * absent in a one-shot.
+   * Answering prepares work (d1109-starts-engine S-2, ADR 0118): the work the answer made
+   * runnable joins the project's running session if it fits, else it waits for the person's next
+   * Start; the daemon's `prepareWork`, absent in a one-shot.
    */
-  start?: StartPort;
+  prepare?: PreparePort;
 }): Promise<SignoffSyncResult> {
   const logger = log("findings");
   const { store, clock } = deps;
@@ -693,7 +699,8 @@ export async function syncSignoffAnswers(deps: {
         await recordStart(
           store,
           row.id,
-          await resumeWork(store, deps.start, {
+          await prepareAnswer(deps.prepare, {
+            by: "person",
             agentId: deps.agentId,
             projectId: task.project_id,
             reason:

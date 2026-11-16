@@ -477,7 +477,7 @@ describe("d1109-oversize-pause, run C: Continue's floor, the question at an oute
       agentId: w.agent,
       limitNow: async () => usd(5),
       roomFor: async () => true,
-      start: start as never,
+      prepare: start as never,
     });
     expect(woke).toBe(0);
     expect(starts).toEqual([]);
@@ -518,7 +518,7 @@ describe("d1109-oversize-pause, run C: Continue's floor, the question at an oute
       agentId: w.agent,
       limitNow: async () => usd(5),
       roomFor: async () => true,
-      start: start as never,
+      prepare: start as never,
     });
     expect(
       await store.humanRequest.list({ task_id: task.id, status: "open" } as never),

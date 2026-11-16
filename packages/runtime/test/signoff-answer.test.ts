@@ -467,7 +467,8 @@ describe("critic sign-off answers", () => {
     await s.w.close();
   });
 
-  it("Try again on the retry card: back to ready, the person's note queued for its brief, and a session of the project started (design §3.8)", async () => {
+  // d1109-starts-engine (S-2, ADR 0118): Try again prepares the work; no session starts by itself.
+  it("Try again on the retry card: back to ready, the person's note queued for its brief, and the work prepared for the next Start", async () => {
     const revise = () =>
       submitReply({
         grade: 40,
@@ -488,28 +489,28 @@ describe("critic sign-off answers", () => {
       { choice: request.options[0] as string, note: "Use plain CSS." },
       w.human,
     );
-    const starts: unknown[] = [];
+    const prepared: unknown[] = [];
     expect(
       await syncSignoffAnswers({
         store: w.store,
         clock: w.clock,
         humanId: w.human,
         agentId: w.alice,
-        start: async (req) => {
-          starts.push(req);
-          return { result: "started" };
+        prepare: async (req) => {
+          prepared.push(req);
+          return { outcome: "waits_start", line: "Ready: it runs at your next Start." };
         },
       }),
     ).toEqual({ ...NONE, revised: 1 });
     expect((await w.store.task.mustGet(task.id)).status).toBe("ready");
-    expect(starts).toEqual([
-      expect.objectContaining({ agentId: w.alice, projectId: task.project_id, trigger: "message" }),
+    expect(prepared).toEqual([
+      expect.objectContaining({ agentId: w.alice, projectId: task.project_id, by: "person" }),
     ]);
     const queued = await w.store.queue.list({ project_id: task.project_id } as never);
     expect(queued.map((q) => q.text)).toContain('About "Stubborn task": Use plain CSS.');
     expect(card(await w.store.humanRequest.mustGet(request.id))).toMatchObject({
       outcome: "revise",
-      start: "started",
+      start: "waits_start",
     });
     await w.close();
   });

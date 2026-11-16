@@ -160,7 +160,15 @@ describe("the person's answers reach the task that waited on them (phase C, live
     });
     expect(answered.status).toBe(200);
     expect((await rt.store.task.mustGet(content.id)).status).toBe("done");
-    // Answering resumes work: a session runs the task that waited, and the critic reviews it.
+    // d1109-starts-engine (S-2, ADR 0118): answering prepares the work, it starts no session;
+    // the person's Start runs the task that waited, and the critic reviews it.
+    expect(await rt.store.session.active(rt.agent.id)).toEqual([]);
+    const res = await req("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agentId: rt.agent.id, projectId, trigger: "manual" }),
+    });
+    expect(res.status).toBe(202);
+
     const call = await waitFor(
       async () =>
         fake.calls.find((c) =>

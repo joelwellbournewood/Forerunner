@@ -1733,7 +1733,8 @@ export class LoopTaskExecutor implements TaskExecutor {
         { reason: credentialStop, kind: source?.kind ?? "api_key" },
         task.title,
         next.wait ? { wait: next.wait } : { continuesOn: next.continuesOn ?? "api_key" },
-        words,
+        // S-10: the person's own session goes on after the wait; other work waits for a Start.
+        { ...words, goesOn: personsSession(ctx.session.plan) },
       );
       onEvent({ type: "warning", message: summary });
       return {
@@ -1985,7 +1986,13 @@ export class LoopTaskExecutor implements TaskExecutor {
       await this.noteWait(ctx, wait);
       throw new ForerunnerError(
         "unavailable",
-        waitSentence(wait, { ...(await this.waitWords(ctx)), title: ctx.task.title }),
+        waitSentence(wait, {
+          ...(await this.waitWords(ctx)),
+          title: ctx.task.title,
+          // S-10: a session the person started goes on after the wait; other work waits for
+          // the person's next Start.
+          goesOn: personsSession(ctx.session.plan),
+        }),
         { details: { wait: wait as unknown as JsonValue } },
       );
     }
@@ -2169,8 +2176,9 @@ export class LoopTaskExecutor implements TaskExecutor {
   ): Promise<void> {
     const projectId = ctx.task.project_id;
     if (!projectId || !wait.sourceId || !this.deps.billing?.noteWait) return;
+    // S-10: the session the wait belongs to, so the person's own session can go on with it.
     await this.deps.billing
-      .noteWait(wait.sourceId, projectId, ctx.session.agent_id)
+      .noteWait(wait.sourceId, projectId, ctx.session.agent_id, ctx.session.id)
       .catch((e: unknown) =>
         this.logger.warn("the wait for a credential was not kept", { error: errorMessage(e) }),
       );
@@ -2492,4 +2500,14 @@ function withModeEffort(
 ): Record<Mode, ModeDefault> {
   const table = defaults ?? MODE_DEFAULTS;
   return { ...table, [mode]: { ...table[mode], effort } };
+}
+
+/**
+ * Whether a session is the person's own (S-10): started by the person, or going on with one of
+ * theirs; its work goes on by itself after a credential wait inside it.
+ */
+function personsSession(plan: unknown): boolean {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return false;
+  const by = ((plan as { startedBy?: { by?: unknown } }).startedBy ?? {}).by;
+  return by === "person" || by === "continuation";
 }

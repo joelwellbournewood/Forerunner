@@ -361,6 +361,8 @@ async function applyPlanAnswer(
     agentId: deps.agentId,
     ...(row.project_id ? { projectId: row.project_id } : {}),
     trigger: "message",
+    // S-1 (ADR 0118, amending 0053): Approve and start on a session plan is the person's start.
+    by: "person",
     reason: `plan approved (request ${row.id})`,
     planApproved: planId,
     ...(cap > 0 ? { budgetUsdMicro: cap } : {}),

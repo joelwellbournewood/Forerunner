@@ -159,6 +159,25 @@ async function waitFor<T>(
 
 type Req = Awaited<ReturnType<typeof compose>>["req"];
 
+/**
+ * d1109-starts-engine (S-3, ADR 0118 amending 0112): a raised or reset limit makes the paused
+ * task ready and starts nothing; the person's Start runs it. The tick before it asked for no
+ * session (`before`: the project's sessions then).
+ */
+async function startAfterRaise(
+  req: Req,
+  rt: Awaited<ReturnType<typeof compose>>["rt"],
+  projectId: string,
+  before: number,
+) {
+  expect((await rt.store.session.forProject(projectId)).length).toBe(before);
+  const res = await req("/sessions", {
+    method: "POST",
+    body: JSON.stringify({ agentId: rt.agent.id, projectId, trigger: "manual" }),
+  });
+  expect(res.status, await res.clone().text()).toBe(202);
+}
+
 /** A project with one task (what New task sends), a session on it, run to its end. */
 async function runOne(
   req: Req,
@@ -498,15 +517,15 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
       {
         label: "Open Settings",
         to: "/settings",
-        explain: "Raise it there; the task goes on by itself.",
+        explain: "Raise it there; the task is ready again then.",
       },
     ]);
     expect(String(card?.body)).toMatch(
-      /It goes on by itself once you raise the monthly cap in Settings, or on 1 December\.$/,
+      /Ready again once you raise the monthly cap in Settings, or on 1 December; it runs at your next Start\.$/,
     );
     expect(r.view.display).toMatchObject({
       label: "Paused at this month's cap",
-      detail: "It goes on by itself once that limit is raised or resets; cancel it in the Inbox.",
+      detail: "Ready again once that limit is raised or resets, for your next Start; or cancel it.",
     });
     expect(await rt.store.review.latestForTask(r.taskId)).toBeUndefined();
     expect(r.runs[0]?.outcome).toBe("budget_exceeded");
@@ -526,7 +545,7 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     // Its card offers no Continue (the fixup's bench walk: the result said "continue or cancel
     // it in the Inbox"): it says how the task goes on.
     expect(summary).toContain(
-      '"Members page" paused at this month\'s cap of CHF 0.10: it goes on by itself once that limit is raised or resets.',
+      '"Members page" paused at this month\'s cap of CHF 0.10: it is ready again once that limit is raised or resets, for your next Start.',
     );
     expect(summary).not.toContain("continue or cancel");
     const said = lines(r.events);
@@ -600,7 +619,9 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
       (q) => q.taskId === r.taskId,
     );
     expect(card?.status).toBe("withdrawn");
-    expect(card?.outcome).toBe('"Members map" goes on: its limit has room again.');
+    expect(card?.outcome).toBe(
+      '"Members map" is ready again: its limit has room; it runs at your next Start.',
+    );
   }, 60_000);
 });
 
@@ -683,11 +704,15 @@ describe("a task paused at the project's budget goes on only once that budget ch
       ).json()) as Json;
     expect(result.status, JSON.stringify(result)).toBe("done");
 
-    // The next tick wakes it: its card closes and one session starts and finishes it.
+    // The next tick wakes it: its card closes and it is ready; d1109-starts-engine (S-3): no
+    // session starts until the person's Start, which finishes it.
     await rt.scheduler.tick();
     const after = await cardOf(r.taskId);
     expect(after.map((q) => q.status)).toEqual(["withdrawn"]);
-    expect(after[0]?.outcome).toBe('"Members chart" goes on: its limit has room again.');
+    expect(after[0]?.outcome).toBe(
+      '"Members chart" is ready again: its limit has room; it runs at your next Start.',
+    );
+    await startAfterRaise(req, rt, r.projectId, 1);
     const done = await waitFor(
       async () => {
         const t = await rt.store.task.mustGet(r.taskId);
@@ -749,7 +774,10 @@ describe("a task paused at the project's budget goes on only once that budget ch
       expect(await wake("2026-12-01T00:00:00.000Z")).toBe(1);
       expect((await rt.store.task.mustGet(r.taskId)).status).toBe("ready");
       expect((await cardOf(r.taskId)).map((q) => [q.status, q.outcome])).toEqual([
-        ["withdrawn", '"Members table" goes on: its limit has room again.'],
+        [
+          "withdrawn",
+          '"Members table" is ready again: its limit has room; it runs at your next Start.',
+        ],
       ]);
       // It is left ready, with no session asked for: nothing runs on for the next test.
       await rt.store.task.transition(
@@ -862,7 +890,9 @@ describe("a review refused at the project's budget pauses the task (leftovers of
         })
       ).json()) as Json;
     expect(result.status, JSON.stringify(result)).toBe("done");
+    const before = (await rt.store.session.forProject(r.projectId)).length;
     await rt.scheduler.tick();
+    await startAfterRaise(req, rt, r.projectId, before);
     const sessions = async () => rt.store.session.forProject(r.projectId);
     await waitFor(
       async () => {
@@ -1293,7 +1323,9 @@ describe("w15-review, wave 15", () => {
         })
       ).json()) as Json;
     expect(result.status, JSON.stringify(result)).toBe("done");
+    const before = (await rt.store.session.forProject(projectId)).length;
     await rt.scheduler.tick();
+    await startAfterRaise(req, rt, projectId, before);
     const sessions = async () => rt.store.session.forProject(projectId);
     await waitFor(
       async () => {
@@ -1436,7 +1468,9 @@ describe("w15-words, wave 15 run B", () => {
         })
       ).json()) as Json;
     expect(result.status, JSON.stringify(result)).toBe("done");
+    const before = (await rt.store.session.forProject(r.projectId)).length;
     await rt.scheduler.tick();
+    await startAfterRaise(req, rt, r.projectId, before);
     const sessions = async () => rt.store.session.forProject(r.projectId);
     await waitFor(
       async () => {
@@ -1511,7 +1545,9 @@ describe("w15-words, wave 15 run B", () => {
           })
         ).json()) as Json;
       expect(result.status, JSON.stringify(result)).toBe("done");
+      const before = (await rt.store.session.forProject(r.projectId)).length;
       await rt.scheduler.tick();
+      await startAfterRaise(req, rt, r.projectId, before);
       const id = await waitFor(
         async () => held ?? undefined,
         async () =>
@@ -2060,6 +2096,7 @@ describe("d1109-oversize-pause, run C: a pause at the project's budget that got 
     // this card read as progress (no_progress false).
     await raise(r.projectId, 0.04);
     await rt.scheduler.tick();
+    await startAfterRaise(req, rt, r.projectId, 1);
     await waitFor(
       async () => ((await sessions()) === 2 ? true : undefined),
       async () => `a second session (${await sessions()})`,
@@ -2191,6 +2228,7 @@ describe("d1109-oversize-pause, run C: a pause at the project's budget that got 
     const sessions = async () => (await rt.store.session.forProject(r.projectId)).length;
     await raise(r.projectId, 0.04);
     await rt.scheduler.tick();
+    await startAfterRaise(req, rt, r.projectId, 1);
     await waitFor(
       async () => ((await sessions()) === 2 ? true : undefined),
       async () => `a second session (${await sessions()})`,

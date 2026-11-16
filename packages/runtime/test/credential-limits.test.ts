@@ -228,16 +228,17 @@ describe("a refused API key (U-078)", () => {
     }
     expect(result.failed).toEqual([]);
     // The session ends on one sentence, not a row of failed tasks.
-    expect(result.summary.split("\n")[0]).toBe("Waits for a new API key: save one in Settings.");
+    // d1109-starts-engine (S-10): the person's session waits for its credential, then goes on.
+    expect(result.summary.split("\n")[0]).toBe(
+      "Waits for a new API key: save one in Settings; then your session goes on.",
+    );
 
     // The Inbox: exactly one card, naming the key, and nothing about a failed task.
     const inbox = await json<InboxView>(req("/inbox"));
     const open = inbox.requests.filter((r) => r.status === "open");
     expect(open.map((r) => r.title)).toEqual(["Anthropic refused your API key"]);
     const card = open[0] as HumanRequestView;
-    expect(card.body).toBe(
-      "Save a new one in Settings. The work that needs it waits and starts by itself then.",
-    );
+    expect(card.body).toBe("Save a new one in Settings. The work that needs it waits until then.");
     expect(card.links?.map((l) => [l.label, l.to])).toEqual([["Save a new key", "/setup"]]);
 
     // The Tasks tab: each row says what it waits for.
@@ -423,7 +424,8 @@ describe("a key at its usage limit (U-078)", () => {
     for (const t of [a, b]) expect((await first.rt.store.task.mustGet(t.id)).status).toBe("ready");
     // 15:40 UTC is 16:40 in Zurich.
     expect(result.summary.split("\n")[0]).toBe(
-      "Waits until 16:40 (your API key's limit) and starts by itself.",
+      // d1109-starts-engine (S-10): the person's session goes on by itself at the reset.
+      "Waits until 16:40 (your API key's limit); then your session goes on.",
     );
     // The session page: its badge and its last line say it stopped to wait, not "Stopped: 2 not
     // started"; in the past tense, which stays true once the credential is back (d1109-sessions).
@@ -435,15 +437,15 @@ describe("a key at its usage limit (U-078)", () => {
       )
     ).filter((e) => e.audience !== "detail");
     expect(lines.map((e) => e.text)).toContain(
-      'Your API key reached its usage limit; "Write note A" waits until 16:40 (your API key\'s limit) and starts by itself.',
+      'Your API key reached its usage limit; "Write note A" waits until 16:40 (your API key\'s limit); then your session goes on.',
     );
     expect(lines.at(-1)?.text).toBe(
       "Stopped to wait for a Claude credential: nothing done. CHF 0.00.",
     );
     const rows = await json<TaskView[]>(first.req(`/projects/${project.id}/tasks`));
     expect(rows.map((t) => [t.display?.label, t.display?.detail])).toEqual([
-      ["Waits until 16:40, your API key's limit", "It starts by itself then."],
-      ["Waits until 16:40, your API key's limit", "It starts by itself then."],
+      ["Waits until 16:40, your API key's limit", "Then your session goes on."],
+      ["Waits until 16:40, your API key's limit", "Then your session goes on."],
     ]);
     const order = await json<BillingOrderView>(first.req("/settings/billing-order"));
     expect(order.sources[0]?.blocked).toBe("resting");

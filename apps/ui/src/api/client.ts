@@ -27,6 +27,8 @@ import {
   ConsolidationProposalView as ConsolidationProposalViewSchema,
   type ConsolidationRunView,
   ConsolidationRunView as ConsolidationRunViewSchema,
+  type ContinuationCancelView,
+  ContinuationCancelView as ContinuationCancelViewSchema,
   type ConversationTurnView,
   type ConversationView,
   ConversationView as ConversationViewSchema,
@@ -636,6 +638,11 @@ export interface DaemonClient {
   ): Promise<SessionView[]>;
   /** The start's outcome and, once its run has made it, the session (U-003). */
   startSession(body: StartSessionInput): Promise<StartSessionView>;
+  /**
+   * `POST /projects/:id/continuation/cancel` (d1109-starts-engine S-10): Cancel on the person's
+   * session that waits to go on after its Claude credential; nothing starts at the reset.
+   */
+  cancelContinuation(projectId: string): Promise<ContinuationCancelView>;
   session(id: string, signal?: AbortSignal): Promise<SessionView>;
   sessionEvents(id: string, afterSeq?: number, signal?: AbortSignal): Promise<EventView[]>;
   stopSession(id: string, reason?: string): Promise<SessionView>;
@@ -1112,6 +1119,8 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         signal,
       ),
     startSession: (body) => post(routePath("startSession"), StartSessionViewSchema, body),
+    cancelContinuation: (projectId) =>
+      post(routePath("cancelContinuation", { id: projectId }), ContinuationCancelViewSchema, {}),
     session: (id, signal) =>
       get(routePath("session", { id }), SessionViewSchema, undefined, signal),
     sessionEvents: (id, afterSeq, signal) =>

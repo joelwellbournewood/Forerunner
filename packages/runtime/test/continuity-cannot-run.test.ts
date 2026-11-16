@@ -156,8 +156,8 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
     expect(card.choices).toEqual([
       expect.objectContaining({
         label: "Try again",
-        explain:
-          "Starts a session that tries again; first fix what stopped it (Edit changes who does it).",
+        // d1109-starts-engine (S-9): an answer prepares the work and says what happens next.
+        explain: "Tries again; fix what stopped it first, with Edit; it runs at your next Start.",
         tone: "primary",
       }),
       expect.objectContaining({ label: "Cancel task", tone: "danger" }),
@@ -190,7 +190,9 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
     expect((await rt.store.task.mustGet(taskId)).status).toBe("needs_human");
   }, 120_000);
 
-  it("Try again starts a session; the same refusal files one new card, never two", async () => {
+  // d1109-starts-engine (S-2, ADR 0118): Try again prepares the task; it starts no session. The
+  // person's next Start runs it and meets the same refusal.
+  it("Try again starts nothing and says so; the next Start meets the same refusal and files one new card, never two", async () => {
     const card = (await openCards())[0] as Json;
     const sessionsBefore = (await rt.store.session.list({} as never, { limit: 100 })).length;
     const answered = await req(`/requests/${String(card.id)}/answer`, {
@@ -198,17 +200,11 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
       body: JSON.stringify({ version: card.version, answer: "Try again" }),
     });
     expect(answered.status).toBe(200);
-    // A session started by itself and ran into the same refusal.
-    await waitFor(
-      async () => {
-        const all = await rt.store.session.list({} as never, { limit: 100 });
-        return all.length > sessionsBefore && all.every((s) => s.status !== "running")
-          ? true
-          : undefined;
-      },
-      async () =>
-        `a session after Try again (task ${(await rt.store.task.mustGet(taskId)).status})`,
+    expect((await rt.store.session.list({} as never, { limit: 100 })).length).toBe(sessionsBefore);
+    expect(String((await inbox()).requests.find((r) => r.id === card.id)?.outcome)).toBe(
+      'Trying "Draw the club\'s logo" again: it runs at your next Start.',
     );
+    await runSession();
     await waitFor(
       async () => ((await openCards()).length === 1 ? true : undefined),
       async () => `one open card (${(await openCards()).length})`,
@@ -217,8 +213,8 @@ describe("a task a run leaves waiting without asking gets one card (live walk 4)
     expect(again).toHaveLength(1);
     expect(again[0]?.id).not.toBe(card.id);
     const old = (await inbox()).requests.find((r) => r.id === card.id);
-    expect(String(old?.outcome)).toMatch(
-      /^Trying "Draw the club's logo" again: (a session started|it runs after the current session)\.$/,
+    expect(String(old?.outcome)).toBe(
+      'Trying "Draw the club\'s logo" again: it runs at your next Start.',
     );
   }, 60_000);
 

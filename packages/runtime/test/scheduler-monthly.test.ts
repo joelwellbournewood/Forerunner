@@ -297,3 +297,120 @@ describe("scheduler: monthly kind", () => {
     await expect(t.tick()).resolves.toBeUndefined();
   });
 });
+
+describe("d1109-starts-engine, run C: who asked holds or runs a start in quiet hours (S-1)", () => {
+  const ask = (by: StartRequest["by"], over: Partial<StartRequest> = {}): StartRequest => ({
+    agentId: "alice",
+    projectId: "p1",
+    trigger: by === "person" ? "manual" : "message",
+    reason: `by ${by}`,
+    by,
+    ...over,
+  });
+
+  it("a start by the person runs at once in quiet hours; hands_off, continuation and schedule are held", async () => {
+    const clock = new SimulatedClock("2026-11-03T02:00:00Z");
+    const started: string[] = [];
+    const s = new Scheduler({
+      clock,
+      start: async (req) => void started.push(req.reason),
+      isQuietHours: () => true,
+    });
+    // A person's start through any trigger (the Start button, chat's yes) is never held.
+    expect(await s.request(ask("person", { trigger: "message" }))).toBe("started");
+    for (const by of ["hands_off", "continuation", "schedule"] as const) {
+      const entry = await s.requestStart(ask(by, { agentId: `agent-${by}` }));
+      expect(entry.result).toBe("deferred");
+    }
+    expect(started).toEqual(["by person"]);
+    // An old request without `by`: a press is the person's, a CI trigger is held.
+    expect(await s.request({ agentId: "bob", trigger: "manual", reason: "old press" })).toBe(
+      "started",
+    );
+    expect(await s.request({ agentId: "carol", trigger: "ci", reason: "old ci" })).toBe("deferred");
+  });
+
+  it("a person's start and a continuation are each kept while the same automatic start is kept once", async () => {
+    const clock = new SimulatedClock("2026-11-03T12:00:00Z");
+    let release: () => void = () => undefined;
+    const s = new Scheduler({
+      clock,
+      start: () => new Promise<void>((r) => (release = r)),
+    });
+    await s.request(ask("person", { projectId: "busy" }));
+    await s.request(ask("person", { projectId: "p1" }));
+    await s.request(ask("person", { projectId: "p1" }));
+    await s.request(ask("continuation", { projectId: "p2", continues: "s1" }));
+    await s.request(ask("continuation", { projectId: "p2", continues: "s1" }));
+    await s.request(ask("hands_off", { projectId: "p3" }));
+    await s.request(ask("hands_off", { projectId: "p3" }));
+    expect(s.pendingStarts("alice").map((e) => e.req.by)).toEqual([
+      "person",
+      "person",
+      "continuation",
+      "continuation",
+      "hands_off",
+    ]);
+    release();
+  });
+
+  it("a monthly job due inside quiet hours writes its fired key only when it starts, once", async () => {
+    const clock = new SimulatedClock("2026-11-01T06:30:00Z");
+    const started: string[] = [];
+    let quiet = true;
+    const keys = seenBefore();
+    const s = new Scheduler({
+      clock,
+      start: async (req) => void started.push(req.reason),
+      isQuietHours: () => quiet,
+      fired: keys,
+    });
+    s.add(monthly());
+    await s.tick();
+    await s.tick();
+    expect(started).toHaveLength(0);
+    // Held: the month is not marked fired while quiet hours hold its start.
+    expect(keys.get("m")).toBe("");
+    expect(s.pendingStarts("job")).toHaveLength(1);
+    expect(s.pendingStarts("job")[0]?.req.by).toBe("schedule");
+    quiet = false;
+    await s.tick();
+    expect(started).toEqual([`monthly on day 1 at 06:00 ${TZ}`]);
+    expect(keys.get("m")).toBe("2026-11");
+    await s.tick();
+    expect(started).toHaveLength(1);
+  });
+
+  it("a monthly job held by quiet hours runs exactly once after them, across two restarts inside them", async () => {
+    const dir = mkdtempSync(join(os.tmpdir(), "fr-quiet-fired-"));
+    temps.push(dir);
+    const file = join(dir, "scheduler-fired.json");
+    fileFiredKeys(file).set("m", "");
+    const clock = new SimulatedClock("2026-11-01T06:30:00Z");
+    const started: string[] = [];
+    let quiet = true;
+    const boot = () => {
+      const s = new Scheduler({
+        clock,
+        start: async (req) => void started.push(req.reason),
+        isQuietHours: () => quiet,
+        fired: fileFiredKeys(file),
+      });
+      s.add(monthly());
+      return s;
+    };
+    // Inside quiet hours: the first process holds it and quits; so does a second.
+    await boot().tick();
+    await clock.advance(600_000);
+    await boot().tick();
+    expect(started).toHaveLength(0);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ m: "" });
+    // After them, a third process runs it once; a fourth does not run it again.
+    quiet = false;
+    await clock.advance(3_600_000);
+    await boot().tick();
+    await boot().tick();
+    expect(started).toEqual([`monthly on day 1 at 06:00 ${TZ}`]);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ m: "2026-11" });
+  });
+});

@@ -180,7 +180,8 @@ export async function credentialWaitRow(
   const rows = await store.billingSource.list({}, { limit: 100 }).catch(() => []);
   const now = store.clock.now();
   for (const row of rows) {
-    if (!waitingOf(row.limits).some((w) => w.projectId === projectId)) continue;
+    const entry = waitingOf(row.limits).find((w) => w.projectId === projectId);
+    if (!entry) continue;
     const limits = row.limits as { restingUntil?: unknown; refusedAt?: unknown };
     const until =
       typeof limits.restingUntil === "string" && Date.parse(limits.restingUntil) > now
@@ -196,7 +197,12 @@ export async function credentialWaitRow(
         kind: row.kind as BillingSourceKind,
         until,
       },
-      { ...(human?.timezone ? { timezone: human.timezone } : {}), nowMs: now },
+      {
+        ...(human?.timezone ? { timezone: human.timezone } : {}),
+        nowMs: now,
+        // S-10: the person's session waits to go on (a kept continuation or start).
+        goesOn: !!entry.kept,
+      },
     );
   }
   return null;

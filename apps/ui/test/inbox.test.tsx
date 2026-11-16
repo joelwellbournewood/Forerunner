@@ -83,7 +83,7 @@ describe("Inbox", () => {
       "Anthropic refused your API key",
     );
     expect(within(card).getByTestId("request-body")).toHaveTextContent(
-      "Save a new one in Settings. The work that needs it waits and starts by itself then.",
+      "Save a new one in Settings. The work that needs it waits until then.",
     );
     // Nothing to answer: no options and no text box, one link to where a new key is pasted.
     expect(within(card).queryAllByTestId("option")).toHaveLength(0);
@@ -173,7 +173,7 @@ describe("Inbox", () => {
     expect(options.map((o) => o.textContent)).toEqual(["Merge", "Redo"]);
     expect(card).not.toHaveTextContent("I merged it");
     expect(card).toHaveTextContent("Merges #8 as it is now, as Merge on the Overview does.");
-    expect(card).toHaveTextContent("The task is done again from main; a session starts for it.");
+    expect(card).toHaveTextContent("The task is done again from main; it runs at your next Start.");
     await user.click(within(card).getByRole("button", { name: "Merge" }));
     await waitFor(() =>
       expect(postedCalls(harness, "/requests/req_rebuilt/answer")[0]?.body).toEqual({
@@ -228,7 +228,7 @@ describe("Inbox", () => {
     const options = within(card).getAllByTestId("option");
     expect(options.map((o) => o.textContent)).toEqual(["Redo", "Leave it open"]);
     expect(card).not.toHaveTextContent("I merged it");
-    expect(card).toHaveTextContent("The task is done again from main; a session starts for it.");
+    expect(card).toHaveTextContent("The task is done again from main; it runs at your next Start.");
     expect(card).toHaveTextContent("Closes this card; the pull request stays open on GitHub.");
     await user.click(within(card).getByRole("button", { name: "Redo" }));
     await waitFor(() =>

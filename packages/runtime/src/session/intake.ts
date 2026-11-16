@@ -96,7 +96,7 @@ import {
   SMALL_PLAN_MAX_TASKS,
   shapeProjectPlan,
 } from "./project-plan.ts";
-import { recordStart, resumeWork, type StartPort } from "./resume-work.ts";
+import { recordStart, type StartPort, startForPerson } from "./resume-work.ts";
 import { failureWords } from "./task-context.ts";
 
 /**
@@ -2241,11 +2241,12 @@ export class IntakeService {
           ...written,
         });
         // "Approve and start" (design §3.3): the first session of the approved plan starts now
-        // (or after the session that runs); the card records it for its Done line.
+        // (or after the session that runs), as the person's own start (S-1, ADR 0118); the card
+        // records it for its Done line.
         await recordStart(
           store,
           row.id,
-          await resumeWork(store, this.deps.start, {
+          await startForPerson(store, this.deps.start, {
             agentId: this.deps.agent.id,
             projectId: project.id,
             reason: "you approved the plan",

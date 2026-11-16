@@ -3009,6 +3009,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!s) return errorBody(c, 404, "not_found", "no such session");
     return c.json({ sessionId: id, projectId: s.projectId, tasks: state.sessionTasks[id] ?? [] });
   });
+  // d1109-starts-engine (S-10), as the daemon: Cancel on a session that waits to go on after its
+  // Claude credential. The fake keeps no credential waits, so none waits.
+  app.post("/projects/:id/continuation/cancel", (c) => {
+    const project = state.projects.find((p) => p.id === c.req.param("id"));
+    if (!project) return errorBody(c, 404, "not_found", "no such project");
+    return c.json({ cancelled: false, sentence: "Nothing waits to go on for this project." });
+  });
+
   app.post("/sessions", async (c) => {
     const parsed = StartSessionBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);

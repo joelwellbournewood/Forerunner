@@ -1,4 +1,4 @@
-import type { PricingTable } from "@forerunner/billing";
+import { formatChf, type PricingTable } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
 // The module path, not the package index: the index imports this package back (a cycle).
 import { AUTONOMY_NAMES, type AutonomyLevel } from "@forerunner/runtime/enforcement/autonomy";
@@ -22,6 +22,7 @@ import type { HumanRow, JsonValue, ProjectRow } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
 import type { CommandContext, CommandDef, Risk } from "../types.ts";
+import { sessionBudgetOf } from "./budget.ts";
 import {
   asObject,
   authorOf,
@@ -79,6 +80,11 @@ export interface SettingSpec {
    * the shape alone does not say how a person's words map to it ('sites': only and never).
    */
   examples?: JsonValue[];
+  /**
+   * d1109-starts-engine (S-5, ADR 0118): only the person sets it (the app's Settings, or chat
+   * and voice with their yes); a change an agent asks for is refused in words.
+   */
+  personOnly?: boolean;
 }
 
 /** What an effect sentence may read besides the value: the prices in force (ADR 0057). */
@@ -87,6 +93,8 @@ export interface SettingEffectContext {
   pricing?: PricingTable;
   /** CHF per USD at the day's rate (`CommandPorts.chfPerUsd`); absent: the default rate. */
   chfPerUsd?: number;
+  /** A per-project key's project: its name and its session cap in CHF (S-5's effect line). */
+  project?: { name: string; sessionCapChfMicro: number };
 }
 
 /**
@@ -273,6 +281,24 @@ export function speedQualityEffect(value: JsonValue): string {
     : value === 1
       ? SPEED_QUALITY_EFFECT.quality
       : SPEED_QUALITY_EFFECT.balanced;
+}
+
+/** The project's "When work is ready" key (S-5): `true` starts a session by itself. */
+export const START_BY_ITSELF_SETTING = "start_by_itself";
+
+/**
+ * What "When work is ready" changes (S-5), for the yes and the change log: on, "Sessions of
+ * Quote page will start by themselves when work you made ready can run, up to CHF 5.00 each.
+ * Never in your quiet hours or while sessions are stopped."; off, they wait for your Start.
+ */
+export function startByItselfEffect(
+  on: boolean,
+  project?: { name: string; sessionCapChfMicro: number },
+): string {
+  const of = project ? ` of ${project.name}` : "";
+  if (!on) return `sessions${of} start only when you press Start`;
+  const cap = project ? `, up to ${formatChf(project.sessionCapChfMicro)} each` : "";
+  return `sessions${of} will start by themselves when work you made ready can run${cap}. Never in your quiet hours or while sessions are stopped`;
 }
 
 export const SETTING_SPECS: Record<string, SettingSpec> = {
@@ -595,6 +621,28 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
         : "no monthly handover test runs on the project";
     },
   },
+  // d1109-starts-engine (S-5, ADR 0118; the owner, 2026-11-09: "Only when you say so is the
+  // default with the hands-off setting optional. Yes, that sounds good."): "When work is ready"
+  // per project, off unless set (no migration: absent is off). On, a session starts by itself
+  // when work the person or a raised limit made ready can run, with the project's session cap,
+  // never in quiet hours or while sessions are stopped, never for the agent's own tasks; CI
+  // results and pull request comments start none either (the owner's answer 9). Turning it on
+  // asks a yes; turning it off acts at once. Only the person sets it. C3's d1109-chat-depth
+  // appends chat_ask_above after this key, C5's d1109-cred-engine credential_policy after that.
+  [START_BY_ITSELF_SETTING]: {
+    key: START_BY_ITSELF_SETTING,
+    label: "when work is ready",
+    scope: "project",
+    risk: "medium",
+    schema: z.boolean(),
+    narrows: (to) => to !== true,
+    narrowingActsAtOnce: true,
+    personOnly: true,
+    description:
+      "When work is ready: false (the default) waits for the person's Start; true starts a session by itself when work the person made ready can run, never in quiet hours or while sessions are stopped, never for the agent's own tasks. Only the person sets it.",
+    display: (value) => (value === true ? "Start a session by itself" : "Wait for my Start"),
+    effect: (value, ctx) => startByItselfEffect(value === true, ctx.project),
+  },
 };
 
 /** The risk of setting `value` on the key: its `riskFor` when it has one, else its `risk`. */
@@ -797,9 +845,22 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
   const parsed = spec.schema.safeParse(p.value);
   if (!parsed.success) throw refusalOf(spec, parsed.error.issues);
   const human = await ctx.store.human.mustGet(ctx.humanId);
-  const effect = spec.effect?.(parsed.data, await effectContext(spec, ctx));
   if (spec.scope === "project") {
     const { project, usedActive } = await resolveProject(ctx, p.project);
+    // S-5: a person-only key changed by an agent (D7's own work) is refused in words.
+    if (spec.personOnly && ctx.actor.kind === "agent")
+      throw new ForerunnerError(
+        "validation",
+        `Only you can change ${spec.label} for ${project.name}.`,
+        { details: { key: spec.key, cause: "person_only" } },
+      );
+    const effect = spec.effect?.(parsed.data, {
+      ...(await effectContext(spec, ctx)),
+      project: {
+        name: project.name,
+        sessionCapChfMicro: (await sessionBudgetOf(project, ctx)).chfMicro,
+      },
+    });
     const current = spec.column
       ? ((project[spec.column as keyof ProjectRow] as JsonValue | undefined) ?? null)
       : spec.currentOf
@@ -816,6 +877,7 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
       effect,
     };
   }
+  const effect = spec.effect?.(parsed.data, await effectContext(spec, ctx));
   const current = spec.column
     ? ((human[spec.column as keyof HumanRow] as JsonValue | undefined) ?? null)
     : (human.notify_prefs[spec.key] ?? null);

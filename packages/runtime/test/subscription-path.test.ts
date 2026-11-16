@@ -570,7 +570,7 @@ describe("the subscription path (ADR 0044)", () => {
         const [view] = await requestViews(rt.store, cards);
         expect(view?.title).toBe("Anthropic refused your Claude sign-in");
         expect(view?.body).toBe(
-          "Save a new one in Settings. The work that needs it waits and starts by itself then.",
+          "Save a new one in Settings. The work that needs it waits until then.",
         );
         expect(view?.links?.[0]?.label).toBe("Save a new sign-in");
         // A task pick under 'Wait' waits for the sign-in; a non-task pick (chat, planning,

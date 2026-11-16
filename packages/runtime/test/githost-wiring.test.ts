@@ -114,7 +114,7 @@ describe("the git host poller in the composed daemon", () => {
     expect(DEFAULT_GITHOST_POLL_MS).toBe(60_000);
   });
 
-  it("polls on the clock: the baseline, then a failed check fires ci through the scheduler", async () => {
+  it("polls on the clock: the baseline, then a failed check is audited and waits for the person's Start (ADR 0118)", async () => {
     const cursor = join(home, "data", "githost", `cursor-${rt.agent.id}.json`);
     await clock.advance(1_000);
     await until(() => existsSync(cursor));
@@ -131,20 +131,28 @@ describe("the git host poller in the composed daemon", () => {
       await clock.advance(1_000);
       return (await triggerAudits()).length > 0;
     });
-    const fired = rt.scheduler.log.filter((e) => e.req.trigger === "ci");
-    expect(fired).toHaveLength(1);
-    expect(fired[0]?.req).toMatchObject({
-      agentId: rt.agent.id,
-      projectId,
-      reason: `reviewer/app#1 check "unit-tests" failure`,
-    });
+    // S-4 (d1109-starts-engine): a CI result starts no session; it is audited as waiting for
+    // the next session the person starts.
+    const rows = (await triggerAudits()).filter((x) => x.input_summary.startsWith("ci: "));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.input_summary).toBe(`ci: reviewer/app#1 check "unit-tests" failure`);
+    expect(JSON.parse(rows[0]?.result_summary ?? "{}")).toMatchObject({ outcome: "waits_start" });
+    expect(rt.scheduler.log.filter((e) => e.req.trigger === "ci")).toEqual([]);
+    // What the check says waits in the agent's inbox, on its project, for the next session.
+    const ciMsg = (await rt.store.message.inbox({ agentId: rt.agent.id })).find((m) =>
+      m.body.includes('check "unit-tests" concluded failure'),
+    );
+    expect(ciMsg?.project_id).toBe(projectId);
     // The same check never fires again.
     await clock.advance(1_000);
     await clock.advance(1_000);
-    expect(rt.scheduler.log.filter((e) => e.req.trigger === "ci")).toHaveLength(1);
+    expect((await triggerAudits()).filter((x) => x.input_summary.startsWith("ci: "))).toHaveLength(
+      1,
+    );
+    expect(rt.scheduler.log).toEqual([]);
   });
 
-  it("defers in the human's quiet hours, then a flagged comment fires pr_comment and is audited", async () => {
+  it("defers in the human's quiet hours, then a flagged comment is audited and starts nothing", async () => {
     // 08:00Z is 10:00 in Zurich: a window around it holds the PRs.
     await rt.store.human.patch(rt.human.id, {
       notify_prefs: { quiet_hours: { start: "09:00", end: "18:00" } },
@@ -159,12 +167,19 @@ describe("the git host poller in the composed daemon", () => {
     expect(rt.scheduler.log.filter((e) => e.req.trigger === "pr_comment")).toEqual([]);
 
     await rt.store.human.patch(rt.human.id, { notify_prefs: {} });
+    const commentRows = async () =>
+      (await triggerAudits()).filter((x) => x.input_summary.startsWith("pr_comment: "));
     await until(async () => {
       await clock.advance(1_000);
-      return rt.scheduler.log.some((e) => e.req.trigger === "pr_comment");
+      return (await commentRows()).length > 0;
     });
-    const entry = rt.scheduler.log.find((e) => e.req.trigger === "pr_comment");
-    expect(entry?.req.reason).toBe("reviewer/app#1 comment by @reviewer (flagged)");
+    const row = (await commentRows())[0];
+    expect(row?.input_summary).toBe("pr_comment: reviewer/app#1 comment by @reviewer (flagged)");
+    expect(JSON.parse(row?.result_summary ?? "{}")).toMatchObject({
+      outcome: "waits_start",
+      flagged: true,
+    });
+    expect(rt.scheduler.log.filter((e) => e.req.trigger === "pr_comment")).toEqual([]);
     const flaggedRows = await rt.store.auditLog.list({ tool: INJECTION_FLAGGED_AUDIT } as never);
     expect(flaggedRows.some((x) => x.input_summary.startsWith("githost: memory://"))).toBe(true);
     const inbox = await rt.store.message.inbox({ agentId: rt.agent.id });
@@ -176,7 +191,7 @@ describe("the git host poller in the composed daemon", () => {
 
   it("stops on close", async () => {
     const w = rt.githostWatcher;
-    // The sessions the triggers started end first (the scripted reply), then the daemon closes.
+    // No session runs (the events wait for the person's Start); the daemon closes.
     await until(async () => {
       await clock.advance(1_000);
       return !rt.scheduler.isActive(rt.agent.id) && !rt.scheduler.pendingFor(rt.agent.id);

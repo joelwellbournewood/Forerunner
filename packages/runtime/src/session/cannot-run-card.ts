@@ -8,7 +8,8 @@ import type {
 } from "@forerunner/state";
 import { ANSWER_CARD_KEYS, cannotRunAnswer } from "../wiring/request-answers.ts";
 import { unappliedAnswers } from "./findings.ts";
-import { recordStart, resumeWork, type StartPort } from "./resume-work.ts";
+import type { PreparePort } from "./prepared-work.ts";
+import { prepareAnswer, recordStart } from "./resume-work.ts";
 
 /**
  * Every task a run leaves waiting for the person has one card (live walk 4, problem 1; design
@@ -153,8 +154,12 @@ export async function syncCannotRunAnswers(deps: {
   clock: Clock;
   humanId: string;
   agentId: string;
-  /** Answering resumes work (design §3.8): the daemon's scheduler; absent in a one-shot. */
-  start?: StartPort;
+  /**
+   * Answering prepares work (d1109-starts-engine S-2, ADR 0118): the work the answer made
+   * runnable joins the project's running session if it fits, else it waits for the person's next
+   * Start; the daemon's `prepareWork`, absent in a one-shot.
+   */
+  prepare?: PreparePort;
 }): Promise<CannotRunSyncResult> {
   const logger = log("cannot-run-card");
   const { store, clock } = deps;
@@ -187,7 +192,8 @@ export async function syncCannotRunAnswers(deps: {
         await recordStart(
           store,
           row.id,
-          await resumeWork(store, deps.start, {
+          await prepareAnswer(deps.prepare, {
+            by: "person",
             agentId: deps.agentId,
             projectId: task.project_id,
             reason: `you asked to try "${task.title}" again`,

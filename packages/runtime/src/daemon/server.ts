@@ -101,6 +101,7 @@ import {
   type CommandSourceBody,
   type ConsolidationProposalView,
   type ConsolidationRunView,
+  type ContinuationCancelView,
   type ConversationView,
   CreateProjectBody,
   CreateTaskBody,
@@ -1604,8 +1605,49 @@ export function createDaemonApp(
   // The start dialog opens the session it started (U-003): a started run is waited for until its
   // `session.started` (its row exists then), its end, or SESSION_START_WAIT_MS. A run that fails
   // before its session begins (the kill switch, no model credential) answers that error.
+  // d1109-starts-engine (S-10, ADR 0118): Cancel on the person's session that waits to go on
+  // after its Claude credential (or a Start kept for the reset): nothing starts at the reset; the
+  // tasks wait for the next Start.
+  app.post("/projects/:id/continuation/cancel", async (c) => {
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    const cancelled = await rt.continuations.cancel(project.id);
+    const view: ContinuationCancelView = {
+      cancelled,
+      sentence: cancelled
+        ? "Cancelled: nothing goes on by itself; its tasks run at your next Start."
+        : "Nothing waits to go on for this project.",
+    };
+    rt.events.emit("project", { id: project.id });
+    return c.json(view);
+  });
+
   app.post("/sessions", async (c) => {
     const body = await parse(c, StartSessionBody);
+    // S-10: a session's Continue goes on with the ended session: the rest of its promise and of
+    // its budget (its cap less its booked spend), never more; refused when nothing is left.
+    if (body.continues) {
+      const earlier = await rt.store.session.mustGet(body.continues);
+      const left = earlier.budget_cap_usd_micro - earlier.spent_usd_micro;
+      if (left <= 0)
+        throw new ForerunnerError(
+          "validation",
+          "That session used its whole budget: start a new one to go on.",
+          { details: { cause: "nothing_left", sessionId: earlier.id } },
+        );
+      body.projectId ??= earlier.project_id ?? undefined;
+      body.budgetUsdMicro = left;
+    }
+    // S-10: one wait per project: while the person's session waits to go on (or a Start was kept
+    // for the reset), a Start keeps nothing new and starts nothing; it says when it goes on. The
+    // wake runs first, so a stop that has ended goes on now.
+    if (body.projectId) {
+      if (await rt.continuations.waiting(body.projectId)) await rt.billing.waits.wake();
+      const waits = await rt.continuations.waiting(body.projectId);
+      if (waits)
+        throw new ForerunnerError("claim_conflict", waits, {
+          details: { cause: "continuation_waits", projectId: body.projectId },
+        });
+    }
     // W15B-02: a removed project (its creation undone) starts nothing: refused at once in one
     // sentence, before the scheduler is asked, so no session row is made (`startSession`
     // refuses any other start of it too).
@@ -1655,6 +1697,10 @@ export function createDaemonApp(
         agentId: body.agentId,
         projectId: body.projectId,
         trigger: body.trigger,
+        // S-1: the person pressed Start (the app, the palette, the phone): it runs inside quiet
+        // hours too, and the session's plan says who asked.
+        by: "person",
+        ...(body.continues ? { continues: body.continues } : {}),
         reason: body.reason ?? "started from the app",
         ...(body.note?.trim() ? { note: body.note.trim() } : {}),
         ...(body.budgetUsdMicro ? { budgetUsdMicro: body.budgetUsdMicro } : {}),
@@ -1869,6 +1915,8 @@ export function createDaemonApp(
     const report = await rt.kill.stop(body.scope, body.reason ?? STOP_ALL_REASON, {
       by: "stop_all",
     });
+    // S-10 (ADR 0118): Stop all drops every session kept to go on after its credential wait.
+    await rt.continuations.dropAll().catch(() => undefined);
     const killActive = rt.kill.isFrozen({ agentId: rt.agent.id });
     // The sessions it ended go with the request, so Continue where it stopped starts those
     // again after a restart too (later #60).

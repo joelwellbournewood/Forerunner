@@ -249,11 +249,21 @@ describe("session commands over the scheduler", () => {
       isQuietHours: () => true,
     });
     const quietPorts = sessionCommandPorts({ scheduler: quiet, kill, store });
-    const night = await quietPorts.startSession?.({
+    // d1109-starts-engine (S-1): the registry's session.start is the person's own start and runs
+    // inside quiet hours; a deferred start is one nobody pressed (a schedule).
+    await quietPorts.startSession?.({
+      agentId: "carol",
+      trigger: "manual",
+      reason: "pressed at night",
+    });
+    expect(quiet.log.find((e) => e.req.agentId === "carol")?.result).toBe("started");
+    const deferred = await quiet.requestStart({
       agentId: "bob",
       trigger: "schedule",
+      by: "schedule",
       reason: "night",
     });
+    const night = { sessionId: undefined, startId: deferred.id, outcome: deferred.result };
     expect(night).toEqual({
       sessionId: undefined,
       startId: quiet.pendingStart("bob")?.id,

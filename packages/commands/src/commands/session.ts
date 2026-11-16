@@ -108,6 +108,18 @@ async function refuseBlockedStart(s: StartPlan, ctx: CommandContext): Promise<vo
 }
 
 /**
+ * S-10 (ADR 0118): one wait per project: while the person's session waits to go on after its
+ * Claude credential (or a Start was kept for the reset), a start keeps nothing new and starts
+ * nothing; it says when that session goes on, with no read-back.
+ */
+async function refuseWhileWaiting(s: StartPlan, ctx: CommandContext): Promise<void> {
+  if (s.remote) return;
+  const waits = await ctx.ports.startWaits?.(s.resolved.project.id);
+  if (waits)
+    throw new ForerunnerError("validation", waits, { details: { cause: "continuation_waits" } });
+}
+
+/**
  * The start as one question for the read-back (design §5, "Chat read-back"). D4
  * (d1109-oversize-start): when the session would take a task larger than its work budget, the
  * Start dialog's warning follows ('Start a session on Shop (up to CHF 5.00)? "Build the shop"
@@ -134,9 +146,14 @@ async function startWarningOf(s: StartPlan, ctx: CommandContext): Promise<string
 
 export const sessionStart: CommandDef<SessionStartParams> = {
   name: "session.start",
+  // d1109-starts-engine (S-11, ADR 0118): model-facing text, asserted as the model receives it.
   description:
-    "Start a work session for the principal agent on a project, on the PC or the cloud runner, with an optional budget in CHF.",
+    "Start a work session now on the person's say-so, on a project, on the PC or the cloud runner, with an optional budget in CHF; read back for their yes. Answers and task changes never start one.",
   params: startParams,
+  // S-11 (the owner: "the user clearly states when a session will run"): a start said in chat or
+  // voice is read back for the person's yes at any budget, whether the parser or the chat model
+  // asked for it ("ok" or "sounds good" read by a model is not the person saying when).
+  askFromChat: true,
   risk: async (p, ctx) => {
     const s = await startPlan(p, ctx);
     return s.budgetUsd > (ctx.ports.costlySessionUsdMicro ?? DEFAULT_COSTLY_SESSION_USD_MICRO)
@@ -150,6 +167,7 @@ export const sessionStart: CommandDef<SessionStartParams> = {
   actionClass: "non_routine",
   async plan(p, ctx) {
     const s = await startPlan(p, ctx);
+    await refuseWhileWaiting(s, ctx);
     // A start that would do nothing is refused before any card is shown: the chat says why at
     // once, as the Start dialog does, instead of a Yes/No for a start that cannot happen (review
     // of fix/chat). `run` checks again: the state may change while a card waits.
@@ -177,6 +195,7 @@ export const sessionStart: CommandDef<SessionStartParams> = {
   async run(p, ctx): Promise<CommandOutcome> {
     const s = await startPlan(p, ctx);
     const agentId = needAgent(ctx);
+    await refuseWhileWaiting(s, ctx);
     await refuseBlockedStart(s, ctx);
     const reason = p.reason ?? `${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`;
     if (s.remote) {
@@ -250,11 +269,9 @@ export const sessionStart: CommandDef<SessionStartParams> = {
             ? outcome
             : undefined,
         ),
-        // D4: a start below the costly line is not read back first, so its warning comes with
-        // what happened; a costly one said it in its read-back (`startAsk`).
-        s.budgetUsd > (ctx.ports.costlySessionUsdMicro ?? DEFAULT_COSTLY_SESSION_USD_MICRO)
-          ? null
-          : await startWarningOf(s, ctx),
+        // D4: a start said in chat or voice said its warning in its read-back (`startAsk`, S-11:
+        // every one is read back); one from the app's palette or the phone hears it now.
+        ctx.source === "chat" || ctx.source === "voice" ? null : await startWarningOf(s, ctx),
       ),
       projectId: s.resolved.project.id,
     };

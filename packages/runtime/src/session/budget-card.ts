@@ -12,7 +12,8 @@ import { ANSWER_CARD_KEYS, answerNote, budgetStopAnswer } from "../wiring/reques
 import type { BudgetStopSource, RunHandoff } from "./budget-pause.ts";
 import { unappliedAnswers } from "./findings.ts";
 import { moneyWords } from "./money-words.ts";
-import { noteAboutTask, recordStart, resumeWork, type StartPort } from "./resume-work.ts";
+import type { PreparePort, PrepareResult } from "./prepared-work.ts";
+import { noteAboutTask, recordStart, type StartPort, startForPerson } from "./resume-work.ts";
 import type { BudgetStop } from "./runner.ts";
 
 /**
@@ -392,10 +393,12 @@ export async function syncBudgetStopAnswers(deps: {
         });
         await finish("continue", { budget_usd_micro: budget, continued_usd_micro: more });
         out.continued++;
+        // Continue is the person's own start (S-1, ADR 0118 amending 0112), with the card's
+        // budget for a session's pause.
         await recordStart(
           store,
           row.id,
-          await resumeWork(store, deps.start, {
+          await startForPerson(store, deps.start, {
             agentId: deps.agentId,
             projectId: task.project_id,
             reason: outer
@@ -494,8 +497,25 @@ export async function wakeBudgetWaits(deps: {
    * asked only once the limit changed (the caps read again, not from a minute's cache).
    */
   roomFor: (projectId: string) => Promise<boolean>;
-  start?: StartPort;
+  /**
+   * d1109-starts-engine (S-3, ADR 0118 amending 0112): the work made ready again is prepared, by
+   * the system: it joins the project's running session if it fits, else it waits for the
+   * person's next Start (or the hands-off setting starts a session). A raised or reset limit
+   * starts nothing by itself. Absent: a one-shot, nothing more happens.
+   */
+  prepare?: PreparePort;
 }): Promise<number> {
+  return (await wakeBudgetWaitsDetailed(deps)).wentOn;
+}
+
+/** `wakeBudgetWaits` with what was made ready and what the prepared work answered, per project. */
+export async function wakeBudgetWaitsDetailed(
+  deps: Parameters<typeof wakeBudgetWaits>[0],
+): Promise<{
+  wentOn: number;
+  /** Per project: the tasks made ready again and the prepared work's answer. */
+  prepared: { projectId: string; taskIds: string[]; result: PrepareResult | null }[];
+}> {
   const { store, clock } = deps;
   const cards = (await store.humanRequest.open({ humanId: deps.humanId }, { limit: 500 })).filter(
     (r) => {
@@ -508,7 +528,7 @@ export async function wakeBudgetWaits(deps: {
     },
   );
   let wentOn = 0;
-  const projects = new Set<string>();
+  const projects = new Map<string, string[]>();
   for (const row of cards) {
     const card = (row.change_card ?? {}) as JsonObject;
     const task = row.task_id ? await store.task.get(row.task_id) : undefined;
@@ -551,7 +571,7 @@ export async function wakeBudgetWaits(deps: {
         "its limit has room again: it continues from where it stopped",
         { agentId: deps.agentId },
       );
-      projects.add(task.project_id);
+      projects.set(task.project_id, [...(projects.get(task.project_id) ?? []), task.id]);
       wentOn++;
     } catch (e) {
       log("budget-card").warn("a paused task did not go on", {
@@ -560,13 +580,38 @@ export async function wakeBudgetWaits(deps: {
       });
     }
   }
-  for (const projectId of projects)
-    await resumeWork(store, deps.start, {
-      agentId: deps.agentId,
+  const prepared: { projectId: string; taskIds: string[]; result: PrepareResult | null }[] = [];
+  for (const [projectId, taskIds] of projects)
+    prepared.push({
       projectId,
-      reason: "a limit a task paused at has room again",
+      taskIds,
+      result: deps.prepare
+        ? await deps.prepare({
+            agentId: deps.agentId,
+            projectId,
+            taskIds,
+            reason: "a limit a task paused at has room again",
+            by: "system",
+          })
+        : null,
     });
-  return wentOn;
+  return { wentOn, prepared };
+}
+
+/**
+ * The line a raise of a limit says about the tasks it made ready again (S-3): "1 paused task is
+ * ready again: it runs at your next Start."; null when none was.
+ */
+export function wokenLine(woken: number, result: PrepareResult | null | undefined): string | null {
+  if (woken <= 0) return null;
+  const what =
+    woken === 1 ? "1 paused task is ready again" : `${woken} paused tasks are ready again`;
+  const next = result?.line
+    ? result.line.replace(/^Ready: /, "").replace(/\.$/, "")
+    : "it runs at your next Start";
+  const clause = next.charAt(0).toLowerCase() + next.slice(1);
+  const many = clause.replace(/^it runs /, "they run ").replace(/^it joins /, "they join ");
+  return `${what}: ${woken === 1 ? clause : many}.`;
 }
 
 /** `change_card.outcome` of a no-progress card the question for the same pause replaced (OP-4). */

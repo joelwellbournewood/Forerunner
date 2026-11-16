@@ -71,6 +71,7 @@ export const SETTING_LABELS: Record<string, string> = {
   status_pull_request: "Status pull request",
   merge_mode: "Who merges accepted work",
   push_unfinished_work: "Push unfinished work to GitHub",
+  start_by_itself: "When work is ready",
   speed_quality_offset: "Speed or quality",
   mid_session_limit: "When my first choice runs out mid-session",
   code_commands: "Code tasks that need commands",
@@ -126,6 +127,16 @@ export const MID_SESSION_LIMITS = [
 export const MERGE_MODES = [
   { value: "you", label: "You press Merge" },
   { value: "after_review", label: "Merge automatically after review" },
+] as const;
+
+/**
+ * "When work is ready" (d1109-starts-engine S-5, ADR 0118; the owner, 2026-11-09: "Only when you
+ * say so is the default"): wait for the person's Start (off, the default), or start a session by
+ * itself when work the person made ready can run (on, a yes first).
+ */
+export const START_BY_ITSELF = [
+  { value: "false", label: "Wait for my Start" },
+  { value: "true", label: "Start a session by itself" },
 ] as const;
 
 /**
@@ -192,6 +203,8 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
       return v === "use_other" ? MID_SESSION_LIMITS[1].label : MID_SESSION_LIMITS[0].label;
     case "merge_mode":
       return v === "after_review" ? MERGE_MODES[1].label : MERGE_MODES[0].label;
+    case "start_by_itself":
+      return v === true ? START_BY_ITSELF[1].label : START_BY_ITSELF[0].label;
     case "code_commands":
       return v === "api_key" ? CODE_COMMANDS[1].label : CODE_COMMANDS[0].label;
     case "web_access":
@@ -390,6 +403,8 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
         (c) => (c === "after_review" ? "after_review" : "you"),
         projectParam,
       );
+    case "start_by_itself":
+      return select(leaf, START_BY_ITSELF, asBool, boolInitial, projectParam);
     case "web_access":
       // 'sites': the mode and the two lists, cleaned and shown back before saving.
       return {

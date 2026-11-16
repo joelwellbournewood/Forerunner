@@ -84,8 +84,17 @@ export interface TaskBillingPort {
    * next picks skip it until a new one is saved, and one Inbox card names it. Optional.
    */
   refuse?(sourceId: string, why: string): Promise<void>;
-  /** The project's work waits for the source (its reset, a new credential; U-078). Optional. */
-  noteWait?(sourceId: string, projectId: string, agentId: string): Promise<void>;
+  /**
+   * The project's work waits for the source (its reset, a new credential; U-078). Optional.
+   * `sessionId` (d1109-starts-engine S-10, append-only): the session whose task met the wait, so
+   * the person's own session can go on by itself when the credential is back.
+   */
+  noteWait?(
+    sourceId: string,
+    projectId: string,
+    agentId: string,
+    sessionId?: string,
+  ): Promise<void>;
 }
 
 /** The person's setting "When my first choice runs out mid-session" (U-078). */

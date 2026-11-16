@@ -356,7 +356,15 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
       body: JSON.stringify({ version: card.version, answer: "Cloudflare Pages" }),
     });
     expect(answered.status).toBe(200);
-    // The answer starts the task's next run, and its brief carries the answer.
+    // d1109-starts-engine (S-2, ADR 0118): the answer prepares the task; the person's Start runs
+    // its next run, and its brief carries the answer.
+    expect(await rt.store.session.active(rt.agent.id)).toEqual([]);
+    const res = await req("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agentId: rt.agent.id, projectId, trigger: "manual" }),
+    });
+    expect(res.status).toBe(202);
+
     const second = await waitFor(async () =>
       fake.calls.find((c) =>
         JSON.stringify(c.request.messages).includes("Answers from the person"),
