@@ -15,7 +15,13 @@ import { world } from "./helpers.ts";
 const KITE = "01a1a000-0000-7000-8000-00000000c1ab";
 const FACTS: RepoTakeOverFacts = { locator: "o/kite", projects: [KITE], name: "Kite club" };
 
-type Calls = { writes: string[]; blocked: string | null; facts: RepoTakeOverFacts | Error };
+type Calls = {
+  writes: string[];
+  blocked: string | null;
+  facts: RepoTakeOverFacts | Error;
+  /** The docs pull request could not be opened (GitHub refused, the copy failed). */
+  writeFails?: boolean;
+};
 
 function port(calls: Calls): RepositoryTakeOverPort {
   return {
@@ -25,6 +31,7 @@ function port(calls: Calls): RepositoryTakeOverPort {
     },
     writeMarker: async (projectId) => {
       calls.writes.push(projectId);
+      if (calls.writeFails) return { prUrl: null, failed: true };
       return { prUrl: "https://github.com/o/kite/pull/4" };
     },
     undoBlocked: async () => calls.blocked,
@@ -69,6 +76,30 @@ describe("d1109-onerepo-link, run C: repo.take_over (OR-07)", () => {
       'o/kite is no longer taken over from "Kite club".',
     );
     expect((await w.store.project.mustGet(w.pharma.id)).settings.took_over).toBeUndefined();
+    await w.store.close();
+  });
+
+  it("when its docs pull request could not be opened, the sentence and the Changes row say what it did and what it could not do (C2-left-11)", async () => {
+    // Before, writeMarker swallowed the scaffold's failure and the sentence read as if the
+    // repository now named this project.
+    const w = await world();
+    const calls: Calls = { writes: [], blocked: null, facts: FACTS, writeFails: true };
+    w.ports.repositoryTakeOver = port(calls);
+    const r = await w.executor.execute({
+      name: "repo.take_over",
+      params: { project: w.pharma.id },
+      ctx: w.ctx({ source: "ui" }),
+      confirmation: { kind: "tap", by: { kind: "human", id: w.human.id } },
+    });
+    expect(r.status).toBe("done");
+    const done = r as Extract<ExecuteResult, { status: "done" }>;
+    const said =
+      'Took over o/kite from "Kite club" here, but the docs pull request that names this project could not be opened, so GitHub still names "Kite club".';
+    expect(done.sentence).toBe(said);
+    expect((await w.store.changeLog.mustGet(done.changeLogId)).sentence).toBe(said);
+    // Undo stays open: no pull request names this project.
+    const undone = await w.executor.undo(done.changeLogId, w.ctx({ source: "ui" }));
+    expect(undone.status).toBe("done");
     await w.store.close();
   });
 

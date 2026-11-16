@@ -18248,9 +18248,18 @@ describe("d1109-onerepo-link, run C", () => {
       });
       const done = await press(client);
       expect(done.status).toBe("done");
-      expect(done.sentence).toBe('Took over o/kite from "Kite club".');
+      // This home's copy is a plain folder, not a clone, so the scaffold fails ("git clone
+      // failed: destination path ... already exists"): the sentence says the docs pull request
+      // was not opened (C2-left-11; before, it read 'Took over o/kite from "Kite club".' as if
+      // GitHub now named this project).
+      const noPr =
+        'Took over o/kite from "Kite club" here, but the docs pull request that names this project could not be opened, so GitHub still names "Kite club".';
+      expect(done.sentence).toBe(noPr);
+      expect((await rt.store.project.mustGet(made.id)).summary_cache.docs).toMatchObject({
+        error: expect.stringContaining("git clone failed"),
+      });
       const rows = (await client.changes()).filter((r) => r.sentence.startsWith("Took over"));
-      expect(rows.map((r) => r.sentence)).toEqual(['Took over o/kite from "Kite club".']);
+      expect(rows.map((r) => r.sentence)).toEqual([noPr]);
       expect((await rt.store.project.mustGet(made.id)).settings.took_over).toMatchObject({
         projects: [KITE_ID],
         name: "Kite club",
@@ -18384,7 +18393,10 @@ describe("d1109-onerepo-link, run C", () => {
       expect((await rt.store.project.mustGet(made.id)).settings.took_over).toBeUndefined();
       const yes = await client.confirmCommand(String(pending?.id), { answer: "yes" });
       expect(yes.status).toBe("done");
-      expect(yes.sentence).toBe('Took over o/kite from "Kite club".');
+      // The copy here is a plain folder, so the docs pull request is not opened (C2-left-11).
+      expect(yes.sentence).toBe(
+        'Took over o/kite from "Kite club" here, but the docs pull request that names this project could not be opened, so GitHub still names "Kite club".',
+      );
       expect((await rt.store.project.mustGet(made.id)).settings.took_over).toMatchObject({
         projects: [KITE_ID],
       });

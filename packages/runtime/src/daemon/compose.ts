@@ -4311,7 +4311,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             const out = await docs.scaffoldProject(await store.project.mustGet(projectId));
             return { prUrl: out.prUrl ?? null };
           } catch {
-            return { prUrl: null };
+            // C2-left-11: said in the take-over's sentence, not swallowed (the scaffold records
+            // the error on the project).
+            return { prUrl: null, failed: true };
           }
         },
         undoBlocked: (projectId, since, prUrl) =>

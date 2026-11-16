@@ -4,6 +4,7 @@ import {
   TOOK_OVER_KEY,
   takeOverAsk,
   takeOverUndoneSentence,
+  tookOverNoPullRequestSentence,
   tookOverSentence,
 } from "@forerunner/runtime/sources/repository-words";
 import { ANSWER_CARD_KEYS } from "@forerunner/runtime/wiring/request-answers";
@@ -273,14 +274,19 @@ export const repoTakeOver: CommandDef<RepoTakeOverParams> = {
     await patchProjectSettings(ctx.store, project.id, { [TOOK_OVER_KEY]: tookOver }, authorOf(ctx));
     const written = await port.writeMarker(project.id);
     const untrusted = untrustedOf(facts);
+    const from = { ids: facts.projects, name: facts.name };
     return {
       before: { took_over: before },
       after: {
         took_over: tookOver,
         repository: { locator: facts.locator, projects: facts.projects, name: facts.name },
         pr_url: written.prUrl,
+        ...(written.failed ? { pr_failed: true } : {}),
       },
-      sentence: tookOverSentence(facts.locator, { ids: facts.projects, name: facts.name }),
+      // C2-left-11: says what it could not do when its docs pull request was not opened.
+      sentence: written.failed
+        ? tookOverNoPullRequestSentence(facts.locator, from)
+        : tookOverSentence(facts.locator, from),
       projectId: project.id,
       ...(untrusted ? { untrusted } : {}),
     };

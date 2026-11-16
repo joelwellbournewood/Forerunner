@@ -308,6 +308,18 @@ export function tookOverSentence(locator: string, e: Pick<Elsewhere, "ids" | "na
   return `Took over ${locator} from ${projectFromWords(e)}.`;
 }
 
+/**
+ * C2-left-11: repo.take_over's sentence when its docs pull request could not be opened: what it
+ * did (here) and what it could not do (GitHub still names the other project).
+ */
+export function tookOverNoPullRequestSentence(
+  locator: string,
+  e: Pick<Elsewhere, "ids" | "name">,
+): string {
+  const from = projectFromWords(e);
+  return `Took over ${locator} from ${from} here, but the docs pull request that names this project could not be opened, so GitHub still names ${from}.`;
+}
+
 /** OR-07: repo.take_over's read-back question. */
 export function takeOverAsk(locator: string, e: Pick<Elsewhere, "ids" | "name">): string {
   return `Take over ${locator} from ${projectFromWords(e)}? ${takeOverLine(e)}`;

@@ -155,7 +155,8 @@ export class MemoryGitHost implements GitHost {
     return [...this.repos.values()]
       .filter(
         (r) =>
-          (!opts.org || sameName(r.owner, opts.org)) && (!opts.user || sameName(r.owner, opts.user)),
+          (!opts.org || sameName(r.owner, opts.org)) &&
+          (!opts.user || sameName(r.owner, opts.user)),
       )
       .map((r) => ({
         owner: r.owner,

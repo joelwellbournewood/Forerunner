@@ -432,9 +432,10 @@ export interface RepositoryTakeOverPort {
   /**
    * After `settings.took_over` is written: this project's docs pull request replaces exactly
    * that marker (the scaffold run again). Never throws: a failure leaves it to the next docs
-   * pull request; the pull request opened or updated, when there is one.
+   * pull request; the pull request opened or updated, when there is one, and `failed` when the
+   * scaffold failed, so the sentence says what could not be done (C2-left-11).
    */
-  writeMarker(projectId: string): Promise<{ prUrl: string | null }>;
+  writeMarker(projectId: string): Promise<{ prUrl: string | null; failed?: boolean }>;
   /**
    * Why the take-over cannot be undone now: its docs pull request is open (close it there
    * first) or merged (the repository names this project); null while neither is the case.
