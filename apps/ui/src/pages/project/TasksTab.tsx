@@ -15,6 +15,7 @@ import { ExternalLink } from "../../components/ExternalLink.tsx";
 import {
   Badge,
   Button,
+  buttonClassName,
   EmptyState,
   ErrorBanner,
   Field,
@@ -203,12 +204,19 @@ export function TasksTab({
   projectId,
   reference,
   defaultRiskTier,
+  closed = null,
 }: {
   projectId: string;
   /** Money pair carrying the day's rate for the CHF budget fields. */
   reference?: MoneyLike;
   /** The project card's default tier for a new task, named on the dialog's default option. */
   defaultRiskTier?: number;
+  /**
+   * OJ-06 (d1109-onerepo-join): a project closed into another (or removed) takes no new task: no
+   * New task, and with no task left the line says where its tasks are ('Its tasks are in
+   * "Site".'), with Open it to that page.
+   */
+  closed?: { text: string; to: string | null } | null;
 }) {
   const client = useClient();
   const navigate = useNavigate();
@@ -416,9 +424,11 @@ export function TasksTab({
         <Button variant="ghost" onClick={reloadAll}>
           Refresh
         </Button>
-        <Button variant="primary" onClick={() => setNewOpen(true)} data-testid="new-task">
-          New task
-        </Button>
+        {closed ? null : (
+          <Button variant="primary" onClick={() => setNewOpen(true)} data-testid="new-task">
+            New task
+          </Button>
+        )}
       </div>
       {error ? <ErrorBanner message={error} /> : null}
       {moved ? (
@@ -469,7 +479,21 @@ export function TasksTab({
       ) : null}
       {tasks.data && tasks.data.length === 0 ? (
         <EmptyState testId="no-tasks">
-          No tasks yet. Press New task, or describe them in Chat.
+          {closed ? (
+            <>
+              {closed.text}
+              {closed.to ? (
+                <>
+                  {" "}
+                  <Link to={closed.to} className={buttonClassName("secondary")}>
+                    Open it
+                  </Link>
+                </>
+              ) : null}
+            </>
+          ) : (
+            "No tasks yet. Press New task, or describe them in Chat."
+          )}
         </EmptyState>
       ) : null}
       {tasks.data && tasks.data.length > 0 ? (

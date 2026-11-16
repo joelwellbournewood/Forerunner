@@ -93,8 +93,10 @@ import {
   includesWorkSentence,
   joinAsk,
   joinedIntoSentence,
+  joinedRefusalSentence,
   joinSentence,
   joinUndoneSentence,
+  OPEN_ON_A_CLOSED_PROJECT,
   sessionsBeforeJoinSentence,
 } from "@forerunner/runtime/daemon/join-words";
 import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
@@ -1442,6 +1444,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return { ...r, ...words };
   };
 
+  /**
+   * OJ-06 (d1109-onerepo-join), as the daemon's executor and queue route: a project closed into
+   * another takes no new work: '"Beacon" joined "Atlas", so its work runs there.'; null for any
+   * other project.
+   */
+  const joinedRefusalOf = (projectId: string | null | undefined): string | null => {
+    const into = projectId ? state.joined[projectId] : undefined;
+    const row = into ? state.projects.find((p) => p.id === projectId) : undefined;
+    return into && row ? joinedRefusalSentence(row.name, into.name) : null;
+  };
+
   const app = new Hono();
   app.use(
     "*",
@@ -2453,6 +2466,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!project) {
       return errorBody(c, 404, "not_found", "no such project");
     }
+    // OJ-06, as the daemon's executor: a project closed into another takes no new task.
+    const closed = joinedRefusalOf(id);
+    if (closed) return errorBody(c, 409, "conflict", closed);
     const parsed = CreateTaskBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
     // Like the daemon (U-040): an unknown or cancelled dependency is refused, nothing written.
@@ -6754,7 +6770,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         call.params && typeof call.params === "object"
           ? (call.params as Record<string, unknown>)
           : {};
-      const outcome = plan(call.name, params);
+      const planned = plan(call.name, params);
+      // OJ-06, as the daemon's executor (`refuseClosedProject`): a command for a project closed
+      // into another is new work for it and is refused, except the ones it still answers.
+      const closed =
+        !("refused" in planned) && !OPEN_ON_A_CLOSED_PROJECT.has(call.name)
+          ? joinedRefusalOf(planned.card.projectId)
+          : null;
+      const outcome: PlanOutcome = closed ? refuse(closed, "validation") : planned;
       if ("refused" in outcome) {
         const result: CommandResultJson = {
           status: "refused",
@@ -7345,6 +7368,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!state.projects.some((p) => p.id === id)) {
       return errorBody(c, 404, "not_found", "no such project");
     }
+    // OJ-06, as the daemon: a project closed into another has no next session to note for.
+    const closed = joinedRefusalOf(id);
+    if (closed) return errorBody(c, 409, "conflict", closed);
     const body = (await c.req.json()) as { kind?: string; text?: string; priority?: number };
     if (
       !body.text?.trim() ||

@@ -8,6 +8,7 @@ import {
   shortToken,
 } from "@forerunner/platform";
 import { isYes } from "@forerunner/runtime";
+import { OPEN_ON_A_CLOSED_PROJECT } from "@forerunner/runtime/daemon/join-words";
 import type { ChangeLogRow, DeviceRow, JsonValue, StateStore } from "@forerunner/state";
 import {
   buildCard,
@@ -16,7 +17,12 @@ import {
   mergeCards,
   renderChangeCard,
 } from "./change-card.ts";
-import { joinedProjectWords, removedProjectName } from "./commands/project.ts";
+import {
+  joinedProjectRefusal,
+  joinedProjectWords,
+  removedProjectName,
+  removedProjectRefusal,
+} from "./commands/project.ts";
 import {
   type ConfirmationAnswer,
   type ConfirmationDecision,
@@ -295,7 +301,27 @@ export class CommandExecutor {
     const risk = typeof def.risk === "function" ? await def.risk(params, ctx) : def.risk;
     const card = def.plan ? await def.plan(params, ctx) : genericCard(def, params, risk);
     card.impact.risk = risk;
+    await this.refuseClosedProject(def.name, card);
     return { def, params, card, risk };
+  }
+
+  /**
+   * d1109-onerepo-join (OJ-06): a project closed into another takes no new work, from the app,
+   * chat or a pending yes: '"Kite club" joined "Site", so its work runs there.' (a removed project:
+   * 'The project "X" was removed, so nothing of it runs.'). Before, New task, a note or a change
+   * from its chat was written on the closed project, where no session ever runs it.
+   */
+  private async refuseClosedProject(name: string, card: ChangeCard): Promise<void> {
+    if (!card.projectId || OPEN_ON_A_CLOSED_PROJECT.has(name)) return;
+    const project = await this.store.project.get(card.projectId);
+    const refusal = project ? removedProjectRefusal(project) : null;
+    if (!project || !refusal) return;
+    throw new ForerunnerError("validation", refusal, {
+      details: {
+        cause: joinedProjectRefusal(project) ? "project_joined" : "project_removed",
+        projectId: project.id,
+      },
+    });
   }
 
   private async prepareAll(calls: CommandCall[], ctx: CommandContext): Promise<Step[]> {

@@ -174,6 +174,96 @@ describe("d1109-onerepo-join, run C: Make one project on the Overview (OJ-01, OJ
   });
 });
 
+describe("d1109-onerepo-join, run C: a joined project offers no new work (OJ-06)", () => {
+  /** Beacon closed into Atlas, its tasks moved, as `project.join` leaves it. */
+  const joinedBeacon = () => {
+    const harness = createHarness();
+    const { state } = harness.daemon;
+    state.joined.proj_beacon = {
+      projectId: "proj_atlas",
+      name: "Atlas",
+      at: "2026-11-09T10:00:00.000Z",
+      text: 'Joined into "Atlas" on 9 Nov.',
+    };
+    for (const t of state.tasks) if (t.projectId === "proj_beacon") t.projectId = "proj_atlas";
+    return harness;
+  };
+
+  it("its Tasks tab has no New task and says where its tasks are, with Open it; Atlas's has New task", async () => {
+    const user = userEvent.setup();
+    const harness = joinedBeacon();
+    renderApp("/projects/proj_beacon/tasks", harness);
+    const empty = await screen.findByTestId("no-tasks");
+    expect(empty).toHaveTextContent('Its tasks are in "Atlas". Open it');
+    expect(empty).not.toHaveTextContent("Press New task");
+    expect(screen.queryByTestId("new-task")).toBeNull();
+    await user.click(within(empty).getByRole("link", { name: "Open it" }));
+    expect(await screen.findByTestId("new-task")).toBeEnabled();
+    expect((await screen.findAllByTestId("task-row")).length).toBeGreaterThan(0);
+  });
+
+  it("its Overview has no note for the next session, no Research reads with Change and no Decisions (they moved); Atlas's Overview has them", async () => {
+    const harness = joinedBeacon();
+    renderApp("/projects/proj_beacon/summary", harness);
+    await screen.findByTestId("project-joined");
+    await screen.findByTestId("summary-tab");
+    expect(screen.queryByTestId("queue")).toBeNull();
+    expect(screen.queryByTestId("queue-text")).toBeNull();
+    expect(screen.queryByTestId("research-reads")).toBeNull();
+    expect(screen.queryByTestId("research-reads-change")).toBeNull();
+    expect(screen.queryByTestId("decisions")).toBeNull();
+    renderApp("/projects/proj_atlas/summary", harness);
+    expect(await screen.findByTestId("queue-text")).toBeInTheDocument();
+    expect(await screen.findByTestId("research-reads-change")).toBeInTheDocument();
+  });
+
+  it("its Chat keeps the conversation to read: no message box, no 'add a task' example, no Make this a task; it says where to ask, with Open it to Atlas's Chat", async () => {
+    const user = userEvent.setup();
+    const harness = joinedBeacon();
+    renderApp("/projects/proj_beacon/chat", harness);
+    const line = await screen.findByTestId("chat-closed");
+    expect(line).toHaveTextContent(
+      'This chat is kept to read; ask about its work in the Chat of "Atlas".',
+    );
+    expect(within(line).getByRole("link", { name: "Open it" })).toHaveAttribute(
+      "href",
+      "/projects/proj_atlas/chat",
+    );
+    expect(screen.queryByTestId("chat-intro")).toBeNull();
+    // An empty kept-to-read chat promises no change either.
+    expect(await screen.findByTestId("chat-empty")).toHaveTextContent("Nothing was said here.");
+    expect(screen.queryByTestId("chat-input")).toBeNull();
+    expect(screen.queryByTestId("chat-send")).toBeNull();
+    expect(screen.queryByTestId("chat-examples")).toBeNull();
+    expect(screen.queryByText("add a task: …")).toBeNull();
+    expect(screen.queryByText("Make this a task")).toBeNull();
+    await user.click(within(line).getByRole("link", { name: "Open it" }));
+    expect(await screen.findByTestId("chat-input")).toBeEnabled();
+    expect(screen.getByTestId("chat-examples")).toHaveTextContent("add a task: …");
+  });
+
+  it("as the daemon, the fake refuses New task and a note on the joined project with the same sentence", async () => {
+    const harness = joinedBeacon();
+    const refused = '"Beacon" joined "Atlas", so its work runs there.';
+    await expect(
+      harness.client.createTask("proj_beacon", { title: "Probe task", outcome: "probe" }),
+    ).rejects.toMatchObject({ status: 409, message: refused });
+    await expect(
+      harness.client.enqueue("proj_beacon", { kind: "note", text: "Use the red kite." }),
+    ).rejects.toMatchObject({ status: 409, message: refused });
+    const r = await harness.client.executeCommands({
+      commands: [
+        { name: "note.add", params: { text: "Use the red kite.", project: "proj_beacon" } },
+      ],
+      wordsUsed: "Note for the next session",
+      source: "ui",
+      projectId: "proj_beacon",
+      confirm: "tap",
+    });
+    expect(r).toMatchObject({ status: "refused", reason: refused });
+  });
+});
+
 describe("d1109-onerepo-join, run C: the kept project's Sessions and Costs (OJ-10, OJ-07)", () => {
   it("the kept project's Sessions list ends with the joined project's line and Open; its Costs names what the joined project spent before it joined", async () => {
     const user = userEvent.setup();

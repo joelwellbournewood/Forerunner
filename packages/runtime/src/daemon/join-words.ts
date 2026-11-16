@@ -100,6 +100,43 @@ export function includesWorkSentence(names: readonly string[]): string {
   return `Includes the work of ${quotedList(names)}.`;
 }
 
+/**
+ * OJ-06: what a project closed into another answers to new work (a task, a note for the next
+ * session, a setting, a change from its chat): '"Kite club" joined "Site", so its work runs there.'
+ * The same sentence answers a start (`removedProjectRefusal` in @forerunner/commands).
+ */
+export function joinedRefusalSentence(name: string, into: string): string {
+  return `"${name}" joined "${into}", so its work runs there.`;
+}
+
+/**
+ * OJ-06: the commands a project closed into another (or removed, W15B-02) still answers: reading
+ * its summary, a stop (the safe direction), the answer to a card left on it, and Make one project,
+ * which says itself why it cannot keep or close it. Any other command is new work for it (a task,
+ * a note, a setting, a switch to it) and is refused with `joinedRefusalSentence` (the executor's
+ * `refuseClosedProject`; the UI's fake daemon reads the same set).
+ */
+export const OPEN_ON_A_CLOSED_PROJECT: ReadonlySet<string> = new Set([
+  "summary.speak",
+  "session.stop",
+  "session.pause",
+  "request.answer",
+  "project.join",
+]);
+
+/** OJ-06: the joined project's Tasks tab, with Open it: 'Its tasks are in "Site".' */
+export function joinedTasksSentence(into: string): string {
+  return `Its tasks are in "${into}".`;
+}
+
+/**
+ * OJ-06: the joined project's Chat tab, with Open it: its conversation stays to read, and the kept
+ * project's chat answers about the joined work (its recall reads the joined project's records).
+ */
+export function joinedChatSentence(into: string): string {
+  return `This chat is kept to read; ask about its work in the Chat of "${into}".`;
+}
+
 /** OJ-07: the kept project's Costs line: 'Spent in "Kite club" before it joined: CHF 3.20' */
 export function spentBeforeJoinSentence(name: string, amount: string): string {
   return `Spent in "${name}" before it joined: ${amount}`;

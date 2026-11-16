@@ -552,3 +552,69 @@ describe("d1109-onerepo-join, run C: project.join (OJ-02, OJ-04, OJ-06, OJ-08)",
     await w.store.close();
   });
 });
+
+describe("d1109-onerepo-join, run C: a closed project takes no new work (OJ-06)", () => {
+  it('after the join a task, a note, a setting, autonomy and a switch for Kite club are refused with \'"Kite club" joined "Site", so its work runs there.\', from the app and from chat, and nothing is written; a removed project answers its own sentence; Site takes the same work', async () => {
+    const w = await world();
+    w.ports.projectJoin = joinPort(w);
+    const { site, kite } = await seedPair(w);
+    expect((await join(w, site.id, [kite.id])).status).toBe("done");
+    const tap = { kind: "tap" as const, by: { kind: "human" as const, id: w.human.id } };
+    const asked = [
+      { name: "task.create", params: { title: "Probe task", project: kite.id } },
+      { name: "note.add", params: { text: "Use the red kite." } },
+      { name: "settings.set", params: { key: "status_pull_request", value: true } },
+      { name: "autonomy.set", params: { level: 2 } },
+      { name: "project.switch", params: { project: kite.id } },
+    ];
+    const kiteRows = async () => ({
+      tasks: (await w.store.task.forProject(kite.id)).length,
+      queued: (await w.store.queue.pending(kite.id)).length,
+      changes: (await w.store.changeLog.list({ project_id: kite.id } as never)).length,
+    });
+    const before = await kiteRows();
+    expect(before.tasks).toBe(0);
+    for (const source of ["ui", "chat"] as const) {
+      for (const call of asked) {
+        const r = await w.executor.execute({
+          ...call,
+          ctx: w.ctx({ source, activeProjectId: kite.id }),
+          confirmation: tap,
+        });
+        expect(r, `${source} ${call.name}`).toMatchObject({
+          status: "refused",
+          code: "validation",
+          reason: '"Kite club" joined "Site", so its work runs there.',
+        });
+      }
+    }
+    expect(await kiteRows()).toEqual(before);
+    const kept = await w.store.project.mustGet(kite.id);
+    expect(kept.settings.status_pull_request).toBeUndefined();
+    expect(kept.autonomy_level).toBe(kite.autonomy_level);
+    // Site, which has the work now, takes it.
+    const onSite = await w.executor.execute({
+      name: "task.create",
+      params: { title: "Probe task", project: site.id },
+      ctx: w.ctx({ source: "ui", activeProjectId: site.id }),
+      confirmation: tap,
+    });
+    expect(onSite.status).toBe("done");
+    // The sibling: a project whose creation was undone takes no new work either.
+    const gone = await w.store.project.insert({ name: "Gone", goal: "g", repos: [] });
+    await w.store.project.patch(gone.id, { status: "archived" });
+    const onGone = await w.executor.execute({
+      name: "task.create",
+      params: { title: "Probe task", project: gone.id },
+      ctx: w.ctx({ source: "ui", activeProjectId: gone.id }),
+      confirmation: tap,
+    });
+    expect(onGone).toMatchObject({
+      status: "refused",
+      code: "validation",
+      reason: 'The project "Gone" was removed, so nothing of it runs.',
+    });
+    expect((await w.store.task.forProject(gone.id)).length).toBe(0);
+    await w.store.close();
+  });
+});

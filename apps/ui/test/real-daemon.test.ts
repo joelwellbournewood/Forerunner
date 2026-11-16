@@ -20183,4 +20183,94 @@ describe("d1109-onerepo-join, run C", () => {
       await rt.close();
     }
   }, 60_000);
+
+  it('OJ-06: a joined project takes no new work: New task, a note for the next session, a setting and a task from its chat are refused with \'"Kite club" joined "Site", so its work runs there.\' and write nothing; the same after the daemon starts again', async () => {
+    const host = new MemoryGitHost("alice");
+    await host.createRepo({ owner: "o", name: "site", private: true });
+    const { compose } = onHome(host);
+    let { rt, client, chatCalls } = await compose();
+    const REFUSED = '"Kite club" joined "Site", so its work runs there.';
+    /** The answer a request got: the error's status and words, or "ok". */
+    const answerOf = async (p: Promise<unknown>) => {
+      try {
+        await p;
+        return "ok";
+      } catch (e) {
+        if (e instanceof ApiError) return { status: e.status, message: e.message };
+        throw e;
+      }
+    };
+    try {
+      const { site, kite } = await pair(rt);
+      const joined = await client.executeCommands({
+        commands: [{ name: "project.join", params: { keep: site.id, close: [kite.id] } }],
+        wordsUsed: "Make one project (Overview)",
+        source: "ui",
+        projectId: site.id,
+        confirm: "tap",
+      });
+      expect(joined.status).toBe("done");
+      const check = async (c: DaemonClient) => {
+        // New task on the joined page (the dialog's request).
+        expect(
+          await answerOf(
+            c.createTask(kite.id, { title: "Probe task on the joined project", outcome: "probe" }),
+          ),
+        ).toEqual({ status: 409, message: REFUSED });
+        // Note for the next session.
+        expect(
+          await answerOf(c.enqueue(kite.id, { kind: "note", text: "Use the red kite." })),
+        ).toEqual({ status: 409, message: REFUSED });
+        // A setting of the joined project (Research reads' Change goes through settings.set).
+        const setting = await c.executeCommands({
+          commands: [
+            {
+              name: "settings.set",
+              params: { key: "status_pull_request", value: true, project: kite.id },
+            },
+          ],
+          wordsUsed: "Status pull request (Settings)",
+          source: "ui",
+          projectId: kite.id,
+          confirm: "tap",
+        });
+        expect(setting).toMatchObject({ status: "refused", reason: REFUSED });
+        expect(await c.tasks(kite.id)).toEqual([]);
+        expect(await c.queue(kite.id)).toEqual([]);
+        expect((await rt.store.project.mustGet(kite.id)).settings.status_pull_request).toBe(
+          undefined,
+        );
+        // Site, which has the work now, takes a new task.
+        const onSite = await c.createTask(site.id, {
+          title: "Probe task on Site",
+          outcome: "probe",
+        });
+        expect(onSite.projectId).toBe(site.id);
+      };
+      await check(client);
+      await rt.close();
+      ({ rt, client, chatCalls } = await compose());
+      await check(client);
+      // A task asked for in the joined project's chat: the model's tool answer is the refusal,
+      // nothing waits for a yes and nothing is written.
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      chatCalls.length = 0;
+      const reply = await client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: kite.id,
+        projectTab: true,
+        text: 'tool: task_create {"title": "Probe task from chat"}',
+        source: "text",
+      });
+      expect(reply.pendingConfirmation).toBeNull();
+      expect(JSON.stringify(chatCalls[1]?.messages.at(-1)?.content ?? "")).toContain(
+        'Refused: \\"Kite club\\" joined \\"Site\\", so its work runs there.',
+      );
+      expect(await client.tasks(kite.id)).toEqual([]);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

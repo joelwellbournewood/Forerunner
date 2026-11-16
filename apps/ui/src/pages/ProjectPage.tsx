@@ -1,3 +1,4 @@
+import { joinedChatSentence, joinedTasksSentence } from "@forerunner/runtime/daemon/join-words";
 import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, useLocation, useParams } from "react-router";
 import { ProjectStatus } from "../components/ProjectState.tsx";
@@ -17,6 +18,10 @@ import { SessionsTab } from "./project/SessionsTab.tsx";
 import { StartSessionDialog } from "./project/StartSessionDialog.tsx";
 import { SummaryTab } from "./project/SummaryTab.tsx";
 import { TasksTab } from "./project/TasksTab.tsx";
+
+/** W15B-02, OJ-06: a removed project's Tasks tab with no task, and its Chat, kept to read. */
+const REMOVED_TASKS = "No tasks: this project was removed.";
+const REMOVED_CHAT = "This chat is kept to read; the project was removed.";
 
 /**
  * The project's tabs (design §6): Overview, Tasks, Chat and Files in the bar; Sessions, Plan,
@@ -107,6 +112,20 @@ export function ProjectPage() {
   const joined = view.joinedInto ?? null;
   const removed = view.status === "archived" && !joined;
   const closed = removed || !!joined;
+  // OJ-06 (d1109-onerepo-join, fixup): a closed project takes no new work (the daemon refuses it
+  // in words), so its Tasks tab offers no New task and its Chat is kept to read; each says where
+  // the work is now, with Open it for a joined project.
+  const into = joined ? `/projects/${encodeURIComponent(joined.projectId)}` : null;
+  const closedTasks = joined
+    ? { text: joinedTasksSentence(joined.name), to: `${into}/tasks` }
+    : removed
+      ? { text: REMOVED_TASKS, to: null }
+      : null;
+  const closedChat = joined
+    ? { text: joinedChatSentence(joined.name), to: `${into}/chat` }
+    : removed
+      ? { text: REMOVED_CHAT, to: null }
+      : null;
   // The plan banner says "Drafting the plan…" / "Waiting for you: approve the plan" itself.
   const planBanner =
     !closed &&
@@ -238,7 +257,12 @@ export function ProjectPage() {
         {tab === "sessions" ? <SessionsTab projectId={id} project={view} /> : null}
         {tab === "plan" ? <PlanTab projectId={id} project={view} /> : null}
         {tab === "tasks" ? (
-          <TasksTab projectId={id} reference={view.budget} defaultRiskTier={view.defaultRiskTier} />
+          <TasksTab
+            projectId={id}
+            reference={view.budget}
+            defaultRiskTier={view.defaultRiskTier}
+            closed={closedTasks}
+          />
         ) : null}
         {tab === "files" ? <FilesTab projectId={id} repository={view?.repository ?? null} /> : null}
         {tab === "docs" ? <DocsTab projectId={id} /> : null}
@@ -246,7 +270,12 @@ export function ProjectPage() {
         {tab === "costs" ? <CostsTab projectId={id} /> : null}
         {tab === "data" ? <DataTab projectId={id} /> : null}
         {tab === "chat" ? (
-          <ChatTab projectId={id} reference={view.budget} defaultRiskTier={view.defaultRiskTier} />
+          <ChatTab
+            projectId={id}
+            reference={view.budget}
+            defaultRiskTier={view.defaultRiskTier}
+            closed={closedChat}
+          />
         ) : null}
       </div>
       {repoOpen && !closed ? (

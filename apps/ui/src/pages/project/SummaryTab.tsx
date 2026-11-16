@@ -46,6 +46,12 @@ export function withKeys(lines: readonly string[]): { text: string; key: string 
 }
 
 export function SummaryTab({ projectId, project }: { projectId: string; project?: ProjectCard }) {
+  // OJ-06 (d1109-onerepo-join, fixup): a project closed into another (or removed) runs nothing,
+  // so its Overview offers no note for a next session and no research setting to change; a
+  // joined project's decisions moved with its work, so its own list would read "No decisions
+  // yet." untruly. What it did stays to read (Last result, files, sessions).
+  const joined = !!project?.joinedInto;
+  const closed = joined || project?.status === "archived";
   return (
     <div className="space-y-6" data-testid="summary-tab">
       <ProjectCards projectId={projectId} />
@@ -54,9 +60,9 @@ export function SummaryTab({ projectId, project }: { projectId: string; project?
       <RepositoryElsewhere projectId={projectId} project={project} />
       <SharedRepository projectId={projectId} project={project} />
       <IncludesWorkOf project={project} />
-      <ResearchReads projectId={projectId} project={project} />
-      <DecisionsSection projectId={projectId} />
-      <QueueSection projectId={projectId} />
+      {closed ? null : <ResearchReads projectId={projectId} project={project} />}
+      {joined ? null : <DecisionsSection projectId={projectId} />}
+      {closed ? null : <QueueSection projectId={projectId} />}
       <PeersSection projectId={projectId} />
     </div>
   );

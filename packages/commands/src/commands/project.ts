@@ -1,5 +1,5 @@
 import { errorMessage, ForerunnerError, log } from "@forerunner/platform";
-import { joinedIntoOf } from "@forerunner/runtime/daemon/join-words";
+import { joinedIntoOf, joinedRefusalSentence } from "@forerunner/runtime/daemon/join-words";
 import type { JsonValue, ProjectRow, StateStore } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
@@ -80,8 +80,8 @@ export function removedProjectRefusal(project: ProjectRow): string | null {
  * runs in the kept project. Null for any other project.
  */
 export function joinedProjectRefusal(project: ProjectRow): string | null {
-  const words = joinedProjectWords(project);
-  return words ? `${words}, so its work runs there.` : null;
+  const into = joinedIntoOf(project);
+  return into ? joinedRefusalSentence(project.name, into.name) : null;
 }
 
 /** '"Kite club" joined "Site"': where a closed project's work went (a fragment), or null. */
