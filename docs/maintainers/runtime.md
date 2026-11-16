@@ -7666,6 +7666,62 @@ An Inbox answer prepares the work it made runnable, for that work only (C3-left-
 task closed as done) the tasks that wait on it, and every answer path passes them as `taskIds`;
 `summarize` says "joined" only when every task joined (`answer-prepare.test.ts`).
 
+### What runs now (d1109-run-visible, ADR 0118 D8, U-096)
+
+One run state in the daemon's words, read by the header's bar, Home, the Overview, Talk, the
+Sessions list, the tray and the window title (design §5 rule 10: one place per fact; the phone
+shows the same words later from the same route). `daemon/run-words.ts` holds the words and a fold
+of a session's log with nothing that needs the store (the UI's fake daemon says the same
+sentences from it); `daemon/run-indicator.ts` reads the store and re-exports them.
+
+- **The fold** (`foldRunEvents`, `RUN_EVENT_TYPES`): the session's log read incrementally by
+  `seq` (`runFolds` in compose, one fold per active session) into planning, working, reviewing,
+  between, wrapping, stopping or waiting, with the task and the specialist in flight. A plan
+  being drafted and the chat's conversation row are not sessions here (`isIntakeSession`); the
+  critic's monthly calibration (a session on no project) is: "Forerunner · the critic's monthly
+  check on known examples" with `explain` (`calibrationExplain`: on the API key "... it spends at
+  most CHF 8.00 a month of its own budget.", on the Claude plan "... it runs on your Claude plan,
+  within CHF 8.00 a month at API prices."), stoppable with Stop now and Stop all
+  (`runCalibration` registers it with the kill switch; `running.stopCalibration`).
+- **The words** (`runText`, at most 80 characters, titles shortened by `runFit`): 'Quote page ·
+  the coder works on "Style the page"', '... · the critic checks "X"', '... · picks the next
+  task', '... · plans the session', '... · wraps up "X" at its budget', '... · stops after "X"',
+  "· then Garden site" for a person's start that waits behind it, and for a person's session
+  that ended to wait for its Claude credential with its continuation kept (`waitingContinuations`
+  from `limits.waiting[].kept`, d1109-starts-engine S-10): "Quote page · waiting until 15:40,
+  then it goes on", "... · waiting for a new API key, then it goes on", "... · waiting until
+  07:00 (after your quiet hours), then it goes on", or for any other wait (`RunWait` `other`,
+  which d1109-cred-engine's share and key-month waits use) "... · waiting for Claude, then it
+  goes on". `stopChoices`: none while waiting, Stop now and Stop all for a stop already asked
+  for and the monthly check, else after, now and all. No id, no USD.
+- **Routes and events**: `GET /running` answers `RunningView[]` (`{key, sessionId, projectId,
+  projectName, state, what, text, since, stop, cancel, nextProject, explain}`); `run.changed`
+  (`RUN_CHANGED_EVENT` on the bus, "run" being the task runs' own name) carries the list on
+  `/events` and in polling, emitted at most once a second (compose's debounced `running.poke`,
+  poked by every session event, the scheduler's `requestStart` and `cancelPending`, and the
+  wait list); `/health` gains `running {projectName, what, text, waiting}` (append-only, null
+  when nothing runs) and its `activeSessions` stops counting a plan being drafted.
+- **Elsewhere**: the Sessions list's working row says `sessionRunText` (d1109-sessions'
+  `workingWords` re-pointed); the project status line gains rule 2b from `startsWaitOf`
+  (`ProjectCardFacts.startsWait`): "Waiting until 15:40 (your subscription's limit), then it
+  goes on" with Cancel (action kind `cancel`), "Starts at 15:40 (your subscription's limit)"
+  with Cancel (a kept Start), "Starts after your quiet hours" (a held hands-off start), 'Starts
+  after the session on "Quote page"' (a waiting person start), and rule 4 reads "Ready: 3 tasks
+  wait for your Start"; a session that ended to wait has `SessionView.waitBlock` (`{state:
+  goes_on | starts_again | stopped, text, action: cancel | continue, explain, projectId,
+  budgetLeft}`), and once its continuation is cancelled its summary says "...; then it runs at
+  your next Start." (`summaryAfterWait`, C3-left-8); an answered card whose answer readied work
+  for the next Start has `startOffer` (`startOfferOf`: the stored prepared outcome waits_start,
+  stopping or failed, never a hands-off start), so the Inbox's Done line offers Start (V-6).
+
+Tests: `run-indicator.test.ts` (each sentence exactly, the fold, the views, the 80-character
+cap, the Done line's Start), `project-status.test.ts` (rule 2b and 4), and the UI real-daemon
+cases "d1109-run-visible, run C" (`GatedProvider` holds the model calls: running across a
+session's life with a queued person start and the status line, the monthly check with Stop now,
+a plan being drafted, a restart with no ghost entry; a person's session waiting to go on at a
+limit, at quiet hours, across a restart, Cancel, a kept Start with a third compose; the page
+of a session that ended to wait).
+
 ### Keeping the task list right during a run (d1109-selftasks-run, [ADR 0119](../decisions/0119-the-agent-keeps-its-task-list-right.md))
 
 A session checks its own task list between two tasks when a report or a review gave it reason,

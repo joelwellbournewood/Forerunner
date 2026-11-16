@@ -50,8 +50,7 @@ the cloud runner are built and pass their tests, but you are the first to run th
 
 The header has **Home**, **Inbox** (with how many cards need you) and **More** (Memory,
 Extensions, Changes, Performance, Updates), and the gear for **Settings**. While a session
-works, a chip says so: **Alice is working on "Style the page" · 2 min ›**; click it to open the
-session. **Stop all (1 running)** shows only while something runs (see "Kill switch").
+works, a bar under the header says what runs, on every page (see "Seeing what runs").
 Without a Claude key a bar says "Claude is not connected: planning and tasks need it. You can
 still add tasks." with **Connect** (not on the setup page Connect opens).
 
@@ -1417,12 +1416,45 @@ change for tonight that went back by itself) or **Cannot be undone**; the line a
 leaves ("Undone: …") has no such badge. "Said:" shows the words you
 typed in chat, said aloud or wrote in an email; a click in the app has none.
 
+## Seeing what runs
+
+While a session works, a bar directly under the header says so on every page and at every
+window size: **Quote page · the coder works on "Style the page"**, with how long it has been
+doing that and **Stop ▾**. The words follow the session as it goes: '... · the critic checks
+"Style the page"', '... · picks the next task', '... · wraps up "X" at its budget', '... · stops
+after "X"'; a session you started for another project that waits for this one adds '· then
+Garden site'. Click the words to open the session. **Stop ▾** offers **Stop after this task**,
+**Stop now** (asked once) and **Stop all** (asked once, see "Kill switch"). The window's title
+starts with ● and the project's name while a session runs. Home's and the Overview's
+**Working now** show the same line with the same Stop, and so does the first line of **Talk**.
+
+Once a month the critic checks itself on examples whose right answers are known; while it does,
+the bar reads **Forerunner · the critic's monthly check on known examples**, and Stop's menu
+says what it is for and what it may spend.
+
+When a session of yours stopped to wait for Claude (a usage limit, a refused key) and goes on by
+itself when Claude is back, the bar reads **Quote page · waiting until 15:40, then it goes on**
+with **Cancel** instead of Stop; Cancel means nothing starts when Claude is back and its tasks
+wait for your Start. The same wait shows on the project's line and on that session's page (with
+Cancel, or once cancelled **Continue**, which opens Start with the rest of that session and what
+is left of its budget). The project's line also says what waits to start: "Starts at 15:40" for
+a Start you pressed while Claude was out (with Cancel), "Starts after your quiet hours", 'Starts
+after the session on "Quote page"', or "Ready: 3 tasks wait for your Start".
+
+After an answer in the Inbox that readied work for your next Start, its Done line offers
+**Start**, which opens that project's Start dialog; it is not shown while a session of that
+project runs.
+
+On the desktop the tray says the same: its first line (and its tooltip) is what runs now, the
+icon gets a blue dot while a session runs, and the window's title reads "Forerunner — Quote page
+is working". A session that only waits to go on shows its words there but no dot.
+
 ## Kill switch
 
-**Stop all (1 running)** in the header shows only while a session runs. It asks once ("Stops
-every running session now. No session starts until you allow it again."), then stops every
+**Stop all**, in the Stop menu of the bar under the header, asks once ("Stops every running
+session now. No session starts until you allow it again."), then stops every
 session of your agents on this computer, revokes the run tokens and freezes claims within two
-seconds; the tray does the same. On a shared project the other people's sessions keep running,
+seconds; the tray's **Stop all sessions** does the same. On a shared project the other people's sessions keep running,
 and the tasks they hold stay theirs. A bar then says **Sessions are stopped** until you press
 **Allow sessions again** (lets sessions start again) or **Continue where it stopped** (allows
 them and starts a session again on the projects Stop all stopped, if they still have work that
@@ -1433,8 +1465,8 @@ session only and leave the rest running. Starting a session while sessions are s
 so, with **Allow sessions again**.
 
 The command palette opens with **Ctrl+K** (**⌘K** on a Mac) and has **Start session** for the
-project on screen, or for the active project when no project is open. It lists **Stop all** only while something runs, and asks first as the header's
-button does; while sessions are stopped it offers **Allow sessions again**.
+project on screen, or for the active project when no project is open. It lists **Stop all** only while something runs, and asks first as the Stop
+menu does; while sessions are stopped it offers **Allow sessions again**.
 
 ## Links
 

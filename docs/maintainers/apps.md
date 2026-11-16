@@ -519,11 +519,40 @@ the word beside it; blue when there is no target) for the Performance view. Both
 **The header while work runs (design §3.1, §6; `shell/ShellBars.tsx`).** The bar is **Home**,
 **Inbox** (the badge's label says "N need you") and **More ▾** (Memory, Extensions, Changes,
 Performance, Updates: the same routes, `MORE_NAV`), with a gear link for **Settings**. The
-switcher's label is the project on screen (`/projects/:id/...`), else the active project. The
-running chip ('Alice is working on "Style the page" · 2 min ›', `RunningChip`) and **Stop all
-(N running)** come from the live project cards' `working`; Stop all shows only while something
-runs and asks once ("Stops every running session now. No session starts until you allow it
-again.") before `POST /kill {scope:"all"}`. While stopped, the bar "Sessions are stopped" offers
+switcher's label is the project on screen (`/projects/:id/...`), else the active project.
+
+**The run indicator (d1109-run-visible, U-096; D8 of ADR 0118: "it should at least be very clear
+to a user when a run is ongoing ... no matter where the person is").** One element,
+`shell/RunIndicator.tsx`, says what runs now in the daemon's words: a bar directly under the
+header (`run-indicator-bar`, role status: a pulsing dot, `RunningView.text` such as 'Quote page ·
+the coder works on "Style the page"', the time since its state began, **Stop ▾**) on every route
+and at every width, never inside the collapsed menu. It replaces the header's running chip
+(`RunningChip`, 'Alice is working on ...', which named the agent, not the project) and its
+**Stop all (N running)** button. The store's `running` list comes from `GET /running` at start
+and from every `run.changed` frame on `/events` (and the poll), so a task, a review, a wrap-up
+or a stop asked for change the words without a reload. **Stop ▾** opens a menu headed by the
+words (and, for the critic's monthly check, `explain`: what it is for, in the form of the
+credential it runs on) with **Stop after this task** (`POST /sessions/:id/pause`), **Stop now**
+(`POST /sessions/:id/stop`, asked once) and **Stop all** (`POST /kill {scope:"all"}`, asked once:
+"Stops every running session now. No session starts until you allow it again."); the entry's
+`stop` list says which apply (none for a session that waits, Stop now and Stop all for a stop
+already asked for and the monthly check). A person's session that ended to wait for its Claude
+credential with its continuation kept reads "Beacon · waiting until 15:40, then it goes on" with
+**Cancel** (`POST /projects/:id/continuation/cancel`; "Nothing starts when Claude is back; its
+tasks wait for your Start.", `CANCEL_WAIT_EXPLAIN` from `daemon/run-wait-words.ts`, a file with
+no imports: `run-words.ts` reaches Node modules through `task-words.ts`, and importing it into
+the browser build blanked every page, `test/browser-imports.test.ts`). The text opens the
+session. While a session runs `document.title` is "● Quote page · Forerunner" (a waiting one
+leaves it "Forerunner"). The same element in its **block** form is Home's and the Overview's
+**Working now**, and in its **compact** form the first line of Talk (`ConversationPanel`, whose
+modal covers the header). The Inbox's Done line offers **Start** (V-6, `DoneStart`) when the
+answer readied work for the person's next Start (`HumanRequestView.startOffer`) and no session of
+that project runs or waits (the same `running` list); it opens that project's Start dialog.
+Tests: `test/run-indicator.test.tsx` (every route at two widths, the menu, `run.changed`, the
+waiting entry, the title, Home, the Overview, Talk, the session page's wait block, the Done
+line's Start), real-daemon "d1109-run-visible, run C", `e2e/smoke.spec.ts` (two widths).
+
+While stopped, the bar "Sessions are stopped" offers
 **Allow sessions again** (`POST /kill/resume`) and **Continue where it stopped** (resume, then a
 session on each project the answer's `stoppedProjects` names, the projects whose sessions Stop
 all ended (never one the person undid or stopped themselves), while its start check would run
@@ -566,8 +595,9 @@ project, "Start session: <project>" (opens `StartSessionDialog` from the shell, 
 the project the dialog starts: the one on screen, hint "the project on screen", else the active
 one, "the active project", since opening a project from Home does not make it active, later #61),
 theme and shortcuts commands; `filterCommands` matches every word). As the header (later #59):
-**Stop all (N running)** is listed only while something runs and opens the header's own question
-(the shell holds `StopAll`'s `asking`), so nothing stops before "Stop all" in it; while sessions
+**Stop all (N running)** is listed only while something runs and opens the run indicator's own
+question (d1109-run-visible: the menu's Stop all, asked once), so nothing stops before "Stop all"
+in it; while sessions
 are stopped it is **Allow sessions again** (`POST /kill/resume`); before, "Stop all sessions" was
 listed while nothing ran, stopped at once and read "Resume all sessions" when stopped (test
 `test/polish-screens.test.tsx`). The header's
@@ -1612,9 +1642,19 @@ section tauri-build's manifest never had. The decision is `build_support/windows
 script's own `cfg(windows)` is the host's), shared with the tests in `src/windows_manifest.rs`.
 The windows-gnu target, which Forerunner does not build, keeps tauri-build's own embedding.
 
-**Tray (`tray.rs`, `state::tray_view`).** Open Forerunner; Kill switch: stop everything
-(confirm dialog → `POST /kill { scope: "all" }`; then disabled, "Resume" enabled →
-`POST /kill/resume`); Pause email / Resume email (one item; `POST /agents/<id>/email/pause|resume`
+**Tray (`tray.rs`, `state::tray_view`).** First, what runs now (d1109-run-visible V-7,
+U-096; disabled, never clickable): `/health.running`'s words ("Quote page: the coder works on
+"A"", or "No session runs"), the same line first in the tooltip; while a person's session only
+waits to go on it reads "Quote page: waiting until 15:40, then it goes on" and the title and the
+icon stay as when nothing runs. While a session runs the main window's title is "Forerunner —
+Quote page is working" (`state::window_title`, `windows::set_main_title`) and the tray icon gets
+a blue dot at its lower right (V-8: `tray::with_running_dot` draws it over the app's own icon
+once, no new asset; `state::icon_dot` picks the icon on each refresh). Then Open Forerunner;
+**Stop all sessions** (confirm dialog "Stop every running session now? No session starts until
+you allow it again." → `POST /kill { scope: "all" }`; the notification says how many stopped, in
+words, `actions::stopped_words`; then disabled, **Allow sessions again** enabled →
+`POST /kill/resume`; before: "Kill switch: stop everything" and "Resume"); Pause email / Resume
+email (one item; `POST /agents/<id>/email/pause|resume`
 where `<id>` is `/me`'s `agent.id`; enabled only after `GET /agents/<id>/email/settings`
 answered 200, disabled with the reason in its text otherwise, since menu items have no
 tooltips; a test reads `emailRouteTable()`'s source so a route rename fails it); Updates…
