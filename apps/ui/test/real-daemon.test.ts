@@ -22470,7 +22470,7 @@ describe("d1109-cred-screens, run C", () => {
       );
       expect(held.oneOff?.label).toBe("Use API key");
       expect(held.oneOff?.explain).toMatch(
-        /^Answers this question on your API key: about (CHF \d+\.\d\d|less than CHF 0\.01)\.$/,
+        /^Answers this question on your API key: (about CHF \d+\.\d\d|less than CHF 0\.01)\.$/,
       );
       expect(held.offer ?? null).toBeNull();
       expect(keyCalls()).toBe(0);

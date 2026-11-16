@@ -31,7 +31,7 @@ import { eventAudience } from "../src/daemon/event-audience.ts";
 import { projectStatusLine } from "../src/daemon/project-status.ts";
 import { describeEvent } from "../src/daemon/views.ts";
 import { waitRowWords } from "../src/session/credential-wait.ts";
-import { backLogLine, switchRunLine } from "../src/session/credential-words.ts";
+import { backLogLine, chatOneOffExplain, switchRunLine } from "../src/session/credential-words.ts";
 
 /**
  * d1109-cred-screens (run C, C6; ADR 0120 amended 2026-11-16): every screen sentence of "which
@@ -408,5 +408,16 @@ describe("d1109-cred-screens, run C (C5-left-1): the switch's session log lines"
       "Your Claude subscription can work again; the next tasks use it.",
     );
     expect(eventAudience("billing.back", {})).toBe("person");
+  });
+});
+
+describe("d1109-cred-screens, run C (CS-8): chat's one-off line never says CHF 0.00", () => {
+  it("a cost under a centime reads 'less than CHF 0.01', with no 'about'", () => {
+    expect(chatOneOffExplain("api_key", "CHF 0.02")).toBe(
+      "Answers this question on your API key: about CHF 0.02.",
+    );
+    expect(chatOneOffExplain("api_key", "less than CHF 0.01")).toBe(
+      "Answers this question on your API key: less than CHF 0.01.",
+    );
   });
 });

@@ -307,9 +307,11 @@ describe("which Claude credential is used first (U-078)", () => {
     expect(body.reply).toBe(HOLD_12);
     expect(body.reply).not.toContain("I could not answer (");
     expect(body.oneOff?.label).toBe("Use API key");
+    // d1109-cred-screens: never "about CHF 0.00" for a cost above zero.
     expect(body.oneOff?.explain).toMatch(
-      /^Answers this question on your API key: about CHF \d+\.\d\d\.$/,
+      /^Answers this question on your API key: (about CHF \d+\.\d\d|less than CHF 0\.01)\.$/,
     );
+    expect(body.oneOff?.explain).not.toContain("CHF 0.00");
     expect(sdkCalls).toHaveLength(sdkBefore + 1);
     expect(apiCalls.length).toBe(apiBefore);
     expect(await ledgerSince(before)).toEqual([]);

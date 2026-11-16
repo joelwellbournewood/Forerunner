@@ -49,6 +49,7 @@ import {
 } from "../provider/types.ts";
 import type { CredentialWait } from "../session/credential-wait.ts";
 import { chatHoldReply, chatOneOffExplain, chatSwitchNote } from "../session/credential-words.ts";
+import { moneyWords } from "../session/money-words.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { NO_MODEL_CHAT_REPLY } from "../setup/no-model.ts";
 import { isChatOnlyCard } from "../wiring/request-answers.ts";
@@ -1284,7 +1285,11 @@ export class ConversationAgent {
                 label: "Use API key",
                 explain: chatOneOffExplain(
                   credHold.oneOff.kind,
-                  chfText(credHold.oneOff.estimateUsdMicro, chfRate),
+                  // Never "about CHF 0.00" for a cost above zero (design section 5).
+                  moneyWords(
+                    chfText(credHold.oneOff.estimateUsdMicro, chfRate),
+                    credHold.oneOff.estimateUsdMicro,
+                  ),
                 ),
               },
             }
@@ -2130,7 +2135,10 @@ export class ConversationAgent {
           label: "Use API key",
           explain: chatOneOffExplain(
             heldAfter.oneOff.kind,
-            chfText(heldAfter.oneOff.estimateUsdMicro, chf),
+            moneyWords(
+              chfText(heldAfter.oneOff.estimateUsdMicro, chf),
+              heldAfter.oneOff.estimateUsdMicro,
+            ),
           ),
         }
       : null;

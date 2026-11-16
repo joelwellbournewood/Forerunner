@@ -334,7 +334,9 @@ export function chatHoldReply(
 
 /** The one-off press's consequence line: "Answers this question on your API key: about CHF 0.02." */
 export function chatOneOffExplain(to: BillingSourceKind | string, estimateChf: string): string {
-  return `Answers this question on ${yourCredential(to)}: about ${estimateChf}.`;
+  // d1109-cred-screens: "less than CHF 0.01" stands alone ("about less than" says nothing more).
+  const est = /^less than /.test(estimateChf) ? estimateChf : `about ${estimateChf}`;
+  return `Answers this question on ${yourCredential(to)}: ${est}.`;
 }
 
 /** The note under an answer another credential gave: once per stop per conversation. */
