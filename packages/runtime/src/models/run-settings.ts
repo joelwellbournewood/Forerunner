@@ -72,7 +72,11 @@ export type RunSettingsOverride = z.infer<typeof RunSettingsOverrideSchema>;
  * conversation turns that speak for it). The critic's model and effort follow its review tiers
  * (spec H, `pickCriticModel`) and are shown, not set, here.
  */
-export const AGENT_SETTING_MODES = ["planning", "text_chat"] as const satisfies readonly Mode[];
+export const AGENT_SETTING_MODES = [
+  "planning",
+  "text_chat",
+  "chat_thorough",
+] as const satisfies readonly Mode[];
 export type AgentSettingMode = (typeof AGENT_SETTING_MODES)[number];
 
 /** `agent.model_config`: the D.4 overrides; other keys a later feature adds are kept as they are. */

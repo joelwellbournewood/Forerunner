@@ -47,6 +47,7 @@ export const EFFORT_VALUES = [
 export const MODE_VALUES = [
   "voice_chat",
   "text_chat",
+  "chat_thorough",
   "routing",
   "planning",
   "coder",

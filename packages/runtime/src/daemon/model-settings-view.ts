@@ -84,7 +84,7 @@ const minutes = (ms: number) => Math.round((ms / 60_000) * 100) / 100;
 export const PROJECT_CEILING_NOTE = `Runs at most ${DEFAULT_CEILING} unless a project raises its highest model (Settings, per project: Highest model).`;
 export const CHAT_CEILING_NOTE = `Chat runs at most ${DEFAULT_CEILING}; no setting raises it.`;
 /** Chat turns and planning go at standard speed: neither has a fast-mode price (ADR 0072). */
-export const STANDARD_SPEED_MODES: readonly string[] = ["text_chat", "planning"];
+export const STANDARD_SPEED_MODES: readonly string[] = ["text_chat", "chat_thorough", "planning"];
 
 function ceilingOf(mode: string): RunSettingsView["ceiling"] {
   return mode === "text_chat"

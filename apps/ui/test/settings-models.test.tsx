@@ -67,6 +67,20 @@ describe("Settings: models per agent and specialist", () => {
     expect(within(critic).getByTestId("model-settings-note")).not.toHaveTextContent(/tier/i);
   });
 
+  // fixup-d1109-chat-depth (review blocking 5): the longer chat answer's mode was listed under its
+  // raw key ("Alice · chat_thorough"), against design §5 rule 6 (no raw states).
+  it("names the longer chat answers' mode in words: 'Alice · chat, thorough answers' on sonnet at medium", async () => {
+    renderApp("/settings", createHarness({ acceptsTemperature: false }));
+    const row = await rowOf("agent", "Alice", "chat_thorough");
+    expect(row.querySelector("td")?.firstChild?.textContent).toBe("Alice · chat, thorough answers");
+    expect(row).not.toHaveTextContent("chat_thorough");
+    expect(within(row).getByTestId("model-setting-tier")).toHaveTextContent("sonnet (fake-sonnet)");
+    expect(within(row).getByTestId("model-setting-effort")).toHaveTextContent("medium");
+    expect(rowsOf(MODEL_SETTINGS).find((r) => r.mode === "chat_thorough")?.target?.subject).toBe(
+      "Alice · chat, thorough answers",
+    );
+  });
+
   it("hides temperature for a provider that does not accept one", async () => {
     renderApp("/settings", createHarness({ acceptsTemperature: false }));
     const section = await screen.findByTestId("model-settings");
@@ -180,10 +194,12 @@ describe("Settings: models per agent and specialist", () => {
     const temp = modelSettingCommand(target, "temperature", planning.temperature ?? planning.tier);
     expect(temp.command.params("0.7")).toMatchObject({ value: 0.7 });
     expect(temp.command.params("1.2")).toBeNull();
-    // Rows: two of Alice's modes, the critic's, then the specialists.
+    // Rows: Alice's three modes (d1109-chat-depth: the longer chat answers' too), the critic's,
+    // then the specialists.
     expect(rowsOf(MODEL_SETTINGS).map((r) => r.label)).toEqual([
       "Alice · planning",
       "Alice · chat",
+      "Alice · chat, thorough answers",
       "Critic · light review",
       "coder",
       "researcher",

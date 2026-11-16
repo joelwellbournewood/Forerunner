@@ -45,12 +45,17 @@ describe("w15-chat, wave 15", () => {
     expect(lines).toContain(
       "- speed_quality_offset (per project): Shifts every mode's default effort one step per project: -1 speed, 0 balanced, +1 quality. Value: integer from -1 to 1.",
     );
-    // d1109-starts-engine S-5: the project's "When work is ready" key, last of the keys.
-    expect(lines.at(-1)).toBe(
+    // d1109-starts-engine S-5: the project's "When work is ready" key, then d1109-chat-depth's
+    // chat_ask_above after it (run C3's merge order: start_by_itself, chat_ask_above).
+    expect(lines.at(-2)).toBe(
       "- start_by_itself (per project): When work is ready: false (the default) waits for the person's Start; true starts a session by itself when work the person made ready can run, never in quiet hours or while sessions are stopped, never for the agent's own tasks. Only the person sets it. Value: true | false.",
     );
-    // Every key has its line.
-    expect(lines.filter((l) => l.startsWith("- "))).toHaveLength(22);
+    // d1109-chat-depth (run C3): the amount above which chat asks first, appended last.
+    expect(lines.at(-1)).toBe(
+      "- chat_ask_above (for the person): The CHF above which one chat answer asks first before it thinks longer (a stronger model always asks first). 0: chat asks before every longer answer. Unset: CHF 0.10. Value: number. For example 0.1 or 0.",
+    );
+    // Every key has its line (run C3's merge: start_by_itself and chat_ask_above, 21 + 2).
+    expect(lines.filter((l) => l.startsWith("- "))).toHaveLength(23);
     // What the model's tool schema says of `value` (before: `{}`).
     const schema = z.toJSONSchema(settingsSet.params) as {
       properties: Record<string, { description?: string }>;

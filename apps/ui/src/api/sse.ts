@@ -50,6 +50,11 @@ export type DaemonEvent =
   /** Polling only: the sessions running now, read on every poll (a session that ended is gone). */
   | { event: "sessions.running"; data: SessionView[] }
   | { event: "project.changed"; data: { id: string } }
+  /**
+   * d1109-chat-depth: a chat turn started, took a step or ended in this conversation (null: the
+   * one outside any project); its screens re-read it (the answering line, the reply).
+   */
+  | { event: "conversation.changed"; data: { projectId: string | null } }
   /** An agent was renamed (U-025): `/me` and `/agents` are read again. */
   | { event: "agent.changed"; data: { id: string; name: string } }
   | { event: "extension.changed"; data: ExtensionChanged }
@@ -76,6 +81,7 @@ const InboxChanged = z.object({
   needsYouCount: z.number().int().optional(),
 });
 const ProjectChanged = z.object({ id: z.string() });
+const ConversationChanged = z.object({ projectId: z.string().nullable() });
 const AgentChanged = z.object({ id: z.string(), name: z.string() });
 const ExtensionChangedSchema = z.object({ type: z.string(), id: z.string(), name: z.string() });
 const RestartRequestedSchema = z.object({
@@ -116,6 +122,10 @@ export function parseDaemonEvent(event: string, rawData: string): DaemonEvent | 
       const p = ProjectChanged.safeParse(data);
       return p.success ? { event, data: p.data } : null;
     }
+    case "conversation.changed": {
+      const p = ConversationChanged.safeParse(data);
+      return p.success ? { event, data: p.data } : null;
+    }
     case "agent.changed": {
       const p = AgentChanged.safeParse(data);
       return p.success ? { event, data: p.data } : null;
@@ -150,6 +160,7 @@ export const DAEMON_EVENT_NAMES = [
   "inbox.changed",
   "session.changed",
   "project.changed",
+  "conversation.changed",
   "agent.changed",
   "extension.changed",
   "restart.requested",

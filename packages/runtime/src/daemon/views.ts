@@ -1490,6 +1490,7 @@ export function commandDefView(def: CommandDef<unknown>, schema: unknown): Comma
 export const MODE_LABELS: Record<Mode, string> = {
   voice_chat: "Voice chat",
   text_chat: "Text chat",
+  chat_thorough: "Chat, thorough answers",
   routing: "Routing, triage, summaries",
   planning: "Session planning",
   coder: "Coding specialist",
@@ -1533,7 +1534,10 @@ export function effortCapsOf(
   };
   set(["coder"], registry.specialists.get("coder")?.max_effort);
   set(["researcher"], registry.specialists.get("researcher")?.max_effort);
-  set(["text_chat", "voice_chat"], registry.principals.get("conversation-agent")?.max_effort);
+  set(
+    ["text_chat", "voice_chat", "chat_thorough"],
+    registry.principals.get("conversation-agent")?.max_effort,
+  );
   set(["planning"], registry.principals.get("project-manager")?.max_effort);
   set(["critic_t1", "critic_t23"], registry.critic.max_effort);
   return caps;
@@ -1551,7 +1555,8 @@ export function agentEffortOverride(
   mode: Mode,
 ): EffortLevel | undefined {
   if (!config) return undefined;
-  if (mode === "planning" || mode === "text_chat") return modeOverride(config, mode).effort;
+  if (mode === "planning" || mode === "text_chat" || mode === "chat_thorough")
+    return modeOverride(config, mode).effort;
   if (mode === "coder" || mode === "researcher") return specialistOverride(config, mode).effort;
   return undefined;
 }
@@ -1611,6 +1616,22 @@ export function eventSample(e: EventRow): PerfSample | null {
     if (p.source === "voice") return null;
     const ttft = num(p.ttftMs);
     const total = num(p.durationMs);
+    // d1109-chat-depth: a longer answer is measured on its total time against the thorough mode's
+    // target ("Chat, thorough answers"), never as a slow first token of the quick chat.
+    if (p.depth === "longer" || p.depth === "stronger" || p.depth === "best") {
+      if (total === null) return null;
+      return {
+        runId: e.id,
+        source: "chat",
+        mode: "chat_thorough",
+        specialist: "conversation",
+        model: str(p.model),
+        effort: str(p.effort),
+        ttftMs: null,
+        durationMs: total,
+        at: e.created_at,
+      };
+    }
     // A turn whose model call never produced a first token is a measurement only when it ran
     // into its timeout; one that failed at once would count a few ms as a fast reply.
     if (ttft === null && (p.outcome !== "timeout" || total === null)) return null;

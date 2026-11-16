@@ -158,6 +158,8 @@ export class SessionBudget {
   private _warned80 = false;
   /** Each work run's wrap-up line and whether its wrap-up was given (ADR 0112). */
   private readonly runLines = new Map<string, RunWrapUpLine & { wrapped: boolean }>();
+  /** Runs whose next call carries the wrap-up whatever they spent (`wrapUpNow`). */
+  private readonly wrapNow = new Set<string>();
 
   constructor(readonly limits: SessionLimits) {
     // Negated comparisons so NaN fails each check instead of slipping through every one.
@@ -265,12 +267,24 @@ export class SessionBudget {
       !!line &&
       !line.saveOnly &&
       !line.wrapped &&
-      runSpent + lineEstimateUsdMicro > line.lineUsdMicro;
+      (runSpent + lineEstimateUsdMicro > line.lineUsdMicro || this.wrapNow.has(runId));
     if (wrap && line) line.wrapped = true;
     return {
       decision: wrap ? "wrap_up" : local.decision,
       ...(first ? { line: first } : {}),
     };
+  }
+
+  /**
+   * Answer now (d1109-chat-depth): the run's next call carries its wrap-up, once, whatever it
+   * spent; false when the run has had its wrap-up or has no line (a save-only run never hears
+   * one). Append-only: the line, the reserve and the trigger by spend stay as they were.
+   */
+  wrapUpNow(runId: string): boolean {
+    const line = this.runLines.get(runId);
+    if (line && (line.wrapped || line.saveOnly)) return false;
+    this.wrapNow.add(runId);
+    return true;
   }
 
   /** The run's wrap-up line, once its first call set it (ADR 0112). */

@@ -18,6 +18,7 @@ import {
   ConversationAgent,
   type ConversationDeps,
 } from "../src/conversation/agent.ts";
+import { ANSWER_THOROUGHLY_TOOL, TIMEOUT_REPLY } from "../src/conversation/depth.ts";
 import { READ_TOOL_NAMES } from "../src/conversation/read-tools.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import type { CapsPort } from "../src/enforcement/ports.ts";
@@ -214,7 +215,10 @@ describe("conversation agent over the command registry", () => {
           w.commands.registry
             .names()
             .map((c) => c.replace(/\./g, "_"))
-            .includes(n) || (READ_TOOL_NAMES as readonly string[]).includes(n),
+            .includes(n) ||
+          (READ_TOOL_NAMES as readonly string[]).includes(n) ||
+          // d1109-chat-depth: the fast model's one way to ask for a longer answer, gated in code.
+          n === ANSWER_THOROUGHLY_TOOL,
       ),
     ).toBe(true);
     expect(names).toEqual(expect.arrayContaining([...READ_TOOL_NAMES]));
@@ -649,10 +653,11 @@ describe("conversation agent over the command registry", () => {
     const r = await agent.chat({ humanId: human, agentId: alice, text: "switch to pharmawatch" });
     expect(r.reply).toBe("I can only answer questions here.");
     expect(r.actions).toEqual([]);
-    // No command tool: only the read-only tools, which change nothing (design §3.9).
-    expect((provider.calls[0]?.request.tools ?? []).map((t) => t.name).sort()).toEqual([
-      ...READ_TOOL_NAMES,
-    ]);
+    // No command tool: only the read-only tools, which change nothing (design §3.9), and
+    // d1109-chat-depth's answer_thoroughly (a longer answer, gated in code; it changes nothing).
+    expect((provider.calls[0]?.request.tools ?? []).map((t) => t.name).sort()).toEqual(
+      [ANSWER_THOROUGHLY_TOOL, ...READ_TOOL_NAMES].sort(),
+    );
     await store.close();
   });
 });
@@ -1348,38 +1353,60 @@ describe("chat turns read their history from the prompt cache (the leftovers of 
 describe("l3-money-engine, run L3: a chat call its timeout cuts off", () => {
   const SPOKEN = "You have a decision waiting. ";
   const BROKEN = "The critic asked for one of the three options: adopt,";
-  /** Reports 500 input tokens on message_start, streams `text`, then waits for the abort. */
-  const cutOff = (text: string): ModelProvider => ({
-    name: "cut-off",
-    listModels: async () => [],
-    countTokens: (t: string) => Math.ceil(t.length / 4),
-    async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {
-      yield {
-        type: "message_start",
-        model: req.model,
-        usage: {
-          input_tokens: 500,
-          output_tokens: 0,
-          cache_read_input_tokens: 0,
-          cache_creation_input_tokens: 0,
-        },
-      };
-      if (text) yield { type: "text_delta", text };
-      await new Promise<void>((resolve) => {
-        if (req.signal?.aborted) resolve();
-        else req.signal?.addEventListener("abort", () => resolve(), { once: true });
-      });
-      yield { type: "error", code: "aborted", message: "aborted", retryable: false };
-    },
-    complete: () => Promise.reject(new Error("unused")),
-  });
-  /** Steps the simulated clock past the turn's 30 s timeout until the turn has answered. */
+  /**
+   * Reports 500 input tokens on message_start, streams `text`, then waits for the abort.
+   * `started` resolves when the call has begun (C2-left-8: the clock moves only after it).
+   */
+  let markStarted: () => void = () => undefined;
+  let started: Promise<void> = Promise.resolve();
+  const cutOff = (text: string): ModelProvider => {
+    started = new Promise<void>((r) => {
+      markStarted = r;
+    });
+    return {
+      name: "cut-off",
+      listModels: async () => [],
+      countTokens: (t: string) => Math.ceil(t.length / 4),
+      async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {
+        markStarted();
+        yield {
+          type: "message_start",
+          model: req.model,
+          usage: {
+            input_tokens: 500,
+            output_tokens: 0,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        };
+        if (text) yield { type: "text_delta", text };
+        await new Promise<void>((resolve) => {
+          if (req.signal?.aborted) resolve();
+          else req.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield { type: "error", code: "aborted", message: "aborted", retryable: false };
+      },
+      complete: () => Promise.reject(new Error("unused")),
+    };
+  };
+  /**
+   * Steps the simulated clock past the turn's 30 s timeout until the turn has answered. C2-left-8:
+   * it moves the clock only once the model call has started (before, a real-time wait before the
+   * first call under load let the 60 simulated seconds run out first: "had not answered").
+   */
   const pastTimeout = async <T>(w: Awaited<ReturnType<typeof setup>>, p: Promise<T>) => {
     let done = false;
     const tracked = p.finally(() => {
       done = true;
     });
     tracked.catch(() => undefined);
+    await Promise.race([
+      started,
+      tracked.then(
+        () => undefined,
+        () => undefined,
+      ),
+    ]);
     for (let i = 0; i < 60 && !done; i++) {
       for (let j = 0; j < 8; j++) await new Promise<void>((r) => setImmediate(r));
       if (!done) await w.h.clock.advance(1_000);
@@ -1412,6 +1439,9 @@ describe("l3-money-engine, run L3: a chat call its timeout cuts off", () => {
     });
     const res = await pastTimeout(w, w.chat("what is waiting on me?")).finally(off);
     expect(res.ttftMs).toBeNull();
+    // L3-left-11 (d1109-chat-depth): one sentence of what happened and what to do, never "(run
+    // timeout)".
+    expect(res.reply).toBe(TIMEOUT_REPLY);
     const reply = (await w.log()).find((e) => e.type === "chat.reply");
     expect(reply?.payload).toMatchObject({ outcome: "timeout", ttftMs: null, costUsdMicro: 500 });
     expect(warned).not.toContain("chat first token over target");

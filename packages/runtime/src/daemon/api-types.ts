@@ -991,8 +991,55 @@ export const ChatRequestBody = z.object({
    * phone) the active project the registry recorded applies, so every channel uses one.
    */
   projectTab: z.boolean().optional(),
+  /**
+   * d1109-chat-depth: Think it through ("longer"): the person asks this answer to think longer on
+   * the same model, outside their words (with `offer`, the answer whose figures it takes).
+   */
+  depth: z.enum(["longer"]).optional(),
+  /**
+   * d1109-chat-depth: the answer whose offer the person takes (Go ahead, Think it through): its
+   * turn id. It runs once on that answer's question; any other line drops the offer.
+   */
+  offer: z.string().optional(),
 });
 export type ChatRequestBody = z.infer<typeof ChatRequestBody>;
+
+/**
+ * What the app offers under a chat answer (d1109-chat-depth): an ask line with Go ahead, a closer
+ * look with Think it through (and its consequence line), or a cap line with nothing to press.
+ * `line` is null for Think it through alone under a quick answer.
+ */
+export const ChatOfferView = z.object({
+  line: z.string().nullable(),
+  action: z.enum(["go_ahead", "think"]).nullable(),
+  /** Think it through's consequence line ("Thinks longer on this model: about 20 seconds, …"). */
+  explain: z.string().nullable().optional(),
+});
+export type ChatOfferView = z.infer<typeof ChatOfferView>;
+
+/** `POST /chat/stream`'s first frame (d1109-chat-depth): the turn's id, for Stop, and when it began. */
+export const ChatTurnFrame = z.object({ turnId: z.string(), startedAt: z.string() });
+export type ChatTurnFrame = z.infer<typeof ChatTurnFrame>;
+
+/**
+ * `POST /chat/stream`'s step frame (d1109-chat-depth): what chat is doing now, in code-written
+ * words (at most 80 characters, no id); `reset`: the text streamed so far is dropped (a hand-over
+ * to a longer pass, the claim guard's true line).
+ */
+export const ChatStepFrame = z.object({
+  text: z.string(),
+  at: z.string(),
+  reset: z.boolean().optional(),
+});
+export type ChatStepFrame = z.infer<typeof ChatStepFrame>;
+
+/** `POST /chat/turns/:id/stop` (d1109-chat-depth): false when the turn had ended already. */
+export const ChatStopView = z.object({ stopped: z.boolean() });
+export type ChatStopView = z.infer<typeof ChatStopView>;
+
+/** `POST /chat/turns/:id/answer-now` (d1109-chat-depth): false on a quick turn or one that ended. */
+export const ChatAnswerNowView = z.object({ done: z.boolean() });
+export type ChatAnswerNowView = z.infer<typeof ChatAnswerNowView>;
 
 export const ChatActionView = z.object({
   /** The command name(s) that ran ("project.switch+budget.set"), or "undo". */
@@ -1080,8 +1127,18 @@ export const ConversationTurnView = z.object({
       card: z.enum(["waiting", "yes", "no", "expired"]).nullable().optional(),
       /** The records the reply rests on (d1109-chat-recall), at most three; absent for none. */
       sources: z.array(RecordSourceView).optional(),
+      /** d1109-chat-depth: "quick", "longer", "stronger" or "best". Optional for an older daemon. */
+      depth: z.string().optional(),
+      /** The muted line under a longer answer, or "You stopped this answer: CHF 0.02 spent.". */
+      footer: z.string().nullable().optional(),
+      /** What the app offers under the answer (the newest answer's only has an action). */
+      offer: ChatOfferView.nullable().optional(),
     })
     .nullable(),
+  /** d1109-chat-depth: Forerunner closed before answering this line (a restart cut it off). */
+  interrupted: z.boolean().optional(),
+  /** d1109-chat-depth: the answer to this line failed while Forerunner ran. */
+  failed: z.boolean().optional(),
 });
 export type ConversationTurnView = z.infer<typeof ConversationTurnView>;
 
@@ -1094,6 +1151,20 @@ export const ConversationView = z.object({
   projectId: z.string().nullable(),
   turns: z.array(ConversationTurnView),
   waiting: ChatPendingView.nullable(),
+  /**
+   * d1109-chat-depth: the turn being answered now, so a reload or the other surface shows the same
+   * waiting line and Stop: its id, what it does now (null before its first step), since when, and
+   * how deep it goes. Optional for an older daemon.
+   */
+  answering: z
+    .object({
+      turnId: z.string(),
+      step: z.string().nullable(),
+      since: z.string(),
+      depth: z.string(),
+    })
+    .nullable()
+    .optional(),
 });
 export type ConversationView = z.infer<typeof ConversationView>;
 
@@ -1109,6 +1180,12 @@ export const ChatReplyView = z.object({
   activeProjectId: z.string().nullable(),
   /** The records the reply rests on (d1109-chat-recall), at most three; absent for none. */
   sources: z.array(RecordSourceView).optional(),
+  /** d1109-chat-depth: how deep the answer went. Optional for an older daemon. */
+  depth: z.string().optional(),
+  /** The muted line under a longer answer, or the stopped line. */
+  footer: z.string().nullable().optional(),
+  /** What the app offers under the answer. */
+  offer: ChatOfferView.nullable().optional(),
 });
 export type ChatReplyView = z.infer<typeof ChatReplyView>;
 
@@ -3307,7 +3384,11 @@ export const DAEMON_ROUTES = {
   decisions: "GET /projects/:id/decisions",
   peers: "GET /projects/:id/peers (what the other agents on the project are doing)",
   markRead: "POST /messages/:id/read",
-  chat: "POST /chat (JSON) | POST /chat/stream (SSE tokens then a final reply event)",
+  chat: "POST /chat (JSON) | POST /chat/stream (SSE: a turn frame {turnId, startedAt}, step frames {text, at, reset?} while it answers, tokens, then a final reply event; d1109-chat-depth)",
+  chatStop:
+    "POST /chat/turns/:id/stop (ChatStopView: Stop ends the turn's runs as killed; changes it made stay with their Undo; {stopped: false} for a turn that ended; 403 for another person's turn)",
+  chatAnswerNow:
+    "POST /chat/turns/:id/answer-now (ChatAnswerNowView: a longer pass's next call carries the wrap-up; {done: false} on a quick turn)",
   costs: "GET /costs?projectId=&from=&to=",
   costEstimates: "GET /costs/estimates (estimate-versus-actual accuracy, EstimateAccuracyView)",
   performance:

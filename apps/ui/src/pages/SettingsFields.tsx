@@ -215,6 +215,11 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
       return v && typeof v === "object" && (v as { chfMicro?: unknown }).chfMicro === 0
         ? "no budget"
         : null;
+    // d1109-chat-depth: "Chat asks first" before a stronger model or an answer over the amount.
+    case "chat_ask_above":
+      return typeof v === "number" && v <= 0
+        ? "before every longer answer"
+        : `before a stronger model or an answer over CHF ${(typeof v === "number" ? v : 0.1).toFixed(2)}`;
     case "language":
       return option(LANGUAGES);
     case "default_autonomy":

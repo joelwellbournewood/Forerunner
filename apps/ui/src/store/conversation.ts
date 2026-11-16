@@ -10,8 +10,21 @@ import type { UiStore } from "./store.ts";
  */
 export interface ConversationState {
   view: ConversationView | null;
-  /** The line being sent and its reply as it streams; null when nothing is in flight. */
-  live: { said: string; text: string; error: string | null } | null;
+  /**
+   * The line being sent and its reply as it streams; null when nothing is in flight.
+   * d1109-chat-depth: its turn (for Stop), what chat is doing now and since when, how deep it
+   * goes, and whether the person pressed Stop.
+   */
+  live: {
+    said: string;
+    text: string;
+    error: string | null;
+    turnId?: string | null;
+    step?: string | null;
+    since?: string | null;
+    depth?: string | null;
+    stopping?: boolean;
+  } | null;
   /** The daemon did not answer the read; the screen offers Retry. */
   error: string | null;
 }

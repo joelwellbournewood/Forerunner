@@ -107,6 +107,8 @@ export const SETTING_KEYS = [
   "calibration",
   "model_watch",
   "handover",
+  // d1109-chat-depth: the amount above which one chat answer asks first.
+  "chat_ask_above",
 ] as const;
 
 /**
@@ -184,6 +186,11 @@ export interface SettingCommand {
 export const PROJECT_BUDGET_ZERO = {
   allowed: true,
   means: "0 means no budget: only the monthly cap limits it.",
+} as const;
+/** d1109-chat-depth: 0 is taken for the amount above which chat asks first. */
+export const CHAT_ASK_ABOVE_ZERO = {
+  allowed: true,
+  means: "0 means chat asks before every longer answer.",
 } as const;
 /** The monthly cap stays positive: it is the limit enforced in code (U-074 owner question). */
 export const MONTHLY_CAP_ZERO = {
@@ -270,6 +277,22 @@ export function commandForSetting(s: SettingView): SettingCommand | null {
       params: (v) => {
         const level = asInt(v);
         return level === null || level < 0 || level > 4 ? null : { level, ...projectParam };
+      },
+    };
+  }
+  if (key === "human.chat_ask_above") {
+    // d1109-chat-depth: any amount in CHF with a point or a comma; 0 is taken (chat asks before
+    // every longer answer). A lower amount acts at once, a higher one is read back (settings.set).
+    return {
+      name: "settings.set",
+      inputType: "money",
+      unit: "CHF",
+      zero: CHAT_ASK_ABOVE_ZERO,
+      initial: (current) => (typeof current === "number" ? current.toFixed(2) : "0.10"),
+      params: (v) => {
+        const micro = v.trim() ? chfToMicro(v) : null;
+        if (micro === null || micro < 0) return null;
+        return { key: "chat_ask_above", value: micro / 1_000_000 };
       },
     };
   }
@@ -491,8 +514,9 @@ export function SettingChangeDialog({
     >
       <div className="space-y-3 text-sm">
         <p className="text-xs text-neutral-600 dark:text-neutral-400">
-          {setting.description}. The same change chat and voice make, with the same change card and
-          the same entry in Changes.
+          {/* One period after the description, whether or not it ends with one (fixup-d1109-chat-depth). */}
+          {setting.description.replace(/[.!?]+$/, "")}. The same change chat and voice make, with
+          the same change card and the same entry in Changes.
         </p>
         {result === null ? (
           <form onSubmit={submit} className="space-y-2">
@@ -702,6 +726,8 @@ function FastModeCard({
 export const BASIC_SETTING_KEYS = [
   "project.session_cap",
   "human.monthly_cap",
+  // d1109-chat-depth: beside the monthly cap (design §6: the money fields are in Basics).
+  "human.chat_ask_above",
   "human.default_autonomy",
   "human.quiet_hours",
 ] as const;

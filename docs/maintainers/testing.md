@@ -2801,6 +2801,14 @@ needs you", and the decisions' `plan` and `record` entries; another runs a sessi
 repository (a bare repository behind the memory git host, as `--githost` serves one) and reads
 the pull request it opened from `GET /projects/:id/pull-requests` (before, that case put the
 done task and its PR into the store by hand; C-62).
+d1109-chat-depth: the stand-in hands over with `answer_thoroughly` first on a chat line that
+asks why something keeps failing (failure), to compare (comparison), a plan for (plan), a review
+(review) or what the last two or three sessions did (many_records), then answers "A short
+answer from what I have." after the app's "Not now"/"Not yet"; on the thorough pass (its system
+part has "# Thinking it through") it looks up the last session and the tasks, one per call, and
+answers "Thought it through after N lookups…", or at once after the wrap-up.
+`FORERUNNER_BENCH_CHAT_HOLD_MS` (`chatHoldMs`) holds every chat reply that long after its input
+was billed, abortable, so a chat answer can be stopped, reloaded and answered now.
 `FORERUNNER_BENCH_DELAY_MS` waits before each reply but the critic's; `criticDelayMs`
 (`FORERUNNER_BENCH_CRITIC_DELAY_MS`, default 0) waits before each of the critic's, abortable
 like the other, so Stop now or Cancel during "Being reviewed" can be walked and tested

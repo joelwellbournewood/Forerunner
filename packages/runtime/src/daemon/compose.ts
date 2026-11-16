@@ -88,6 +88,7 @@ import {
 import { ContextManager } from "../context/manager.ts";
 import { contextSettingsFrom } from "../context/pipeline.ts";
 import { ConversationAgent } from "../conversation/agent.ts";
+import { ChatTurns } from "../conversation/chat-turns.ts";
 import { DataAssets } from "../data/assets.ts";
 import { DataImporter } from "../data/import.ts";
 import { registerDataTools } from "../data/tools.ts";
@@ -335,6 +336,7 @@ import {
   keepStartAtReset,
   keptContinuationOf,
   keptStartOf,
+  personOrderOf,
   planUsageOf,
   RouterTaskBilling,
   restingUntilOf,
@@ -4516,6 +4518,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     mirrorApprovals.wake();
     return out;
   };
+  // d1109-chat-depth: the chat turns in flight, from this daemon's start (a person's line older
+  // than it without a reply was cut off by a restart: "Forerunner closed before answering this.").
+  const chatTurns = new ChatTurns(clock.nowIso());
   // U-047: Chat exists without a model too. The commands its parser understands ("add a task:
   // …", "make this a task", "skip the … task", "switch to …") need no model and run (a session
   // start says Claude is not connected, `startBlocked`); a line
@@ -4576,6 +4581,55 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // Design §3.3, §3.9: the plan from the brief drafted, waiting, failed (and why), rejected;
     // the live run of 2026-11-01 answered "no tasks yet… I can add tasks" after a failure.
     intakeStatus: (projectId) => intake.status(projectId),
+    // d1109-chat-depth (C3, ADR 0114): the turns in flight (the conversation's answering line,
+    // Stop, conversation.changed), the outer room a longer pass may take (the month cap and the
+    // project's budget as the caps checker reads them per call; the one that binds names the cap
+    // line), and the credential chat would use now (the first-credential rule; d1109-cred-engine
+    // answers it from the policy in C5).
+    turns: chatTurns,
+    chatRoom: async (scope) => {
+      const who = await store.human.get(scope.humanId);
+      const project = scope.projectId ? await store.project.get(scope.projectId) : undefined;
+      const month = (who?.monthly_cap_usd_micro ?? 0) > 0 ? (who?.monthly_cap_usd_micro ?? 0) : 0;
+      const budget = project?.budget_usd_micro ?? 0;
+      const roomOf = (caps: { monthUsdMicro: number; projectUsdMicro?: number }) =>
+        checker.room(
+          { humanId: scope.humanId, ...(scope.projectId ? { projectId: scope.projectId } : {}) },
+          {
+            phase: "work",
+            caps: { ...caps, sessionUsdMicro: Number.MAX_SAFE_INTEGER },
+          },
+        );
+      const monthRoom = month > 0 ? await roomOf({ monthUsdMicro: month }) : undefined;
+      const projectRoom =
+        budget > 0
+          ? await roomOf({ monthUsdMicro: Number.MAX_SAFE_INTEGER, projectUsdMicro: budget })
+          : undefined;
+      if (monthRoom === undefined && projectRoom === undefined) return null;
+      return projectRoom !== undefined && (monthRoom === undefined || projectRoom < monthRoom)
+        ? { usdMicro: projectRoom, level: "project" as const }
+        : { usdMicro: monthRoom ?? 0, level: "month" as const };
+    },
+    ...(routed
+      ? {
+          chatCredential: async () => {
+            const now = await routed
+              .peek(rungModelFor(routed, modelConfig.get().modeDefaults.text_chat.tier))
+              .catch(() => null);
+            if (!now) return null;
+            const sources = await stateSources(store)(human.id);
+            const order = (await personOrderOf(store, human.id)) ?? CALL_FALLBACK_ORDER;
+            const first = order.find((k) => sources.some((x) => x.kind === k)) ?? now.kind;
+            const kindOf = (k: string) =>
+              k === "subscription" || k === "api_key" || k === "plan_credits"
+                ? (k as "subscription" | "api_key" | "plan_credits")
+                : ("other" as const);
+            return now.kind === first
+              ? { kind: kindOf(now.kind) }
+              : { kind: kindOf(now.kind), notFirst: { firstKind: kindOf(first) } };
+          },
+        }
+      : {}),
   });
   // Voice (spec O; ADR 0012, ADR 0048): the loop over the conversation agent, behind the
   // daemon's /voice routes. The providers are the local helpers and the cloud ones by secret

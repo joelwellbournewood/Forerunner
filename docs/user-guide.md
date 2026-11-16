@@ -411,6 +411,23 @@ them as you left them; an open file or task stays on its own tab.
   answered at once, without a lookup. Inbox Updates, notifications and the session log's lines
   are not searched: ask about the session, task or card they are about. What a lookup returns is
   data to Chat, like a report: a change it proposes after a lookup waits for your **Yes**.
+  While it looks it says what it is doing ("Looking through last week's sessions…").
+  **Short and longer answers.** Most questions get a quick answer. When a question needs more
+  (why something keeps failing, a plan, a comparison, what several sessions did), Chat thinks it
+  through: on the same model it goes ahead by itself up to your amount (CHF 0.10 at first); before
+  a stronger model, or an answer that may cost more than your amount, it asks in one line with the
+  cost and the time ("This needs a stronger model: about CHF 0.15 (at most CHF 0.30) and 30
+  seconds. Go ahead?") and goes on only when you press **Go ahead** or say "yes". Say "think it
+  through", "take your time" or "use a stronger model" yourself, or press **Think it through**
+  under an answer. The bubble says what it is doing and for how long, and a longer answer ends
+  with one line of its model, time and cost ("Thought it through with Sonnet · 34 s · CHF 0.06").
+  **Stopping an answer.** While Chat answers, **Send** becomes **Stop**: the answer ends, what it
+  already changed stays with its Undo, and the line under it says what it cost. Only **Stop**
+  stops it: pressing Enter while you type your next line meanwhile keeps the answer going and
+  your line in the box. When an answer says it changed something that did not change, the
+  bubble says "Checking what changed…" and the untrue words go away. A reload shows
+  the same line and Stop; a line Forerunner closed on before answering says so, with **Ask
+  again**.
 
 **A project linked to a GitHub repository**: each task works on a branch of its own and opens a
 pull request when it is done; Forerunner makes the commits, pushes and opens the pull request
@@ -1411,7 +1428,10 @@ your agents may reach beyond their built-in tools.
 
 - **Settings** opens on **Basics**: your name and your agent's name, whether Claude and GitHub
   are connected (with **Connect Claude** when Claude is not, and the setup assistant), the
-  budget per session of each project, the monthly cap, the default autonomy by name ("Standard:
+  budget per session of each project, the monthly cap, **Chat asks first** before a stronger
+  model or an answer over your amount (CHF 0.10 at first; below it Chat thinks longer when it
+  helps, on the same model; 0 makes it ask before every longer answer; a lower amount applies at
+  once, a higher one asks your Yes), the default autonomy by name ("Standard:
   routine, reversible actions run; the rest asks you"), quiet hours, and **Sandbox (Docker)**
   (whether full-review tasks can run, the step to take, the sandbox download). Everything else is
   under **Advanced** (collapsed; click it to open): the subscription allowance, which Claude

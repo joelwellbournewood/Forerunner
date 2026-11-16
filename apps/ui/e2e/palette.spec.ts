@@ -34,8 +34,8 @@ test("keyboard shortcuts navigate and the theme override applies", async ({ page
   // Status pull request and Who merges accepted work (a project on a host repository, C-57,
   // merge-in-app), "Web pages research may read" for Atlas and Beacon ('sites'), less the three
   // that change nothing (design §6: not listed); and each project's budget (Atlas and Beacon), as
-  // the daemon lists it (polish-screens).
-  await expect(page.getByTestId("setting-row")).toHaveCount(22);
+  // the daemon lists it (polish-screens); and "Chat asks first" (d1109-chat-depth).
+  await expect(page.getByTestId("setting-row")).toHaveCount(23);
   // Settings opens on Basics; the theme is under Advanced (design §6).
   await expect(page.getByTestId("settings-basics")).toBeVisible();
   await expect(page.getByTestId("theme-select")).toBeHidden();

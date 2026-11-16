@@ -290,6 +290,20 @@ the run's closure reports it (the month's rows before the run plus the run's spe
 session, task, run and month caps as the ledger says, and the plan level is checked on top
 (`planUsageShare` against `planShareCap`, 80% finish-current, 100% stop).
 
+### A longer chat answer's budget (d1109-chat-depth, ADR 0091 amended)
+
+A chat answer that thinks longer (`packages/runtime/src/conversation/agent.ts`) runs within its
+own `SessionBudget`: min(the person's `chat_ask_above` at the day's rate, the outer room) when it
+goes ahead without asking (fixup-d1109-chat-depth: before, also twice the median, so cheap past
+answers made a pass wrap up early), min(the "at most" its ask line or Think it through's press
+named, the room) after a yes. "At most" is twice the estimate rounded up to the centime; the estimate is the
+median cost of the last 20 answers on that rung and model, else five worst cases of the pass's
+first call; the floor is three worst cases (below it nothing runs). The outer room is
+`CapChecker.room` over the month cap and the project's budget (the smaller names the cap line).
+No daily sum. Every call is booked on the ledger as before (run id `<turn id>:thorough`), a
+stopped one too; the reply's cost is the turn's rows. On a Claude subscription the same
+API-equivalent figures are used.
+
 ### Caps (`src/caps.ts`, `src/defaults.ts`)
 
 `Caps = { monthUsdMicro, projectUsdMicro?, sessionUsdMicro, taskUsdMicro?, runUsdMicro?,

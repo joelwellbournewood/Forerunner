@@ -151,6 +151,13 @@ export interface BenchOptions {
    * whose review takes tens of seconds. Leave it at 0 when the monthly calibration may run.
    */
   criticDelayMs?: number;
+  /**
+   * d1109-chat-depth: hold every chat reply this long after its call starts
+   * (FORERUNNER_BENCH_CHAT_HOLD_MS, default 0), so a chat answer can be seen in flight, stopped
+   * with Stop, reloaded and answered now. The call's input is booked from its start, so a stopped
+   * answer costs what the real API bills.
+   */
+  chatHoldMs?: number;
   clock?: Clock;
 }
 
@@ -192,6 +199,7 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
   const rawDelay = (env.FORERUNNER_BENCH_DELAY_MS ?? "").trim();
   const delay = rawDelay ? Number(rawDelay) : 250;
   const criticDelay = Number((env.FORERUNNER_BENCH_CRITIC_DELAY_MS ?? "").trim() || 0);
+  const chatHold = Number((env.FORERUNNER_BENCH_CHAT_HOLD_MS ?? "").trim() || 0);
   // FORERUNNER_BENCH_PLAN: `chain`, `research`, or both (`chain,research`).
   const plans = list(env.FORERUNNER_BENCH_PLAN).map((v) => v.toLowerCase());
   const searchMode = (env.FORERUNNER_BENCH_SEARCH_MODE ?? "").trim().toLowerCase();
@@ -229,6 +237,7 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     intakeBad: (INTAKE_BAD_KINDS as readonly string[]).includes(bad) ? (bad as IntakeBad) : "none",
     delayMs: Number.isFinite(delay) && delay >= 0 ? delay : 250,
     criticDelayMs: Number.isFinite(criticDelay) && criticDelay > 0 ? criticDelay : 0,
+    chatHoldMs: Number.isFinite(chatHold) && chatHold > 0 ? chatHold : 0,
   };
 }
 
@@ -447,7 +456,10 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
         },
       };
       try {
-        const wait = guess.role === "critic" ? (opts.criticDelayMs ?? 0) : opts.delayMs;
+        const wait =
+          guess.role === "critic"
+            ? (opts.criticDelayMs ?? 0)
+            : opts.delayMs + (guess.role === "chat" ? (opts.chatHoldMs ?? 0) : 0);
         if (wait > 0) await clock.sleep(wait, req.signal);
       } catch {
         logged.stopReason = "aborted";
@@ -1612,8 +1624,59 @@ function recallPlay(req: ModelRequest, calls: ReturnType<typeof pastToolCalls>):
   return null;
 }
 
+/**
+ * d1109-chat-depth: the lines the stand-in hands over with answer_thoroughly (first, before any
+ * lookup), as a real model would for a question that needs a closer look: why something keeps
+ * failing (failure), a comparison, a plan, a review, or what several sessions did (many records).
+ */
+function thoroughWhy(line: string): string | null {
+  if (/keep(?:s)? failing|keeps? going wrong/i.test(line)) return "failure";
+  if (/\bcompare\b/i.test(line)) return "comparison";
+  if (/\bplan (?:for|the next)\b/i.test(line)) return "plan";
+  if (/\breview\b/i.test(line)) return "review";
+  if (/\blast (?:two|three|few) sessions\b|\bacross (?:the )?sessions\b/i.test(line))
+    return "many_records";
+  return null;
+}
+
+/**
+ * d1109-chat-depth: the thorough pass (its system part has "# Thinking it through"): it looks up
+ * the last session and the tasks, one per call, then answers; once it hears the wrap-up ("Wrap
+ * up now: ...") it answers from what it has, as the rules ask.
+ */
+function thoroughAnswer(req: ModelRequest, calls: ReturnType<typeof pastToolCalls>): Answer {
+  const names = (req.tools ?? []).map((t) => t.name);
+  const lastUser = lastUserText(req.messages);
+  const wrapped = /Wrap up now:/.test(lastUser);
+  const lookups = ["session_last", "tasks_list", "recall"].filter((n) => names.includes(n));
+  const next = lookups[calls.length];
+  if (!wrapped && next && calls.length < 2)
+    return {
+      text: "",
+      toolCalls: [
+        { name: next, input: next === "recall" ? { words: chatLine(req).slice(0, 40) } : {} },
+      ],
+    };
+  const told = chatFacts(req);
+  return text(
+    `${STAND_IN} Thought it through after ${calls.length} ${calls.length === 1 ? "lookup" : "lookups"}${wrapped ? ", wrapping up" : ""}.${told ? ` ${told}` : ""} I could not check what no record holds.`,
+  );
+}
+
 function chatAnswer(req: ModelRequest): Answer {
   const calls = pastToolCalls(req.messages);
+  if ((req.system ?? "").includes("# Thinking it through")) return thoroughAnswer(req, calls);
+  // d1109-chat-depth: a question that needs a closer look is handed over first, before any
+  // lookup; after the app's answer ("Not now: ...", "Not yet: ...") a short answer from the facts.
+  const why = thoroughWhy(turnLine(req));
+  if (why && (req.tools ?? []).some((t) => t.name === "answer_thoroughly")) {
+    if (!calls.length)
+      return { text: "", toolCalls: [{ name: "answer_thoroughly", input: { why } }] };
+    if (calls.at(-1)?.name === "answer_thoroughly") {
+      const told = chatFacts(req);
+      return text(`${STAND_IN} A short answer from what I have.${told ? ` ${told}` : ""}`);
+    }
+  }
   const lastCall = calls.at(-1);
   const next = chainedCall(req, calls.length);
   if (next) return { text: `Running ${next.name}.`, toolCalls: [next] };

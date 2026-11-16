@@ -20,6 +20,7 @@ import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { ZodType, z } from "zod";
 import { cardFate } from "../conversation/card-fate.ts";
+import { thinkItThroughExplain } from "../conversation/depth.ts";
 import { readTranscript, TRANSCRIPT_SHOW_LIMIT } from "../conversation/transcript.ts";
 import { createDataRoutes } from "../data/routes.ts";
 import { createDeviceRoutes } from "../devices/routes.ts";
@@ -91,8 +92,12 @@ import {
   AnswerOfferBody,
   AnswerRequestBody,
   ChangeMilestoneBody,
+  type ChatAnswerNowView,
   type ChatReplyView,
   ChatRequestBody,
+  type ChatStepFrame,
+  type ChatStopView,
+  type ChatTurnFrame,
   CommandConfirmBody,
   CommandExecuteBody,
   CommandParseBody,
@@ -313,6 +318,12 @@ export function createDaemonApp(
     activeProjectId: r.activeProjectId,
     // d1109-chat-recall: the records the reply rests on.
     ...(r.sources?.records?.length ? { sources: r.sources.records } : {}),
+    // d1109-chat-depth: how deep it went, the line under it, what it offers.
+    ...(r.depth ? { depth: r.depth } : {}),
+    footer: r.footer ?? null,
+    offer: r.offer
+      ? { line: r.offer.line, action: r.offer.action, explain: r.offer.explain ?? null }
+      : null,
   });
 
   // Every open SSE stream registers how to end it: `server.close()` waits for in-flight
@@ -2300,6 +2311,8 @@ export function createDaemonApp(
       ...(body.projectTab ? { projectTab: true } : {}),
       text: body.text,
       source: body.source,
+      ...(body.depth ? { depth: body.depth } : {}),
+      ...(body.offer ? { offer: body.offer } : {}),
     });
     await heardChat(r);
     return c.json(chatReplyView(r));
@@ -2312,6 +2325,11 @@ export function createDaemonApp(
     if (!rt.conversation) throw new ForerunnerError("provider_auth", NO_MODEL_CREDENTIAL);
     const conv = rt.conversation;
     return streamSSE(c, async (stream) => {
+      // d1109-chat-depth: a dropped stream (a reload, a closed Talk panel) never stops the turn:
+      // its frames go nowhere and the reply is stored as always. A write to a closed stream is
+      // dropped, never thrown into the turn.
+      const send = (event: string, data: unknown) =>
+        void stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => undefined);
       let r: Awaited<ReturnType<typeof conv.chat>>;
       try {
         r = await conv.chat({
@@ -2321,20 +2339,65 @@ export function createDaemonApp(
           ...(body.projectTab ? { projectTab: true } : {}),
           text: body.text,
           source: body.source,
-          onToken: (t) =>
-            void stream.writeSSE({ event: "token", data: JSON.stringify({ text: t }) }),
+          ...(body.depth ? { depth: body.depth } : {}),
+          ...(body.offer ? { offer: body.offer } : {}),
+          // The turn's id first (for Stop), then what it is doing at each step, then the tokens.
+          onTurn: (t) => send("turn", t satisfies ChatTurnFrame),
+          onStep: (text, o) =>
+            send("step", {
+              text,
+              at: rt.clock.nowIso(),
+              ...(o?.reset ? { reset: true } : {}),
+            } satisfies ChatStepFrame),
+          onToken: (t) => send("token", { text: t }),
         });
       } catch (e) {
         const code = e instanceof ForerunnerError ? e.code : "internal";
-        await stream.writeSSE({
-          event: "error",
-          data: JSON.stringify({ code, message: errorMessage(e) }),
-        });
+        await stream
+          .writeSSE({
+            event: "error",
+            data: JSON.stringify({ code, message: errorMessage(e) }),
+          })
+          .catch(() => undefined);
         return;
       }
       await heardChat(r);
-      await stream.writeSSE({ event: "reply", data: JSON.stringify(chatReplyView(r)) });
+      await stream
+        .writeSSE({ event: "reply", data: JSON.stringify(chatReplyView(r)) })
+        .catch(() => undefined);
     });
+  });
+
+  /**
+   * Stop (d1109-chat-depth; the owner's words: "knowing that this will take more time to reply"):
+   * the turn's runs end as killed, the late usage is booked, the changes it made stay with their
+   * Undo, and its reply keeps its complete sentences and says what it cost. The turn's own human
+   * only (another's 403); a turn that ended answers {stopped: false}.
+   */
+  const turnOf = async (c: Context) => {
+    const id = c.req.param("id") ?? "";
+    const body = (await c.req.json().catch(() => ({}))) as { humanId?: unknown };
+    const asker = typeof body.humanId === "string" ? body.humanId : rt.human.id;
+    const entry = rt.conversation?.turnsOf().get(id);
+    // The asker must be this daemon's human, and the turn theirs.
+    const refused =
+      notYourConversation(c, asker) ??
+      (entry && entry.humanId !== asker
+        ? c.json({ ...NOT_YOURS, message: "not your conversation" }, 403)
+        : null);
+    return { id, entry, refused };
+  };
+  app.post("/chat/turns/:id/stop", async (c) => {
+    const { id, entry, refused } = await turnOf(c);
+    if (refused) return refused;
+    if (!entry) return c.json({ stopped: false } satisfies ChatStopView);
+    return c.json({ stopped: rt.conversation?.turnsOf().stop(id) ?? false } satisfies ChatStopView);
+  });
+  /** Answer now: a longer pass's next call carries the wrap-up (its answer comes from that call). */
+  app.post("/chat/turns/:id/answer-now", async (c) => {
+    const { entry, refused } = await turnOf(c);
+    if (refused) return refused;
+    return c.json({ done: entry?.answerNow?.() ?? false } satisfies ChatAnswerNowView);
   });
 
   // One conversation per project (design §3.9): the Chat tab and Talk read the same turns from
@@ -2345,6 +2408,10 @@ export function createDaemonApp(
   ): Promise<ConversationView> => {
     const sessionId = await conversationSessionId(rt);
     const turns = await readTranscript(rt.store, sessionId, projectId, { limit });
+    // d1109-chat-depth: the turn being answered now, and when this daemon started (a line older
+    // than that without a reply was cut off by a restart).
+    const chatTurns = rt.conversation?.turnsOf() ?? null;
+    const inFlight = chatTurns?.inFlight(projectId) ?? null;
     // The change still waiting for a yes: the newest read-back whose card the registry holds.
     const lastAsked = [...turns].reverse().find((t) => t.reply?.pendingId)?.reply?.pendingId;
     const live = lastAsked ? rt.commands.pendingCard(lastAsked) : null;
@@ -2375,8 +2442,31 @@ export function createDaemonApp(
         }
     return {
       projectId,
-      turns: turns.map((t) => {
+      turns: turns.map((t, i) => {
         const r = t.reply;
+        const newest = i === turns.length - 1;
+        // Think it through's consequence line, from the figures the answer kept (d1109-chat-depth).
+        const explain = r?.closer
+          ? thinkItThroughExplain({
+              seconds: r.closer.seconds,
+              atMostUsdMicro: r.closer.atMostUsdMicro,
+              chfPerUsd: chf(),
+            })
+          : null;
+        const offer = !r
+          ? null
+          : r.offer
+            ? {
+                line: r.offer.line === r.text ? null : r.offer.line,
+                action: newest ? r.offer.action : null,
+                explain: newest && r.offer.action === "think" ? explain : null,
+              }
+            : r.capLine
+              ? { line: r.capLine, action: null, explain: null }
+              : newest && explain && !r.notice
+                ? { line: null, action: "think" as const, explain }
+                : null;
+        const answeringNow = inFlight?.turnId === t.transcriptId;
         // The reply's text ends with the read-back the card shows: it is shown once, there.
         const text =
           r?.readback && r.text.endsWith(r.readback)
@@ -2404,10 +2494,30 @@ export function createDaemonApp(
                 card: r.pendingId ? (cardStates.get(r.pendingId) ?? "expired") : null,
                 // d1109-chat-recall: the records the reply rests on, as its row keeps them.
                 ...(r.sources.length ? { sources: r.sources } : {}),
+                // d1109-chat-depth: how deep, the line under it, what it offers.
+                depth: r.depth ?? "quick",
+                footer: r.footer ?? null,
+                ...(offer && (offer.line || offer.action) ? { offer } : { offer: null }),
               }
             : null,
+          // A line with no reply that is not being answered: Forerunner closed before answering
+          // it (older than this daemon's start), or its answer failed while it ran.
+          ...(!r && !answeringNow && chatTurns
+            ? t.at < chatTurns.startedAt
+              ? { interrupted: true }
+              : { failed: true }
+            : {}),
+          ...(r?.failed ? { failed: true } : {}),
         };
       }),
+      answering: inFlight
+        ? {
+            turnId: inFlight.turnId,
+            step: inFlight.step,
+            since: inFlight.since,
+            depth: inFlight.depth,
+          }
+        : null,
       waiting:
         live && lastAsked
           ? {
@@ -3092,6 +3202,14 @@ export function createDaemonApp(
       // `/speak/:id/events`; a stream that declared `?speech=play` counts as one.
       const onSpeak = (p: SpeakStartedView) =>
         void stream.writeSSE({ event: "speak.started", data: JSON.stringify(p) });
+      // d1109-chat-depth: a chat turn started, took a step or ended: the conversation's screens
+      // re-read it (the answering line after a reload, the reply on the other surface).
+      const offConversation =
+        rt.conversation?.turnsOf().on((projectId) => {
+          void stream
+            .writeSSE({ event: "conversation.changed", data: JSON.stringify({ projectId }) })
+            .catch(() => undefined);
+        }) ?? (() => undefined);
       const detachShell = isShellStream({
         client: c.req.query("client"),
         clientHeader: c.req.header(CLIENT_HEADER),
@@ -3130,6 +3248,7 @@ export function createDaemonApp(
         rt.events.off("notification", onNotification);
         rt.events.off(DESKTOP_INDICATOR_EVENT, onDesktopIndicator);
         rt.events.off("speak", onSpeak);
+        offConversation();
         detachShell();
         detachPlayer();
       }

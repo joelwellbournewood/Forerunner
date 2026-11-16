@@ -82,3 +82,13 @@ change, with the claim guard's nudge after it: the turn's model calls go from 4 
 (`CHAT_TURN_CALL_ROOM`). The USD 0.25 ceiling stays (an Opus turn with about 6,000 tokens of
 context is held at it), and a Haiku turn keeps USD 0.05 until its context passes about 95,000
 tokens. No new spending path: a lookup is a call of the turn, booked like any other.
+
+## Amendment 2026-11-16: the pass budgets of a longer answer (d1109-chat-depth)
+
+A chat answer that thinks longer (ADR 0114's amendment of this date) runs as a second run of the
+turn with a budget of its own, in place of the USD 0.25 per-answer ceiling for that pass:
+min(the person's `chat_ask_above` at the day's rate, the outer room) when it goes ahead without
+asking, min(the "at most" its ask line named, the outer room) after a yes. "At most" is twice the
+estimate rounded up to the centime; a budget below three worst cases of the pass's first call is
+refused before any call. The quick pass keeps this ADR's turn budget. Both are booked as every
+call (the pass's run id `<turn id>:thorough`); the reply's cost is the turn's rows.

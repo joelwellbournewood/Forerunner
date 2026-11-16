@@ -598,6 +598,16 @@ export const SETTINGS: SettingView[] = [
       "The most all your work may spend in a month; nothing runs beyond it. It cannot be 0, and raising it needs this computer's OK",
     risk: "medium",
   },
+  // d1109-chat-depth: the amount above which one chat answer asks first, in CHF.
+  {
+    key: "human.chat_ask_above",
+    label: "Chat asks first",
+    scope: "human",
+    scopeId: "human_alice",
+    value: 0.1,
+    description: "Below that it thinks longer when it helps, on the same model.",
+    risk: "medium",
+  },
   // Every setting is listed with a plain label (U-060), as the daemon's settings-view.ts does.
   {
     key: "human.default_autonomy",
@@ -2592,6 +2602,23 @@ export const MODEL_SETTINGS: ModelSettingsView = {
             tier: "opus",
             raisable: false,
             note: "Chat runs at most opus; no setting raises it.",
+          },
+        },
+        // d1109-chat-depth: the longer chat answer's own mode, as the daemon lists it.
+        {
+          mode: "chat_thorough",
+          model: "fake-sonnet",
+          tier: setting("sonnet"),
+          effort: setting("medium"),
+          maxTokens: setting(4096),
+          speedMode: setting("standard"),
+          timeoutMinutes: setting(2),
+          temperature: setting(null),
+          speedModeApplies: false,
+          ceiling: {
+            tier: "opus",
+            raisable: true,
+            note: "Runs at most opus unless a project raises its highest model (Settings, per project: Highest model).",
           },
         },
       ],

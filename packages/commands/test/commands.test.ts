@@ -12,6 +12,7 @@ import {
   SESSION_CAP_KEY,
   SETTING_SPECS,
   SMALL_PROJECT_MODE_EFFECT,
+  settingDefinitionLine,
   spokenProjectSummary,
 } from "../src/index.ts";
 import { TOMORROW_0600, world } from "./helpers.ts";
@@ -1707,6 +1708,59 @@ describe("summary.speak (spec A.6 readable aloud, L.6 TTS for summaries)", () =>
         }),
       ).code,
     ).toBe("validation");
+    await w.store.close();
+  });
+});
+
+describe("d1109-chat-depth, run C: chat_ask_above", () => {
+  it("defaults to CHF 0.10; a lower amount and 0 act at once with one Undo; a higher one is read back; a negative one is refused in words; its definition line", async () => {
+    const w = await world();
+    expect(SETTING_SPECS.chat_ask_above).toMatchObject({ scope: "global", risk: "medium" });
+    const lower = done(
+      await w.executor.execute({
+        name: "settings.set",
+        params: { key: "chat_ask_above", value: 0.05 },
+        ctx: w.ctx(),
+      }),
+    );
+    expect(lower.sentence).toBe(
+      // fixup-d1109-chat-depth: the amount in CHF, not "asks first above" twice in one sentence.
+      "Set the amount above which chat asks first from CHF 0.10 to CHF 0.05. Undo.",
+    );
+    expect((await w.store.human.mustGet(w.human.id)).notify_prefs.chat_ask_above).toBe(0.05);
+    const zero = done(
+      await w.executor.execute({
+        name: "settings.set",
+        params: { key: "chat_ask_above", value: 0 },
+        ctx: w.ctx(),
+      }),
+    );
+    expect(zero.sentence).toBe(
+      "Set the amount above which chat asks first from CHF 0.05 to CHF 0.00, so chat asks before every longer answer. Undo.",
+    );
+    const higher = await w.executor.execute({
+      name: "settings.set",
+      params: { key: "chat_ask_above", value: 1 },
+      ctx: w.ctx(),
+    });
+    expect(higher.status).toBe("pending");
+    expect((higher as { readback?: string }).readback).toContain(
+      "Set the amount above which chat asks first to CHF 1.00?",
+    );
+    expect((await w.store.human.mustGet(w.human.id)).notify_prefs.chat_ask_above).toBe(0);
+    const negative = refused(
+      await w.executor.execute({
+        name: "settings.set",
+        params: { key: "chat_ask_above", value: -1 },
+        ctx: w.ctx(),
+      }),
+    );
+    expect(negative.reason).toBe(
+      "The amount is in CHF, 0 or more: 0 makes chat ask before every longer answer.",
+    );
+    expect(settingDefinitionLine(SETTING_SPECS.chat_ask_above as never)).toBe(
+      "- chat_ask_above (for the person): The CHF above which one chat answer asks first before it thinks longer (a stronger model always asks first). 0: chat asks before every longer answer. Unset: CHF 0.10. Value: number. For example 0.1 or 0.",
+    );
     await w.store.close();
   });
 });

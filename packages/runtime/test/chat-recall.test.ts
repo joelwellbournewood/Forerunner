@@ -593,7 +593,8 @@ describe("d1109-chat-recall, run C: CR-1 the tools' skeleton", () => {
 
 describe("d1109-chat-recall, run C: CR-9 the prompt and the turn's room", () => {
   it("conversation-agent 1.3.0 is the prompt sent, with 'What you look up' and without 'I don't have that here'; the fast pass allows 6 calls, call room 5", async () => {
-    expect(ROLE?.version).toBe("1.3.0");
+    // d1109-chat-depth (C3) bumped it to 1.4.0 ('Thinking longer'); the lookup lines stay.
+    expect(ROLE?.version).toBe("1.4.0");
     expect(ROLE?.prompt).toContain("## What you look up");
     expect(ROLE?.prompt).not.toContain("I don't have that here");
     expect(ROLE?.prompt).toContain(
@@ -633,11 +634,33 @@ describe("d1109-chat-recall, run C: CR-9 the prompt and the turn's room", () => 
     // (run C3: session_start's read-back, the four task moves' "joins the running session if it
     // fits, else waits for the person's next Start" and settings_set's start_by_itself line add
     // 156 tokens; b5fb66f measures 9310 for the whole request with this seed, this area 9466).
+    // d1109-chat-depth (C3): answer_thoroughly's definition, the facts' thinking_longer line and
+    // the role prompt's "Thinking longer" section ride on every turn (the fast request's tools are
+    // the same bytes whatever the gate says). They are measured as they are sent and taken off, so
+    // this area's bounds hold as before for every other growth.
+    const longer =
+      /\n- thinking_longer: [^\n]*/.exec(String(req?.messages.at(-1)?.content))?.[0] ?? "";
+    const section =
+      /## Thinking longer[\s\S]*?(?=## How you answer)/.exec(ROLE?.prompt ?? "")?.[0] ?? "";
+    const depth =
+      w.provider.countTokens(
+        JSON.stringify(req?.tools?.filter((t) => t.name === "answer_thoroughly")),
+      ) +
+      w.provider.countTokens(JSON.stringify(longer)) +
+      w.provider.countTokens(section) +
+      // settings_set's definition gained the key line of chat_ask_above.
+      w.provider.countTokens(
+        JSON.stringify(
+          /\n- chat_ask_above [^\n]*/.exec(
+            req?.tools?.find((t) => t.name === "settings_set")?.description ?? "",
+          )?.[0] ?? "",
+        ),
+      );
     const fixed = w.provider.countTokens(
       `${CHAT_RECALL_RULES}${JSON.stringify(req?.tools?.filter((t) => t.name.startsWith("recall")))}`,
     );
-    expect(sent - BASE_STATUS_TOKENS).toBeLessThanOrEqual(fixed + 160);
-    expect(sent - BASE_STATUS_TOKENS).toBeLessThanOrEqual(1000);
+    expect(sent - BASE_STATUS_TOKENS - depth).toBeLessThanOrEqual(fixed + 160);
+    expect(sent - BASE_STATUS_TOKENS - depth).toBeLessThanOrEqual(1000);
     await w.store.close();
   });
 });

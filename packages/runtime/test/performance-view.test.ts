@@ -6,6 +6,7 @@ import {
   agentEffortOverride,
   effortCapsOf,
   eventSample,
+  MODE_LABELS,
   nearestRank,
   OFFSET_MODES,
   performanceView,
@@ -518,6 +519,8 @@ describe("performanceView over seeded Run rows and turns", () => {
       coder: "high",
       researcher: "high",
       text_chat: "medium",
+      // d1109-chat-depth: a longer chat answer is held at the conversation agent's cap too.
+      chat_thorough: "medium",
       voice_chat: "medium",
       planning: "max",
       critic_t1: "max",
@@ -786,5 +789,33 @@ describe("what counts as a measurement", () => {
     });
     expect(v.recent.some((r) => r.durationMs === 3 || r.durationMs === 4)).toBe(false);
     await store.close();
+  });
+});
+
+describe("d1109-chat-depth, run C: a longer chat answer on Performance", () => {
+  it("is a 'Chat, thorough answers' sample on its total time, never a text_chat first-token sample", () => {
+    const base = {
+      id: "ev",
+      created_at: NOW,
+      updated_at: NOW,
+      author_agent: null,
+      author_human: null,
+      version: 1,
+      session_id: "s",
+      seq: 1,
+      cost_usd_micro: 0,
+      redacted: false,
+      type: "chat.reply",
+    };
+    const sample = eventSample({
+      ...base,
+      payload: { ttftMs: null, durationMs: 34_000, model: "fake-sonnet", depth: "stronger" },
+    });
+    expect(sample).toMatchObject({ mode: "chat_thorough", ttftMs: null, durationMs: 34_000 });
+    expect(MODE_LABELS.chat_thorough).toBe("Chat, thorough answers");
+    // A quick reply stays a first-token sample.
+    expect(
+      eventSample({ ...base, payload: { ttftMs: 400, durationMs: 900, depth: "quick" } }),
+    ).toMatchObject({ mode: "text_chat", ttftMs: 400 });
   });
 });

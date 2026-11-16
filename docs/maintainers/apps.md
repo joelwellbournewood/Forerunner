@@ -384,6 +384,32 @@ lands in the store. Nothing is kept in the browser: a reload or a restart reads 
 turns. Before, the Chat tab kept its lines in `localStorage` (`store/chat-history.ts`, removed)
 and Talk in its own memory, so the two disagreed and a restart of the app lost Talk's.
 
+**While it answers, and under the answer (d1109-chat-depth).** `streamChat` reads the `turn` and
+`step` frames (`onTurn`, `onStep`; a step with `reset` drops the streamed text, L3-left-9), and
+the store's `live` keeps the turn's id, step, start and depth. The agent's bubble shows
+"Thinking…", then the newest step, then " · 7 s" from 3 s on (`secondsSince`); Send becomes
+**Stop** (title "Stops this answer. Changes it already made stay, each with Undo.",
+`POST /chat/turns/:id/stop`), and a longer answer also has **Answer now**. A reload, or the other
+surface, shows the same from the view's `answering` (the person's line with the waiting line and
+Stop), and `conversation.changed` re-reads a conversation the store shows. Stop is a button of its
+own (`type="button"`): Enter in the input while an answer is made neither stops it nor drops the
+line typed meanwhile (fixup-d1109-chat-depth; before, Stop was the form's submit button). The
+seconds tick from the UI clock (`useNow(systemClock)`). Under an answer:
+its footer ("Thought it through with Sonnet · 34 s · CHF 0.06", "You stopped this answer: CHF 0.02
+spent."), the offer line with **Go ahead** (sends "Go ahead." with `offer`) or **Think it
+through** with its consequence line (sends "Think it through." with `depth: "longer"` and
+`offer`), a cap line with nothing to press, and the From line (up to three records; a link only
+where the page shows the record: a session, a task's drawer, a file; C2-left-7). A line with no
+reply says "Forerunner closed before answering this." or "I could not answer this." with **Ask
+again**. A reply that is its changes' sentences joined shows them once (L3-left-10). Tests:
+`chat-depth.test.tsx`, `e2e/chat.spec.ts` (the waiting line and Stop). Settings, Basics: "Chat asks
+first" (`human.chat_ask_above`: "before a stronger model or an answer over CHF 0.10", the line
+"Below that it thinks longer when it helps, on the same model.", any amount with a point or a
+comma, 0 taken; `settings-basics.test.tsx`). The change dialog reads a description with one
+period, whether or not it ends with one. Settings, Advanced, Models names the longer answers'
+mode "Alice · chat, thorough answers" (`MODE_LABELS.chat_thorough`; before, its raw key;
+`settings-models.test.tsx`).
+
 **Model text** (`components/RichText.tsx`; design §3.7, §3.9, §5 rule 6). Text a model wrote is
 rendered through `RichText`: a chat reply (the streamed one too), the session log lines that end
 in a model's words (`EventText` with `MODEL_TEXT_EVENTS`: `session.planned`, `task.finished`,

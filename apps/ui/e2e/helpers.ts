@@ -35,3 +35,15 @@ export async function recordedCalls(request: APIRequestContext): Promise<Recorde
   const res = await request.get(`${daemonUrl()}/__test/calls`, { headers: headers() });
   return (await res.json()) as RecordedCall[];
 }
+
+/** d1109-chat-depth: what the next chat turn does beyond its reply (steps, a hold until Stop). */
+export async function nextChatTurn(
+  request: APIRequestContext,
+  turn: { steps?: { text: string; reset?: boolean }[]; hold?: boolean; depth?: string },
+): Promise<void> {
+  const res = await request.post(`${daemonUrl()}/__test/next-chat-turn`, {
+    headers: headers(),
+    data: turn,
+  });
+  if (!res.ok()) throw new Error(`fake daemon next-chat-turn failed: ${res.status()}`);
+}

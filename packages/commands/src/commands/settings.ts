@@ -301,6 +301,9 @@ export function startByItselfEffect(
   return `sessions${of} will start by themselves when work you made ready can run${cap}. Never in your quiet hours or while sessions are stopped`;
 }
 
+/** d1109-chat-depth: the key of the amount above which one chat answer asks first. */
+export const CHAT_ASK_ABOVE_SETTING = "chat_ask_above";
+
 export const SETTING_SPECS: Record<string, SettingSpec> = {
   speed_quality_offset: {
     key: "speed_quality_offset",
@@ -643,7 +646,49 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     display: (value) => (value === true ? "Start a session by itself" : "Wait for my Start"),
     effect: (value, ctx) => startByItselfEffect(value === true, ctx.project),
   },
+  // d1109-chat-depth (run C3, ADR 0114; the owner's answer 2 of 2026-11-09: "as much as needed,
+  // but if it will switch models and do an expensive task, it should warn/ask first"): the CHF
+  // above which one chat answer asks first ("expensive", CHF 0.10 by default). Below it chat
+  // thinks longer on the same model when it helps; a stronger model always asks. A lower amount
+  // acts at once (it narrows what chat may spend without a yes), a higher one is read back.
+  [CHAT_ASK_ABOVE_SETTING]: {
+    key: CHAT_ASK_ABOVE_SETTING,
+    label: "the amount above which chat asks first",
+    scope: "global",
+    risk: "medium",
+    schema: z
+      .number()
+      .refine((v) => Number.isFinite(v) && v >= 0, {
+        message: "The amount is in CHF, 0 or more: 0 makes chat ask before every longer answer.",
+      })
+      .refine((v) => v <= 100, {
+        message: "The amount is at most CHF 100.00.",
+      }) as unknown as z.ZodType<JsonValue>,
+    plainRefusals: true,
+    narrowingActsAtOnce: true,
+    narrows: (to, from) =>
+      typeof to === "number" && to < (typeof from === "number" ? from : CHAT_ASK_ABOVE_DEFAULT_CHF),
+    description:
+      "The CHF above which one chat answer asks first before it thinks longer (a stronger model always asks first). 0: chat asks before every longer answer. Unset: CHF 0.10.",
+    display: chatAskAboveWords,
+    examples: [0.1, 0],
+  },
 };
+
+/** The default of `chat_ask_above` (CHF): the session lead's reading of "expensive". */
+export const CHAT_ASK_ABOVE_DEFAULT_CHF = 0.1;
+
+/**
+ * `chat_ask_above` in words, after its label ("the amount above which chat asks first"): "CHF
+ * 0.10", or "CHF 0.00, so chat asks before every longer answer". fixup-d1109-chat-depth: before,
+ * "asks first above CHF 0.10", so a sentence said "asks first" twice ("Set the amount above which
+ * chat asks first to asks first above CHF 0.10?").
+ */
+export function chatAskAboveWords(value: unknown): string {
+  const chf =
+    typeof value === "number" && Number.isFinite(value) ? value : CHAT_ASK_ABOVE_DEFAULT_CHF;
+  return chf <= 0 ? "CHF 0.00, so chat asks before every longer answer" : `CHF ${chf.toFixed(2)}`;
+}
 
 /** The risk of setting `value` on the key: its `riskFor` when it has one, else its `risk`. */
 export function settingRisk(spec: SettingSpec, value: unknown): Risk {

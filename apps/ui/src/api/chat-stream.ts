@@ -17,6 +17,9 @@ import { readSseStream } from "./sse.ts";
  */
 
 const TokenFrame = z.object({ text: z.string() });
+/** d1109-chat-depth: the turn's id first (for Stop), then a step frame at each step. */
+const TurnFrame = z.object({ turnId: z.string(), startedAt: z.string() });
+const StepFrame = z.object({ text: z.string(), at: z.string(), reset: z.boolean().optional() });
 
 /** `DAEMON_ROUTES.chat` names both forms; this is the streaming one. */
 export const CHAT_STREAM_PATH = "/chat/stream";
@@ -24,6 +27,13 @@ export const CHAT_STREAM_PATH = "/chat/stream";
 export interface ChatStreamHandlers {
   /** Each token as it arrives; `soFar` is the concatenation. */
   onToken?: (text: string, soFar: string) => void;
+  /** d1109-chat-depth: the turn started (its id for Stop, and when). */
+  onTurn?: (turn: { turnId: string; startedAt: string }) => void;
+  /**
+   * d1109-chat-depth: what chat is doing now ("Reading the last session…"); `reset`: the text
+   * streamed so far is dropped (a hand-over to a longer answer, the claim guard's true line).
+   */
+  onStep?: (step: { text: string; at: string; reset: boolean }) => void;
   signal?: AbortSignal;
 }
 
@@ -66,7 +76,15 @@ export async function streamChat(
 
   let soFar = "";
   for await (const frame of readSseStream(res)) {
-    if (frame.event === "token") {
+    if (frame.event === "turn") {
+      const turn = TurnFrame.safeParse(safeJson(frame.data));
+      if (turn.success) handlers.onTurn?.(turn.data);
+    } else if (frame.event === "step") {
+      const step = StepFrame.safeParse(safeJson(frame.data));
+      if (!step.success) continue;
+      if (step.data.reset) soFar = "";
+      handlers.onStep?.({ ...step.data, reset: step.data.reset === true });
+    } else if (frame.event === "token") {
       const token = TokenFrame.safeParse(safeJson(frame.data));
       if (!token.success) continue;
       soFar += token.data.text;

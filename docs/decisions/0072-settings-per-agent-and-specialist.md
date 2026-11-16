@@ -177,3 +177,11 @@ first rebase. Both touch what this ADR decides; the rebase composed them as foll
 - **The approval gate compares the D.4 keys.** C.5 refuses a promotion that would change any
   frontmatter field it lists between the evaluated and the promoted file; `max_tokens`,
   `speed_mode` and `temperature` decide how the specialist runs, so they are on that list.
+
+## Amendment 2026-11-16: the chat_thorough mode (d1109-chat-depth)
+
+A new agent mode `chat_thorough` ("Chat, thorough answers"): a chat answer on a stronger model
+(sonnet, medium effort, 4,096 output tokens a call, 120 s, a total target of 30 s). It is in
+`MODE_DEFAULTS`, `MODE_VALUES` and `AGENT_SETTING_MODES`, so the person can move it to Opus or
+high effort in Settings, Advanced, Models like the planning and chat modes; at run time its tier
+is held at the project's highest model and its effort at the conversation agent's `max_effort`.

@@ -36,6 +36,7 @@ export function projectCeilingOf(
 export type Mode =
   | "voice_chat"
   | "text_chat"
+  | "chat_thorough"
   | "routing"
   | "planning"
   | "coder"
@@ -76,6 +77,9 @@ const STD = "standard" as const;
  */
 export const CHAT_MAX_TOKENS = 1024;
 
+/** A longer chat answer's output cap per call (d1109-chat-depth): thinking at medium effort fits. */
+export const CHAT_THOROUGH_MAX_TOKENS = 4096;
+
 /**
  * Spec table "Effort and response time" (D.8 to D.15), with the per-call output cap, the speed
  * mode and the run timeout of each mode (ADR 0072: the spec's table names model, effort and the
@@ -102,6 +106,20 @@ export const MODE_DEFAULTS: Record<Mode, ModeDefault> = {
     timeoutMs: 30_000,
     targetMs: 1000,
     targetKind: "first_token",
+  },
+  // d1109-chat-depth (ADR 0072 amended, ADR 0114): a longer chat answer on a stronger model, the
+  // stronger rung's defaults (the person may move it to Opus or high effort, as every mode): its
+  // effort held at the conversation agent's registry max_effort, its tier at the project's
+  // highest model; 4,096 output tokens a call, at most 8 calls (the agent's), 120 s, a total
+  // target of 30 s (it is no first-token answer).
+  chat_thorough: {
+    tier: "sonnet",
+    effort: "medium",
+    maxTokens: CHAT_THOROUGH_MAX_TOKENS,
+    speedMode: STD,
+    timeoutMs: 120_000,
+    targetMs: 30_000,
+    targetKind: "total",
   },
   routing: {
     tier: "haiku",

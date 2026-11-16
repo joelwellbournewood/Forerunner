@@ -1,0 +1,201 @@
+import { describe, expect, it } from "vitest";
+import {
+  askAboveWords,
+  askLine,
+  CHAT_THOROUGH_RULES,
+  CHAT_WRAP_UP,
+  CLOSED_WORDS,
+  capWords,
+  chfSpent,
+  closerLookWords,
+  depthWords,
+  FAILED_WORDS,
+  footerWords,
+  handOverStep,
+  type PassFigures,
+  STOP_EXPLAIN,
+  secondsWords,
+  stoppedWords,
+  thinkItThroughExplain,
+  thinkingLongerFact,
+} from "../src/conversation/depth.ts";
+
+/**
+ * d1109-chat-depth (run C): the person's phrases and every sentence about a longer answer, word
+ * for word (design §5: one sentence read at a glance, CHF only, no ids, no raw states).
+ */
+
+const f = (over: Partial<PassFigures> = {}): PassFigures => ({
+  rung: "stronger",
+  tier: "sonnet",
+  sameModel: false,
+  // USD 0.1875 and 0.375 at 0.8: CHF 0.15 and 0.30.
+  estimateUsdMicro: 187_500,
+  atMostUsdMicro: 375_000,
+  seconds: 20,
+  chfPerUsd: 0.8,
+  ...over,
+});
+
+describe("d1109-chat-depth, run C: the person's phrases", () => {
+  it.each([
+    ['think it through: why does "Style the page" keep failing?', "longer"],
+    ["take your time and compare the two plans", "longer"],
+    ["what went wrong, be thorough", "longer"],
+    ["denk gründlich nach: was fehlt noch?", "longer"],
+    ['use a stronger model: why does "Style the page" keep failing?', "stronger"],
+    ["use Sonnet: what failed?", "stronger"],
+    ["use the best model: plan the next session", "best"],
+    ["quick: what is left?", "quick"],
+    ["briefly, what failed?", "quick"],
+  ] as const)("%s asks %s", (line, ask) => {
+    expect(depthWords(line).ask).toBe(ask);
+  });
+
+  it.each([
+    "add a task: be thorough with the tests",
+    'why did "Think harder" fail?',
+    "what is left?",
+  ])("%s asks nothing", (line) => {
+    expect(depthWords(line).ask).toBeNull();
+  });
+
+  it("a phrase alone is bare: it re-asks the previous line", () => {
+    expect(depthWords("think harder")).toEqual({ ask: "longer", bare: true });
+    expect(depthWords("Think it through.")).toEqual({ ask: "longer", bare: true });
+    expect(depthWords("think it through: what failed?")).toEqual({ ask: "longer", bare: false });
+  });
+});
+
+describe("d1109-chat-depth, run C: the sentences", () => {
+  it("the ask lines (a stronger model, the strongest, a closer look, another credential, the Claude plan)", () => {
+    expect(askLine(f())).toBe(
+      "This needs a stronger model: about CHF 0.15 (at most CHF 0.30) and 20 seconds. Go ahead?",
+    );
+    expect(askLine(f({ rung: "best", tier: "opus", seconds: 40 }))).toBe(
+      "This needs the strongest model: about CHF 0.15 (at most CHF 0.30) and 40 seconds. Go ahead?",
+    );
+    expect(askLine(f({ rung: "longer", tier: "haiku", sameModel: true, seconds: 40 }))).toBe(
+      "This needs a closer look: about CHF 0.15 (at most CHF 0.30) and 40 seconds. Go ahead?",
+    );
+    expect(
+      askLine(
+        f({
+          rung: "longer",
+          sameModel: true,
+          estimateUsdMicro: 37_500,
+          atMostUsdMicro: 75_000,
+          credential: { kind: "api_key", notFirst: { firstKind: "subscription" } },
+        }),
+      ),
+    ).toBe(
+      "This needs a closer look on your API key while your Claude subscription rests: about CHF 0.03 (at most CHF 0.06) and 20 seconds. Go ahead?",
+    );
+    expect(askLine(f({ credential: { kind: "subscription" } }))).toBe(
+      "This needs a stronger model: about 20 seconds on your Claude plan (about CHF 0.15 at API prices). Go ahead?",
+    );
+  });
+
+  it("the hand-over steps, at most 80 characters, no id", () => {
+    const a = handOverStep({ ...f(), budgetUsdMicro: 375_000 });
+    expect(a).toBe("Thinking it through with Sonnet: about 20 seconds, at most CHF 0.30.");
+    const b = handOverStep({ ...f({ sameModel: true, rung: "longer" }), budgetUsdMicro: 125_000 });
+    expect(b).toBe("Thinking it through more carefully: about 20 seconds, at most CHF 0.10.");
+    const c = handOverStep({ ...f({ credential: { kind: "subscription" } }), budgetUsdMicro: 1 });
+    expect(c).toBe("Thinking it through with Sonnet on your Claude plan: about 20 seconds.");
+    for (const s of [a, b, c]) expect(s.length).toBeLessThanOrEqual(80);
+  });
+
+  it("the footers: model, time and CHF ('under CHF 0.01' below a centime; the plan in place of CHF)", () => {
+    expect(
+      footerWords({
+        tier: "sonnet",
+        sameModel: false,
+        durationMs: 34_000,
+        costUsdMicro: 75_000,
+        chfPerUsd: 0.8,
+      }),
+    ).toBe("Thought it through with Sonnet · 34 s · CHF 0.06");
+    expect(
+      footerWords({
+        tier: "haiku",
+        sameModel: true,
+        durationMs: 21_000,
+        costUsdMicro: 25_000,
+        chfPerUsd: 0.8,
+      }),
+    ).toBe("Thought it through more carefully · 21 s · CHF 0.02");
+    expect(
+      footerWords({
+        tier: "haiku",
+        sameModel: true,
+        durationMs: 9_000,
+        costUsdMicro: 5_000,
+        chfPerUsd: 0.8,
+      }),
+    ).toBe("Thought it through more carefully · 9 s · under CHF 0.01");
+    expect(
+      footerWords({
+        tier: "sonnet",
+        sameModel: false,
+        durationMs: 34_000,
+        costUsdMicro: 75_000,
+        chfPerUsd: 0.8,
+        subscription: true,
+      }),
+    ).toBe("Thought it through with Sonnet · 34 s · on your Claude plan");
+  });
+
+  it("stopped, closer look, caps, Think it through, closed and failed lines; the facts' line; the setting's words", () => {
+    expect(stoppedWords(25_000, 0.8)).toBe("You stopped this answer: CHF 0.02 spent.");
+    expect(stoppedWords(1_000, 0.8)).toBe("You stopped this answer: under CHF 0.01 spent.");
+    expect(closerLookWords({ seconds: 20, estimateUsdMicro: 25_000, chfPerUsd: 0.8 })).toBe(
+      "This needs a closer look: about 20 seconds, about CHF 0.02.",
+    );
+    expect(capWords("month")).toBe(
+      "A closer look would pass this month's cap, so this is the quick answer.",
+    );
+    expect(capWords("project")).toBe(
+      "A closer look would pass this project's budget, so this is the quick answer.",
+    );
+    expect(capWords("plan")).toBe(
+      "A closer look would pass the share of your Claude plan Forerunner may use, so this is the quick answer.",
+    );
+    expect(thinkItThroughExplain({ seconds: 20, atMostUsdMicro: 50_000, chfPerUsd: 0.8 })).toBe(
+      "Thinks longer on this model: about 20 seconds, at most CHF 0.04.",
+    );
+    expect(
+      thinkItThroughExplain({
+        seconds: 20,
+        atMostUsdMicro: 50_000,
+        chfPerUsd: 0.8,
+        credential: { kind: "subscription" },
+      }),
+    ).toBe(
+      "Thinks longer on this model: about 20 seconds on your Claude plan, at most CHF 0.04 at API prices.",
+    );
+    expect(CLOSED_WORDS).toBe("Forerunner closed before answering this.");
+    expect(FAILED_WORDS).toBe("I could not answer this.");
+    expect(STOP_EXPLAIN).toBe("Stops this answer. Changes it already made stay, each with Undo.");
+    expect(
+      thinkingLongerFact({ state: "goes_ahead", amountUsdMicro: 125_000, chfPerUsd: 0.8 }),
+    ).toBe("goes ahead up to CHF 0.10 on this model");
+    expect(thinkingLongerFact({ state: "asks" })).toBe("asks the person first");
+    expect(thinkingLongerFact({ state: "spoken" })).toBe("not on a spoken turn");
+    expect(thinkingLongerFact({ state: "room" })).toBe("not now (the caps leave too little)");
+    expect(askAboveWords(0.1)).toBe("asks first above CHF 0.10");
+    expect(askAboveWords(0)).toBe("asks before every longer answer");
+    expect(secondsWords(55)).toBe("a minute");
+    expect(secondsWords(21)).toBe("30 seconds");
+    expect(chfSpent(0, 0.8)).toBe("under CHF 0.01");
+  });
+
+  it("the model-facing texts", () => {
+    expect(CHAT_WRAP_UP).toBe(
+      "Wrap up now: make no more lookups. Answer from what you have, and say in one sentence what you could not check.",
+    );
+    expect(
+      CHAT_THOROUGH_RULES.startsWith("# Thinking it through\nThis question was handed to you"),
+    ).toBe(true);
+  });
+});
