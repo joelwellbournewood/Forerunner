@@ -15,6 +15,44 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
+## Status at 2026-11-16 11:00 UTC (run C steps 1 to 4 merged; C4b next)
+
+Session `claude/nifty-knuth-f9udt0` resumed on 2026-11-15 at 05:35 UTC after the weekly reset
+and works through the roadmap below. **Head: a866c38** (run C step 4 merged); CI and the
+Desktop app workflow were running on it when this was written. Since the pause:
+
+- **Live check 3** (run `wf_a988b75f-218`, on 7d6b34a): USD 2.04 of its USD 3 cap, 40 steps,
+  27 findings. The 4 major ones: a pull request closed on GitHub was merged through its
+  dependent; a merge card stayed after the merge on GitHub; chat said it asked for a yes it
+  never asked for; finished research paused instead of being reviewed. All 13 major and minor
+  findings were real in the code. Result: `live3-result.json` in the plan files.
+- **Run L3** (wave 23, run `wf_d49abaae-666`, six areas): live check 3's fixes, merged at
+  7aa7add with CI and the Desktop app green. 16 of its leftovers went into run C's later areas,
+  13 to the triage after live check 4 (`leftovers-L3.json`).
+- **Run C step 2** merged at b5fb66f: one repository is one project (with Take it over and Work
+  together), chat looks up anything recorded, and a task too big for its session runs in its
+  turn and wraps up cleanly. **Step 3** merged at 46c516d: only the person starts a session,
+  prepared work joins a running session if it fits, a session the person started goes on by
+  itself after a credential wait, and chat thinks longer but asks first before a stronger model
+  or an answer over CHF 0.10. Windows CI failed once on 46c516d (two tests closed the daemon
+  while a session still ended); fixed in ba9874a (`settleSessions` and `removeHomes` in
+  `packages/runtime/test/helpers.ts`), reviewed independently.
+- **Step 4** merged at a866c38 (run `wf_ab42b5f3-91e`, 4 hours): Make one project, for two
+  projects on one repository made before the rule, with Undo (Work together for a project
+  already here went to wave 8); and the agent keeps its task list right between tasks (a
+  split, a missing step, a duplicate, each with Undo; by itself from Standard up, asking first
+  at Advisor and Assisted; added work joins only if it fits). Unit 5,620, the full suite and
+  the bench smoke 25 of 25 green.
+- Each step's leftovers are placed by `workflow-scripts/place-cN-leftovers.cjs`: into a later
+  area when one owns the code, otherwise into `leftovers-CN.json` for the triage after live
+  check 4.
+- **The owner answered run L3's question on 2026-11-16:** "yes it should count critics reviews,
+  and fixes." A task's budget counts its work, the critic's reviews and the fixes, as one
+  figure. Designed and checked adversarially (run `wf_5df2fe4b-667`), it is **sub-run C4b**
+  (`d1116-budget-all`, wave 24, one area, 13 items), built after C4 and before C5, whose areas
+  rewrite the same engine regions (`d1116-budget-all-design.json`, `place-c4b.cjs`). Live
+  check 4 gets LC-C32 (USD 0.15; estimate USD 7.20, cap USD 7 unchanged).
+
 ## Status at 2026-11-09 23:45 UTC (wave 15 and run C step 1 merged; paused until 2026-11-15)
 
 **Paused by the owner's request** ("let some things finish if they are ongoing, but then stop
@@ -243,8 +281,13 @@ check-ins pick the work up if a run stops.
   3. Run C, C2 to C6 (about 5 to 7 hours each; C2's base is 53b7bab or later): C2 onerepo-link, chat-recall, oversize-pause
      (with the hold removed); C3 starts-engine, chat-depth; C4 onerepo-join, selftasks-run;
      C5 cred-engine, run-visible; C6 cred-screens, selftasks-chat. Args from
-     `workflow-scripts/build-runC-args.cjs`.
-  4. Live check 4 with the real model (cap USD 6), then its fix-ups.
+     `workflow-scripts/build-runC-args.cjs`. **Done (2026-11-16):** steps 1 and 2 (live check 3,
+     then run L3), C2, C3 and C4. Next: C4b (`d1116-budget-all`, the owner's answer of
+     2026-11-16; `node build-runC-args.cjs 4 <head>`, index 4 is C4b), then C5 (index 5) and C6
+     (index 6).
+  4. Live check 4 with the real model (cap USD 7 since run L3, estimate USD 7.20 with C4b's
+     LC-C32), then the triage of its findings with `leftovers-L3.json`, `leftovers-C2.json`,
+     `leftovers-C3.json`, `leftovers-C4.json` and `leftovers-C4b-design.json`, and one fix run.
   5. Wave 8 re-planned from `wave8-replan-brief.md` (collaboration through GitHub: one project
      per repository across people, the status issue as the noticeboard, claims, the repository
      guide), then built.
@@ -269,6 +312,7 @@ check-ins pick the work up if a run stops.
   3,000 in all, roughly 30% over the estimate (told to the owner on 2026-11-09).
 - **API spend for live checks:** about USD 10 of the owner's USD 40 (USD 4.03 of it live
   check 2); live check 3 (USD 3) and live check 4 (USD 6) would bring it to about USD 19.
+  Since then: live check 3 spent USD 2.04 (about USD 12 in all); live check 4's cap is USD 7.
 - **Open owner questions** (today's behaviour stays until answered; the decisions of
   2026-11-09 above close U-078, W6-23, the Tasks-row question and the three of the wave 15
   triage, and run C's plan lists the 21 it opens, `owner_questions`): 9 on collaboration
