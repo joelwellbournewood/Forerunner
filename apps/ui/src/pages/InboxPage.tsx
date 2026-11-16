@@ -337,12 +337,15 @@ function IntakeCard({
   dockerReady,
   specialists,
   planTasks,
+  credentialLine,
 }: {
   card: IntakeCardView;
   dockerReady: boolean | null;
   specialists: ReadonlyMap<string, string | null> | null;
   /** The daemon's view of each plan task here (U-078, C-68): who, where it runs and why. */
   planTasks: HumanRequestView["planTasks"];
+  /** d1109-cred-screens (CS-4): what happens if the first choice runs out, the daemon's words. */
+  credentialLine?: string | null | undefined;
 }) {
   const hereOf = (t: IntakeCardTask) =>
     planTasks?.find((p) => (t.key !== null ? p.key === t.key : p.title === t.title)) ?? null;
@@ -455,6 +458,11 @@ function IntakeCard({
         })}
       </ol>
       {totalWords ? <p data-testid="intake-total">{intakeTotalLine(card, totalWords)}</p> : null}
+      {credentialLine ? (
+        <p className="text-neutral-700 dark:text-neutral-300" data-testid="intake-credential-line">
+          {credentialLine}
+        </p>
+      ) : null}
       {decided ? <p data-testid="intake-decision-line">Decision: {decided}</p> : null}
       {decision ? (
         <details
@@ -1052,6 +1060,7 @@ function RequestCard({
           dockerReady={dockerReady}
           specialists={specialists}
           planTasks={request.planTasks}
+          credentialLine={request.planCredentialLine}
         />
       ) : null}
       {challenge ? (

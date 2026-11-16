@@ -40,6 +40,7 @@ import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/t
 import type { ModelRequest } from "@forerunner/runtime/provider/types";
 import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
 import { fileBudgetStopCard } from "@forerunner/runtime/session/budget-card";
+import { clockTime } from "@forerunner/runtime/session/credential-wait";
 import { conflictNoticeSentence } from "@forerunner/runtime/session/dependent-branches";
 import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
@@ -22360,6 +22361,49 @@ describe("d1109-cred-screens, run C", () => {
       expect(check.credential?.runOut).toBeNull();
     } finally {
       await second.rt.close();
+    }
+  }, 120_000);
+
+  it("CS-4: the plan card's foot line says what happens if the first choice runs out, its run-out form while it is out, and follows a preset change without a restart", async () => {
+    const both = await composeWithRolePlayer(
+      {},
+      {
+        vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      },
+    );
+    const { rt, client } = both;
+    try {
+      await setPolicyCs(client, "subscription_then_ask");
+      const brief = "A small web page that shows a quote of the day.";
+      const project = await client.createProject({
+        name: "Quote page",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const me = await client.me();
+      const card = async () =>
+        (await client.inbox(me.id)).requests.find(
+          (r) => r.projectId === project.id && r.status === "open" && r.planTasks,
+        );
+      expect((await card())?.planCredentialLine).toBe(
+        "If your subscription runs out, you are asked before your API key is used.",
+      );
+      // The per-task runs-on lines are the chooser's, unchanged.
+      const until = new Date(rt.clock.now() + 40 * 60_000).toISOString();
+      await restSubscription(rt, until);
+      const at = clockTime(until, rt.human.timezone, rt.clock.now());
+      expect((await card())?.planCredentialLine).toBe(
+        `Your subscription is at its limit until ${at}: you are asked before your API key is used.`,
+      );
+      await setPolicyCs(client, "subscription_then_wait");
+      expect((await card())?.planCredentialLine).toBe(
+        `Your subscription is at its limit until ${at}: the work waits for it.`,
+      );
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
     }
   }, 120_000);
 });

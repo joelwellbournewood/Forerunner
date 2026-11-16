@@ -1025,6 +1025,14 @@ export const HumanRequestView = z.object({
     )
     .nullable()
     .optional(),
+  /**
+   * d1109-cred-screens (CS-4): an open plan card's foot line of which Claude does the work,
+   * computed when shown ("If your subscription runs out, you are asked before your API key is
+   * used."; while the first choice is out "Your subscription is at its limit until 15:40: you
+   * are asked before your API key is used."); null with one credential saved. Absent on other
+   * cards and from an older daemon.
+   */
+  planCredentialLine: z.string().nullable().optional(),
 });
 export type HumanRequestView = z.infer<typeof HumanRequestView>;
 

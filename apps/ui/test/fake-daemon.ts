@@ -651,6 +651,8 @@ export interface FakeDaemonState {
    * session goes on).
    */
   startCredential: Record<string, StartCheckView["credential"]>;
+  /** CS-4: the plan card's foot line (`HumanRequestView.planCredentialLine`); a test sets it. */
+  planCredentialLine: string | null;
   credentialGrants: string[];
   credentialWaitNow: Record<
     string,
@@ -1361,6 +1363,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     joinUndoBlocked: null,
     credentialWaitNow: {},
     startCredential: {},
+    planCredentialLine: null,
     credentialGrants: [],
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
@@ -3742,6 +3745,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         },
       );
       if (planTasks) r.planTasks = planTasks;
+      // d1109-cred-screens (CS-4), as the daemon: the plan card's foot line, read when shown
+      // (`state.planCredentialLine`, as `planCredentialLine` words it).
+      if (planTasks) r.planCredentialLine = state.planCredentialLine;
     }
     return c.json({
       requests,

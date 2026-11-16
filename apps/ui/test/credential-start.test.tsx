@@ -149,3 +149,69 @@ describe("d1109-cred-screens, run C: the Start dialog's credential line and butt
     expect(within(dialog).queryByTestId("start-session-run-out")).toBeNull();
   });
 });
+
+describe("d1109-cred-screens, run C: the plan card's foot line (CS-4)", () => {
+  it("shows the daemon's line once at the card's foot, under the total", async () => {
+    const harness = createHarness();
+    harness.daemon.state.planCredentialLine =
+      "Your subscription is at its limit until 15:40: you are asked before your API key is used.";
+    harness.daemon.state.requests.unshift({
+      id: "req_intake",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      sessionId: "sess_9",
+      kind: "approval",
+      why: 'Plan for "Atlas"',
+      steps: [],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium",
+      changeCard: {
+        key: "intake:proj_atlas",
+        project_id: "proj_atlas",
+        docs_target: "repository",
+        cost_usd_micro: 12_000,
+        applied_at: null,
+        proposal: {
+          plan: {
+            reason: "planned from the brief",
+            milestones: [],
+            tasks: [
+              {
+                key: "page",
+                title: "Build the page",
+                outcome: "a page",
+                acceptanceCriteria: [],
+                priority: 8,
+                dependsOn: [],
+                specialist: "coder",
+              },
+            ],
+          },
+          docs: { "README.md": "# Atlas\n" },
+          firstSession: {
+            summary: "Build it.",
+            items: [{ key: "page", estimateUsdMicro: 400_000 }],
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T22:00:00.000Z",
+      version: 1,
+    });
+    renderApp("/inbox", harness);
+    const card = await screen.findByTestId("intake-card");
+    const lines = within(card).getAllByTestId("intake-credential-line");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toHaveTextContent(
+      "Your subscription is at its limit until 15:40: you are asked before your API key is used.",
+    );
+    // At the foot: after the total line.
+    const total = within(card).getByTestId("intake-total");
+    expect(
+      total.compareDocumentPosition(lines[0] as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+});

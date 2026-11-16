@@ -175,7 +175,7 @@ import type { RuntimeApp } from "./compose.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
 import { createCredentialPolicyRoutes } from "./credential-policy-routes.ts";
-import { startCredential } from "./credential-start.ts";
+import { planCredentialLine, startCredential } from "./credential-start.ts";
 import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
 import { joinPreview, sharesRepositoryWith } from "./join-preview.ts";
@@ -1906,9 +1906,7 @@ export function createDaemonApp(
           // person's Wait for this stop: no ask card follows their own choice.
           const { offer } = await credentialAtStart(check, body.projectId);
           if (offer?.whenStopped === "ask")
-            await recordWait(rt.store, rt.clock, offer.sourceId, offer.stopKey).catch(
-              () => false,
-            );
+            await recordWait(rt.store, rt.clock, offer.sourceId, offer.stopKey).catch(() => false);
           const view: StartSessionView = {
             result: "kept",
             startId: "",
@@ -2358,6 +2356,14 @@ export function createDaemonApp(
       });
       const view = reqViews[i];
       if (planTasks && view) view.planTasks = planTasks;
+      // d1109-cred-screens (CS-4): the plan card's foot line, computed when shown.
+      if (planTasks && view)
+        view.planCredentialLine = await planCredentialLine({
+          store: rt.store,
+          clock: rt.clock,
+          humanId: rt.human.id,
+          billing: rt.billing.pick instanceof RouterTaskBilling ? rt.billing.pick : null,
+        }).catch(() => null);
     }
     const msgViews = [];
     for (const m of messages) {

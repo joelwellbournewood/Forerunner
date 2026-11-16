@@ -9,6 +9,7 @@ import {
   grantStartLine,
   ifRunsOutLine,
   ONE_OFF_UNDER_WAIT,
+  planCardLine,
   sessionGoesOnLine,
   startLaterExplain,
   startLaterLabel,
@@ -148,4 +149,32 @@ export async function startCredential(
       whenStopped,
     },
   };
+}
+
+/**
+ * d1109-cred-screens CS-4: the plan card's foot line, computed when shown: the preset's
+ * if-it-runs-out line, or while the first choice is out its run-out form; null with one
+ * credential saved. The per-task runs-on lines stay the chooser's.
+ */
+export async function planCredentialLine(
+  deps: Pick<StartCredentialDeps, "store" | "clock" | "humanId" | "billing">,
+): Promise<string | null> {
+  if (!deps.billing) return null;
+  const human = await deps.store.human.get(deps.humanId);
+  const policy = credentialPolicyOf((human?.notify_prefs ?? {}) as Record<string, unknown>);
+  const saved = await deps.billing.savedKinds();
+  const opts = {
+    ...(human?.timezone ? { timezone: human.timezone } : {}),
+    nowMs: deps.clock.now(),
+  };
+  const first = await deps.billing.firstChoiceStop().catch(() => null);
+  if (!first || first.reason === "needs") return planCardLine(policy.rule, saved, null, opts);
+  const row = await deps.store.billingSource.get(first.sourceId).catch(() => undefined);
+  const grant = grantOf((row?.limits as JsonObject | undefined)?.grant);
+  return planCardLine(
+    policy.rule,
+    saved,
+    { kind: first.kind, stop: { reason: first.reason, until: first.until } },
+    { ...opts, granted: !!grant && grant.stopKey === first.stopKey },
+  );
 }
