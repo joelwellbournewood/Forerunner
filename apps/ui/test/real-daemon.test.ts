@@ -20273,4 +20273,52 @@ describe("d1109-onerepo-join, run C", () => {
       await rt.close();
     }
   }, 120_000);
+
+  it("C2-left-13: GET /projects/:id/docs of a project made with Work together says who writes each doc it does not have (notWrittenHere), never 'not written yet'; the same after the daemon starts again", async () => {
+    const KITE = "01a1a000-0000-7000-8000-00000000c1ab";
+    const host = new MemoryGitHost("bob");
+    const repo = { owner: "o", name: "kite" };
+    await host.createRepo({ ...repo, private: true });
+    await host.putFile(repo, {
+      path: ".forerunner/project.json",
+      content: JSON.stringify({ schema: 1, project: KITE, name: "Kite club" }),
+      message: "marker",
+      branch: "main",
+    });
+    await host.openPullRequestAs(repo, "alice", {
+      title: "A's page",
+      body: `<!-- forerunner:pr project=${KITE} task=t1 -->`,
+      head: "fr/a-page",
+      updatedAt: new Date(Date.parse("2026-03-05T08:00:00Z") - 24 * 3600_000).toISOString(),
+    });
+    const { compose } = onHome(host);
+    let { rt, client } = await compose();
+    try {
+      const made = await client.createProject({
+        name: "My kites",
+        goal: "Kites",
+        repos: ["o/kite"],
+        together: { project: KITE },
+      });
+      expect(made.id).toBe(KITE);
+      const check = async (c: DaemonClient) => {
+        const rows = await c.docs(KITE);
+        const missing = rows.filter((r) => !r.exists);
+        expect(missing.length).toBeGreaterThan(0);
+        for (const r of missing) {
+          expect(r.notWrittenHere, r.path).toBe(true);
+          expect(r.note, r.path).toBe(
+            'The other Forerunner of "Kite club" writes this doc on GitHub; this project does not write docs.',
+          );
+        }
+        expect(JSON.stringify(rows)).not.toContain("not written yet");
+      };
+      await check(client);
+      await rt.close();
+      ({ rt, client } = await compose());
+      await check(client);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });
