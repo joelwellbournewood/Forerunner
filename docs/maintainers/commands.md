@@ -733,8 +733,21 @@ run C").
   kept tasks created since ('"Shop page" waits for "Cart", which came from "Kite club": change
   that first'). The kept project's `project.create` cannot be undone while it includes another's
   work (`joinedCreateUndoBlocked`); a joined project's own rows answer `joinedProjectWords`
-  ('"Kite club" joined "Site"') through the executor's guard, and `removedProjectRefusal`
-  answers '"Kite club" joined "Site", so its work runs there.' for any command on it.
+  ('"Kite club" joined "Site"') through the executor's guard. Undo gives the closed project back
+  with the status and `active` it had (a project left off comes back off).
+- **A closed project takes no new work** (OJ-06, the review's finding: New task, a note or a
+  change from its chat was written on the joined project, where no session ever ran it). The
+  executor's `prepare` asks `refuseClosedProject(name, card)` after the plan: a command whose
+  card names a project closed into another, or removed (W15B-02), is refused with
+  `removedProjectRefusal`'s sentence ('"Kite club" joined "Site", so its work runs there.'; 'The
+  project "X" was removed, so nothing of it runs.'), code `validation` (409 `conflict` at the
+  routes, as the start's refusal), `details.cause` `project_joined` or `project_removed`, from
+  the app, chat or a pending yes alike. The commands it still answers are
+  `OPEN_ON_A_CLOSED_PROJECT` in `@forerunner/runtime/daemon/join-words` (the fake daemon reads
+  the same set): `summary.speak`, `session.stop`, `session.pause`, `request.answer` and
+  `project.join` (which says itself why a closed project cannot be kept or closed). The sentence
+  is `joinedRefusalSentence` there too. Tests: `test/project-join.test.ts` 'a closed project
+  takes no new work'.
 
 ### Who starts a session (d1109-starts-engine, [ADR 0118](../decisions/0118-who-starts-a-session.md))
 

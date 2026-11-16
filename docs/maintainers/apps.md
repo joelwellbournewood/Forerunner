@@ -200,7 +200,17 @@ line under it says Changes has its Undo. A joined project's page (`ProjectPage.t
 'Joined into "Site" on 9 Nov.' with **Open it** (`project-joined`, `project-joined-open`) and
 shows no Start, repository or intake; the kept project's Overview lists 'Includes the work of
 "Kite club".' with links (`includes-work-of`), its Sessions tab the joined line with Open
-(`sessions-joined`), its Costs tab the spend before the join (`cost-joined`). Tests:
+(`sessions-joined`), its Costs tab the spend before the join (`cost-joined`). A closed project
+(joined, or removed: `ProjectPage`'s `closed`) offers no new work: its Tasks tab has no **New
+task** and, with no task, says 'Its tasks are in "Site".' with **Open it** (`TasksTab`'s
+`closed`; a removed project: "No tasks: this project was removed."); its Chat tab
+(`ChatTab`'s `closed`) keeps the conversation to read (`Conversation`'s `readOnly`: no message
+box, no examples, no Make this a task, no Yes and No, Undo, question options or Go ahead; an
+empty one says "Nothing was said here.") under
+'This chat is kept to read; ask about its work in the Chat of "Site".' with **Open it**
+(`chat-closed`); its Overview shows no Research reads line and no Note for the next session,
+and a joined project no Decisions (they moved with its work). The words are `joinedTasksSentence`
+and `joinedChatSentence` in `join-words.ts`. Tests:
 `test/onerepo-join.test.tsx` and the real-daemon 'd1109-onerepo-join, run C' cases; the fake
 daemon mirrors the route, the command, its Undo and the lines (`state.sharedRepository`,
 `joinPreviews`, `joined`, `joinRefusal`, `joinUndoBlocked`).

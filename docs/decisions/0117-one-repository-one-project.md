@@ -252,3 +252,12 @@ Consequences of the amendment:
   branch on the default branch).
 - A together project's Docs rows (C2-left-13) say who writes a doc it does not have, never "not
   written yet", and carry no missing mark (`DocView.notWrittenHere`).
+- A closed project takes no new work (amended on review, 2026-11-16): a joined project's page,
+  its chat and its routes accepted a task, a note for the next session and a setting, which then
+  waited on a project where nothing runs. Every command but reading its summary, a stop, the
+  answer to a card left on it and Make one project is refused with '"Kite club" joined "Site",
+  so its work runs there.' (a removed project with its own sentence), a note through
+  `POST /projects/:id/queue` too; its Tasks tab says 'Its tasks are in "Site".' with Open it, its
+  Chat is kept to read and points to the kept project's Chat, and its Overview has no note box,
+  research setting or (joined) decisions. Undo of a join gives the closed project back with the
+  status and `active` it had.

@@ -7533,8 +7533,12 @@ moves in `project.join` (commands.md).
   in "Kite club" before it joined: CHF 3.20'), `projectSessionsView` adds `joined` on its first
   page ('"Kite club" had 3 sessions before it joined.'). `change-rows.ts` never reads a joined
   project as removed; `removedProjectRefusal` answers '"Kite club" joined "Site", so its work
-  runs there.' for anything asked of it. The chat's recall reads the kept project with the ones
-  that joined it (`conversation/scope.ts` `withJoined`, used by `recall.ts`).
+  runs there.' (`joinedRefusalSentence`) for anything asked of it: a start, any command but the
+  ones in `OPEN_ON_A_CLOSED_PROJECT` (the executor's guard, commands.md) and `POST
+  /projects/:id/queue`, which refuses a note for a closed project (joined or removed) with the
+  same sentence as 409 `conflict` before anything is written (`queue-routes.ts`). The chat's
+  recall reads the kept project with the ones that joined it (`conversation/scope.ts`
+  `withJoined`, used by `recall.ts`); the joined project's own conversation stays to read.
 - **GitHub that does not answer** (C2-left-10): `GitHubHost` cuts every request at
   `GITHUB_REQUEST_TIMEOUT_MS` (30 s, option `requestTimeoutMs`), so `POST /projects` and the
   scaffold no longer wait for ever (capabilities.md).

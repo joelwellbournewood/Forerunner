@@ -162,7 +162,11 @@ project** moves everything in one step: Changes lists 'Made one project: "Kite c
 moved tasks keep working: Merge and the reviews go on from "Site".
 
 A project that joined another is closed: its page says 'Joined into "Site" on 9 Nov.' with
-**Open it**, and nothing starts from it. "Site"'s Overview says 'Includes the work of "Kite
+**Open it**, and nothing starts from it. It takes no new work: its Tasks tab has no New task
+and says 'Its tasks are in "Site".' with **Open it**, its Chat is kept to read ('This chat is
+kept to read; ask about its work in the Chat of "Site".'), and its Overview has no note for a
+next session. A task, a note or a change asked for it anyway is answered '"Kite club" joined
+"Site", so its work runs there.' and nothing is written. "Site"'s Overview says 'Includes the work of "Kite
 club".', its Sessions tab '"Kite club" had 3 sessions before it joined.' with Open, and its
 Costs tab 'Spent in "Kite club" before it joined: CHF 3.20'. Chat answers about "Site" with
 what "Kite club" did before it joined. In chat, "make Site and Kite club one project, keep
