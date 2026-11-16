@@ -4659,7 +4659,9 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     });
     // Earlier runs spent the whole budget (setup, not under test): the next run stops before it
     // calls the model, as the live walk's run did "after spending $0.00". Its estimate is USD
-    // 0.10 (CHF 0.08), more than its budget: Continue adds at least that.
+    // 0.10 (CHF 0.08), more than its budget: Continue adds at least that. d1116-budget-all
+    // (BA-5): and what its review needs (its review part and one review call's worst case), so
+    // one Continue is enough for the work and its review: CHF 0.12 (before: CHF 0.08).
     await rt.store.task.patch(created.id, {
       actual_cost_usd_micro: 12_500,
       est_cost_usd_micro: 100_000,
@@ -4682,8 +4684,8 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     expect(card?.body).toBe("It stopped before it wrote anything.");
     expect(card?.choices?.map((c) => [c.label, c.explain, c.tone])).toEqual([
       [
-        "Continue (CHF 0.08 more)",
-        "Adds CHF 0.08 to its budget and starts a session that goes on from where it stopped.",
+        "Continue (CHF 0.12 more)",
+        "Adds CHF 0.12 to its budget and starts a session that goes on from where it stopped.",
         "primary",
       ],
       ["Cancel task", "Drops it.", "danger"],
@@ -4706,10 +4708,10 @@ describe("the UI client against the real daemon: a task that stops waits on one 
     // The click sends the button's words; the budget is raised and a session runs the task.
     const answered = await client.answerRequest(card?.id ?? "", {
       version: card?.version ?? 0,
-      answer: "Continue (CHF 0.08 more)",
+      answer: "Continue (CHF 0.12 more)",
     });
     expect(answered.outcome).toMatch(
-      /^Gave "Contact page" CHF 0\.08 more: (a session started|it runs after the current session)\.$/,
+      /^Gave "Contact page" CHF 0\.12 more: (a session started|it runs after the current session)\.$/,
     );
     await eventually(
       async () =>
@@ -4722,8 +4724,8 @@ describe("the UI client against the real daemon: a task that stops waits on one 
       20_000,
     );
     const done = (await client.tasks(project.id)).find((t) => t.id === created.id);
-    // What it had spent (USD 0.0125) plus USD 0.10.
-    expect(done?.budget.usdMicro).toBe(112_500);
+    // What it had spent (USD 0.0125) plus USD 0.15, CHF 0.12 (BA-5; before: plus USD 0.10).
+    expect(done?.budget.usdMicro).toBe(162_500);
     expect(await cardsOf()).toEqual([]);
     // Nothing left running for the next case.
     await allEnded();
@@ -10657,9 +10659,6 @@ describe("the UI client against the real daemon: the plan card's figure is the S
       const guess = new Map(view.firstSession.items.map((i) => [i.key, i.estimateUsdMicro]));
       const shown = card.planTasks.filter((t) => t.specialist !== null && guess.has(t.key ?? ""));
       expect(shown.length).toBeGreaterThan(0);
-      // The card's figure is no longer the plan's own guess (before: always the guess).
-      for (const t of shown)
-        expect(t.estimateUsdMicro, t.title).toBeLessThan(guess.get(t.key ?? "") ?? 0);
 
       await client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
       const tasks = await rt.store.task.list({ project_id: project.id } as never, { limit: 50 });
@@ -10670,6 +10669,20 @@ describe("the UI client against the real daemon: the plan card's figure is the S
         // which is what the card showed.
         expect(row.est_cost_usd_micro, t.title).toBe(guess.get(t.key ?? ""));
         expect(planEstimateUsdMicro(rt.estimates, row), t.title).toBe(t.estimateUsdMicro);
+        // The card's work part is no longer the plan's own guess (before: always the guess).
+        // d1116-budget-all (BA-6): the figure holds the task's review part too, so its work part
+        // (the figure less that part) is what was learned, below the guess.
+        const review =
+          rt.estimates.estimate({
+            specialist: row.specialist,
+            risk_tier: row.risk_tier,
+            est_cost_usd_micro: row.est_cost_usd_micro,
+            outcome: row.outcome,
+            acceptance_criteria: row.acceptance_criteria,
+          }).reviewUsdMicro ?? 0;
+        expect((t.estimateUsdMicro ?? 0) - review, t.title).toBeLessThan(
+          guess.get(t.key ?? "") ?? 0,
+        );
       }
       // Nothing is left running for the next case.
       for (const s of await client.sessions({ projectId: project.id }))
@@ -12880,7 +12893,10 @@ describe("w15-run, wave 15", () => {
   const heardWrapUp = (r: ModelRequest) =>
     JSON.stringify(r.messages.at(-1) ?? "").includes(WRAP_UP_MARK);
 
-  it("W15-14: a researcher at Budget 0.15 that hears the wrap-up and lists only 'Nothing for the acceptance criteria.' and an optional extra is Done and reviewed, with no budget card", async () => {
+  // d1116-budget-all (BA-4): each work run keeps room in its task's budget for its review (CHF
+  // 0.04 here), so the budget that leaves the run the CHF 0.15 this scenario needs is CHF 0.19
+  // (before: Budget 0.15, whose run now stops at CHF 0.11 before the wrap-up).
+  it("W15-14: a researcher at Budget 0.19 that hears the wrap-up and lists only 'Nothing for the acceptance criteria.' and an optional extra is Done and reviewed, with no budget card", async () => {
     const report = [
       'I wrote `popover-hint.md` with three MDN pages that mention `popover="hint"`.',
       "",
@@ -12921,7 +12937,7 @@ describe("w15-run, wave 15", () => {
         priority: "medium",
         status: "ready",
         dependsOn: [],
-        budgetUsdMicro: 187_500,
+        budgetUsdMicro: 237_500,
         specialist: "researcher",
         riskTier: 1,
       });
@@ -15362,14 +15378,16 @@ describe("d1109-oversize-start, run C", () => {
       // Before: blocked "Nothing can run within this budget: ..." and Start off.
       expect(check.blocked).toBeNull();
       expect(check.runnable).toEqual([]);
+      // d1116-budget-all (BA-6): its price holds its review part, USD 0.03 for a light review
+      // (before: 8_000_000, CHF 6.40).
       expect(check.oversized).toEqual({
         taskId: big.id,
         title: "Build the shop",
-        estimate: { usdMicro: 8_000_000, chfMicro: 6_400_000 },
+        estimate: { usdMicro: 8_030_000, chfMicro: 6_424_000 },
         room: { usdMicro: 1_600_000, chfMicro: 1_280_000 },
         after: false,
         sentence:
-          '"Build the shop" needs about CHF 6.40, more than this session\'s work budget of CHF 1.28: it works until that budget is used, keeps its work, and asks you to continue.',
+          '"Build the shop" needs about CHF 6.42, more than this session\'s work budget of CHF 1.28: it works until that budget is used, keeps its work, and asks you to continue.',
         // d1109-oversize-pause (OP-0): nothing comes after it.
         comesAfter: [],
         afterSentence: null,
@@ -15427,13 +15445,14 @@ describe("d1109-oversize-start, run C", () => {
         "Write the intro",
         "Write the about page",
       ]);
-      // USD 1.60 less 0.40: USD 1.20, CHF 0.96.
-      expect(check.oversized?.room).toEqual({ usdMicro: 1_200_000, chfMicro: 960_000 });
+      // USD 1.60 less 0.46 (each task USD 0.20 and its review part USD 0.03, d1116-budget-all
+      // BA-6; before: less 0.40, CHF 0.96): USD 1.14, CHF 0.91.
+      expect(check.oversized?.room).toEqual({ usdMicro: 1_140_000, chfMicro: 912_000 });
       // d1109-oversize-pause (OP-0): the tasks before it by name, and the second larger task
       // after it (before: "after the other tasks", and "one_large" with 'one task that large
       // runs a session, so it waits for the next one.').
       expect(check.oversized?.sentence).toBe(
-        '"Build the shop" needs about CHF 6.40, more than this session\'s work budget of CHF 1.28: after "Write the intro" and "Write the about page" it works with about CHF 0.96, keeps its work, and asks you to continue.',
+        '"Build the shop" needs about CHF 6.42, more than this session\'s work budget of CHF 1.28: after "Write the intro" and "Write the about page" it works with about CHF 0.91, keeps its work, and asks you to continue.',
       );
       const second = check.overBudget.find((t) => t.title === "Big two");
       expect(second?.why).toBe("after_large");
@@ -18715,7 +18734,8 @@ describe("d1109-oversize-pause, run C", () => {
       expect(check.blocked).toBeNull();
       expect(check.runnable.map((t) => t.title)).toEqual(["Write the intro"]);
       expect(check.oversized?.sentence).toMatch(
-        /^"Build the shop" needs about CHF 6\.40, more than this session's work budget of CHF 1\.28: after "Write the intro" it works with about CHF 1\.2\d, keeps its work, and asks you to continue\.$/,
+        // d1116-budget-all (BA-6): with its review part (before: CHF 6.40).
+        /^"Build the shop" needs about CHF 6\.42, more than this session's work budget of CHF 1\.28: after "Write the intro" it works with about CHF 1\.2\d, keeps its work, and asks you to continue\.$/,
       );
       expect(check.oversized?.comesAfter).toEqual(["Write the notes"]);
       expect(check.oversized?.afterSentence).toBe(
