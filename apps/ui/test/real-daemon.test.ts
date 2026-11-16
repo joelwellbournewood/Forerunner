@@ -21092,7 +21092,27 @@ describe("d1109-run-visible, run C", () => {
 
   it("the critic's monthly check reads 'Forerunner · the critic's monthly check on known examples' with Stop now and Stop all and what it is for; Stop now stops it", async () => {
     const { rt, client, gated } = await compose();
+    // What the screens hear on /events (the review of d1109-run-visible, blocking 2: the check
+    // was sent on no run.changed frame, so the bar showed it only after a reload, and then kept
+    // it with Stop after it had ended).
+    const events = new AbortController();
+    const frames: string[][] = [];
     try {
+      const res = await client.raw({
+        method: "GET",
+        path: "/events",
+        accept: "text/event-stream",
+        signal: events.signal,
+      });
+      void (async () => {
+        try {
+          for await (const f of readSseStream(res))
+            if (f.event === "run.changed")
+              frames.push((JSON.parse(f.data) as { text: string }[]).map((v) => v.text));
+        } catch {
+          // closed at the end of the test
+        }
+      })();
       await rt.scheduler.request({
         agentId: "critic-calibration",
         trigger: "schedule",
@@ -21119,6 +21139,16 @@ describe("d1109-run-visible, run C", () => {
         explain: `Once a month the critic reviews examples whose right answers are known, so you see whether it still catches mistakes; it spends at most CHF ${(10 * rt.chfPerUsd()).toFixed(2)} a month of its own budget.`,
       });
       expect(check?.explain).not.toMatch(/verdict|USD/);
+      // The bar hears it start, with no reload: a run.changed frame names the check.
+      await eventually(
+        async () =>
+          frames.some(
+            (f) => f.join() === "Forerunner · the critic's monthly check on known examples",
+          ),
+        "a run.changed frame with the check while it runs (20 s)",
+        async () => JSON.stringify(frames),
+        20_000,
+      );
       // Stop now (the indicator's Stop menu): the check's run stops and its row ends.
       await client.stopSession(check?.sessionId ?? "");
       gated.stopGating();
@@ -21130,7 +21160,15 @@ describe("d1109-run-visible, run C", () => {
       );
       const row = await rt.store.session.mustGet(check?.sessionId ?? "");
       expect(["running", "paused", "planned"]).not.toContain(row.status);
+      // ...and hears it end: the last frame is empty, so the bar goes away.
+      await eventually(
+        async () => frames.length > 0 && (frames.at(-1) ?? ["x"]).length === 0,
+        "a run.changed frame with nothing running after the check ended (20 s)",
+        async () => JSON.stringify(frames),
+        20_000,
+      );
     } finally {
+      events.abort();
       gated.stopGating();
       await settleSessions(rt);
       await rt.close();

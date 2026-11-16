@@ -35,6 +35,10 @@ const STOP_NOW = {
   explain:
     "Stops the current task at once. It goes back to Ready; what it wrote so far stays in the folder.",
 } as const;
+/** Stop now on the critic's monthly check: it has no task to send back to Ready. */
+const STOP_NOW_CHECK = "Stops the check at once. This month's report is not written.";
+const stopNowExplain = (run: RunningView) =>
+  run.state === "calibrating" ? STOP_NOW_CHECK : STOP_NOW.explain;
 const STOP_ALL = {
   label: "Stop all",
   explain: "Stops every running session now. No session starts until you allow it again.",
@@ -49,10 +53,19 @@ export function useRunning(projectId?: string | null): RunningView[] {
   return projectId ? running.filter((r) => r.projectId === projectId) : running;
 }
 
-/** The window's title while a session runs ('● Quote page · Forerunner'), 'Forerunner' else. */
+/**
+ * The window's title while a session runs ('● Quote page · Forerunner'), a project's session
+ * before the critic's monthly check ('● The critic's monthly check · Forerunner'), 'Forerunner'
+ * else (a session that only waits to go on leaves it).
+ */
 export function runTitle(running: readonly RunningView[]): string {
-  const first = running.find((r) => r.state !== "waiting");
-  return first ? `● ${first.projectName} · Forerunner` : "Forerunner";
+  const first =
+    running.find((r) => r.state !== "waiting" && r.state !== "calibrating") ??
+    running.find((r) => r.state === "calibrating");
+  if (!first) return "Forerunner";
+  return first.state === "calibrating"
+    ? "● The critic's monthly check · Forerunner"
+    : `● ${first.projectName} · Forerunner`;
 }
 
 export function RunIndicator({
@@ -303,7 +316,7 @@ function StopMenu({
           ) : null}
           {asking === "now" ? (
             <Question
-              text={STOP_NOW.explain}
+              text={stopNowExplain(run)}
               confirm="Stop now"
               busy={busy}
               testId="stop-now-confirm"
@@ -335,7 +348,7 @@ function StopMenu({
               {run.stop.includes("now") ? (
                 <MenuItem
                   label={STOP_NOW.label}
-                  explain={STOP_NOW.explain}
+                  explain={stopNowExplain(run)}
                   testId="run-stop-now"
                   disabled={busy}
                   onClick={() => setAsking("now")}

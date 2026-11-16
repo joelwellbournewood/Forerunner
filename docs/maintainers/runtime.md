@@ -2655,7 +2655,9 @@ calibrate [--force]`, `fr jobs handover <project> [--force]`, `fr jobs reports` 
   after the scheduler's fired keys. The run's session row and token are the **critic agent's**
   (`criticAgentId`), never the principal's (design §4.11, ADR 0102): a running calibration row
   of the principal held its one-session rule, so every Start on the 1st of the month answered
-  "already has an active session". Without a model (`modelAvailable`, the daemon passes
+  "already has an active session". `onRowChanged` is called when the row is made and when it
+  is ended (compose passes the run indicator's poke, so the bar shows the check while it runs
+  and takes it away after; d1109-run-visible). Without a model (`modelAvailable`, the daemon passes
   `provider !== null`) the run is skipped (`no_model`) before anything is written; before, an
   install with no key ran it and failed every month. A monthly schedule first seen on its due
   day or after it (a fresh install, a job just switched on) waits for the next month
@@ -7700,9 +7702,11 @@ sentences from it); `daemon/run-indicator.ts` reads the store and re-exports the
 - **Routes and events**: `GET /running` answers `RunningView[]` (`{key, sessionId, projectId,
   projectName, state, what, text, since, stop, cancel, nextProject, explain}`); `run.changed`
   (`RUN_CHANGED_EVENT` on the bus, "run" being the task runs' own name) carries the list on
-  `/events` and in polling, emitted at most once a second (compose's debounced `running.poke`,
-  poked by every session event, the scheduler's `requestStart` and `cancelPending`, and the
-  wait list); `/health` gains `running {projectName, what, text, waiting}` (append-only, null
+  `/events` and in polling, emitted at most once a second (compose's debounced `running.poke`
+  on the clock's monotonic time, poked by every session and project event (a kept wait or Start
+  and its Cancel emit a project event), the scheduler's `requestStart` and `cancelPending`, and
+  the monthly check's row made and ended: `CalibrationJobDeps.onRowChanged`, since the job runs
+  outside the session runner and emits on no bus); `/health` gains `running {projectName, what, text, waiting}` (append-only, null
   when nothing runs) and its `activeSessions` stops counting a plan being drafted.
 - **Elsewhere**: the Sessions list's working row says `sessionRunText` (d1109-sessions'
   `workingWords` re-pointed; the same kept fold as the bar); the project status line gains rule 2b from `startsWaitOf`

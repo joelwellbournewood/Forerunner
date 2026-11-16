@@ -303,6 +303,14 @@ describe("d1109-run-visible: the run indicator under the header (V-2)", () => {
     expect(screen.queryByTestId("run-stop-after")).toBeNull();
     expect(screen.getByTestId("run-stop-now")).toBeInTheDocument();
     expect(screen.getByTestId("kill-switch")).toBeInTheDocument();
+    // The review of d1109-run-visible: Stop now's line says what stopping the check does (it has
+    // no task to send back to Ready, design §5 rule 9), and the tab names the check, not
+    // "Forerunner · Forerunner".
+    expect(screen.getByTestId("run-stop-now")).toHaveTextContent(
+      "Stops the check at once. This month's report is not written.",
+    );
+    expect(screen.getByTestId("run-stop-now")).not.toHaveTextContent("Ready");
+    await waitFor(() => expect(document.title).toBe("● The critic's monthly check · Forerunner"));
   });
 });
 

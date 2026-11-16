@@ -3473,6 +3473,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // under a budget from the human's settings; the handover runs ONE session of a fresh agent
   // on the flagged project, planned over the seeded task alone and without a memory port
   // (`runSession` below is that session: the same ports, grant and gate as any other).
+  // d1109-run-visible: the run indicator's poke, set once the indicator is composed below (the
+  // monthly check's row is made and ended out of the session runner, so it pokes by itself).
+  let pokeRunIndicator: () => void = () => undefined;
   const calibrationJob = new CalibrationJob({
     store,
     clock,
@@ -3489,6 +3492,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     settings: async () => calibrationSettingsOf((await store.human.mustGet(human.id)).notify_prefs),
     // The once-a-month check is the human's local month, as the schedule's (ADR 0060).
     timezone: async () => (await store.human.mustGet(human.id)).timezone,
+    // Its row made and ended: the bar shows it while it runs and takes it away after.
+    onRowChanged: () => pokeRunIndicator(),
   });
   // d1109-run-visible (V-1): the critic's monthly check shows on the run indicator with Stop now
   // and Stop all, so its run can be stopped: Stop all through the kill switch, Stop now through
@@ -4119,14 +4124,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   const running: RuntimeApp["running"] = (() => {
     let last = "[]";
-    let lastAt = 0;
+    let lastAt = Number.NEGATIVE_INFINITY;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
     const views = () => runViews(runIndicatorDeps);
     const emitNow = async () => {
       timer = null;
       if (closed) return;
-      lastAt = Date.now();
+      lastAt = clock.monotonic();
       const now = await views().catch((e: unknown) => {
         logger.warn("the run indicator was not read", { error: errorMessage(e) });
         return null;
@@ -4139,7 +4144,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     };
     const poke = () => {
       if (timer || closed) return;
-      timer = setTimeout(() => void emitNow(), Math.max(0, lastAt + 1000 - Date.now()));
+      timer = setTimeout(
+        () => void emitNow(),
+        Math.max(0, Math.min(1000, lastAt + 1000 - clock.monotonic())),
+      );
       timer.unref?.();
     };
     events.on("session", poke);
@@ -4161,6 +4169,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       poke();
       return dropped;
     };
+    pokeRunIndicator = poke;
     return {
       views,
       poke,

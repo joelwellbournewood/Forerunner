@@ -536,14 +536,16 @@ credential it runs on) with **Stop after this task** (`POST /sessions/:id/pause`
 (`POST /sessions/:id/stop`, asked once) and **Stop all** (`POST /kill {scope:"all"}`, asked once:
 "Stops every running session now. No session starts until you allow it again."); the entry's
 `stop` list says which apply (none for a session that waits, Stop now and Stop all for a stop
-already asked for and the monthly check). A person's session that ended to wait for its Claude
+already asked for and the monthly check, whose Stop now reads "Stops the check at once. This
+month's report is not written.": it has no task to send back to Ready). A person's session that ended to wait for its Claude
 credential with its continuation kept reads "Beacon · waiting until 15:40, then it goes on" with
 **Cancel** (`POST /projects/:id/continuation/cancel`; "Nothing starts when Claude is back; its
 tasks wait for your Start.", `CANCEL_WAIT_EXPLAIN` from `daemon/run-wait-words.ts`, a file with
 no imports: `run-words.ts` reaches Node modules through `task-words.ts`, and importing it into
 the browser build blanked every page, `test/browser-imports.test.ts`). The text opens the
-session. While a session runs `document.title` is "● Quote page · Forerunner" (a waiting one
-leaves it "Forerunner"). The same element in its **block** form is Home's and the Overview's
+session. While a session runs `document.title` is "● Quote page · Forerunner" (a project's
+session first; the monthly check alone: "● The critic's monthly check · Forerunner"; a waiting
+one leaves it "Forerunner"). The same element in its **block** form is Home's and the Overview's
 **Working now**, and in its **compact** form the first line of Talk (`ConversationPanel`, whose
 modal covers the header). The Inbox's Done line offers **Start** (V-6, `DoneStart`) when the
 answer readied work for the person's next Start (`HumanRequestView.startOffer`) and no session of

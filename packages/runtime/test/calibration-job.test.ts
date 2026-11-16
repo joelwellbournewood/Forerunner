@@ -118,6 +118,7 @@ describe("monthly critic calibration job (H.7)", () => {
     });
     const outDir = tempDir();
     const notifier = new FakeNotifier();
+    const rowChanged: string[] = [];
     let evalSet: EvalTask[] = FIRST_SET;
     const loaded: string[] = [];
     const evals: CalibrationEvalsPort = {
@@ -147,11 +148,14 @@ describe("monthly critic calibration job (H.7)", () => {
           tier: 1,
           specialists: ["coder"],
         }),
+        // d1109-run-visible: the run indicator hears the row made and ended.
+        onRowChanged: (id) => rowChanged.push(id),
       });
 
       // --- First run of the month ---------------------------------------------------------
       const first = await job.run();
       expect(first.status).toBe("ran");
+      expect(rowChanged).toEqual([first.sessionId, first.sessionId]);
       expect(first.monthKey).toBe("2026-10");
       expect(loaded).toEqual([REGISTRY.specialist("coder").evalSetDir]);
       const report = first.report;
