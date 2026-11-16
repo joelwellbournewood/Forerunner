@@ -521,6 +521,52 @@ export function credentialWaitFrom(value: unknown): CredentialWait | null {
   };
 }
 
+/**
+ * d1109-cred-engine fix-up (design §5: a sentence promises only what the app does): whether the
+ * one ask card of this stop is open now: the stopped source's `limits.asking` names a card filed
+ * for this stop (`stopKey`, when given), the person has not answered Wait without one, and the
+ * card is still open (not answered, not closed). False when no card was filed (no other
+ * credential can serve, or the stop was asked about before), so the words say the plain wait.
+ */
+export async function askCardOpen(
+  store: {
+    billingSource: Pick<StateStore["billingSource"], "get">;
+    humanRequest?: Pick<StateStore["humanRequest"], "get">;
+  },
+  sourceId: string,
+  stopKey?: string,
+): Promise<boolean> {
+  if (!store.humanRequest || !sourceId) return false;
+  const row = await store.billingSource.get(sourceId).catch(() => undefined);
+  const asking = (row?.limits as { asking?: unknown } | undefined)?.asking as
+    | { stopKey?: unknown; requestId?: unknown; answer?: unknown }
+    | undefined;
+  if (!asking || asking.answer === "wait" || typeof asking.requestId !== "string") return false;
+  if (stopKey && asking.stopKey !== stopKey) return false;
+  const card = await store.humanRequest.get(asking.requestId).catch(() => undefined);
+  return card?.status === "open";
+}
+
+/**
+ * The wait as the person may be told it (d1109-cred-engine fix-up): its 'ask' form ("Waits for
+ * your answer: use your API key? The card is in the Inbox.") only while the one card of its stop
+ * is open (`askCardOpen`); else the plain wait ("Waits until 15:40 (your subscription's limit);
+ * then your session goes on."). Before, every wait under 'Subscription first, then ask' said a
+ * card was in the Inbox, also when none was filed or the person had answered it.
+ */
+export async function askShown(
+  store: {
+    billingSource: Pick<StateStore["billingSource"], "get">;
+    humanRequest?: Pick<StateStore["humanRequest"], "get">;
+  },
+  wait: CredentialWait,
+): Promise<CredentialWait> {
+  if (!wait.ask) return wait;
+  if (await askCardOpen(store, wait.sourceId, wait.stopKey).catch(() => false)) return wait;
+  const { ask: _ask, ...plain } = wait;
+  return plain;
+}
+
 /** The credential the person is asked to go on with: "your API key" for a subscription's stop. */
 export function otherCredentialOf(kind: BillingSourceKind | string): string {
   return kind === "subscription" ? "your API key" : "your Claude subscription";

@@ -216,7 +216,7 @@ describe("d1109-cred-engine, run C: the ask card (CE-7)", () => {
       version: row?.version,
     });
     expect(answered.outcome).toBe(
-      "Done: your API key does the work until 15:00; your session goes on now.",
+      "Your API key does the work until 15:00; your session goes on now.",
     );
     const grants = await rt.store.auditLog.list({ tool: BILLING_GRANT_AUDIT_TOOL } as never, {
       limit: 10,
@@ -277,7 +277,7 @@ describe("d1109-cred-engine, run C: the ask card (CE-7)", () => {
       answer: "Wait",
       version: row?.version,
     });
-    expect(answered.outcome).toBe("Done: nothing moves until 15:00; then your session goes on.");
+    expect(answered.outcome).toBe("Nothing moves until 15:00; then your session goes on.");
     const work = () =>
       provider.calls.filter((c) => !(c.tools ?? []).some((t) => t.name === "submit_review"));
     // A second session before the reset: nothing on the key, no second card.

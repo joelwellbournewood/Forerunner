@@ -113,13 +113,15 @@ export function askCardWords(input: AskCardInput): AskCardWords {
     details: [
       "Forerunner's own monthly checks wait for your subscription; they cost nothing meanwhile.",
     ],
+    // The outcome the Inbox shows after "Done: " (its Done line) and alone in Answered: one
+    // sentence, no "Done:" of its own (before, the screen read "Done: Done: ...").
     done: {
       use: input.sessionWaits
-        ? `Done: your API key does the work until ${share ? (w?.untilShort ?? until) : until}; your session goes on now.`
-        : `Done: your API key does the work until ${share ? (w?.untilShort ?? until) : until}; the waiting work runs at your next Start.`,
+        ? `Your API key does the work until ${share ? (w?.untilShort ?? until) : until}; your session goes on now.`
+        : `Your API key does the work until ${share ? (w?.untilShort ?? until) : until}; the waiting work runs at your next Start.`,
       wait: input.sessionWaits
-        ? `Done: nothing moves until ${after}; then your session goes on.`
-        : `Done: nothing moves until ${until}; then the work runs at your next Start.`,
+        ? `Nothing moves until ${after}; then your session goes on.`
+        : `Nothing moves until ${until}; then the work runs at your next Start.`,
     },
     closed: `Closed: ${yourCredential(input.wait.kind)} can work again.`,
   };

@@ -1459,6 +1459,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         // that prepare work say what pressing them does now (a session of the project running,
         // another one running, "Start a session by itself" on).
         ...(r.status === "open" && r.projectId ? preparedOfFake(r.projectId) : {}),
+        // d1109-cred-engine, as the daemon's `credentialAskFor`: the ask card is worded in the
+        // person's clock at the time it was filed; the fake keeps every stop's session waiting.
+        ...((r.changeCard as { key?: unknown } | null)?.key === "credential:ask"
+          ? {
+              credentialAsk: {
+                timezone: me.timezone,
+                nowMs: Date.parse(
+                  String((r.changeCard as { filed_at?: unknown }).filed_at ?? r.createdAt),
+                ),
+                sessionWaits: true,
+              },
+            }
+          : {}),
       },
     );
     return { ...r, ...words };

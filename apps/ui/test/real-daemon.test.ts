@@ -21002,7 +21002,7 @@ describe("d1109-cred-engine, run C", () => {
         answer: card?.choices?.[0]?.label ?? "",
       });
       expect(answered.outcome).toBe(
-        "Done: your API key does the work until 11:40; your session goes on now.",
+        "Your API key does the work until 11:40; your session goes on now.",
       );
       await eventually(
         async () => (await client.tasks(project.id)).every((t) => t.status === "done"),

@@ -145,6 +145,7 @@ import {
 } from "./budget-pause.ts";
 import { needsOf } from "./credential-choice.ts";
 import {
+  askShown,
   type CredentialWait,
   credentialWaitOf,
   goesOnAtWords,
@@ -1813,7 +1814,10 @@ export class LoopTaskExecutor implements TaskExecutor {
                 until: credentialStop === "limit" ? (until ?? null) : null,
               } satisfies CredentialWait,
             };
-      if (next.wait) await this.noteWait(ctx, next.wait);
+      if (next.wait) {
+        await this.noteWait(ctx, next.wait);
+        next.wait = await askShown(this.deps.store, next.wait);
+      }
       // S-10: the person's own session goes on after the wait (at the end of their quiet hours
       // when those hold it past the reset); other work waits for a Start.
       const words = await this.waitWords(ctx, next.wait);
@@ -2083,9 +2087,12 @@ export class LoopTaskExecutor implements TaskExecutor {
       // was refused, or 'wait' holds to a first choice that rests): the task waits, it does not
       // fail. The runner gives it back without counting a try and ends the session with the
       // wait's sentence; its start at the reset (or once a new key is saved) is scheduled.
-      const wait = credentialWaitOf(e);
-      if (!wait) throw e;
-      await this.noteWait(ctx, wait);
+      const found = credentialWaitOf(e);
+      if (!found) throw e;
+      await this.noteWait(ctx, found);
+      // The 'ask' form only while the stop's one card is open (none filed: no other credential
+      // can serve, or it was answered): a sentence promises only what the app does.
+      const wait = await askShown(this.deps.store, found);
       throw new ForerunnerError(
         "unavailable",
         waitSentence(wait, {

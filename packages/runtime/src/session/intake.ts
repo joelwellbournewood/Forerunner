@@ -72,6 +72,7 @@ import { intakeAnswer, intakeChangeText } from "../wiring/request-answers.ts";
 import { webAccessOf } from "../wiring/web-access.ts";
 import { markAnswer } from "./answer-mark.ts";
 import {
+  askShown,
   asStopWait,
   type CredentialWait,
   credentialWaitFrom,
@@ -1143,8 +1144,11 @@ export class IntakeService {
   }
 
   /** A planning wait in the person's words, in their time zone (U-078). */
-  private async waitView(wait: CredentialWait): Promise<IntakeWaitView> {
+  private async waitView(kept: CredentialWait): Promise<IntakeWaitView> {
     const human = await this.deps.store.human.get(this.deps.human.id).catch(() => undefined);
+    // d1109-cred-engine fix-up: "Planning waits for your answer" only while the stop's one ask
+    // card is open; once it is answered (or none was filed) the plain wait.
+    const wait = await askShown(this.deps.store, kept).catch(() => kept);
     const words = planWaitWords(wait, {
       ...(human?.timezone ? { timezone: human.timezone } : {}),
       nowMs: this.deps.clock.now(),

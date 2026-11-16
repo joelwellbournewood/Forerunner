@@ -158,7 +158,7 @@ describe("d1109-cred-engine, run C: every sentence of the policy (credential-wor
       "Forerunner's own monthly checks wait for your subscription; they cost nothing meanwhile.",
     ]);
     expect(w.done.use).toBe(
-      "Done: your API key does the work until 15:40; your session goes on now.",
+      "Your API key does the work until 15:40; your session goes on now.",
     );
     expect(w.closed).toBe("Closed: your Claude subscription can work again.");
     const none = askCardWords({

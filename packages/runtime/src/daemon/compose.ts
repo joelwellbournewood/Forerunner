@@ -230,6 +230,7 @@ import {
   needsOf,
 } from "../session/credential-choice.ts";
 import {
+  askShown,
   type CredentialWait,
   clockTime,
   credentialWaitOf,
@@ -4214,8 +4215,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       return credentialWaits.wake();
     },
     now: async (projectId) => {
-      const wait = await credentialWaitNow(projectId);
-      if (!wait) return null;
+      const found = await credentialWaitNow(projectId);
+      if (!found) return null;
+      // d1109-cred-engine fix-up: the 'ask' form only while the stop's one card is open.
+      const wait = await askShown(store, found).catch(() => found);
       await quietHours.refresh();
       // TR-2: looking records nothing (the Start dialog's check, the stopped bar's read). A
       // wait a Start or a session already kept on its source starts by itself, and says so; a
@@ -4611,7 +4614,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               goesOn = true;
               continue;
             }
-            const kept = await keptContinuationOf(store, projectId);
+            // The person's session that ended to wait goes on now, and so does a Start they
+            // pressed during the stop (kept for its end, "Start at 15:40"): either is the
+            // person's own session waiting for this stop (d1109-cred-engine fix-up; before, a
+            // kept Start was left for the wake, which started it seconds later while the Done
+            // line said the work runs at the next Start).
+            const kept =
+              (await keptContinuationOf(store, projectId)) ?? (await keptStartOf(store, projectId));
             if (!kept) continue;
             const start = await scheduler.requestStart({
               agentId: kept.entry.agentId,
@@ -4620,6 +4629,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               by: "person",
               ...(kept.kept.continues ? { continues: kept.kept.continues } : {}),
               ...(kept.kept.budgetUsdMicro ? { budgetUsdMicro: kept.kept.budgetUsdMicro } : {}),
+              // A kept Start's note, as the person gave it to the Start dialog (quoted as data).
+              ...(kept.kept.note ? { note: kept.kept.note } : {}),
               reason: "your yes: your API key does the work until your subscription can again",
             });
             if (start.result === "started" || start.result === "queued") {
