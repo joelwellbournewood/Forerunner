@@ -20373,11 +20373,21 @@ describe("d1109-selftasks-run, run C", () => {
   const ADD_LINE = 'Add "Check that the links work".';
   const ASKS_LINE = 'Asks you first: "Style the page" is a task you added or changed yourself.';
 
-  async function open(home: string) {
+  /**
+   * The daemon on `home`. `later` starts its clock hours after the first one's (C4b-left-3): in
+   * the app time goes on across a restart, so a task made after it is younger than every task
+   * made before it. Both composes on 08:00 made the run order depend on milliseconds.
+   */
+  async function open(home: string, later = false) {
     const env = { FORERUNNER_HOME: home };
     return composeWithRolePlayer(
       { FORERUNNER_BENCH_TASK_LIST: "Create the page", FORERUNNER_BENCH_TASK_LIST_SAYS: SAYS },
-      { env, dirs: appDirs({ env }), stateUrl: `sqlite:${join(home, "state.sqlite")}` },
+      {
+        env,
+        dirs: appDirs({ env }),
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        ...(later ? { clock: new ShiftedClock("2026-03-05T11:00:00Z") } : {}),
+      },
     );
   }
   type Open = Awaited<ReturnType<typeof open>>;
@@ -20507,8 +20517,9 @@ describe("d1109-selftasks-run, run C", () => {
       await a.rt.close();
     }
 
-    // The daemon starts again on the same home: the same card, answered with its first option.
-    const b = await open(home);
+    // The daemon starts again on the same home, hours later: the same card, answered with its
+    // first option.
+    const b = await open(home, true);
     try {
       const row = (await proposals(b, w.project.id)).find((r) => r.id === cardId);
       expect(row?.status).toBe("open");
@@ -20521,13 +20532,14 @@ describe("d1109-selftasks-run, run C", () => {
       expect(answered.outcome).toBe("Changed 2 tasks; your next Start runs them.");
       const tasks = await b.client.tasks(w.project.id);
       const byTitle = new Map(tasks.map((t) => [t.title, t]));
-      // In run order, as the Tasks tab lists them.
+      // In run order, as the Tasks tab lists them: the two tasks the change made are younger than
+      // every task made before the restart, the split's part first (it is made first).
       expect(tasks.map((t) => [t.title, t.status])).toEqual([
         ["Create the page in index.html", "done"],
-        ["Check that the links work", "ready"],
         ["Send the logo", "needs_human"],
         ["Style the page: layout", "ready"],
         ["Style the page: colours", "ready"],
+        ["Check that the links work", "ready"],
       ]);
       // The task keeps its id as the first part; the second waits for it.
       expect(byTitle.get("Style the page: layout")?.id).toBe(w.style.id);
@@ -20557,10 +20569,10 @@ describe("d1109-selftasks-run, run C", () => {
       );
       expect(await taskRows(b, w.project.id)).toEqual([
         ["Create the page in index.html", "done"],
-        ["Check that the links work", "cancelled"],
         ["Send the logo", "needs_human"],
         ["Style the page", "ready"],
         ["Style the page: colours", "cancelled"],
+        ["Check that the links work", "cancelled"],
       ]);
       expect((await b.client.tasks(w.project.id)).find((t) => t.id === w.style.id)).toMatchObject({
         acceptanceCriteria: ["the layout is a grid", "the colours match the logo"],
