@@ -1132,6 +1132,8 @@ export class RouterTaskBilling implements TaskBillingPort {
           this.opts.store as Pick<StateStore, "humanRequest">,
           this.opts.humanId,
           row.id,
+          // C5-left-5: its closed line says what became of the work only when work waited.
+          { why: stale ? "saved" : "taken", workWaited: taken.length > 0 },
         ).catch(() => undefined);
       for (const w of taken) out.push({ ...w, sourceId: row.id });
     }
@@ -1149,6 +1151,7 @@ export class RouterTaskBilling implements TaskBillingPort {
     );
     for (const row of rows) {
       if (row.kind !== kind || typeof row.limits.refusedAt !== "string") continue;
+      const workWaited = waitingOf(row.limits).length > 0;
       await updateSourceLimits(this.opts.store, row.id, (limits) => {
         if (typeof limits.refusedAt !== "string") return null;
         const {
@@ -1166,6 +1169,7 @@ export class RouterTaskBilling implements TaskBillingPort {
           this.opts.store as Pick<StateStore, "humanRequest">,
           this.opts.humanId,
           row.id,
+          { why: "saved", workWaited },
         ).catch(() => undefined);
     }
   }

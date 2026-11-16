@@ -1,6 +1,6 @@
 import type { BillingSourceKind } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
-import type { HumanRequestRow, HumanRow, StateStore } from "@forerunner/state";
+import type { HumanRequestRow, HumanRow, JsonObject, StateStore } from "@forerunner/state";
 import { quietHoursEndAt, resolvePrefs } from "../notifications/prefs.ts";
 
 /**
@@ -683,12 +683,29 @@ export async function closeRefusedCards(
   store: Pick<StateStore, "humanRequest">,
   humanId: string,
   sourceId?: string,
+  /**
+   * C5-left-5 (d1109-cred-screens): why it closes, for its closed line: a new credential was
+   * saved (`saved`) or another credential took all the work that waited on it while it stays
+   * refused (`taken`, TR-10); and whether any work waited. Absent: as a save with work waiting.
+   */
+  close?: { why: "saved" | "taken"; workWaited: boolean },
 ): Promise<number> {
   let closed = 0;
   for (const r of await openRefusedCards(store, humanId)) {
     const card = r.change_card as { source_id?: unknown };
     if (sourceId && card.source_id !== sourceId) continue;
-    await store.humanRequest.withdraw(r.id, r.version).catch(() => undefined);
+    let row = r;
+    if (close)
+      row = await store.humanRequest
+        .update(r.id, r.version, {
+          change_card: {
+            ...(r.change_card as JsonObject),
+            closed_why: close.why,
+            work_waited: close.workWaited,
+          },
+        })
+        .catch(() => r);
+    await store.humanRequest.withdraw(row.id, row.version).catch(() => undefined);
     closed++;
   }
   return closed;

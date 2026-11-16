@@ -247,6 +247,24 @@ export function refusedBody(input: {
   return `${why} Save a new one in Settings; until then the work waits.`;
 }
 
+/**
+ * C5-left-5 (d1109-cred-screens): the refused card's closed line says what became of waiting
+ * work only when work waited: 'A new one is saved; the work that waited for it goes on.' after
+ * a save with work waiting, 'A new key is saved.' (or sign-in) with none, and 'Closed: the work
+ * that waited for it goes on with your Claude subscription.' when another credential took it
+ * all while this one stays refused (TR-10; before, that card read 'A new one is saved; ...').
+ */
+export function refusedClosedLine(
+  kind: BillingSourceKind | string,
+  why: "saved" | "taken",
+  workWaited: boolean,
+): string {
+  if (why === "taken")
+    return `Closed: the work that waited for it goes on with ${kind === "subscription" ? "your API key" : "your Claude subscription"}.`;
+  if (workWaited) return "A new one is saved; the work that waited for it goes on.";
+  return kind === "subscription" ? "A new sign-in is saved." : "A new key is saved.";
+}
+
 // ── CE-11: the session log ───────────────────────────────────────────────────────────────────
 
 /** '"Style the page" goes on with your API key from where it stopped: your subscription ...'. */

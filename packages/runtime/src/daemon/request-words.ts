@@ -1,6 +1,11 @@
 import type { HumanRequestRow, JsonObject } from "@forerunner/state";
 import { chfText } from "../money-words.ts";
-import { askCardWords, askClosedLine, refusedBody } from "../session/credential-words.ts";
+import {
+  askCardWords,
+  askClosedLine,
+  refusedBody,
+  refusedClosedLine,
+} from "../session/credential-words.ts";
 import { moneyWords } from "../session/money-words.ts";
 import {
   isPreparedOutcome,
@@ -1822,7 +1827,12 @@ export function requestWords(
     words = refusedCredentialCard(card, ctx);
     // Closed when a new credential was saved (`closeRefusedCards`).
     if (r.status === "withdrawn") {
-      words.outcome = "A new one is saved; the work that waited for it goes on.";
+      // C5-left-5: what became of waiting work only when work waited.
+      words.outcome = refusedClosedLine(
+        str(card.credential_kind) ?? "api_key",
+        card.closed_why === "taken" ? "taken" : "saved",
+        card.work_waited !== false,
+      );
       return words;
     }
   } else if (key === CREDENTIAL_ASK_KEY) {
