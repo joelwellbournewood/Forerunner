@@ -1,4 +1,6 @@
 import type { HumanRequestRow, JsonObject } from "@forerunner/state";
+import { chfText } from "../money-words.ts";
+import { askCardWords, askClosedLine, refusedBody } from "../session/credential-words.ts";
 import { moneyWords } from "../session/money-words.ts";
 import {
   isPreparedOutcome,
@@ -115,6 +117,29 @@ export interface RequestWordsContext {
    * one can serve; null or absent under 'Wait', where the work waits for a new one.
    */
   credentialGoesOn?: string | null;
+  /**
+   * d1109-cred-engine CE-8 (ADR 0120): a refused credential's card, read when it is shown: the
+   * refusal's category (never the provider's words), the person's rule at a stop, the credential
+   * that can take the work (null: none), and under 'ask' what the waiting work's next calls cost
+   * on the API key. The card says what the work does until a new one is saved.
+   */
+  /**
+   * CE-7: an ask card's facts read when it is shown: the person's clock, whether their session
+   * waits for this stop (it goes on by itself after a Wait), and when it goes on when their quiet
+   * hours end later than the stop.
+   */
+  credentialAsk?: {
+    timezone?: string;
+    nowMs: number;
+    sessionWaits: boolean;
+    goesOnAt?: string;
+  } | null;
+  credentialRefused?: {
+    category: "signed_out" | "invalid_key" | "not_allowed" | "other" | null;
+    rule: "wait" | "next" | "ask";
+    other: string | null;
+    estimateChf?: string;
+  } | null;
   /**
    * The card's project works on a repository (its approved plan's docs go in as a pull
    * request): the plan card's line while Approve and start works says so (L-20).
@@ -1330,24 +1355,104 @@ const CREDENTIAL_REFUSED_KEY = "credential:refused";
  * task, no answer to give; the link opens the setup assistant where a new key or sign-in is
  * pasted, which closes the card and starts the work that waited for it.
  */
+const CREDENTIAL_ASK_KEY = "credential:ask";
+
+/**
+ * CE-7's ask card: "Use your API key until 15:40?", what the waiting work costs on the key, and
+ * its two options with what each does; once answered or closed, its Done or Closed line.
+ */
+function askCard(
+  r: Pick<HumanRequestRow, "status">,
+  card: JsonObject,
+  ctx: RequestWordsContext,
+): RequestWords {
+  const ask = ctx.credentialAsk;
+  const answeredGoesOn = card.session_goes_on === true;
+  const w = askCardWords({
+    wait: {
+      reason: (str(card.reason) ?? "limit") as "limit",
+      kind: (str(card.credential_kind) ?? "subscription") as "subscription",
+      until: str(card.until),
+    },
+    ...(ask?.timezone ? { timezone: ask.timezone } : {}),
+    nowMs: ask?.nowMs ?? Date.now(),
+    estimateChf: chfText(
+      typeof card.estimate_usd_micro === "number" ? card.estimate_usd_micro : 0,
+      typeof card.chf_per_usd === "number" ? card.chf_per_usd : undefined,
+    ),
+    sessionWaits: r.status === "open" ? (ask?.sessionWaits ?? false) : answeredGoesOn,
+    ...(ask?.goesOnAt ? { goesOnAt: ask.goesOnAt } : {}),
+  });
+  const outcome =
+    r.status === "open"
+      ? null
+      : card.outcome === "granted"
+        ? w.done.use
+        : card.outcome === "waited"
+          ? w.done.wait
+          : card.closed_why === "policy_changed" || card.closed_why === "other_cannot"
+            ? askClosedLine(card.closed_why, str(card.credential_kind) ?? "subscription")
+            : w.closed;
+  return {
+    title: w.title,
+    body: w.body,
+    choices: w.options.map((o, i) => ({
+      label: o.label,
+      explain: o.explain,
+      tone: i === 0 ? "primary" : "secondary",
+      confirm: null,
+      input: null,
+    })),
+    links: [],
+    reply: "none",
+    details: w.details,
+    outcome,
+  };
+}
+
 function refusedCredentialCard(card: JsonObject, ctx: RequestWordsContext = {}): RequestWords {
   const subscription = card.credential_kind === "subscription";
-  // U-078 (the session lead's default of 2026-11-03): under 'Wait' the task work waits for a
-  // new one; under "use the other one" it goes on with the other credential, and the card says
-  // so, with the money when that is the API key.
-  const goesOn = ctx.credentialGoesOn;
-  const body =
-    goesOn === "api_key" || goesOn === "plan_credits"
-      ? `Save a new one in Settings. Until then your tasks go on with ${goesOn === "api_key" ? "your API key" : "your plan credits"}, which costs money.`
-      : goesOn === "subscription"
-        ? "Save a new one in Settings. Until then your tasks go on with your Claude subscription."
-        : "Save a new one in Settings. The work that needs it waits until then.";
+  // CE-8 (the owner's 7c: "follow the frameowrk for a) or b) as if it has run out, but also give
+  // the user some kind of notification or information"): why it was refused (its category),
+  // then what the work does under the person's rule until a new one is saved; under 'ask' the
+  // card offers Use API key and Wait, and stays open as the fix-it card after an answer.
+  const refused = ctx.credentialRefused ?? {
+    category: null,
+    rule: ctx.credentialGoesOn ? ("next" as const) : ("wait" as const),
+    other: ctx.credentialGoesOn ?? null,
+  };
+  const body = refusedBody({
+    category: refused.category,
+    rule: refused.rule,
+    other: refused.other,
+    ...(refused.estimateChf ? { estimateChf: refused.estimateChf } : {}),
+  });
+  const answered = typeof card.ask_answer === "string";
+  const asks =
+    refused.rule === "ask" && refused.other === "api_key" && !!refused.estimateChf && !answered;
   return {
     title:
       str(card.title) ??
       (subscription ? "Anthropic refused your Claude sign-in" : "Anthropic refused your API key"),
     body,
-    choices: [],
+    choices: asks
+      ? [
+          {
+            label: "Use API key",
+            explain: `Your work and chat use your API key until a new sign-in is saved: about ${refused.estimateChf}.`,
+            tone: "primary",
+            confirm: null,
+            input: null,
+          },
+          {
+            label: "Wait",
+            explain: "Nothing moves until a new sign-in is saved.",
+            tone: "secondary",
+            confirm: null,
+            input: null,
+          },
+        ]
+      : [],
     links: [
       {
         label: subscription ? "Save a new sign-in" : "Save a new key",
@@ -1732,6 +1837,10 @@ export function requestWords(
       words.outcome = "A new one is saved; the work that waited for it goes on.";
       return words;
     }
+  } else if (key === CREDENTIAL_ASK_KEY) {
+    // d1109-cred-engine CE-7: the one card per stop, its words computed when it is shown.
+    words = askCard(r, card, ctx);
+    if (r.status !== "open") return words;
   } else {
     words = genericCard(r);
     outcome = changeCardOutcome(card, r.answer) ?? lateApprovalOutcome(card);

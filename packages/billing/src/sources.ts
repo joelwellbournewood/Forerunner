@@ -60,6 +60,24 @@ export interface BillingSourceLimits {
    * is saved): each gets a session started by itself then, after a restart too.
    */
   waiting?: { projectId: string; agentId: string; since: string }[];
+  /**
+   * CE-7 (ADR 0120): the stop the person was asked about on one card ("Use your API key until
+   * 15:40?"), and the card; set once per stop by the one writer that files it (version-checked),
+   * so a second card never comes. `answer` records a Wait given without a card (the Start
+   * dialog's "Start at 15:40" under ask).
+   */
+  asking?: { stopKey: string; requestId: string | null; at: string; answer?: "wait" };
+  /** CE-7: the person's yes for this stop: the granted kind serves until the stop ends. */
+  grant?: { to: BillingSourceKind; stopKey: string; by: "card" | "start"; at: string };
+  /** CE-12: the stop a switch notification was sent for, and the sessions it named. */
+  switchNotified?: { stopKey: string; sessionIds: string[] };
+  /**
+   * CE-8: the refused credential's one card: `open` while it is open; flipped to open by the one
+   * writer that files it (version-checked), cleared when it closes.
+   */
+  refusedCard?: { refusedAt: string; open: boolean };
+  /** CE-8: what kind of refusal it was (never the provider's words). */
+  refusedCategory?: "signed_out" | "invalid_key" | "not_allowed" | "other";
 }
 
 export interface BillingSource {
@@ -155,6 +173,25 @@ const limitsSchema = z
     waiting: z
       .array(z.object({ projectId: z.string(), agentId: z.string(), since: z.string() }))
       .optional(),
+    asking: z
+      .object({
+        stopKey: z.string(),
+        requestId: z.string().nullable(),
+        at: z.string(),
+        answer: z.literal("wait").optional(),
+      })
+      .optional(),
+    grant: z
+      .object({
+        to: z.enum(["subscription", "plan_credits", "api_key", "fake"]),
+        stopKey: z.string(),
+        by: z.enum(["card", "start"]),
+        at: z.string(),
+      })
+      .optional(),
+    switchNotified: z.object({ stopKey: z.string(), sessionIds: z.array(z.string()) }).optional(),
+    refusedCard: z.object({ refusedAt: z.string(), open: z.boolean() }).optional(),
+    refusedCategory: z.enum(["signed_out", "invalid_key", "not_allowed", "other"]).optional(),
   })
   .strict();
 

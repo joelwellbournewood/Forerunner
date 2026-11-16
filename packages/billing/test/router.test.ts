@@ -415,3 +415,160 @@ describe("BillingRouter: the person's order and the rest after a usage limit (U-
     expect(ORDERABLE_KINDS).toEqual(["subscription", "api_key", "plan_credits"]);
   });
 });
+
+// d1109-cred-engine CE-2 (ADR 0120): the router holds every stop under 'wait' and 'ask'.
+describe("d1109-cred-engine, run C: the router holds every stop", () => {
+  const now = Date.parse("2026-11-16T14:00:00Z");
+  const order = ["subscription", "plan_credits", "api_key"] as const;
+  const sub = makeBillingSource({
+    id: "alice-sub",
+    kind: "subscription",
+    humanId: "alice",
+    priority: 1,
+    limits: { planShareCap: 0.95 },
+  });
+  const key = makeBillingSource({
+    id: "alice-api",
+    kind: "api_key",
+    humanId: "alice",
+    priority: 2,
+    limits: { monthlyUsdMicro: 5_000_000 },
+  });
+  const stops: [string, Record<string, object>, string, string | null][] = [
+    [
+      "limit",
+      { "alice-sub": { available: true, restingUntil: "2026-11-16T15:40:00Z" } },
+      "limit",
+      "2026-11-16T15:40:00Z",
+    ],
+    [
+      "refused",
+      { "alice-sub": { available: true, refused: "2026-11-16T13:00:00Z" } },
+      "refused",
+      null,
+    ],
+    [
+      "share",
+      { "alice-sub": { available: true, planUsageShare: 0.96 } },
+      "share",
+      "2026-12-01T00:00:00.000Z",
+    ],
+  ];
+  const waitOf = async (p: Promise<unknown>) => {
+    try {
+      await p;
+    } catch (e) {
+      return (e as ForerunnerError).details.waitFor as Record<string, unknown>;
+    }
+    return null;
+  };
+
+  for (const [name, statuses, reason, until] of stops)
+    for (const rule of ["wait", "ask"] as const)
+      it(`a subscription stopped (${name}) holds the pick under ${rule}`, async () => {
+        const r = router([sub, key], new FakeProbe(statuses as never));
+        const w = await waitOf(r.pick(ctx({ order: [...order], whenStopped: rule, nowMs: now })));
+        expect(w).toMatchObject({ sourceId: "alice-sub", kind: "subscription", reason, until });
+        expect(typeof w?.stopKey).toBe("string");
+        expect(w?.ask).toBe(rule === "ask");
+      });
+
+  it("a key at its monthly cap holds under wait (key first)", async () => {
+    const r = router(
+      [sub, key],
+      new FakeProbe({ "alice-api": { available: true, monthSpentUsdMicro: 5_000_000 } }),
+    );
+    const w = await waitOf(
+      r.pick(
+        ctx({
+          order: ["api_key", "plan_credits", "subscription"],
+          whenStopped: "wait",
+          nowMs: now,
+        }),
+      ),
+    );
+    expect(w).toMatchObject({ reason: "key_month", until: "2026-12-01T00:00:00.000Z" });
+  });
+
+  for (const [name, statuses] of stops)
+    it(`under next a subscription stopped (${name}) moves to the key`, async () => {
+      const r = router([sub, key], new FakeProbe(statuses as never));
+      const d = await r.pick(ctx({ order: [...order], whenStopped: "next", nowMs: now }));
+      expect(d.source.id).toBe("alice-api");
+    });
+
+  it("a grant for the current stop lets the key serve under ask and wait; an older stop's does not; never for batch", async () => {
+    const statuses = { "alice-sub": { available: true, restingUntil: "2026-11-16T15:40:00Z" } };
+    const granted = (stopKey: string) =>
+      makeBillingSource({
+        ...sub,
+        limits: { ...sub.limits, grant: { to: "api_key", stopKey, by: "card", at: "t" } },
+      });
+    const current = "limit:2026-11-16T15:40:00Z";
+    for (const rule of ["ask", "wait"] as const) {
+      const d = await router([granted(current), key], new FakeProbe(statuses)).pick(
+        ctx({ order: [...order], whenStopped: rule, nowMs: now }),
+      );
+      expect(d.source.id).toBe("alice-api");
+      const older = await waitOf(
+        router([granted("limit:2026-11-15T10:00:00Z"), key], new FakeProbe(statuses)).pick(
+          ctx({ order: [...order], whenStopped: rule, nowMs: now }),
+        ),
+      );
+      expect(older?.reason).toBe("limit");
+      const batch = await waitOf(
+        router([granted(current), key], new FakeProbe(statuses)).pick(
+          ctx({ order: [...order], whenStopped: rule, nowMs: now, purpose: "batch" }),
+        ),
+      );
+      expect(batch?.reason).toBe("limit");
+    }
+  });
+
+  it("under key_only no pick returns the subscription, for any purpose", async () => {
+    const r = router([sub, key], new FakeProbe({}));
+    for (const purpose of ["session", "critic", "interactive", "chat", "batch"] as const) {
+      const d = await r.pick(
+        ctx({ purpose, order: ["api_key", "plan_credits"], kinds: ["api_key", "plan_credits"] }),
+      );
+      expect(d.source.id).toBe("alice-api");
+      expect(d.skipped.map((s) => [s.sourceId, s.code])).toEqual([["alice-sub", "policy"]]);
+    }
+    const resting = router(
+      [sub, key],
+      new FakeProbe({ "alice-api": { available: true, restingUntil: "2026-11-16T15:40:00Z" } }),
+    );
+    const w = await waitOf(
+      resting.pick(
+        ctx({
+          order: ["api_key", "plan_credits"],
+          kinds: ["api_key", "plan_credits"],
+          whenStopped: "wait",
+          nowMs: now,
+        }),
+      ),
+    );
+    expect(w).toMatchObject({ sourceId: "alice-api", reason: "limit" });
+  });
+
+  it("a source passed in heldNow is held like a resting one", async () => {
+    const r = router([sub, key], new FakeProbe({}));
+    const w = await waitOf(
+      r.pick(ctx({ order: [...order], whenStopped: "wait", heldNow: ["alice-sub"], nowMs: now })),
+    );
+    expect(w).toMatchObject({ sourceId: "alice-sub", reason: "limit" });
+    const d = await r.pick(
+      ctx({ order: [...order], whenStopped: "next", heldNow: ["alice-sub"], nowMs: now }),
+    );
+    expect(d.source.id).toBe("alice-api");
+  });
+
+  it("another person's source is never a candidate, held or not", async () => {
+    const r = router(
+      [bobSub, key],
+      new FakeProbe({ "bob-sub": { available: true, restingUntil: "2026-11-16T15:40:00Z" } }),
+    );
+    const d = await r.pick(ctx({ order: [...order], whenStopped: "wait", nowMs: now }));
+    expect(d.source.id).toBe("alice-api");
+  });
+});

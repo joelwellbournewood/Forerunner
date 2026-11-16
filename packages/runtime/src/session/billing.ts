@@ -1,4 +1,4 @@
-import type { BillingSource, BillingSourceKind, Purpose, RouteSkip } from "@forerunner/billing";
+import type { BillingSource, Purpose, RouteSkip } from "@forerunner/billing";
 import type { SpecialistDriver } from "../registry/tools.ts";
 
 /**
@@ -26,13 +26,11 @@ export interface TaskBillingRequest {
   modelTier: string;
   /** What the call is for (the policy's per-purpose kinds); default `session`. */
   purpose?: Purpose;
-  /** Sources not to use for this pick: one the same call just failed on (ADR 0100). */
-  exclude?: readonly string[];
   /**
-   * The order to use when the person chose none (ADR 0100): the non-task calls keep ADR 0098's
-   * choice, the API key when there is one. Absent: the purpose's own order, as task runs use.
+   * Sources this very call saw stop (ADR 0100): the router holds them like resting ones under the
+   * person's 'wait' and 'ask' (CE-3), and skips them under 'next'.
    */
-  fallbackOrder?: readonly BillingSourceKind[];
+  exclude?: readonly string[];
   /**
    * What the task needs of its credential (U-078, the owner's decision of 2026-11-02, ADR 0100
    * amended): the pick keeps the credentials that meet every hard need and lets the person's
@@ -41,11 +39,17 @@ export interface TaskBillingRequest {
    */
   needs?: TaskNeeds;
   /**
-   * "When my first choice runs out mid-session: Wait" (U-078, the default): a first choice that
-   * rests after a usage limit makes the pick wait for it (`unavailable` with `waitFor`) rather
-   * than move the task onto the next credential. Task runs only; the non-task calls never set it.
+   * Read as `whenStopped: "wait"` for one release (CE-2); the person's credential policy decides
+   * the rule at a stop for every purpose now (ADR 0120).
    */
   waitOnRest?: boolean;
+  /** The rule at a stop for this pick alone, in place of the person's policy (tests, CE-3). */
+  whenStopped?: "next" | "ask" | "wait";
+  /**
+   * CE-9: the person's one-off "Use API key" in chat: this one call may move to the next
+   * credential at a stop (no grant, no card); never a background job.
+   */
+  allowSwitch?: boolean;
 }
 
 /** Plan usage of a subscription source as the pick saw it, and what moves it. */

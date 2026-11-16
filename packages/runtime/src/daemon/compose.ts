@@ -221,6 +221,7 @@ import {
   wakeBudgetWaits,
 } from "../session/budget-card.ts";
 import { type CannotRunSyncResult, syncCannotRunAnswers } from "../session/cannot-run-card.ts";
+import { ensureAskCard, settleAsks, syncAskAnswers } from "../session/credential-ask.ts";
 import {
   type AbilityTable,
   abilityTable,
@@ -331,15 +332,14 @@ import {
   VoiceProviderRegistry,
 } from "../voice/pkg.ts";
 import {
-  CALL_FALLBACK_ORDER,
   type ChooserFacts,
   dropKeptStart,
   keepContinuation,
   keepStartAtReset,
   keptContinuationOf,
   keptStartOf,
-  personOrderOf,
   planUsageOf,
+  policyOf,
   RouterTaskBilling,
   restingUntilOf,
   sdkHostCommandsEnabled,
@@ -1235,6 +1235,10 @@ export interface RuntimeApp {
 
 const DEFAULT_SESSION_CAP_USD_MICRO = 6_250_000; // CHF 5 at 0.8 CHF/USD
 
+/** CE-9: the one-off "Use API key" in chat is priced as one quick answer of this size. */
+const ONE_OFF_CHAT_INPUT_TOKENS = 4_000;
+const ONE_OFF_CHAT_OUTPUT_TOKENS = 800;
+
 /** What `jobs.refreshSchedules()` answers: the calibration's switch and the handover projects. */
 export interface JobSchedules {
   calibration: boolean;
@@ -1722,6 +1726,41 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     personalRunner,
     ...(opts.billing?.probe ? { probe: opts.billing.probe } : {}),
     facts: chooserFacts,
+    // d1109-cred-engine CE-7 (ADR 0120): under 'Subscription first, then ask' the one card per
+    // stop, priced as the Start check prices the waiting work (never above a session's work
+    // budget); called only after the composition is complete.
+    ask: async (stop) => {
+      const row = await store.billingSource.get(stop.sourceId).catch(() => undefined);
+      const projects = new Set([
+        stop.projectId,
+        ...waitingOf((row?.limits ?? {}) as Record<string, unknown>).map((w) => w.projectId),
+      ]);
+      let estimateUsdMicro = 0;
+      for (const projectId of projects) {
+        const project = await store.project.get(projectId).catch(() => undefined);
+        if (!project) continue;
+        const cap = sessionCapFromSettings(
+          project.settings,
+          clock.now(),
+          DEFAULT_SESSION_CAP_USD_MICRO,
+        ).usdMicro;
+        const check = await startCheck(
+          { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
+          projectId,
+          cap,
+        ).catch(() => null);
+        if (check)
+          estimateUsdMicro += Math.min(
+            check.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0),
+            check.workBudgetUsdMicro,
+          );
+      }
+      const filed = await ensureAskCard(
+        { store, clock, humanId: human.id, estimateUsdMicro, chfPerUsd: chfPerUsd() },
+        stop,
+      );
+      if (filed) events.emit("inbox", {});
+    },
   });
 
   // Model provider: injected (tests), else the routed provider over the person's credentials,
@@ -1776,8 +1815,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             store,
             // The table in force at the call (declared below; read only when a call is made).
             pricing: (modelId) => pricingFor(modelId, pricingTable),
-            fallbackOrder: CALL_FALLBACK_ORDER,
+            // CE-4 (ADR 0120): no order of its own; the person's policy, read at every pick.
             fastMode: hasKey,
+            // CE-11: the session log names a reset in the person's clock.
+            timezone: async () => (await store.human.get(human.id).catch(() => null))?.timezone,
           },
           "chat",
         )
@@ -4035,6 +4076,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const credentialWaits: RuntimeApp["billing"]["waits"] = {
     wake: async () => {
       await quietHours.refresh();
+      // d1109-cred-engine CE-7: before the waits are taken, a grant whose stop is over ends and
+      // an open ask card whose stop ended (or whose preset is no longer 'ask') closes.
+      await settleAsks({
+        store,
+        humanId: human.id,
+        currentStop: (sourceId) => taskBilling.currentStopOf(sourceId),
+        rule: async () => (await policyOf(store, human.id)).rule.whenStopped,
+      }).catch((e: unknown) =>
+        logger.warn("the ask cards were not settled", { error: errorMessage(e) }),
+      );
       // R-refusedstays: a project kept on a source that cannot serve is taken too when another
       // credential serves its work now (a subscription saved while the only key is refused).
       const ready = await taskBilling.takeReady(async (projectId) => {
@@ -4542,6 +4593,43 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           });
         },
       }),
+      // d1109-cred-engine CE-7 (ADR 0120): Use API key grants this stop and lets the waiting
+      // work go on (a running session takes its waiting tasks back; the person's session that
+      // ended to wait goes on now as their start); Wait moves nothing.
+      credentialAsks: await syncAskAnswers({
+        store,
+        clock,
+        humanId: human.id,
+        currentStop: (sourceId) => taskBilling.currentStopOf(sourceId),
+        onGrant: async (_sourceId, projectIds) => {
+          let goesOn = false;
+          for (const projectId of projectIds) {
+            const handle = liveSessions.forProject(projectId);
+            if (handle) {
+              const ready = await store.task.readyTasks(projectId, { limit: 50 }).catch(() => []);
+              handle.readmit(ready.map((t) => t.id));
+              goesOn = true;
+              continue;
+            }
+            const kept = await keptContinuationOf(store, projectId);
+            if (!kept) continue;
+            const start = await scheduler.requestStart({
+              agentId: kept.entry.agentId,
+              projectId,
+              trigger: "manual",
+              by: "person",
+              ...(kept.kept.continues ? { continues: kept.kept.continues } : {}),
+              ...(kept.kept.budgetUsdMicro ? { budgetUsdMicro: kept.kept.budgetUsdMicro } : {}),
+              reason: "your yes: your API key does the work until your subscription can again",
+            });
+            if (start.result === "started" || start.result === "queued") {
+              await dropKeptStart(store, projectId);
+              goesOn = true;
+            }
+          }
+          return goesOn;
+        },
+      }),
       extensions: await extensions.syncApprovals({ humanId: human.id }),
       modelWatch: await modelWatch.syncPendingAnswers(),
       memory: await memory.syncApprovals(),
@@ -4796,13 +4884,72 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     },
     ...(routed
       ? {
+          // d1109-cred-engine CE-9 (ADR 0120): chat follows the person's credential policy too.
+          credentialHold: async ({ oneOff }: { oneOff: boolean }) => {
+            const model = rungModelFor(routed, modelConfig.get().modeDefaults.text_chat.tier);
+            const untilOf = (until: string | null) =>
+              until ? clockTime(until, human.timezone, clock.now()) : null;
+            const held = await routed.holdNow(model);
+            if (held) {
+              // The person's press: this one question answers on the credential that serves.
+              if (oneOff && held.switchTo)
+                return {
+                  held: false,
+                  wait: held.wait,
+                  untilText: untilOf(held.wait.until),
+                  answersOn: held.switchTo.kind,
+                };
+              // The one-off is offered only when another credential serves now and the month
+              // cap has room for one quick answer (its worst case at the day's prices).
+              let offer: { kind: BillingSource["kind"]; estimateUsdMicro: number } | null = null;
+              if (held.switchTo) {
+                const estimate = pricingFor(model, pricingTable).estimate(
+                  ONE_OFF_CHAT_INPUT_TOKENS,
+                  ONE_OFF_CHAT_OUTPUT_TOKENS,
+                );
+                const cap = human.monthly_cap_usd_micro ?? 0;
+                const room =
+                  cap > 0
+                    ? await checker.room(
+                        { humanId: human.id },
+                        {
+                          phase: "work",
+                          caps: { monthUsdMicro: cap, sessionUsdMicro: Number.MAX_SAFE_INTEGER },
+                        },
+                      )
+                    : Number.MAX_SAFE_INTEGER;
+                if ((room ?? Number.MAX_SAFE_INTEGER) >= estimate)
+                  offer = { kind: held.switchTo.kind, estimateUsdMicro: estimate };
+              }
+              return {
+                held: true,
+                wait: held.wait,
+                untilText: untilOf(held.wait.until),
+                oneOff: offer,
+              };
+            }
+            // Not held: another credential answers while the first choice is stopped (a standing
+            // grant, or "then the API key"); the reply's note says so once per stop.
+            const first = await taskBilling.firstChoiceStop().catch(() => null);
+            if (!first) return null;
+            const now = await routed.peek(model).catch(() => null);
+            if (!now || now.kind === first.kind) return null;
+            return {
+              held: false,
+              wait: first,
+              untilText: untilOf(first.until),
+              answersOn: now.kind,
+            };
+          },
           chatCredential: async () => {
             const now = await routed
               .peek(rungModelFor(routed, modelConfig.get().modeDefaults.text_chat.tier))
               .catch(() => null);
             if (!now) return null;
             const sources = await stateSources(store)(human.id);
-            const order = (await personOrderOf(store, human.id)) ?? CALL_FALLBACK_ORDER;
+            // CE-9 (ADR 0120, one dated line in ADR 0114): the person's first is their policy's
+            // first saved kind, the order every call follows (the owner's answer 4).
+            const order = (await policyOf(store, human.id)).rule.order;
             const first = order.find((k) => sources.some((x) => x.kind === k)) ?? now.kind;
             const kindOf = (k: string) =>
               k === "subscription" || k === "api_key" || k === "plan_credits"

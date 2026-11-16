@@ -126,8 +126,6 @@ import {
   BILLING_PICK_AUDIT_TOOL,
   CODE_COMMANDS_SETTING,
   codeCommandsOf,
-  MID_SESSION_LIMIT_SETTING,
-  midSessionLimitOf,
   planShareAfter,
   type TaskBillingPick,
   type TaskBillingPort,
@@ -2143,8 +2141,8 @@ export class LoopTaskExecutor implements TaskExecutor {
   ): Promise<TaskBillingRequest> {
     const agent = await this.deps.store.agent.get(who.agentId);
     const ownerId = agent?.owner_human_id ?? who.ownerHumanId;
-    const human = await this.deps.store.human.get(ownerId).catch(() => undefined);
-    const mode = midSessionLimitOf(human?.notify_prefs?.[MID_SESSION_LIMIT_SETTING]);
+    // CE-3 (ADR 0120): the rule at a stop is the person's credential policy, read by the pick
+    // itself for every purpose (before, only task runs set 'wait', from mid_session_limit).
     return {
       agentId: who.agentId,
       agentOwnerHumanId: ownerId,
@@ -2152,7 +2150,6 @@ export class LoopTaskExecutor implements TaskExecutor {
       modelTier: tier,
       purpose: "session",
       ...(needs ? { needs } : {}),
-      ...(mode === "wait" ? { waitOnRest: true } : {}),
     };
   }
 

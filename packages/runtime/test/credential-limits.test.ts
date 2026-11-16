@@ -238,7 +238,9 @@ describe("a refused API key (U-078)", () => {
     const open = inbox.requests.filter((r) => r.status === "open");
     expect(open.map((r) => r.title)).toEqual(["Anthropic refused your API key"]);
     const card = open[0] as HumanRequestView;
-    expect(card.body).toBe("Save a new one in Settings. The work that needs it waits until then.");
+    expect(card.body).toBe(
+      "The key is not valid or was deleted. Save a new one in Settings; until then the work waits.",
+    );
     expect(card.links?.map((l) => [l.label, l.to])).toEqual([["Save a new key", "/setup"]]);
 
     // The Tasks tab: each row says what it waits for.

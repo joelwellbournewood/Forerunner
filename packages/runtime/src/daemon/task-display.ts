@@ -191,6 +191,15 @@ export async function credentialWaitRow(
     const refused = typeof limits.refusedAt === "string";
     if (!until && !refused) continue;
     const human = await store.human.get(row.human_id).catch(() => undefined);
+    // d1109-cred-engine CE-7: under 'ask' while the one card for this stop is open, the row says
+    // the work waits for the person's answer.
+    const asking = (row.limits as { asking?: { requestId?: unknown; answer?: unknown } }).asking;
+    const askOpen =
+      !refused &&
+      !!asking &&
+      asking.answer !== "wait" &&
+      typeof asking.requestId === "string" &&
+      (await store.humanRequest.get(asking.requestId).catch(() => undefined))?.status === "open";
     // S-10: the person's waiting session goes on when their quiet hours end, if they hold it
     // past the reset (a continuation; a Start the person kept is never held: they chose the time).
     const goesOnAt =
@@ -203,6 +212,7 @@ export async function credentialWaitRow(
         sourceId: row.id,
         kind: row.kind as BillingSourceKind,
         until,
+        ...(askOpen ? { ask: true } : {}),
       },
       {
         ...(human?.timezone ? { timezone: human.timezone } : {}),

@@ -72,6 +72,7 @@ import { intakeAnswer, intakeChangeText } from "../wiring/request-answers.ts";
 import { webAccessOf } from "../wiring/web-access.ts";
 import { markAnswer } from "./answer-mark.ts";
 import {
+  asStopWait,
   type CredentialWait,
   credentialWaitFrom,
   planWaitWords,
@@ -365,7 +366,8 @@ export type IntakeState =
  * plan is drafted by itself once the credential serves (`RuntimeApp.billing.waits`).
  */
 export interface IntakeWaitView {
-  reason: CredentialWait["reason"];
+  /** A refusal, or a wait until a time (a limit, the share, a key's month cap: `limit`). */
+  reason: "limit" | "refused";
   kind: CredentialWait["kind"];
   /** When the credential serves again (a limit); null for a refusal. */
   until: string | null;
@@ -1148,7 +1150,7 @@ export class IntakeService {
       nowMs: this.deps.clock.now(),
     });
     return {
-      reason: wait.reason,
+      reason: asStopWait(wait).reason === "refused" ? "refused" : "limit",
       kind: wait.kind,
       until: wait.until,
       ...words,

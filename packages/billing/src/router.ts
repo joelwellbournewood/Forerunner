@@ -9,6 +9,7 @@
  *   2. a disabled source is never used.
  */
 import { ForerunnerError } from "@forerunner/platform";
+import { grantOf, type StopReason, stopOf, type WhenStopped } from "./policy.ts";
 import type {
   BillingSource,
   BillingSourceKind,
@@ -44,6 +45,36 @@ export interface RouteContext {
    * next source serves, as before.
    */
   waitOnRest?: boolean;
+  /**
+   * The person's rule at a stop (CE-2, ADR 0120; replaces `waitOnRest`, which still reads as
+   * `wait` for one release): a first choice that is stopped (its usage limit, a refusal, the
+   * share of the subscription Forerunner may use, an API key's monthly cap) and ranks ahead of
+   * every source that could serve holds the pick under `wait` and `ask` (it throws `unavailable`
+   * with `details.waitFor`), unless the person's yes for that very stop (`limits.grant`) lets the
+   * granted kind serve (never for `batch`); under `next` the next source serves. Absent: `next`.
+   */
+  whenStopped?: WhenStopped;
+  /**
+   * Sources the caller saw stop on this very call (CE-2): held like resting ones under `wait` and
+   * `ask` (before, they were withheld before the router, so the hold could not see them).
+   */
+  heldNow?: readonly string[];
+  /** The kinds the person's policy lets serve (key_only leaves the subscription out). */
+  kinds?: readonly BillingSourceKind[];
+  /** Now, for the end of a share or monthly stop (the next month's start UTC). */
+  nowMs?: number;
+}
+
+/** What a held pick waits for (CE-2): `details.waitFor` of the `unavailable` it throws. */
+export interface RouteWaitFor {
+  sourceId: string;
+  kind: BillingSourceKind;
+  reason: StopReason;
+  /** When the stop ends (ISO), or null for a refusal (until a new credential is saved). */
+  until: string | null;
+  stopKey: string;
+  /** True under `ask`: the person is asked once for this stop (one card). */
+  ask: boolean;
 }
 
 export interface RoutingPolicy {
@@ -118,7 +149,9 @@ export type SkipCode =
   | "plan_share"
   | "monthly_limit"
   | "tier"
-  | "purpose";
+  | "purpose"
+  /** The person's credential policy does not let this kind serve (key_only; ADR 0120). */
+  | "policy";
 
 export interface RouteSkip {
   sourceId: string;
@@ -176,10 +209,19 @@ export class BillingRouter {
     const tierKinds = this.policy.kindsForTier?.[ctx.modelTier];
 
     const candidates: { source: BillingSource; status: BillingSourceStatus; rank: number }[] = [];
-    /** Sources resting after a usage limit, with their rank (the 'wait' rule reads them). */
-    const resting: { source: BillingSource; rank: number; until: string }[] = [];
-    /** Sources whose credential was refused, with their rank (the 'wait' rule reads them too). */
-    const refused: { source: BillingSource; rank: number }[] = [];
+    /**
+     * CE-2: the stopped sources with their rank, the stop and its key: resting (`limit`),
+     * refused, at the share (`share`) or at the key's month cap (`key_month`); the rule reads them.
+     */
+    const held: {
+      source: BillingSource;
+      rank: number;
+      reason: StopReason;
+      until: string | null;
+      stopKey: string;
+    }[] = [];
+    const nowMs = ctx.nowMs ?? Date.now();
+    const heldNow = new Set(ctx.heldNow ?? []);
     for (const source of all) {
       // Invariant, not policy: never another human's source.
       if (source.humanId !== ctx.humanId) {
@@ -188,6 +230,11 @@ export class BillingRouter {
       }
       if (!source.enabled) {
         skipped.push(skip(source, "disabled", "disabled"));
+        continue;
+      }
+      // The fake row is the stand-in of an install without credentials: no policy names it.
+      if (ctx.kinds && source.kind !== "fake" && !ctx.kinds.includes(source.kind)) {
+        skipped.push(skip(source, "policy", `your credential policy does not use ${source.kind}`));
         continue;
       }
       const rank = preference.indexOf(source.kind);
@@ -218,47 +265,48 @@ export class BillingRouter {
         skipped.push(skip(source, "unavailable", status.reason ?? "not available"));
         continue;
       }
-      if (status.refused) {
-        skipped.push(skip(source, "refused", `its credential was refused at ${status.refused}`));
-        // 'Wait' holds to a refused first choice too (U-078, the session lead's default of
-        // 2026-11-03): its work waits for a new credential rather than move onto another one.
-        refused.push({ source, rank: rankOf(source.kind, rank, ctx.order) });
-        continue;
-      }
-      if (status.restingUntil) {
-        skipped.push({
-          ...skip(source, "cooldown", `resting after a usage limit until ${status.restingUntil}`),
-          until: status.restingUntil,
-        });
-        resting.push({
-          source,
-          rank: rankOf(source.kind, rank, ctx.order),
-          until: status.restingUntil,
-        });
-        continue;
-      }
-      if (source.kind === "subscription" && typeof status.planUsageShare === "number") {
-        const cap = source.limits.planShareCap ?? this.policy.planShareCap;
-        if (status.planUsageShare >= cap) {
+      const ranked = rankOf(source.kind, rank, ctx.order);
+      // CE-2 (the owner's 7b, 7c): every stop is held alike under 'wait' and 'ask': a refusal
+      // (until a new credential is saved), a usage limit (until its reset), the share of the
+      // subscription Forerunner may use and an API key's monthly cap (until the next month's
+      // start UTC, or a raised allowance or cap, which changes the stop's key). Before, the share
+      // and the cap were plain skips, so the next credential served under any setting.
+      const stop = stopOf(source, status, nowMs, this.policy.planShareCap);
+      if (stop) {
+        if (stop.reason === "refused")
+          skipped.push(skip(source, "refused", `its credential was refused at ${status.refused}`));
+        else if (stop.reason === "limit")
+          skipped.push({
+            ...skip(source, "cooldown", `resting after a usage limit until ${status.restingUntil}`),
+            until: status.restingUntil as string,
+          });
+        else if (stop.reason === "share") {
+          const cap = source.limits.planShareCap ?? this.policy.planShareCap;
           skipped.push(
             skip(
               source,
               "plan_share",
-              `plan usage ${pct(status.planUsageShare)} is at or above the cap ${pct(cap)}`,
+              `plan usage ${pct(status.planUsageShare ?? 0)} is at or above the cap ${pct(cap)}`,
             ),
           );
-          continue;
-        }
-      }
-      if (
-        typeof source.limits.monthlyUsdMicro === "number" &&
-        typeof status.monthSpentUsdMicro === "number" &&
-        status.monthSpentUsdMicro >= source.limits.monthlyUsdMicro
-      ) {
-        skipped.push(skip(source, "monthly_limit", "monthly limit for this source reached"));
+        } else skipped.push(skip(source, "monthly_limit", "monthly limit for this source reached"));
+        held.push({ source, rank: ranked, ...stop });
         continue;
       }
-      candidates.push({ source, status, rank: rankOf(source.kind, rank, ctx.order) });
+      // The caller saw this source stop on this very call (its rest may not be written yet):
+      // held like a resting one.
+      if (heldNow.has(source.id)) {
+        skipped.push(skip(source, "cooldown", "it just met its usage limit on this call"));
+        held.push({
+          source,
+          rank: ranked,
+          reason: "limit",
+          until: null,
+          stopKey: `now:${source.id}`,
+        });
+        continue;
+      }
+      candidates.push({ source, status, rank: ranked });
     }
 
     candidates.sort(
@@ -281,12 +329,8 @@ export class BillingRouter {
         ...(s.until ? { until: s.until } : {}),
       })),
     });
-    // 'Wait' (U-078): the first choice rests, or Anthropic refused it, so nothing moves onto a
-    // later one: the work waits for its reset, or for a new credential.
-    const held: { source: BillingSource; rank: number; until: string | null }[] = [
-      ...resting,
-      ...refused.map((r) => ({ ...r, until: null })),
-    ];
+    // 'Wait' and 'Ask' (U-078, CE-2): the first choice is stopped, so nothing moves onto a later
+    // one: the work waits for the stop's end, or for the person's answer to the one card.
     held.sort(
       (a, b) =>
         a.rank - b.rank ||
@@ -294,29 +338,36 @@ export class BillingRouter {
         (a.source.id < b.source.id ? -1 : a.source.id > b.source.id ? 1 : 0),
     );
     const first = held[0];
-    if (
-      ctx.waitOnRest &&
-      first &&
+    const rule: WhenStopped = ctx.whenStopped ?? (ctx.waitOnRest ? "wait" : "next");
+    const ahead =
+      !!first &&
       (!chosen ||
         first.rank < chosen.rank ||
-        (first.rank === chosen.rank && first.source.priority < chosen.source.priority))
-    ) {
+        (first.rank === chosen.rank && first.source.priority < chosen.source.priority));
+    // CE-7: the person's yes for this very stop lets the granted kind serve until it ends; a yes
+    // for an older stop does not, and none covers the background jobs.
+    const grant = first ? grantOf(first.source.limits.grant) : null;
+    const granted =
+      !!grant &&
+      !!chosen &&
+      ctx.purpose !== "batch" &&
+      grant.stopKey === first?.stopKey &&
+      grant.to === chosen.source.kind;
+    if (first && ahead && rule !== "next" && !granted) {
+      const waitFor: RouteWaitFor = {
+        sourceId: first.source.id,
+        kind: first.source.kind,
+        reason: first.reason,
+        until: first.until,
+        stopKey: first.stopKey,
+        ask: rule === "ask",
+      };
       throw new ForerunnerError(
         "unavailable",
-        first.until
-          ? `the first choice for ${ctx.purpose} work rests until ${first.until}; waiting for it`
-          : `the first choice for ${ctx.purpose} work was refused; waiting for a new credential`,
-        {
-          details: {
-            ...details(),
-            waitFor: {
-              sourceId: first.source.id,
-              kind: first.source.kind,
-              until: first.until,
-              reason: first.until ? "limit" : "refused",
-            },
-          },
-        },
+        first.reason === "refused"
+          ? `the first choice for ${ctx.purpose} work was refused; waiting for a new credential`
+          : `the first choice for ${ctx.purpose} work is stopped (${first.reason}) until ${first.until ?? "later"}; waiting for it`,
+        { details: { ...details(), waitFor: waitFor as never } },
       );
     }
     if (!chosen) {

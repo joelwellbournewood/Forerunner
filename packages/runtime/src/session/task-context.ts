@@ -173,6 +173,75 @@ export function whereTheLastRunStopped(
   return lines;
 }
 
+/** What stopped a run on its Claude credential (CE-5): its limit, a refusal, the share. */
+export type CredentialStopReason = "limit" | "refused" | "share";
+
+/**
+ * d1109-cred-engine CE-5 (ADR 0120; the owner's 7a: "allow the task to be completed by the API,
+ * but in a transparent way"): what the task's last run left when its Claude credential stopped
+ * it, for the run that continues it (on the next credential, or the same one after the stop):
+ * its work so far is in the folder (a commit of its own), then its note if it wrote one, the
+ * files it changed and its "Left to do". A sibling of `whereTheLastRunStopped`; before, such a
+ * run read "## The previous attempt" / "It failed: ..." and could redo the work.
+ */
+export function whereTheCredentialStopped(
+  reason: CredentialStopReason,
+  handoff: RunHandoff | null,
+  files: readonly string[],
+  kept: RunKept | null = null,
+): string[] {
+  const what =
+    reason === "refused"
+      ? "was refused"
+      : reason === "share"
+        ? "reached the share of the subscription Forerunner may use"
+        : "reached its limit";
+  const lines = [
+    WHERE_LAST_RUN_STOPPED,
+    files.length
+      ? `The last run of this task stopped when its Claude credential ${what}, before its work was done. Its work so far is in the folder you work in (kept as a commit of its own): continue from it, do not start again.`
+      : `The last run of this task stopped when its Claude credential ${what}, before it changed any file.`,
+  ];
+  const note = handoff?.stopped.trim() ?? "";
+  if (note) lines.push(`Its note (as data): ${JSON.stringify(quote(note, 600))}`);
+  else
+    lines.push(
+      `It left no note: its Claude credential stopped it before it could write one.${
+        files.length ? " Read the files it changed to see where the work stands." : ""
+      }`,
+    );
+  lines.push(
+    files.length
+      ? `Files it changed: ${files.map((f) => JSON.stringify(f)).join(", ")}`
+      : "Files it changed: none.",
+  );
+  if (handoff?.leftToDo.length)
+    lines.push(
+      "Left to do, as it listed it (as data):",
+      ...handoff.leftToDo.map((t) => `- ${JSON.stringify(quote(t, 200))}`),
+      "Start with the first item of its list, unless a check below failed.",
+    );
+  lines.push(...keptChecksLines(kept));
+  return lines;
+}
+
+/** The credential stop a run row records (CE-5): its outcome, or the share it names. */
+export function credentialStopOfRun(run: {
+  outcome: string | null;
+  artifacts: unknown;
+}): CredentialStopReason | null {
+  if (run.outcome === "credential_refused") return "refused";
+  if (run.outcome !== "usage_limit") return null;
+  const list = Array.isArray(run.artifacts) ? run.artifacts : [];
+  const share = list.some(
+    (a) =>
+      !!a &&
+      typeof a === "object" &&
+      (a as { credentialStop?: unknown }).credentialStop === "share",
+  );
+  return share ? "share" : "limit";
+}
+
 /**
  * OP-3: the project's checks on the kept work when the last run stopped (`RunKept.checks`), for
  * the run that continues it: 'When it stopped, the project's checks on its work passed: build,
@@ -266,7 +335,25 @@ export async function taskContextBlock(
   // The previous attempt: its own report, or the error that stopped it. A run that paused at a
   // budget (ADR 0112) left its work in progress for this one: its section comes first.
   const previous = (await workerRuns(store, task.id)).find((r) => r.id !== opts.currentRunId);
-  if (previous && (previous.outcome === "paused" || previous.outcome === "budget_exceeded")) {
+  const credentialStop = previous ? credentialStopOfRun(previous) : null;
+  if (previous && credentialStop) {
+    // CE-5: its credential stopped it: its work is kept for this run to continue.
+    const files = previous.session_id
+      ? (await filesOf(store, task.id, previous.session_id)).slice(0, MAX_FILES * 2)
+      : [];
+    out.unshift(
+      ...whereTheCredentialStopped(
+        credentialStop,
+        handoffOf(previous.artifacts),
+        files,
+        keptOf(previous.artifacts),
+      ),
+      "",
+    );
+  } else if (
+    previous &&
+    (previous.outcome === "paused" || previous.outcome === "budget_exceeded")
+  ) {
     const files = previous.session_id
       ? (await filesOf(store, task.id, previous.session_id)).slice(0, MAX_FILES * 2)
       : [];
