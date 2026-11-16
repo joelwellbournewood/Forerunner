@@ -1,4 +1,5 @@
 import { type Clock, SimulatedClock } from "@forerunner/platform";
+import { removeFolder } from "@forerunner/testenv/test-tmp";
 import { z } from "zod";
 import type { RunPricing } from "../src/agent/loop.ts";
 import { ToolRegistry, type ToolSpec } from "../src/agent/tools.ts";
@@ -272,6 +273,42 @@ export async function until(cond: () => boolean, what: string): Promise<void> {
 
 /** The critic's tool name (`@forerunner/critic`'s SUBMIT_REVIEW_TOOL), kept here to avoid a cycle. */
 const SUBMIT_REVIEW = "submit_review";
+
+/**
+ * Waits until no session of the agent runs and no planning call holds it, before a test closes
+ * its composed daemon. A test's last check (a task done, a session counted) can pass while that
+ * session still ends: its git work in the project's workspace. Closing the runtime does not wait
+ * for it (the person's Quit, POST /shutdown, stops every run first; rt.close() does not), and on
+ * Windows a folder a running git works in cannot be removed (Windows CI run 43804425585: EBUSY on
+ * rmdir of the workspace in two continuation.test.ts cases), while the next daemon on the same
+ * home would run a second git in the same .git. It watches the agent's own id only: the
+ * schedules under other ids (memory consolidation, the monthly jobs) are the test's to wait on.
+ * The same wait as monthly-jobs-wiring.test.ts's: on the scheduler, never a fixed sleep; after
+ * 20 s it fails with what it waited for.
+ */
+export async function settleSessions(rt: {
+  scheduler: { isActive(agentId: string): boolean; isHeld(agentId: string): boolean };
+  agent: { id: string };
+}): Promise<void> {
+  const end = Date.now() + 20_000;
+  const busy = () => rt.scheduler.isActive(rt.agent.id) || rt.scheduler.isHeld(rt.agent.id);
+  while (busy()) {
+    if (Date.now() > end) throw new Error("still waiting after 20 s for the session to end");
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+/**
+ * Removes the homes a test made, after its daemons closed. removeFolder retries for the moment
+ * a just-closed file is still held on Windows (antivirus, the search indexer), then says why it
+ * could not; a home that still cannot be removed fails the test, because then something the
+ * test started outlived rt.close() (how the EBUSY above was found).
+ */
+export function removeHomes(homes: string[]): void {
+  const kept = homes.filter((h) => !removeFolder(h));
+  if (kept.length > 0)
+    throw new Error(`could not remove ${kept.length} test home(s): ${kept.join(", ")}`);
+}
 
 /**
  * A provider that accepts every critic review and hands every other call to `inner` (ADR 0104:

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
@@ -11,7 +11,12 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import { describeEvent } from "../src/daemon/views.ts";
 import { CONTINUES_EVENT } from "../src/session/runner.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
-import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
+import {
+  AcceptingCriticProvider,
+  removeHomes,
+  ScriptedProvider,
+  settleSessions,
+} from "./helpers.ts";
 
 /**
  * d1109-starts-engine S-10 (ADR 0118 amending 0100; the owner, 2026-11-09: "A session the person
@@ -156,6 +161,7 @@ async function compose(
     post,
     get,
     close: async () => {
+      await settleSessions(rt);
       await rt.close();
       open.splice(open.indexOf(rt), 1);
     },
@@ -164,8 +170,18 @@ async function compose(
 }
 
 afterEach(async () => {
-  for (const rt of open.splice(0)) await rt.close().catch(() => undefined);
-  for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true });
+  // Every daemon is closed and every home removed; then the first failure, if any, fails the test.
+  const failures: unknown[] = [];
+  for (const rt of open.splice(0)) {
+    await settleSessions(rt).catch((e: unknown) => failures.push(e));
+    await rt.close().catch(() => undefined);
+  }
+  try {
+    removeHomes(homes.splice(0));
+  } catch (e) {
+    failures.push(e);
+  }
+  if (failures.length > 0) throw failures[0];
 });
 
 async function changelog(rt: RuntimeApp) {

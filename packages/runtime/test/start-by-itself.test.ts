@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
@@ -9,7 +9,12 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import { fileBudgetStopCard } from "../src/session/budget-card.ts";
 import { startPendingOf } from "../src/session/prepared-work.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
-import { AcceptingCriticProvider, ScriptedProvider } from "./helpers.ts";
+import {
+  AcceptingCriticProvider,
+  removeHomes,
+  ScriptedProvider,
+  settleSessions,
+} from "./helpers.ts";
 
 /**
  * d1109-starts-engine S-5 (ADR 0118; the owner, 2026-11-09: "Off by default with the hands-off
@@ -83,8 +88,18 @@ async function compose(opts: { home?: string; clock: SimulatedClock }): Promise<
 }
 
 afterEach(async () => {
-  for (const rt of open.splice(0)) await rt.close().catch(() => undefined);
-  for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true });
+  // Every daemon is closed and every home removed; then the first failure, if any, fails the test.
+  const failures: unknown[] = [];
+  for (const rt of open.splice(0)) {
+    await settleSessions(rt).catch((e: unknown) => failures.push(e));
+    await rt.close().catch(() => undefined);
+  }
+  try {
+    removeHomes(homes.splice(0));
+  } catch (e) {
+    failures.push(e);
+  }
+  if (failures.length > 0) throw failures[0];
 });
 
 async function draftTask(rt: RuntimeApp) {
@@ -244,6 +259,7 @@ describe("d1109-starts-engine S-5: the project's 'When work is ready'", () => {
       status: "open",
     } as never);
     expect(cards.map((r) => (r.change_card as { question?: unknown }).question)).toEqual([true]);
+    await settleSessions(w1.rt);
     await w1.rt.close();
     open.splice(open.indexOf(w1.rt), 1);
     const w2 = await compose({ home: w1.home, clock });
@@ -281,6 +297,7 @@ describe("d1109-starts-engine S-5: the project's 'When work is ready'", () => {
     expect(startPendingOf(await w1.rt.store.project.mustGet(project.id))).toMatchObject({
       why: "deferred",
     });
+    await settleSessions(w1.rt);
     await w1.rt.close();
     open.splice(open.indexOf(w1.rt), 1);
 
