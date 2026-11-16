@@ -389,7 +389,9 @@ describe("d1109-sessions, run C: the Sessions tab (SL-7)", () => {
     });
     await waitFor(
       () =>
-        expect(gist()).toHaveTextContent('Atlas · the coder works on "Index the documentation pages"'),
+        expect(gist()).toHaveTextContent(
+          'Atlas · the coder works on "Index the documentation pages"',
+        ),
       { timeout: 10_000 },
     );
   }, 15_000);

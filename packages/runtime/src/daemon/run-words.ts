@@ -245,12 +245,8 @@ export const RUN_EVENT_TYPES = [
   "critic.review_paused",
 ] as const;
 
-/**
- * Cancel on a person's session waiting to go on, or on a Start kept for the reset (V-2, V-5): what
- * pressing it does, said with the button.
- */
-export const CANCEL_WAIT_EXPLAIN =
-  "Nothing starts when Claude is back; its tasks wait for your Start.";
+// Cancel's sentence lives in a file the browser build can read (no imports).
+export { CANCEL_WAIT_EXPLAIN } from "./run-wait-words.ts";
 
 /**
  * C3-left-8: an ended session's stored result promises "...; then your session goes on." while

@@ -1,4 +1,4 @@
-import { CANCEL_WAIT_EXPLAIN } from "@forerunner/runtime/daemon/run-words";
+import { CANCEL_WAIT_EXPLAIN } from "@forerunner/runtime/daemon/run-wait-words";
 import { useState } from "react";
 import { Link } from "react-router";
 import { describeError, type ProjectCard } from "../api/client.ts";
