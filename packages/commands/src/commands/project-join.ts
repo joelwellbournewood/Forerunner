@@ -476,7 +476,8 @@ export const projectJoin: CommandDef<ProjectJoinParams> = {
           delete settings[WAS_LINKED_KEY];
           await tx.project.update(row.id, row.version, {
             status: c.status === "archived" ? "active" : (c.status as ProjectRow["status"]),
-            active: true,
+            // As it was before the join (a project left off comes back off).
+            active: c.active,
             repos,
             settings,
             ...author,

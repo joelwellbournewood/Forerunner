@@ -617,4 +617,28 @@ describe("d1109-onerepo-join, run C: a closed project takes no new work (OJ-06)"
     expect((await w.store.task.forProject(gone.id)).length).toBe(0);
     await w.store.close();
   });
+
+  it("Undo of the join gives Kite club back as it was: a paused project left off comes back paused and off, and takes work again", async () => {
+    const w = await world();
+    w.ports.projectJoin = joinPort(w);
+    const { site, kite } = await seedPair(w);
+    await w.store.project.patch(kite.id, { status: "paused", active: false });
+    const r = await join(w, site.id, [kite.id]);
+    expect(r.status).toBe("done");
+    const done = r as Extract<ExecuteResult, { status: "done" }>;
+    expect((await w.executor.undo(done.changeLogId, w.ctx({ source: "ui" }))).status).toBe("done");
+    const back = await w.store.project.mustGet(kite.id);
+    expect({ status: back.status, active: back.active }).toEqual({
+      status: "paused",
+      active: false,
+    });
+    const again = await w.executor.execute({
+      name: "task.create",
+      params: { title: "Probe task", project: kite.id },
+      ctx: w.ctx({ source: "ui", activeProjectId: kite.id }),
+      confirmation: { kind: "tap", by: { kind: "human", id: w.human.id } },
+    });
+    expect(again.status).toBe("done");
+    await w.store.close();
+  });
 });
