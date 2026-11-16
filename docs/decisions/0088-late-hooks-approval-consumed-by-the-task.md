@@ -139,3 +139,10 @@ the same answered rows), and what a refusal does.
 - **Report background failures of a late start by request id on every claimed row of a
   bundled cloud start.** `StartRequest` names one request; a list would change the plan path's
   shape for an edge of an edge. Recorded as a known limit.
+
+## Amendment 2026-11-16 (ADR 0118, d1109-starts-engine S-2): a late yes prepares its task
+
+A hooks approval answered after its session ended makes its task ready and prepares it, as every
+answer does: it joins a running session of the project if its promise has room, else it waits for
+the next Start. The card's Done line says which ("Allowed: it runs at your next Start."); with the
+project's "Start a session by itself" on, a session starts for it and the line says so.

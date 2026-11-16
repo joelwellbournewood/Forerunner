@@ -255,6 +255,21 @@ describe("Tasks tab (design §3.5)", () => {
     );
   });
 
+  // d1109-starts-engine S-9 (ADR 0118): Make ready and Resume start no session; each says so.
+  // Before: "A session will pick it up." and "It is ready again; the next session can run it."
+  it("Make ready and Resume say they start nothing: the running session takes it if it fits, else your next Start", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "t_draft2", "Sketch the import", { status: "draft", version: 1 });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await user.click(within(await rowOf("t_draft2")).getByTestId("action-make_ready"));
+    const dialog = await screen.findByTestId("action-dialog");
+    expect(within(dialog).getByTestId("action-explain")).toHaveTextContent(
+      "Ready to run: the running session takes it if it fits, else your next Start.",
+    );
+    expect(dialog.textContent).not.toMatch(/will pick it up|a session starts/i);
+  });
+
   it("Pause says what it does, sends the action and the note, shows Paused by you, and Undo puts it back", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

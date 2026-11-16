@@ -1487,6 +1487,7 @@ export function createDaemonApp(
       // left out of the work that fits, in the daemon's one sentence (`oversize-words.ts`).
       overBudget: overBudgetView(r, rate),
       later: r.later.map(named),
+      laterBeyond: r.laterBeyond.map(named),
       blocked,
       busy,
       planning,

@@ -43,6 +43,8 @@ export interface StartBlockedFacts {
      * ("Nothing can run until 15:40 (...). Press Start and the work starts then.") and Start stays on.
      */
     startable?: boolean;
+    /** S-10: the person's session (or a Start they pressed) is kept on the wait: Cancel drops it. */
+    kept?: boolean;
   } | null;
 }
 
@@ -85,6 +87,7 @@ export function startBlocked(r: StartCheck, f: StartBlockedFacts): StartCheckVie
         ? { kind: "link", label: f.credentialWait.save.label, to: f.credentialWait.save.to }
         : null,
       ...(f.credentialWait.startable ? { startable: true } : {}),
+      ...(f.credentialWait.kept ? { kept: true } : {}),
     };
   if (blocked?.kind !== "nothing_runnable" || r.ready !== 0) return blocked;
   if (f.plan === "pending")

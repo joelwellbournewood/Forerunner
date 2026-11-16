@@ -580,6 +580,8 @@ export interface FakeDaemonState {
       save: { label: string; to: string } | null;
       /** leftovers7-tailrun TR-2: no Start kept the wait yet: `text` is the whole sentence, Start stays on. */
       startable?: boolean;
+      /** d1109-starts-engine S-10: the person's session waits to go on: Cancel drops it. */
+      kept?: boolean;
     }
   >;
   /**
@@ -1022,6 +1024,22 @@ function fakeStartCheck(
       changed = true;
     }
   }
+  // S-6, as the daemon's `cutFollowers`: without a larger task, the work budget left after the
+  // tasks ready now holds the followers in order; the first that does not fit and those after it
+  // wait for a later Start.
+  const laterBeyond: StartCheckView["laterBeyond"] = [];
+  if (!larger) {
+    let room = work - total;
+    const taken = [];
+    for (const l of later) {
+      if (laterBeyond.length > 0 || l.estimate.usdMicro > room) laterBeyond.push(l);
+      else {
+        taken.push(l);
+        room -= l.estimate.usdMicro;
+      }
+    }
+    later.splice(0, later.length, ...taken);
+  }
   // D4 (OP-0): the larger task gets what the tasks before it in the plan's order leave; the
   // tasks after it (ready now or later) run only if it leaves budget.
   const chf = (m: { chfMicro: number }) => ({ chfMicro: m.chfMicro, text: formatChf(m.chfMicro) });
@@ -1112,6 +1130,7 @@ function fakeStartCheck(
     overBudget: overBudgetView,
     waiting,
     later,
+    laterBeyond,
     blocked,
     oversized,
     monthLeft: money(FAKE_MONTH_LEFT_USD_MICRO),
@@ -2894,6 +2913,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           ? { kind: "link", label: credentialWait.save.label, to: credentialWait.save.to }
           : null,
         ...(credentialWait.startable ? { startable: true } : {}),
+        ...(credentialWait.kept ? { kept: true } : {}),
       };
     return c.json(view);
   });
@@ -3010,11 +3030,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return c.json({ sessionId: id, projectId: s.projectId, tasks: state.sessionTasks[id] ?? [] });
   });
   // d1109-starts-engine (S-10), as the daemon: Cancel on a session that waits to go on after its
-  // Claude credential. The fake keeps no credential waits, so none waits.
+  // Claude credential (a wait marked `kept`): the wait stays, its kept start goes, and the tasks
+  // wait for the next Start ("; then it runs at your next Start.").
   app.post("/projects/:id/continuation/cancel", (c) => {
     const project = state.projects.find((p) => p.id === c.req.param("id"));
     if (!project) return errorBody(c, 404, "not_found", "no such project");
-    return c.json({ cancelled: false, sentence: "Nothing waits to go on for this project." });
+    const wait = state.credentialWaitNow[project.id];
+    if (!wait?.kept)
+      return c.json({ cancelled: false, sentence: "Nothing waits to go on for this project." });
+    state.credentialWaitNow[project.id] = {
+      text: wait.text.replace("; then your session goes on.", "; then it runs at your next Start."),
+      save: wait.save,
+    };
+    return c.json({
+      cancelled: true,
+      sentence: "Cancelled: nothing goes on by itself; its tasks run at your next Start.",
+    });
   });
 
   app.post("/sessions", async (c) => {

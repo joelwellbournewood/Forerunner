@@ -21,7 +21,11 @@ import type { TaskAction, TaskView } from "../api/client.ts";
 export type TaskActionKey = TaskAction | "edit" | "dependencies" | "answer" | "take_out";
 
 export const ACTIONS: Readonly<Record<TaskActionKey, { label: string; explain: string }>> = {
-  make_ready: { label: "Make ready", explain: "A session will pick it up." },
+  // d1109-starts-engine S-9 (ADR 0118): a made-ready task starts no session.
+  make_ready: {
+    label: "Make ready",
+    explain: "Ready to run: the running session takes it if it fits, else your next Start.",
+  },
   edit: {
     label: "Edit",
     explain: "Change the wording, priority, budget, review level or specialist.",
@@ -31,7 +35,10 @@ export const ACTIONS: Readonly<Record<TaskActionKey, { label: string; explain: s
     explain: "Pick the tasks that must finish first.",
   },
   pause: { label: "Pause", explain: "No session runs it until you press Resume." },
-  resume: { label: "Resume", explain: "It is ready again; the next session can run it." },
+  resume: {
+    label: "Resume",
+    explain: "It is ready again: the running session takes it if it fits, else your next Start.",
+  },
   stop: {
     label: "Stop",
     explain: "Its run stops now and it is paused; the session goes on with the rest.",

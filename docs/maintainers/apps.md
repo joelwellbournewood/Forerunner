@@ -710,6 +710,26 @@ moves the task to ready.
 Tests: `test/d1109-oversize.test.tsx` and `test/inbox.test.tsx` ("d1109-oversize-pause, run C"),
 `test/real-daemon.test.ts` ("d1109-oversize-pause, run C").
 
+### Who starts a session (d1109-starts-engine, ADR 0118)
+
+The screens never promise a start an action does not make. The Start dialog's plan sentence
+counts the followers the work budget does not hold apart ("; 1 more waits for a later Start.",
+`StartCheckView.laterBeyond`) and says under Start that work made ready while it runs joins it
+only if its budget has room (`start-session-join`). The Tasks tab's Make ready and Resume explain
+"Ready to run: the running session takes it if it fits, else your next Start." and "It is ready
+again: ..." (`lib/task-actions.ts`), and every action's line comes from the daemon. Settings has
+the project's "When work is ready" (`start_by_itself`: "Wait for my Start" or "Start a session by
+itself", `SettingsFields.tsx`). The client's `cancelContinuation(projectId)` is `POST
+/projects/:id/continuation/cancel`, and `startSession` takes `continues`. The billing order's
+resting line says "your session that waits for it goes on then". The fake daemon answers cards as
+prepared (`change_card.start: "waits_start"`, so their Done lines read "...: it runs at your next
+Start."; Mark done anyway only when work after it can run), cuts `later` by the work budget into
+`laterBeyond` as `cutFollowers` does, refuses `continues` on a session with nothing left, and
+answers the cancel route with nothing waiting. Tests: `test/polish-screens.test.tsx` ("a follower
+the work budget does not hold"), `test/tasks.test.tsx` ("Make ready and Resume say they start
+nothing"), `test/inbox.test.tsx`, `test/real-daemon.test.ts` ("d1109-starts-engine, run C",
+"credential-limits" S-10 cases).
+
 ### Fake daemon
 
 A task paused at a budget (ADR 0112) reads as the daemon words it, "Paused at its budget" (or the limit its card names), since the fake builds every task's `display` with the daemon's own `taskDisplay`; `test/inbox.test.tsx` and `test/real-daemon.test.ts` ("a budget stop is a clean pause": the stand-in's wrap-up, no critic call, the run's report in the drawer) check it on both sides. A session a pause at this month's cap ended reads "Stopped at this month's cap" (the daemon's `statusText`, which the session page shows as it comes) with "Stopped at this month's cap of CHF ..." in its result and Update; the fake simulates no budget stop, so only `test/real-daemon.test.ts` ("a session ended at this month's cap names it") checks it.

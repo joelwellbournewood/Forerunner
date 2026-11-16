@@ -134,3 +134,11 @@ only the report leaves it out. "Open" is read from the task's recorded `pr_url`,
 has no access to the git host. A merged PR cannot occur here, since a merge that succeeded is
 not refused. Tests: `handover-job.test.ts` (both sides of the rule) and
 `scripts/handover-live.test.ts` (the end-to-end fake run at autonomy 2 passes with exit 0).
+
+## Amendment 2026-11-16 (ADR 0118, d1109-starts-engine): a schedule's fired key and quiet hours
+
+A schedule's start carries `by: "schedule"` (and `personSchedule` for one the person set). Its
+fired day or month is written only when its start leaves the line (started or queued), so a start
+quiet hours held, or that was refused, comes again at the next tick; before, the key was written
+first and a held start was lost for the month. Quiet hours hold every start the person did not
+press, schedules included.

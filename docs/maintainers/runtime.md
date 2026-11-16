@@ -1539,7 +1539,9 @@ re-makes a call answered after its session ended is started by the answer itself
 (`syncLateApprovals`, below under "Local daemon").
 
 **CI results and PR comments (spec E.1; [ADR 0075](../decisions/0075-githost-triggers-polling-and-dedupe.md); `src/session/githost-watcher.ts`).**
-`GitHostWatcher` is the producer of the `ci` and `pr_comment` triggers. Every `pollMs`
+Since run C (ADR 0118, amending 0075) a firing starts no session: it is audited `waits_start`
+and its messages wait in the agent's inbox for the person's next Start; the rest of this
+paragraph is unchanged. `GitHostWatcher` is the producer of the `ci` and `pr_comment` triggers. Every `pollMs`
 (`FORERUNNER_GITHOST_POLL_MS`, `DEFAULT_GITHOST_POLL_MS` = 60 000) on the `Clock` it lists
 the PRs the task rows give the install's agents (`watchedPullRequests`: a task in any status
 but `draft` / `cancelled` with a `pr_url`, whose `owner_agent_id`, else `claimed_by`, else
@@ -3192,7 +3194,9 @@ waits on you" while 4 tasks waited on it).
   accepted without review" (ADR 0102 decision 2); the sign-off's Accept the work records "you
   accepted the work at sign-off". Reasons no longer carry the request id (design §5 rule 3; the
   `critic.signoff` audit row ties them).
-- **Answering resumes work** (`session/resume-work.ts`): Try again (with the person's optional
+- **Answering resumes work** (`session/resume-work.ts`; since run C, ADR 0118, an answer prepares
+  work and starts nothing: see "Who starts a session" below; what follows is the earlier
+  design): Try again (with the person's optional
   note, `{ choice, note }`, queued as a note naming the task for its next brief), Send it back and
   Mark done anyway start a session of the project through the scheduler, or queue one behind the
   running session, when a task of the project can run (`readyTasks`); nothing runnable starts
@@ -7371,6 +7375,57 @@ no store, git host or file system, so the UI's fake daemon imports it).
   default branch's marker names this project, or a docs pull request of this project updated
   since the take-over, or the one the run opened, is merged: refused; open: refused; GitHub
   unreadable: refused).
+
+### Who starts a session (d1109-starts-engine, [ADR 0118](../decisions/0118-who-starts-a-session.md))
+
+Only the person starts a session; everything else prepares work. The pieces:
+
+- **`StartRequest.by`** (`session/triggers.ts`): `person`, `schedule`, `hands_off`,
+  `continuation`; `startByOf(req)` reads it, else the trigger (`manual`/`remote` are the
+  person's, `schedule` a schedule's). `Scheduler` holds every start that is not the person's in
+  quiet hours (`isQuietHours`, compose's cached `quietHours` reader, refreshed before every tick,
+  every such start and every sentence naming the window's end; `RuntimeApp.quietHours`), and
+  writes a schedule's fired key only when its start leaves the line (`markFired`). The runner
+  records `plan.startedBy` (`{ by, continues?, continuesAt? }`, reason "who asked for the
+  session") and `plan.promise`.
+- **`prepareWork`** (`session/prepared-work.ts`, `PrepareDeps`, `PreparePort`): the work an
+  action made runnable joins the project's live session (`LiveSessions.forProject(...).admit`) if
+  it fits, else waits (`waits_start`), or waits for the person's continuation
+  (`waits_continuation`), or, with `start_by_itself` on and `by` not `agent`, starts a
+  `hands_off` session (kept on `summary_cache.start_pending` when it cannot start now;
+  `sweepStartPending` asks again; a hands-off start that begins drops it). `preparedLine`,
+  `preparedClause` and `preparedExplain` are the only words; `previewWork` is the read-only
+  sibling for a read-back. Every answer path (`resume-work.ts`'s `prepareAnswer` +
+  `recordStart`: budget-card, intake, person-questions, cannot-run-card, findings, pr-answers,
+  late-approval) calls it with `by: "person"`; the budget wake and a credential's wake for
+  non-person work with `by: "system"`. `resumeWork` is gone.
+- **The promise** (`session/promise.ts`, `session/live-sessions.ts`): `promiseOf` and
+  `cutFollowers` split the followers by the work budget left after the runnable tasks (the Start
+  check's `later`/`laterBeyond`); a live session registers an `AdmitHandle` (`admit(taskIds, by,
+  { partOf, before })`, `readmit`, `closing`); a newcomer is admitted when the work budget less
+  the spend and the remaining own and joined estimates holds its estimate; events
+  `session.promised`, `session.joined`, `session.left_for_next_start` ("Left for your next
+  Start: …") and `session.continues`.
+- **The continuation** (`wiring/billing-pick.ts`: `limits.waiting[].kept`, `keepContinuation`,
+  `keepStartAtReset`, `dropKeptStart`, `keptContinuationOf`, `keptStartOf`): the runner keeps one
+  when a person's session (or continuation, or a schedule the person set) ends to wait for its
+  credential with budget left and no stop pending; `credentialWaits.wake` starts it once
+  (`budget_reset`, `by: "continuation"`, the rest of its budget), held by quiet hours, dropped by
+  `continuations.cancel` (`POST /projects/:id/continuation/cancel`), `dropAll` (Stop all) and the
+  project's removal; `continuations.waiting` says "Your session of 10:00 goes on by itself at
+  15:00." and POST /sessions refuses a second wait with it (`claim_conflict`). `POST /sessions`
+  with `continues` goes on with an ended session's budget left. The words of a wait
+  (`credential-wait.ts`, `afterWaitClause(goesOn)`): "; then your session goes on." or "; then it
+  runs at your next Start.".
+- **Git host events** are audited `waits_start` and start nothing (`GitHostWatcher` has no start
+  port).
+
+Tests: `scheduler-monthly.test.ts` (S-1), `session-join.test.ts` (promise and admission),
+`continuation.test.ts` (composed, file database: once at the reset, quiet hours, Cancel, Stop all,
+none after Stop after this task, none for a system schedule, two restarts),
+`start-by-itself.test.ts` (composed: off, on after a yes, quiet hours across a restart),
+`githost-watcher.test.ts`/`githost-wiring.test.ts` (no firing reaches the scheduler), and the UI
+real-daemon cases under "d1109-starts-engine, run C" and "credential-limits" (S-6, S-10 routes).
 
 ## How to change it
 

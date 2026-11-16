@@ -273,6 +273,29 @@ describe("the Start dialog counts right (later #48, #69, C-45, P7-16)", () => {
     expect(dialog).not.toHaveTextContent("as they become ready");
   });
 
+  // d1109-starts-engine S-6, S-7 (ADR 0118): the session promises what its work budget holds; a
+  // follower it does not hold waits for a later Start, and work made ready meanwhile joins it
+  // only if its budget has room. Before: every follower was "up to N more as they become ready".
+  it("a follower the work budget does not hold waits for a later Start; the join line says when made-ready work joins", async () => {
+    const harness = createHarness();
+    const ready = readyTask(harness);
+    ready.estimate = money(1_000_000);
+    harness.daemon.state.tasks.push({
+      ...ready,
+      id: "task_big_follow",
+      title: "Write the whole manual",
+      estimate: money(20_000_000),
+      dependsOn: ["task_3"],
+    });
+    const { dialog } = await openDialog(harness);
+    expect(await within(dialog).findByTestId("start-session-plan")).toHaveTextContent(
+      /^This session runs "Decide the versioning scheme" \(about CHF 0\.80\); 1 more waits for a later Start\.$/,
+    );
+    expect(within(dialog).getByTestId("start-session-join")).toHaveTextContent(
+      "Work you make ready while it runs joins it if its budget has room.",
+    );
+  });
+
   it("a stuck line names what holds it in words, never '(cancelled)' or '(draft)'", async () => {
     const harness = createHarness();
     const ready = readyTask(harness);

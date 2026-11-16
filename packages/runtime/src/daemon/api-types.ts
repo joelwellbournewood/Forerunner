@@ -1741,6 +1741,12 @@ export const StartCheckView = z.object({
    */
   later: z.array(StartCheckTaskView).default([]),
   /**
+   * d1109-starts-engine S-6 (ADR 0118): the waiting tasks that would become ready in the session
+   * but that its work budget does not hold after the work it takes first: they wait for a later
+   * Start, so the session promises them not. Empty from an older daemon.
+   */
+  laterBeyond: z.array(StartCheckTaskView).default([]),
+  /**
    * Why a Start now would do nothing (design §3.6), in one sentence with the button that
    * unblocks it: sessions are stopped (Stop all), no Claude credential, or nothing can run.
    * Null when a session would work. `action.kind` says what the button does: `resume` (Allow
@@ -1760,6 +1766,12 @@ export const StartCheckView = z.object({
         })
         .nullable(),
       startable: z.boolean().optional(),
+      /**
+       * d1109-starts-engine S-10: the person's session waits to go on after its Claude credential
+       * (or a Start they pressed is kept for the reset): the dialog offers Cancel, which is `POST
+       * /projects/:id/continuation/cancel`. Absent from an older daemon.
+       */
+      kept: z.boolean().optional(),
     })
     .nullable()
     .default(null),

@@ -59,3 +59,12 @@ decided here and can be reversed by a later ADR.
 - Build "Run with a light review": it contradicts ADR 0101, the owner's explicit decision.
 - Roll back a stopped task's files: it loses work the person may want, and the workspace
   baseline already makes the change visible and reversible.
+
+## Amendment 2026-11-16 (ADR 0118, d1109-starts-engine S-9): point 2, the Tasks tab's actions start nothing
+
+The owner's decision D6 of 2026-11-09. Make ready, Resume, Go ahead without, Reopen, Redo and Try
+again on the Tasks tab, and New task when ready, make the task ready and prepare it: it joins the
+running session if its promise has room, else it waits for the person's next Start. Each action's
+line says so after its own sentence ('"X" is ready again. It runs at your next Start.'), and its
+dialog's explanation too ("Ready to run: the running session takes it if it fits, else your next
+Start."); none says a session will pick it up.

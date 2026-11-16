@@ -137,3 +137,10 @@ start, exactly once.
   `session.plan_approved` event names the filing session, which is enough to join the two.
 - **Start from the sync in a CLI one-shot too.** A process that exits after its command is no
   place to run a session; the daemon's compose-time sync and poll cover it.
+
+## Amendment 2026-11-16 (ADR 0118, d1109-starts-engine): who starts the session
+
+The owner's decision D6 of 2026-11-09: only the person starts a session. Approve and start is the
+person's own start (`by: "person"`, recorded on the session's plan as `startedBy`): it runs at
+once, inside quiet hours too, as Start does. Nothing else an approval card leads to starts a
+session; work a later answer makes ready is prepared (ADR 0118).

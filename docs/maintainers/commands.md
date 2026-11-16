@@ -683,6 +683,36 @@ among them.
 - **Names**: a command name may join two words with an underscore inside a dotted part
   (`NAME_RE`, `repo.take_over`; tool name `repo_take_over`).
 
+### Who starts a session (d1109-starts-engine, [ADR 0118](../decisions/0118-who-starts-a-session.md))
+
+- **`session.start` is read back from chat and voice at any budget** (`askFromChat: true`; S-11):
+  "ok" or "sounds good" read by a model is not the person saying when. The palette, the app and
+  the phone's Start press (source `ui`) act at once. Its definition, asserted word for word in
+  `test/starts-engine.test.ts`: "Start a work session now on the person's say-so, ...; read back
+  for their yes. Answers and task changes never start one.". `refuseWhileWaiting` answers the
+  port `startWaits` (the person's session waits to go on: one wait per project) in words, with
+  no read-back.
+- **The parser** (`matchStart`) reads "run it now", "start it", "run them", "run the tasks",
+  "let's run it", "starte es", "starten sie" and "(jetzt) ausführen" as a start; "please run it" is
+  "run it" once `clean` drops the "please"; "go ahead and run it" is two clauses and goes to the
+  chat model.
+- **Task moves prepare work** (S-9): `task.create` (ready), `task.transition` to ready,
+  `task.resume` and `task.reopen` call the port `prepareWork` after the move (`withNextLine`; the
+  agent's own moves with `by: "agent"`), and add its line after the move's sentence with the
+  "Ready: " dropped (`afterMove`: '"X" is ready again. It runs at your next Start.'); their
+  read-back in chat asks `previewWork` (read-only). No move's ask or sentence promises a session
+  any more ("A session will pick it up" is gone). Their four definitions say "it joins the
+  running session if it fits, else waits for the person's next Start".
+- **`start_by_itself`** (`SETTING_SPECS`, appended last; `chat_ask_above` and `credential_policy`
+  of later areas go after it): per project, a boolean, label "when work is ready", risk medium
+  (turning it on asks a yes; `narrows` is `to !== true`, `narrowingActsAtOnce`), `personOnly` (an
+  agent actor is refused: "Only you can change when work is ready for X."), display "Start a
+  session by itself" / "Wait for my Start", effect `startByItselfEffect(on, project)` ("sessions
+  of Quote page will start by themselves when work you made ready can run, up to CHF 5.00 each.
+  Never in your quiet hours or while sessions are stopped").
+- **Ports** (`CommandPorts`): `prepareWork(req)` (the line, or null), `previewWork(req)` and
+  `startWaits(projectId)`, all wired by compose.
+
 ## How to change it
 
 **Add a command.** Write `src/commands/<area>.ts` exporting a `CommandDef`: a zod `params`

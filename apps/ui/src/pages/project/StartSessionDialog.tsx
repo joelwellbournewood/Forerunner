@@ -160,7 +160,11 @@ export function planSentence(check: StartCheckView): string | null {
     check.later.length === 0
       ? `${head}${now}`
       : `${head}${now}${now ? ", then" : " and"} continues with up to ${check.later.length} more as they become ready (${about(check.later)})`;
-  return `${runs}.`;
+  // d1109-starts-engine S-6 (ADR 0118): what its work budget does not hold is not promised.
+  const beyond = check.laterBeyond?.length ?? 0;
+  const wait =
+    beyond === 0 ? "" : `; ${beyond} more ${beyond === 1 ? "waits" : "wait"} for a later Start`;
+  return `${runs}${wait}.`;
 }
 
 /**
@@ -313,6 +317,7 @@ export function StartSessionDialog({
   const [notice, setNotice] = useState<string | null>(null);
   const [startedId, setStartedId] = useState<string | null>(null);
   const [checkTick, setCheckTick] = useState(0);
+  const [cancelled, setCancelled] = useState<string | null>(null);
   // What a session would do, with the budget typed so far (the project's default while empty).
   const typedChf = budgetTouched && budget.trim() ? chfToMicro(budget.replace(",", ".")) : null;
   const budgetUsdMicro =
@@ -336,6 +341,7 @@ export function StartSessionDialog({
       setBudgetTouched(false);
       setNote("");
       setError(null);
+      setCancelled(null);
     }
   }, [open]);
   const intake = useIntakeStatus(projectId, { enabled: open }).data?.state ?? null;
@@ -408,6 +414,11 @@ export function StartSessionDialog({
                 {plan}
               </p>
             ) : null}
+            {cancelled ? (
+              <p className="text-sm" data-testid="start-session-wait-cancelled">
+                {cancelled}
+              </p>
+            ) : null}
             {blocked ? (
               <div
                 role="note"
@@ -417,6 +428,24 @@ export function StartSessionDialog({
                 <p className="font-medium" data-testid="start-session-blocked">
                   {blocked.sentence}
                 </p>
+                {/* d1109-starts-engine S-10: the person's session waits to go on by itself;
+                    Cancel drops that, and its tasks wait for the next Start. */}
+                {blocked.kept ? (
+                  <Button
+                    onClick={() =>
+                      void client
+                        .cancelContinuation(projectId)
+                        .then((r) => {
+                          setCancelled(r.sentence);
+                          setCheckTick((t) => t + 1);
+                        })
+                        .catch((e: unknown) => setError(describeError(e)))
+                    }
+                    data-testid="start-session-cancel-wait"
+                  >
+                    Cancel the wait
+                  </Button>
+                ) : null}
                 {blocked.action ? (
                   blocked.action.kind === "resume" ? (
                     <Button onClick={() => void resume()} data-testid="start-session-unblock">
@@ -535,6 +564,13 @@ export function StartSessionDialog({
             {data?.busy && !blocked && !planning
               ? "Starts after the current session; then works until nothing more can run, the budget is used, or you stop it."
               : "Start: works until nothing more can run, the budget is used, or you stop it."}
+          </p>
+        )}
+        {/* d1109-starts-engine S-7 (ADR 0118, option C): what the person makes ready while the
+            session runs joins it only if its work budget has room; nothing else starts one. */}
+        {notice || blocked ? null : (
+          <p className="text-xs text-neutral-500" data-testid="start-session-join">
+            Work you make ready while it runs joins it if its budget has room.
           </p>
         )}
         <div className="flex justify-end gap-2">

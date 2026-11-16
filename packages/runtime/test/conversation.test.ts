@@ -600,7 +600,9 @@ describe("conversation agent over the command registry", () => {
     await w.store.close();
   });
 
-  it("starts a costly session only after yes; a cheap one starts at once", async () => {
+  // d1109-starts-engine S-11 (ADR 0118): a start said in chat is read back for the person's yes at
+  // any budget (before: a cheap one started at once).
+  it("starts a session only after yes, a costly one and a cheap one alike", async () => {
     const w = await setup();
     const r1 = await w.chat("start a session on pharmawatch with 20 francs");
     expect(r1.pendingConfirmation?.commands).toEqual(["session.start"]);
@@ -609,7 +611,9 @@ describe("conversation agent over the command registry", () => {
     expect(w.started).toHaveLength(1);
     expect(w.started[0]).toMatchObject({ projectId: w.pharma });
     const r3 = await w.chat("start a session on the game with 1 franc");
-    expect(r3.pendingConfirmation).toBeNull();
+    expect(r3.pendingConfirmation?.readback).toBe("Start a session on Game (up to CHF 1)?");
+    expect(w.started).toHaveLength(1);
+    await w.chat("yes");
     expect(w.started).toHaveLength(2);
     await w.store.close();
   });

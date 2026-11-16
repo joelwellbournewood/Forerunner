@@ -692,6 +692,33 @@ describe("leftovers7-tailrun, wave 13: Start keeps a credential wait, looking do
     );
     expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
   });
+
+  // d1109-starts-engine S-10 (ADR 0118): the person's session that waits to go on can be
+  // cancelled from the Start dialog; its tasks then wait for the next Start.
+  it("the person's session waiting to go on offers Cancel the wait; after it the work waits for the next Start", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Waits until 09:30 (your API key's limit); then your session goes on.",
+      save: null,
+      kept: true,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    await user.click(await within(dialog).findByTestId("start-session-cancel-wait"));
+    expect(await within(dialog).findByTestId("start-session-wait-cancelled")).toHaveTextContent(
+      "Cancelled: nothing goes on by itself; its tasks run at your next Start.",
+    );
+    expect(postedCalls(harness, "/projects/proj_atlas/continuation/cancel")).toHaveLength(1);
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("start-session-blocked")).toHaveTextContent(
+        "Nothing can run until 09:30 (your API key's limit); then it runs at your next Start.",
+      ),
+    );
+    expect(within(dialog).queryByTestId("start-session-cancel-wait")).toBeNull();
+  });
 });
 
 /**

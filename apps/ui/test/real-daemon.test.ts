@@ -18825,6 +18825,30 @@ describe("d1109-starts-engine, run C", () => {
       60_000,
     );
 
+  it("S-6: GET /projects/:id/start-check promises what the work budget holds: a follower it does not hold is in laterBeyond, not later", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Manual", goal: "A manual" });
+      const intro = await readyTask(rt, client, project.id, "Write the intro", 0.05);
+      const whole = await readyTask(rt, client, project.id, "Write the whole manual", 0.5);
+      await client.setTaskDependencies(whole.id, {
+        version: (await rt.store.task.mustGet(whole.id)).version,
+        dependsOn: [intro.id],
+      });
+      // CHF 0.20 a session: its work budget holds the intro, not the manual after it.
+      const check = await client.startCheck(project.id, { budgetUsdMicro: 250_000 });
+      expect(check.runnable.map((t) => t.title)).toEqual(["Write the intro"]);
+      expect(check.later).toEqual([]);
+      expect(check.laterBeyond.map((t) => t.title)).toEqual(["Write the whole manual"]);
+      // A budget that holds both promises both.
+      const roomy = await client.startCheck(project.id, { budgetUsdMicro: 2_000_000 });
+      expect(roomy.later.map((t) => t.title)).toEqual(["Write the whole manual"]);
+      expect(roomy.laterBeyond).toEqual([]);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
   it("S-1: with quiet hours on now POST /sessions starts at once and its session says the person asked; a hands_off start is held", async () => {
     const { rt, client } = await composeWithRolePlayer({});
     try {

@@ -894,6 +894,8 @@ export interface RuntimeApp {
         text: string;
         save: { label: string; to: string } | null;
         startable?: boolean;
+        /** S-10: the person's session (or a Start) is kept on the wait: Cancel drops it. */
+        kept?: boolean;
       } | null>;
     };
   };
@@ -3997,6 +3999,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       return {
         text: waitSentence(wait, { ...words, goesOn: !!kept, ...goesOnAtOf(wait, kept) }),
         save: wait.reason === "refused" ? saveLink(wait.kind) : null,
+        ...(kept ? { kept: true } : {}),
       };
     },
   };

@@ -522,3 +522,12 @@ in the next run") and answer 5 ("be able to wrap up and continue next time").
   files a card that asks, with a note on Continue, and is never made ready by itself: the wake at
   an outer limit leaves it out and, once the limit has room, files one question card for the same
   pause instead. Cards filed before this amendment read and answer as before.
+
+## Amendment 2026-11-16 (ADR 0118, d1109-starts-engine S-3): a raised or reset limit prepares the paused task
+
+The owner's decision D6 of 2026-11-09. Continue (CHF N more) on a pause's card is the person's
+start and starts a session at once, as before. A paused task woken by a raised budget, a raised
+monthly cap or a new month is ready again and prepared, not started: it joins a running session if
+its promise has room, else it waits for the next Start ("Ready again once you raise the monthly
+cap in Settings, or on 1 December; it runs at your next Start."; the row's detail "Ready again
+once that limit is raised or resets, for your next Start; or cancel it.").
