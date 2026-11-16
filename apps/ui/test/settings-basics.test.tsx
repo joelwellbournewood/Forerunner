@@ -33,13 +33,15 @@ describe("Settings Basics (design §6)", () => {
     ).toHaveAttribute("href", "/setup");
     // Budget per session, the monthly cap, the default autonomy by name and quiet hours.
     const rows = await basicRows();
+    // d1109-chat-depth: "Chat asks first" sits beside the monthly cap (design §6: the money rows).
     expect(rows.map((r) => r.dataset.key)).toEqual([
       "project.session_cap",
       "human.monthly_cap",
+      "human.chat_ask_above",
       "human.default_autonomy",
       "human.quiet_hours",
     ]);
-    const autonomy = rows[2] as HTMLElement;
+    const autonomy = rows[3] as HTMLElement;
     expect(within(autonomy).getByTestId("setting-value-cell")).toHaveTextContent(
       "Standard: routine, reversible actions run; the rest asks you",
     );
@@ -207,5 +209,37 @@ describe("Settings Basics (design §6)", () => {
     expect(await within(accounts).findByTestId("account-github")).toHaveTextContent(
       "GitHub: not connected",
     );
+  });
+});
+
+describe("d1109-chat-depth, run C: Settings, Basics, Chat asks first", () => {
+  it("reads 'Chat asks first before a stronger model or an answer over CHF 0.10', with what happens below it; any amount with a point or a comma, 0 taken, sent through settings.set", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/settings", harness);
+    const row = (
+      await within(await screen.findByTestId("settings-basics")).findAllByTestId("setting-row")
+    ).find((r) => r.dataset.key === "human.chat_ask_above") as HTMLElement;
+    // The row reads as one sentence: its label, then its value in words.
+    expect(within(row).getByTestId("setting-label")).toHaveTextContent("Chat asks first");
+    expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent(
+      /^before a stronger model or an answer over CHF 0\.10$/,
+    );
+    expect(within(row).getByTestId("setting-explain")).toHaveTextContent(
+      "Below that it thinks longer when it helps, on the same model.",
+    );
+    await user.click(within(row).getByTestId("setting-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    const input = within(dialog).getByTestId("setting-value");
+    await user.clear(input);
+    await user.type(input, "0");
+    expect(within(dialog).queryByTestId("setting-value-problem")).toBeNull();
+    await user.clear(input);
+    await user.type(input, "0,25");
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
+    expect(postedCalls(harness, "/commands/execute")[0]?.body).toMatchObject({
+      commands: [{ name: "settings.set", params: { key: "chat_ask_above", value: 0.25 } }],
+    });
   });
 });

@@ -223,7 +223,8 @@ describe("Settings", () => {
     // merge-in-app), "Web pages research may read" for Atlas and Beacon ('sites'), less the three
     // that change nothing (language, the model provider, chat.model): design §6 hides them.
     // polish-screens: each project's budget row too (Atlas and Beacon), as the daemon lists it.
-    expect(rows).toHaveLength(22);
+    // d1109-chat-depth: "Chat asks first" (chat_ask_above) is one more.
+    expect(rows).toHaveLength(23);
     const advanced = screen.getByTestId("settings-advanced");
     for (const row of rows) {
       // Every row under Advanced names its scope; in Basics a project's row names the project

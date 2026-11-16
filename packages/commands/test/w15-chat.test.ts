@@ -45,8 +45,12 @@ describe("w15-chat, wave 15", () => {
     expect(lines).toContain(
       "- speed_quality_offset (per project): Shifts every mode's default effort one step per project: -1 speed, 0 balanced, +1 quality. Value: integer from -1 to 1.",
     );
+    // d1109-chat-depth (run C3): the amount above which chat asks first, appended last.
+    expect(lines.at(-1)).toBe(
+      "- chat_ask_above (for the person): The CHF above which one chat answer asks first before it thinks longer (a stronger model always asks first). 0: chat asks before every longer answer. Unset: CHF 0.10. Value: number. For example 0.1 or 0.",
+    );
     // Every key has its line.
-    expect(lines.filter((l) => l.startsWith("- "))).toHaveLength(21);
+    expect(lines.filter((l) => l.startsWith("- "))).toHaveLength(22);
     // What the model's tool schema says of `value` (before: `{}`).
     const schema = z.toJSONSchema(settingsSet.params) as {
       properties: Record<string, { description?: string }>;

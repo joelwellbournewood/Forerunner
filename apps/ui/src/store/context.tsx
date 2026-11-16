@@ -19,6 +19,7 @@ import {
   createSpeechAnnouncer,
   type SpeechAnnouncer,
 } from "../lib/speech.ts";
+import { conversationKey, loadConversation } from "./conversation.ts";
 import {
   defaultAgent,
   desktopControlFromIndicator,
@@ -145,6 +146,12 @@ export function AppProvider({
                 .project(event.data.id)
                 .then((project) => store.dispatch({ type: "project.upsert", project }))
                 .catch(() => {});
+            } else if (event.event === "conversation.changed") {
+              // d1109-chat-depth: a turn started, took a step or ended: a conversation a screen
+              // shows is read again (the answering line after a reload, the other surface's reply).
+              const key = conversationKey(event.data.projectId);
+              if (store.getState().conversations[key])
+                void loadConversation(client, store, event.data.projectId);
             } else if (event.event === "agent.changed") {
               // Renamed in Settings, here or in another window (U-025).
               void refreshIdentity(client, store).catch(() => {});

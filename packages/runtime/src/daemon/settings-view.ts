@@ -117,6 +117,18 @@ export function settingsView(input: SettingsViewInput): Row[] {
       risk: "medium",
     }),
     human({
+      // d1109-chat-depth (the owner's answer 2 of 2026-11-09): the CHF above which one chat answer
+      // asks first; a stronger model always asks. Stored in CHF (`chat_ask_above`), CHF 0.10 unset.
+      key: "human.chat_ask_above",
+      label: "Chat asks first",
+      value: (() => {
+        const v = prefOf(h, "chat_ask_above");
+        return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0.1;
+      })(),
+      description: "Below that it thinks longer when it helps, on the same model.",
+      risk: "medium",
+    }),
+    human({
       key: "human.timezone",
       label: "Time zone",
       value: h.timezone,

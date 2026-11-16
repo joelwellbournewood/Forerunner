@@ -73,6 +73,7 @@ import { type ScriptedReply, textReply, toolReply } from "../../../testenv/src/p
 import { streamChat } from "../src/api/chat-stream.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
+import { readSseStream } from "../src/api/sse.ts";
 import { formatChf, formatMoney } from "../src/lib/money.ts";
 import { currentFromLog, taskStepsFromLog } from "../src/lib/session-steps.ts";
 import {
@@ -18693,4 +18694,287 @@ describe("d1109-oversize-pause, run C", () => {
       await rt.close();
     }
   }, 120_000);
+});
+
+/**
+ * d1109-chat-depth (run C, ADR 0114; the owner's words of 2026-11-09: "There should be something
+ * indicating what the chat is doing when waiting", "knowing that this will take more time to
+ * reply"): `POST /chat/stream`'s turn and step frames, Stop and Answer now on a turn in flight
+ * (`POST /chat/turns/:id/stop`, `/answer-now`), the conversation view's `answering` and its
+ * closed and failed lines, and `/events`' conversation.changed, on the bench's stand-in with
+ * FORERUNNER_BENCH_CHAT_HOLD_MS holding the chat call.
+ */
+describe("d1109-chat-depth, run C", () => {
+  async function open(home: string, env: Record<string, string> = {}) {
+    const provider = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0", ...env },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock: new SystemClock(),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    return { rt, client, me, agentId };
+  }
+
+  it("POST /chat/stream: a line that reads the last session gets the turn frame first, then the step 'Reading the last session…', then the tokens and the reply; a client that ignores step frames still gets its reply", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-d1109-chat-depth-"));
+    const a = await open(home);
+    try {
+      const project = await a.client.createProject({ name: "Bakery", goal: "A page" });
+      const order: string[] = [];
+      let turnId = "";
+      const steps: string[] = [];
+      const reply = await streamChat(
+        a.client,
+        {
+          humanId: a.me.id,
+          agentId: a.agentId,
+          projectId: project.id,
+          projectTab: true,
+          text: "tool: session_last {}",
+          source: "text",
+        },
+        {
+          onTurn: (t) => {
+            order.push("turn");
+            turnId = t.turnId;
+          },
+          onStep: (s) => {
+            order.push("step");
+            steps.push(s.text);
+          },
+          onToken: () => {
+            if (order.at(-1) !== "token") order.push("token");
+          },
+        },
+      );
+      // The turn frame first; the step before the answer's tokens (the stand-in writes "Running
+      // session_last." before its tool call, so a token may come before the step too).
+      expect(order[0]).toBe("turn");
+      expect(order.lastIndexOf("token")).toBeGreaterThan(order.indexOf("step"));
+      expect(turnId).toBe(reply.transcriptId);
+      expect(steps).toContain("Reading the last session…");
+      for (const s of steps) {
+        expect(s.length).toBeLessThanOrEqual(80);
+        expect(s).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
+      }
+      expect(reply.depth).toBe("quick");
+      expect(reply.footer).toBeNull();
+      // A client that knows only tokens and the reply (the phone, an older shell) still gets it.
+      const plain = await streamChat(a.client, {
+        humanId: a.me.id,
+        agentId: a.agentId,
+        projectId: project.id,
+        projectTab: true,
+        text: "what is left?",
+        source: "text",
+      });
+      expect(plain.reply).toContain("[stand-in model]");
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+
+  it("Stop on a held turn: {stopped: true}, the reply says what it cost; another person's Stop is 403; a finished turn's Stop is {stopped: false}; a dropped stream does not stop a turn; the view's answering and /events' conversation.changed follow it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-d1109-chat-depth-stop-"));
+    const a = await open(home, { FORERUNNER_BENCH_CHAT_HOLD_MS: "600000" });
+    const events = new AbortController();
+    try {
+      const project = await a.client.createProject({ name: "Bakery", goal: "A page" });
+      // /events: what the screens hear about the conversation.
+      const heard: { projectId: string | null }[] = [];
+      const res = await a.client.raw({
+        method: "GET",
+        path: "/events",
+        accept: "text/event-stream",
+        signal: events.signal,
+      });
+      void (async () => {
+        try {
+          for await (const f of readSseStream(res))
+            if (f.event === "conversation.changed") heard.push(JSON.parse(f.data));
+        } catch {
+          // closed at the end of the test
+        }
+      })();
+      let turnId = "";
+      const pending = streamChat(
+        a.client,
+        {
+          humanId: a.me.id,
+          agentId: a.agentId,
+          projectId: project.id,
+          projectTab: true,
+          text: "what is left?",
+          source: "text",
+        },
+        { onTurn: (t) => (turnId = t.turnId) },
+      );
+      await eventually(
+        async () => turnId !== "",
+        "the turn frame",
+        async () => turnId,
+        10_000,
+      );
+      // The view after a reload: the person's line with the answering line and Stop.
+      const during = await a.client.conversation(project.id);
+      expect(during.answering).toMatchObject({ turnId, step: null, depth: "quick" });
+      expect(during.turns.at(-1)).toMatchObject({ id: turnId, reply: null });
+      expect(during.turns.at(-1)?.interrupted).toBeUndefined();
+      // Another person's Stop is refused.
+      await expect(a.client.stopChatTurn(turnId, "someone-else")).rejects.toMatchObject({
+        status: 403,
+      });
+      expect(await a.client.stopChatTurn(turnId)).toEqual({ stopped: true });
+      const reply = await pending;
+      expect(reply.footer).toMatch(/^You stopped this answer: (?:under )?CHF \d+\.\d{2} spent\.$/);
+      expect(await a.client.stopChatTurn(turnId)).toEqual({ stopped: false });
+      expect(await a.client.answerNow(turnId)).toEqual({ done: false });
+      const after = await a.client.conversation(project.id);
+      expect(after.answering).toBeNull();
+      expect(after.turns.at(-1)?.reply?.footer).toBe(reply.footer);
+      await eventually(
+        async () => heard.filter((h) => h.projectId === project.id).length >= 2,
+        "conversation.changed at the turn's start and end (10 s)",
+        async () => JSON.stringify(heard),
+        10_000,
+      );
+
+      // A dropped stream (a reload, a closed Talk panel) does not stop the turn.
+      const drop = new AbortController();
+      let second = "";
+      const dropped = streamChat(
+        a.client,
+        {
+          humanId: a.me.id,
+          agentId: a.agentId,
+          projectId: project.id,
+          projectTab: true,
+          text: "and now?",
+          source: "text",
+        },
+        { signal: drop.signal, onTurn: (t) => (second = t.turnId) },
+      ).catch(() => null);
+      await eventually(
+        async () => second !== "",
+        "the second turn frame",
+        async () => second,
+        10_000,
+      );
+      drop.abort();
+      // The turn goes on: still answering after the client went away (well within the quick
+      // pass's 30 s timeout), until Stop ends it.
+      await new Promise((r) => setTimeout(r, 200));
+      expect((await a.client.conversation(project.id)).answering?.turnId).toBe(second);
+      expect(await a.client.stopChatTurn(second)).toEqual({ stopped: true });
+      await dropped;
+      await eventually(
+        async () => (await a.client.conversation(project.id)).answering === null,
+        "the dropped turn to end on Stop (10 s)",
+        async () => JSON.stringify((await a.client.conversation(project.id)).answering),
+        10_000,
+      );
+      expect((await a.client.conversation(project.id)).turns.at(-1)?.reply?.footer).toMatch(
+        /^You stopped this answer/,
+      );
+    } finally {
+      events.abort();
+      await a.rt.close();
+    }
+  }, 60_000);
+
+  it("GET /settings: 'Chat asks first' is CHF 0.10 unset; settings.set chat_ask_above 0.05 acts at once, 1.00 is read back, and the value is the same after the daemon composes again", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-d1109-chat-depth-setting-"));
+    const a = await open(home);
+    try {
+      const row = async (c: DaemonClient) =>
+        (await c.settings()).find((x) => x.key === "human.chat_ask_above");
+      expect(await row(a.client)).toMatchObject({
+        label: "Chat asks first",
+        value: 0.1,
+        description: "Below that it thinks longer when it helps, on the same model.",
+      });
+      const lower = await a.client.executeCommands({
+        commands: [{ name: "settings.set", params: { key: "chat_ask_above", value: 0.05 } }],
+        wordsUsed: "Chat asks first (Settings)",
+        source: "ui",
+      });
+      expect(lower.status).toBe("done");
+      const higher = await a.client.executeCommands({
+        commands: [{ name: "settings.set", params: { key: "chat_ask_above", value: 1 } }],
+        wordsUsed: "Chat asks first (Settings)",
+        source: "ui",
+      });
+      expect(higher.status).toBe("pending");
+      expect((await row(a.client))?.value).toBe(0.05);
+    } finally {
+      await a.rt.close();
+    }
+    const b = await open(home);
+    try {
+      expect((await b.client.settings()).find((x) => x.key === "human.chat_ask_above")?.value).toBe(
+        0.05,
+      );
+    } finally {
+      await b.rt.close();
+    }
+  }, 60_000);
+
+  it("a line Forerunner closed on before answering reads as interrupted after the daemon composes again on the same home", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-d1109-chat-depth-closed-"));
+    const a = await open(home);
+    let projectId = "";
+    try {
+      const project = await a.client.createProject({ name: "Bakery", goal: "A page" });
+      projectId = project.id;
+      // The daemon wrote the person's line and closed before the reply (a crash mid-turn).
+      const sessionId = await a.rt.conversation?.conversationSessionId(a.agentId, project.id);
+      await a.rt.store.event.append(sessionId ?? "", "chat.human", {
+        transcriptId: "t-cut-off",
+        text: "what did the first session do?",
+        source: "text",
+        conversationProjectId: project.id,
+      } as never);
+    } finally {
+      await a.rt.close();
+    }
+    await new Promise((r) => setTimeout(r, 20));
+    const b = await open(home);
+    try {
+      const view = await b.client.conversation(projectId);
+      const turn = view.turns.find((t) => t.id === "t-cut-off");
+      expect(turn).toMatchObject({ reply: null, interrupted: true });
+      expect(turn?.failed).toBeUndefined();
+      expect(view.answering).toBeNull();
+    } finally {
+      await b.rt.close();
+    }
+  }, 60_000);
 });

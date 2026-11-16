@@ -11,9 +11,13 @@ import {
   type ChangeLogView,
   ChangeLogView as ChangeLogViewSchema,
   type ChangeMilestoneBody as ChangeMilestoneBodySchema,
+  type ChatAnswerNowView,
+  ChatAnswerNowView as ChatAnswerNowViewSchema,
   type ChatReplyView,
   ChatReplyView as ChatReplyViewSchema,
   type ChatRequestBody,
+  type ChatStopView,
+  ChatStopView as ChatStopViewSchema,
   type CommandConfirmBody,
   type CommandDefView,
   CommandDefView as CommandDefViewSchema,
@@ -583,6 +587,13 @@ export interface DaemonClient {
    * turns the Chat tab and Talk show and the change still waiting for a yes.
    */
   conversation(projectId: string | null, signal?: AbortSignal): Promise<ConversationView>;
+  /**
+   * d1109-chat-depth: Stop on an answer being made (`POST /chat/turns/:id/stop`): its runs end,
+   * the changes it made stay with their Undo; `{stopped: false}` when it had ended already.
+   */
+  stopChatTurn(turnId: string, humanId?: string): Promise<ChatStopView>;
+  /** d1109-chat-depth: Answer now on a longer answer: its next step answers from what it has. */
+  answerNow(turnId: string): Promise<ChatAnswerNowView>;
   // Read aloud (spec A.6, L.6; ADR 0063): the daemon's voice provider reads a summary;
   // `lib/speech.ts` follows the utterance's stream and plays the frames.
   speakProject(id: string, body?: SpeakBody): Promise<SpeakView>;
@@ -1055,6 +1066,10 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("project", { id }), ProjectCardSchema, undefined, signal),
     projectSummary: (id, signal) =>
       get(routePath("projectSummary", { id }), ProjectSummarySchema, undefined, signal),
+    stopChatTurn: (turnId, humanId) =>
+      post(routePath("chatStop", { id: turnId }), ChatStopViewSchema, humanId ? { humanId } : {}),
+    answerNow: (turnId) =>
+      post(routePath("chatAnswerNow", { id: turnId }), ChatAnswerNowViewSchema, {}),
     conversation: (projectId, signal) =>
       projectId
         ? get(

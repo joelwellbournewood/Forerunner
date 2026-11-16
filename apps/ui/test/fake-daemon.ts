@@ -5,6 +5,7 @@ import type {
   BillingOrderSourceView,
   BillingOrderView,
   ChangeLogView,
+  ChatOfferView as ChatOfferViewT,
   ChatReplyView,
   CommandResultJson,
   ConsolidationProposalView,
@@ -669,6 +670,29 @@ export interface FakeDaemonState {
    */
   nextChatSources: { kind: string; title: string; date: string; link: string | null }[] | null;
   /**
+   * d1109-chat-depth: what the next `/chat` or `/chat/stream` turn does beyond its reply, as the
+   * daemon does it: its step lines (with `reset` on a hand-over), a hold until Stop or Answer now
+   * (`hold`), how deep it went and the lines under it (`footer`, `offer`).
+   */
+  nextChatTurn: {
+    steps?: { text: string; reset?: boolean }[];
+    hold?: boolean;
+    depth?: string;
+    footer?: string | null;
+    offer?: ChatOfferViewT | null;
+  } | null;
+  /** d1109-chat-depth: the turn being answered now (the conversation's `answering`; Stop ends it). */
+  answering: {
+    turnId: string;
+    key: string;
+    step: string | null;
+    since: string;
+    depth: string;
+    stopped: boolean;
+    answeredNow: boolean;
+    release: () => void;
+  } | null;
+  /**
    * The conversations as the daemon stores them (design §3.9): one per project (the key is
    * the project id; "" for the one outside any project), each turn as
    * `GET /projects/:id/conversation` shows it. `/chat` and `/chat/stream` append to them.
@@ -1232,6 +1256,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     pendingConfirmation: null,
     nextChatReply: null,
     nextChatSources: null,
+    nextChatTurn: null,
+    answering: null,
     conversations: new Map(),
     nextChatActions: null,
     listeners: new Set(),
@@ -1428,6 +1454,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.nextChatReply = null;
     state.nextChatActions = null;
     state.nextChatSources = null;
+    state.nextChatTurn = null;
+    state.answering?.release();
+    state.answering = null;
     state.extensions = clone(EXTENSIONS);
     state.voiceStatus = initialVoiceStatus(options);
     state.version = HEALTH.version;
@@ -3848,6 +3877,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         card: reply.pendingConfirmation ? "waiting" : null,
         // d1109-chat-recall: the records the reply rests on, as the daemon keeps them.
         ...(reply.sources?.length ? { sources: reply.sources } : {}),
+        // d1109-chat-depth: how deep it went and the lines under it.
+        depth: reply.depth ?? "quick",
+        footer: reply.footer ?? null,
+        offer: reply.offer ?? null,
       },
     });
     // A yes or a no answers the card read back before it.
@@ -3885,9 +3918,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         : null,
     }));
     const waiting = turns.find((t) => t.reply?.waiting);
+    // As the daemon: only the newest answer's offer can be taken.
+    turns.forEach((t, i) => {
+      if (t.reply?.offer && i < turns.length - 1)
+        t.reply = { ...t.reply, offer: { ...t.reply.offer, action: null } };
+    });
+    const a = state.answering && state.answering.key === key ? state.answering : null;
     return {
       projectId: key || null,
       turns,
+      answering: a ? { turnId: a.turnId, step: a.step, since: a.since, depth: a.depth } : null,
       waiting:
         waiting && state.pendingConfirmation
           ? {
@@ -3917,22 +3957,113 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/chat", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    const reply = keepTurn(
-      parsed.data,
-      chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
-    );
+    const extra = state.nextChatTurn;
+    state.nextChatTurn = null;
+    const reply = keepTurn(parsed.data, {
+      ...chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
+      depth: extra?.depth ?? "quick",
+      footer: extra?.footer ?? null,
+      offer: extra?.offer ?? null,
+    });
     heardChat(reply, parsed.data.projectId);
     return c.json(reply);
+  });
+  // d1109-chat-depth: Stop and Answer now on the turn being answered, as the daemon answers them.
+  app.post("/chat/turns/:id/stop", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { humanId?: unknown };
+    if (typeof body.humanId === "string" && body.humanId !== ME.id)
+      return errorBody(c, 403, "not_yours", "not your conversation");
+    const a = state.answering;
+    if (!a || a.turnId !== c.req.param("id")) return c.json({ stopped: false });
+    a.stopped = true;
+    a.step = "Stopping…";
+    a.release();
+    return c.json({ stopped: true });
+  });
+  app.post("/chat/turns/:id/answer-now", (c) => {
+    const a = state.answering;
+    if (!a || a.turnId !== c.req.param("id") || a.depth === "quick") return c.json({ done: false });
+    a.answeredNow = true;
+    a.release();
+    return c.json({ done: true });
   });
   app.post("/chat/stream", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    const reply = keepTurn(
-      parsed.data,
-      chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
-    );
-    heardChat(reply, parsed.data.projectId);
+    const extra = state.nextChatTurn;
+    state.nextChatTurn = null;
+    const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
+    const key = parsed.data.projectId ?? "";
+    const startedAt = new Date().toISOString();
+    // d1109-chat-depth: a held turn is in its conversation without a reply (the daemon wrote the
+    // person's line) and in flight (answering) until Stop or Answer now ends it.
+    if (extra?.hold) {
+      const turns = state.conversations.get(key) ?? [];
+      turns.push({
+        id: base.transcriptId,
+        at: startedAt,
+        said: parsed.data.text,
+        source: parsed.data.source ?? "text",
+        reply: null,
+      });
+      state.conversations.set(key, turns);
+    }
+    let release: () => void = () => undefined;
+    const ended = new Promise<void>((r) => {
+      release = r;
+    });
+    if (extra?.hold)
+      state.answering = {
+        turnId: base.transcriptId,
+        key,
+        step: extra.steps?.at(-1)?.text ?? null,
+        since: startedAt,
+        depth: extra.depth ?? "quick",
+        stopped: false,
+        answeredNow: false,
+        release,
+      };
+    const finish = (): ChatReplyView => {
+      const stopped = state.answering?.turnId === base.transcriptId && state.answering.stopped;
+      if (state.answering?.turnId === base.transcriptId) state.answering = null;
+      const reply: ChatReplyView = {
+        ...base,
+        ...(stopped ? { reply: "" } : {}),
+        depth: extra?.depth ?? "quick",
+        footer: stopped
+          ? "You stopped this answer: under CHF 0.01 spent."
+          : (extra?.footer ?? null),
+        offer: stopped ? null : (extra?.offer ?? null),
+      };
+      if (extra?.hold) {
+        const turns = state.conversations.get(key) ?? [];
+        state.conversations.set(
+          key,
+          turns.filter((t) => t.id !== base.transcriptId),
+        );
+      }
+      keepTurn(parsed.data, reply);
+      heardChat(reply, parsed.data.projectId);
+      emit("conversation.changed", { projectId: parsed.data.projectId ?? null });
+      return reply;
+    };
+    if (extra?.hold) emit("conversation.changed", { projectId: parsed.data.projectId ?? null });
     return streamSSE(c, async (stream) => {
+      await stream.writeSSE({
+        event: "turn",
+        data: JSON.stringify({ turnId: base.transcriptId, startedAt }),
+      });
+      for (const step of extra?.steps ?? [])
+        await stream.writeSSE({
+          event: "step",
+          data: JSON.stringify({
+            text: step.text,
+            at: new Date().toISOString(),
+            ...(step.reset ? { reset: true } : {}),
+          }),
+        });
+      if (extra?.hold) await ended;
+      const reply = finish();
       const words = reply.reply.split(/(\s+)/).filter((w) => w.length > 0);
       for (const w of words) {
         await stream.writeSSE({ event: "token", data: JSON.stringify({ text: w }) });
@@ -5942,6 +6073,50 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
             return {
               before: { key, project_id: project.id, value: had ?? null },
               after: { key, project_id: project.id, value },
+            };
+          },
+        };
+      }
+      if (key === "chat_ask_above" && typeof params.value === "number") {
+        // d1109-chat-depth, as SETTING_SPECS.chat_ask_above: a lower amount acts at once, a
+        // higher one is read back; a negative amount is refused in words; the same is refused.
+        const value = params.value;
+        if (!Number.isFinite(value) || value < 0)
+          return refuse(
+            "The amount is in CHF, 0 or more: 0 makes chat ask before every longer answer.",
+          );
+        const had = state.settingValues.chat_ask_above;
+        const before = typeof had === "number" ? had : 0.1;
+        const words = (v: number) =>
+          v <= 0 ? "asks before every longer answer" : `asks first above CHF ${v.toFixed(2)}`;
+        const what = "the amount above which chat asks first";
+        if (before === value && had !== undefined)
+          return refuse(`The amount above which chat asks first is already ${words(before)}.`);
+        const r: Risk = value < before ? "low" : risk;
+        return {
+          name,
+          params,
+          risk: r,
+          card: card(
+            {
+              command: name,
+              what,
+              oldValue: words(before),
+              newValue: words(value),
+              ask: `Set ${what} to ${words(value)}?`,
+              scope: "global",
+              sentence: `Set ${what} from ${words(before)} to ${words(value)}. Undo.`,
+              projectId: null,
+              projectName: null,
+              usesActiveProject: false,
+            },
+            r,
+          ),
+          apply: () => {
+            state.settingValues.chat_ask_above = value;
+            return {
+              before: { key, project_id: null, value: had ?? null },
+              after: { key, project_id: null, value },
             };
           },
         };
