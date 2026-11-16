@@ -16,9 +16,13 @@ import {
  *
  * 1. "Waiting for you: approve the plan" / "Waiting for you: 2 questions" / "Waiting for you:
  *    1 sign-off and 1 paused task" (the cards' kinds, linking the oldest card)
- * 2. "Working on "Style the page" (3 of 7 done)"
+ * 2. "Working on "Style the page" (3 of 7 done)"; what waits to start (d1109-run-visible V-3):
+ *    "Waiting until 15:40 (your subscription's limit), then it goes on" [Cancel] (the person's
+ *    session waiting to go on), "Starts at 15:40 (your subscription's limit)" [Cancel] (a Start
+ *    kept for the reset), "Starts after your quiet hours" (a held hands-off start), 'Starts after
+ *    the session on "Garden site"' (a person start waiting behind another project's session)
  * 3. "Stuck: "Style the page" failed; 4 tasks wait on it" / "Waiting for Docker: 1 task"
- * 4. "Ready to continue: 3 tasks ready"
+ * 4. "Ready: 3 tasks wait for your Start" [Continue] (D6: only the person's Start starts work)
  * 5. "Drafting the plan…" / "Planning failed: <short reason>" [Try again] / "You rejected the
  *    plan. Nothing was written." [Draft a new plan]; without Claude the button is Connect Claude
  * 6. "Done: all 7 tasks." [Open your files]; a repository project: "Done: all 6 tasks. 6 pull
@@ -104,7 +108,25 @@ export interface ProjectStatusInput {
    * it runs; its sessions, changes and costs stay readable).
    */
   joinedInto?: { text: string; projectId: string } | null;
+  /**
+   * d1109-run-visible (V-3): what waits to start for the project, said on its line after the
+   * working rule: the person's own session waiting to go on after its credential wait (the
+   * wait's words, "Waiting until 15:40 (your subscription's limit)"; a refusal's with where a new
+   * key is saved), a Start kept for the reset ("Starts at 15:40 (your subscription's limit)"),
+   * a hands-off start quiet hours hold, a person start waiting behind another project's session.
+   */
+  startsWait?: StartsWait | null;
 }
+
+/** What waits to start for a project (`ProjectStatusInput.startsWait`). */
+export type StartsWait =
+  | { kind: "continuation"; head: string; save?: { label: string; to: string } | null }
+  | { kind: "kept_start"; head: string }
+  | { kind: "held" }
+  | { kind: "queued"; behind: string };
+
+/** Cancel on a wait that goes on or starts by itself (POST /projects/:id/continuation/cancel). */
+const CANCEL_WAIT = { kind: "cancel", label: "Cancel", to: null } as const;
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -154,6 +176,14 @@ function cardKindsWords(cards: readonly { change_card?: unknown }[]): string {
 
 /** Status sentence length (design §5 rule 1). */
 const STATUS_MAX = 80;
+
+/** A status sentence within `STATUS_MAX`, cut at a word (a long project or task name). */
+function fitStatus(text: string): string {
+  if (text.length <= STATUS_MAX) return text;
+  const cut = text.slice(0, STATUS_MAX - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > STATUS_MAX / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
 const PLAN_FAILED = "Planning failed";
 /** Connect Claude: the setup assistant, as the header's no-key bar opens it (design §3.1). */
 const CONNECT_CLAUDE = { kind: "link", label: "Connect Claude", to: "/setup" } as const;
@@ -292,6 +322,29 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
     };
   }
 
+  // 2b. What waits to start (d1109-run-visible V-3; D6, the owner: "the user clearly states when a
+  // session will run"): the person's own session going on, a kept Start, a held hands-off start
+  // or a person start behind another project's session, each said with when, Cancel where it
+  // starts by itself.
+  const sw = input.startsWait;
+  if (sw?.kind === "continuation")
+    return {
+      // A refusal needs the person (a new key); a limit needs nothing but time.
+      kind: sw.save ? "waiting" : "paused",
+      text: fitStatus(`${sw.head}, then it goes on`),
+      action: sw.save ? { kind: "link", label: sw.save.label, to: sw.save.to } : { ...CANCEL_WAIT },
+    };
+  if (sw?.kind === "kept_start")
+    return { kind: "paused", text: fitStatus(sw.head), action: { ...CANCEL_WAIT } };
+  if (sw?.kind === "queued")
+    return {
+      kind: "paused",
+      text: fitStatus(`Starts after the session on "${shortTitle(sw.behind, 40)}"`),
+      action: null,
+    };
+  if (sw?.kind === "held")
+    return { kind: "paused", text: "Starts after your quiet hours", action: null };
+
   // 3. Stuck: a task that failed or was cancelled holds others back; or Docker is not ready.
   const stuck = input.tasks.filter((t) => keyOf(t) === "stuck");
   if (stuck.length > 0) {
@@ -367,9 +420,11 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
             ? { kind: "link", label: wait.save.label, to: wait.save.to }
             : null,
       };
+    // d1109-run-visible (V-3, rewording w15-words' "Ready to continue: 3 tasks ready"): only the
+    // person's Start starts work (D6), so the line says what the work waits for.
     return {
       kind: "ready",
-      text: `Ready to continue: ${n} ready`,
+      text: `Ready: ${plural(ready.length, "task waits", "tasks wait")} for your Start`,
       action: { kind: "start", label: "Continue", to: null },
     };
   }

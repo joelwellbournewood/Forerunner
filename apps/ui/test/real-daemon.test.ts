@@ -1275,7 +1275,7 @@ describe("the UI client against the real daemon", () => {
     const ready = await client.project(own.id);
     expect(ready.statusLine).toEqual({
       kind: "ready",
-      text: "Ready to continue: 1 task ready",
+      text: "Ready: 1 task waits for your Start",
       action: { kind: "start", label: "Continue", to: null },
     });
     expect(ready.progress).toEqual({ done: 0, total: 2 });
@@ -1284,7 +1284,7 @@ describe("the UI client against the real daemon", () => {
     expect(typeof (await client.me()).provider).toBe("string");
     // The list Home reads carries the same sentence.
     expect((await client.projects()).find((p) => p.id === own.id)?.statusLine?.text).toBe(
-      "Ready to continue: 1 task ready",
+      "Ready: 1 task waits for your Start",
     );
     // The Overview's Next, computed when read.
     expect((await client.projectSummary(own.id)).next).toEqual([
@@ -6345,7 +6345,7 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
       await client.resume();
     }
     expect((await client.projects()).find((p) => p.id === project.id)?.statusLine).toMatchObject({
-      text: "Ready to continue: 1 task ready",
+      text: "Ready: 1 task waits for your Start",
       action: { kind: "start", label: "Continue" },
     });
     // Nothing is left ready for the next case's session.
@@ -8483,7 +8483,9 @@ describe("the UI client against the real daemon: a Claude credential at its limi
       ]);
       expect((await client.project(notes.id)).statusLine).toEqual({
         kind: "waiting",
-        text: "Waiting for a new API key: 2 tasks",
+        // d1109-run-visible (V-3): the person's session that waits for the key goes on once
+        // one is saved, and the line says so (it read "Waiting for a new API key: 2 tasks").
+        text: "Waiting for a new API key, then it goes on",
         action: { kind: "link", label: "Save a new key", to: "/setup" },
       });
       // One request reached Anthropic, and was refused.
@@ -11481,8 +11483,9 @@ describe("leftovers7-tailrun, wave 13", () => {
       expect(await rt.store.session.list({ project_id: started.id } as never)).toEqual([]);
       expect(await waitsOnKey()).toEqual([started.id]);
       // The project's status says when it starts.
+      // d1109-run-visible (V-3): said with Cancel on the project's line (it read "...: 1 task").
       expect((await client.project(started.id)).statusLine?.text).toBe(
-        "Starts at 09:30 (your API key's limit): 1 task",
+        "Starts at 09:30 (your API key's limit)",
       );
       // From then on its check says the person's session goes on (true now), with Start off.
       expect((await client.startCheck(started.id)).blocked).toEqual({
@@ -15035,7 +15038,7 @@ describe("w15-words, wave 15 run B", () => {
         });
         // With the key serving, the line reads as today.
         expect((await client.project(project.id)).statusLine).toMatchObject({
-          text: "Ready to continue: 1 task ready",
+          text: "Ready: 1 task waits for your Start",
           action: { kind: "start", label: "Continue" },
         });
         // The only key rests until 08:30 UTC (09:30 in Zurich): another session met its limit.
@@ -21026,6 +21029,12 @@ describe("d1109-run-visible, run C", () => {
       expect(await texts()).toEqual([
         'Quote page · the coder works on "Write A" · then Garden site',
       ]);
+      // V-3: Garden site's own line says when it starts.
+      expect((await client.project(garden.id)).statusLine).toEqual({
+        kind: "paused",
+        text: 'Starts after the session on "Quote page"',
+        action: null,
+      });
       rt.scheduler.cancelPending(agentId, "test cleanup", queued.startId);
       expect(await texts()).toEqual(['Quote page · the coder works on "Write A"']);
       // The run ends; the critic checks it.
@@ -21326,6 +21335,12 @@ describe("d1109-run-visible, run C: a person's session waiting to go on", () => 
         text: "Quote page · waiting until 11:40, then it goes on",
         waiting: true,
       });
+      // V-3: the project's line says it too, with Cancel.
+      expect((await client.project(project.id)).statusLine).toEqual({
+        kind: "paused",
+        text: "Waiting until 11:40 (your subscription's limit), then it goes on",
+        action: { kind: "cancel", label: "Cancel", to: null },
+      });
       // The person's quiet hours cover the reset: it goes on when they end.
       const me = await rt.store.human.mustGet(rt.human.id);
       await rt.store.human.update(me.id, me.version, {
@@ -21347,13 +21362,46 @@ describe("d1109-run-visible, run C: a person's session waiting to go on", () => 
       expect((await second.client.running()).map((v) => [v.text, v.sessionId, v.cancel])).toEqual([
         ["Quote page · waiting until 11:40, then it goes on", sessionId, true],
       ]);
+      expect((await second.client.project(projectId)).statusLine?.text).toBe(
+        "Waiting until 11:40 (your subscription's limit), then it goes on",
+      );
       // Cancel (POST /projects/:id/continuation/cancel): nothing waits to go on any more.
       expect((await second.client.cancelContinuation(projectId)).cancelled).toBe(true);
       expect(await second.client.running()).toEqual([]);
       expect((await second.client.health()).running).toBeNull();
+      expect((await second.client.project(projectId)).statusLine?.text).toBe(
+        // The tasks' own wait (the credential-wait rule): nothing goes on by itself now.
+        "Waiting until 11:40 (your subscription's limit): 1 task",
+      );
+      // The person presses Start while the credential rests: the Start is kept for the reset,
+      // said on the project's line with Cancel, never on the run indicator (nothing runs yet).
+      const agentId = (await second.client.agents())[0]?.id ?? "";
+      const kept = await second.client.startSession({ agentId, projectId });
+      expect(kept.result).toBe("kept");
+      expect((await second.client.project(projectId)).statusLine).toEqual({
+        kind: "paused",
+        text: "Starts at 11:40 (your subscription's limit)",
+        action: { kind: "cancel", label: "Cancel", to: null },
+      });
+      expect(await second.client.running()).toEqual([]);
     } finally {
       await settleSessions(second.rt);
       await second.rt.close();
+    }
+    // And again after a restart; Cancel drops it.
+    const third = await compose(home, calls);
+    try {
+      expect((await third.client.project(projectId)).statusLine?.text).toBe(
+        "Starts at 11:40 (your subscription's limit)",
+      );
+      expect((await third.client.cancelContinuation(projectId)).cancelled).toBe(true);
+      expect((await third.client.project(projectId)).statusLine?.text).toBe(
+        // The tasks' own wait (the credential-wait rule): nothing goes on by itself now.
+        "Waiting until 11:40 (your subscription's limit): 1 task",
+      );
+    } finally {
+      await settleSessions(third.rt);
+      await third.rt.close();
     }
   }, 120_000);
 });

@@ -305,3 +305,126 @@ describe("d1109-run-visible: the run indicator under the header (V-2)", () => {
     expect(screen.getByTestId("kill-switch")).toBeInTheDocument();
   });
 });
+
+/**
+ * V-3 (the owner named "Home, the project"; design §3.2 and §3.4 keep Working now) and V-4 (the
+ * Talk panel is a modal over the header): the same element elsewhere, and the project's one
+ * sentence says what waits to start and when.
+ */
+describe("d1109-run-visible: Home, the Overview, the project's line and Talk (V-3, V-4)", () => {
+  it("Home's Working now shows the bar's words and Stop in its block form", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    running(harness);
+    renderApp("/", harness);
+    const block = within(await screen.findByTestId("working-now")).getByTestId(
+      "run-indicator-block",
+    );
+    expect(within(block).getByTestId("run-text")).toHaveTextContent(
+      'Atlas · the coder works on "Add the search box"',
+    );
+    await user.click(within(block).getByTestId("run-stop"));
+    await user.click(screen.getByTestId("run-stop-after"));
+    await waitFor(() => expect(postedCalls(harness, "/sessions/sess_live/pause")).toHaveLength(1));
+  });
+
+  it("the Overview's Working now shows its project's entry only", async () => {
+    const harness = createHarness();
+    running(harness);
+    harness.daemon.state.runningExtra = [WAITING];
+    renderApp("/projects/proj_atlas", harness);
+    const section = await screen.findByTestId("overview-working");
+    const entries = within(section).getAllByTestId("run-entry");
+    expect(entries.map((e) => within(e).getByTestId("run-text").textContent)).toEqual([
+      'Atlas · the coder works on "Add the search box"',
+    ]);
+    expect(within(section).getByTestId("run-stop")).toBeInTheDocument();
+  });
+
+  it("the project's line: the person's session waiting to go on, with Cancel; after Cancel the tasks wait for the Start", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const beaconTask = harness.daemon.state.tasks.find((t) => t.id === "task_4");
+    if (!beaconTask) throw new Error("fixture changed");
+    beaconTask.status = "ready";
+    harness.daemon.state.startsWait.proj_beacon = {
+      kind: "continuation",
+      head: "Waiting until 15:40 (your subscription's limit)",
+    };
+    harness.daemon.state.runningExtra = [WAITING];
+    renderApp("/projects/proj_beacon", harness);
+    const header = await screen.findByTestId("project-header");
+    await waitFor(() =>
+      expect(within(header).getByTestId("project-status")).toHaveTextContent(
+        "Waiting until 15:40 (your subscription's limit), then it goes on",
+      ),
+    );
+    const cancel = within(header).getByTestId("project-status-action");
+    expect(cancel).toHaveTextContent("Cancel");
+    expect(cancel).toHaveAttribute(
+      "title",
+      "Nothing starts when Claude is back; its tasks wait for your Start.",
+    );
+    await user.click(cancel);
+    await waitFor(() =>
+      expect(postedCalls(harness, "/projects/proj_beacon/continuation/cancel")).toHaveLength(1),
+    );
+    await waitFor(() =>
+      expect(within(header).getByTestId("project-status")).toHaveTextContent(
+        /^Ready: 1 task waits for your Start$/,
+      ),
+    );
+    await waitFor(() => expect(screen.queryByTestId("run-indicator-bar")).toBeNull());
+  });
+
+  it("the project's line: a kept Start with Cancel, a held hands-off start, a person start behind another session", async () => {
+    const harness = createHarness();
+    harness.daemon.state.startsWait.proj_beacon = {
+      kind: "kept_start",
+      head: "Starts at 15:40 (your subscription's limit)",
+    };
+    const { unmount } = renderApp("/projects/proj_beacon", harness);
+    const header = await screen.findByTestId("project-header");
+    await waitFor(() =>
+      expect(within(header).getByTestId("project-status")).toHaveTextContent(
+        /^Starts at 15:40 \(your subscription's limit\)$/,
+      ),
+    );
+    expect(within(header).getByTestId("project-status-action")).toHaveTextContent("Cancel");
+    // Nothing runs for a kept Start yet: the bar shows nothing.
+    expect(screen.queryByTestId("run-indicator-bar")).toBeNull();
+    unmount();
+    harness.daemon.state.startsWait.proj_beacon = { kind: "held" };
+    const second = renderApp("/projects/proj_beacon", harness);
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("project-header")).getByTestId("project-status"),
+      ).toHaveTextContent(/^Starts after your quiet hours$/),
+    );
+    second.unmount();
+    harness.daemon.state.startsWait.proj_beacon = { kind: "queued", behind: "Atlas" };
+    renderApp("/projects/proj_beacon", harness);
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("project-header")).getByTestId("project-status"),
+      ).toHaveTextContent(/^Starts after the session on "Atlas"$/),
+    );
+  });
+
+  it("Talk's first line says what runs, with the same Stop", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    running(harness);
+    renderApp("/", harness);
+    await screen.findByTestId("run-indicator-bar");
+    await user.click(screen.getByTestId("talk-open"));
+    const panel = await screen.findByTestId("conversation");
+    const line = within(panel).getByTestId("run-indicator-compact");
+    expect(within(line).getByTestId("run-text")).toHaveTextContent(
+      'Atlas · the coder works on "Add the search box"',
+    );
+    await user.click(within(line).getByTestId("run-stop"));
+    await user.click(within(panel).getByTestId("run-stop-after"));
+    await waitFor(() => expect(postedCalls(harness, "/sessions/sess_live/pause")).toHaveLength(1));
+  });
+});

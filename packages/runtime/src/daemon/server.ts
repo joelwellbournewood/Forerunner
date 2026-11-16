@@ -45,6 +45,7 @@ import { CODE_COMMANDS_DEFAULT } from "../session/billing.ts";
 import { needsOf } from "../session/credential-choice.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { isPersonTask } from "../session/person-questions.ts";
+import { startPendingOf } from "../session/prepared-work.ts";
 import {
   applyProjectPlan,
   describeMilestoneChange,
@@ -61,6 +62,7 @@ import {
   taskReasonForStop,
 } from "../session/stop-words.ts";
 import type { StartRequest } from "../session/triggers.ts";
+import { startByOf } from "../session/triggers.ts";
 import { NO_MODEL_CREDENTIAL } from "../setup/no-model.ts";
 import { createPlanAllowanceRoutes } from "../setup/plan-allowance-routes.ts";
 import { createSetupRoutes } from "../setup/routes.ts";
@@ -82,6 +84,7 @@ import {
   voiceStatusView,
   voiceTurnView,
 } from "../voice/views.ts";
+import { keptContinuationOf, keptStartOf } from "../wiring/billing-pick.ts";
 import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
 import { assertAnswerAccepted, isChatOnlyCard, NOT_AN_OPTION } from "../wiring/request-answers.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
@@ -170,6 +173,7 @@ import { buildModelSettingsView } from "./model-settings-view.ts";
 import { overBudgetView, oversizedView } from "./oversize-view.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
 import { planTaskViews } from "./plan-tasks.ts";
+import type { StartsWait } from "./project-status.ts";
 import { projectRepository } from "./pull-requests.ts";
 import { createQueueRoutes } from "./queue-routes.ts";
 import type { RestartRequestFile } from "./restart.ts";
@@ -906,6 +910,44 @@ export function createDaemonApp(
       return null;
     }
   };
+  /**
+   * d1109-run-visible (V-3): what waits to start for a project, for its status sentence: the
+   * person's session kept to go on after its credential wait (the wait's own words), a Start kept
+   * for the reset, a person start waiting behind another project's session, a hands-off start
+   * the quiet hours hold. Read only (d1109-starts-engine's accessors).
+   */
+  const startsWaitOf = async (projectId: string): Promise<StartsWait | null> => {
+    const now = () => rt.billing.waits.now(projectId).catch(() => null);
+    if (await keptContinuationOf(rt.store, projectId)) {
+      const wait = await now();
+      const text = wait?.text ?? "";
+      const until = /^Waits (until .+); then your session goes on\.$/.exec(text);
+      if (until) return { kind: "continuation", head: `Waiting ${until[1]}` };
+      const saved = /^Waits for (.+?): save one in Settings/.exec(text);
+      if (saved)
+        return { kind: "continuation", head: `Waiting for ${saved[1]}`, save: wait?.save ?? null };
+      return { kind: "continuation", head: "Waiting for Claude" };
+    }
+    if (await keptStartOf(rt.store, projectId)) {
+      const wait = await now();
+      return { kind: "kept_start", head: wait?.startsAt ?? "Starts once Claude is back" };
+    }
+    const pending = rt.scheduler.pendingStarts(rt.agent.id);
+    const active = rt.scheduler.activeStart(rt.agent.id)?.req.projectId;
+    if (
+      active &&
+      active !== projectId &&
+      pending.some((e) => e.req.projectId === projectId && startByOf(e.req) === "person")
+    ) {
+      const behind = (await rt.store.project.get(active).catch(() => undefined))?.name;
+      if (behind) return { kind: "queued", behind };
+    }
+    const held = pending.some((e) => e.req.projectId === projectId && e.result === "deferred");
+    const project = await rt.store.project.get(projectId).catch(() => undefined);
+    if (held || (startPendingOf(project) && rt.quietHours.isQuiet(rt.clock.now())))
+      return { kind: "held" };
+    return null;
+  };
   const projectCardOf = (
     id: string,
     plan?: { state: "drafting" | "pending" | null; error: string | null },
@@ -938,6 +980,8 @@ export function createDaemonApp(
       repositoryElsewhere: (project) => rt.repositoryUse.overviewOf(project),
       // OJ-01 (d1109-onerepo-join): other projects here on the same repository or folder.
       sharesRepositoryWith: (project) => sharesRepositoryWith(rt.joinDeps, project),
+      // d1109-run-visible (V-3): what waits to start, said with when.
+      startsWait: startsWaitOf,
     });
   app.get("/projects", async (c) => {
     const rows = await rt.store.project.active({ limit: 100 });

@@ -27,7 +27,10 @@ describe("the project header and its tabs (later #56, #57)", () => {
     renderApp("/projects/proj_beacon/summary", harness);
     const header = await screen.findByTestId("project-header");
     await waitFor(() =>
-      expect(within(header).getByTestId("project-status")).toHaveTextContent("Ready to continue"),
+      // d1109-run-visible (V-3): it read "Ready to continue: 1 task ready".
+      expect(within(header).getByTestId("project-status")).toHaveTextContent(
+        "Ready: 1 task waits for your Start",
+      ),
     );
     const starts = within(header)
       .getAllByRole("button")

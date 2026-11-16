@@ -146,6 +146,7 @@ import {
   oversizedSentence,
 } from "@forerunner/runtime/daemon/oversize-words";
 import { planTaskViews } from "@forerunner/runtime/daemon/plan-tasks";
+import type { StartsWait } from "@forerunner/runtime/daemon/project-status";
 import {
   blockedTaskIds,
   overviewNext,
@@ -553,6 +554,12 @@ export interface FakeDaemonState {
    * calls `emitRunning()`; `POST /projects/:id/continuation/cancel` drops a waiting one.
    */
   runningExtra: RunningView[];
+  /**
+   * d1109-run-visible (V-3): what waits to start for a project, as the daemon's `startsWaitOf`
+   * reads it (the person's session going on, a kept Start, a held hands-off start, a person start
+   * behind another session); its status line says it. Cancel drops a continuation or kept start.
+   */
+  startsWait: Record<string, StartsWait>;
   /**
    * d1109-sessions (ADR 0116): each project's ended sessions as `GET /projects/:id/sessions`
    * lists them (newest first), every word as the daemon writes it; the working ones are read
@@ -1304,6 +1311,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     runs: clone(RUNS),
     sessions: clone(SESSIONS),
     runningExtra: [],
+    startsWait: {},
     projectSessions: clone(PROJECT_SESSIONS),
     projectSessionsChat: {},
     sessionTasks: clone(SESSION_TASKS),
@@ -1988,6 +1996,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       joinedInto: state.joined[p.id]
         ? { text: state.joined[p.id]?.text ?? "", projectId: state.joined[p.id]?.projectId ?? "" }
         : null,
+      // d1109-run-visible (V-3), as the daemon: what waits to start, while nothing of it runs.
+      startsWait: working ? null : (state.startsWait[p.id] ?? null),
     });
     const includes = Object.entries(state.joined)
       .filter(([, j]) => j.projectId === p.id)
@@ -3277,6 +3287,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/projects/:id/continuation/cancel", (c) => {
     const project = state.projects.find((p) => p.id === c.req.param("id"));
     if (!project) return errorBody(c, 404, "not_found", "no such project");
+    // d1109-run-visible: a continuation or a kept Start on the project's line goes with it.
+    const startsWait = state.startsWait[project.id];
+    if (startsWait?.kind === "continuation" || startsWait?.kind === "kept_start") {
+      delete state.startsWait[project.id];
+      state.runningExtra = state.runningExtra.filter(
+        (r) => !(r.state === "waiting" && r.projectId === project.id),
+      );
+      emit("project.changed", { id: project.id });
+      emitRunning();
+      if (!state.credentialWaitNow[project.id]?.kept)
+        return c.json({
+          cancelled: true,
+          sentence: "Cancelled: nothing goes on by itself; its tasks run at your next Start.",
+        });
+    }
     const wait = state.credentialWaitNow[project.id];
     if (!wait?.kept)
       return c.json({ cancelled: false, sentence: "Nothing waits to go on for this project." });

@@ -433,7 +433,8 @@ describe("w15-words, wave 15 run B", () => {
           hasModel: true,
           credentialWaitNow,
         });
-      expect(ready(null)).toMatchObject({ text: "Ready to continue: 1 task ready" });
+      // d1109-run-visible (V-3): the ready line says the work waits for the person's Start.
+      expect(ready(null)).toMatchObject({ text: "Ready: 1 task waits for your Start" });
       expect(
         ready({ text: startKeepsWaitSentence(resting, words), save: null, startable: true }),
       ).toEqual({

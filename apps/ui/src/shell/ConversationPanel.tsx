@@ -12,6 +12,7 @@ import { Badge, Button, SegmentedControl } from "../components/ui.tsx";
 import type { AudioOutput } from "../lib/speech.ts";
 import { useClient, useRealtime, useUiState, useUiStore } from "../store/context.tsx";
 import type { VoiceReplyMode } from "../store/store.ts";
+import { RunIndicator } from "./RunIndicator.tsx";
 import type { MicCapture } from "./voice-capture.ts";
 import { useCaptureFactory } from "./voice-capture.ts";
 import {
@@ -689,6 +690,9 @@ export function ConversationPanel({
   return (
     <Dialog open={open} onClose={close} title="Talk to your agent" testId="conversation" wide>
       <div className="space-y-3 text-sm">
+        {/* d1109-run-visible (V-4): the panel covers the header, so its first line says what
+            runs now, with the same Stop (the run indicator's compact form). */}
+        <RunIndicator form="compact" />
         <div className="flex flex-wrap items-center gap-2">
           <Badge
             tone={phase === "listening" ? "good" : phase === "unavailable" ? "warn" : "neutral"}

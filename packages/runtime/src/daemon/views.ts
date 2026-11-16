@@ -113,6 +113,7 @@ import {
   type PlanState,
   progressOf,
   projectStatusLine,
+  type StartsWait,
   sinceLines,
   workingOn,
 } from "./project-status.ts";
@@ -190,6 +191,12 @@ export interface ProjectCardFacts {
   repositoryElsewhere?: (project: ProjectRow) => Promise<ProjectCard["repositoryElsewhere"]>;
   /** OJ-01 (d1109-onerepo-join): the projects here on the same link (`sharesRepositoryWith`). */
   sharesRepositoryWith?: (project: ProjectRow) => Promise<ProjectCard["sharesRepositoryWith"]>;
+  /**
+   * d1109-run-visible (V-3): what waits to start for the project (the person's session going on,
+   * a kept Start, a held hands-off start, a person start behind another session); its status
+   * sentence says it.
+   */
+  startsWait?: (projectId: string) => Promise<StartsWait | null>;
 }
 
 export async function projectCard(
@@ -256,6 +263,8 @@ export async function projectCard(
     working,
     folder,
     joinedInto: joined ? { text: joined.text, projectId: joined.projectId } : null,
+    startsWait:
+      !working && facts?.startsWait ? await facts.startsWait(p.id).catch(() => null) : null,
   });
   return {
     id: p.id,

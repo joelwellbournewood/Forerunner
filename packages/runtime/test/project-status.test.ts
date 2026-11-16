@@ -217,13 +217,15 @@ describe("project status sentence (design §2)", () => {
     });
   });
 
-  it("4. tasks that can run: 'Ready to continue: 2 tasks ready' with Continue", async () => {
+  // d1109-run-visible (V-3): only the person's Start starts work (D6); it read "Ready to continue:
+  // 2 tasks ready".
+  it("4. tasks that can run: 'Ready: 2 tasks wait for your Start' with Continue", async () => {
     const first = await task("Create index.html", "ready");
     await task("Write the README", "ready");
     await task("Style the page", "ready", { depends_on: [first] });
     expect((await card()).statusLine).toEqual({
       kind: "ready",
-      text: "Ready to continue: 2 tasks ready",
+      text: "Ready: 2 tasks wait for your Start",
       action: { kind: "start", label: "Continue", to: null },
     });
   });
@@ -246,7 +248,7 @@ describe("project status sentence (design §2)", () => {
     expect((await card({ sandboxReady: null, hasModel: true, stopped: false })).statusLine).toEqual(
       {
         kind: "ready",
-        text: "Ready to continue: 1 task ready",
+        text: "Ready: 1 task waits for your Start",
         action: { kind: "start", label: "Continue", to: null },
       },
     );
@@ -472,5 +474,97 @@ describe("project status sentence (design §2)", () => {
       '"Write the README": Waiting for "Create index.html"',
       "and 1 more",
     ]);
+  });
+});
+
+/**
+ * d1109-run-visible V-3 (D6, the owner, 2026-11-09: "the user clearly states when a session will
+ * run"; the decision that the person's session goes on by itself, "shown on the run indicator
+ * while it waits ('Waiting until 15:40, then it goes on', with Cancel)"): the project's sentence
+ * says what waits to start and when, after the working rule, each within 80 characters.
+ */
+describe("d1109-run-visible, run C: what waits to start, on the project's line (V-3)", () => {
+  const ready = { key: "ready", label: "Ready", tone: "neutral" } as never;
+  const line = (
+    startsWait: Parameters<typeof projectStatusLine>[0]["startsWait"],
+    working = null,
+  ) =>
+    projectStatusLine({
+      projectId: "p1",
+      tasks: [
+        { id: "t1", title: "B", status: "ready", depends_on: [] },
+        { id: "t2", title: "C", status: "ready", depends_on: [] },
+      ],
+      displays: new Map([
+        ["t1", ready],
+        ["t2", ready],
+      ]),
+      cards: [],
+      plan: "none",
+      working,
+      folder: null,
+      startsWait,
+    });
+  const CANCEL = { kind: "cancel", label: "Cancel", to: null };
+
+  it("the person's session waiting to go on: its time, then it goes on, with Cancel", () => {
+    expect(
+      line({ kind: "continuation", head: "Waiting until 15:40 (your subscription's limit)" }),
+    ).toEqual({
+      kind: "paused",
+      text: "Waiting until 15:40 (your subscription's limit), then it goes on",
+      action: CANCEL,
+    });
+    expect(
+      line({ kind: "continuation", head: "Waiting until 07:00 (after your quiet hours)" }).text,
+    ).toBe("Waiting until 07:00 (after your quiet hours), then it goes on");
+    // A refusal: where a new key is saved, which is what lets it go on.
+    expect(
+      line({
+        kind: "continuation",
+        head: "Waiting for a new API key",
+        save: { label: "Save a new key", to: "/settings#credentials" },
+      }),
+    ).toEqual({
+      kind: "waiting",
+      text: "Waiting for a new API key, then it goes on",
+      action: { kind: "link", label: "Save a new key", to: "/settings#credentials" },
+    });
+  });
+
+  it("a Start kept for the reset, a held hands-off start and a person start behind another session", () => {
+    expect(
+      line({ kind: "kept_start", head: "Starts at 15:40 (your subscription's limit)" }),
+    ).toEqual({
+      kind: "paused",
+      text: "Starts at 15:40 (your subscription's limit)",
+      action: CANCEL,
+    });
+    expect(line({ kind: "held" })).toEqual({
+      kind: "paused",
+      text: "Starts after your quiet hours",
+      action: null,
+    });
+    expect(line({ kind: "queued", behind: "Quote page" })).toEqual({
+      kind: "paused",
+      text: 'Starts after the session on "Quote page"',
+      action: null,
+    });
+    // Nothing waits: the ready line, which says the work waits for the person's Start.
+    expect(line(null)).toEqual({
+      kind: "ready",
+      text: "Ready: 2 tasks wait for your Start",
+      action: { kind: "start", label: "Continue", to: null },
+    });
+  });
+
+  it("every sentence is at most 80 characters, a long name shortened", () => {
+    const long = "A garden site with a name far longer than anyone would ever want to read again";
+    for (const sw of [
+      { kind: "queued" as const, behind: long },
+      { kind: "continuation" as const, head: `Waiting until Wed 4 Nov, 15:40 (${long})` },
+      { kind: "kept_start" as const, head: `Starts at Wed 4 Nov, 15:40 (${long})` },
+    ])
+      expect(line(sw).text.length).toBeLessThanOrEqual(80);
   });
 });
