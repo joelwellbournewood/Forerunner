@@ -756,4 +756,61 @@ describe("d1116-budget-all", () => {
       await o.rt.close();
     }
   }, 120_000);
+
+  it("BA-11: Redo of a done task keeps its figure; with nothing left of its budget it pauses before it runs, with one card and Continue", async () => {
+    const TITLE = "Write the about page";
+    const w = world([...codes(TITLE, "about.html")]);
+    const o = await w.open(home(), { services: true });
+    try {
+      const { projectId, taskId } = await projectWithTask(o, TITLE, {
+        budgetUsdMicro: 2_000_000,
+        file: "about.html",
+      });
+      const first = await start(o, projectId);
+      await ended(o, first);
+      await settleSessions(o.rt);
+      const done = await o.rt.store.task.mustGet(taskId);
+      expect(done.status).toBe("done");
+      const figure = done.actual_cost_usd_micro;
+      expect(figure).toBeGreaterThan(0);
+      expect(figure).toBe((await o.rt.store.costLedger.sum({ taskId })).usd_micro);
+      // Its budget is what it spent (as a CHF 0.20 task whose work and review used it all).
+      await o.rt.store.task.patch(taskId, { budget_usd_micro: figure } as never);
+      const before = await o.rt.store.task.mustGet(taskId);
+      const redo = await o.req(
+        `/tasks/${taskId}/action`,
+        post({ action: "redo", version: before.version }),
+      );
+      expect(redo.status, await redo.clone().text()).toBe(200);
+      const ready = await o.rt.store.task.mustGet(taskId);
+      expect(ready.status).toBe("ready");
+      // Redo never resets nor raises the figure.
+      expect(ready.actual_cost_usd_micro).toBe(figure);
+      expect(ready.budget_usd_micro).toBe(figure);
+      const coderBefore = w.seen.filter(isCoderOn(TITLE)).length;
+      const second = await start(o, projectId);
+      await ended(o, second);
+      await settleSessions(o.rt);
+      const paused = await o.rt.store.task.mustGet(taskId);
+      expect(paused.status).toBe("needs_human");
+      expect(paused.actual_cost_usd_micro).toBe(figure);
+      // Nothing ran: no coder call, no new work run.
+      expect(w.seen.filter(isCoderOn(TITLE)).length).toBe(coderBefore);
+      const events = (await o.json(`/sessions/${second}/events`)) as unknown as Json[];
+      const finished = events.find((e) => e.type === "task.finished");
+      const chf = (usd: number) => `CHF ${((usd * 0.8) / 1e6).toFixed(2)}`;
+      expect((finished?.payload as Json | undefined)?.summary).toBe(
+        `Its budget of ${chf(figure)} is spent (${chf(figure)} so far), so nothing ran.`,
+      );
+      const cards = await cardsOf(o, taskId);
+      expect(cards).toHaveLength(1);
+      expect((cards[0]?.options as string[]) ?? []).toEqual([
+        expect.stringMatching(/^Continue \(CHF \d+\.\d{2} more\)$/),
+        "Cancel task",
+      ]);
+    } finally {
+      await settleSessions(o.rt);
+      await o.rt.close();
+    }
+  }, 120_000);
 });
