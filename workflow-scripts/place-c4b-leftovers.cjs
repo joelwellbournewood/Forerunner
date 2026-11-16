@@ -126,7 +126,7 @@ p.session_lead_decisions.push(
 const c4b = p.sub_runs.find((s) => s.name === "C4b");
 c4b.merged = {
   head: HEAD,
-  ci: "pending at placement (CI run 43898132088, Desktop app run 43898132035)",
+  ci: "green on Windows and Linux: CI 311 (43898132088) and Desktop app 76 (43898132035), 2026-11-16 16:10 UTC",
   review: "pass, nothing blocking; no fix-up",
   leftovers_placed: Object.fromEntries(Object.entries(toAreas).map(([k, v]) => [k, v.map((i) => i[0])])),
   leftovers_for_triage: "/tmp/frbench/leftovers-C4b.json",

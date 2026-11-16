@@ -1,0 +1,92 @@
+{
+  "merged": [
+    "fix/d1109-cred-engine at 09969dea5a2f8fc6daa4e90e6709998e9411fd29 (fix-up head): merge commit f1518d34fbfa60d389f1c6fc33930053791d1858, no conflicts",
+    "fix/d1109-run-visible at 4aad38277cb7e4d7ae81d870d197239bc4f87f6c (fix-up head): merge commit d133246008888fa945d41a4ae0101e5b85fd19e4, one conflicted file"
+  ],
+  "head_sha": "d133246008888fa945d41a4ae0101e5b85fd19e4",
+  "pushed": true,
+  "conflicts_resolved": [
+    "apps/ui/test/real-daemon.test.ts: the only conflict, an append-only clash. Both areas appended describe blocks at the end of the file after the d1116-budget-all describe. Git interleaved them in four hunks because both blocks start with near-identical helpers (an oauth and apiKey pair, resetAt, and a claudeCode limit-then-answer SDK stand-in). Each side's earlier hunks (cred-engine's two refused-card wording changes at about :8357 and :8372, and run-visible's many hunks above line 20866) had already auto-merged. I took the auto-merged file up to the conflict, then d1109-cred-engine's whole appended block (describe 'd1109-cred-engine, run C', in merge order), then d1109-run-visible's whole appended block (describes 'd1109-run-visible, run C', '... a person's session waiting to go on' and '... the page of a session that ended to wait (V-5)'). Every area's describe is kept unchanged. Compared with run-visible's own file, the result differs only by cred-engine's 158-line describe and its two refused-card sentences.",
+    "Auto-merged without conflict, checked against the shared_files ownership: packages/runtime/src/daemon/compose.ts, views.ts, apps/ui/test/fake-daemon.ts, packages/runtime/test/credential-limits.test.ts, docs/maintainers/runtime.md and apps.md, docs/user-guide.md. In compose.ts, run-visible's scheduler.requestStart and cancelPending wrappers replace the methods on the scheduler object. Cred-engine's onGrant calls scheduler.requestStart at call time, so a start granted by Use API key also updates the run bar. Run-visible's waitingContinuations maps the share and key-month waits that cred-engine added to the generic 'other' form ('waiting for Claude, then it goes on'), as the C5 notes ask. The two areas' user-guide paragraphs agree."
+  ],
+  "integration_fixes": [],
+  "validation": [
+    {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing (exit 1)"
+    },
+    {
+      "command": "pnpm install --frozen-lockfile",
+      "result": "ok"
+    },
+    {
+      "command": "pnpm lint && pnpm lint:paths",
+      "result": "exit 0 (biome: 42 warnings and 1 info, no errors); check-paths ok (1575 files)"
+    },
+    {
+      "command": "pnpm typecheck",
+      "result": "exit 0"
+    },
+    {
+      "command": "pnpm test (vitest --project unit)",
+      "result": "exit 0: 533 files passed, 5766 tests passed, 7 skipped"
+    },
+    {
+      "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0; pnpm docs:links; pnpm secrets:scan",
+      "result": "docs-check ok (110 files); link-check ok (213 files); secret-scan clean (2212 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped (Postgres); 30 tests passed, 81 skipped"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+    },
+    {
+      "command": "pnpm --filter @forerunner/live test",
+      "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+    },
+    {
+      "command": "pnpm test:injection",
+      "result": "exit 0: PASS, 81 of 81 cases (58 hostile, 23 controls), 0 failed"
+    },
+    {
+      "command": "HOME=<empty dir> FORCE_COLOR=1 vitest run --project unit (as CI runs it; git config --global user.name had no value)",
+      "result": "exit 0: 533 files passed, 5766 tests passed, 7 skipped"
+    },
+    {
+      "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 vitest run --config vitest.config.ts",
+      "result": "exit 0: 97 files, 1297 tests passed (includes real-daemon.test.ts with both areas' describes and browser-imports.test.ts)"
+    },
+    {
+      "command": "cd apps/ui && vitest run --config vitest.config.ts test/real-daemon.test.ts -t 'd1109-run-visible|d1109-cred-engine|selftasks' (3 runs, a flake check on the shared file and C4b-left-3)",
+      "result": "10 passed each run"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "38 passed (1.3m)"
+    },
+    {
+      "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
+      "result": "fmt exit 0; clippy exit 0; cargo test 157 passed, 0 failed"
+    },
+    {
+      "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+      "result": "printed nothing: all 35 commits are signed, both merge commits included"
+    },
+    {
+      "command": "git push -u origin claude/nifty-knuth-f9udt0",
+      "result": "fast-forward c4583eb..d133246 on the first try"
+    }
+  ],
+  "smoke": "node scripts/bench/start.mjs --name merge-w21 --daemon-port 48770 --ui-port 2370 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w21: 25/25 checks passed, 0 findings, 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. The journey's expectations still held, so I did not change it. The bench was stopped with scripts/bench/stop.mjs, and its home, browser profile and the empty test HOME were deleted. Logs are kept in /tmp/frbench/merge-w21/ (1.8 MB), with the result at /tmp/frbench/merge-w21/steps/smoke-result.json.",
+  "problems_left": [
+    "The merge broke nothing, and no fix-up commit was needed. The items below are the areas' own recorded leftovers, carried over unchanged.",
+    "d1109-cred-engine not_done (from its fix-up report): CE-6 (a share reached mid-run is still the hooks' plan-level budget pause, and the allowance raise's change line is not built); CE-11 (switch log line, switchedFrom, SessionResult.switched, CostView.byCredential; the runner still logs '\"X\" continues on your API key now.'); CE-12 (the switch notification has no producer); CE-10 (jobs are not marked 'not done for the period'); CE-1's one-time Update; CE-5's composed repository case (left to live check 4); CE-9 (POST /chat does not carry oneOff, and the hold reply still offers 'Think it through ... at most CHF 0.03'; these are in server.ts, which belongs to C6); leftovers L3-left-14, C3-left-4, C3-left-5, C3-left-6, C4b-left-1 and C4-left-11.",
+    "d1109-cred-engine new_problems: the intake card still says 'milestone(s)', 'task(s)' and 'doc(s)' (intake.ts about :1476); the refused card's withdrawn line also shows when TR-10 closes it with nothing waiting; credential_policy's narrows treats an unset earlier value as rank 0; GET /settings/billing-order and the Settings section still read billing_order (C6 replaces them); syncAskAnswers is not atomic; onGrant readmits every ready task of a running project; credentialHold reads timezone and month cap at compose time; the router falls back to Date.now() when nowMs is absent.",
+    "d1109-run-visible not_done: the status line's Cancel and Continue explain themselves only as a tooltip (left for the session lead's design call); the critic's monthly check, a working row past 49 steps, and the tray, title and icon were not walked on a real desktop. Read the Desktop app workflow's window job after this push (LC-C20).",
+    "d1109-run-visible new_problems: chat's project facts (conversation/project-facts.ts) and the typed 'summary' command (commands/summary.ts:79) still repeat '...; then your session goes on.' after Cancel; resultAfterWait is the fix. A calibration or session that a CLI one-shot starts beside a running daemon sends no run.changed. The project header keeps offering 'Start session' while a start is queued. A stopped monthly check is recorded as failed.",
+    "Not run here, by design: CI on Windows and Linux, the Desktop app workflow (including scripts/desktop-window-check.mjs), and live check 4 (LC-C31). The session lead runs these after the push."
+  ]
+}

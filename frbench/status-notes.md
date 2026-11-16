@@ -48,3 +48,16 @@
 - Saved: runC-C4b-{result,merge}.json, runC-C4b-{fix,review}-d1116-budget-all.json. Worktrees removed.
 - Leftovers: place-c4b-leftovers.cjs (tags " C4b leftovers adds", "(C4b-merge)"): C4b-left-1/2 -> d1109-cred-engine, C4b-left-3/4 -> d1109-run-visible (3 = C4's flaky real-daemon case), C4b-left-5/6 -> d1109-cred-screens (5 = BA-12); triage leftovers-C4b.json (C4bL-1..5). Strip lookaheads in place-c2/c3/c4 widened to (?! C\d\w?(?: leftovers)? adds).
 - CI 311 (43898132088) and Desktop app 76 (43898132035) running on c4583eb.
+- 15:41 UTC: plan files backed up (backup branch 6f1a01f). C5 args built: /tmp/frbench/runC-C5-args.json (wave 21, d1109-cred-engine + d1109-run-visible, base c4583eb, with the C4b base note). Check-in trig_01G6sAY74S1u3pE9C241CWSY at 16:17 UTC checks CI 311 / Desktop app 76 and launches C5; fallback trig_01Vohgq4ThWbT8tRpF5CxVcY at 18:30 UTC re-prompted.
+
+## 2026-11-16 ~16:22 UTC: C5 launched
+- CI 311 and Desktop app 76 green on c4583eb (Windows and Linux); runC-plan.json C4b merged.ci set; task #175 completed.
+- build-runC-args.cjs: leftover-id regex now (L3|C\d\w?)-left-\d+ so C4b-left items show in fixNotes (backup build-runC-args.before-C5.cjs); base note re-applied by scratchpad/c5-base-note.cjs.
+- C5 (wave 21, d1109-cred-engine + d1109-run-visible, base c4583eb): run wf_bc132d49-0b3, task wc2qha3s4.
+
+## 2026-11-16 ~21:30 UTC: C5 merged (d133246), C6 args ready
+- C5 (wf_bc132d49-0b3) done: both reviews fix-needed (cred-engine 5 blocking, run-visible 4), both fix-ups fixed every blocking item; merged at d133246 (one append-only conflict in real-daemon.test.ts), no merge fix-up. Merge validation green: unit 5766, UI 1297, e2e 25, integration 30, live 63, injection 81/81, Playwright 38, cargo fmt/clippy/test 157, smoke 25/25, all commits signed; pushed fast-forward.
+- Saved: runC-C5-{result,merge}.json, runC-C5-{fix,review,fixup}-{d1109-cred-engine,d1109-run-visible}.json. Worktrees wf_bc132d49-0b3-1..6 removed.
+- Leftovers: place-c5-leftovers.cjs (tags " C5 leftovers adds", "(C5-merge)"): C5-left-1..5 -> d1109-cred-screens (1 = CE-11 switch data, major: CS-5 needs it; 2 = CE-12; 3 = CE-9 chat one-off; 4 = billing_order reads; 5 = refused card line), C5-left-6/7 -> d1109-selftasks-chat (6 = remaining created_at tie of C4b-left-3; 7 = C4-left-11). Triage leftovers-C5.json (29: C5L-1..24 plus the carried L3-left-14, C3-left-4/5/6, C4b-left-1). LC-C20/21/23/24/31 folded. Backups runC-plan.before-C5L.json, phaseE.before-C5L.json.
+- C6 args: /tmp/frbench/runC-C6-args.json (wave 22, d1109-cred-screens + d1109-selftasks-chat, base d133246) with the base note (scratchpad/c6-base-note.cjs).
+- CI 312 (43958488578) and Desktop app 77 (43958488591) running on d133246 since 21:17 UTC.

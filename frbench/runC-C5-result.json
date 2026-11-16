@@ -1,0 +1,1366 @@
+{
+  "wave": 21,
+  "areas": [
+    {
+      "key": "d1109-cred-engine",
+      "fix": {
+        "area": "d1109-cred-engine",
+        "branch": "fix/d1109-cred-engine",
+        "head_sha": "f5e819d7cfadfc1089a67e54de5261e755ffde96",
+        "commits": [
+          {
+            "sha": "894a923",
+            "subject": "cred-engine: one credential policy for every call; every stop held; one ask card per stop (U-078, U-048)"
+          },
+          {
+            "sha": "f184579",
+            "subject": "commands: \"Which Claude does the work\" (credential_policy); the older keys replaced (U-078, U-074)"
+          },
+          {
+            "sha": "8f171af",
+            "subject": "ui tests: the ask card and \"Which Claude does the work\" through the client; refused card words (U-078)"
+          },
+          {
+            "sha": "c99e307",
+            "subject": "runtime tests: a refusal informs once, across a restart; every sentence of the policy (U-078, U-074)"
+          },
+          {
+            "sha": "d952297",
+            "subject": "intake: the plan card says \"a first-session plan of 1 task\" / \"N tasks\" (C4b-left-2)"
+          },
+          {
+            "sha": "65c5e25",
+            "subject": "docs: ADR 0120 \"Which Claude does the work\"; amendments of 0100, 0044, 0098, 0112, one line in 0114 (U-078)"
+          },
+          {
+            "sha": "f5e819d",
+            "subject": "docs: index ADR 0120 in the decisions README (U-078)"
+          }
+        ],
+        "fixed": [
+          {
+            "problem": "CE-1 / D5-14 (owner's answer 4): with no order chosen, chat, planning, reviews, the task check and the jobs used the API key first (CALL_FALLBACK_ORDER), a split the person never chose. Now one credential policy (packages/billing/src/policy.ts: CREDENTIAL_POLICIES, ruleOf, credentialPolicyOf, moneyRank, stopOf/stopKeyOf, grantOf) is read at every pick for every purpose; an earlier choice is derived as the policy; with nothing chosen the default preset subscription_then_wait applies to every call. CALL_FALLBACK_ORDER and RoutedProvider's fallbackOrder are removed.",
+            "u_ids": [
+              "U-078",
+              "U-048"
+            ],
+            "failing_test_before": "packages/billing/test/policy.test.ts (new: every billing_order x mid_session_limit combination, presets, moneyRank, stop keys); packages/runtime/test/billing-order.test.ts 'without a chosen order, chat uses the subscription first, like the tasks (one order)' (before: 'From the API.')",
+            "how": "policy.ts in @forerunner/billing; RouterTaskBilling.pick reads policyOf(store, humanId) and passes order, kinds, whenStopped and heldNow to the router; compose drops fallbackOrder; d1109-chat-depth's first-credential check reads the policy's first saved kind.",
+            "check_in_the_app": "Live check: on a home with both a Claude subscription and an API key saved and nothing chosen in Settings, ask Talk a question: the answer comes from Claude Code (the model-call log shows the subscription source, no request with the API key); Costs books the turn on the subscription."
+          },
+          {
+            "problem": "CE-2 / D5-1, D5-2: 'Wait' held only task runs and only a rest or a refusal; the subscription's share and a key's monthly cap were plain skips, so the API key served under any setting.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/billing/test/router.test.ts describe 'd1109-cred-engine, run C' (share and key_month held under wait and ask with waitFor reason/until/stopKey/ask; grants for this stop vs an older stop; never batch; key_only; heldNow; another person's source)",
+            "how": "router.ts: RouteContext.whenStopped (waitOnRest read as wait), heldNow, kinds, nowMs; every stop (limit, refused, share, key_month) is held with stopOf's key; a grant on the held source for the current stop key lets the granted kind serve (not for batch); a fake row is never left out by kinds.",
+            "check_in_the_app": "Settings: set the subscription's allowance low so this month's share is at the cap, keep the default rule, press Start on a project with a ready task: the row reads 'Waits until <1st of next month> (your subscription's allowance)' and the API key gets no request."
+          },
+          {
+            "problem": "CE-3: the pick withheld the sources a call saw stop (so a hold could not see them), fell to a lower chooser group at a stop, and only task runs set wait.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-policy.test.ts (new table: purposes session, critic, interactive, chat, batch x stops limit, share, refused x rules wait, ask unanswered, ask granted for this stop, ask granted for an older stop, next; key_month; exclude held; needs wait under key_then_subscription; earlier choice vs key_only; policy change applies to the next pick; allowSwitch never for batch)",
+            "how": "billing-pick.ts pick(): policy per pick, exclude -> heldNow, at a stop (or a group the policy leaves out) with hard needs the pick waits with reason needs (CredentialWait.stop); TaskBillingRequest.whenStopped and allowSwitch appended, fallbackOrder removed; executor no longer sets waitOnRest.",
+            "check_in_the_app": "Bench (--provider bench-api --api-key limited, Settings policy 'API key first, then the subscription' via settings.set credential_policy key_then_subscription): a research task whose page reading only the key meets waits with the key's limit; a code task moves to the subscription."
+          },
+          {
+            "problem": "CE-4 / D5-1: RoutedProvider moved chat, planning, reviews and jobs to the next credential at a limit or refusal whatever the person chose; its fallback sentence named UTC.",
+            "u_ids": [
+              "U-078",
+              "U-048"
+            ],
+            "failing_test_before": "packages/runtime/test/billing-order.test.ts 'a usage limit in Claude Code under then wait holds chat: no request to the API key, the hold reply, and the next question holds before any call' (before: 'From the API.')",
+            "how": "routed.ts: no order of its own; after a limit or refusal it picks again under the rule (held: the call ends with the limit and the log says 'the work waits for it, as you chose.'); holdNow(model) and withOneOffSwitch(); fallbackSentence in the person's clock (RoutedProviderDeps.timezone).",
+            "check_in_the_app": "Live check: subscription first (default), let Claude Code hit its usage limit during a chat answer: the reply is 'Your Claude subscription is at its limit until HH:MM, so I have not answered. I can still add, move and start tasks.' and the API key has no request; under 'Subscription first, then the API key' the same call moves to the key and the session log reads 'The Claude subscription reached its usage limit and rests until HH:MM; the API key answered instead.' (no UTC)."
+          },
+          {
+            "problem": "CE-5 / D5-4: the run that continues a task its credential stopped was briefed '## The previous attempt' / 'It failed: ...' and redid the work.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/task-usage-limit.test.ts describe 'd1109-cred-engine, run C' (the key's run is briefed '## Where the last run stopped', 'The last run of this task stopped when its Claude credential reached its limit, before it changed any file.', 'It left no note: its Claude credential stopped it before it could write one.', 'Files it changed: none.', never 'The previous attempt' or 'It failed')",
+            "how": "task-context.ts: whereTheCredentialStopped (limit / was refused / reached the share of the subscription Forerunner may use) and credentialStopOfRun, used before the paused-run branch; the work-in-progress commit was already kept by pr-executor.",
+            "check_in_the_app": "Live check: under 'Subscription first, then the API key', a repository task whose Claude Code run hits its limit after writing a file continues in the same session on the API key; the model-call log of the key's first call shows '## Where the last run stopped' and 'continue from it, do not start again.'"
+          },
+          {
+            "problem": "CE-7 / D5-3: there was no 'ask first': nothing offered to go on with the API key at a stated cost, and no state held an answer.",
+            "u_ids": [
+              "U-078",
+              "U-052"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-ask.test.ts (new, composed, file database: one card per stop, rows 'Waits for your answer: use your API key?', card title/body/options/Details, the card still works after a restart between filing and answering, Use API key grants (one billing.grant row) and both tasks run on the key, a restart keeps the grant until the stop ends and the wake ends it; Wait moves nothing, files no second card after a restart, and the person's session goes on by itself at the reset on the subscription); apps/ui/test/real-daemon.test.ts describe 'd1109-cred-engine, run C' (through the client, answered with the option the card shows)",
+            "how": "session/credential-ask.ts (CREDENTIAL_ASK_KEY 'credential:ask', ensureAskCard behind limits.asking, recordWait, syncAskAnswers, settleAsks, BILLING_GRANT_AUDIT_TOOL); RouterTaskBilling.noteWait asks through options.ask (compose prices it with the Start check, capped at the work budget); syncApprovals applies answers (readmit for a running session, else the person's kept continuation starts now by 'person'); the wake settles grants and cards first; request-words askCard with credentialAsk facts read when shown; task-display rows under ask.",
+            "check_in_the_app": "Live check: set 'Subscription first, then ask me' (Settings, or chat 'set credential policy to subscription_then_ask' with the yes), let Claude Code hit its limit on the first of two ready tasks: one Inbox card 'Use your API key until HH:MM?' with an about-CHF figure, options Use API key / Wait with their lines; Use API key -> 'Done: your API key does the work until HH:MM; your session goes on now.' and both tasks run on the key; on another try press Wait: nothing moves, no second card, and at the reset the session goes on on the subscription."
+          },
+          {
+            "problem": "CE-8 / D5-8, D5-9: two refusals at the same moment could file two cards (filing was deduplicated by a read, not tied to the mark); the card said neither why nor what the work does under the person's choice.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-refusal.test.ts (new: refusalWhy categories, the three bodies by rule, two concurrent refusals file one card and one billing.refused row with refusedCategory stored and no credential value, TR-10's filing again once across a restart with two waits at the same instant)",
+            "how": "billing-pick.ts refuse() files only when it set the mark (limits.refusedCard {refusedAt, open}, refusedCategory); noteWait's TR-10 path files only for the writer that opens refusedCard; takeReady closes it; credential-words refusalCategoryOf/refusalWhy/refusedBody; views credentialRefusedFor reads the policy's rule.",
+            "check_in_the_app": "Bench walked (after): --provider bench-api --api-key refused, credentials journey: the Inbox card reads 'The key is not valid or was deleted. Save a new one in Settings; until then the work waits.' and the stand-in's log shows one POST /v1/messages 401 for the key (screenshot /tmp/frbench/fix-d1109-cred-engine/steps/02-after-first-inbox.png)."
+          },
+          {
+            "problem": "CE-9 / D5-10: chat moved silently to another credential, never said which credential answered, and replied 'I could not answer (<router message>)' when none may serve.",
+            "u_ids": [
+              "U-078",
+              "U-048"
+            ],
+            "failing_test_before": "packages/runtime/test/billing-order.test.ts (the hold reply, no model call and no ledger row, oneOff 'Use API key' with 'Answers this question on your API key: about CHF N.', the next question holds before any call; under 'then the API key' the footer 'Answered with your API key: your subscription is at its limit until 12:00.')",
+            "how": "agent.ts: ConversationAgentDeps.credentialHold before the model path and after a held call; ChatRequest.oneOffSwitch uses RoutedProvider.withOneOffSwitch for that question; ChatReply.oneOff; the note once per stop per conversation; compose wires credentialHold (holdNow, firstChoiceStop, month-cap room for one quick answer).",
+            "check_in_the_app": "Live check: with the subscription at its limit under the default rule, ask Talk 'what is next?': the reply is the hold sentence and no request reaches the API key; under 'Subscription first, then the API key' the answer carries the line 'Answered with your API key: your subscription is at its limit until HH:MM.' once."
+          },
+          {
+            "problem": "CE-13: a credential setting could be widened without care, an agent could change it, the tool definition listed the older keys.",
+            "u_ids": [
+              "U-078",
+              "U-074"
+            ],
+            "failing_test_before": "packages/commands/test/credential-policy.test.ts (new: needs-a-yes with 'When your subscription runs out, work goes on with your API key at once, at a cost per use.', an agent refused with 'Only you can change which Claude does the work.', narrowing acts at once with its Changes row, Undo that widens asks, settings_set lists credential_policy and neither older key, older keys and their Undo answer 'This was replaced by \"Which Claude does the work\"; change it there.')",
+            "how": "settings.ts: SETTING_SPECS.credential_policy appended last (narrowingActsAtOnce by moneyRank, personOnly, currentOfPrefs, display/effect words); global person-only keys refused for agents; replacedBy + hiddenFromTool on billing_order and mid_session_limit; undoBlocked.",
+            "check_in_the_app": "In Talk say 'use my API key when the subscription runs out': the read-back asks 'Set which Claude does the work to Subscription first, then the API key? When your subscription runs out, work goes on with your API key at once, at a cost per use.' and nothing changes until yes."
+          },
+          {
+            "problem": "C4b-left-2: the intake card read 'a first-session plan of N task(s)'.",
+            "u_ids": [],
+            "failing_test_before": "packages/runtime/test/intake.test.ts ('a first-session plan of 2 tasks. Approve'), packages/runtime/test/intake-live.test.ts",
+            "how": "intake.ts tasksWords(n); the fake daemon's card matches.",
+            "check_in_the_app": "New project with a brief: the plan card's text says 'a first-session plan of 1 task' or 'N tasks'."
+          }
+        ],
+        "not_done": [
+          {
+            "problem": "CE-6 / D5-5: the share reached mid-run is still the hooks' plan-level budget pause (a budget card until the 1st), and the allowance raise's change line is not built.",
+            "why": "Time: the share is now held at every pick (CE-2, a task whose next pick meets it waits under wait/ask), but turning the mid-run plan-level stop into a credential stop needs the executor's budget-stop branch and a composed SDK test with a tiny allowance; left for the next round (named in ADR 0120)."
+          },
+          {
+            "problem": "CE-10: background jobs are not marked 'not done for the period' after a held call; no explicit one-line log.",
+            "why": "Cut line allows it. What holds now: batch picks wait under wait and ask, and a grant never covers batch (credential-policy.test.ts), so no money is spent; whether calibration/model watch retry next tick is unverified."
+          },
+          {
+            "problem": "CE-11: switchedFrom on the Run row, billing.switch/billing.back events, SessionResult.switched, CostView.byCredential; the switch log line (switchLogLine/backLogLine exist in credential-words.ts but the runner still says '\"X\" continues on your API key now.').",
+            "why": "Time; only the routed fallback sentence in the person's clock is built. Cut line allows CostView.byCredential."
+          },
+          {
+            "problem": "CE-12: the switch notification (switchNotificationWords exists, no producer).",
+            "why": "Time (cut line allows the restart case; the producer itself is not built)."
+          },
+          {
+            "problem": "CE-1's one-time Update ('Chat, planning and reviews now use your Claude subscription first, like your tasks...').",
+            "why": "Time; the spec allows it to end in not_done."
+          },
+          {
+            "problem": "CE-3's held-call branch in task-check.ts (no call, nothing booked, notes kept, the ask card) and C4-left-11 (the task check's model chosen as the intake's).",
+            "why": "Time. The task check's routed call (purpose interactive) is held by the policy through RoutedProvider now, but task-check.ts has no explicit held branch keeping its notes."
+          },
+          {
+            "problem": "CE-7 parts: the refused card's Use API key / Wait under 'ask' (refused-stop grants), withdrawal when the other credential cannot serve any more, the caps-room check before filing, the second/late answer through the route (the route answers 409 on an answered card as before).",
+            "why": "Time. The refused card shows the ask body only when an estimate is supplied, which views does not yet; under ask it reads the wait body."
+          },
+          {
+            "problem": "CE-9: POST /chat's view does not carry ChatReply.oneOff, and there is no route flag for the press.",
+            "why": "server.ts is d1109-run-visible's only in C5 and the flag is d1109-cred-screens' (C6); tests use the agent's chat entry for the one-off."
+          },
+          {
+            "problem": "Leftovers L3-left-14 (book a cut-off call on its own source), C3-left-4 (chat's session.start kept at the reset), C3-left-5 (continuation test gaps), C3-left-6 (plan share in chatRoom + composed subscription chat case), C4b-left-1 (BA-7/BA-3 composed restart cases).",
+            "why": "Time: the area's own blocking items (CE-2..CE-5, CE-7, CE-8, CE-13 agent refusal) came first."
+          },
+          {
+            "problem": "Bench BEFORE walk.",
+            "why": "The code was changed before the bench walk; the before behaviour is shown by the tests that failed before (e.g. billing-order 'From the API.' with nothing chosen). The AFTER walk was done on --provider bench-api --api-key refused."
+          }
+        ],
+        "validation": [
+          {
+            "command": "pnpm lint && pnpm lint:paths && pnpm typecheck && pnpm secrets:scan",
+            "result": "green (biome: warnings only, pre-existing)"
+          },
+          {
+            "command": "pnpm test (vitest --project unit)",
+            "result": "5726 passed, 1 failed (closeout-docs: ADR 0120 not indexed) -> fixed in f5e819d; the file reruns 22/22 green"
+          },
+          {
+            "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0 && node scripts/link-check.mjs",
+            "result": "docs-check ok (50 files); link-check ok (213 files)"
+          },
+          {
+            "command": "pnpm test:integration",
+            "result": "5 files passed, 6 skipped (Postgres), 30 tests passed"
+          },
+          {
+            "command": "pnpm test:e2e",
+            "result": "13 files passed, 25 tests passed, 1 skipped"
+          },
+          {
+            "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+            "result": "95 files, 1244 tests passed"
+          },
+          {
+            "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+            "result": "36 passed"
+          },
+          {
+            "command": "git grep -n '^<<<<<<< '",
+            "result": "nothing"
+          },
+          {
+            "command": "node scripts/bench/start.mjs --name fix-d1109-cred-engine --daemon-port 48740 --ui-port 2340 --fresh --provider bench-api --api-key refused; node scripts/bench/journeys/credentials.cjs fix-d1109-cred-engine after",
+            "result": "no task failed; the refused card's new body; one POST /v1/messages 401 for the key; bench stopped and home removed"
+          }
+        ],
+        "tests_changed_for_design": [
+          {
+            "test": "packages/runtime/test/billing-order.test.ts (all cases from 'without a chosen order...')",
+            "why": "Owner's answer 4: chat uses the subscription first with nothing chosen; under 'then wait' a limit holds chat (hold reply, no API request) and the in-call move happens only under 'then the API key'; a refused key moves only under 'API key first, then the subscription'."
+          },
+          {
+            "test": "packages/runtime/test/subscription-path.test.ts (refused sign-in x2, share-cap case, fake-row case)",
+            "why": "Every purpose waits at a refusal under the default (before: non-task picks used the key); the share is a stop held under wait, so the key serves it only under 'then the API key'; refused card body words."
+          },
+          {
+            "test": "packages/runtime/test/routed-provider.test.ts (three fallback sentences)",
+            "why": "CE-11: the reset in the person's clock, never 'UTC'."
+          },
+          {
+            "test": "packages/runtime/test/credential-limits.test.ts, apps/ui/test/real-daemon.test.ts (refused sign-in case), apps/ui/test/inbox.test.tsx",
+            "why": "CE-8: the refused card's body says why (category) and what the work does under the rule."
+          },
+          {
+            "test": "packages/commands/test/w15-chat.test.ts (settings_set definition's last lines and count)",
+            "why": "CE-13: credential_policy appended last; billing_order and mid_session_limit no longer offered to the chat model (22 keys)."
+          },
+          {
+            "test": "packages/runtime/test/intake.test.ts, intake-live.test.ts",
+            "why": "C4b-left-2: '1 task' / 'N tasks' instead of 'task(s)'."
+          }
+        ],
+        "screenshots": {
+          "before": [],
+          "after": [
+            "/tmp/frbench/fix-d1109-cred-engine/steps/01-after-first-tasks-tab.png",
+            "/tmp/frbench/fix-d1109-cred-engine/steps/02-after-first-inbox.png",
+            "/tmp/frbench/fix-d1109-cred-engine/steps/03-after-first-session.png",
+            "/tmp/frbench/fix-d1109-cred-engine/steps/05-after-first-settings.png"
+          ]
+        },
+        "new_problems": [
+          "RoutedProvider.listModels/maxOutputTokens ask the first API-style source even when it is refused: the bench's request log (/tmp/frbench/fix-d1109-cred-engine/home/bench/api-requests.jsonl, removed; line at 18:04:10) showed a GET /v1/models with the refused key after its refusal. CE-8 says no path sends a refused credential a request; apiProvider() should skip refused sources.",
+          "The intake card's other counts still read 'milestone(s)', 'task(s)', 'doc(s)' (packages/runtime/src/session/intake.ts about :1476-1477); only the first-session clause was C4b-left-2's.",
+          "The refused card's withdrawn line 'A new one is saved; the work that waited for it goes on.' is also shown when TR-10 closes it with nothing waiting (request-words.ts refused branch; pre-existing).",
+          "credential_policy's narrows treats an unset earlier value as the default (rank 0), so an Undo back to 'not chosen' while an explicit mid_session_limit use_other is stored is judged as narrowing (acts at once) although it reads as subscription_then_key."
+        ],
+        "notes_for_other_areas": [
+          "@forerunner/billing policy.ts: CREDENTIAL_POLICIES, CredentialPolicyId, CREDENTIAL_POLICY_SETTING, DEFAULT_CREDENTIAL_POLICY (the owner question's default: one constant), ruleOf, credentialPolicyOf(prefs) -> {id: preset | 'earlier', chosen: 'stored'|'derived'|'default', rule}, moneyRank, stopOf/stopKeyOf, nextMonthStartIso, grantOf, CredentialGrant. RouteContext gains whenStopped, heldNow, kinds, nowMs; RouteWaitFor {sourceId, kind, reason, until, stopKey, ask}; SkipCode 'policy'. BillingSourceLimits (append-only): asking, grant, switchNotified (unused yet), refusedCard, refusedCategory.",
+          "runtime wiring/billing-pick.ts: policyOf(store, humanId) replaces CALL_FALLBACK_ORDER (removed; personOrderOf kept for the billing-order routes); RouterTaskBilling.currentStopOf(sourceId), firstChoiceStop(), options.ask (compose files the card). TaskBillingRequest: fallbackOrder removed; whenStopped and allowSwitch appended.",
+          "session/credential-wait.ts: CredentialWait.reason gains share, key_month, needs; fields stopKey, ask, stop; asStopWait, stopReasonOf, otherCredentialOf; waitRowWords under ask gives label 'Waits for your answer: use your API key?' (d1109-run-visible: share/key_month waits exist now for the generic form).",
+          "session/credential-words.ts (d1109-cred-screens reads these): askCardWords, askClosedLine, ASK_OPTIONS, refusalCategoryOf, refusalWhy, refusedBody, switchLogLine, backLogLine, switchNotificationWords, chatHoldReply, chatOneOffExplain, chatSwitchNote, stoppedPhrase, LEGACY_SETTING_REPLACED.",
+          "session/credential-ask.ts: CREDENTIAL_ASK_KEY, BILLING_GRANT_AUDIT_TOOL, ensureAskCard, recordWait (for C6's 'Start at 15:40' under ask), askAnswerOf, syncAskAnswers, settleAsks. The card's change_card keeps source_id, stop_key, reason, until, estimate_usd_micro, chf_per_usd, filed_at, outcome (granted|waited|stop_ended), session_goes_on, closed_why.",
+          "provider/routed.ts: holdNow(model) -> {wait, switchTo} | null; withOneOffSwitch(); RoutedProviderDeps.timezone; fallbackSentence(from, to, until, {timezone, nowMs, held}).",
+          "conversation/agent.ts: ConversationAgentDeps.credentialHold, ChatCredentialHold, ChatRequest.oneOffSwitch, ChatReply.oneOff {label, explain}. server.ts's chatReplyView does not pass oneOff yet (server.ts is d1109-run-visible's in C5): C6 adds oneOff to the POST /chat view (api-types ChatReplyView) and the press's route flag.",
+          "compose.ts hunks (C5 shared): taskBilling's ask option; credentialWaits.wake calls settleAsks before takeReady; syncApprovalsOnce has credentialAsks (syncAskAnswers with onGrant: readmit or the person's continuation started by 'person', dropKeptStart); routed provider timezone; credentialHold; chatCredential reads policyOf; ONE_OFF_CHAT_INPUT_TOKENS/OUTPUT_TOKENS.",
+          "request-words.ts: RequestWordsContext gains credentialAsk and credentialRefused (credentialGoesOn kept as a fallback reader); views.ts credentialAskFor, credentialRefusedFor (credentialGoesOnFor removed).",
+          "commands settings.ts: credential_policy appended last (after start_by_itself and chat_ask_above); SettingSpec.currentOfPrefs, replacedBy, hiddenFromTool; exports CREDENTIAL_KEY_REPLACED, credentialPolicyWords ('Subscription first, then wait' ...), credentialPolicyEffect. A global personOnly key is refused for agents too.",
+          "Owner questions (defaults built in one place): the default preset is DEFAULT_CREDENTIAL_POLICY = subscription_then_wait; no Forerunner monthly limit on the API key (a stored limits.monthlyUsdMicro counts as a key_month stop).",
+          "Suggested UPDATE-LOG/CHANGELOG lines (session lead's files): 'One rule decides which Claude does the work, for tasks, reviews, planning, chat and the monthly checks; until you pick one it is \"Subscription first, then wait\".' / 'When your first choice stops, nothing moves to your API key unless your rule says so; \"Subscription first, then ask me\" puts one card in the Inbox per stop.' / 'A refused key or sign-in gets one card that says why and what the work does until you save a new one.' / 'Chat says when it waits for your subscription and offers Use API key for that one question.'",
+          "Live check 4 steps (LC for this area): (1) both credentials, nothing chosen: one Talk question goes to Claude Code (no key request); (2) subscription at its limit under the default: chat holds, a ready task waits, the critic's review of a finished task waits in review, nothing on the key; (3) set 'Subscription first, then ask me' with the yes, hit the limit with two ready tasks: one card, Use API key runs both on the key with the Done line; (4) refused key: one card with the category sentence and one 401 in the key's request log."
+        ]
+      },
+      "review": {
+        "verdict": "fix-needed",
+        "acceptance_walk": "I ran three walks on bench review-d1109-cred-engine (daemon 48750, UI 2350, from the worktree at f5e819d, provider bench-api, stand-ins only). Screenshots and texts are saved under /tmp/frbench/review-d1109-cred-engine/walk1-steps, walk2-steps and walk3-steps. The bench is stopped and its home is deleted.\n\nWalk 1: a limited key (--api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=2) and no subscription.\n- I asked a question in the project Chat tab under the default policy. The reply was the hold sentence \"Your API key is at its limit until 18:16, so I have not answered. I can still add, move and start tasks.\" Exactly one 429 /v1/messages went to the key, and the second question also held (walk1-steps/01). The reply still offers \"Think it through: Thinks longer on this model ... at most CHF 0.03\".\n- I set \"Subscription first, then ask me\" through POST /commands/execute. The read-back asked for a yes with the right sentence, and the yes stored it.\n- I restarted the daemon (a new limit window) and started a session on a project with two tasks. The key hit its limit and no ask card was filed, because no other credential exists. Yet the session summary, the Overview \"Last result\", the session log and a notification all said: 'Waits for your answer: use your Claude subscription? The card is in the Inbox.' The Inbox was empty, the person has no subscription, and the rows said \"Waits until 18:19, your API key's limit\" (walk1-steps/11, 12).\n- At 18:19 the session went on by itself (trigger budget_reset) and both tasks finished.\n\nWalk 2: a working key plus a subscription (--api-key ok --subscription).\n- I set the policy to subscription_then_ask with a yes. To inject the stop, I wrote limits.restingUntil=19:40 on the subscription row in state.sqlite.\n- Chat held: \"Your Claude subscription is at its limit until 19:40, so I have not answered...\" No request reached the key.\n- I pressed Start. The start was kept (\"A session of Quote page starts at 19:40.\") and exactly one ask card appeared in the Inbox: \"Use your API key until 19:40?\", body with about CHF 0.11, options Use API key and Wait with their lines, and Details naming the monthly checks (walk2-steps/07). This matches the design.\n- I pressed \"Use API key\" in the UI. The Inbox showed \"Done: Done: your API key does the work until 19:40; the waiting work runs at your next Start.\" (walk2-steps/09). Ten seconds later the kept Start ran by itself on the key: the session started at 18:21:05, both tasks were done and reviewed, and every request carried the key.\n- On a second stop (19:45) and a new project, Start again produced one card. Pressing Wait showed \"Done: Done: nothing moves until 19:45; then your session goes on.\" (walk2-steps/14).\n\nWalk 3: a refused key (--api-key refused).\n- Chat gave \"Anthropic refused your API key, so I have not answered...\" after one 401.\n- After Start, the rows read \"Waits for a new API key\", and the Inbox showed one refused card: \"The key is not valid or was deleted. Save a new one in Settings; until then the work waits.\" with \"Save a new key\" (walk3-steps/09). This matches the design.\n- But the key then got a second request after its refusal: GET /v1/models returned 401 at 18:22:54, after the first 401 at 18:22:35.\n\nExtra composed check: I put a temporary copy of the fixer's own credential-ask.test.ts Wait case in the tree (deleted again) to read the second session's words. After the person answered Wait, a second session started before the reset says in its summary and its log '\"Style the page\" waits for your answer: use your API key? The card is in the Inbox.' The Inbox has no open card, and the rows say \"Waits until 15:00, your subscription's limit\".\n\nValidation runs, all green:\n- pnpm test: 529 files, 5727 passed.\n- UI vitest: 95 files, 1244 passed.\n- pnpm test:integration: 30 passed.\n- pnpm test:e2e: 25 passed.\n- typecheck, lint (warnings only), lint:paths, secrets:scan, docs-check and link-check all pass.\n- The fixer's 11 named test files pass (145 tests).\n\nFailing first: billing-order.test.ts (5 cases) and the CE-5 case of task-usage-limit.test.ts fail on claude/nifty-knuth-f9udt0 code (I checked in a separate worktree, now removed). For example, with nothing chosen chat answered \"From the API.\" instead of \"From Claude Code.\".\n\nI did not run Playwright again, because apps/ui/src is unchanged by this branch.",
+        "blocking": [
+          {
+            "issue": "The app says a card is waiting in the Inbox when there is none. Whenever the rule is 'ask', the sentence 'Waits for your answer: use <other>? The card is in the Inbox.' is written, even when no card was filed or the card was already answered. It shows in the session summary, the session log, the Overview's Last result and a notification.",
+            "where": "packages/billing/src/router.ts:363 (ask: rule === \"ask\" with no check for a card); packages/runtime/src/session/credential-wait.ts:290 and :487 (waitSentence and planWaitWords); packages/runtime/src/wiring/billing-pick.ts:996 (askFor files nothing when no other credential serves)",
+            "evidence": "Bench walk 1 (subscription_then_ask, only a limited API key): the session summary reads 'Waits for your answer: use your Claude subscription? The card is in the Inbox.', the log line is 'Your API key reached its usage limit; \"Write the quote note\" waits for your answer: use your Claude subscription? The card is in the Inbox.' and a notification was sent, but GET /inbox has no open card and no subscription is saved (/tmp/frbench/review-d1109-cred-engine/walk1-steps/11-ask-only-key-session.png, 12-ask-only-key-overview.png). Also, in the fixer's own credential-ask Wait scenario, a session started after the person pressed Wait (before the reset) says '\"Style the page\" waits for your answer: use your API key? The card is in the Inbox.' while the Inbox has no open card and the rows say 'Waits until 15:00, your subscription's limit'. Design section 5: a sentence promises only what the app does.",
+            "expected": "Use the 'your answer' form only while the one ask card for this stop is open (task-display.ts already checks this for the rows). Otherwise use the plain wait sentence ('Waits until 18:19 (your API key's limit); then your session goes on.'). Add tests that fail first: a session after Wait, and ask with no other credential."
+          },
+          {
+            "issue": "Both Done lines of the ask card show 'Done:' twice in the Inbox.",
+            "where": "packages/runtime/src/session/credential-words.ts:118-122 (outcomes already start with 'Done:'); apps/ui/src/pages/InboxPage.tsx:798 adds 'Done: ' in front",
+            "evidence": "Bench walk 2: after Use API key the screen reads 'Done: Done: your API key does the work until 19:40; the waiting work runs at your next Start.' (walk2-steps/09-inbox-after-pressing-use-api-key.png). After Wait it reads 'Done: Done: nothing moves until 19:45; then your session goes on.' (walk2-steps/14-inbox-after-pressing-wait.txt). The real-daemon case checks only answered.outcome, not what the screen shows.",
+            "expected": "One 'Done:' on screen, as for every other card, with a UI test of the answered ask card's line."
+          },
+          {
+            "issue": "After 'Use API key', the Done line says the work runs at the person's next Start. In fact the person's kept Start runs by itself on the key within seconds. The card's own Wait line had called it 'your session'.",
+            "where": "packages/runtime/src/daemon/compose.ts:4614 (onGrant looks only at keptContinuationOf and ignores a kept person start, keptStartOf, so session_goes_on is false); credential-words.ts:119",
+            "evidence": "Bench walk 2: Start was pressed during the stop and kept ('A session of Quote page starts at 19:40.'). The card's Wait line read '...then your session goes on with your subscription.' Use API key was answered at 18:20:55 and showed '...the waiting work runs at your next Start.' A session then started at 18:21:05 by itself (trigger budget_reset) and ran both tasks and their reviews on the key.",
+            "expected": "A kept person start counts as the person's waiting session for the grant: it goes on now, and the Done line says 'your session goes on now'. Add a test that fails first."
+          },
+          {
+            "issue": "CE-8 is one of the items the spec says may never be cut, and its acceptance fails: a refused key still gets a second request, and the refused card's 'ask' form is not wired. The user guide and security.md nevertheless promise 'Forerunner never sends it another request meanwhile'.",
+            "where": "the routed provider's listModels / API-provider path (named by the fixer in new_problems); packages/runtime/src/daemon/views.ts credentialRefusedFor (never passes estimateChf, so the refused card's Use API key / Wait never shows); request-words.ts (ask_answer is never written); docs/user-guide.md; docs/maintainers/security.md",
+            "evidence": "Bench walk 3 (--api-key refused), request log: POST /v1/messages 401 at 18:22:35 (chat), then GET /v1/models 401 at 18:22:54 during the session, with the same key id. Acceptance CE-8: 'the stand-in's log shows one 401 for that key and no further request ... until a different key is saved', and under subscription_then_ask the card offers ['Use API key', 'Wait'].",
+            "expected": "No path asks a refused source anything until a different credential is saved: skip refused sources in listModels and maxOutputTokens, with a composed test that counts 401s per key. Wire the refused card under 'ask', or fix the docs' promise and record the reason against the cut line."
+          },
+          {
+            "issue": "Other parts of items the spec marks never-cut are not built or not tested where the acceptance names them, and the composed tests inject a provider although fix_scope forbids it.",
+            "where": "packages/runtime/src/session/task-check.ts (not in the diff); packages/runtime/test/credential-ask.test.ts and apps/ui/test/real-daemon.test.ts (both pass provider: new AcceptingCriticProvider(...)); task-usage-limit.test.ts (only the no-file case of CE-5)",
+            "evidence": "(1) CE-3: the task check has no held branch. When held, runTaskCheck writes a Run row with outcome 'failed' (task-check.ts:518-549), checkAtBoundary counts it as a check and logs taskCheckedLine kind 'failed' (task-check.ts:1248-1255): 'Checked the task list after \"X\": the call did not answer, so nothing changed (...)' (result.ts:197). Under ask it files no card. The table test has no task-check row. (2) CE-4: no composed test with the routed provider shows the critic's review or a plan from a brief holding under wait or ask. Only chat is covered (billing-order.test.ts); credential-policy-session.test.ts does not exist. (3) CE-5: the main case is untested: a run that wrote a file ('Its work so far is in the folder you work in ... continue from it', the work-in-progress commit under the continuing commit), and the 'was refused' and 'share' briefs. (4) CE-7: no withdrawal when the other credential cannot serve, no caps-room check before filing, no test that an unanswered card closes at the first wake after a reset that passed while the runtime was down, and no test that a policy change closes it. (5) CE-6 (the allowance raise's change line and both Wait lines of the share are this area's in the sub-run notes), CE-11 beyond CostView.byCredential, and CE-12's producer are in not_done, outside the cut line, which allows only CE-10, CE-11's byCredential and CE-12's restart case.",
+            "expected": "Build these or test them at the boundaries the acceptance names: the routed provider over both stand-ins, no injected provider, failing first. If an item truly cannot be built, record the reason against the cut line for the session lead's decision."
+          }
+        ],
+        "claims_checked": [
+          {
+            "claim": "CE-1: one policy; CALL_FALLBACK_ORDER and fallbackOrder removed; with nothing chosen, chat uses the subscription first",
+            "holds": true,
+            "note": "policy.ts and the router read it at every pick. A grep shows neither name left in code, but the acceptance's grep unit test is missing. billing-order.test.ts fails on base ('From the API.') and passes now."
+          },
+          {
+            "claim": "CE-2: every stop (limit, refused, share, key_month) is held under wait and ask; grants apply to the current stop only and never to batch",
+            "holds": true,
+            "note": "router.test.ts and credential-policy.test.ts table pass. Not walked end to end on the bench (the subscription path needs Claude Code)."
+          },
+          {
+            "claim": "CE-3: the pick follows the policy for every purpose; exclude goes in as heldNow; needs waits",
+            "holds": false,
+            "note": "The pick part holds (table test). The task check's held branch, the card for it and its table row are not built."
+          },
+          {
+            "claim": "CE-4: the routed provider has no order of its own; under wait, chat holds with no API request",
+            "holds": true,
+            "note": "Chat is shown composed and on the bench. The critic's review and the plan from a brief are not tested composed under wait or ask."
+          },
+          {
+            "claim": "CE-5: the continuing run is briefed from where the credential stopped",
+            "holds": true,
+            "note": "Only the no-file case is tested. The changed-files and work-in-progress-commit case, and the refused and share wording, are untested."
+          },
+          {
+            "claim": "CE-7: one ask card per stop; Use API key grants; Wait moves nothing; works after a restart",
+            "holds": false,
+            "note": "The card, the grant and the restart work. On screen the Done lines read 'Done: Done:'. The 'next Start' Done line is untrue for a kept Start. The 'your answer' sentence appears with no open card, also after Wait."
+          },
+          {
+            "claim": "CE-8: a refusal informs once (one card, the category body), never retried",
+            "holds": false,
+            "note": "One card with the category body: yes. A second request to the refused key (GET /v1/models 401) was seen on the bench. The ask form of the refused card is not wired."
+          },
+          {
+            "claim": "CE-9: chat holds with the hold reply; one-off switch; note once per stop",
+            "holds": true,
+            "note": "The hold reply is shown on the bench. The one-off press is not in the POST /chat view (C6). The hold reply still offers 'Think it through ... at most CHF 0.03'."
+          },
+          {
+            "claim": "CE-13: a widening needs a yes, agents are refused, the older keys answer 'replaced', the tool definition is updated",
+            "holds": true,
+            "note": "The commands tests pass and the read-back was seen on the bench. An Undo that widens is checked through undoRisk only, not the Changes route."
+          },
+          {
+            "claim": "C4b-left-2: 'a first-session plan of 1 task / N tasks'",
+            "holds": true,
+            "note": "The same sentence still has 'milestone(s)', 'task(s)' and 'doc(s)' (the fixer lists this)."
+          },
+          {
+            "claim": "Validation: pnpm test, integration, e2e, UI vitest, lint, typecheck and docs-check are green",
+            "holds": true,
+            "note": "I ran them again myself; all green."
+          }
+        ],
+        "non_blocking": [
+          "The chat hold reply still shows 'Think it through' with 'Thinks longer on this model: about 30 seconds, at most CHF 0.03' (server.ts:2503 offers it because the stored reply has closer and no notice). Pressing it only gets the hold reply again (walk1-steps/01).",
+          "docs/user-guide.md says 'While chat waits it says why and offers Use API key for that one question'. No such button is on screen until C6 adds oneOff to the POST /chat view.",
+          "billing-order.test.ts, 'policy and rest survive a restart': the explicit post-restart assertions on GET /settings/billing-order (chosen, order, blocked: resting) were removed. Survival is now implied only by the reply source.",
+          "GET /settings/billing-order and the existing Settings section still read billing_order (personOrderOf), not credential_policy. Once a policy is stored, Settings can show an order that is not in force (C6 replaces the screen).",
+          "The concurrent-refusal test calls RouterTaskBilling.refuse twice, not a task run and a chat call at the same moment through the composed runtime.",
+          "syncAskAnswers writes the grant, calls onGrant, then marks the card applied, not atomically. A crash in between could start a second continuation after a restart.",
+          "onGrant readmits every ready task of the project into a running session, not only the tasks that waited for the stop.",
+          "The compose credentialHold reads human.timezone and monthly_cap_usd_micro captured at compose time, not at each call.",
+          "The router falls back to Date.now() when nowMs is absent (AGENTS: Clock). Current callers pass nowMs.",
+          "After a grant, the session log never says the work ran on the API key, or why (CE-11 not built). The person sees only 'The session started with a budget of CHF 5.00.'",
+          "credential_policy's narrows treats an unset earlier value as rank 0 even when mid_session_limit use_other is stored (the fixer lists this).",
+          "The leftovers L3-left-14, C3-left-4/5/6, C4b-left-1 and C4-left-11 are in not_done with the reason 'Time'. The acceptance allows not_done with a reason.",
+          "No bench BEFORE walk was done. The before behaviour is shown only by tests that failed on the base."
+        ]
+      },
+      "fixup": {
+        "area": "d1109-cred-engine",
+        "branch": "fix/d1109-cred-engine",
+        "head_sha": "09969dea5a2f8fc6daa4e90e6709998e9411fd29",
+        "commits": [
+          {
+            "sha": "1d7b617",
+            "subject": "cred-engine: the ask form only while its card is open; one \"Done:\"; a kept Start goes on after Use API key (U-078)"
+          },
+          {
+            "sha": "f52e3fd",
+            "subject": "cred-engine: a refused key is asked nothing more; under \"then ask me\" a refusal is asked about once (U-078)"
+          },
+          {
+            "sha": "03a1be6",
+            "subject": "cred-engine: the task check is held by the policy; an ask card closes when its yes could move nothing; tests without an injected provider (U-078)"
+          },
+          {
+            "sha": "cd945d7",
+            "subject": "docs: ADR 0120 and the maintainer docs follow the fix-up; the user guide promises only what chat does (U-078)"
+          },
+          {
+            "sha": "09969de",
+            "subject": "task-check test: the check asks whether its call is held before it makes it (U-078)"
+          }
+        ],
+        "fixed": [
+          {
+            "problem": "Blocking 1: under 'Subscription first, then ask me' every wait said 'Waits for your answer: use <other>? The card is in the Inbox.' (session result, log, Overview, notification, plan), also when no card was filed (no other credential) and after the person answered Wait. Root cause: the router's waitFor.ask means 'the rule asks', and every sentence read it as 'a card is open'.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-ask-words.test.ts 'under then ask me with only an API key at its limit, no card is filed and nothing says one is' and 'after Wait, a session started before the stop ends says the plain wait' (both failed: the summary held the card sentence)",
+            "how": "credential-wait.ts askCardOpen(store, sourceId, stopKey) and askShown(store, wait): the ask form only while the stop's one card is open, else the plain wait. Applied in executor.pickBilling and its stopped-run path, withReviewWait, intake.waitView (the stored plan wait now keeps stopKey and ask), and compose's Start-check 'now'. Rows (task-display) already checked the open card.",
+            "check_in_the_app": "Bench (--provider bench-api --api-key limited, policy subscription_then_ask set with the yes through POST /commands/execute): Start a project with two tasks: the session page, its log, the Overview's Last result and the rows read 'Waits until HH:MM (your API key's limit); then your session goes on.' and nothing says a card is in the Inbox; the Inbox has no ask card (walked: /tmp/frbench/fixup-d1109-cred-engine-keep/walk1-steps). Live check 4: with both credentials under 'then ask me', press Wait on the card, press Start again before the reset: the new session says the plain wait, never 'your answer'."
+          },
+          {
+            "problem": "Blocking 2: the ask card's Done lines read 'Done: Done: ...' in the Inbox (the outcomes began with 'Done:' and the Inbox adds 'Done: ').",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/inbox.test.tsx 'the ask card's Done line reads one Done: after Use API key and after Wait (d1109-cred-engine, run C)'; packages/runtime/test/credential-ask-words.test.ts 'after Wait ...' (outcome was 'Done: nothing moves ...')",
+            "how": "credential-words.ts askCardWords: the outcomes are one sentence without 'Done:' ('Your API key does the work until 15:40; your session goes on now.', 'Nothing moves until 15:40; then your session goes on.'); the fake daemon words the ask card in the person's clock as the daemon does.",
+            "check_in_the_app": "Inbox, an open 'Use your API key until HH:MM?' card: press Use API key: the line reads 'Done: Your API key does the work until HH:MM; your session goes on now.' with one 'Done:' (walked: walk2-steps/03-ask-keep-inbox-after-use-api-key.png)."
+          },
+          {
+            "problem": "Blocking 3: after Use API key, a Start the person pressed during the stop (kept for its end) was left for the wake, which started it seconds later on the key, while the Done line said the work runs at the next Start.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-ask-words.test.ts 'a Start kept for the stop's end goes on at once after Use API key, and the Done line says so' (outcome was '... the waiting work runs at your next Start.')",
+            "how": "compose.ts onGrant: the kept continuation, else the kept person Start (keptStartOf, its note kept), starts now as the person's own start and is dropped from the wait; the card records session_goes_on, so the Done line says 'your session goes on now'.",
+            "check_in_the_app": "Bench (--provider bench-api --api-key ok --subscription, subscription rest written into the home's state, 'then ask me'): press Start (it is kept: 'A session of Quote page starts at HH:MM.'), answer the one card with Use API key: the Done line says the session goes on now and the first request to the key comes within a second (walked: walk2-steps; api-requests.jsonl starts 19:20:23 right after the answer)."
+          },
+          {
+            "problem": "Blocking 4a (CE-8, never cut): a refused key got a second request: RoutedProvider.apiProvider() (the model list and a model's output limit) took the first API-style source whatever its state, so after chat's 401 the session's GET /v1/models went to the refused key.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-refused-once.test.ts 'one 401 for the key across chat, a session, the model list and a restart; one card' (failed: GET /v1/models 401 from listModels)",
+            "how": "RoutedProviderDeps.refused (compose: refusedSince over the vault): apiProvider skips a source whose refusal stands until a different credential is saved.",
+            "check_in_the_app": "Bench (--provider bench-api --api-key refused): ask Talk a question, Start a project with two tasks, ask again: home/bench/api-requests.jsonl holds exactly one line, 'POST /v1/messages 401' (walked: walk3-steps, the walk's result lists the only request)."
+          },
+          {
+            "problem": "Blocking 4b (CE-8, the owner's 7c 'as if it has run out'): under 'then ask me' a refused first choice filed no ask card (askFor returned for a refusal) and the refused card's Use API key / Wait were never wired (no estimate, no row options to answer).",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-refused-once.test.ts 'under then ask me a refused sign-in is asked about once ...' (failed: one card, no ask card); packages/runtime/test/credential-refusal.test.ts 'a refusal's ask card under then ask me' (exact words)",
+            "how": "A refusal is a stop like a limit under ask: askFor files the one ask card for it ('Use your API key until a new sign-in is saved?', refusedAskWords in credential-words.ts) with the usual grant, which ends when a different credential is saved (the stop key changes). The refused card stays the notification with its link and no options; its body (views.credentialRefusedFor) reads '... Save a new one in Settings, or go on with your API key until then (about CHF N).' while the ask card is open, '... until then your API key does the work, at a cost per use.' after Use API key, '... until then the work waits.' after Wait or with no card. This puts the options on the ask card rather than on the refused card itself (the acceptance's literal shape); the session lead may prefer it the other way.",
+            "check_in_the_app": "Live check 4: Claude Code signed out, a working API key, 'Subscription first, then ask me', two ready tasks, press Start: the Inbox shows 'Anthropic refused your Claude sign-in' (body with the category and 'or go on with your API key until then (about CHF N)', link Save a new sign-in) and one 'Use your API key until a new sign-in is saved?' card; Use API key runs both tasks on the key and the refused card then says the key does the work; saving a new sign-in closes it and the next call uses the subscription."
+          },
+          {
+            "problem": "Blocking 5 / CE-3 (never cut): the task check had no held branch: when the policy held it, runTaskCheck still made its routed call, wrote a 'failed' Run row, logged 'the call did not answer' and filed no card under ask.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-policy-session.test.ts (new) 'nothing chosen ...' and 'subscription_then_ask ...' (a task-check Run row was written)",
+            "how": "task-check.ts runTaskCheck asks the routed provider's holdNow(model) before its call: a held check returns not_made/held with its wait: no call, no Run row, nothing booked, the notes kept for the next boundary; noteWait keeps the project's wait on the stopped source (its one ask card under 'ask'). TaskCheckRun.not_made gains reason 'held' and an optional wait.",
+            "check_in_the_app": "Live check 4: subscription first, a session whose first task's report ends with 'For the task list: ...' and whose review meets the subscription's limit: the session's Details show no 'Checked the task list ...: the call did not answer' line, the Costs page has no task-check row, and the next session checks the kept notes once."
+          },
+          {
+            "problem": "Blocking 5 / CE-4 (never cut): no composed test showed the critic's review and a plan from a brief held under wait or ask with the routed provider; the composed tests injected a provider (it bypasses routing).",
+            "u_ids": [
+              "U-078",
+              "U-048"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-policy-session.test.ts (new; it also found that the plan from a brief stored its wait without stopKey and ask, so under 'then ask me' the project page said 'and starts by itself' while its ask card was open)",
+            "how": "New test world packages/runtime/test/cred-world.ts (composeRuntime with no provider: the Messages API stand-in for the key, a scripted Claude Code that answers runs, chat and reviews with submit_review for the subscription, limits and refusals switchable). credential-policy-session.test.ts: with the subscription at its limit on the review, under nothing chosen and an unanswered 'then ask me' the review waits without a try, no task-check Run row, the notes kept, chat gives the hold reply, the plan from a brief waits, no key request and no key ledger row, one card under ask; under 'then the API key' the review, the check and the next task run on the key and the log reads 'The Claude subscription reached its usage limit and rests until 15:00; the API key answered instead.'. credential-ask.test.ts and the real-daemon case 'd1109-cred-engine, run C' now run on the stand-in, no injected provider.",
+            "check_in_the_app": "Live check 4 step (2): subscription at its limit under the default: chat holds ('Your Claude subscription is at its limit until HH:MM, so I have not answered. ...'), a ready task waits, the critic's review of a finished task waits, a new project's plan waits ('Planning waits until HH:MM (your subscription's limit) and starts by itself.'), and the key's request log is empty."
+          },
+          {
+            "problem": "Blocking 5 / CE-7 (never cut): no withdrawal when the other credential cannot serve any more, no caps-room check before filing, and no test that an unanswered card closes at the first wake after a reset that passed while Forerunner was closed, or on a policy change.",
+            "u_ids": [
+              "U-078",
+              "U-052"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-ask-words.test.ts 'the API key cannot do the work either (at its own limit): the card closes' and 'with the month cap reached no card is filed' (shown to fail with the new check switched off)",
+            "how": "settleAsks gains otherServes (compose: a pick with allowSwitch): an open card whose other credential cannot serve closes with 'Closed: your API key cannot do the work now either.'; the composition's ask files no card when the month cap has no room. Coverage cases that passed at once, each named for what it guards: the stop ended while Forerunner was closed (closed at the first wake with 'Closed: your Claude subscription can work again.', the person's session goes on on the subscription, no key request) and a change to 'then wait' closes the card and the next pick waits.",
+            "check_in_the_app": "Live check 4: under 'then ask me' with an open card, quit Forerunner until after the reset and open it: the card reads 'Closed: your Claude subscription can work again.' and the session goes on on the subscription; with an open card, set 'Subscription first, then wait' in Settings: the card closes with 'Closed: \"Which Claude does the work\" changed, so this question no longer applies.'."
+          },
+          {
+            "problem": "Blocking 5 / CE-5 (never cut): only the no-file case of the continuing brief was tested.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "none: packages/runtime/test/where-last-run-stopped.test.ts 'd1109-cred-engine, run C' cases pass at once; they guard the exact model-facing brief after a limit that wrote a file ('... Its work so far is in the folder you work in (kept as a commit of its own): continue from it, do not start again.', 'Files it changed: \"index.html\"'), after a refusal ('was refused') and at the share ('reached the share of the subscription Forerunner may use'), composed through taskContextBlock over stored Run rows and task.files events, never '## The previous attempt' or 'It failed'",
+            "how": "Tests only (task-context.ts unchanged).",
+            "check_in_the_app": "Live check 4: under 'Subscription first, then the API key', a task whose Claude Code run hits its limit after writing a file continues on the key; the model-call log of the key's first call starts with '## Where the last run stopped' and the 'continue from it, do not start again.' line, naming the file."
+          }
+        ],
+        "not_done": [
+          {
+            "problem": "CE-6: the share reached mid-run is still the hooks' plan-level budget pause (a budget card until the 1st), and the allowance raise's change line is not built (both Wait lines of the share exist in askCardWords and are unit-tested).",
+            "why": "Outside the cut line's exceptions; the reviewer allows recording the reason for the session lead's decision. It needs the executor's budget-stop branch turned into a credential stop and a composed SDK test with the usage-source stand-in; the fix-up spent its time on the blocking items. Named in ADR 0120's consequences."
+          },
+          {
+            "problem": "CE-11: the switch's session log line ('\"X\" goes on with your API key from where it stopped: ...' once, a second task's switch as a detail line, the back line), switchedFrom on the Run row, SessionResult.switched and CostView.byCredential. The runner still logs '\"X\" continues on your API key now.'.",
+            "why": "Outside the cut line except CostView.byCredential; switchLogLine/backLogLine exist in credential-words.ts. Changing the line needs a once-per-session dedupe in the runner and re-baselines three tests of other areas (task-usage-limit, subscription-path, real-daemon). Left for the session lead's decision."
+          },
+          {
+            "problem": "CE-12: the switch notification producer (switchNotificationWords exists).",
+            "why": "Outside the cut line except its restart case; not built in the fix-up for time."
+          },
+          {
+            "problem": "CE-10: background jobs are not marked 'not done for the period' after a held call.",
+            "why": "Within the cut line. A held batch pick waits (no money); whether calibration and the model watch retry next tick stays unverified."
+          },
+          {
+            "problem": "CE-1's one-time Update on homes with both credentials and nothing chosen.",
+            "why": "The spec allows it to end in not_done."
+          },
+          {
+            "problem": "CE-5's composed repository case (the work-in-progress commit under the continuing run's commit on the task's branch).",
+            "why": "The scripted Claude Code of the composed world writes no file through the SDK driver's tools; the brief is covered at the model-facing boundary (taskContextBlock over stored runs and task.files events). Left to live check 4 (step in check_in_the_app)."
+          },
+          {
+            "problem": "CE-9: POST /chat's view does not carry ChatReply.oneOff, and the chat hold reply still offers 'Think it through ... at most CHF 0.03' (server.ts offers it).",
+            "why": "server.ts is d1109-run-visible's only in C5; the press and its route flag are d1109-cred-screens' (C6). The user guide no longer promises the button."
+          },
+          {
+            "problem": "Leftovers L3-left-14, C3-left-4, C3-left-5, C3-left-6, C4b-left-1, C4-left-11.",
+            "why": "Time: the blocking items came first (as in the fixer's report)."
+          }
+        ],
+        "validation": [
+          {
+            "command": "pnpm check (lint, lint:paths, typecheck, unit tests)",
+            "result": "lint and typecheck green; unit 5741 passed, 1 failed (task-check.test.ts pick sequence, the held check's extra read-only pick) -> assertion updated in 09969de, file reruns 24/24 green"
+          },
+          {
+            "command": "pnpm docs:links; node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0; pnpm secrets:scan",
+            "result": "link-check ok (213 files); docs-check ok (57 files); secret-scan clean (2205 files)"
+          },
+          {
+            "command": "pnpm test:integration",
+            "result": "5 files passed, 6 skipped (Postgres), 30 tests passed"
+          },
+          {
+            "command": "pnpm test:e2e",
+            "result": "13 files passed, 25 tests passed, 1 skipped"
+          },
+          {
+            "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+            "result": "95 files, 1245 tests passed"
+          },
+          {
+            "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+            "result": "36 passed"
+          },
+          {
+            "command": "git grep -n '^<<<<<<< '",
+            "result": "nothing"
+          },
+          {
+            "command": "bench fixup-d1109-cred-engine (48760/2360), three fresh starts with --provider bench-api: --api-key limited (then ask me), --api-key ok --subscription (then ask me, subscription rest written into state), --api-key refused; walk script node walk.cjs <bench> nokey-ask|ask-keep|refused",
+            "result": "all checks ok: no card sentence and no ask card with only a limited key; one ask card, one 'Done:' with 'your session goes on now', both tasks on the key; one 401 for the refused key and no other request. Bench stopped, home and browser profile removed; steps kept in /tmp/frbench/fixup-d1109-cred-engine-keep/walk1-steps, walk2-steps, walk3-steps"
+          }
+        ],
+        "new_problems": [
+          "The fixer's new_problems still stand: the intake card's 'milestone(s)', 'task(s)', 'doc(s)' (intake.ts ~1476); the refused card's withdrawn line 'A new one is saved; ...' also when TR-10 closes it with nothing waiting; credential_policy's narrows treats an unset earlier value as rank 0.",
+          "GET /settings/billing-order and the current Settings section still read billing_order (personOrderOf), not credential_policy (C6 replaces the screen).",
+          "syncAskAnswers writes the grant, calls onGrant, then marks the card applied, not atomically; a crash between could start a second continuation after a restart.",
+          "onGrant readmits every ready task of a project with a running session, not only the ones that waited for the stop.",
+          "compose's credentialHold reads human.timezone and monthly_cap_usd_micro captured at compose time, not at each call.",
+          "The router falls back to Date.now() when RouteContext.nowMs is absent (current callers pass it)."
+        ],
+        "notes_for_other_areas": [
+          "session/credential-wait.ts: askCardOpen(store, sourceId, stopKey?) and askShown(store, wait): any sentence that names the ask card (d1109-run-visible's generic 'waiting for Claude, then it goes on' form, d1109-cred-screens' words) passes the wait through askShown, so 'Waits for your answer ... The card is in the Inbox.' shows only while that card is open.",
+          "session/credential-words.ts: AskCardWords.done.use/.wait carry no 'Done:' prefix (the Inbox adds it): 'Your API key does the work until 15:40; your session goes on now.'; askCardWords gives refusedAskWords for a refusal stop ('Use your API key until a new sign-in is saved?').",
+          "Under subscription_then_ask a refusal of the first choice now files the one credential:ask card (reason 'refused', until null); the refused card never carries options; views.credentialRefusedFor returns rule 'ask' with estimateChf while that card is open, 'next' with other api_key after a grant, else 'wait'.",
+          "provider/routed.ts: RoutedProviderDeps.refused(source) (compose: refusedSince over the vault); listModels and maxOutputTokens skip a refused source.",
+          "session/task-check.ts: TaskCheckRun not_made gains reason 'held' and an optional wait; runTaskCheck calls the provider's holdNow before its call and noteWait when held (any caller that counts picks sees one extra read-only pick).",
+          "session/credential-ask.ts settleAsks gains otherServes(sourceId) (closed_why 'other_cannot'); compose's ask files no card when the month cap has no room.",
+          "compose onGrant starts a kept person Start (keptStartOf, with its note) as well as a kept continuation, by 'person', and drops it from the wait.",
+          "intake's stored plan wait (summary_cache.intake.wait) now keeps stopKey, ask and stop.",
+          "packages/runtime/test/cred-world.ts: a composed world with no injected provider (Messages API stand-in + scripted Claude Code that answers runs, chat and reviews; limitSubscription, limitSubscriptionAfter, refuseSubscription, setKey, setRunReport, keyCalls, key401s, sdkCalls) plus seedProject, startSession, setPolicy and until, for C6's composed tests.",
+          "Suggested UPDATE-LOG/CHANGELOG lines (session lead's files): 'Under \"Subscription first, then ask me\" the app says a card waits for your answer only while that card is in the Inbox.' / 'A refused key or sign-in is asked nothing more until you save a new one, the model list included; under \"then ask me\" a refused sign-in also gets one card asking whether your API key does the work until then.' / 'After Use API key, a Start you pressed while the subscription rested goes on at once.' / 'The agent's check of its task list waits like every call when your rule holds the subscription; nothing is booked and its notes are kept.'"
+        ],
+        "screenshots": {
+          "before": [],
+          "after": [
+            "/tmp/frbench/fixup-d1109-cred-engine-keep/walk1-steps/03-nokey-ask-after-session.png",
+            "/tmp/frbench/fixup-d1109-cred-engine-keep/walk1-steps/04-nokey-ask-after-overview.png",
+            "/tmp/frbench/fixup-d1109-cred-engine-keep/walk2-steps/02-ask-keep-inbox-ask-card.png",
+            "/tmp/frbench/fixup-d1109-cred-engine-keep/walk2-steps/03-ask-keep-inbox-after-use-api-key.png",
+            "/tmp/frbench/fixup-d1109-cred-engine-keep/walk3-steps/02-refused-after-inbox.png"
+          ]
+        },
+        "tests_changed_for_design": [
+          {
+            "test": "packages/runtime/test/credential-ask.test.ts (rewritten on cred-world.ts)",
+            "why": "The reviewer's finding: an injected provider bypasses the routing of reviews and chat; the same cases (one card per stop, restart between filing and answering, Use API key, Wait, the reset) now run on the Messages API stand-in and a scripted Claude Code, plus a second answer that changes nothing. Done outcomes lose their own 'Done:'."
+          },
+          {
+            "test": "apps/ui/test/real-daemon.test.ts describe 'd1109-cred-engine, run C'",
+            "why": "No injected provider (fetchImpl over messagesApiStandIn); work counted from the stand-in's request log; the Done outcome without its own 'Done:'."
+          },
+          {
+            "test": "packages/runtime/test/credential-refusal.test.ts (askCardWords done.use)",
+            "why": "The outcome without its own 'Done:' (the Inbox adds it)."
+          },
+          {
+            "test": "packages/runtime/test/task-check.test.ts 'on the subscription stand-in: the call is routed as the intake's planning call ...'",
+            "why": "The held-call branch asks holdNow (a read-only pick) before the call: two 'interactive' picks where there was one; the intent (routed as the intake's planning call, booked as a subscription row) is kept."
+          }
+        ]
+      }
+    },
+    {
+      "key": "d1109-run-visible",
+      "fix": {
+        "area": "d1109-run-visible",
+        "branch": "fix/d1109-run-visible",
+        "head_sha": "f8f728850e408c47fcd624847b7d8723fac2fe9d",
+        "commits": [
+          {
+            "sha": "5edf901b53f75b9db44dd9c1f2fcd5072f821d80",
+            "subject": "real-daemon: the restarted daemon's clock goes on from later (C4b-left-3)"
+          },
+          {
+            "sha": "a1b824949d2b244106359455214b7365ae034e89",
+            "subject": "run-indicator: one run state in the daemon's words, GET /running, run.changed, /health.running (U-096, U-071, U-077)"
+          },
+          {
+            "sha": "ef77b601962d58e190316899736cd6e6299b9f92",
+            "subject": "shell: one run indicator under the header on every page, with Stop and Cancel (U-096, U-071, U-077)"
+          },
+          {
+            "sha": "dc11dee2032b558d3f7005c44595d627b3b03ae0",
+            "subject": "project-status: Home, the Overview and Talk show the run indicator; the line says what waits to start (U-096, U-071)"
+          },
+          {
+            "sha": "d7841a4f8de3f79aec4621cafc2e61a8434ac1c3",
+            "subject": "session-page: a session that ended to wait says what comes next, with Cancel or Continue (U-096, U-078)"
+          },
+          {
+            "sha": "225916ebc1764ad4a4bb78fe14fecad79eaaa17d",
+            "subject": "desktop: the tray, its first item, the window title and the icon's dot say what runs (U-096)"
+          },
+          {
+            "sha": "ba2f6b6c00de0a42c84cd7618180e2a314fdf4fd",
+            "subject": "shell: the browser build reads Cancel's sentence from a file with no Node imports (U-096)"
+          },
+          {
+            "sha": "62792d1313ab59fdfc94df26015d7383221f0dce",
+            "subject": "inbox: the Done line offers Start when the answer readied work and no session of that project runs (U-096, U-071)"
+          },
+          {
+            "sha": "aa586500202be333003816557c0782e7f40c6dba",
+            "subject": "bench: the stand-in critic counts reviews without a run id; the journeys check today's words (C4b-left-4)"
+          },
+          {
+            "sha": "fe30a47a2630f4fc1c3b4cccfc78b2638cc8a111",
+            "subject": "docs: what runs now, the Done line's Start and the tray in the maintainer docs, the user guide and ADR 0118 D8 (U-096)"
+          },
+          {
+            "sha": "539a21a8417d12f5b4a794c9fe6a518832789ed6",
+            "subject": "test: the browser-imports check builds its paths with the platform's helpers (U-096)"
+          },
+          {
+            "sha": "55d22975fd45def93279b13677e7cd9bcd9692f1",
+            "subject": "run-indicator: the scheduler's start keeps its own promise; the poke rides beside it (U-096)"
+          },
+          {
+            "sha": "7324651a88ff80b17fb362736bf17fb02241e5ff",
+            "subject": "project-status: the composed credential tests read the line that says what waits to start (U-096, U-078)"
+          },
+          {
+            "sha": "f8f728850e408c47fcd624847b7d8723fac2fe9d",
+            "subject": "shell: the Stop-all cases press the bar's Stop, not Home's Working now (U-096)"
+          }
+        ],
+        "fixed": [
+          {
+            "problem": "V-1: there was no single run state. Each project card worked out 'working' from every event of each session, and the header chip, Home and the Overview each built their own words ('Alice is working on \"X\"' named the agent, not the project). The Sessions list said 'Working on \"X\" (3 of 7 done)'. The shells read only /health's count, which also counted a plan being drafted. Nothing showed a review, a requested stop, the critic's monthly check or a session waiting to go on.",
+            "u_ids": [
+              "U-096",
+              "U-071",
+              "U-077"
+            ],
+            "failing_test_before": "packages/runtime/test/run-indicator.test.ts (module missing; now 15 cases with each sentence exact); apps/ui/test/real-daemon.test.ts describe 'd1109-run-visible, run C' (GET /running answered 404) and its case for a session waiting to go on (before and after a restart, quiet hours, Cancel)",
+            "how": "daemon/run-words.ts (pure) and daemon/run-indicator.ts (reads the store) fold each active session's log incrementally into planning, working, reviewing, between, wrapping, stopping, calibrating or waiting. runText gives at most 80 characters with no id and no USD: 'Quote page · the coder works on \"Style the page\"', '· the critic checks \"X\"', '· picks the next task', '· wraps up \"X\" at its budget', '· stops after \"X\"', '· then Garden site', 'waiting until 15:40, then it goes on' (also in quiet-hours, refusal and generic forms), and 'Forerunner · the critic's monthly check on known examples' with its explanation for the API key or for the Claude plan. GET /running and the run.changed event (debounced to at most one per second) carry it, and /health gains running. activeSessions no longer counts a plan being drafted. The calibration run is registered with the kill switch (running.stopCalibration). The Sessions list's working row now uses the same words.",
+            "check_in_the_app": "live_check: 1) Open a project and press Start. 2) While it runs, open Home, Inbox, Settings, the project's Overview and Tasks, and the session page. Each shows the same line under the header, 'Quote page · the coder works on \"Create index.html\"', which changes to '... the critic checks \"...\"' during a review and to '... picks the next task' between tasks. 3) The Sessions tab's running row says the same words. 4) When the session ends the line goes away."
+          },
+          {
+            "problem": "V-2: the header had a small chip cut at max-w-md and a red 'Stop all (1 running)' at the other end. Only the session page offered Stop after this task and Stop now, and the window title never changed.",
+            "u_ids": [
+              "U-096",
+              "U-071",
+              "U-077"
+            ],
+            "failing_test_before": "apps/ui/test/run-indicator.test.tsx 'd1109-run-visible: the run indicator under the header (V-2)' (no run-indicator-bar on any of 12 routes at 1280 and 375 px, no Stop menu, no Cancel, no title); apps/ui/e2e/smoke.spec.ts (bar at both widths)",
+            "how": "shell/RunIndicator.tsx shows a bar directly under the header on every route and width, never in the collapsed menu. It has a pulsing dot, the words (which open the session), the elapsed time and Stop ▾ with three items: Stop after this task (POST /sessions/:id/pause), Stop now (asks once) and Stop all (asks once, POST /kill). A session waiting to go on shows Cancel instead of Stop ('Nothing starts when Claude is back; its tasks wait for your Start.'). document.title is '● Quote page · Forerunner' while a session runs. The store keeps the list from GET /running and run.changed. RunningChip and the header's Stop all are gone, and the palette's Stop all opens the bar's question.",
+            "check_in_the_app": "live_check: 1) Start a session. 2) Look under the header on any page, wide and with the window narrowed to phone width. One bar names the project and what it does, shows 'just started' or minutes, and has Stop ▾. 3) The browser tab title starts with '● <project> ·'. 4) Open Stop ▾: Stop after this task, Stop now and Stop all, each with one line saying what it does. 5) Press Stop all and confirm: the bar goes and 'Sessions are stopped' appears."
+          },
+          {
+            "problem": "V-3/V-4: Home's and the Overview's 'Working now' used their own words. Talk is a modal that covers the header. The project's line said nothing of what waits to start (a session going on after a wait, a kept Start, a hands-off start held by quiet hours, a person start behind another project's session). Its ready line read 'Ready to continue: 3 tasks ready'.",
+            "u_ids": [
+              "U-096",
+              "U-071"
+            ],
+            "failing_test_before": "packages/runtime/test/project-status.test.ts 'd1109-run-visible, run C' (startsWait cases); apps/ui/test/run-indicator.test.tsx 'd1109-run-visible: Home, the Overview, the project's line and Talk (V-3, V-4)'; real-daemon 'd1109-run-visible, run C' (line for the waiting session, kept Start after a restart, queued start)",
+            "how": "Home's and the Overview's Working now show the indicator in its block form, and Talk's first line shows its compact form with Stop. project-status.ts rule 2b adds four lines: 'Waiting until 15:40 (your subscription's limit), then it goes on' with Cancel (action kind 'cancel'), 'Starts at 15:40 (your subscription's limit)' with Cancel, 'Starts after your quiet hours', and 'Starts after the session on \"Quote page\"'. Rule 4 now reads 'Ready: 3 tasks wait for your Start'. The server reads all of this through d1109-starts-engine's read-only accessors (startsWaitOf).",
+            "check_in_the_app": "live_check: 1) With a session running, Home's 'Working now' and the project's Overview show the same line with Stop. 2) Press Talk: the dialog's first line is the same, with Stop. 3) Start a session on a second project while the first runs: the second project's line says 'Starts after the session on \"<first>\"' and the bar adds '· then <second>'. 4) A project with ready tasks and no session says 'Ready: N tasks wait for your Start'."
+          },
+          {
+            "problem": "V-5 and the leftovers C3-left-7, C3-left-8 and L3-left-15. A session that ended to wait for its credential showed nothing on its page: no Cancel while kept to go on, and no way to continue with the rest of its budget after Cancel. Its stored result kept promising '...; then your session goes on.' after Cancel. The Start dialog said 'Starts after the current session' without naming the other project. The log chips read 'info (20) warning (0)'.",
+            "u_ids": [
+              "U-096",
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-run-visible, run C: the page of a session that ended to wait (V-5)' (no waitBlock; the summary kept its promise after Cancel); apps/ui/test/run-indicator.test.tsx 'd1109-run-visible: the page of a session that ended to wait (V-5), its level chips (L3-left-15)'",
+            "how": "GET /sessions/:id gains waitBlock with three states. goes_on: 'Waiting until 15:40 (...), then it goes on with \"B\" and 1 more.' with Cancel. starts_again: 'Starts again at 15:40 with \"B\" and 1 more.' with Cancel. stopped: 'Stopped to wait ... \"B\" and 1 more wait.' with Continue, which opens Start with the rest of the session and its budget left (POST /sessions with continues). summaryAfterWait rewrites the result to '...; then it runs at your next Start.' once nothing is kept. The Start dialog names the other project ('Starts after the session on \"Quote page\"'). The chips read Updates, Warnings, Needs you and Errors, with no chip for a level that has no lines.",
+            "check_in_the_app": "live_check: 1) Run a session whose Claude credential hits its limit (on the bench: --provider bench-api --api-key limited). 2) The bar reads '<project> · waiting until HH:MM, then it goes on' with Cancel. 3) Open that session's page: 'Waiting until HH:MM (your API key's limit), then it goes on with \"...\" and 1 more.' with Cancel. 4) Press Cancel: it reads 'Stopped to wait ...' with Continue, and the result line says '...; then it runs at your next Start.'. 5) Continue opens Start with the budget left. 6) Details' chips read Updates (N) and so on, with none at 0."
+          },
+          {
+            "problem": "V-6: after an Inbox answer readied work for the person's next Start (e.g. Try again on a failed task), the Done line said 'it runs at your next Start.' but offered nothing. The person had to find the project and its Start.",
+            "u_ids": [
+              "U-096",
+              "U-071"
+            ],
+            "failing_test_before": "apps/ui/test/run-indicator.test.tsx \"d1109-run-visible: the Inbox's Done line offers Start (V-6)\" (no done-line-start in two of its cases); real-daemon '... Try again prepares it for the person's Start ...' now asserts startOffer; packages/runtime/test/run-indicator.test.ts \"the Done line's Start (V-6)\"",
+            "how": "run-words.ts startOfferOf: true when the answered card's prepared outcome is waits_start, stopping or failed. It is never true for a hands-off start, an open card, or a card with no project. requestView and the fake daemon set HumanRequestView.startOffer. The Inbox's Done line shows Start ('Opens Start for <project>.'), which opens that project's Start dialog. Start is hidden while a session of that project runs or waits, read live from the run indicator's list.",
+            "check_in_the_app": "live_check: 1) In the Inbox, answer a failed task's card with Try again while no session of its project runs. 2) The Done line reads 'Done: Trying \"...\" again: it runs at your next Start.' with a Start button and 'Opens Start for <project>.'. 3) Press Start: that project's Start dialog opens and nothing starts until its own Start. 4) Start the session: the Done line's Start disappears."
+          },
+          {
+            "problem": "V-7/V-8: the desktop shell read only /health's count. The tooltip said '1 running session' with no project, the window title was always 'Forerunner', and the icon never changed. The tray's stop read 'Kill switch: stop everything' and 'Resume'.",
+            "u_ids": [
+              "U-096"
+            ],
+            "failing_test_before": "apps/desktop/src-tauri: state.rs a_running_session_is_said_by_the_tooltip_the_first_item_and_the_title, with_none_running_the_title_is_forerunner_and_the_tooltip_says_no_session_runs, a_session_that_only_waits_to_go_on_is_said_but_leaves_the_title_and_the_icon; daemon.rs health_reads_what_runs_now; tray.rs the_running_dot_is_drawn_at_the_lower_right_over_the_icon",
+            "how": "daemon.rs reads /health.running. The tray's first, disabled item and the tooltip's first line say what runs ('Quote page: the coder works on \"A\"', or 'No session runs'). The window title is 'Forerunner — Quote page is working' while a session runs. tray::with_running_dot draws a blue dot over the app's own icon while a session runs. A session that only waits is said in the item and tooltip but leaves the title and icon unchanged. The tray offers 'Stop all sessions' (asks 'Stop every running session now? No session starts until you allow it again.') and 'Allow sessions again'. scripts/desktop-window-check.mjs checks the bar and the page title on Windows CI.",
+            "check_in_the_app": "live_check (installed desktop app): 1) Start a session and minimise the window. The tray icon has a blue dot at its lower right. 2) Hovering the tray shows 'Quote page: the coder works on \"...\"' first. 3) The tray menu's first item shows the same words, greyed out. 4) The taskbar title reads 'Forerunner — Quote page is working'. 5) Choose 'Stop all sessions': the question appears; confirm and the notification says '1 session stopped. Allow sessions again from the tray or the app.'; the menu now offers 'Allow sessions again'. 6) With nothing running the dot is gone and the title is 'Forerunner'."
+          },
+          {
+            "problem": "Found on the bench walk: the real app (Vite browser build) was blank on every page. It threw at load with 'Module \"node:crypto\" has been externalized for browser compatibility', because RunIndicator.tsx and ProjectState.tsx imported a value from daemon/run-words.ts. That file reaches node:crypto through task-words.ts, credential-wait.ts, @forerunner/platform and ids.ts. The unit suite runs in Node and could not see it.",
+            "u_ids": [
+              "U-096"
+            ],
+            "failing_test_before": "apps/ui/test/browser-imports.test.ts 'every value import of a workspace package from apps/ui/src stays browser-safe' (failed listing the two chains ending at node:crypto)",
+            "how": "The Cancel sentence moves to daemon/run-wait-words.ts, which has no imports; run-words.ts re-exports it and the UI imports it from there. The new test walks every value import from apps/ui/src into the workspace packages and fails on any Node built-in it reaches. Its second case shows it does find such a chain where one exists.",
+            "check_in_the_app": "live_check: 1) Start the app against a real daemon (bench or install) and open Home: the page renders. 2) The browser console has no 'externalized for browser compatibility' error. 3) The bench walk after the fix passed 10 of 10 checks (bar on Home, Inbox, Settings, Overview, Tasks and the session page, title, narrow width, GET /running, no bar once ended)."
+          },
+          {
+            "problem": "A regression this area introduced and fixed: wrapping scheduler.requestStart in an async function (to update the indicator) added an await step to every start, the scheduler's internal ones too. In sync-gate.test.ts the memory consolidation the test asks for read 'queued' instead of 'started'.",
+            "u_ids": [
+              "U-096"
+            ],
+            "failing_test_before": "packages/runtime/test/sync-gate.test.ts 'refuses sessions, approvals, the mirror and the peers route while paused, serves them after the update' (failed in pnpm check; it still failed with the wrapper and no indicator update, and passed without the wrapper)",
+            "how": "requestStart now returns the scheduler's own promise unchanged; the indicator update is attached beside it (started.then(poke, poke)), so a queued or dropped start still moves '· then Garden site'.",
+            "check_in_the_app": "live_check: 1) Start a session on project A. 2) Press Start on project B while A runs. Within a second the bar reads 'A · ... · then B', and B's line says 'Starts after the session on \"A\"'. 3) When A ends, B starts and the bar names B."
+          },
+          {
+            "problem": "C4b-left-3 (major, CI flake): the d1109-selftasks-run real-daemon case 'the card in the Inbox names the project ... after a restart' failed in full-file runs (3 of 6 on C4b's branch). Both composes started their clock at 08:00, so the order of tasks made before and after the restart depended on milliseconds.",
+            "u_ids": [
+              "U-096"
+            ],
+            "failing_test_before": "apps/ui/test/real-daemon.test.ts d1109-selftasks-run 'the card in the Inbox names the project ... after a restart' (failed with a 3 s pause before the answer, which forces the tie)",
+            "how": "The second compose's clock starts hours later, as time goes on across a restart in the app, and the order assertions state the real run order. The describe passed 10 times in a row.",
+            "check_in_the_app": "live_check: not visible in the app (test-only). Run `cd apps/ui && pnpm vitest run --config vitest.config.ts test/real-daemon.test.ts -t 'selftasks'` several times: it passes every time."
+          },
+          {
+            "problem": "C4b-left-4 (bench only). On --provider bench-api the stand-in critic ignored FORERUNNER_BENCH_CRITIC_REJECT_TIMES: no run id is sent there, so every review was sent back. budget.cjs's 'the tiny task's log line says it pauses and keeps its work' failed in every walk: CHF 0.004 is now below the first step's worst case. resume.cjs checked 'Paused at its budget' and 'Done: ...; left:', words that changed in C2's cd9bece.",
+            "u_ids": [],
+            "failing_test_before": "testenv/test/bench-role-player.test.ts 'FORERUNNER_BENCH_CRITIC_REJECT_TIMES counts reviews of a task without a run id too' (failed with revise, revise, revise)",
+            "how": "Without a run id each review of the task counts as its own (key#review-n). budget.cjs's tiny default is now CHF 0.009. resume.cjs checks the exact labels ('Paused before its budget ran out' after a wrap-up, 'Paused at its budget' at a stop), the card's title, its first sentence 'It spent CHF X of its budget of CHF Y', and its lists 'Where it stopped' and 'Left to do'. The README and testing.md describe both.",
+            "check_in_the_app": "live_check (bench): 1) node scripts/bench/start.mjs --name <n> ... --provider bench --env 'FORERUNNER_BENCH_LONG=Write the'; node scripts/bench/journeys/budget.cjs <n> bj: all 8 checks pass, with the log line 'This run may spend CHF 0.01, too little to wrap up (two steps may cost CHF 0.01): it pauses at its budget and keeps its work.'. The old default reproduced the FAIL. 2) Restart with 'FORERUNNER_BENCH_LONG=Write the guide,Write the notes'; node scripts/bench/journeys/resume.cjs <n> rs: 11 of 11 pass."
+          }
+        ],
+        "not_done": [
+          {
+            "problem": "V-7/V-8 have not been walked on a real desktop (tray dot, tooltip, menu's first item, window title).",
+            "why": "This Linux container has no display or tray. They are covered by cargo tests (state.rs, daemon.rs, tray.rs). scripts/desktop-window-check.mjs checks the in-window bar and page title on the Desktop app workflow's Windows job; that check was not run here (CI only, never pushed). The owner's install walk covers the tray."
+          },
+          {
+            "problem": "The BEFORE walk ran on the base commit c4583eb, exported with git archive into /tmp/frbench/rv-before-src (deleted afterwards). It did not run from a branch of this worktree.",
+            "why": "A git worktree for the base was not available to this isolated agent. The exported tree ran the same bench name and ports; its screenshots are in /tmp/frbench/fix-d1109-run-visible-before-steps."
+          },
+          {
+            "problem": "The bench-api REJECT_TIMES fix (C4b-left-4 part 1) was not walked on a bench-api bench with FORERUNNER_BENCH_CRITIC_REJECT_TIMES=1.",
+            "why": "The testenv test covers it at the stand-in's boundary. The bench time went to the run-visible, waiting-session, V-6, budget and resume walks."
+          }
+        ],
+        "validation": [
+          {
+            "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+            "result": "exit 0: 525 test files, 5672 passed, 7 skipped; link-check ok (212 files); secret-scan clean (2199 files). docs:check fell back because origin/main is missing, so it was run separately with --base."
+          },
+          {
+            "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+            "result": "docs-check: ok (58 files)"
+          },
+          {
+            "command": "pnpm test:integration",
+            "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 81 skipped"
+          },
+          {
+            "command": "pnpm test:e2e",
+            "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+          },
+          {
+            "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+            "result": "exit 0: 97 files, 1294 tests passed (includes real-daemon.test.ts). An earlier run had 3 failures from a test lookup that found two Stop buttons; fixed in f8f7288 and rerun green."
+          },
+          {
+            "command": "cd apps/ui && pnpm exec playwright test --config playwright.local.config.ts",
+            "result": "38 passed (1.5m)"
+          },
+          {
+            "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo fmt --check",
+            "result": "exit 0"
+          },
+          {
+            "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo clippy --all-targets -- -D warnings",
+            "result": "exit 0"
+          },
+          {
+            "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo test",
+            "result": "156 passed, 0 failed"
+          },
+          {
+            "command": "git grep -n \"^<<<<<<< \"",
+            "result": "empty"
+          },
+          {
+            "command": "bench fix-d1109-run-visible (48741/2341), base c4583eb, rv-walk.cjs before",
+            "result": "Every page while a session ran had only the header chip 'Alice is working on \"Create index.html\" · just started' and 'Stop all (1 running)'. The title stayed 'Forerunner' and GET /running answered 404."
+          },
+          {
+            "command": "bench fix-d1109-run-visible, worktree code, rv-walk.cjs after",
+            "result": "The first walk found every page blank (node:crypto externalized; fixed in ba2f6b6). After the fix, 10 of 10 checks passed: the bar names the project on Home, Inbox, Settings, Overview, Tasks and the session page and at 390 px; the title is '● Quote page … · Forerunner'; GET /running lists the session; no bar after it ends."
+          },
+          {
+            "command": "bench (--provider bench-api --api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=2) rv-walk-wait.cjs",
+            "result": "6 of 6: GET /running lists the waiting session with cancel; the bar reads 'Kite club … · waiting until 18:34, then it goes on' with Cancel and no Stop; the title stays 'Forerunner'; the session page's block says it goes on with Cancel; /health.running.waiting is true; after the reset the session went on."
+          },
+          {
+            "command": "bench rv-walk-v6.cjs (FORERUNNER_BENCH_FAIL)",
+            "result": "5 of 5: Try again gives a Done line with Start; Start opens the project's Start dialog; Start is gone while that project's session runs."
+          },
+          {
+            "command": "bench budget.cjs (old default / --tiny-chf 0.009) and resume.cjs",
+            "result": "Old default reproduced the FAIL; CHF 0.009 passed 8 of 8; resume passed 11 of 11. The bench was stopped with scripts/bench/stop.mjs, and its home and browser profile were deleted."
+          }
+        ],
+        "screenshots": {
+          "before": [
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/01-before-home-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/02-before-inbox-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/03-before-settings-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/04-before-overview-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/05-before-tasks-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/06-before-session-page-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/07-before-talk-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/08-before-home-while-running-narrow.png",
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/09-before-session-page-while-running-narrow.png",
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/10-before-home-after-the-session.png",
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/11-before-overview-after-the-session.png",
+            "/tmp/frbench/fix-d1109-run-visible-before-steps/12-before-session-page-after-the-session.png",
+            "/tmp/frbench/fix-d1109-run-visible-broken-steps/01-after-home-while-running.png"
+          ],
+          "after": [
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/01-after-home-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/02-after-inbox-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/03-after-settings-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/04-after-overview-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/05-after-tasks-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/06-after-session-page-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/07-after-talk-while-running.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/08-after-stop-menu-open.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/09-after-home-while-running-narrow.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/10-after-session-page-while-running-narrow.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/11-after-home-after-the-session.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/12-after-overview-after-the-session.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/13-after-session-page-after-the-session.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/01-after-wait-home-while-it-waits.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/02-after-wait-overview-while-it-waits.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/03-after-wait-session-page-while-it-waits.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/04-after-wait-home-once-it-goes-on.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/36-after-v6-inbox-done-line-with-start.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/37-after-v6-start-dialog-from-the-done-line.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/38-after-v6-inbox-while-the-session-runs.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/23-bjtry-inbox.png",
+            "/tmp/frbench/fix-d1109-run-visible-after-steps/28-rs-guide-card.png"
+          ]
+        },
+        "tests_changed_for_design": [
+          {
+            "test": "apps/ui/test/sessions-tab.test.tsx (working row words) and apps/ui/test/real-daemon.test.ts d1109-sessions working gist",
+            "why": "V-1: the Sessions list's working row now uses the run indicator's words ('Atlas · the coder works on \"X\"'), not 'Working on \"X\" (3 of 7 done)' (a1b8249)."
+          },
+          {
+            "test": "Ready line in packages/runtime/test/project-status.test.ts, packages/runtime/test/w15-words.test.ts, apps/ui/test/home.test.tsx, apps/ui/test/polish-screens.test.tsx, apps/ui/test/real-daemon.test.ts",
+            "why": "V-3: rule 4 reads 'Ready: N tasks wait for your Start' (D6: only the person's Start starts work), replacing 'Ready to continue: N tasks ready' (dc11dee)."
+          },
+          {
+            "test": "Home's and the Overview's 'Working now' words (home / project-overview tests)",
+            "why": "V-3: these show the run indicator's block form and its words (dc11dee)."
+          },
+          {
+            "test": "apps/ui/test/real-daemon.test.ts refused-key status line and TR-2 kept-Start line",
+            "why": "V-3: 'Waiting for a new API key, then it goes on' (kind waiting); the kept Start is 'Starts at 15:40 (...)' with Cancel, without ': 1 task' (dc11dee)."
+          },
+          {
+            "test": "packages/runtime/test/continuation.test.ts kept Start line; packages/runtime/test/credential-limits.test.ts refused-key and usage-limit lines",
+            "why": "The same V-3 words in the composed-runtime cases, which run only in the unit project: 'Starts at 15:00 (your subscription's limit)', 'Waiting for a new API key, then it goes on', and 'Waiting until 16:40 (your API key's limit), then it goes on' with Cancel (7324651)."
+          },
+          {
+            "test": "apps/ui/test/shell.test.tsx, shell-live.test.tsx, polish-screens.test.tsx, d1109-oversize.test.tsx (Stop all flow) and shell-live's running-chip cases",
+            "why": "V-2: Stop all lives in the bar's Stop ▾ menu and the chip is replaced by the bar. The Stop-all cases open the bar's menu, scoped to run-indicator-bar since Home's Working now shows the same element (ef77b60, f8f7288)."
+          },
+          {
+            "test": "apps/desktop/src-tauri/src/state.rs kill_switch_and_resume_follow_kill_active",
+            "why": "V-7: the tray says 'Stop all sessions' and 'Allow sessions again' instead of 'Kill switch: stop everything' and 'Resume' (225916e)."
+          },
+          {
+            "test": "scripts/bench/journeys/budget.cjs (tiny default) and resume.cjs (labels and card checks)",
+            "why": "C4b-left-4: they check today's words (bench only, aa58650)."
+          }
+        ],
+        "new_problems": [
+          "On Home and the Overview, a running project's own status line still says 'Working on \"Create index.html\" (0 of 7 done)' beside the bar's 'Quote page · the coder works on \"Create index.html\"': two wordings of one fact (design §5 rule 10). V-3 listed only additions to project-status.ts, so the 'working' rule was left. Evidence: /tmp/frbench/fix-d1109-run-visible-after-steps/01-after-home-while-running.png.",
+          "The Overview says 'Last result: No session yet.' while the project's first session is running. Evidence: /tmp/frbench/fix-d1109-run-visible-after-steps/08-after-stop-menu-open.png.",
+          "Stopping the critic's monthly check (Stop now or Stop all) aborts its run; the job then records the run as stopped, and in the real-daemon calibration case its notification reads as a failed calibration rather than 'stopped by you'. Its wording belongs to the jobs area (src/jobs).",
+          "The UI's unit suite runs in Node, so a browser-only failure (a value import that reaches a Node module) blanks every page while vitest stays green. apps/ui/test/browser-imports.test.ts now guards the workspace packages. Playwright with the real Vite build is the other guard and should run before every merge; here it was green only after the fix.",
+          "The Sessions list's gist never carried the credential wait's '...; then your session goes on.' sentence. C3-left-8's Sessions-list half passed at once, and its case now guards that."
+        ],
+        "notes_for_other_areas": [
+          "GET /running answers RunningView[] {key, sessionId, projectId, projectName, state (planning|working|reviewing|between|wrapping|stopping|calibrating|waiting), what, text, since, stop, cancel, nextProject, explain}. The run.changed event (RUN_CHANGED_EVENT in daemon/run-words.ts; the bus name 'run' belongs to task runs) carries it on /events and in polling, at most once a second. /health.running is {projectName, what, text, waiting} or null.",
+          "runText, runFit, runWhat, stopChoices, foldRunEvents and RUN_EVENT_TYPES live in daemon/run-words.ts, which has no store and is safe for the fake daemon. It is NOT safe for the browser build (it reaches node:crypto through task-words.ts). UI code must import only browser-safe files such as daemon/run-wait-words.ts (CANCEL_WAIT_EXPLAIN); apps/ui/test/browser-imports.test.ts fails otherwise.",
+          "RunWait has an 'other' form ('<project> · waiting for Claude, then it goes on') for d1109-cred-engine's share and key-month waits. C6 (cred-screens) can give it its own words with a date.",
+          "ProjectCardFacts.startsWait (views.ts) and project-status.ts rule 2b: the status line's action kind 'cancel' posts /projects/:id/continuation/cancel. SessionView.waitBlock {state goes_on|starts_again|stopped, text, action cancel|continue, explain, projectId, budgetLeft}. summaryAfterWait rewrites '; then your session goes on.' to '; then it runs at your next Start.'. HumanRequestView.startOffer comes from startOfferOf(change_card, status, projectId): prepared outcomes waits_start, stopping or failed, never hands_off.",
+          "compose.ts registers `running` {views, poke, stopCalibration, close} on RuntimeApp. scheduler.requestStart and cancelPending are wrapped only to call poke beside the scheduler's own promise; never make that wrapper async (sync-gate.test.ts). The calibration run is registered with the kill switch and running.stopCalibration aborts it.",
+          "Desktop: daemon.rs Health.running (an older daemon gives None). state.rs running_words, window_title and icon_dot; tray.rs with_running_dot; actions.rs STOP_ALL_QUESTION and stopped_words.",
+          "Suggested lines for the session lead (not written here). U-096 'I cannot tell from every screen whether a session runs'. Check in the app: start a session; every page at any width shows '<project> · the coder works on \"X\"' under the header with Stop ▾ (Stop after this task, Stop now, Stop all); the tab title starts with '●'; Home's and the Overview's Working now and Talk's first line say the same; a session that stopped at a Claude limit reads 'waiting until HH:MM, then it goes on' with Cancel there and on its page; the desktop tray's first item and tooltip say the same, the icon has a blue dot and the title reads 'Forerunner — <project> is working'. Note: 'on the desktop this round: the phone (apps/ui/src/mobile, phase H) shows the same words later from GET /running'. For UPDATE-LOG / CHANGELOG: 'One line under the header says what runs now, on every page, with Stop; a session waiting for Claude says when it goes on, with Cancel; the tray and the window title say it too (U-096).'",
+          "ADR 0118 gained point 12 (D8, appended 2026-11-16). docs/maintainers/runtime.md has a new section 'What runs now'. apps.md has the run indicator and the tray. user-guide.md has 'Seeing what runs'. testing.md covers the window check and the C4b-left-4 bench changes."
+        ]
+      },
+      "review": {
+        "verdict": "fix-needed",
+        "acceptance_walk": "I ran my own bench, \"review-d1109-run-visible\" (daemon 48751, UI 2351), from the worktree at f8f7288 and walked it through the real UI with Playwright. Screenshots are in /tmp/frbench/review-d1109-run-visible/steps-walk12/ (walks 1 and 2, --provider bench) and /tmp/frbench/review-d1109-run-visible/steps/ (walks 3 to 5, --provider bench-api --api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=2, FORERUNNER_BENCH_FAIL=\"Draw the logo\"). Check results are in rv1..rv5-result.json and walk1..5.log in /tmp/frbench/review-d1109-run-visible/.\n\nWalk 1 (V-1, V-2, V-4):\n- Nothing running: no bar, and the title is 'Forerunner'.\n- I pressed Start session on \"Quote page\". The bar appeared at once ('Quote page · plans the session', 'just started', 'Stop ▾') and the title became '● Quote page · Forerunner'.\n- The bar was present on all 20 route × width pairs: Home, Inbox, Settings, Memory, Changes, the project's Overview, Tasks, Files and Sessions tab, and the session page, each at 1280 and 375 px. At 375 px it sits outside the hamburger menu (15-rv1-home-375.png).\n- Home's Working now shows the same block with Stop.\n- The words changed live with no reload: the critic checks \"...\", then picks the next task, then the coder works on \"Write the README\".\n- Talk's first line shows the compact form, and its Stop menu opens inside the dialog (26-rv1-talk-stop-menu-open.png).\n- I pressed Start on \"Garden site\" while Quote page ran. The Start dialog said 'Starts after the session on \"Quote page\"' and the bar added '· then Garden site'.\n\nWalk 2:\n- The queued project's own header line, read without a reload, still said 'Ready: 1 task waits for your Start' for at least 6 s (FAIL). After a reload it said 'Starts after the session on \"Kite day\"' (30-rv2-bird-overview-queued.png, 31-rv2-home-while-one-queued.png).\n- Stop ▾ > Stop after this task changed the bar to 'Kite day · stops after \"...\"'. When that session ended, the bar and title named Bird walk.\n- Stop now asked once, and the bar and the title's dot went away.\n- Stop all asked once and showed 'Sessions are stopped' with no run bar. 11 of 12 checks passed.\n\nWalk 3 (the waiting session, V-1/V-2/V-3/V-5):\n- I pressed Start with the limited key. The bar read 'Kite club · waiting until 19:33, then it goes on' with Cancel and its explanation, no Stop and no dot, and the title stayed 'Forerunner'.\n- The status line read 'Waiting until 19:33 (your API key's limit), then it goes on' with Cancel. Working now and Talk showed the same. /health.running.waiting was true.\n- The session page block read 'Waiting until 19:33 (your API key's limit), then it goes on with \"Create index.html\" and 2 more.' with Cancel. Cancel changed it to 'Stopped to wait for your API key's limit until 19:33: \"Create index.html\" and 2 more wait.' with Continue, and the session's result line was rewritten to '...; then it runs at your next Start.'.\n- Continue opened Start with the budget left. Start then kept a Start for 19:33. At the reset the bar went 'plans the session' then 'the coder works on ...' live, the title got the dot, and the bar was gone after the end. 12 of 13 checks passed.\n\nWalk 5:\n- The kept Start's line read 'Starts at 19:37 (your API key's limit)' with Cancel. After Cancel it read 'Ready: 2 tasks; nothing runs until 19:37 (...)', which is true while the key still rests.\n- A waiting session left alone went on by itself at the reset, and the bar followed with no reload ('Park walk · waiting until 19:37' > 'plans the session' > 'the coder works on \"Create index.html\"'). This is the owner's decision of 2026-11-09 working.\n- I restarted the daemon to get a new limit window, let Sea notes wait, and pressed the bar's Cancel. The Overview's Last result still read 'Waits until 19:40 (your API key's limit); then your session goes on.', also after a reload (FAIL, 19-rv5-sea-overview-after-cancel-reload.png). The Inbox Updates carry the same promise.\n- V-6: a failed task's card > Try again gave 'Done: Trying \"Draw the logo\" again: it runs at your next Start.' with Start and 'Opens Start for Logo shop.'. Start opened Logo shop's Start dialog, and the Start button was hidden while that session ran (23-rv5-inbox-done-start-dialog.png).\n\nI stopped the bench with scripts/bench/stop.mjs and deleted its home, its browser profile and my reverted source copy.",
+        "blocking": [
+          {
+            "issue": "Regression in the Sessions list's working row (the screen this area pointed at runText): once a task has logged more than about 49 steps, the row says the session 'plans the session' while the task is still running.",
+            "where": "packages/runtime/src/daemon/run-indicator.ts:236 (sessionRunText; called from session-list.ts workingWords)",
+            "evidence": "sessionRunText folds only the newest 50 events of RUN_EVENT_TYPES. That list includes task.step, and the runner emits one task.step per tool call (runner.ts:2649-2660). Once there are more than about 49 steps, task.started falls outside the window and the fold starts again at 'planning'. Probe (a temporary test, described in /tmp/frbench/review-d1109-run-visible/probes/README.txt): session.started, session.planned and task.started 'Style the page' gave 'Quote page · the coder works on \"Style the page\"'. After 60 task.step events it gave 'Quote page · plans the session'. The same probe against the base's workingWords (which read the whole log) returned 'Working on \"Style the page\"' both times. Meanwhile the bar, which folds the whole log incrementally, keeps saying 'the coder works on ...', so two screens state the same fact differently and one is wrong (design §5 rules 4 and 10).",
+            "expected": "The Sessions list's working row says the same words as the bar however many steps the task has taken. For example, leave task.step out of the windowed read and look up the last task.started/task.finished separately, or reuse the bar's incremental fold. Add a failing case with more than 50 steps first."
+          },
+          {
+            "issue": "The critic's monthly check never reaches the bar live. No run.changed frame is sent when the check starts or when it ends, so the UI shows it only after a reload or reconnect, and then keeps showing it, with Stop, after it has ended.",
+            "where": "packages/runtime/src/daemon/compose.ts:3497 (runCalibration) and :4145-4156 (poke wiring)",
+            "evidence": "The poke listens only to the 'session' and 'project' buses and wraps scheduler.requestStart and cancelPending. CalibrationJob emits nothing on any bus. The requestStart poke fires, often with 0 delay, before the check's session row exists, so views() returns [] and that equals last \"[]\", and nothing is sent. Nothing pokes when the check ends. Probe (/tmp/frbench/review-d1109-run-visible/probes/README.txt, a composed runtime with a gated provider): while the check's first critic call was held, GET /running returned [\"Forerunner · the critic's monthly check on known examples\"], but rt.events received zero run.changed frames during the check (2.5 s) and after it ended. The UI re-reads /running only at bootstrap, when the stream reopens, or in polling mode (context.tsx). The real-daemon case reads GET /running directly, and the UI case uses the fake daemon's emitRunning(), so neither catches this. This is spec V-1/V-2 ('while the critic's calibration runs it reads ...', 'the UI shows it in the open form') and the owner's answer 6: 'show it in the running-session bar'.",
+            "expected": "run.changed is emitted when the check's row is created and when it ends, for example by poking from runCalibration once the job has inserted its row and again in its finally block, or by having the job emit on the session bus. Add a real-daemon or composed case that asserts the frames, failing first."
+          },
+          {
+            "issue": "C3-left-8 is only half fixed. After Cancel, the project's Overview 'Last result', and the Inbox Update, still promise '...; then your session goes on.'.",
+            "where": "packages/runtime/src/daemon/views.ts:467 (project summary lastSession.summary); only server.ts:1988 (GET /sessions/:id) applies summaryAfterWait",
+            "evidence": "Bench walk 5: Sea notes waited on the limited key and I pressed the bar's Cancel. The Overview's Last result still read 'Waits until 19:40 (your API key's limit); then your session goes on.' right after Cancel and again after a reload (/tmp/frbench/review-d1109-run-visible/steps/18-rv5-sea-overview-after-cancel.png, 19-rv5-sea-overview-after-cancel-reload.png). At the same moment the header line no longer said it goes on. GET /inbox still holds 'Sea notes: Waits until 19:40 (your API key's limit); then your session goes on.' (and the same for the cancelled Kite club wait from walk 3). The leftover says 'The continuation's words follow the kept state wherever they show ... after Cancel, nothing says the session goes on.' The Overview is where design §5 rule 10 puts the session result.",
+            "expected": "Once the continuation is cancelled, every place that shows that session's stored result (the Overview's Last result, the Update line, Read aloud) shows the summaryAfterWait form. Add a real-daemon case: Cancel, then GET /projects/:id/summary (and the Inbox) no longer contain 'then your session goes on'."
+          },
+          {
+            "issue": "When a person presses Start on a project while another project's session runs, that project's status line is not live. It keeps saying 'Ready: 1 task waits for your Start', with Start session and Continue still offered, until a reload or until the other session ends.",
+            "where": "packages/runtime/src/daemon/server.ts:1877 (POST /sessions answers 'queued' and emits no project event); apps/ui/src/store/context.tsx:151 (run.changed refreshes project cards only when the entry keys change)",
+            "evidence": "Bench walk 2: Kite day was running. I pressed Start on Bird walk and closed the 'Queued' dialog. The bar said 'Kite day · ... · then Bird walk' within a second. Bird walk's own header line, polled for 6 s with no reload, still read 'Ready: 1 task waits for your Start' (FAIL in /tmp/frbench/review-d1109-run-visible/walk2.log; screenshot /tmp/frbench/review-d1109-run-visible/steps-walk12/30-rv2-bird-overview-queued.png). After page.reload() it read 'Starts after the session on \"Kite day\"' (31-rv2-home-while-one-queued.png). A queued start does not change the run.changed keys (only nextProject changes), and POST /sessions emits no 'project' event, so the card is never re-read. This is the area's own D8-5 problem ('Not live ... a wait show late or never') and V-3's line; design §3.2 says 'stale data is a bug'. The UI test passes only because the fake daemon seeds startsWait and emits frames itself.",
+            "expected": "The project's line says 'Starts after the session on \"<other>\"' without a reload as soon as the start is queued, and changes again when the queued start runs or is dropped. For example, emit project.changed for the queued project in POST /sessions and cancelPending, or refresh cards when a run.changed entry's nextProject changes. Add a real-daemon or UI case that drives the real daemon's frames."
+          }
+        ],
+        "claims_checked": [
+          {
+            "claim": "V-1: one run state in the daemon's words via GET /running, run.changed and /health.running, across a session's life",
+            "holds": false,
+            "note": "Holds for project sessions: on the bench I saw plans the session, the coder works on, the critic checks, picks the next task, stops after and '· then <project>', all live, and /health.running matched. It fails for the critic's monthly check, which is never sent on run.changed (blocking 2), and for the Sessions list row after more than about 49 steps (blocking 1)."
+          },
+          {
+            "claim": "V-2: one bar under the header on every route and width, Stop after this task / Stop now / Stop all, and the title '● <project> · Forerunner'",
+            "holds": true,
+            "note": "20 of 20 route × width checks on the real app. Stop after this task, Stop now (asks once) and Stop all (asks once, then 'Sessions are stopped') all worked. The title follows the running project and is 'Forerunner' after the end and while a session only waits."
+          },
+          {
+            "claim": "V-3: Home/Overview Working now in block form; the status line says what waits to start; 'Ready: N tasks wait for your Start'",
+            "holds": false,
+            "note": "The block form and the lines for a waiting session and a kept Start are correct on screen, and the API's queued line is correct. On screen, the queued project's line stays stale until a reload (blocking 4)."
+          },
+          {
+            "claim": "V-4: Talk's first line shows the compact form with Stop",
+            "holds": true,
+            "note": "Seen while a session ran and while one waited (Cancel). The Stop menu opens inside the dialog."
+          },
+          {
+            "claim": "V-5 / C3-left-8: the session page's waitBlock with Cancel/Continue, and the stored result rewritten after Cancel",
+            "holds": false,
+            "note": "Session page: goes_on, then stopped with Continue, then Start with the budget left all work, and its result line is rewritten. The Overview's Last result and the Inbox Update still promise 'then your session goes on' after Cancel (blocking 3)."
+          },
+          {
+            "claim": "C3-left-7: the Start dialog names the other project; Continue sends POST /sessions with continues",
+            "holds": true,
+            "note": "The bench showed 'Starts after the session on \"Quote page\"'. Continue opened Start with the budget prefilled; the daemon sets the budget to what was left."
+          },
+          {
+            "claim": "V-6: the Inbox Done line offers Start, which opens that project's Start dialog, and hides it while that project runs",
+            "holds": true,
+            "note": "Walk 5 with FORERUNNER_BENCH_FAIL: 3 of 3 checks."
+          },
+          {
+            "claim": "V-7/V-8: tray tooltip, first item, window title and icon dot (cargo tests)",
+            "holds": true,
+            "note": "cargo fmt --check passed, clippy -D warnings passed, cargo test 156 passed (CARGO_TARGET_DIR=/tmp/frbench/cargo-target). Not walked on a real desktop (fixer's not_done)."
+          },
+          {
+            "claim": "Browser build blank page fixed (run-wait-words.ts) and guarded by browser-imports.test.ts",
+            "holds": true,
+            "note": "The bench UI rendered on every page. The test passes."
+          },
+          {
+            "claim": "The requestStart wrapper keeps the scheduler's promise (sync-gate regression fixed)",
+            "holds": true,
+            "note": "sync-gate, continuation, credential-limits and w15-words: 54 of 54 passed."
+          },
+          {
+            "claim": "C4b-left-3: the selftasks restart case is stable with a later clock for the second compose",
+            "holds": true,
+            "note": "The describe passed 3 of 3 runs here. The changed order assertions keep the case's intent."
+          },
+          {
+            "claim": "C4b-left-4: the stand-in critic counts reviews without a run id; journeys use today's words",
+            "holds": true,
+            "note": "The testenv REJECT_TIMES test fails against the reverted role-player.ts and passes on the fix. I did not rerun budget.cjs or resume.cjs."
+          },
+          {
+            "claim": "The failing-before tests fail without the fix",
+            "holds": true,
+            "note": "With the UI source reverted to base (the run-words modules kept), apps/ui/test/run-indicator.test.tsx failed 42 of 43; the passing case is 'no Start for an answer that readied nothing'. The real-daemon 'the page of a session that ended to wait (V-5)' failed with waitBlock undefined against the base server.ts."
+          },
+          {
+            "claim": "The Sessions list's working row uses the same words as the bar",
+            "holds": false,
+            "note": "True for short tasks. After more than about 49 tool steps it says 'plans the session' (blocking 1)."
+          },
+          {
+            "claim": "Validation green",
+            "holds": true,
+            "note": "Runtime run-indicator, project-status and role-player: 72 passed. Area UI tests (9 files): 160 passed. Real-daemon d1109-run-visible: 6 passed. pnpm test:e2e: 25 passed, 1 skipped. Playwright (local config): 38 passed. Not rerun: the full pnpm check and test:integration."
+          }
+        ],
+        "non_blocking": [
+          "The critic's monthly check: its Stop menu shows Stop now with the session explanation 'Stops the current task at once. It goes back to Ready; what it wrote so far stays in the folder.', which is untrue for the check (design §5 rule 9). The tab title during the check would be '● Forerunner · Forerunner' (RunIndicator.tsx STOP_NOW, runTitle).",
+          "The Start dialog opened by Continue prefills what is left of the session's budget but still says 'The project's default is filled in.' (StartSessionDialog.tsx:534).",
+          "compose.ts:4129 and :4142 call Date.now() for the debounce. AGENTS.md says time goes through a Clock; clock.monotonic exists. There is precedent in recall.ts and try-run.ts.",
+          "The status line's Cancel shows its explanation only as a title tooltip. The bar's and Working now's Cancel show it beside the button (design §3: a one-line explanation shown with the button).",
+          "While a session waits, the Overview states the fact four times with three Cancel buttons (bar, Working now, status line). This follows the spec, but it is heavy at 375 px (/tmp/frbench/review-d1109-run-visible/steps/05-rv3-home-while-it-waits-375.png).",
+          "The session log line written at the time keeps '...; then your session goes on.' after Cancel. It is a timestamped record, so I am not counting it as a promise.",
+          "Two wordings of one fact: the session page's 'Current task: Choosing the next task…' while the bar says 'the critic checks \"X\"' (session page owned by d1109-sessions), and the project row's 'Working on \"X\" (0 of 3 done)' beside the bar (design §2's own sentence; the fixer noted it).",
+          "desktop-window-check.mjs passes trivially when the session has already ended, and checks document.title rather than the native window title. set_main_title is covered only by Rust unit tests; the owner's checklist covers the rest.",
+          "docs/maintainers/runtime.md says run.changed is poked by 'the wait list', but compose pokes only on session/project events and the scheduler's requestStart/cancelPending.",
+          "The real-daemon life-cycle case does not assert 'plans the session' during a live session (only through the restart ghost row). The calibration case reads GET /running and never the run.changed stream (see blocking 2).",
+          "Stopping the monthly check aborts its run and the job records it as failed (the fixer's new_problem; the wording belongs to src/jobs).",
+          "The C4b-left-3 expectation orders 'Style the page: colours' before 'Check that the links work'. Both are made after the restart, so a same-millisecond tie is still possible. It passed 3 of 3 here."
+        ]
+      },
+      "fixup": {
+        "area": "d1109-run-visible",
+        "branch": "fix/d1109-run-visible",
+        "head_sha": "4aad38277cb7e4d7ae81d870d197239bc4f87f6c",
+        "commits": [
+          {
+            "sha": "b7f4b9e",
+            "subject": "run-indicator: the Sessions list's working row folds the whole log, as the bar does (U-096)"
+          },
+          {
+            "sha": "ec7c073",
+            "subject": "run-indicator: the bar hears the critic's monthly check start and end (U-096)"
+          },
+          {
+            "sha": "63eefa2",
+            "subject": "run-indicator: the Overview, Read aloud and the Update line stop promising after Cancel (U-096, U-078)"
+          },
+          {
+            "sha": "00a22f5",
+            "subject": "run-indicator: a start that waits behind a session moves its project's line live (U-096, U-071)"
+          },
+          {
+            "sha": "ad46894",
+            "subject": "desktop: the window title names the critic's monthly check; health names a project's session first (U-096)"
+          },
+          {
+            "sha": "5fbce48",
+            "subject": "session-page: Continue's Start says what it filled in; the selftasks restart case ranks as the run order does (U-096)"
+          },
+          {
+            "sha": "4aad382",
+            "subject": "docs: the user guide says what Cancel does to a waiting session's result and the check's Stop now (U-096)"
+          }
+        ],
+        "fixed": [
+          {
+            "problem": "Blocking 1: the Sessions list's working row said 'Quote page · plans the session' while a task was still running, once the task had taken more than about 49 steps. The bar meanwhile said 'the coder works on ...'. Cause: sessionRunText folded only the newest 50 events of the fold's types, and task.step (one per tool call) is one of those types.",
+            "u_ids": [
+              "U-096"
+            ],
+            "failing_test_before": "packages/runtime/test/run-indicator.test.ts 'runViews (V-1) > says in the Sessions list's working row what the bar says, however many steps the task took' (after 60 steps it got 'Quote page · plans the session')",
+            "how": "sessionRunText now folds the session's whole log through the store's kept folds (new runFoldsOf(store) in run-indicator.ts). compose's run indicator uses the same map, so the list and the bar read each log once, in order, and say the same sentence. The map keeps at most 200 folds and drops the oldest first; runViews still drops the folds of ended sessions. The test also covers the wrap-up line after 60 more steps and a read with no fold kept (a fresh daemon).",
+            "check_in_the_app": "live_check: 1) Start a session on a project whose first task takes many steps (a long research or writing task on the real model). 2) While that task has been running for a few minutes, open the project's Sessions tab. The working row reads the same sentence as the bar under the header, e.g. 'Quote page · the coder works on \"Write the guide\"'. It never reads 'plans the session' while the task runs. Bench walk A: the row and GET /running gave the same text."
+          },
+          {
+            "problem": "Blocking 2: the critic's monthly check never reached the bar live. No run.changed frame was sent when it started or ended, so the bar showed it only after a reload, and then kept showing it with Stop after it had ended. Cause: CalibrationJob runs outside the session runner and emits on no bus. The requestStart poke fired before the check's row existed, and nothing poked at its end.",
+            "u_ids": [
+              "U-096"
+            ],
+            "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-run-visible, run C > the critic's monthly check reads ...' now reads /events. It waits for a run.changed frame naming the check while it runs and an empty frame after it ends; before the fix it timed out with frames [].",
+            "how": "New optional CalibrationJobDeps.onRowChanged(sessionId), called after the run's row is made and after it is ended (it never fails the run). compose passes the run indicator's poke through a late-bound pokeRunIndicator. The poke's debounce now reads clock.monotonic() instead of Date.now(), as AGENTS.md requires. Two of the review's notes on the same entry are fixed too. The check's Stop now line reads 'Stops the check at once. This month's report is not written.', not the session sentence about Ready. The tab title reads '● The critic's monthly check · Forerunner', with a project's session named first. calibration-job.test.ts asserts onRowChanged is called twice per run; run-indicator.test.tsx asserts the Stop now line and the title.",
+            "check_in_the_app": "live_check (only when the monthly check runs; it cannot be triggered from the UI this month, because the schedule's first sighting marks the month): 1) With the app open on Home when the check runs (day 1 at 06:00 local by default), the bar shows 'Forerunner · the critic's monthly check on known examples' without a reload. 2) Open Stop ▾: the explanation line, Stop now with 'Stops the check at once. This month's report is not written.', and Stop all. 3) The tab title is '● The critic's monthly check · Forerunner'. 4) When the check ends, the bar goes away without a reload. Covered here at the /events boundary by the real-daemon case."
+          },
+          {
+            "problem": "Blocking 3 (C3-left-8, second half): after Cancel, the Overview's Last result, its Read aloud and the Inbox's Update line still promised '...; then your session goes on.', also after a reload. Only GET /sessions/:id applied summaryAfterWait, and only for its 'stopped' block.",
+            "u_ids": [
+              "U-096",
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-run-visible, run C: the page of a session that ended to wait (V-5) > goes on: the wait with Cancel; ...' now reads GET /projects/:id/summary (lastSession.summary and spoken) and GET /inbox messages before Cancel, after Cancel and after a restart. Before the fix, after Cancel it got 'Waits until 11:40 (your subscription's limit); then your session goes on.'.",
+            "how": "New run-indicator.ts waitPromiseHolds(store, projectId, since) and resultAfterWait(store, projectId, since, text). The promise holds while the continuation or a Start for the reset is kept and no session of the project has begun since. It also holds once a continuation session began after it, because the session did go on by itself. Cancel, Stop all, or a session the person started instead end the promise, and the text then reads '...; then it runs at your next Start.'. The session page (server.ts liveSessionView, replacing the waitBlock 'stopped' test), views.ts projectSummary (Last result and spoken) and GET /inbox's message bodies all read it. Stored rows are not rewritten; the state is read from the store, so it holds across a restart. Unit siblings: kept, cancelled, went on by itself, and a session the person started instead while a later wait is kept.",
+            "check_in_the_app": "live_check: 1) Run a session until its Claude credential hits a limit (bench: --provider bench-api --api-key limited --env FORERUNNER_BENCH_API_LIMIT_MIN=2). 2) On the project's Overview, Last result reads 'Waits until HH:MM (your API key's limit); then your session goes on.'. 3) Press Cancel in the bar. Without a reload, Last result reads '...; then it runs at your next Start.'. 4) Press Read aloud: the text says the same. 5) In the Inbox, the Update line 'Sea notes: Waits until HH:MM (...); then it runs at your next Start.'. 6) Reload, then restart the app: all three still say it. Bench walk B passed 9 of 9."
+          },
+          {
+            "problem": "Blocking 4: when the person pressed Start on a project while another project's session ran, the bar said '· then Bird walk', but Bird walk's own line kept saying 'Ready: 1 task waits for your Start' until a reload. Cause: a queued start changes no session, POST /sessions emitted no project event, and the UI re-read the cards on run.changed only when the entry keys changed (a queued start changes only nextProject).",
+            "u_ids": [
+              "U-096",
+              "U-071"
+            ],
+            "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-run-visible, run C > GET /running and /health.running say ...' now reads /events and waits for project.changed for Garden site once its start waits and once it is dropped (timed out before). apps/ui/test/run-indicator.test.tsx 'the project's line follows a start that waits behind another session, without a reload' (the line did not change after the frame).",
+            "how": "compose's scheduler wrapper emits a project event for the project of a start that is queued or deferred, and of one that cancelPending drops. The wrapper still returns the scheduler's own promise unchanged (sync-gate passes). The UI's run.changed handler (store/context.tsx) re-reads the project cards when the entries or their nextProject change, which also covers polling.",
+            "check_in_the_app": "live_check: 1) Start a session on project A. 2) Open project B's Overview and press Start session, then confirm and close the 'Queued' dialog. 3) Within a second, with no reload, B's line reads 'Starts after the session on \"A\"' and the bar adds '· then B'. Home's row for B says the same. 4) Press Stop ▾ > Stop after this task on A. When A ends, B starts, and B's line stops saying 'Starts after' with no reload. Bench walk A passed 7 of 7."
+          },
+          {
+            "problem": "Found while fixing blocking 2: while only the monthly check ran, /health.running named it under 'Forerunner', so the desktop window title read 'Forerunner — Forerunner is working'. With the check and a project session running together, health named whichever row was made first.",
+            "u_ids": [
+              "U-096"
+            ],
+            "failing_test_before": "packages/runtime/test/run-indicator.test.ts 'runningHealth (V-7)' (both cases); apps/desktop/src-tauri state.rs the_critics_monthly_check_is_named_by_the_title and the check case in daemon.rs health_reads_what_runs_now (no check field, so they did not compile)",
+            "how": "runningHealth names a project's running session first, then the check, then a session that only waits. The check's entry carries check: true (RunningHealth.check, optional and append-only). daemon.rs reads it, and state::window_title reads 'Forerunner — the critic's monthly check' for it.",
+            "check_in_the_app": "live_check (installed desktop app, when the monthly check runs): the taskbar title reads 'Forerunner — the critic's monthly check', the tray's first item reads 'Forerunner: the critic's monthly check on known examples', and the icon has the blue dot. While a project's session runs alongside it, the title reads 'Forerunner — <project> is working'."
+          },
+          {
+            "problem": "Review note: the Start dialog opened by a session's Continue prefills what is left of that session's budget (the daemon sets a continuation's budget to that, never more), but it still said 'The project's default is filled in.'",
+            "u_ids": [
+              "U-096"
+            ],
+            "failing_test_before": "apps/ui/test/run-indicator.test.tsx 'goes on by itself: the wait with Cancel; ... offers Continue with the budget left' (the hint read 'The project's default is filled in.')",
+            "how": "StartSessionDialog's budget hint reads 'What is left of that session's budget is filled in: it goes on with that, never more.' when the dialog continues a session, and the project's default otherwise.",
+            "check_in_the_app": "live_check: after Cancel on a session that waits for its credential, press Continue on its page. The Start dialog's budget field shows what is left, and the hint under it reads 'What is left of that session's budget is filled in: it goes on with that, never more.'"
+          },
+          {
+            "problem": "Review note on C4b-left-3: the restart case still expected 'Style the page: colours' before 'Check that the links work'. Both are made by one answer after the restart, so one millisecond can hold both, and the run order then ranks them by a random id.",
+            "u_ids": [
+              "U-096"
+            ],
+            "failing_test_before": "apps/ui/test/real-daemon.test.ts d1109-selftasks-run 'the card in the Inbox names the project ... after a restart' (a latent same-millisecond tie, not seen failing here)",
+            "how": "The case now expects those two tasks in the order the run order ranks the stored rows (priority, created_at, id), in both the answered list and the list after Undo. Its intent is kept: both come after every task made before the restart.",
+            "check_in_the_app": "not visible in the app (test-only). `cd apps/ui && pnpm vitest run --config vitest.config.ts test/real-daemon.test.ts -t 'selftasks'` passed 3 of 3 runs here."
+          }
+        ],
+        "not_done": [
+          {
+            "problem": "The status line's Cancel (and its Continue) show their explanation only as a tooltip. The bar's and Working now's Cancel show it beside the button.",
+            "why": "ProjectStatus is a compact line, and all its buttons (Continue, Cancel) carry their explanation as a title. The reviewer also noted that a waiting Overview already says the fact four times with three Cancel buttons at 375 px. A fourth visible sentence there would make that worse. Left for the session lead to decide in design terms."
+          },
+          {
+            "problem": "The critic's monthly check was not walked on the bench (bar, Stop now line, title).",
+            "why": "Nothing in the UI or API can start it on a running daemon: the scheduler's first sighting marks the current month as run, and `fr jobs calibrate` runs in a separate process whose events never reach the daemon's bus. It is covered at the /events boundary by the real-daemon case, and the words and title by run-indicator.test.tsx."
+          },
+          {
+            "problem": "The Sessions list's working row after more than 49 steps was not walked on the bench.",
+            "why": "The stand-in's tasks take far fewer than 50 tool steps (FORERUNNER_BENCH_LONG stops at 30 parts). The unit case covers it with 60 and 120 steps. On the bench (walk A), the row and GET /running gave the same text."
+          }
+        ],
+        "validation": [
+          {
+            "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+            "result": "exit 0: 525 test files, 5677 passed, 7 skipped; link-check ok (212 files); secret-scan clean (2199 files). docs:check fell back because origin/main is missing, so it was run separately."
+          },
+          {
+            "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+            "result": "docs-check: ok (60 files)"
+          },
+          {
+            "command": "pnpm test:integration",
+            "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 81 skipped"
+          },
+          {
+            "command": "pnpm test:e2e",
+            "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+          },
+          {
+            "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+            "result": "exit 0: 97 files, 1295 tests passed (includes real-daemon.test.ts and browser-imports.test.ts)"
+          },
+          {
+            "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+            "result": "38 passed (1.3m)"
+          },
+          {
+            "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts test/real-daemon.test.ts -t 'd1109-run-visible|selftasks' (3 times)",
+            "result": "9 passed each time"
+          },
+          {
+            "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo fmt --check",
+            "result": "exit 0"
+          },
+          {
+            "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo clippy --all-targets -- -D warnings",
+            "result": "exit 0"
+          },
+          {
+            "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo test",
+            "result": "157 passed, 0 failed"
+          },
+          {
+            "command": "bench fixup-d1109-run-visible (48761/2361), --provider bench, FORERUNNER_BENCH_DELAY_MS=1500, walk A (scratchpad fx-walk-a.cjs)",
+            "result": "7 of 7 passed. The Sessions list's working row equals GET /running's text. The bar adds '· then Bird walk'. Bird walk's line reads 'Starts after the session on \"Kite day ...\"' without a reload, and Home names it too. Once Bird walk runs, its line follows with no reload and the title names it; no bar once nothing runs. The first run with the default delay finished Kite day before the second Start (no queue), so the walk was run again with a slower stand-in."
+          },
+          {
+            "command": "bench fixup-d1109-run-visible, --provider bench-api --api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=2, walk B (scratchpad fx-walk-b.cjs)",
+            "result": "9 of 9 passed. While waiting, Last result promises it goes on. After the bar's Cancel, with no reload, Last result reads 'Waits until 20:34 (your API key's limit); then it runs at your next Start.'. A reload, Read aloud's text, the Inbox Update line and the Inbox page say the same, and so do Last result and the Update line after a daemon restart. The bench was stopped with stop.mjs; its home and browser profile were deleted."
+          }
+        ],
+        "screenshots": {
+          "before": [
+            "/tmp/frbench/review-d1109-run-visible/steps-walk12/30-rv2-bird-overview-queued.png",
+            "/tmp/frbench/review-d1109-run-visible/steps/18-rv5-sea-overview-after-cancel.png",
+            "/tmp/frbench/review-d1109-run-visible/steps/19-rv5-sea-overview-after-cancel-reload.png"
+          ],
+          "after": [
+            "/tmp/frbench/fixup-d1109-run-visible-steps-a/04-after-a1-kite-sessions-tab-while-running.png",
+            "/tmp/frbench/fixup-d1109-run-visible-steps-a/05-after-a2-bird-overview-queued-no-reload.png",
+            "/tmp/frbench/fixup-d1109-run-visible-steps-a/06-after-a3-home-while-one-queued.png",
+            "/tmp/frbench/fixup-d1109-run-visible-steps-a/07-after-a4-bird-overview-runs-no-reload.png",
+            "/tmp/frbench/fixup-d1109-run-visible-steps-a/08-after-a5-bird-overview-after.png",
+            "/tmp/frbench/fixup-d1109-run-visible-steps-b/01-after-b1-sea-overview-waiting.png",
+            "/tmp/frbench/fixup-d1109-run-visible-steps-b/02-after-b2-sea-overview-after-cancel.png",
+            "/tmp/frbench/fixup-d1109-run-visible-steps-b/03-after-b3-sea-overview-after-cancel-reload.png",
+            "/tmp/frbench/fixup-d1109-run-visible-steps-b/04-after-b4-inbox-after-cancel.png",
+            "/tmp/frbench/fixup-d1109-run-visible-steps-b/05-after-b5-sea-overview-after-restart.png"
+          ]
+        },
+        "tests_changed_for_design": [
+          {
+            "test": "apps/ui/test/real-daemon.test.ts d1109-selftasks-run 'the card in the Inbox names the project ... after a restart'",
+            "why": "The two tasks made after the restart are expected in the order the run order ranks their stored rows (priority, created_at, id), not in a fixed order that a same-millisecond tie can flip. The intent is kept: both come after every task made before the restart."
+          },
+          {
+            "test": "apps/ui/test/real-daemon.test.ts 'd1109-run-visible, run C: the page of a session that ended to wait (V-5)'",
+            "why": "Extended, not weakened: it now also reads the Overview's summary, Read aloud and the Inbox before and after Cancel, and after a restart (a second compose on the same home)."
+          }
+        ],
+        "new_problems": [
+          "The chat's project facts (packages/runtime/src/conversation/project-facts.ts) and the typed 'summary' command (packages/commands/src/commands/summary.ts:79) still read the stored last result as written, so after Cancel the chat can repeat '...; then your session goes on.'. Both belong to the chat (D3, outside this area). They can call run-indicator.ts resultAfterWait(store, projectId, last_session.ended_at, summary).",
+          "A calibration run started by `fr jobs calibrate` while the daemon runs shows on the daemon's GET /running (shared store), but no run.changed frame is sent: the CLI process pokes only its own runtime. The same holds for any session a CLI one-shot starts beside a running daemon.",
+          "In bench walk A, while Bird walk's start was queued, its header still offered 'Start session'. Pressing it again would ask for one more start. The status line offers nothing then, but the header button stays (project page header, not this area's).",
+          "Stopping the monthly check still records its row as failed (the fixer's note; wording in src/jobs)."
+        ],
+        "notes_for_other_areas": [
+          "run-indicator.ts: runFoldsOf(store) is the one map of kept run folds per store. compose's RunIndicatorDeps.folds and sessionRunText (the Sessions list's working row) both use it. sessionRunText now folds the whole log, and no longer reads ofTypes(RUN_EVENT_TYPES, 50).",
+          "run-indicator.ts: resultAfterWait(store, projectId, since, text) and waitPromiseHolds(store, projectId, since) are the one rule for a stored '...; then your session goes on.'. The promise holds while a continuation or a Start for the reset is kept and no non-intake session of the project has begun since, or once a session with plan.startedBy.by === 'continuation' began after it. Otherwise the text reads summaryAfterWait's '...; then it runs at your next Start.'. It is applied by GET /sessions/:id (since = ended_at), views.ts projectSummary (Last result and spoken; since = last_session.ended_at) and GET /inbox message bodies (since = created_at). run-indicator.ts now imports wiring/billing-pick.ts, so it stays daemon-only, never in the browser build.",
+          "CalibrationJobDeps.onRowChanged?(sessionId) is called after the run's session row is inserted and after close(). compose wires it to running.poke through `pokeRunIndicator`, which is set once the indicator is composed.",
+          "compose's scheduler.requestStart wrapper now also emits events.emit('project', {id}) for a start whose entry.result is 'queued' or 'deferred'. cancelPending emits it for the dropped request's projectId. The wrapper still returns the scheduler's own promise. The UI (store/context.tsx) re-reads the project cards when a run.changed frame changes the entries' keys or their nextProject.",
+          "RunningHealth (api-types.ts) gained an optional check: boolean (true only for the critic's monthly check). runningHealth orders a project's running session first, then the check, then a waiting one. The desktop's daemon::RunningHealth has a check field and state::window_title reads 'Forerunner — the critic's monthly check' for it. d1109-cred-engine (C5) and d1109-cred-screens (C6) should keep this order when they add waiting forms.",
+          "RunIndicator.tsx: Stop now's explanation depends on the entry's state. For 'calibrating' it reads 'Stops the check at once. This month's report is not written.'. runTitle names a project's session before the check ('● The critic's monthly check · Forerunner').",
+          "compose's run.changed debounce reads clock.monotonic() (lastAt starts at -Infinity) instead of Date.now().",
+          "Suggested lines for the session lead (not written here): U-096 check in the app, add 'press Start on a second project while one runs: its line says \"Starts after the session on <first>\" at once; after Cancel on a waiting session, its Last result, Read aloud and Inbox Update say \"then it runs at your next Start.\"'. CHANGELOG: 'A start that waits behind another session shows on its project at once; after Cancel nothing says a session goes on by itself; the critic's monthly check shows on the bar while it runs.'"
+        ]
+      }
+    }
+  ],
+  "missing": [],
+  "merge": {
+    "merged": [
+      "fix/d1109-cred-engine at 09969dea5a2f8fc6daa4e90e6709998e9411fd29 (fix-up head): merge commit f1518d34fbfa60d389f1c6fc33930053791d1858, no conflicts",
+      "fix/d1109-run-visible at 4aad38277cb7e4d7ae81d870d197239bc4f87f6c (fix-up head): merge commit d133246008888fa945d41a4ae0101e5b85fd19e4, one conflicted file"
+    ],
+    "head_sha": "d133246008888fa945d41a4ae0101e5b85fd19e4",
+    "pushed": true,
+    "conflicts_resolved": [
+      "apps/ui/test/real-daemon.test.ts: the only conflict, an append-only clash. Both areas appended describe blocks at the end of the file after the d1116-budget-all describe. Git interleaved them in four hunks because both blocks start with near-identical helpers (an oauth and apiKey pair, resetAt, and a claudeCode limit-then-answer SDK stand-in). Each side's earlier hunks (cred-engine's two refused-card wording changes at about :8357 and :8372, and run-visible's many hunks above line 20866) had already auto-merged. I took the auto-merged file up to the conflict, then d1109-cred-engine's whole appended block (describe 'd1109-cred-engine, run C', in merge order), then d1109-run-visible's whole appended block (describes 'd1109-run-visible, run C', '... a person's session waiting to go on' and '... the page of a session that ended to wait (V-5)'). Every area's describe is kept unchanged. Compared with run-visible's own file, the result differs only by cred-engine's 158-line describe and its two refused-card sentences.",
+      "Auto-merged without conflict, checked against the shared_files ownership: packages/runtime/src/daemon/compose.ts, views.ts, apps/ui/test/fake-daemon.ts, packages/runtime/test/credential-limits.test.ts, docs/maintainers/runtime.md and apps.md, docs/user-guide.md. In compose.ts, run-visible's scheduler.requestStart and cancelPending wrappers replace the methods on the scheduler object. Cred-engine's onGrant calls scheduler.requestStart at call time, so a start granted by Use API key also updates the run bar. Run-visible's waitingContinuations maps the share and key-month waits that cred-engine added to the generic 'other' form ('waiting for Claude, then it goes on'), as the C5 notes ask. The two areas' user-guide paragraphs agree."
+    ],
+    "integration_fixes": [],
+    "validation": [
+      {
+        "command": "git grep -n '^<<<<<<< '",
+        "result": "nothing (exit 1)"
+      },
+      {
+        "command": "pnpm install --frozen-lockfile",
+        "result": "ok"
+      },
+      {
+        "command": "pnpm lint && pnpm lint:paths",
+        "result": "exit 0 (biome: 42 warnings and 1 info, no errors); check-paths ok (1575 files)"
+      },
+      {
+        "command": "pnpm typecheck",
+        "result": "exit 0"
+      },
+      {
+        "command": "pnpm test (vitest --project unit)",
+        "result": "exit 0: 533 files passed, 5766 tests passed, 7 skipped"
+      },
+      {
+        "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0; pnpm docs:links; pnpm secrets:scan",
+        "result": "docs-check ok (110 files); link-check ok (213 files); secret-scan clean (2212 files)"
+      },
+      {
+        "command": "pnpm test:integration",
+        "result": "exit 0: 5 files passed, 6 skipped (Postgres); 30 tests passed, 81 skipped"
+      },
+      {
+        "command": "pnpm test:e2e",
+        "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+      },
+      {
+        "command": "pnpm --filter @forerunner/live test",
+        "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+      },
+      {
+        "command": "pnpm test:injection",
+        "result": "exit 0: PASS, 81 of 81 cases (58 hostile, 23 controls), 0 failed"
+      },
+      {
+        "command": "HOME=<empty dir> FORCE_COLOR=1 vitest run --project unit (as CI runs it; git config --global user.name had no value)",
+        "result": "exit 0: 533 files passed, 5766 tests passed, 7 skipped"
+      },
+      {
+        "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 vitest run --config vitest.config.ts",
+        "result": "exit 0: 97 files, 1297 tests passed (includes real-daemon.test.ts with both areas' describes and browser-imports.test.ts)"
+      },
+      {
+        "command": "cd apps/ui && vitest run --config vitest.config.ts test/real-daemon.test.ts -t 'd1109-run-visible|d1109-cred-engine|selftasks' (3 runs, a flake check on the shared file and C4b-left-3)",
+        "result": "10 passed each run"
+      },
+      {
+        "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+        "result": "38 passed (1.3m)"
+      },
+      {
+        "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
+        "result": "fmt exit 0; clippy exit 0; cargo test 157 passed, 0 failed"
+      },
+      {
+        "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+        "result": "printed nothing: all 35 commits are signed, both merge commits included"
+      },
+      {
+        "command": "git push -u origin claude/nifty-knuth-f9udt0",
+        "result": "fast-forward c4583eb..d133246 on the first try"
+      }
+    ],
+    "smoke": "node scripts/bench/start.mjs --name merge-w21 --daemon-port 48770 --ui-port 2370 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w21: 25/25 checks passed, 0 findings, 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. The journey's expectations still held, so I did not change it. The bench was stopped with scripts/bench/stop.mjs, and its home, browser profile and the empty test HOME were deleted. Logs are kept in /tmp/frbench/merge-w21/ (1.8 MB), with the result at /tmp/frbench/merge-w21/steps/smoke-result.json.",
+    "problems_left": [
+      "The merge broke nothing, and no fix-up commit was needed. The items below are the areas' own recorded leftovers, carried over unchanged.",
+      "d1109-cred-engine not_done (from its fix-up report): CE-6 (a share reached mid-run is still the hooks' plan-level budget pause, and the allowance raise's change line is not built); CE-11 (switch log line, switchedFrom, SessionResult.switched, CostView.byCredential; the runner still logs '\"X\" continues on your API key now.'); CE-12 (the switch notification has no producer); CE-10 (jobs are not marked 'not done for the period'); CE-1's one-time Update; CE-5's composed repository case (left to live check 4); CE-9 (POST /chat does not carry oneOff, and the hold reply still offers 'Think it through ... at most CHF 0.03'; these are in server.ts, which belongs to C6); leftovers L3-left-14, C3-left-4, C3-left-5, C3-left-6, C4b-left-1 and C4-left-11.",
+      "d1109-cred-engine new_problems: the intake card still says 'milestone(s)', 'task(s)' and 'doc(s)' (intake.ts about :1476); the refused card's withdrawn line also shows when TR-10 closes it with nothing waiting; credential_policy's narrows treats an unset earlier value as rank 0; GET /settings/billing-order and the Settings section still read billing_order (C6 replaces them); syncAskAnswers is not atomic; onGrant readmits every ready task of a running project; credentialHold reads timezone and month cap at compose time; the router falls back to Date.now() when nowMs is absent.",
+      "d1109-run-visible not_done: the status line's Cancel and Continue explain themselves only as a tooltip (left for the session lead's design call); the critic's monthly check, a working row past 49 steps, and the tray, title and icon were not walked on a real desktop. Read the Desktop app workflow's window job after this push (LC-C20).",
+      "d1109-run-visible new_problems: chat's project facts (conversation/project-facts.ts) and the typed 'summary' command (commands/summary.ts:79) still repeat '...; then your session goes on.' after Cancel; resultAfterWait is the fix. A calibration or session that a CLI one-shot starts beside a running daemon sends no run.changed. The project header keeps offering 'Start session' while a start is queued. A stopped monthly check is recorded as failed.",
+      "Not run here, by design: CI on Windows and Linux, the Desktop app workflow (including scripts/desktop-window-check.mjs), and live check 4 (LC-C31). The session lead runs these after the push."
+    ]
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "verdict": "fix-needed",
+  "acceptance_walk": "I ran my own bench, \"review-d1109-run-visible\" (daemon 48751, UI 2351), from the worktree at f8f7288 and walked it through the real UI with Playwright. Screenshots are in /tmp/frbench/review-d1109-run-visible/steps-walk12/ (walks 1 and 2, --provider bench) and /tmp/frbench/review-d1109-run-visible/steps/ (walks 3 to 5, --provider bench-api --api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=2, FORERUNNER_BENCH_FAIL=\"Draw the logo\"). Check results are in rv1..rv5-result.json and walk1..5.log in /tmp/frbench/review-d1109-run-visible/.\n\nWalk 1 (V-1, V-2, V-4):\n- Nothing running: no bar, and the title is 'Forerunner'.\n- I pressed Start session on \"Quote page\". The bar appeared at once ('Quote page · plans the session', 'just started', 'Stop ▾') and the title became '● Quote page · Forerunner'.\n- The bar was present on all 20 route × width pairs: Home, Inbox, Settings, Memory, Changes, the project's Overview, Tasks, Files and Sessions tab, and the session page, each at 1280 and 375 px. At 375 px it sits outside the hamburger menu (15-rv1-home-375.png).\n- Home's Working now shows the same block with Stop.\n- The words changed live with no reload: the critic checks \"...\", then picks the next task, then the coder works on \"Write the README\".\n- Talk's first line shows the compact form, and its Stop menu opens inside the dialog (26-rv1-talk-stop-menu-open.png).\n- I pressed Start on \"Garden site\" while Quote page ran. The Start dialog said 'Starts after the session on \"Quote page\"' and the bar added '· then Garden site'.\n\nWalk 2:\n- The queued project's own header line, read without a reload, still said 'Ready: 1 task waits for your Start' for at least 6 s (FAIL). After a reload it said 'Starts after the session on \"Kite day\"' (30-rv2-bird-overview-queued.png, 31-rv2-home-while-one-queued.png).\n- Stop ▾ > Stop after this task changed the bar to 'Kite day · stops after \"...\"'. When that session ended, the bar and title named Bird walk.\n- Stop now asked once, and the bar and the title's dot went away.\n- Stop all asked once and showed 'Sessions are stopped' with no run bar. 11 of 12 checks passed.\n\nWalk 3 (the waiting session, V-1/V-2/V-3/V-5):\n- I pressed Start with the limited key. The bar read 'Kite club · waiting until 19:33, then it goes on' with Cancel and its explanation, no Stop and no dot, and the title stayed 'Forerunner'.\n- The status line read 'Waiting until 19:33 (your API key's limit), then it goes on' with Cancel. Working now and Talk showed the same. /health.running.waiting was true.\n- The session page block read 'Waiting until 19:33 (your API key's limit), then it goes on with \"Create index.html\" and 2 more.' with Cancel. Cancel changed it to 'Stopped to wait for your API key's limit until 19:33: \"Create index.html\" and 2 more wait.' with Continue, and the session's result line was rewritten to '...; then it runs at your next Start.'.\n- Continue opened Start with the budget left. Start then kept a Start for 19:33. At the reset the bar went 'plans the session' then 'the coder works on ...' live, the title got the dot, and the bar was gone after the end. 12 of 13 checks passed.\n\nWalk 5:\n- The kept Start's line read 'Starts at 19:37 (your API key's limit)' with Cancel. After Cancel it read 'Ready: 2 tasks; nothing runs until 19:37 (...)', which is true while the key still rests.\n- A waiting session left alone went on by itself at the reset, and the bar followed with no reload ('Park walk · waiting until 19:37' > 'plans the session' > 'the coder works on \"Create index.html\"'). This is the owner's decision of 2026-11-09 working.\n- I restarted the daemon to get a new limit window, let Sea notes wait, and pressed the bar's Cancel. The Overview's Last result still read 'Waits until 19:40 (your API key's limit); then your session goes on.', also after a reload (FAIL, 19-rv5-sea-overview-after-cancel-reload.png). The Inbox Updates carry the same promise.\n- V-6: a failed task's card > Try again gave 'Done: Trying \"Draw the logo\" again: it runs at your next Start.' with Start and 'Opens Start for Logo shop.'. Start opened Logo shop's Start dialog, and the Start button was hidden while that session ran (23-rv5-inbox-done-start-dialog.png).\n\nI stopped the bench with scripts/bench/stop.mjs and deleted its home, its browser profile and my reverted source copy.",
+  "blocking": [
+    {
+      "issue": "Regression in the Sessions list's working row (the screen this area pointed at runText): once a task has logged more than about 49 steps, the row says the session 'plans the session' while the task is still running.",
+      "where": "packages/runtime/src/daemon/run-indicator.ts:236 (sessionRunText; called from session-list.ts workingWords)",
+      "evidence": "sessionRunText folds only the newest 50 events of RUN_EVENT_TYPES. That list includes task.step, and the runner emits one task.step per tool call (runner.ts:2649-2660). Once there are more than about 49 steps, task.started falls outside the window and the fold starts again at 'planning'. Probe (a temporary test, described in /tmp/frbench/review-d1109-run-visible/probes/README.txt): session.started, session.planned and task.started 'Style the page' gave 'Quote page · the coder works on \"Style the page\"'. After 60 task.step events it gave 'Quote page · plans the session'. The same probe against the base's workingWords (which read the whole log) returned 'Working on \"Style the page\"' both times. Meanwhile the bar, which folds the whole log incrementally, keeps saying 'the coder works on ...', so two screens state the same fact differently and one is wrong (design §5 rules 4 and 10).",
+      "expected": "The Sessions list's working row says the same words as the bar however many steps the task has taken. For example, leave task.step out of the windowed read and look up the last task.started/task.finished separately, or reuse the bar's incremental fold. Add a failing case with more than 50 steps first."
+    },
+    {
+      "issue": "The critic's monthly check never reaches the bar live. No run.changed frame is sent when the check starts or when it ends, so the UI shows it only after a reload or reconnect, and then keeps showing it, with Stop, after it has ended.",
+      "where": "packages/runtime/src/daemon/compose.ts:3497 (runCalibration) and :4145-4156 (poke wiring)",
+      "evidence": "The poke listens only to the 'session' and 'project' buses and wraps scheduler.requestStart and cancelPending. CalibrationJob emits nothing on any bus. The requestStart poke fires, often with 0 delay, before the check's session row exists, so views() returns [] and that equals last \"[]\", and nothing is sent. Nothing pokes when the check ends. Probe (/tmp/frbench/review-d1109-run-visible/probes/README.txt, a composed runtime with a gated provider): while the check's first critic call was held, GET /running returned [\"Forerunner · the critic's monthly check on known examples\"], but rt.events received zero run.changed frames during the check (2.5 s) and after it ended. The UI re-reads /running only at bootstrap, when the stream reopens, or in polling mode (context.tsx). The real-daemon case reads GET /running directly, and the UI case uses the fake daemon's emitRunning(), so neither catches this. This is spec V-1/V-2 ('while the critic's calibration runs it reads ...', 'the UI shows it in the open form') and the owner's answer 6: 'show it in the running-session bar'.",
+      "expected": "run.changed is emitted when the check's row is created and when it ends, for example by poking from runCalibration once the job has inserted its row and again in its finally block, or by having the job emit on the session bus. Add a real-daemon or composed case that asserts the frames, failing first."
+    },
+    {
+      "issue": "C3-left-8 is only half fixed. After Cancel, the project's Overview 'Last result', and the Inbox Update, still promise '...; then your session goes on.'.",
+      "where": "packages/runtime/src/daemon/views.ts:467 (project summary lastSession.summary); only server.ts:1988 (GET /sessions/:id) applies summaryAfterWait",
+      "evidence": "Bench walk 5: Sea notes waited on the limited key and I pressed the bar's Cancel. The Overview's Last result still read 'Waits until 19:40 (your API key's limit); then your session goes on.' right after Cancel and again after a reload (/tmp/frbench/review-d1109-run-visible/steps/18-rv5-sea-overview-after-cancel.png, 19-rv5-sea-overview-after-cancel-reload.png). At the same moment the header line no longer said it goes on. GET /inbox still holds 'Sea notes: Waits until 19:40 (your API key's limit); then your session goes on.' (and the same for the cancelled Kite club wait from walk 3). The leftover says 'The continuation's words follow the kept state wherever they show ... after Cancel, nothing says the session goes on.' The Overview is where design §5 rule 10 puts the session result.",
+      "expected": "Once the continuation is cancelled, every place that shows that session's stored result (the Overview's Last result, the Update line, Read aloud) shows the summaryAfterWait form. Add a real-daemon case: Cancel, then GET /projects/:id/summary (and the Inbox) no longer contain 'then your session goes on'."
+    },
+    {
+      "issue": "When a person presses Start on a project while another project's session runs, that project's status line is not live. It keeps saying 'Ready: 1 task waits for your Start', with Start session and Continue still offered, until a reload or until the other session ends.",
+      "where": "packages/runtime/src/daemon/server.ts:1877 (POST /sessions answers 'queued' and emits no project event); apps/ui/src/store/context.tsx:151 (run.changed refreshes project cards only when the entry keys change)",
+      "evidence": "Bench walk 2: Kite day was running. I pressed Start on Bird walk and closed the 'Queued' dialog. The bar said 'Kite day · ... · then Bird walk' within a second. Bird walk's own header line, polled for 6 s with no reload, still read 'Ready: 1 task waits for your Start' (FAIL in /tmp/frbench/review-d1109-run-visible/walk2.log; screenshot /tmp/frbench/review-d1109-run-visible/steps-walk12/30-rv2-bird-overview-queued.png). After page.reload() it read 'Starts after the session on \"Kite day\"' (31-rv2-home-while-one-queued.png). A queued start does not change the run.changed keys (only nextProject changes), and POST /sessions emits no 'project' event, so the card is never re-read. This is the area's own D8-5 problem ('Not live ... a wait show late or never') and V-3's line; design §3.2 says 'stale data is a bug'. The UI test passes only because the fake daemon seeds startsWait and emits frames itself.",
+      "expected": "The project's line says 'Starts after the session on \"<other>\"' without a reload as soon as the start is queued, and changes again when the queued start runs or is dropped. For example, emit project.changed for the queued project in POST /sessions and cancelPending, or refresh cards when a run.changed entry's nextProject changes. Add a real-daemon or UI case that drives the real daemon's frames."
+    }
+  ],
+  "claims_checked": [
+    {
+      "claim": "V-1: one run state in the daemon's words via GET /running, run.changed and /health.running, across a session's life",
+      "holds": false,
+      "note": "Holds for project sessions: on the bench I saw plans the session, the coder works on, the critic checks, picks the next task, stops after and '· then <project>', all live, and /health.running matched. It fails for the critic's monthly check, which is never sent on run.changed (blocking 2), and for the Sessions list row after more than about 49 steps (blocking 1)."
+    },
+    {
+      "claim": "V-2: one bar under the header on every route and width, Stop after this task / Stop now / Stop all, and the title '● <project> · Forerunner'",
+      "holds": true,
+      "note": "20 of 20 route × width checks on the real app. Stop after this task, Stop now (asks once) and Stop all (asks once, then 'Sessions are stopped') all worked. The title follows the running project and is 'Forerunner' after the end and while a session only waits."
+    },
+    {
+      "claim": "V-3: Home/Overview Working now in block form; the status line says what waits to start; 'Ready: N tasks wait for your Start'",
+      "holds": false,
+      "note": "The block form and the lines for a waiting session and a kept Start are correct on screen, and the API's queued line is correct. On screen, the queued project's line stays stale until a reload (blocking 4)."
+    },
+    {
+      "claim": "V-4: Talk's first line shows the compact form with Stop",
+      "holds": true,
+      "note": "Seen while a session ran and while one waited (Cancel). The Stop menu opens inside the dialog."
+    },
+    {
+      "claim": "V-5 / C3-left-8: the session page's waitBlock with Cancel/Continue, and the stored result rewritten after Cancel",
+      "holds": false,
+      "note": "Session page: goes_on, then stopped with Continue, then Start with the budget left all work, and its result line is rewritten. The Overview's Last result and the Inbox Update still promise 'then your session goes on' after Cancel (blocking 3)."
+    },
+    {
+      "claim": "C3-left-7: the Start dialog names the other project; Continue sends POST /sessions with continues",
+      "holds": true,
+      "note": "The bench showed 'Starts after the session on \"Quote page\"'. Continue opened Start with the budget prefilled; the daemon sets the budget to what was left."
+    },
+    {
+      "claim": "V-6: the Inbox Done line offers Start, which opens that project's Start dialog, and hides it while that project runs",
+      "holds": true,
+      "note": "Walk 5 with FORERUNNER_BENCH_FAIL: 3 of 3 checks."
+    },
+    {
+      "claim": "V-7/V-8: tray tooltip, first item, window title and icon dot (cargo tests)",
+      "holds": true,
+      "note": "cargo fmt --check passed, clippy -D warnings passed, cargo test 156 passed (CARGO_TARGET_DIR=/tmp/frbench/cargo-target). Not walked on a real desktop (fixer's not_done)."
+    },
+    {
+      "claim": "Browser build blank page fixed (run-wait-words.ts) and guarded by browser-imports.test.ts",
+      "holds": true,
+      "note": "The bench UI rendered on every page. The test passes."
+    },
+    {
+      "claim": "The requestStart wrapper keeps the scheduler's promise (sync-gate regression fixed)",
+      "holds": true,
+      "note": "sync-gate, continuation, credential-limits and w15-words: 54 of 54 passed."
+    },
+    {
+      "claim": "C4b-left-3: the selftasks restart case is stable with a later clock for the second compose",
+      "holds": true,
+      "note": "The describe passed 3 of 3 runs here. The changed order assertions keep the case's intent."
+    },
+    {
+      "claim": "C4b-left-4: the stand-in critic counts reviews without a run id; journeys use today's words",
+      "holds": true,
+      "note": "The testenv REJECT_TIMES test fails against the reverted role-player.ts and passes on the fix. I did not rerun budget.cjs or resume.cjs."
+    },
+    {
+      "claim": "The failing-before tests fail without the fix",
+      "holds": true,
+      "note": "With the UI source reverted to base (the run-words modules kept), apps/ui/test/run-indicator.test.tsx failed 42 of 43; the passing case is 'no Start for an answer that readied nothing'. The real-daemon 'the page of a session that ended to wait (V-5)' failed with waitBlock undefined against the base server.ts."
+    },
+    {
+      "claim": "The Sessions list's working row uses the same words as the bar",
+      "holds": false,
+      "note": "True for short tasks. After more than about 49 tool steps it says 'plans the session' (blocking 1)."
+    },
+    {
+      "claim": "Validation green",
+      "holds": true,
+      "note": "Runtime run-indicator, project-status and role-player: 72 passed. Area UI tests (9 files): 160 passed. Real-daemon d1109-run-visible: 6 passed. pnpm test:e2e: 25 passed, 1 skipped. Playwright (local config): 38 passed. Not rerun: the full pnpm check and test:integration."
+    }
+  ],
+  "non_blocking": [
+    "The critic's monthly check: its Stop menu shows Stop now with the session explanation 'Stops the current task at once. It goes back to Ready; what it wrote so far stays in the folder.', which is untrue for the check (design §5 rule 9). The tab title during the check would be '● Forerunner · Forerunner' (RunIndicator.tsx STOP_NOW, runTitle).",
+    "The Start dialog opened by Continue prefills what is left of the session's budget but still says 'The project's default is filled in.' (StartSessionDialog.tsx:534).",
+    "compose.ts:4129 and :4142 call Date.now() for the debounce. AGENTS.md says time goes through a Clock; clock.monotonic exists. There is precedent in recall.ts and try-run.ts.",
+    "The status line's Cancel shows its explanation only as a title tooltip. The bar's and Working now's Cancel show it beside the button (design §3: a one-line explanation shown with the button).",
+    "While a session waits, the Overview states the fact four times with three Cancel buttons (bar, Working now, status line). This follows the spec, but it is heavy at 375 px (/tmp/frbench/review-d1109-run-visible/steps/05-rv3-home-while-it-waits-375.png).",
+    "The session log line written at the time keeps '...; then your session goes on.' after Cancel. It is a timestamped record, so I am not counting it as a promise.",
+    "Two wordings of one fact: the session page's 'Current task: Choosing the next task…' while the bar says 'the critic checks \"X\"' (session page owned by d1109-sessions), and the project row's 'Working on \"X\" (0 of 3 done)' beside the bar (design §2's own sentence; the fixer noted it).",
+    "desktop-window-check.mjs passes trivially when the session has already ended, and checks document.title rather than the native window title. set_main_title is covered only by Rust unit tests; the owner's checklist covers the rest.",
+    "docs/maintainers/runtime.md says run.changed is poked by 'the wait list', but compose pokes only on session/project events and the scheduler's requestStart/cancelPending.",
+    "The real-daemon life-cycle case does not assert 'plans the session' during a live session (only through the restart ghost row). The calibration case reads GET /running and never the run.changed stream (see blocking 2).",
+    "Stopping the monthly check aborts its run and the job records it as failed (the fixer's new_problem; the wording belongs to src/jobs).",
+    "The C4b-left-3 expectation orders 'Style the page: colours' before 'Check that the links work'. Both are made after the restart, so a same-millisecond tie is still possible. It passed 3 of 3 here."
+  ]
+}

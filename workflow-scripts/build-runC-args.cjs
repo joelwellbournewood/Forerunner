@@ -21,7 +21,7 @@ const args = { wave: s.wave, keys: s.keys, noMerge: false, note, fixNotes: {} };
 for (const k of s.keys) {
   const a = p.areas.find((x) => x.key === k);
   args.fixNotes[k] = `Your area builds ${a.title.split(":")[0]}. Its size and cut line: ${a.size}`;
-  const left = a.problems.filter((x) => /\b(L3|C\d)-left-\d+/.test(x)).map((x) => ({ id: x.match(/\b((?:L3|C\d)-left-\d+)/)[1], major: /^\[major/.test(x) }));
+  const left = a.problems.filter((x) => /\b(L3|C\d\w?)-left-\d+/.test(x)).map((x) => ({ id: x.match(/\b((?:L3|C\d\w?)-left-\d+)/)[1], major: /^\[major/.test(x) }));
   if (left.length) {
     const majors = left.filter((x) => x.major).map((x) => x.id);
     args.fixNotes[k] += ` Added to your problems since the spec was sized: ${left.map((x) => x.id).join(", ")} (earlier runs' leftovers in your code).${majors.length ? ` ${majors.join(" and ")} ${majors.length > 1 ? "are" : "is"} major and not on the cut line: not_done only with evidence that ${majors.length > 1 ? "they cannot" : "it cannot"} be built in this area.` : " They may end in not_done with the evidence if the area's own items need the time."}`;

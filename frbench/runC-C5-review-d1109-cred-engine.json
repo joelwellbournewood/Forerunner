@@ -1,0 +1,108 @@
+{
+  "verdict": "fix-needed",
+  "acceptance_walk": "I ran three walks on bench review-d1109-cred-engine (daemon 48750, UI 2350, from the worktree at f5e819d, provider bench-api, stand-ins only). Screenshots and texts are saved under /tmp/frbench/review-d1109-cred-engine/walk1-steps, walk2-steps and walk3-steps. The bench is stopped and its home is deleted.\n\nWalk 1: a limited key (--api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=2) and no subscription.\n- I asked a question in the project Chat tab under the default policy. The reply was the hold sentence \"Your API key is at its limit until 18:16, so I have not answered. I can still add, move and start tasks.\" Exactly one 429 /v1/messages went to the key, and the second question also held (walk1-steps/01). The reply still offers \"Think it through: Thinks longer on this model ... at most CHF 0.03\".\n- I set \"Subscription first, then ask me\" through POST /commands/execute. The read-back asked for a yes with the right sentence, and the yes stored it.\n- I restarted the daemon (a new limit window) and started a session on a project with two tasks. The key hit its limit and no ask card was filed, because no other credential exists. Yet the session summary, the Overview \"Last result\", the session log and a notification all said: 'Waits for your answer: use your Claude subscription? The card is in the Inbox.' The Inbox was empty, the person has no subscription, and the rows said \"Waits until 18:19, your API key's limit\" (walk1-steps/11, 12).\n- At 18:19 the session went on by itself (trigger budget_reset) and both tasks finished.\n\nWalk 2: a working key plus a subscription (--api-key ok --subscription).\n- I set the policy to subscription_then_ask with a yes. To inject the stop, I wrote limits.restingUntil=19:40 on the subscription row in state.sqlite.\n- Chat held: \"Your Claude subscription is at its limit until 19:40, so I have not answered...\" No request reached the key.\n- I pressed Start. The start was kept (\"A session of Quote page starts at 19:40.\") and exactly one ask card appeared in the Inbox: \"Use your API key until 19:40?\", body with about CHF 0.11, options Use API key and Wait with their lines, and Details naming the monthly checks (walk2-steps/07). This matches the design.\n- I pressed \"Use API key\" in the UI. The Inbox showed \"Done: Done: your API key does the work until 19:40; the waiting work runs at your next Start.\" (walk2-steps/09). Ten seconds later the kept Start ran by itself on the key: the session started at 18:21:05, both tasks were done and reviewed, and every request carried the key.\n- On a second stop (19:45) and a new project, Start again produced one card. Pressing Wait showed \"Done: Done: nothing moves until 19:45; then your session goes on.\" (walk2-steps/14).\n\nWalk 3: a refused key (--api-key refused).\n- Chat gave \"Anthropic refused your API key, so I have not answered...\" after one 401.\n- After Start, the rows read \"Waits for a new API key\", and the Inbox showed one refused card: \"The key is not valid or was deleted. Save a new one in Settings; until then the work waits.\" with \"Save a new key\" (walk3-steps/09). This matches the design.\n- But the key then got a second request after its refusal: GET /v1/models returned 401 at 18:22:54, after the first 401 at 18:22:35.\n\nExtra composed check: I put a temporary copy of the fixer's own credential-ask.test.ts Wait case in the tree (deleted again) to read the second session's words. After the person answered Wait, a second session started before the reset says in its summary and its log '\"Style the page\" waits for your answer: use your API key? The card is in the Inbox.' The Inbox has no open card, and the rows say \"Waits until 15:00, your subscription's limit\".\n\nValidation runs, all green:\n- pnpm test: 529 files, 5727 passed.\n- UI vitest: 95 files, 1244 passed.\n- pnpm test:integration: 30 passed.\n- pnpm test:e2e: 25 passed.\n- typecheck, lint (warnings only), lint:paths, secrets:scan, docs-check and link-check all pass.\n- The fixer's 11 named test files pass (145 tests).\n\nFailing first: billing-order.test.ts (5 cases) and the CE-5 case of task-usage-limit.test.ts fail on claude/nifty-knuth-f9udt0 code (I checked in a separate worktree, now removed). For example, with nothing chosen chat answered \"From the API.\" instead of \"From Claude Code.\".\n\nI did not run Playwright again, because apps/ui/src is unchanged by this branch.",
+  "blocking": [
+    {
+      "issue": "The app says a card is waiting in the Inbox when there is none. Whenever the rule is 'ask', the sentence 'Waits for your answer: use <other>? The card is in the Inbox.' is written, even when no card was filed or the card was already answered. It shows in the session summary, the session log, the Overview's Last result and a notification.",
+      "where": "packages/billing/src/router.ts:363 (ask: rule === \"ask\" with no check for a card); packages/runtime/src/session/credential-wait.ts:290 and :487 (waitSentence and planWaitWords); packages/runtime/src/wiring/billing-pick.ts:996 (askFor files nothing when no other credential serves)",
+      "evidence": "Bench walk 1 (subscription_then_ask, only a limited API key): the session summary reads 'Waits for your answer: use your Claude subscription? The card is in the Inbox.', the log line is 'Your API key reached its usage limit; \"Write the quote note\" waits for your answer: use your Claude subscription? The card is in the Inbox.' and a notification was sent, but GET /inbox has no open card and no subscription is saved (/tmp/frbench/review-d1109-cred-engine/walk1-steps/11-ask-only-key-session.png, 12-ask-only-key-overview.png). Also, in the fixer's own credential-ask Wait scenario, a session started after the person pressed Wait (before the reset) says '\"Style the page\" waits for your answer: use your API key? The card is in the Inbox.' while the Inbox has no open card and the rows say 'Waits until 15:00, your subscription's limit'. Design section 5: a sentence promises only what the app does.",
+      "expected": "Use the 'your answer' form only while the one ask card for this stop is open (task-display.ts already checks this for the rows). Otherwise use the plain wait sentence ('Waits until 18:19 (your API key's limit); then your session goes on.'). Add tests that fail first: a session after Wait, and ask with no other credential."
+    },
+    {
+      "issue": "Both Done lines of the ask card show 'Done:' twice in the Inbox.",
+      "where": "packages/runtime/src/session/credential-words.ts:118-122 (outcomes already start with 'Done:'); apps/ui/src/pages/InboxPage.tsx:798 adds 'Done: ' in front",
+      "evidence": "Bench walk 2: after Use API key the screen reads 'Done: Done: your API key does the work until 19:40; the waiting work runs at your next Start.' (walk2-steps/09-inbox-after-pressing-use-api-key.png). After Wait it reads 'Done: Done: nothing moves until 19:45; then your session goes on.' (walk2-steps/14-inbox-after-pressing-wait.txt). The real-daemon case checks only answered.outcome, not what the screen shows.",
+      "expected": "One 'Done:' on screen, as for every other card, with a UI test of the answered ask card's line."
+    },
+    {
+      "issue": "After 'Use API key', the Done line says the work runs at the person's next Start. In fact the person's kept Start runs by itself on the key within seconds. The card's own Wait line had called it 'your session'.",
+      "where": "packages/runtime/src/daemon/compose.ts:4614 (onGrant looks only at keptContinuationOf and ignores a kept person start, keptStartOf, so session_goes_on is false); credential-words.ts:119",
+      "evidence": "Bench walk 2: Start was pressed during the stop and kept ('A session of Quote page starts at 19:40.'). The card's Wait line read '...then your session goes on with your subscription.' Use API key was answered at 18:20:55 and showed '...the waiting work runs at your next Start.' A session then started at 18:21:05 by itself (trigger budget_reset) and ran both tasks and their reviews on the key.",
+      "expected": "A kept person start counts as the person's waiting session for the grant: it goes on now, and the Done line says 'your session goes on now'. Add a test that fails first."
+    },
+    {
+      "issue": "CE-8 is one of the items the spec says may never be cut, and its acceptance fails: a refused key still gets a second request, and the refused card's 'ask' form is not wired. The user guide and security.md nevertheless promise 'Forerunner never sends it another request meanwhile'.",
+      "where": "the routed provider's listModels / API-provider path (named by the fixer in new_problems); packages/runtime/src/daemon/views.ts credentialRefusedFor (never passes estimateChf, so the refused card's Use API key / Wait never shows); request-words.ts (ask_answer is never written); docs/user-guide.md; docs/maintainers/security.md",
+      "evidence": "Bench walk 3 (--api-key refused), request log: POST /v1/messages 401 at 18:22:35 (chat), then GET /v1/models 401 at 18:22:54 during the session, with the same key id. Acceptance CE-8: 'the stand-in's log shows one 401 for that key and no further request ... until a different key is saved', and under subscription_then_ask the card offers ['Use API key', 'Wait'].",
+      "expected": "No path asks a refused source anything until a different credential is saved: skip refused sources in listModels and maxOutputTokens, with a composed test that counts 401s per key. Wire the refused card under 'ask', or fix the docs' promise and record the reason against the cut line."
+    },
+    {
+      "issue": "Other parts of items the spec marks never-cut are not built or not tested where the acceptance names them, and the composed tests inject a provider although fix_scope forbids it.",
+      "where": "packages/runtime/src/session/task-check.ts (not in the diff); packages/runtime/test/credential-ask.test.ts and apps/ui/test/real-daemon.test.ts (both pass provider: new AcceptingCriticProvider(...)); task-usage-limit.test.ts (only the no-file case of CE-5)",
+      "evidence": "(1) CE-3: the task check has no held branch. When held, runTaskCheck writes a Run row with outcome 'failed' (task-check.ts:518-549), checkAtBoundary counts it as a check and logs taskCheckedLine kind 'failed' (task-check.ts:1248-1255): 'Checked the task list after \"X\": the call did not answer, so nothing changed (...)' (result.ts:197). Under ask it files no card. The table test has no task-check row. (2) CE-4: no composed test with the routed provider shows the critic's review or a plan from a brief holding under wait or ask. Only chat is covered (billing-order.test.ts); credential-policy-session.test.ts does not exist. (3) CE-5: the main case is untested: a run that wrote a file ('Its work so far is in the folder you work in ... continue from it', the work-in-progress commit under the continuing commit), and the 'was refused' and 'share' briefs. (4) CE-7: no withdrawal when the other credential cannot serve, no caps-room check before filing, no test that an unanswered card closes at the first wake after a reset that passed while the runtime was down, and no test that a policy change closes it. (5) CE-6 (the allowance raise's change line and both Wait lines of the share are this area's in the sub-run notes), CE-11 beyond CostView.byCredential, and CE-12's producer are in not_done, outside the cut line, which allows only CE-10, CE-11's byCredential and CE-12's restart case.",
+      "expected": "Build these or test them at the boundaries the acceptance names: the routed provider over both stand-ins, no injected provider, failing first. If an item truly cannot be built, record the reason against the cut line for the session lead's decision."
+    }
+  ],
+  "claims_checked": [
+    {
+      "claim": "CE-1: one policy; CALL_FALLBACK_ORDER and fallbackOrder removed; with nothing chosen, chat uses the subscription first",
+      "holds": true,
+      "note": "policy.ts and the router read it at every pick. A grep shows neither name left in code, but the acceptance's grep unit test is missing. billing-order.test.ts fails on base ('From the API.') and passes now."
+    },
+    {
+      "claim": "CE-2: every stop (limit, refused, share, key_month) is held under wait and ask; grants apply to the current stop only and never to batch",
+      "holds": true,
+      "note": "router.test.ts and credential-policy.test.ts table pass. Not walked end to end on the bench (the subscription path needs Claude Code)."
+    },
+    {
+      "claim": "CE-3: the pick follows the policy for every purpose; exclude goes in as heldNow; needs waits",
+      "holds": false,
+      "note": "The pick part holds (table test). The task check's held branch, the card for it and its table row are not built."
+    },
+    {
+      "claim": "CE-4: the routed provider has no order of its own; under wait, chat holds with no API request",
+      "holds": true,
+      "note": "Chat is shown composed and on the bench. The critic's review and the plan from a brief are not tested composed under wait or ask."
+    },
+    {
+      "claim": "CE-5: the continuing run is briefed from where the credential stopped",
+      "holds": true,
+      "note": "Only the no-file case is tested. The changed-files and work-in-progress-commit case, and the refused and share wording, are untested."
+    },
+    {
+      "claim": "CE-7: one ask card per stop; Use API key grants; Wait moves nothing; works after a restart",
+      "holds": false,
+      "note": "The card, the grant and the restart work. On screen the Done lines read 'Done: Done:'. The 'next Start' Done line is untrue for a kept Start. The 'your answer' sentence appears with no open card, also after Wait."
+    },
+    {
+      "claim": "CE-8: a refusal informs once (one card, the category body), never retried",
+      "holds": false,
+      "note": "One card with the category body: yes. A second request to the refused key (GET /v1/models 401) was seen on the bench. The ask form of the refused card is not wired."
+    },
+    {
+      "claim": "CE-9: chat holds with the hold reply; one-off switch; note once per stop",
+      "holds": true,
+      "note": "The hold reply is shown on the bench. The one-off press is not in the POST /chat view (C6). The hold reply still offers 'Think it through ... at most CHF 0.03'."
+    },
+    {
+      "claim": "CE-13: a widening needs a yes, agents are refused, the older keys answer 'replaced', the tool definition is updated",
+      "holds": true,
+      "note": "The commands tests pass and the read-back was seen on the bench. An Undo that widens is checked through undoRisk only, not the Changes route."
+    },
+    {
+      "claim": "C4b-left-2: 'a first-session plan of 1 task / N tasks'",
+      "holds": true,
+      "note": "The same sentence still has 'milestone(s)', 'task(s)' and 'doc(s)' (the fixer lists this)."
+    },
+    {
+      "claim": "Validation: pnpm test, integration, e2e, UI vitest, lint, typecheck and docs-check are green",
+      "holds": true,
+      "note": "I ran them again myself; all green."
+    }
+  ],
+  "non_blocking": [
+    "The chat hold reply still shows 'Think it through' with 'Thinks longer on this model: about 30 seconds, at most CHF 0.03' (server.ts:2503 offers it because the stored reply has closer and no notice). Pressing it only gets the hold reply again (walk1-steps/01).",
+    "docs/user-guide.md says 'While chat waits it says why and offers Use API key for that one question'. No such button is on screen until C6 adds oneOff to the POST /chat view.",
+    "billing-order.test.ts, 'policy and rest survive a restart': the explicit post-restart assertions on GET /settings/billing-order (chosen, order, blocked: resting) were removed. Survival is now implied only by the reply source.",
+    "GET /settings/billing-order and the existing Settings section still read billing_order (personOrderOf), not credential_policy. Once a policy is stored, Settings can show an order that is not in force (C6 replaces the screen).",
+    "The concurrent-refusal test calls RouterTaskBilling.refuse twice, not a task run and a chat call at the same moment through the composed runtime.",
+    "syncAskAnswers writes the grant, calls onGrant, then marks the card applied, not atomically. A crash in between could start a second continuation after a restart.",
+    "onGrant readmits every ready task of the project into a running session, not only the tasks that waited for the stop.",
+    "The compose credentialHold reads human.timezone and monthly_cap_usd_micro captured at compose time, not at each call.",
+    "The router falls back to Date.now() when nowMs is absent (AGENTS: Clock). Current callers pass nowMs.",
+    "After a grant, the session log never says the work ran on the API key, or why (CE-11 not built). The person sees only 'The session started with a budget of CHF 5.00.'",
+    "credential_policy's narrows treats an unset earlier value as rank 0 even when mid_session_limit use_other is stored (the fixer lists this).",
+    "The leftovers L3-left-14, C3-left-4/5/6, C4b-left-1 and C4-left-11 are in not_done with the reason 'Time'. The acceptance allows not_done with a reason.",
+    "No bench BEFORE walk was done. The before behaviour is shown only by tests that failed on the base."
+  ]
+}

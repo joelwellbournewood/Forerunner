@@ -1,0 +1,328 @@
+{
+  "area": "d1109-run-visible",
+  "branch": "fix/d1109-run-visible",
+  "head_sha": "f8f728850e408c47fcd624847b7d8723fac2fe9d",
+  "commits": [
+    {
+      "sha": "5edf901b53f75b9db44dd9c1f2fcd5072f821d80",
+      "subject": "real-daemon: the restarted daemon's clock goes on from later (C4b-left-3)"
+    },
+    {
+      "sha": "a1b824949d2b244106359455214b7365ae034e89",
+      "subject": "run-indicator: one run state in the daemon's words, GET /running, run.changed, /health.running (U-096, U-071, U-077)"
+    },
+    {
+      "sha": "ef77b601962d58e190316899736cd6e6299b9f92",
+      "subject": "shell: one run indicator under the header on every page, with Stop and Cancel (U-096, U-071, U-077)"
+    },
+    {
+      "sha": "dc11dee2032b558d3f7005c44595d627b3b03ae0",
+      "subject": "project-status: Home, the Overview and Talk show the run indicator; the line says what waits to start (U-096, U-071)"
+    },
+    {
+      "sha": "d7841a4f8de3f79aec4621cafc2e61a8434ac1c3",
+      "subject": "session-page: a session that ended to wait says what comes next, with Cancel or Continue (U-096, U-078)"
+    },
+    {
+      "sha": "225916ebc1764ad4a4bb78fe14fecad79eaaa17d",
+      "subject": "desktop: the tray, its first item, the window title and the icon's dot say what runs (U-096)"
+    },
+    {
+      "sha": "ba2f6b6c00de0a42c84cd7618180e2a314fdf4fd",
+      "subject": "shell: the browser build reads Cancel's sentence from a file with no Node imports (U-096)"
+    },
+    {
+      "sha": "62792d1313ab59fdfc94df26015d7383221f0dce",
+      "subject": "inbox: the Done line offers Start when the answer readied work and no session of that project runs (U-096, U-071)"
+    },
+    {
+      "sha": "aa586500202be333003816557c0782e7f40c6dba",
+      "subject": "bench: the stand-in critic counts reviews without a run id; the journeys check today's words (C4b-left-4)"
+    },
+    {
+      "sha": "fe30a47a2630f4fc1c3b4cccfc78b2638cc8a111",
+      "subject": "docs: what runs now, the Done line's Start and the tray in the maintainer docs, the user guide and ADR 0118 D8 (U-096)"
+    },
+    {
+      "sha": "539a21a8417d12f5b4a794c9fe6a518832789ed6",
+      "subject": "test: the browser-imports check builds its paths with the platform's helpers (U-096)"
+    },
+    {
+      "sha": "55d22975fd45def93279b13677e7cd9bcd9692f1",
+      "subject": "run-indicator: the scheduler's start keeps its own promise; the poke rides beside it (U-096)"
+    },
+    {
+      "sha": "7324651a88ff80b17fb362736bf17fb02241e5ff",
+      "subject": "project-status: the composed credential tests read the line that says what waits to start (U-096, U-078)"
+    },
+    {
+      "sha": "f8f728850e408c47fcd624847b7d8723fac2fe9d",
+      "subject": "shell: the Stop-all cases press the bar's Stop, not Home's Working now (U-096)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "V-1: there was no single run state. Each project card worked out 'working' from every event of each session, and the header chip, Home and the Overview each built their own words ('Alice is working on \"X\"' named the agent, not the project). The Sessions list said 'Working on \"X\" (3 of 7 done)'. The shells read only /health's count, which also counted a plan being drafted. Nothing showed a review, a requested stop, the critic's monthly check or a session waiting to go on.",
+      "u_ids": [
+        "U-096",
+        "U-071",
+        "U-077"
+      ],
+      "failing_test_before": "packages/runtime/test/run-indicator.test.ts (module missing; now 15 cases with each sentence exact); apps/ui/test/real-daemon.test.ts describe 'd1109-run-visible, run C' (GET /running answered 404) and its case for a session waiting to go on (before and after a restart, quiet hours, Cancel)",
+      "how": "daemon/run-words.ts (pure) and daemon/run-indicator.ts (reads the store) fold each active session's log incrementally into planning, working, reviewing, between, wrapping, stopping, calibrating or waiting. runText gives at most 80 characters with no id and no USD: 'Quote page · the coder works on \"Style the page\"', '· the critic checks \"X\"', '· picks the next task', '· wraps up \"X\" at its budget', '· stops after \"X\"', '· then Garden site', 'waiting until 15:40, then it goes on' (also in quiet-hours, refusal and generic forms), and 'Forerunner · the critic's monthly check on known examples' with its explanation for the API key or for the Claude plan. GET /running and the run.changed event (debounced to at most one per second) carry it, and /health gains running. activeSessions no longer counts a plan being drafted. The calibration run is registered with the kill switch (running.stopCalibration). The Sessions list's working row now uses the same words.",
+      "check_in_the_app": "live_check: 1) Open a project and press Start. 2) While it runs, open Home, Inbox, Settings, the project's Overview and Tasks, and the session page. Each shows the same line under the header, 'Quote page · the coder works on \"Create index.html\"', which changes to '... the critic checks \"...\"' during a review and to '... picks the next task' between tasks. 3) The Sessions tab's running row says the same words. 4) When the session ends the line goes away."
+    },
+    {
+      "problem": "V-2: the header had a small chip cut at max-w-md and a red 'Stop all (1 running)' at the other end. Only the session page offered Stop after this task and Stop now, and the window title never changed.",
+      "u_ids": [
+        "U-096",
+        "U-071",
+        "U-077"
+      ],
+      "failing_test_before": "apps/ui/test/run-indicator.test.tsx 'd1109-run-visible: the run indicator under the header (V-2)' (no run-indicator-bar on any of 12 routes at 1280 and 375 px, no Stop menu, no Cancel, no title); apps/ui/e2e/smoke.spec.ts (bar at both widths)",
+      "how": "shell/RunIndicator.tsx shows a bar directly under the header on every route and width, never in the collapsed menu. It has a pulsing dot, the words (which open the session), the elapsed time and Stop ▾ with three items: Stop after this task (POST /sessions/:id/pause), Stop now (asks once) and Stop all (asks once, POST /kill). A session waiting to go on shows Cancel instead of Stop ('Nothing starts when Claude is back; its tasks wait for your Start.'). document.title is '● Quote page · Forerunner' while a session runs. The store keeps the list from GET /running and run.changed. RunningChip and the header's Stop all are gone, and the palette's Stop all opens the bar's question.",
+      "check_in_the_app": "live_check: 1) Start a session. 2) Look under the header on any page, wide and with the window narrowed to phone width. One bar names the project and what it does, shows 'just started' or minutes, and has Stop ▾. 3) The browser tab title starts with '● <project> ·'. 4) Open Stop ▾: Stop after this task, Stop now and Stop all, each with one line saying what it does. 5) Press Stop all and confirm: the bar goes and 'Sessions are stopped' appears."
+    },
+    {
+      "problem": "V-3/V-4: Home's and the Overview's 'Working now' used their own words. Talk is a modal that covers the header. The project's line said nothing of what waits to start (a session going on after a wait, a kept Start, a hands-off start held by quiet hours, a person start behind another project's session). Its ready line read 'Ready to continue: 3 tasks ready'.",
+      "u_ids": [
+        "U-096",
+        "U-071"
+      ],
+      "failing_test_before": "packages/runtime/test/project-status.test.ts 'd1109-run-visible, run C' (startsWait cases); apps/ui/test/run-indicator.test.tsx 'd1109-run-visible: Home, the Overview, the project's line and Talk (V-3, V-4)'; real-daemon 'd1109-run-visible, run C' (line for the waiting session, kept Start after a restart, queued start)",
+      "how": "Home's and the Overview's Working now show the indicator in its block form, and Talk's first line shows its compact form with Stop. project-status.ts rule 2b adds four lines: 'Waiting until 15:40 (your subscription's limit), then it goes on' with Cancel (action kind 'cancel'), 'Starts at 15:40 (your subscription's limit)' with Cancel, 'Starts after your quiet hours', and 'Starts after the session on \"Quote page\"'. Rule 4 now reads 'Ready: 3 tasks wait for your Start'. The server reads all of this through d1109-starts-engine's read-only accessors (startsWaitOf).",
+      "check_in_the_app": "live_check: 1) With a session running, Home's 'Working now' and the project's Overview show the same line with Stop. 2) Press Talk: the dialog's first line is the same, with Stop. 3) Start a session on a second project while the first runs: the second project's line says 'Starts after the session on \"<first>\"' and the bar adds '· then <second>'. 4) A project with ready tasks and no session says 'Ready: N tasks wait for your Start'."
+    },
+    {
+      "problem": "V-5 and the leftovers C3-left-7, C3-left-8 and L3-left-15. A session that ended to wait for its credential showed nothing on its page: no Cancel while kept to go on, and no way to continue with the rest of its budget after Cancel. Its stored result kept promising '...; then your session goes on.' after Cancel. The Start dialog said 'Starts after the current session' without naming the other project. The log chips read 'info (20) warning (0)'.",
+      "u_ids": [
+        "U-096",
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-run-visible, run C: the page of a session that ended to wait (V-5)' (no waitBlock; the summary kept its promise after Cancel); apps/ui/test/run-indicator.test.tsx 'd1109-run-visible: the page of a session that ended to wait (V-5), its level chips (L3-left-15)'",
+      "how": "GET /sessions/:id gains waitBlock with three states. goes_on: 'Waiting until 15:40 (...), then it goes on with \"B\" and 1 more.' with Cancel. starts_again: 'Starts again at 15:40 with \"B\" and 1 more.' with Cancel. stopped: 'Stopped to wait ... \"B\" and 1 more wait.' with Continue, which opens Start with the rest of the session and its budget left (POST /sessions with continues). summaryAfterWait rewrites the result to '...; then it runs at your next Start.' once nothing is kept. The Start dialog names the other project ('Starts after the session on \"Quote page\"'). The chips read Updates, Warnings, Needs you and Errors, with no chip for a level that has no lines.",
+      "check_in_the_app": "live_check: 1) Run a session whose Claude credential hits its limit (on the bench: --provider bench-api --api-key limited). 2) The bar reads '<project> · waiting until HH:MM, then it goes on' with Cancel. 3) Open that session's page: 'Waiting until HH:MM (your API key's limit), then it goes on with \"...\" and 1 more.' with Cancel. 4) Press Cancel: it reads 'Stopped to wait ...' with Continue, and the result line says '...; then it runs at your next Start.'. 5) Continue opens Start with the budget left. 6) Details' chips read Updates (N) and so on, with none at 0."
+    },
+    {
+      "problem": "V-6: after an Inbox answer readied work for the person's next Start (e.g. Try again on a failed task), the Done line said 'it runs at your next Start.' but offered nothing. The person had to find the project and its Start.",
+      "u_ids": [
+        "U-096",
+        "U-071"
+      ],
+      "failing_test_before": "apps/ui/test/run-indicator.test.tsx \"d1109-run-visible: the Inbox's Done line offers Start (V-6)\" (no done-line-start in two of its cases); real-daemon '... Try again prepares it for the person's Start ...' now asserts startOffer; packages/runtime/test/run-indicator.test.ts \"the Done line's Start (V-6)\"",
+      "how": "run-words.ts startOfferOf: true when the answered card's prepared outcome is waits_start, stopping or failed. It is never true for a hands-off start, an open card, or a card with no project. requestView and the fake daemon set HumanRequestView.startOffer. The Inbox's Done line shows Start ('Opens Start for <project>.'), which opens that project's Start dialog. Start is hidden while a session of that project runs or waits, read live from the run indicator's list.",
+      "check_in_the_app": "live_check: 1) In the Inbox, answer a failed task's card with Try again while no session of its project runs. 2) The Done line reads 'Done: Trying \"...\" again: it runs at your next Start.' with a Start button and 'Opens Start for <project>.'. 3) Press Start: that project's Start dialog opens and nothing starts until its own Start. 4) Start the session: the Done line's Start disappears."
+    },
+    {
+      "problem": "V-7/V-8: the desktop shell read only /health's count. The tooltip said '1 running session' with no project, the window title was always 'Forerunner', and the icon never changed. The tray's stop read 'Kill switch: stop everything' and 'Resume'.",
+      "u_ids": [
+        "U-096"
+      ],
+      "failing_test_before": "apps/desktop/src-tauri: state.rs a_running_session_is_said_by_the_tooltip_the_first_item_and_the_title, with_none_running_the_title_is_forerunner_and_the_tooltip_says_no_session_runs, a_session_that_only_waits_to_go_on_is_said_but_leaves_the_title_and_the_icon; daemon.rs health_reads_what_runs_now; tray.rs the_running_dot_is_drawn_at_the_lower_right_over_the_icon",
+      "how": "daemon.rs reads /health.running. The tray's first, disabled item and the tooltip's first line say what runs ('Quote page: the coder works on \"A\"', or 'No session runs'). The window title is 'Forerunner — Quote page is working' while a session runs. tray::with_running_dot draws a blue dot over the app's own icon while a session runs. A session that only waits is said in the item and tooltip but leaves the title and icon unchanged. The tray offers 'Stop all sessions' (asks 'Stop every running session now? No session starts until you allow it again.') and 'Allow sessions again'. scripts/desktop-window-check.mjs checks the bar and the page title on Windows CI.",
+      "check_in_the_app": "live_check (installed desktop app): 1) Start a session and minimise the window. The tray icon has a blue dot at its lower right. 2) Hovering the tray shows 'Quote page: the coder works on \"...\"' first. 3) The tray menu's first item shows the same words, greyed out. 4) The taskbar title reads 'Forerunner — Quote page is working'. 5) Choose 'Stop all sessions': the question appears; confirm and the notification says '1 session stopped. Allow sessions again from the tray or the app.'; the menu now offers 'Allow sessions again'. 6) With nothing running the dot is gone and the title is 'Forerunner'."
+    },
+    {
+      "problem": "Found on the bench walk: the real app (Vite browser build) was blank on every page. It threw at load with 'Module \"node:crypto\" has been externalized for browser compatibility', because RunIndicator.tsx and ProjectState.tsx imported a value from daemon/run-words.ts. That file reaches node:crypto through task-words.ts, credential-wait.ts, @forerunner/platform and ids.ts. The unit suite runs in Node and could not see it.",
+      "u_ids": [
+        "U-096"
+      ],
+      "failing_test_before": "apps/ui/test/browser-imports.test.ts 'every value import of a workspace package from apps/ui/src stays browser-safe' (failed listing the two chains ending at node:crypto)",
+      "how": "The Cancel sentence moves to daemon/run-wait-words.ts, which has no imports; run-words.ts re-exports it and the UI imports it from there. The new test walks every value import from apps/ui/src into the workspace packages and fails on any Node built-in it reaches. Its second case shows it does find such a chain where one exists.",
+      "check_in_the_app": "live_check: 1) Start the app against a real daemon (bench or install) and open Home: the page renders. 2) The browser console has no 'externalized for browser compatibility' error. 3) The bench walk after the fix passed 10 of 10 checks (bar on Home, Inbox, Settings, Overview, Tasks and the session page, title, narrow width, GET /running, no bar once ended)."
+    },
+    {
+      "problem": "A regression this area introduced and fixed: wrapping scheduler.requestStart in an async function (to update the indicator) added an await step to every start, the scheduler's internal ones too. In sync-gate.test.ts the memory consolidation the test asks for read 'queued' instead of 'started'.",
+      "u_ids": [
+        "U-096"
+      ],
+      "failing_test_before": "packages/runtime/test/sync-gate.test.ts 'refuses sessions, approvals, the mirror and the peers route while paused, serves them after the update' (failed in pnpm check; it still failed with the wrapper and no indicator update, and passed without the wrapper)",
+      "how": "requestStart now returns the scheduler's own promise unchanged; the indicator update is attached beside it (started.then(poke, poke)), so a queued or dropped start still moves '· then Garden site'.",
+      "check_in_the_app": "live_check: 1) Start a session on project A. 2) Press Start on project B while A runs. Within a second the bar reads 'A · ... · then B', and B's line says 'Starts after the session on \"A\"'. 3) When A ends, B starts and the bar names B."
+    },
+    {
+      "problem": "C4b-left-3 (major, CI flake): the d1109-selftasks-run real-daemon case 'the card in the Inbox names the project ... after a restart' failed in full-file runs (3 of 6 on C4b's branch). Both composes started their clock at 08:00, so the order of tasks made before and after the restart depended on milliseconds.",
+      "u_ids": [
+        "U-096"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts d1109-selftasks-run 'the card in the Inbox names the project ... after a restart' (failed with a 3 s pause before the answer, which forces the tie)",
+      "how": "The second compose's clock starts hours later, as time goes on across a restart in the app, and the order assertions state the real run order. The describe passed 10 times in a row.",
+      "check_in_the_app": "live_check: not visible in the app (test-only). Run `cd apps/ui && pnpm vitest run --config vitest.config.ts test/real-daemon.test.ts -t 'selftasks'` several times: it passes every time."
+    },
+    {
+      "problem": "C4b-left-4 (bench only). On --provider bench-api the stand-in critic ignored FORERUNNER_BENCH_CRITIC_REJECT_TIMES: no run id is sent there, so every review was sent back. budget.cjs's 'the tiny task's log line says it pauses and keeps its work' failed in every walk: CHF 0.004 is now below the first step's worst case. resume.cjs checked 'Paused at its budget' and 'Done: ...; left:', words that changed in C2's cd9bece.",
+      "u_ids": [],
+      "failing_test_before": "testenv/test/bench-role-player.test.ts 'FORERUNNER_BENCH_CRITIC_REJECT_TIMES counts reviews of a task without a run id too' (failed with revise, revise, revise)",
+      "how": "Without a run id each review of the task counts as its own (key#review-n). budget.cjs's tiny default is now CHF 0.009. resume.cjs checks the exact labels ('Paused before its budget ran out' after a wrap-up, 'Paused at its budget' at a stop), the card's title, its first sentence 'It spent CHF X of its budget of CHF Y', and its lists 'Where it stopped' and 'Left to do'. The README and testing.md describe both.",
+      "check_in_the_app": "live_check (bench): 1) node scripts/bench/start.mjs --name <n> ... --provider bench --env 'FORERUNNER_BENCH_LONG=Write the'; node scripts/bench/journeys/budget.cjs <n> bj: all 8 checks pass, with the log line 'This run may spend CHF 0.01, too little to wrap up (two steps may cost CHF 0.01): it pauses at its budget and keeps its work.'. The old default reproduced the FAIL. 2) Restart with 'FORERUNNER_BENCH_LONG=Write the guide,Write the notes'; node scripts/bench/journeys/resume.cjs <n> rs: 11 of 11 pass."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "V-7/V-8 have not been walked on a real desktop (tray dot, tooltip, menu's first item, window title).",
+      "why": "This Linux container has no display or tray. They are covered by cargo tests (state.rs, daemon.rs, tray.rs). scripts/desktop-window-check.mjs checks the in-window bar and page title on the Desktop app workflow's Windows job; that check was not run here (CI only, never pushed). The owner's install walk covers the tray."
+    },
+    {
+      "problem": "The BEFORE walk ran on the base commit c4583eb, exported with git archive into /tmp/frbench/rv-before-src (deleted afterwards). It did not run from a branch of this worktree.",
+      "why": "A git worktree for the base was not available to this isolated agent. The exported tree ran the same bench name and ports; its screenshots are in /tmp/frbench/fix-d1109-run-visible-before-steps."
+    },
+    {
+      "problem": "The bench-api REJECT_TIMES fix (C4b-left-4 part 1) was not walked on a bench-api bench with FORERUNNER_BENCH_CRITIC_REJECT_TIMES=1.",
+      "why": "The testenv test covers it at the stand-in's boundary. The bench time went to the run-visible, waiting-session, V-6, budget and resume walks."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "exit 0: 525 test files, 5672 passed, 7 skipped; link-check ok (212 files); secret-scan clean (2199 files). docs:check fell back because origin/main is missing, so it was run separately with --base."
+    },
+    {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (58 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 81 skipped"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 97 files, 1294 tests passed (includes real-daemon.test.ts). An earlier run had 3 failures from a test lookup that found two Stop buttons; fixed in f8f7288 and rerun green."
+    },
+    {
+      "command": "cd apps/ui && pnpm exec playwright test --config playwright.local.config.ts",
+      "result": "38 passed (1.5m)"
+    },
+    {
+      "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo fmt --check",
+      "result": "exit 0"
+    },
+    {
+      "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo clippy --all-targets -- -D warnings",
+      "result": "exit 0"
+    },
+    {
+      "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo test",
+      "result": "156 passed, 0 failed"
+    },
+    {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "empty"
+    },
+    {
+      "command": "bench fix-d1109-run-visible (48741/2341), base c4583eb, rv-walk.cjs before",
+      "result": "Every page while a session ran had only the header chip 'Alice is working on \"Create index.html\" · just started' and 'Stop all (1 running)'. The title stayed 'Forerunner' and GET /running answered 404."
+    },
+    {
+      "command": "bench fix-d1109-run-visible, worktree code, rv-walk.cjs after",
+      "result": "The first walk found every page blank (node:crypto externalized; fixed in ba2f6b6). After the fix, 10 of 10 checks passed: the bar names the project on Home, Inbox, Settings, Overview, Tasks and the session page and at 390 px; the title is '● Quote page … · Forerunner'; GET /running lists the session; no bar after it ends."
+    },
+    {
+      "command": "bench (--provider bench-api --api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=2) rv-walk-wait.cjs",
+      "result": "6 of 6: GET /running lists the waiting session with cancel; the bar reads 'Kite club … · waiting until 18:34, then it goes on' with Cancel and no Stop; the title stays 'Forerunner'; the session page's block says it goes on with Cancel; /health.running.waiting is true; after the reset the session went on."
+    },
+    {
+      "command": "bench rv-walk-v6.cjs (FORERUNNER_BENCH_FAIL)",
+      "result": "5 of 5: Try again gives a Done line with Start; Start opens the project's Start dialog; Start is gone while that project's session runs."
+    },
+    {
+      "command": "bench budget.cjs (old default / --tiny-chf 0.009) and resume.cjs",
+      "result": "Old default reproduced the FAIL; CHF 0.009 passed 8 of 8; resume passed 11 of 11. The bench was stopped with scripts/bench/stop.mjs, and its home and browser profile were deleted."
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/01-before-home-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/02-before-inbox-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/03-before-settings-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/04-before-overview-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/05-before-tasks-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/06-before-session-page-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/07-before-talk-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/08-before-home-while-running-narrow.png",
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/09-before-session-page-while-running-narrow.png",
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/10-before-home-after-the-session.png",
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/11-before-overview-after-the-session.png",
+      "/tmp/frbench/fix-d1109-run-visible-before-steps/12-before-session-page-after-the-session.png",
+      "/tmp/frbench/fix-d1109-run-visible-broken-steps/01-after-home-while-running.png"
+    ],
+    "after": [
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/01-after-home-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/02-after-inbox-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/03-after-settings-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/04-after-overview-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/05-after-tasks-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/06-after-session-page-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/07-after-talk-while-running.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/08-after-stop-menu-open.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/09-after-home-while-running-narrow.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/10-after-session-page-while-running-narrow.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/11-after-home-after-the-session.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/12-after-overview-after-the-session.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/13-after-session-page-after-the-session.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/01-after-wait-home-while-it-waits.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/02-after-wait-overview-while-it-waits.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/03-after-wait-session-page-while-it-waits.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/04-after-wait-home-once-it-goes-on.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/36-after-v6-inbox-done-line-with-start.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/37-after-v6-start-dialog-from-the-done-line.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/38-after-v6-inbox-while-the-session-runs.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/23-bjtry-inbox.png",
+      "/tmp/frbench/fix-d1109-run-visible-after-steps/28-rs-guide-card.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "apps/ui/test/sessions-tab.test.tsx (working row words) and apps/ui/test/real-daemon.test.ts d1109-sessions working gist",
+      "why": "V-1: the Sessions list's working row now uses the run indicator's words ('Atlas · the coder works on \"X\"'), not 'Working on \"X\" (3 of 7 done)' (a1b8249)."
+    },
+    {
+      "test": "Ready line in packages/runtime/test/project-status.test.ts, packages/runtime/test/w15-words.test.ts, apps/ui/test/home.test.tsx, apps/ui/test/polish-screens.test.tsx, apps/ui/test/real-daemon.test.ts",
+      "why": "V-3: rule 4 reads 'Ready: N tasks wait for your Start' (D6: only the person's Start starts work), replacing 'Ready to continue: N tasks ready' (dc11dee)."
+    },
+    {
+      "test": "Home's and the Overview's 'Working now' words (home / project-overview tests)",
+      "why": "V-3: these show the run indicator's block form and its words (dc11dee)."
+    },
+    {
+      "test": "apps/ui/test/real-daemon.test.ts refused-key status line and TR-2 kept-Start line",
+      "why": "V-3: 'Waiting for a new API key, then it goes on' (kind waiting); the kept Start is 'Starts at 15:40 (...)' with Cancel, without ': 1 task' (dc11dee)."
+    },
+    {
+      "test": "packages/runtime/test/continuation.test.ts kept Start line; packages/runtime/test/credential-limits.test.ts refused-key and usage-limit lines",
+      "why": "The same V-3 words in the composed-runtime cases, which run only in the unit project: 'Starts at 15:00 (your subscription's limit)', 'Waiting for a new API key, then it goes on', and 'Waiting until 16:40 (your API key's limit), then it goes on' with Cancel (7324651)."
+    },
+    {
+      "test": "apps/ui/test/shell.test.tsx, shell-live.test.tsx, polish-screens.test.tsx, d1109-oversize.test.tsx (Stop all flow) and shell-live's running-chip cases",
+      "why": "V-2: Stop all lives in the bar's Stop ▾ menu and the chip is replaced by the bar. The Stop-all cases open the bar's menu, scoped to run-indicator-bar since Home's Working now shows the same element (ef77b60, f8f7288)."
+    },
+    {
+      "test": "apps/desktop/src-tauri/src/state.rs kill_switch_and_resume_follow_kill_active",
+      "why": "V-7: the tray says 'Stop all sessions' and 'Allow sessions again' instead of 'Kill switch: stop everything' and 'Resume' (225916e)."
+    },
+    {
+      "test": "scripts/bench/journeys/budget.cjs (tiny default) and resume.cjs (labels and card checks)",
+      "why": "C4b-left-4: they check today's words (bench only, aa58650)."
+    }
+  ],
+  "new_problems": [
+    "On Home and the Overview, a running project's own status line still says 'Working on \"Create index.html\" (0 of 7 done)' beside the bar's 'Quote page · the coder works on \"Create index.html\"': two wordings of one fact (design §5 rule 10). V-3 listed only additions to project-status.ts, so the 'working' rule was left. Evidence: /tmp/frbench/fix-d1109-run-visible-after-steps/01-after-home-while-running.png.",
+    "The Overview says 'Last result: No session yet.' while the project's first session is running. Evidence: /tmp/frbench/fix-d1109-run-visible-after-steps/08-after-stop-menu-open.png.",
+    "Stopping the critic's monthly check (Stop now or Stop all) aborts its run; the job then records the run as stopped, and in the real-daemon calibration case its notification reads as a failed calibration rather than 'stopped by you'. Its wording belongs to the jobs area (src/jobs).",
+    "The UI's unit suite runs in Node, so a browser-only failure (a value import that reaches a Node module) blanks every page while vitest stays green. apps/ui/test/browser-imports.test.ts now guards the workspace packages. Playwright with the real Vite build is the other guard and should run before every merge; here it was green only after the fix.",
+    "The Sessions list's gist never carried the credential wait's '...; then your session goes on.' sentence. C3-left-8's Sessions-list half passed at once, and its case now guards that."
+  ],
+  "notes_for_other_areas": [
+    "GET /running answers RunningView[] {key, sessionId, projectId, projectName, state (planning|working|reviewing|between|wrapping|stopping|calibrating|waiting), what, text, since, stop, cancel, nextProject, explain}. The run.changed event (RUN_CHANGED_EVENT in daemon/run-words.ts; the bus name 'run' belongs to task runs) carries it on /events and in polling, at most once a second. /health.running is {projectName, what, text, waiting} or null.",
+    "runText, runFit, runWhat, stopChoices, foldRunEvents and RUN_EVENT_TYPES live in daemon/run-words.ts, which has no store and is safe for the fake daemon. It is NOT safe for the browser build (it reaches node:crypto through task-words.ts). UI code must import only browser-safe files such as daemon/run-wait-words.ts (CANCEL_WAIT_EXPLAIN); apps/ui/test/browser-imports.test.ts fails otherwise.",
+    "RunWait has an 'other' form ('<project> · waiting for Claude, then it goes on') for d1109-cred-engine's share and key-month waits. C6 (cred-screens) can give it its own words with a date.",
+    "ProjectCardFacts.startsWait (views.ts) and project-status.ts rule 2b: the status line's action kind 'cancel' posts /projects/:id/continuation/cancel. SessionView.waitBlock {state goes_on|starts_again|stopped, text, action cancel|continue, explain, projectId, budgetLeft}. summaryAfterWait rewrites '; then your session goes on.' to '; then it runs at your next Start.'. HumanRequestView.startOffer comes from startOfferOf(change_card, status, projectId): prepared outcomes waits_start, stopping or failed, never hands_off.",
+    "compose.ts registers `running` {views, poke, stopCalibration, close} on RuntimeApp. scheduler.requestStart and cancelPending are wrapped only to call poke beside the scheduler's own promise; never make that wrapper async (sync-gate.test.ts). The calibration run is registered with the kill switch and running.stopCalibration aborts it.",
+    "Desktop: daemon.rs Health.running (an older daemon gives None). state.rs running_words, window_title and icon_dot; tray.rs with_running_dot; actions.rs STOP_ALL_QUESTION and stopped_words.",
+    "Suggested lines for the session lead (not written here). U-096 'I cannot tell from every screen whether a session runs'. Check in the app: start a session; every page at any width shows '<project> · the coder works on \"X\"' under the header with Stop ▾ (Stop after this task, Stop now, Stop all); the tab title starts with '●'; Home's and the Overview's Working now and Talk's first line say the same; a session that stopped at a Claude limit reads 'waiting until HH:MM, then it goes on' with Cancel there and on its page; the desktop tray's first item and tooltip say the same, the icon has a blue dot and the title reads 'Forerunner — <project> is working'. Note: 'on the desktop this round: the phone (apps/ui/src/mobile, phase H) shows the same words later from GET /running'. For UPDATE-LOG / CHANGELOG: 'One line under the header says what runs now, on every page, with Stop; a session waiting for Claude says when it goes on, with Cancel; the tray and the window title say it too (U-096).'",
+    "ADR 0118 gained point 12 (D8, appended 2026-11-16). docs/maintainers/runtime.md has a new section 'What runs now'. apps.md has the run indicator and the tray. user-guide.md has 'Seeing what runs'. testing.md covers the window check and the C4b-left-4 bench changes."
+  ]
+}

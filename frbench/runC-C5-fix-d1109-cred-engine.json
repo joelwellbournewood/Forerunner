@@ -1,0 +1,266 @@
+{
+  "area": "d1109-cred-engine",
+  "branch": "fix/d1109-cred-engine",
+  "head_sha": "f5e819d7cfadfc1089a67e54de5261e755ffde96",
+  "commits": [
+    {
+      "sha": "894a923",
+      "subject": "cred-engine: one credential policy for every call; every stop held; one ask card per stop (U-078, U-048)"
+    },
+    {
+      "sha": "f184579",
+      "subject": "commands: \"Which Claude does the work\" (credential_policy); the older keys replaced (U-078, U-074)"
+    },
+    {
+      "sha": "8f171af",
+      "subject": "ui tests: the ask card and \"Which Claude does the work\" through the client; refused card words (U-078)"
+    },
+    {
+      "sha": "c99e307",
+      "subject": "runtime tests: a refusal informs once, across a restart; every sentence of the policy (U-078, U-074)"
+    },
+    {
+      "sha": "d952297",
+      "subject": "intake: the plan card says \"a first-session plan of 1 task\" / \"N tasks\" (C4b-left-2)"
+    },
+    {
+      "sha": "65c5e25",
+      "subject": "docs: ADR 0120 \"Which Claude does the work\"; amendments of 0100, 0044, 0098, 0112, one line in 0114 (U-078)"
+    },
+    {
+      "sha": "f5e819d",
+      "subject": "docs: index ADR 0120 in the decisions README (U-078)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "CE-1 / D5-14 (owner's answer 4): with no order chosen, chat, planning, reviews, the task check and the jobs used the API key first (CALL_FALLBACK_ORDER), a split the person never chose. Now one credential policy (packages/billing/src/policy.ts: CREDENTIAL_POLICIES, ruleOf, credentialPolicyOf, moneyRank, stopOf/stopKeyOf, grantOf) is read at every pick for every purpose; an earlier choice is derived as the policy; with nothing chosen the default preset subscription_then_wait applies to every call. CALL_FALLBACK_ORDER and RoutedProvider's fallbackOrder are removed.",
+      "u_ids": [
+        "U-078",
+        "U-048"
+      ],
+      "failing_test_before": "packages/billing/test/policy.test.ts (new: every billing_order x mid_session_limit combination, presets, moneyRank, stop keys); packages/runtime/test/billing-order.test.ts 'without a chosen order, chat uses the subscription first, like the tasks (one order)' (before: 'From the API.')",
+      "how": "policy.ts in @forerunner/billing; RouterTaskBilling.pick reads policyOf(store, humanId) and passes order, kinds, whenStopped and heldNow to the router; compose drops fallbackOrder; d1109-chat-depth's first-credential check reads the policy's first saved kind.",
+      "check_in_the_app": "Live check: on a home with both a Claude subscription and an API key saved and nothing chosen in Settings, ask Talk a question: the answer comes from Claude Code (the model-call log shows the subscription source, no request with the API key); Costs books the turn on the subscription."
+    },
+    {
+      "problem": "CE-2 / D5-1, D5-2: 'Wait' held only task runs and only a rest or a refusal; the subscription's share and a key's monthly cap were plain skips, so the API key served under any setting.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/billing/test/router.test.ts describe 'd1109-cred-engine, run C' (share and key_month held under wait and ask with waitFor reason/until/stopKey/ask; grants for this stop vs an older stop; never batch; key_only; heldNow; another person's source)",
+      "how": "router.ts: RouteContext.whenStopped (waitOnRest read as wait), heldNow, kinds, nowMs; every stop (limit, refused, share, key_month) is held with stopOf's key; a grant on the held source for the current stop key lets the granted kind serve (not for batch); a fake row is never left out by kinds.",
+      "check_in_the_app": "Settings: set the subscription's allowance low so this month's share is at the cap, keep the default rule, press Start on a project with a ready task: the row reads 'Waits until <1st of next month> (your subscription's allowance)' and the API key gets no request."
+    },
+    {
+      "problem": "CE-3: the pick withheld the sources a call saw stop (so a hold could not see them), fell to a lower chooser group at a stop, and only task runs set wait.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-policy.test.ts (new table: purposes session, critic, interactive, chat, batch x stops limit, share, refused x rules wait, ask unanswered, ask granted for this stop, ask granted for an older stop, next; key_month; exclude held; needs wait under key_then_subscription; earlier choice vs key_only; policy change applies to the next pick; allowSwitch never for batch)",
+      "how": "billing-pick.ts pick(): policy per pick, exclude -> heldNow, at a stop (or a group the policy leaves out) with hard needs the pick waits with reason needs (CredentialWait.stop); TaskBillingRequest.whenStopped and allowSwitch appended, fallbackOrder removed; executor no longer sets waitOnRest.",
+      "check_in_the_app": "Bench (--provider bench-api --api-key limited, Settings policy 'API key first, then the subscription' via settings.set credential_policy key_then_subscription): a research task whose page reading only the key meets waits with the key's limit; a code task moves to the subscription."
+    },
+    {
+      "problem": "CE-4 / D5-1: RoutedProvider moved chat, planning, reviews and jobs to the next credential at a limit or refusal whatever the person chose; its fallback sentence named UTC.",
+      "u_ids": [
+        "U-078",
+        "U-048"
+      ],
+      "failing_test_before": "packages/runtime/test/billing-order.test.ts 'a usage limit in Claude Code under then wait holds chat: no request to the API key, the hold reply, and the next question holds before any call' (before: 'From the API.')",
+      "how": "routed.ts: no order of its own; after a limit or refusal it picks again under the rule (held: the call ends with the limit and the log says 'the work waits for it, as you chose.'); holdNow(model) and withOneOffSwitch(); fallbackSentence in the person's clock (RoutedProviderDeps.timezone).",
+      "check_in_the_app": "Live check: subscription first (default), let Claude Code hit its usage limit during a chat answer: the reply is 'Your Claude subscription is at its limit until HH:MM, so I have not answered. I can still add, move and start tasks.' and the API key has no request; under 'Subscription first, then the API key' the same call moves to the key and the session log reads 'The Claude subscription reached its usage limit and rests until HH:MM; the API key answered instead.' (no UTC)."
+    },
+    {
+      "problem": "CE-5 / D5-4: the run that continues a task its credential stopped was briefed '## The previous attempt' / 'It failed: ...' and redid the work.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/task-usage-limit.test.ts describe 'd1109-cred-engine, run C' (the key's run is briefed '## Where the last run stopped', 'The last run of this task stopped when its Claude credential reached its limit, before it changed any file.', 'It left no note: its Claude credential stopped it before it could write one.', 'Files it changed: none.', never 'The previous attempt' or 'It failed')",
+      "how": "task-context.ts: whereTheCredentialStopped (limit / was refused / reached the share of the subscription Forerunner may use) and credentialStopOfRun, used before the paused-run branch; the work-in-progress commit was already kept by pr-executor.",
+      "check_in_the_app": "Live check: under 'Subscription first, then the API key', a repository task whose Claude Code run hits its limit after writing a file continues in the same session on the API key; the model-call log of the key's first call shows '## Where the last run stopped' and 'continue from it, do not start again.'"
+    },
+    {
+      "problem": "CE-7 / D5-3: there was no 'ask first': nothing offered to go on with the API key at a stated cost, and no state held an answer.",
+      "u_ids": [
+        "U-078",
+        "U-052"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-ask.test.ts (new, composed, file database: one card per stop, rows 'Waits for your answer: use your API key?', card title/body/options/Details, the card still works after a restart between filing and answering, Use API key grants (one billing.grant row) and both tasks run on the key, a restart keeps the grant until the stop ends and the wake ends it; Wait moves nothing, files no second card after a restart, and the person's session goes on by itself at the reset on the subscription); apps/ui/test/real-daemon.test.ts describe 'd1109-cred-engine, run C' (through the client, answered with the option the card shows)",
+      "how": "session/credential-ask.ts (CREDENTIAL_ASK_KEY 'credential:ask', ensureAskCard behind limits.asking, recordWait, syncAskAnswers, settleAsks, BILLING_GRANT_AUDIT_TOOL); RouterTaskBilling.noteWait asks through options.ask (compose prices it with the Start check, capped at the work budget); syncApprovals applies answers (readmit for a running session, else the person's kept continuation starts now by 'person'); the wake settles grants and cards first; request-words askCard with credentialAsk facts read when shown; task-display rows under ask.",
+      "check_in_the_app": "Live check: set 'Subscription first, then ask me' (Settings, or chat 'set credential policy to subscription_then_ask' with the yes), let Claude Code hit its limit on the first of two ready tasks: one Inbox card 'Use your API key until HH:MM?' with an about-CHF figure, options Use API key / Wait with their lines; Use API key -> 'Done: your API key does the work until HH:MM; your session goes on now.' and both tasks run on the key; on another try press Wait: nothing moves, no second card, and at the reset the session goes on on the subscription."
+    },
+    {
+      "problem": "CE-8 / D5-8, D5-9: two refusals at the same moment could file two cards (filing was deduplicated by a read, not tied to the mark); the card said neither why nor what the work does under the person's choice.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-refusal.test.ts (new: refusalWhy categories, the three bodies by rule, two concurrent refusals file one card and one billing.refused row with refusedCategory stored and no credential value, TR-10's filing again once across a restart with two waits at the same instant)",
+      "how": "billing-pick.ts refuse() files only when it set the mark (limits.refusedCard {refusedAt, open}, refusedCategory); noteWait's TR-10 path files only for the writer that opens refusedCard; takeReady closes it; credential-words refusalCategoryOf/refusalWhy/refusedBody; views credentialRefusedFor reads the policy's rule.",
+      "check_in_the_app": "Bench walked (after): --provider bench-api --api-key refused, credentials journey: the Inbox card reads 'The key is not valid or was deleted. Save a new one in Settings; until then the work waits.' and the stand-in's log shows one POST /v1/messages 401 for the key (screenshot /tmp/frbench/fix-d1109-cred-engine/steps/02-after-first-inbox.png)."
+    },
+    {
+      "problem": "CE-9 / D5-10: chat moved silently to another credential, never said which credential answered, and replied 'I could not answer (<router message>)' when none may serve.",
+      "u_ids": [
+        "U-078",
+        "U-048"
+      ],
+      "failing_test_before": "packages/runtime/test/billing-order.test.ts (the hold reply, no model call and no ledger row, oneOff 'Use API key' with 'Answers this question on your API key: about CHF N.', the next question holds before any call; under 'then the API key' the footer 'Answered with your API key: your subscription is at its limit until 12:00.')",
+      "how": "agent.ts: ConversationAgentDeps.credentialHold before the model path and after a held call; ChatRequest.oneOffSwitch uses RoutedProvider.withOneOffSwitch for that question; ChatReply.oneOff; the note once per stop per conversation; compose wires credentialHold (holdNow, firstChoiceStop, month-cap room for one quick answer).",
+      "check_in_the_app": "Live check: with the subscription at its limit under the default rule, ask Talk 'what is next?': the reply is the hold sentence and no request reaches the API key; under 'Subscription first, then the API key' the answer carries the line 'Answered with your API key: your subscription is at its limit until HH:MM.' once."
+    },
+    {
+      "problem": "CE-13: a credential setting could be widened without care, an agent could change it, the tool definition listed the older keys.",
+      "u_ids": [
+        "U-078",
+        "U-074"
+      ],
+      "failing_test_before": "packages/commands/test/credential-policy.test.ts (new: needs-a-yes with 'When your subscription runs out, work goes on with your API key at once, at a cost per use.', an agent refused with 'Only you can change which Claude does the work.', narrowing acts at once with its Changes row, Undo that widens asks, settings_set lists credential_policy and neither older key, older keys and their Undo answer 'This was replaced by \"Which Claude does the work\"; change it there.')",
+      "how": "settings.ts: SETTING_SPECS.credential_policy appended last (narrowingActsAtOnce by moneyRank, personOnly, currentOfPrefs, display/effect words); global person-only keys refused for agents; replacedBy + hiddenFromTool on billing_order and mid_session_limit; undoBlocked.",
+      "check_in_the_app": "In Talk say 'use my API key when the subscription runs out': the read-back asks 'Set which Claude does the work to Subscription first, then the API key? When your subscription runs out, work goes on with your API key at once, at a cost per use.' and nothing changes until yes."
+    },
+    {
+      "problem": "C4b-left-2: the intake card read 'a first-session plan of N task(s)'.",
+      "u_ids": [],
+      "failing_test_before": "packages/runtime/test/intake.test.ts ('a first-session plan of 2 tasks. Approve'), packages/runtime/test/intake-live.test.ts",
+      "how": "intake.ts tasksWords(n); the fake daemon's card matches.",
+      "check_in_the_app": "New project with a brief: the plan card's text says 'a first-session plan of 1 task' or 'N tasks'."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "CE-6 / D5-5: the share reached mid-run is still the hooks' plan-level budget pause (a budget card until the 1st), and the allowance raise's change line is not built.",
+      "why": "Time: the share is now held at every pick (CE-2, a task whose next pick meets it waits under wait/ask), but turning the mid-run plan-level stop into a credential stop needs the executor's budget-stop branch and a composed SDK test with a tiny allowance; left for the next round (named in ADR 0120)."
+    },
+    {
+      "problem": "CE-10: background jobs are not marked 'not done for the period' after a held call; no explicit one-line log.",
+      "why": "Cut line allows it. What holds now: batch picks wait under wait and ask, and a grant never covers batch (credential-policy.test.ts), so no money is spent; whether calibration/model watch retry next tick is unverified."
+    },
+    {
+      "problem": "CE-11: switchedFrom on the Run row, billing.switch/billing.back events, SessionResult.switched, CostView.byCredential; the switch log line (switchLogLine/backLogLine exist in credential-words.ts but the runner still says '\"X\" continues on your API key now.').",
+      "why": "Time; only the routed fallback sentence in the person's clock is built. Cut line allows CostView.byCredential."
+    },
+    {
+      "problem": "CE-12: the switch notification (switchNotificationWords exists, no producer).",
+      "why": "Time (cut line allows the restart case; the producer itself is not built)."
+    },
+    {
+      "problem": "CE-1's one-time Update ('Chat, planning and reviews now use your Claude subscription first, like your tasks...').",
+      "why": "Time; the spec allows it to end in not_done."
+    },
+    {
+      "problem": "CE-3's held-call branch in task-check.ts (no call, nothing booked, notes kept, the ask card) and C4-left-11 (the task check's model chosen as the intake's).",
+      "why": "Time. The task check's routed call (purpose interactive) is held by the policy through RoutedProvider now, but task-check.ts has no explicit held branch keeping its notes."
+    },
+    {
+      "problem": "CE-7 parts: the refused card's Use API key / Wait under 'ask' (refused-stop grants), withdrawal when the other credential cannot serve any more, the caps-room check before filing, the second/late answer through the route (the route answers 409 on an answered card as before).",
+      "why": "Time. The refused card shows the ask body only when an estimate is supplied, which views does not yet; under ask it reads the wait body."
+    },
+    {
+      "problem": "CE-9: POST /chat's view does not carry ChatReply.oneOff, and there is no route flag for the press.",
+      "why": "server.ts is d1109-run-visible's only in C5 and the flag is d1109-cred-screens' (C6); tests use the agent's chat entry for the one-off."
+    },
+    {
+      "problem": "Leftovers L3-left-14 (book a cut-off call on its own source), C3-left-4 (chat's session.start kept at the reset), C3-left-5 (continuation test gaps), C3-left-6 (plan share in chatRoom + composed subscription chat case), C4b-left-1 (BA-7/BA-3 composed restart cases).",
+      "why": "Time: the area's own blocking items (CE-2..CE-5, CE-7, CE-8, CE-13 agent refusal) came first."
+    },
+    {
+      "problem": "Bench BEFORE walk.",
+      "why": "The code was changed before the bench walk; the before behaviour is shown by the tests that failed before (e.g. billing-order 'From the API.' with nothing chosen). The AFTER walk was done on --provider bench-api --api-key refused."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm lint && pnpm lint:paths && pnpm typecheck && pnpm secrets:scan",
+      "result": "green (biome: warnings only, pre-existing)"
+    },
+    {
+      "command": "pnpm test (vitest --project unit)",
+      "result": "5726 passed, 1 failed (closeout-docs: ADR 0120 not indexed) -> fixed in f5e819d; the file reruns 22/22 green"
+    },
+    {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0 && node scripts/link-check.mjs",
+      "result": "docs-check ok (50 files); link-check ok (213 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "5 files passed, 6 skipped (Postgres), 30 tests passed"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "13 files passed, 25 tests passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "95 files, 1244 tests passed"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "36 passed"
+    },
+    {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing"
+    },
+    {
+      "command": "node scripts/bench/start.mjs --name fix-d1109-cred-engine --daemon-port 48740 --ui-port 2340 --fresh --provider bench-api --api-key refused; node scripts/bench/journeys/credentials.cjs fix-d1109-cred-engine after",
+      "result": "no task failed; the refused card's new body; one POST /v1/messages 401 for the key; bench stopped and home removed"
+    }
+  ],
+  "tests_changed_for_design": [
+    {
+      "test": "packages/runtime/test/billing-order.test.ts (all cases from 'without a chosen order...')",
+      "why": "Owner's answer 4: chat uses the subscription first with nothing chosen; under 'then wait' a limit holds chat (hold reply, no API request) and the in-call move happens only under 'then the API key'; a refused key moves only under 'API key first, then the subscription'."
+    },
+    {
+      "test": "packages/runtime/test/subscription-path.test.ts (refused sign-in x2, share-cap case, fake-row case)",
+      "why": "Every purpose waits at a refusal under the default (before: non-task picks used the key); the share is a stop held under wait, so the key serves it only under 'then the API key'; refused card body words."
+    },
+    {
+      "test": "packages/runtime/test/routed-provider.test.ts (three fallback sentences)",
+      "why": "CE-11: the reset in the person's clock, never 'UTC'."
+    },
+    {
+      "test": "packages/runtime/test/credential-limits.test.ts, apps/ui/test/real-daemon.test.ts (refused sign-in case), apps/ui/test/inbox.test.tsx",
+      "why": "CE-8: the refused card's body says why (category) and what the work does under the rule."
+    },
+    {
+      "test": "packages/commands/test/w15-chat.test.ts (settings_set definition's last lines and count)",
+      "why": "CE-13: credential_policy appended last; billing_order and mid_session_limit no longer offered to the chat model (22 keys)."
+    },
+    {
+      "test": "packages/runtime/test/intake.test.ts, intake-live.test.ts",
+      "why": "C4b-left-2: '1 task' / 'N tasks' instead of 'task(s)'."
+    }
+  ],
+  "screenshots": {
+    "before": [],
+    "after": [
+      "/tmp/frbench/fix-d1109-cred-engine/steps/01-after-first-tasks-tab.png",
+      "/tmp/frbench/fix-d1109-cred-engine/steps/02-after-first-inbox.png",
+      "/tmp/frbench/fix-d1109-cred-engine/steps/03-after-first-session.png",
+      "/tmp/frbench/fix-d1109-cred-engine/steps/05-after-first-settings.png"
+    ]
+  },
+  "new_problems": [
+    "RoutedProvider.listModels/maxOutputTokens ask the first API-style source even when it is refused: the bench's request log (/tmp/frbench/fix-d1109-cred-engine/home/bench/api-requests.jsonl, removed; line at 18:04:10) showed a GET /v1/models with the refused key after its refusal. CE-8 says no path sends a refused credential a request; apiProvider() should skip refused sources.",
+    "The intake card's other counts still read 'milestone(s)', 'task(s)', 'doc(s)' (packages/runtime/src/session/intake.ts about :1476-1477); only the first-session clause was C4b-left-2's.",
+    "The refused card's withdrawn line 'A new one is saved; the work that waited for it goes on.' is also shown when TR-10 closes it with nothing waiting (request-words.ts refused branch; pre-existing).",
+    "credential_policy's narrows treats an unset earlier value as the default (rank 0), so an Undo back to 'not chosen' while an explicit mid_session_limit use_other is stored is judged as narrowing (acts at once) although it reads as subscription_then_key."
+  ],
+  "notes_for_other_areas": [
+    "@forerunner/billing policy.ts: CREDENTIAL_POLICIES, CredentialPolicyId, CREDENTIAL_POLICY_SETTING, DEFAULT_CREDENTIAL_POLICY (the owner question's default: one constant), ruleOf, credentialPolicyOf(prefs) -> {id: preset | 'earlier', chosen: 'stored'|'derived'|'default', rule}, moneyRank, stopOf/stopKeyOf, nextMonthStartIso, grantOf, CredentialGrant. RouteContext gains whenStopped, heldNow, kinds, nowMs; RouteWaitFor {sourceId, kind, reason, until, stopKey, ask}; SkipCode 'policy'. BillingSourceLimits (append-only): asking, grant, switchNotified (unused yet), refusedCard, refusedCategory.",
+    "runtime wiring/billing-pick.ts: policyOf(store, humanId) replaces CALL_FALLBACK_ORDER (removed; personOrderOf kept for the billing-order routes); RouterTaskBilling.currentStopOf(sourceId), firstChoiceStop(), options.ask (compose files the card). TaskBillingRequest: fallbackOrder removed; whenStopped and allowSwitch appended.",
+    "session/credential-wait.ts: CredentialWait.reason gains share, key_month, needs; fields stopKey, ask, stop; asStopWait, stopReasonOf, otherCredentialOf; waitRowWords under ask gives label 'Waits for your answer: use your API key?' (d1109-run-visible: share/key_month waits exist now for the generic form).",
+    "session/credential-words.ts (d1109-cred-screens reads these): askCardWords, askClosedLine, ASK_OPTIONS, refusalCategoryOf, refusalWhy, refusedBody, switchLogLine, backLogLine, switchNotificationWords, chatHoldReply, chatOneOffExplain, chatSwitchNote, stoppedPhrase, LEGACY_SETTING_REPLACED.",
+    "session/credential-ask.ts: CREDENTIAL_ASK_KEY, BILLING_GRANT_AUDIT_TOOL, ensureAskCard, recordWait (for C6's 'Start at 15:40' under ask), askAnswerOf, syncAskAnswers, settleAsks. The card's change_card keeps source_id, stop_key, reason, until, estimate_usd_micro, chf_per_usd, filed_at, outcome (granted|waited|stop_ended), session_goes_on, closed_why.",
+    "provider/routed.ts: holdNow(model) -> {wait, switchTo} | null; withOneOffSwitch(); RoutedProviderDeps.timezone; fallbackSentence(from, to, until, {timezone, nowMs, held}).",
+    "conversation/agent.ts: ConversationAgentDeps.credentialHold, ChatCredentialHold, ChatRequest.oneOffSwitch, ChatReply.oneOff {label, explain}. server.ts's chatReplyView does not pass oneOff yet (server.ts is d1109-run-visible's in C5): C6 adds oneOff to the POST /chat view (api-types ChatReplyView) and the press's route flag.",
+    "compose.ts hunks (C5 shared): taskBilling's ask option; credentialWaits.wake calls settleAsks before takeReady; syncApprovalsOnce has credentialAsks (syncAskAnswers with onGrant: readmit or the person's continuation started by 'person', dropKeptStart); routed provider timezone; credentialHold; chatCredential reads policyOf; ONE_OFF_CHAT_INPUT_TOKENS/OUTPUT_TOKENS.",
+    "request-words.ts: RequestWordsContext gains credentialAsk and credentialRefused (credentialGoesOn kept as a fallback reader); views.ts credentialAskFor, credentialRefusedFor (credentialGoesOnFor removed).",
+    "commands settings.ts: credential_policy appended last (after start_by_itself and chat_ask_above); SettingSpec.currentOfPrefs, replacedBy, hiddenFromTool; exports CREDENTIAL_KEY_REPLACED, credentialPolicyWords ('Subscription first, then wait' ...), credentialPolicyEffect. A global personOnly key is refused for agents too.",
+    "Owner questions (defaults built in one place): the default preset is DEFAULT_CREDENTIAL_POLICY = subscription_then_wait; no Forerunner monthly limit on the API key (a stored limits.monthlyUsdMicro counts as a key_month stop).",
+    "Suggested UPDATE-LOG/CHANGELOG lines (session lead's files): 'One rule decides which Claude does the work, for tasks, reviews, planning, chat and the monthly checks; until you pick one it is \"Subscription first, then wait\".' / 'When your first choice stops, nothing moves to your API key unless your rule says so; \"Subscription first, then ask me\" puts one card in the Inbox per stop.' / 'A refused key or sign-in gets one card that says why and what the work does until you save a new one.' / 'Chat says when it waits for your subscription and offers Use API key for that one question.'",
+    "Live check 4 steps (LC for this area): (1) both credentials, nothing chosen: one Talk question goes to Claude Code (no key request); (2) subscription at its limit under the default: chat holds, a ready task waits, the critic's review of a finished task waits in review, nothing on the key; (3) set 'Subscription first, then ask me' with the yes, hit the limit with two ready tasks: one card, Use API key runs both on the key with the Done line; (4) refused key: one card with the category sentence and one 401 in the key's request log."
+  ]
+}

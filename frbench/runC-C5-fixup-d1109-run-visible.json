@@ -1,0 +1,211 @@
+{
+  "area": "d1109-run-visible",
+  "branch": "fix/d1109-run-visible",
+  "head_sha": "4aad38277cb7e4d7ae81d870d197239bc4f87f6c",
+  "commits": [
+    {
+      "sha": "b7f4b9e",
+      "subject": "run-indicator: the Sessions list's working row folds the whole log, as the bar does (U-096)"
+    },
+    {
+      "sha": "ec7c073",
+      "subject": "run-indicator: the bar hears the critic's monthly check start and end (U-096)"
+    },
+    {
+      "sha": "63eefa2",
+      "subject": "run-indicator: the Overview, Read aloud and the Update line stop promising after Cancel (U-096, U-078)"
+    },
+    {
+      "sha": "00a22f5",
+      "subject": "run-indicator: a start that waits behind a session moves its project's line live (U-096, U-071)"
+    },
+    {
+      "sha": "ad46894",
+      "subject": "desktop: the window title names the critic's monthly check; health names a project's session first (U-096)"
+    },
+    {
+      "sha": "5fbce48",
+      "subject": "session-page: Continue's Start says what it filled in; the selftasks restart case ranks as the run order does (U-096)"
+    },
+    {
+      "sha": "4aad382",
+      "subject": "docs: the user guide says what Cancel does to a waiting session's result and the check's Stop now (U-096)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "Blocking 1: the Sessions list's working row said 'Quote page · plans the session' while a task was still running, once the task had taken more than about 49 steps. The bar meanwhile said 'the coder works on ...'. Cause: sessionRunText folded only the newest 50 events of the fold's types, and task.step (one per tool call) is one of those types.",
+      "u_ids": [
+        "U-096"
+      ],
+      "failing_test_before": "packages/runtime/test/run-indicator.test.ts 'runViews (V-1) > says in the Sessions list's working row what the bar says, however many steps the task took' (after 60 steps it got 'Quote page · plans the session')",
+      "how": "sessionRunText now folds the session's whole log through the store's kept folds (new runFoldsOf(store) in run-indicator.ts). compose's run indicator uses the same map, so the list and the bar read each log once, in order, and say the same sentence. The map keeps at most 200 folds and drops the oldest first; runViews still drops the folds of ended sessions. The test also covers the wrap-up line after 60 more steps and a read with no fold kept (a fresh daemon).",
+      "check_in_the_app": "live_check: 1) Start a session on a project whose first task takes many steps (a long research or writing task on the real model). 2) While that task has been running for a few minutes, open the project's Sessions tab. The working row reads the same sentence as the bar under the header, e.g. 'Quote page · the coder works on \"Write the guide\"'. It never reads 'plans the session' while the task runs. Bench walk A: the row and GET /running gave the same text."
+    },
+    {
+      "problem": "Blocking 2: the critic's monthly check never reached the bar live. No run.changed frame was sent when it started or ended, so the bar showed it only after a reload, and then kept showing it with Stop after it had ended. Cause: CalibrationJob runs outside the session runner and emits on no bus. The requestStart poke fired before the check's row existed, and nothing poked at its end.",
+      "u_ids": [
+        "U-096"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-run-visible, run C > the critic's monthly check reads ...' now reads /events. It waits for a run.changed frame naming the check while it runs and an empty frame after it ends; before the fix it timed out with frames [].",
+      "how": "New optional CalibrationJobDeps.onRowChanged(sessionId), called after the run's row is made and after it is ended (it never fails the run). compose passes the run indicator's poke through a late-bound pokeRunIndicator. The poke's debounce now reads clock.monotonic() instead of Date.now(), as AGENTS.md requires. Two of the review's notes on the same entry are fixed too. The check's Stop now line reads 'Stops the check at once. This month's report is not written.', not the session sentence about Ready. The tab title reads '● The critic's monthly check · Forerunner', with a project's session named first. calibration-job.test.ts asserts onRowChanged is called twice per run; run-indicator.test.tsx asserts the Stop now line and the title.",
+      "check_in_the_app": "live_check (only when the monthly check runs; it cannot be triggered from the UI this month, because the schedule's first sighting marks the month): 1) With the app open on Home when the check runs (day 1 at 06:00 local by default), the bar shows 'Forerunner · the critic's monthly check on known examples' without a reload. 2) Open Stop ▾: the explanation line, Stop now with 'Stops the check at once. This month's report is not written.', and Stop all. 3) The tab title is '● The critic's monthly check · Forerunner'. 4) When the check ends, the bar goes away without a reload. Covered here at the /events boundary by the real-daemon case."
+    },
+    {
+      "problem": "Blocking 3 (C3-left-8, second half): after Cancel, the Overview's Last result, its Read aloud and the Inbox's Update line still promised '...; then your session goes on.', also after a reload. Only GET /sessions/:id applied summaryAfterWait, and only for its 'stopped' block.",
+      "u_ids": [
+        "U-096",
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-run-visible, run C: the page of a session that ended to wait (V-5) > goes on: the wait with Cancel; ...' now reads GET /projects/:id/summary (lastSession.summary and spoken) and GET /inbox messages before Cancel, after Cancel and after a restart. Before the fix, after Cancel it got 'Waits until 11:40 (your subscription's limit); then your session goes on.'.",
+      "how": "New run-indicator.ts waitPromiseHolds(store, projectId, since) and resultAfterWait(store, projectId, since, text). The promise holds while the continuation or a Start for the reset is kept and no session of the project has begun since. It also holds once a continuation session began after it, because the session did go on by itself. Cancel, Stop all, or a session the person started instead end the promise, and the text then reads '...; then it runs at your next Start.'. The session page (server.ts liveSessionView, replacing the waitBlock 'stopped' test), views.ts projectSummary (Last result and spoken) and GET /inbox's message bodies all read it. Stored rows are not rewritten; the state is read from the store, so it holds across a restart. Unit siblings: kept, cancelled, went on by itself, and a session the person started instead while a later wait is kept.",
+      "check_in_the_app": "live_check: 1) Run a session until its Claude credential hits a limit (bench: --provider bench-api --api-key limited --env FORERUNNER_BENCH_API_LIMIT_MIN=2). 2) On the project's Overview, Last result reads 'Waits until HH:MM (your API key's limit); then your session goes on.'. 3) Press Cancel in the bar. Without a reload, Last result reads '...; then it runs at your next Start.'. 4) Press Read aloud: the text says the same. 5) In the Inbox, the Update line 'Sea notes: Waits until HH:MM (...); then it runs at your next Start.'. 6) Reload, then restart the app: all three still say it. Bench walk B passed 9 of 9."
+    },
+    {
+      "problem": "Blocking 4: when the person pressed Start on a project while another project's session ran, the bar said '· then Bird walk', but Bird walk's own line kept saying 'Ready: 1 task waits for your Start' until a reload. Cause: a queued start changes no session, POST /sessions emitted no project event, and the UI re-read the cards on run.changed only when the entry keys changed (a queued start changes only nextProject).",
+      "u_ids": [
+        "U-096",
+        "U-071"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-run-visible, run C > GET /running and /health.running say ...' now reads /events and waits for project.changed for Garden site once its start waits and once it is dropped (timed out before). apps/ui/test/run-indicator.test.tsx 'the project's line follows a start that waits behind another session, without a reload' (the line did not change after the frame).",
+      "how": "compose's scheduler wrapper emits a project event for the project of a start that is queued or deferred, and of one that cancelPending drops. The wrapper still returns the scheduler's own promise unchanged (sync-gate passes). The UI's run.changed handler (store/context.tsx) re-reads the project cards when the entries or their nextProject change, which also covers polling.",
+      "check_in_the_app": "live_check: 1) Start a session on project A. 2) Open project B's Overview and press Start session, then confirm and close the 'Queued' dialog. 3) Within a second, with no reload, B's line reads 'Starts after the session on \"A\"' and the bar adds '· then B'. Home's row for B says the same. 4) Press Stop ▾ > Stop after this task on A. When A ends, B starts, and B's line stops saying 'Starts after' with no reload. Bench walk A passed 7 of 7."
+    },
+    {
+      "problem": "Found while fixing blocking 2: while only the monthly check ran, /health.running named it under 'Forerunner', so the desktop window title read 'Forerunner — Forerunner is working'. With the check and a project session running together, health named whichever row was made first.",
+      "u_ids": [
+        "U-096"
+      ],
+      "failing_test_before": "packages/runtime/test/run-indicator.test.ts 'runningHealth (V-7)' (both cases); apps/desktop/src-tauri state.rs the_critics_monthly_check_is_named_by_the_title and the check case in daemon.rs health_reads_what_runs_now (no check field, so they did not compile)",
+      "how": "runningHealth names a project's running session first, then the check, then a session that only waits. The check's entry carries check: true (RunningHealth.check, optional and append-only). daemon.rs reads it, and state::window_title reads 'Forerunner — the critic's monthly check' for it.",
+      "check_in_the_app": "live_check (installed desktop app, when the monthly check runs): the taskbar title reads 'Forerunner — the critic's monthly check', the tray's first item reads 'Forerunner: the critic's monthly check on known examples', and the icon has the blue dot. While a project's session runs alongside it, the title reads 'Forerunner — <project> is working'."
+    },
+    {
+      "problem": "Review note: the Start dialog opened by a session's Continue prefills what is left of that session's budget (the daemon sets a continuation's budget to that, never more), but it still said 'The project's default is filled in.'",
+      "u_ids": [
+        "U-096"
+      ],
+      "failing_test_before": "apps/ui/test/run-indicator.test.tsx 'goes on by itself: the wait with Cancel; ... offers Continue with the budget left' (the hint read 'The project's default is filled in.')",
+      "how": "StartSessionDialog's budget hint reads 'What is left of that session's budget is filled in: it goes on with that, never more.' when the dialog continues a session, and the project's default otherwise.",
+      "check_in_the_app": "live_check: after Cancel on a session that waits for its credential, press Continue on its page. The Start dialog's budget field shows what is left, and the hint under it reads 'What is left of that session's budget is filled in: it goes on with that, never more.'"
+    },
+    {
+      "problem": "Review note on C4b-left-3: the restart case still expected 'Style the page: colours' before 'Check that the links work'. Both are made by one answer after the restart, so one millisecond can hold both, and the run order then ranks them by a random id.",
+      "u_ids": [
+        "U-096"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts d1109-selftasks-run 'the card in the Inbox names the project ... after a restart' (a latent same-millisecond tie, not seen failing here)",
+      "how": "The case now expects those two tasks in the order the run order ranks the stored rows (priority, created_at, id), in both the answered list and the list after Undo. Its intent is kept: both come after every task made before the restart.",
+      "check_in_the_app": "not visible in the app (test-only). `cd apps/ui && pnpm vitest run --config vitest.config.ts test/real-daemon.test.ts -t 'selftasks'` passed 3 of 3 runs here."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "The status line's Cancel (and its Continue) show their explanation only as a tooltip. The bar's and Working now's Cancel show it beside the button.",
+      "why": "ProjectStatus is a compact line, and all its buttons (Continue, Cancel) carry their explanation as a title. The reviewer also noted that a waiting Overview already says the fact four times with three Cancel buttons at 375 px. A fourth visible sentence there would make that worse. Left for the session lead to decide in design terms."
+    },
+    {
+      "problem": "The critic's monthly check was not walked on the bench (bar, Stop now line, title).",
+      "why": "Nothing in the UI or API can start it on a running daemon: the scheduler's first sighting marks the current month as run, and `fr jobs calibrate` runs in a separate process whose events never reach the daemon's bus. It is covered at the /events boundary by the real-daemon case, and the words and title by run-indicator.test.tsx."
+    },
+    {
+      "problem": "The Sessions list's working row after more than 49 steps was not walked on the bench.",
+      "why": "The stand-in's tasks take far fewer than 50 tool steps (FORERUNNER_BENCH_LONG stops at 30 parts). The unit case covers it with 60 and 120 steps. On the bench (walk A), the row and GET /running gave the same text."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests, docs:check, docs:links, secrets:scan)",
+      "result": "exit 0: 525 test files, 5677 passed, 7 skipped; link-check ok (212 files); secret-scan clean (2199 files). docs:check fell back because origin/main is missing, so it was run separately."
+    },
+    {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (60 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 81 skipped"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 97 files, 1295 tests passed (includes real-daemon.test.ts and browser-imports.test.ts)"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "38 passed (1.3m)"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts test/real-daemon.test.ts -t 'd1109-run-visible|selftasks' (3 times)",
+      "result": "9 passed each time"
+    },
+    {
+      "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo fmt --check",
+      "result": "exit 0"
+    },
+    {
+      "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo clippy --all-targets -- -D warnings",
+      "result": "exit 0"
+    },
+    {
+      "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo test",
+      "result": "157 passed, 0 failed"
+    },
+    {
+      "command": "bench fixup-d1109-run-visible (48761/2361), --provider bench, FORERUNNER_BENCH_DELAY_MS=1500, walk A (scratchpad fx-walk-a.cjs)",
+      "result": "7 of 7 passed. The Sessions list's working row equals GET /running's text. The bar adds '· then Bird walk'. Bird walk's line reads 'Starts after the session on \"Kite day ...\"' without a reload, and Home names it too. Once Bird walk runs, its line follows with no reload and the title names it; no bar once nothing runs. The first run with the default delay finished Kite day before the second Start (no queue), so the walk was run again with a slower stand-in."
+    },
+    {
+      "command": "bench fixup-d1109-run-visible, --provider bench-api --api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=2, walk B (scratchpad fx-walk-b.cjs)",
+      "result": "9 of 9 passed. While waiting, Last result promises it goes on. After the bar's Cancel, with no reload, Last result reads 'Waits until 20:34 (your API key's limit); then it runs at your next Start.'. A reload, Read aloud's text, the Inbox Update line and the Inbox page say the same, and so do Last result and the Update line after a daemon restart. The bench was stopped with stop.mjs; its home and browser profile were deleted."
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/review-d1109-run-visible/steps-walk12/30-rv2-bird-overview-queued.png",
+      "/tmp/frbench/review-d1109-run-visible/steps/18-rv5-sea-overview-after-cancel.png",
+      "/tmp/frbench/review-d1109-run-visible/steps/19-rv5-sea-overview-after-cancel-reload.png"
+    ],
+    "after": [
+      "/tmp/frbench/fixup-d1109-run-visible-steps-a/04-after-a1-kite-sessions-tab-while-running.png",
+      "/tmp/frbench/fixup-d1109-run-visible-steps-a/05-after-a2-bird-overview-queued-no-reload.png",
+      "/tmp/frbench/fixup-d1109-run-visible-steps-a/06-after-a3-home-while-one-queued.png",
+      "/tmp/frbench/fixup-d1109-run-visible-steps-a/07-after-a4-bird-overview-runs-no-reload.png",
+      "/tmp/frbench/fixup-d1109-run-visible-steps-a/08-after-a5-bird-overview-after.png",
+      "/tmp/frbench/fixup-d1109-run-visible-steps-b/01-after-b1-sea-overview-waiting.png",
+      "/tmp/frbench/fixup-d1109-run-visible-steps-b/02-after-b2-sea-overview-after-cancel.png",
+      "/tmp/frbench/fixup-d1109-run-visible-steps-b/03-after-b3-sea-overview-after-cancel-reload.png",
+      "/tmp/frbench/fixup-d1109-run-visible-steps-b/04-after-b4-inbox-after-cancel.png",
+      "/tmp/frbench/fixup-d1109-run-visible-steps-b/05-after-b5-sea-overview-after-restart.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "apps/ui/test/real-daemon.test.ts d1109-selftasks-run 'the card in the Inbox names the project ... after a restart'",
+      "why": "The two tasks made after the restart are expected in the order the run order ranks their stored rows (priority, created_at, id), not in a fixed order that a same-millisecond tie can flip. The intent is kept: both come after every task made before the restart."
+    },
+    {
+      "test": "apps/ui/test/real-daemon.test.ts 'd1109-run-visible, run C: the page of a session that ended to wait (V-5)'",
+      "why": "Extended, not weakened: it now also reads the Overview's summary, Read aloud and the Inbox before and after Cancel, and after a restart (a second compose on the same home)."
+    }
+  ],
+  "new_problems": [
+    "The chat's project facts (packages/runtime/src/conversation/project-facts.ts) and the typed 'summary' command (packages/commands/src/commands/summary.ts:79) still read the stored last result as written, so after Cancel the chat can repeat '...; then your session goes on.'. Both belong to the chat (D3, outside this area). They can call run-indicator.ts resultAfterWait(store, projectId, last_session.ended_at, summary).",
+    "A calibration run started by `fr jobs calibrate` while the daemon runs shows on the daemon's GET /running (shared store), but no run.changed frame is sent: the CLI process pokes only its own runtime. The same holds for any session a CLI one-shot starts beside a running daemon.",
+    "In bench walk A, while Bird walk's start was queued, its header still offered 'Start session'. Pressing it again would ask for one more start. The status line offers nothing then, but the header button stays (project page header, not this area's).",
+    "Stopping the monthly check still records its row as failed (the fixer's note; wording in src/jobs)."
+  ],
+  "notes_for_other_areas": [
+    "run-indicator.ts: runFoldsOf(store) is the one map of kept run folds per store. compose's RunIndicatorDeps.folds and sessionRunText (the Sessions list's working row) both use it. sessionRunText now folds the whole log, and no longer reads ofTypes(RUN_EVENT_TYPES, 50).",
+    "run-indicator.ts: resultAfterWait(store, projectId, since, text) and waitPromiseHolds(store, projectId, since) are the one rule for a stored '...; then your session goes on.'. The promise holds while a continuation or a Start for the reset is kept and no non-intake session of the project has begun since, or once a session with plan.startedBy.by === 'continuation' began after it. Otherwise the text reads summaryAfterWait's '...; then it runs at your next Start.'. It is applied by GET /sessions/:id (since = ended_at), views.ts projectSummary (Last result and spoken; since = last_session.ended_at) and GET /inbox message bodies (since = created_at). run-indicator.ts now imports wiring/billing-pick.ts, so it stays daemon-only, never in the browser build.",
+    "CalibrationJobDeps.onRowChanged?(sessionId) is called after the run's session row is inserted and after close(). compose wires it to running.poke through `pokeRunIndicator`, which is set once the indicator is composed.",
+    "compose's scheduler.requestStart wrapper now also emits events.emit('project', {id}) for a start whose entry.result is 'queued' or 'deferred'. cancelPending emits it for the dropped request's projectId. The wrapper still returns the scheduler's own promise. The UI (store/context.tsx) re-reads the project cards when a run.changed frame changes the entries' keys or their nextProject.",
+    "RunningHealth (api-types.ts) gained an optional check: boolean (true only for the critic's monthly check). runningHealth orders a project's running session first, then the check, then a waiting one. The desktop's daemon::RunningHealth has a check field and state::window_title reads 'Forerunner — the critic's monthly check' for it. d1109-cred-engine (C5) and d1109-cred-screens (C6) should keep this order when they add waiting forms.",
+    "RunIndicator.tsx: Stop now's explanation depends on the entry's state. For 'calibrating' it reads 'Stops the check at once. This month's report is not written.'. runTitle names a project's session before the check ('● The critic's monthly check · Forerunner').",
+    "compose's run.changed debounce reads clock.monotonic() (lastAt starts at -Infinity) instead of Date.now().",
+    "Suggested lines for the session lead (not written here): U-096 check in the app, add 'press Start on a second project while one runs: its line says \"Starts after the session on <first>\" at once; after Cancel on a waiting session, its Last result, Read aloud and Inbox Update say \"then it runs at your next Start.\"'. CHANGELOG: 'A start that waits behind another session shows on its project at once; after Cancel nothing says a session goes on by itself; the critic's monthly check shows on the bar while it runs.'"
+  ]
+}

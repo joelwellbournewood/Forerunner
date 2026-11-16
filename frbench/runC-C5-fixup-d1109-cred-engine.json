@@ -1,0 +1,228 @@
+{
+  "area": "d1109-cred-engine",
+  "branch": "fix/d1109-cred-engine",
+  "head_sha": "09969dea5a2f8fc6daa4e90e6709998e9411fd29",
+  "commits": [
+    {
+      "sha": "1d7b617",
+      "subject": "cred-engine: the ask form only while its card is open; one \"Done:\"; a kept Start goes on after Use API key (U-078)"
+    },
+    {
+      "sha": "f52e3fd",
+      "subject": "cred-engine: a refused key is asked nothing more; under \"then ask me\" a refusal is asked about once (U-078)"
+    },
+    {
+      "sha": "03a1be6",
+      "subject": "cred-engine: the task check is held by the policy; an ask card closes when its yes could move nothing; tests without an injected provider (U-078)"
+    },
+    {
+      "sha": "cd945d7",
+      "subject": "docs: ADR 0120 and the maintainer docs follow the fix-up; the user guide promises only what chat does (U-078)"
+    },
+    {
+      "sha": "09969de",
+      "subject": "task-check test: the check asks whether its call is held before it makes it (U-078)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "Blocking 1: under 'Subscription first, then ask me' every wait said 'Waits for your answer: use <other>? The card is in the Inbox.' (session result, log, Overview, notification, plan), also when no card was filed (no other credential) and after the person answered Wait. Root cause: the router's waitFor.ask means 'the rule asks', and every sentence read it as 'a card is open'.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-ask-words.test.ts 'under then ask me with only an API key at its limit, no card is filed and nothing says one is' and 'after Wait, a session started before the stop ends says the plain wait' (both failed: the summary held the card sentence)",
+      "how": "credential-wait.ts askCardOpen(store, sourceId, stopKey) and askShown(store, wait): the ask form only while the stop's one card is open, else the plain wait. Applied in executor.pickBilling and its stopped-run path, withReviewWait, intake.waitView (the stored plan wait now keeps stopKey and ask), and compose's Start-check 'now'. Rows (task-display) already checked the open card.",
+      "check_in_the_app": "Bench (--provider bench-api --api-key limited, policy subscription_then_ask set with the yes through POST /commands/execute): Start a project with two tasks: the session page, its log, the Overview's Last result and the rows read 'Waits until HH:MM (your API key's limit); then your session goes on.' and nothing says a card is in the Inbox; the Inbox has no ask card (walked: /tmp/frbench/fixup-d1109-cred-engine-keep/walk1-steps). Live check 4: with both credentials under 'then ask me', press Wait on the card, press Start again before the reset: the new session says the plain wait, never 'your answer'."
+    },
+    {
+      "problem": "Blocking 2: the ask card's Done lines read 'Done: Done: ...' in the Inbox (the outcomes began with 'Done:' and the Inbox adds 'Done: ').",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/inbox.test.tsx 'the ask card's Done line reads one Done: after Use API key and after Wait (d1109-cred-engine, run C)'; packages/runtime/test/credential-ask-words.test.ts 'after Wait ...' (outcome was 'Done: nothing moves ...')",
+      "how": "credential-words.ts askCardWords: the outcomes are one sentence without 'Done:' ('Your API key does the work until 15:40; your session goes on now.', 'Nothing moves until 15:40; then your session goes on.'); the fake daemon words the ask card in the person's clock as the daemon does.",
+      "check_in_the_app": "Inbox, an open 'Use your API key until HH:MM?' card: press Use API key: the line reads 'Done: Your API key does the work until HH:MM; your session goes on now.' with one 'Done:' (walked: walk2-steps/03-ask-keep-inbox-after-use-api-key.png)."
+    },
+    {
+      "problem": "Blocking 3: after Use API key, a Start the person pressed during the stop (kept for its end) was left for the wake, which started it seconds later on the key, while the Done line said the work runs at the next Start.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-ask-words.test.ts 'a Start kept for the stop's end goes on at once after Use API key, and the Done line says so' (outcome was '... the waiting work runs at your next Start.')",
+      "how": "compose.ts onGrant: the kept continuation, else the kept person Start (keptStartOf, its note kept), starts now as the person's own start and is dropped from the wait; the card records session_goes_on, so the Done line says 'your session goes on now'.",
+      "check_in_the_app": "Bench (--provider bench-api --api-key ok --subscription, subscription rest written into the home's state, 'then ask me'): press Start (it is kept: 'A session of Quote page starts at HH:MM.'), answer the one card with Use API key: the Done line says the session goes on now and the first request to the key comes within a second (walked: walk2-steps; api-requests.jsonl starts 19:20:23 right after the answer)."
+    },
+    {
+      "problem": "Blocking 4a (CE-8, never cut): a refused key got a second request: RoutedProvider.apiProvider() (the model list and a model's output limit) took the first API-style source whatever its state, so after chat's 401 the session's GET /v1/models went to the refused key.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-refused-once.test.ts 'one 401 for the key across chat, a session, the model list and a restart; one card' (failed: GET /v1/models 401 from listModels)",
+      "how": "RoutedProviderDeps.refused (compose: refusedSince over the vault): apiProvider skips a source whose refusal stands until a different credential is saved.",
+      "check_in_the_app": "Bench (--provider bench-api --api-key refused): ask Talk a question, Start a project with two tasks, ask again: home/bench/api-requests.jsonl holds exactly one line, 'POST /v1/messages 401' (walked: walk3-steps, the walk's result lists the only request)."
+    },
+    {
+      "problem": "Blocking 4b (CE-8, the owner's 7c 'as if it has run out'): under 'then ask me' a refused first choice filed no ask card (askFor returned for a refusal) and the refused card's Use API key / Wait were never wired (no estimate, no row options to answer).",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-refused-once.test.ts 'under then ask me a refused sign-in is asked about once ...' (failed: one card, no ask card); packages/runtime/test/credential-refusal.test.ts 'a refusal's ask card under then ask me' (exact words)",
+      "how": "A refusal is a stop like a limit under ask: askFor files the one ask card for it ('Use your API key until a new sign-in is saved?', refusedAskWords in credential-words.ts) with the usual grant, which ends when a different credential is saved (the stop key changes). The refused card stays the notification with its link and no options; its body (views.credentialRefusedFor) reads '... Save a new one in Settings, or go on with your API key until then (about CHF N).' while the ask card is open, '... until then your API key does the work, at a cost per use.' after Use API key, '... until then the work waits.' after Wait or with no card. This puts the options on the ask card rather than on the refused card itself (the acceptance's literal shape); the session lead may prefer it the other way.",
+      "check_in_the_app": "Live check 4: Claude Code signed out, a working API key, 'Subscription first, then ask me', two ready tasks, press Start: the Inbox shows 'Anthropic refused your Claude sign-in' (body with the category and 'or go on with your API key until then (about CHF N)', link Save a new sign-in) and one 'Use your API key until a new sign-in is saved?' card; Use API key runs both tasks on the key and the refused card then says the key does the work; saving a new sign-in closes it and the next call uses the subscription."
+    },
+    {
+      "problem": "Blocking 5 / CE-3 (never cut): the task check had no held branch: when the policy held it, runTaskCheck still made its routed call, wrote a 'failed' Run row, logged 'the call did not answer' and filed no card under ask.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-policy-session.test.ts (new) 'nothing chosen ...' and 'subscription_then_ask ...' (a task-check Run row was written)",
+      "how": "task-check.ts runTaskCheck asks the routed provider's holdNow(model) before its call: a held check returns not_made/held with its wait: no call, no Run row, nothing booked, the notes kept for the next boundary; noteWait keeps the project's wait on the stopped source (its one ask card under 'ask'). TaskCheckRun.not_made gains reason 'held' and an optional wait.",
+      "check_in_the_app": "Live check 4: subscription first, a session whose first task's report ends with 'For the task list: ...' and whose review meets the subscription's limit: the session's Details show no 'Checked the task list ...: the call did not answer' line, the Costs page has no task-check row, and the next session checks the kept notes once."
+    },
+    {
+      "problem": "Blocking 5 / CE-4 (never cut): no composed test showed the critic's review and a plan from a brief held under wait or ask with the routed provider; the composed tests injected a provider (it bypasses routing).",
+      "u_ids": [
+        "U-078",
+        "U-048"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-policy-session.test.ts (new; it also found that the plan from a brief stored its wait without stopKey and ask, so under 'then ask me' the project page said 'and starts by itself' while its ask card was open)",
+      "how": "New test world packages/runtime/test/cred-world.ts (composeRuntime with no provider: the Messages API stand-in for the key, a scripted Claude Code that answers runs, chat and reviews with submit_review for the subscription, limits and refusals switchable). credential-policy-session.test.ts: with the subscription at its limit on the review, under nothing chosen and an unanswered 'then ask me' the review waits without a try, no task-check Run row, the notes kept, chat gives the hold reply, the plan from a brief waits, no key request and no key ledger row, one card under ask; under 'then the API key' the review, the check and the next task run on the key and the log reads 'The Claude subscription reached its usage limit and rests until 15:00; the API key answered instead.'. credential-ask.test.ts and the real-daemon case 'd1109-cred-engine, run C' now run on the stand-in, no injected provider.",
+      "check_in_the_app": "Live check 4 step (2): subscription at its limit under the default: chat holds ('Your Claude subscription is at its limit until HH:MM, so I have not answered. ...'), a ready task waits, the critic's review of a finished task waits, a new project's plan waits ('Planning waits until HH:MM (your subscription's limit) and starts by itself.'), and the key's request log is empty."
+    },
+    {
+      "problem": "Blocking 5 / CE-7 (never cut): no withdrawal when the other credential cannot serve any more, no caps-room check before filing, and no test that an unanswered card closes at the first wake after a reset that passed while Forerunner was closed, or on a policy change.",
+      "u_ids": [
+        "U-078",
+        "U-052"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-ask-words.test.ts 'the API key cannot do the work either (at its own limit): the card closes' and 'with the month cap reached no card is filed' (shown to fail with the new check switched off)",
+      "how": "settleAsks gains otherServes (compose: a pick with allowSwitch): an open card whose other credential cannot serve closes with 'Closed: your API key cannot do the work now either.'; the composition's ask files no card when the month cap has no room. Coverage cases that passed at once, each named for what it guards: the stop ended while Forerunner was closed (closed at the first wake with 'Closed: your Claude subscription can work again.', the person's session goes on on the subscription, no key request) and a change to 'then wait' closes the card and the next pick waits.",
+      "check_in_the_app": "Live check 4: under 'then ask me' with an open card, quit Forerunner until after the reset and open it: the card reads 'Closed: your Claude subscription can work again.' and the session goes on on the subscription; with an open card, set 'Subscription first, then wait' in Settings: the card closes with 'Closed: \"Which Claude does the work\" changed, so this question no longer applies.'."
+    },
+    {
+      "problem": "Blocking 5 / CE-5 (never cut): only the no-file case of the continuing brief was tested.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "none: packages/runtime/test/where-last-run-stopped.test.ts 'd1109-cred-engine, run C' cases pass at once; they guard the exact model-facing brief after a limit that wrote a file ('... Its work so far is in the folder you work in (kept as a commit of its own): continue from it, do not start again.', 'Files it changed: \"index.html\"'), after a refusal ('was refused') and at the share ('reached the share of the subscription Forerunner may use'), composed through taskContextBlock over stored Run rows and task.files events, never '## The previous attempt' or 'It failed'",
+      "how": "Tests only (task-context.ts unchanged).",
+      "check_in_the_app": "Live check 4: under 'Subscription first, then the API key', a task whose Claude Code run hits its limit after writing a file continues on the key; the model-call log of the key's first call starts with '## Where the last run stopped' and the 'continue from it, do not start again.' line, naming the file."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "CE-6: the share reached mid-run is still the hooks' plan-level budget pause (a budget card until the 1st), and the allowance raise's change line is not built (both Wait lines of the share exist in askCardWords and are unit-tested).",
+      "why": "Outside the cut line's exceptions; the reviewer allows recording the reason for the session lead's decision. It needs the executor's budget-stop branch turned into a credential stop and a composed SDK test with the usage-source stand-in; the fix-up spent its time on the blocking items. Named in ADR 0120's consequences."
+    },
+    {
+      "problem": "CE-11: the switch's session log line ('\"X\" goes on with your API key from where it stopped: ...' once, a second task's switch as a detail line, the back line), switchedFrom on the Run row, SessionResult.switched and CostView.byCredential. The runner still logs '\"X\" continues on your API key now.'.",
+      "why": "Outside the cut line except CostView.byCredential; switchLogLine/backLogLine exist in credential-words.ts. Changing the line needs a once-per-session dedupe in the runner and re-baselines three tests of other areas (task-usage-limit, subscription-path, real-daemon). Left for the session lead's decision."
+    },
+    {
+      "problem": "CE-12: the switch notification producer (switchNotificationWords exists).",
+      "why": "Outside the cut line except its restart case; not built in the fix-up for time."
+    },
+    {
+      "problem": "CE-10: background jobs are not marked 'not done for the period' after a held call.",
+      "why": "Within the cut line. A held batch pick waits (no money); whether calibration and the model watch retry next tick stays unverified."
+    },
+    {
+      "problem": "CE-1's one-time Update on homes with both credentials and nothing chosen.",
+      "why": "The spec allows it to end in not_done."
+    },
+    {
+      "problem": "CE-5's composed repository case (the work-in-progress commit under the continuing run's commit on the task's branch).",
+      "why": "The scripted Claude Code of the composed world writes no file through the SDK driver's tools; the brief is covered at the model-facing boundary (taskContextBlock over stored runs and task.files events). Left to live check 4 (step in check_in_the_app)."
+    },
+    {
+      "problem": "CE-9: POST /chat's view does not carry ChatReply.oneOff, and the chat hold reply still offers 'Think it through ... at most CHF 0.03' (server.ts offers it).",
+      "why": "server.ts is d1109-run-visible's only in C5; the press and its route flag are d1109-cred-screens' (C6). The user guide no longer promises the button."
+    },
+    {
+      "problem": "Leftovers L3-left-14, C3-left-4, C3-left-5, C3-left-6, C4b-left-1, C4-left-11.",
+      "why": "Time: the blocking items came first (as in the fixer's report)."
+    }
+  ],
+  "validation": [
+    {
+      "command": "pnpm check (lint, lint:paths, typecheck, unit tests)",
+      "result": "lint and typecheck green; unit 5741 passed, 1 failed (task-check.test.ts pick sequence, the held check's extra read-only pick) -> assertion updated in 09969de, file reruns 24/24 green"
+    },
+    {
+      "command": "pnpm docs:links; node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0; pnpm secrets:scan",
+      "result": "link-check ok (213 files); docs-check ok (57 files); secret-scan clean (2205 files)"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "5 files passed, 6 skipped (Postgres), 30 tests passed"
+    },
+    {
+      "command": "pnpm test:e2e",
+      "result": "13 files passed, 25 tests passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+      "result": "95 files, 1245 tests passed"
+    },
+    {
+      "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+      "result": "36 passed"
+    },
+    {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing"
+    },
+    {
+      "command": "bench fixup-d1109-cred-engine (48760/2360), three fresh starts with --provider bench-api: --api-key limited (then ask me), --api-key ok --subscription (then ask me, subscription rest written into state), --api-key refused; walk script node walk.cjs <bench> nokey-ask|ask-keep|refused",
+      "result": "all checks ok: no card sentence and no ask card with only a limited key; one ask card, one 'Done:' with 'your session goes on now', both tasks on the key; one 401 for the refused key and no other request. Bench stopped, home and browser profile removed; steps kept in /tmp/frbench/fixup-d1109-cred-engine-keep/walk1-steps, walk2-steps, walk3-steps"
+    }
+  ],
+  "new_problems": [
+    "The fixer's new_problems still stand: the intake card's 'milestone(s)', 'task(s)', 'doc(s)' (intake.ts ~1476); the refused card's withdrawn line 'A new one is saved; ...' also when TR-10 closes it with nothing waiting; credential_policy's narrows treats an unset earlier value as rank 0.",
+    "GET /settings/billing-order and the current Settings section still read billing_order (personOrderOf), not credential_policy (C6 replaces the screen).",
+    "syncAskAnswers writes the grant, calls onGrant, then marks the card applied, not atomically; a crash between could start a second continuation after a restart.",
+    "onGrant readmits every ready task of a project with a running session, not only the ones that waited for the stop.",
+    "compose's credentialHold reads human.timezone and monthly_cap_usd_micro captured at compose time, not at each call.",
+    "The router falls back to Date.now() when RouteContext.nowMs is absent (current callers pass it)."
+  ],
+  "notes_for_other_areas": [
+    "session/credential-wait.ts: askCardOpen(store, sourceId, stopKey?) and askShown(store, wait): any sentence that names the ask card (d1109-run-visible's generic 'waiting for Claude, then it goes on' form, d1109-cred-screens' words) passes the wait through askShown, so 'Waits for your answer ... The card is in the Inbox.' shows only while that card is open.",
+    "session/credential-words.ts: AskCardWords.done.use/.wait carry no 'Done:' prefix (the Inbox adds it): 'Your API key does the work until 15:40; your session goes on now.'; askCardWords gives refusedAskWords for a refusal stop ('Use your API key until a new sign-in is saved?').",
+    "Under subscription_then_ask a refusal of the first choice now files the one credential:ask card (reason 'refused', until null); the refused card never carries options; views.credentialRefusedFor returns rule 'ask' with estimateChf while that card is open, 'next' with other api_key after a grant, else 'wait'.",
+    "provider/routed.ts: RoutedProviderDeps.refused(source) (compose: refusedSince over the vault); listModels and maxOutputTokens skip a refused source.",
+    "session/task-check.ts: TaskCheckRun not_made gains reason 'held' and an optional wait; runTaskCheck calls the provider's holdNow before its call and noteWait when held (any caller that counts picks sees one extra read-only pick).",
+    "session/credential-ask.ts settleAsks gains otherServes(sourceId) (closed_why 'other_cannot'); compose's ask files no card when the month cap has no room.",
+    "compose onGrant starts a kept person Start (keptStartOf, with its note) as well as a kept continuation, by 'person', and drops it from the wait.",
+    "intake's stored plan wait (summary_cache.intake.wait) now keeps stopKey, ask and stop.",
+    "packages/runtime/test/cred-world.ts: a composed world with no injected provider (Messages API stand-in + scripted Claude Code that answers runs, chat and reviews; limitSubscription, limitSubscriptionAfter, refuseSubscription, setKey, setRunReport, keyCalls, key401s, sdkCalls) plus seedProject, startSession, setPolicy and until, for C6's composed tests.",
+    "Suggested UPDATE-LOG/CHANGELOG lines (session lead's files): 'Under \"Subscription first, then ask me\" the app says a card waits for your answer only while that card is in the Inbox.' / 'A refused key or sign-in is asked nothing more until you save a new one, the model list included; under \"then ask me\" a refused sign-in also gets one card asking whether your API key does the work until then.' / 'After Use API key, a Start you pressed while the subscription rested goes on at once.' / 'The agent's check of its task list waits like every call when your rule holds the subscription; nothing is booked and its notes are kept.'"
+  ],
+  "screenshots": {
+    "before": [],
+    "after": [
+      "/tmp/frbench/fixup-d1109-cred-engine-keep/walk1-steps/03-nokey-ask-after-session.png",
+      "/tmp/frbench/fixup-d1109-cred-engine-keep/walk1-steps/04-nokey-ask-after-overview.png",
+      "/tmp/frbench/fixup-d1109-cred-engine-keep/walk2-steps/02-ask-keep-inbox-ask-card.png",
+      "/tmp/frbench/fixup-d1109-cred-engine-keep/walk2-steps/03-ask-keep-inbox-after-use-api-key.png",
+      "/tmp/frbench/fixup-d1109-cred-engine-keep/walk3-steps/02-refused-after-inbox.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "packages/runtime/test/credential-ask.test.ts (rewritten on cred-world.ts)",
+      "why": "The reviewer's finding: an injected provider bypasses the routing of reviews and chat; the same cases (one card per stop, restart between filing and answering, Use API key, Wait, the reset) now run on the Messages API stand-in and a scripted Claude Code, plus a second answer that changes nothing. Done outcomes lose their own 'Done:'."
+    },
+    {
+      "test": "apps/ui/test/real-daemon.test.ts describe 'd1109-cred-engine, run C'",
+      "why": "No injected provider (fetchImpl over messagesApiStandIn); work counted from the stand-in's request log; the Done outcome without its own 'Done:'."
+    },
+    {
+      "test": "packages/runtime/test/credential-refusal.test.ts (askCardWords done.use)",
+      "why": "The outcome without its own 'Done:' (the Inbox adds it)."
+    },
+    {
+      "test": "packages/runtime/test/task-check.test.ts 'on the subscription stand-in: the call is routed as the intake's planning call ...'",
+      "why": "The held-call branch asks holdNow (a read-only pick) before the call: two 'interactive' picks where there was one; the intent (routed as the intake's planning call, booked as a subscription row) is kept."
+    }
+  ]
+}
