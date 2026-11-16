@@ -281,9 +281,11 @@ describe("a refused API key (U-078)", () => {
     // Home and the project header say what the project waits for, with where to fix it
     // (before: "0 of 2 done [Open Tasks]").
     const card0 = await json<{ statusLine: StatusLine }>(later.req(`/projects/${project.id}`));
+    // d1109-run-visible (V-3): the person's session that stopped at the refusal goes on once a
+    // key is saved, and the line says so.
     expect(card0.statusLine).toEqual({
       kind: "waiting",
-      text: "Waiting for a new API key: 2 tasks",
+      text: "Waiting for a new API key, then it goes on",
       action: { kind: "link", label: "Save a new key", to: "/setup" },
     });
 
@@ -449,12 +451,13 @@ describe("a key at its usage limit (U-078)", () => {
     ]);
     const order = await json<BillingOrderView>(first.req("/settings/billing-order"));
     expect(order.sources[0]?.blocked).toBe("resting");
-    // Home and the project header: what the project waits for, and that nothing is to be done.
+    // Home and the project header: what the project waits for; nothing is to be done, and
+    // d1109-run-visible (V-3): it goes on by itself, with Cancel for a person who does not want it.
     const card = await json<{ statusLine: StatusLine }>(first.req(`/projects/${project.id}`));
     expect(card.statusLine).toEqual({
       kind: "paused",
-      text: "Waiting until 16:40 (your API key's limit): 2 tasks",
-      action: null,
+      text: "Waiting until 16:40 (your API key's limit), then it goes on",
+      action: { kind: "cancel", label: "Cancel", to: null },
     });
     // No card: a limit is nothing the person must do.
     const inbox = await json<InboxView>(first.req("/inbox"));
