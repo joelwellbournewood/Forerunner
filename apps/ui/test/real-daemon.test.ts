@@ -22544,4 +22544,101 @@ describe("d1109-cred-screens, run C", () => {
       await rt.close();
     }
   }, 60_000);
+
+  it("C4b-left-5: GET /projects/:id/start-check names a task whose own budget may leave too little for its review; a roomy one is not named", async () => {
+    const { rt, client } = await composeCs();
+    try {
+      const project = await client.createProject({ name: "Club page", goal: "A club page" });
+      const tight = await client.createTask(project.id, {
+        title: "Add a footer line with the club's name to index.html",
+        outcome: "The footer names the club",
+        acceptanceCriteria: ["the footer names the club"],
+        priority: "high",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 90_000,
+        specialist: "coder",
+        riskTier: 1,
+      });
+      await rt.store.task.patch(tight.id, { est_cost_usd_micro: 50_000 });
+      await addReady(client, project.id, "Write the about page");
+      const check = await client.startCheck(project.id);
+      expect(check.reviewMayWait.map((t) => [t.taskId, t.line])).toEqual([
+        [
+          tight.id,
+          expect.stringMatching(
+            /^"Add a footer line with the club's name to index\.html": its budget of CHF \d+\.\d\d may leave too little for its review, which then waits for Continue\.$/,
+          ),
+        ],
+      ]);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("CS-3: no Use API key while the key is refused or the month's cap has no room; Use API key with a budget above what is left this month is refused and writes no yes", async () => {
+    const { rt, client } = await composeCs();
+    try {
+      await setPolicyCs(client, "subscription_then_ask");
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addReady(client, project.id, "Style the page");
+      const subscription = await restSubscription(rt, resetAt);
+      expect((await client.startCheck(project.id)).credential?.runOut?.use.label).toBe(
+        "Use API key",
+      );
+      const key = (
+        await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+      ).find((r) => r.kind === "api_key");
+      if (!key) throw new Error("no key row");
+      // The key is refused: nothing to offer, the plain wait only.
+      await rt.store.billingSource.update(key.id, key.version, {
+        limits: {
+          ...(key.limits as Record<string, unknown>),
+          refusedAt: rt.clock.nowIso(),
+        } as never,
+      });
+      const refused = await client.startCheck(project.id);
+      expect(refused.credential?.runOut ?? null).toBeNull();
+      expect(JSON.stringify(refused.credential)).not.toContain("Use API key");
+      const fresh = await rt.store.billingSource.mustGet(key.id);
+      const { refusedAt: _r, ...limits } = fresh.limits as Record<string, unknown>;
+      await rt.store.billingSource.update(fresh.id, fresh.version, { limits: limits as never });
+      expect((await client.startCheck(project.id)).credential?.runOut?.use.label).toBe(
+        "Use API key",
+      );
+      // The month's cap has no room: nothing to offer either.
+      await rt.store.human.patch(rt.human.id, { monthly_cap_usd_micro: 30_000 });
+      await rt.store.costLedger.record({
+        human_id: rt.human.id,
+        agent_id: rt.agent.id,
+        project_id: project.id,
+        session_id: null,
+        task_id: null,
+        run_id: null,
+        kind: "api",
+        usd_micro: 30_000,
+        chf_micro: 24_000,
+        model: "fake",
+      });
+      expect((await client.startCheck(project.id)).credential?.runOut ?? null).toBeNull();
+      // Room again, but the session's budget is above what is left this month: refused in words,
+      // and no yes is written for the stop (the key is not widened by a start that never ran).
+      await rt.store.human.patch(rt.human.id, { monthly_cap_usd_micro: 1_030_000 });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      await expect(
+        client.startSession({
+          agentId,
+          projectId: project.id,
+          budgetUsdMicro: 2_000_000,
+          useOtherCredential: true,
+        }),
+      ).rejects.toThrow(/more than what is left of your monthly cap/);
+      const row = await rt.store.billingSource.mustGet(subscription);
+      expect((row.limits as { grant?: unknown }).grant).toBeUndefined();
+      expect(await rt.store.session.forProject(project.id, { limit: 5 })).toHaveLength(0);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
 });

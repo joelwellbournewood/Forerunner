@@ -5721,7 +5721,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         sessionCapFromSettings(project.settings, clock.now(), DEFAULT_SESSION_CAP_USD_MICRO)
           .usdMicro;
       return startCheck(
-        { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
+        {
+          store,
+          estimates,
+          defaultEstimateUsdMicro: 500_000,
+          sandbox: sandbox.gate,
+          // C4b-left-5: one critic call's worst case, as the runner keeps room for it.
+          reviewCallUsdMicro: (task, specialist) => critic.reviewCallUsdMicro(task, specialist),
+        },
         project.id,
         cap,
       );

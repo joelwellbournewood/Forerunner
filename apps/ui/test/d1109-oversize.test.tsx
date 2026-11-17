@@ -393,3 +393,54 @@ describe("d1109-oversize-pause, run C: the Start dialog and chat say the plan's 
     );
   });
 });
+
+/**
+ * C4b-left-5 (d1109-cred-screens, BA-12; the owner's answer of 2026-11-16: a task's budget counts
+ * "critics reviews, and fixes"): the Start dialog says before Start when a task's own budget may
+ * leave too little for its review, which then waits for Continue. Before, it said nothing.
+ */
+describe("d1109-cred-screens, run C: the Start dialog warns when a task's budget may leave too little for its review (C4b-left-5)", () => {
+  it("one line per such task under the plan; a roomy budget or none says nothing; Start stays on", async () => {
+    const harness = createHarness();
+    const t = harness.daemon.state.tasks.find((x) => x.id === "task_3");
+    if (!t) throw new Error("fixture changed");
+    t.title = "Add a footer line with the club's name to index.html";
+    t.riskTier = 1;
+    t.estimate = money(50_000);
+    // CHF 0.07 at the fixtures' rate: its work and its review part leave less than one review
+    // call's worst case.
+    t.budget = money(90_000);
+    harness.daemon.state.tasks.push({
+      ...t,
+      id: "task_roomy",
+      title: "Write the about page",
+      budget: money(20_000_000),
+    });
+    const user = userEvent.setup();
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    const lines = await within(dialog).findByTestId("start-session-review-may-wait");
+    expect(
+      within(lines)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual([
+      '"Add a footer line with the club\'s name to index.html": its budget of CHF 0.07 may leave too little for its review, which then waits for Continue.',
+    ]);
+    expect(dialog).not.toHaveTextContent(/"Write the about page": its budget/);
+    expect(within(dialog).getByTestId("confirm-start-session")).toBeEnabled();
+  });
+
+  it("no line when every task's budget holds its work and its review", async () => {
+    const harness = createHarness();
+    const user = userEvent.setup();
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    await within(dialog).findByTestId("start-session-plan");
+    expect(within(dialog).queryByTestId("start-session-review-may-wait")).toBeNull();
+  });
+});

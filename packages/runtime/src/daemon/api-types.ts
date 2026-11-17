@@ -2064,6 +2064,15 @@ export const StartCheckView = z.object({
     })
     .nullable()
     .default(null),
+  /**
+   * C4b-left-5 (d1109-cred-screens, BA-12): the tasks the session takes whose own budget may
+   * leave too little for their review, each with the dialog's line ('"X": its budget of CHF 0.10
+   * may leave too little for its review, which then waits for Continue.'), in run order; empty
+   * from an older daemon.
+   */
+  reviewMayWait: z
+    .array(z.object({ taskId: z.string(), title: z.string(), line: z.string() }))
+    .default([]),
 });
 export type StartCheckView = z.infer<typeof StartCheckView>;
 

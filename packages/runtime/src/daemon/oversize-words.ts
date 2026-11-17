@@ -201,3 +201,14 @@ export function continuesLine(who: string, title: string): string {
 export function takenLine(title: string, room: ChfAmount): string {
   return `Took ${quoted(title)}, larger than this session's work budget, with ${about(room)} left.`;
 }
+
+/**
+ * C4b-left-5 (d1109-cred-screens, BA-12; the owner's answer of 2026-11-16: a task's budget counts
+ * "critics reviews, and fixes"): the Start dialog's line for a task whose own budget may leave too
+ * little for its review: '"Add a footer line with the club's name to index.html": its budget of
+ * CHF 0.10 may leave too little for its review, which then waits for Continue.' (the review then
+ * waits with one card whose Continue adds to its budget, BA-3).
+ */
+export function reviewMayWaitLine(title: string, budget: ChfAmount): string {
+  return `${quoted(title)}: its budget of ${plain(budget)} may leave too little for its review, which then waits for Continue.`;
+}

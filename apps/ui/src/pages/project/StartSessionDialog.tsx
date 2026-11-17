@@ -546,6 +546,22 @@ export function StartSessionDialog({
             ) : data && plan ? (
               <BlockerLines check={data} />
             ) : null}
+            {/* C4b-left-5 (BA-12): a task whose own budget may leave too little for its review
+                (a task's budget counts its work, the critic's reviews and the fixes: the owner,
+                2026-11-16); its review then waits for Continue. At most three named. */}
+            {!blocked && plan && (data?.reviewMayWait?.length ?? 0) > 0 ? (
+              <ul
+                className="list-disc pl-5 text-sm text-amber-900 dark:text-amber-100"
+                data-testid="start-session-review-may-wait"
+              >
+                {(data?.reviewMayWait ?? []).slice(0, 3).map((t) => (
+                  <li key={t.taskId}>{t.line}</li>
+                ))}
+                {(data?.reviewMayWait?.length ?? 0) > 3 ? (
+                  <li>and {(data?.reviewMayWait?.length ?? 0) - 3} more</li>
+                ) : null}
+              </ul>
+            ) : null}
             <Field
               label="Session budget (CHF)"
               hint={`${

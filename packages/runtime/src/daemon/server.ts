@@ -183,6 +183,7 @@ import { createDocsRoutes } from "./docs-routes.ts";
 import { joinPreview, sharesRepositoryWith } from "./join-preview.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
 import { overBudgetView, oversizedView } from "./oversize-view.ts";
+import { reviewMayWaitLine } from "./oversize-words.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
 import { planTaskViews } from "./plan-tasks.ts";
 import type { StartsWait } from "./project-status.ts";
@@ -1537,6 +1538,17 @@ export function createDaemonApp(
     ).usd_micro;
     return Math.max(0, cap - spent);
   };
+  /** A session budget above what is left this month is refused in words (design §3.6). */
+  const refuseOverMonth = async (budgetUsdMicro: number | undefined) => {
+    if (budgetUsdMicro === undefined) return;
+    const left = await monthLeftUsdMicro();
+    if (left !== null && budgetUsdMicro > left)
+      throw new ForerunnerError(
+        "validation",
+        `That is more than what is left of your monthly cap (${formatChf(usdToChfMicro(left, chf()))}). Give the session less, or raise the cap in Settings.`,
+        { details: { cause: "budget_over_month", leftUsdMicro: left } },
+      );
+  };
   /**
    * d1109-cred-screens (CS-3): which Claude does the work, as the Start dialog says it, and the
    * stop its "Use API key" acts on (`credential-start.ts`). The figure is the runnable work's
@@ -1677,6 +1689,15 @@ export function createDaemonApp(
       // the work that fits, with the warning the Start dialog shows; Start is not refused for it.
       oversized: oversizedView(r, rate),
       credential: credential.view,
+      // C4b-left-5: a task whose own budget may leave too little for its review.
+      reviewMayWait: (r.reviewMayWait ?? []).map((t) => ({
+        taskId: t.taskId,
+        title: t.title,
+        line: reviewMayWaitLine(t.title, {
+          chfMicro: usdToChfMicro(t.budgetUsdMicro, rate),
+          text: formatChf(usdToChfMicro(t.budgetUsdMicro, rate)),
+        }),
+      })),
     };
     return c.json(view);
   });
@@ -1816,9 +1837,12 @@ export function createDaemonApp(
       if (!offer)
         throw new ForerunnerError(
           "validation",
-          "Your API key cannot take this work now: your first choice serves, your choice moves to it by itself, or the key cannot serve either.",
+          "Use API key is not offered for this start now: open Start again to see what it does.",
           { details: { cause: "use_other_not_offered" } },
         );
+      // The money checks come before the yes: a start refused for its budget writes no yes for
+      // the stop (before, the yes stood and the key served the next pick, although nothing ran).
+      await refuseOverMonth(body.budgetUsdMicro);
       const kept =
         (await keptContinuationOf(rt.store, body.projectId)) ??
         (await keptStartOf(rt.store, body.projectId));
@@ -1872,15 +1896,7 @@ export function createDaemonApp(
     }
     // A budget above what is left this month is refused in words (design §3.6); 0 and negative
     // amounts never pass the body's schema.
-    if (body.budgetUsdMicro !== undefined) {
-      const left = await monthLeftUsdMicro();
-      if (left !== null && body.budgetUsdMicro > left)
-        throw new ForerunnerError(
-          "validation",
-          `That is more than what is left of your monthly cap (${formatChf(usdToChfMicro(left, chf()))}). Give the session less, or raise the cap in Settings.`,
-          { details: { cause: "budget_over_month", leftUsdMicro: left } },
-        );
-    }
+    await refuseOverMonth(body.budgetUsdMicro);
     // Nothing a session could run (design §3.6, §4.8: nothing runnable means no session):
     // refused with the Start dialog's sentence, as the chat's session.start is. The dialog
     // disables Start then, but Continue where it stopped, the phone and the API did not ask

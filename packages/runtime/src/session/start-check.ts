@@ -1,4 +1,4 @@
-import type { StateStore, WaitsOn } from "@forerunner/state";
+import type { StateStore, TaskRow, WaitsOn } from "@forerunner/state";
 import {
   type EstimatePort,
   estimateLeftUsdMicro,
@@ -112,6 +112,15 @@ export interface StartCheck {
    * tasks holds, in run order (`later` is cut to it): they wait for a later Start.
    */
   laterBeyond: StartCheckTask[];
+  /**
+   * C4b-left-5 (d1109-cred-screens, BA-12; the owner's answer of 2026-11-16: a task's budget
+   * counts "critics reviews, and fixes"): the tasks the session takes whose own budget may leave
+   * too little for their review: what is left of the budget is less than the task's estimate
+   * plus one critic call's worst case at its review tier (`CriticPort.reviewCallUsdMicro`'s
+   * `worstUsdMicro`, what the runner keeps room for). Its review then waits for Continue (BA-3).
+   * Empty without a critic that prices its call, or for tasks without a budget of their own.
+   */
+  reviewMayWait: { taskId: string; title: string; budgetUsdMicro: number }[];
 }
 
 /**
@@ -164,6 +173,8 @@ export async function startCheck(
     defaultEstimateUsdMicro?: number;
     /** The runner's gate (U-079): asked as the runner asks it, before the plan. */
     sandbox?: Pick<SandboxGate, "check">;
+    /** C4b-left-5: one critic call's worst case at a task's review tier (the runner's `W`). */
+    reviewCallUsdMicro?: (task: TaskRow, specialist?: string) => Promise<{ worstUsdMicro: number }>;
   },
   projectId: string,
   sessionBudgetUsdMicro: number,
@@ -306,11 +317,36 @@ export async function startCheck(
       ...(kept && kept.usdMicro > 0 ? { spentUsdMicro: kept.usdMicro } : {}),
     };
   }
+  // C4b-left-5: a task the session takes whose own budget may not hold its work and its review
+  // (estimate plus W against what is left of it), in run order.
+  const reviewMayWait: StartCheck["reviewMayWait"] = [];
+  if (deps.reviewCallUsdMicro) {
+    const rows = new Map(
+      [...runnableRows, ...waiting.map((w) => w.task)].map((t) => [t.id, t] as const),
+    );
+    for (const t of [...runs.map(named), ...later]) {
+      const row = rows.get(t.taskId);
+      if (!row || !(row.budget_usd_micro > 0)) continue;
+      const worst = await deps
+        .reviewCallUsdMicro(row, row.specialist ?? undefined)
+        .then((p) => p.worstUsdMicro)
+        .catch(() => 0);
+      if (!(worst > 0)) continue;
+      const left = Math.max(0, row.budget_usd_micro - row.actual_cost_usd_micro);
+      if (t.estimateUsdMicro + worst > left)
+        reviewMayWait.push({
+          taskId: row.id,
+          title: row.title,
+          budgetUsdMicro: row.budget_usd_micro,
+        });
+    }
+  }
   return {
     projectId,
     sessionBudgetUsdMicro,
     workBudgetUsdMicro,
     ready: ready.length,
+    reviewMayWait,
     runnable: runs.map(named),
     overBudget: leftOut.map((i) => ({
       ...named(i),

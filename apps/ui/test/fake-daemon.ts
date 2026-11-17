@@ -150,6 +150,7 @@ import {
   leftOutSentence,
   oversizedAsk,
   oversizedSentence,
+  reviewMayWaitLine,
 } from "@forerunner/runtime/daemon/oversize-words";
 import { planTaskViews } from "@forerunner/runtime/daemon/plan-tasks";
 import type { StartsWait } from "@forerunner/runtime/daemon/project-status";
@@ -1035,6 +1036,12 @@ function fakePrice(t: TaskView): number {
 }
 
 /** d1116-budget-all (BA-10): a task's one figure, its work, reviews and fixes (as the ledger). */
+/**
+ * C4b-left-5: one critic call's worst case at a light review, as the daemon's critic prices it
+ * (`reviewCallUsdMicro`) for the stand-in model (USD 0.018).
+ */
+const FAKE_REVIEW_CALL_WORST_USD_MICRO = 18_000;
+
 function fakeTotal(t: Pick<TaskView, "actual" | "spent">): number {
   return Math.max(t.actual.usdMicro, t.spent?.usdMicro ?? 0);
 }
@@ -1262,6 +1269,15 @@ function fakeStartCheck(
     oversized,
     // d1109-cred-screens (CS-3): set per project by the route (`state.startCredential`).
     credential: null,
+    // C4b-left-5, as the daemon: a task the session takes whose own budget may leave too little
+    // for its review (its figure plus one critic call's worst case against what is left).
+    reviewMayWait: [...runnable, ...later].flatMap((r) => {
+      const t = byId.get(r.taskId);
+      if (!t || !(t.budget.usdMicro > 0)) return [];
+      const left = Math.max(0, t.budget.usdMicro - fakeTotal(t));
+      if (r.estimate.usdMicro + FAKE_REVIEW_CALL_WORST_USD_MICRO <= left) return [];
+      return [{ taskId: t.id, title: t.title, line: reviewMayWaitLine(t.title, chf(t.budget)) }];
+    }),
     monthLeft: money(FAKE_MONTH_LEFT_USD_MICRO),
     busy: opts.busy ?? false,
     planning: false,
@@ -3419,7 +3435,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           c,
           400,
           "validation",
-          "Your API key cannot take this work now: your first choice serves, your choice moves to it by itself, or the key cannot serve either.",
+          "Use API key is not offered for this start now: open Start again to see what it does.",
         );
       state.credentialGrants.push(parsed.data.projectId);
       delete state.credentialWaitNow[parsed.data.projectId];
