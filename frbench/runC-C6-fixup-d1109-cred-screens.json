@@ -1,0 +1,191 @@
+{
+  "area": "d1109-cred-screens",
+  "branch": "fix/d1109-cred-screens",
+  "head_sha": "d6344cd",
+  "commits": [
+    {
+      "sha": "4ec635c",
+      "subject": "start dialog and plan card: Start at 15:40 is the Wait, a yes names the key, Use API key only for a start that runs (U-078, CS-3, CS-4)"
+    },
+    {
+      "sha": "9fd65c6",
+      "subject": "settings, start dialog and costs: Stop using it says what it does; the fake mirrors the offer gate and By credential (U-078, CS-1, CS-3, CS-9)"
+    },
+    {
+      "sha": "d6344cd",
+      "subject": "docs: Start at 15:40 is the Wait, a yes names the key, Use API key only for a start that runs (U-078, ADR 0120)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "Review blocking 1. The preset was 'Subscription first, ask before API key'. Pressing 'Start at 15:40' in the Start dialog kept the start, but it also filed the card 'Use your API key until 15:40?' with an urgent notification. When the dialog was opened again it said 'Waits for your answer'. The spec says the opposite: 'under ask it also records the person's Wait for this stop, so no card follows'.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-cred-screens, run C' > \"CS-3 (fix-up): under 'ask', 'Start at 11:40' is the person's Wait for this stop: one start kept and no ask card, also after a restart\" (before the fix: expected [] but got ['Use your API key until 11:40?'])",
+      "how": "Root cause: compose.ts continuations.keepStart calls taskBilling.noteWait, and under 'ask' noteWait's CE-7 ask files the card. The server's recordWait ran only after that, found asking.stopKey already set, and did nothing. Now keepStart records the person's Wait for the stop first (recordWait, under 'ask' only), so noteWait files no card. recordWait (session/credential-ask.ts) has a new signature: recordWait({store, clock, humanId}, {sourceId, stopKey}) -> {closedCard}. If an ask card for the same stop is already open (another project's work met the stop first), it is answered 'Wait' and applied at once: outcome waited, Done line 'Nothing moves until 15:00; then your session goes on.'. So one stop asks one question, also after a restart. The server's recordWait call after keepStart is removed. A runtime case in credential-ask-words.test.ts covers the open-card case (answered Wait, no card after a restart).",
+      "check_in_the_app": "Bench (bench-api with a key and a subscription): set 'Subscription first, ask before API key' and rest the subscription. Open Start on a project with ready tasks. The dialog shows 'Your subscription is at its limit until HH:MM.', then Use API key, then Start at HH:MM. Press Start at HH:MM. The header reads 'Starts at HH:MM (your subscription's limit)' with Cancel. The Inbox has no 'Use your API key' card and there is no urgent notification. Open Start again: no 'Waits for your answer'. Restart the daemon: still no card. Seen on the bench: /tmp/frbench/fixup-d1109-cred-screens/steps/03..07-fx-b1-*. Live check 4: under 'ask', when the owner's real subscription meets its limit, open Start on a project with ready work and press Start at HH:MM. Confirm that no ask card and no urgent notification appear. If an ask card was already open, confirm it now shows in Answered as Wait with 'Nothing moves until HH:MM; then your session goes on.'."
+    },
+    {
+      "problem": "Review blocking 2. While the person's yes stood for the stop (given in the Start dialog or on the ask card), every task line on the plan card said 'Waits until 03:37 (your subscription's limit). Press Start and the work starts then.' The card's foot line said 'you said yes, so your API key does the work meanwhile', and Approve and start ran the tasks on the key at once.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-cred-screens, run C' > \"CS-4 (fix-up): with a yes standing for the stop, no task line of the plan card says it waits; the foot line says the yes\" (before the fix, each line was 'Waits until 09:40 (your subscription's limit). Press Start and the work starts then.')",
+      "how": "Root cause: compose.ts chooserBatch replaced the first choice's wait line only when the rule was 'next', and never read a grant. It now reads, once per batch, the limits.grant on each blocked source and keeps it when its stopKey matches the source's current stop (currentStopOf through the batch's vault-memo view). The credential the person said yes to then serves, as the pick does. The task line becomes that credential's choice, here {kind: api_key, line: null}, as under 'then API key'. New task's and Settings' runs-on lines use the same chooserBatch; the test asserts them through GET /settings/models with a projectId.",
+      "check_in_the_app": "Bench: under 'ask' with the subscription rested, an open plan card has a task line 'Waits until HH:MM ... Press Start and the work starts then.'. Press Use API key in the Start dialog of another project with ready tasks. The plan card's foot then reads '...: you said yes, so your API key does the work meanwhile.' and no task line says Waits until. Seen on the bench: steps 08-fx-b2-01 (before) and 10-fx-b2-03 (after). Live check 4: after pressing Use API key on the ask card or in the dialog, open the Inbox plan card. The task lines name no wait, and Approve and start runs the tasks on the key."
+    },
+    {
+      "problem": "Review blocking 3. The Start dialog offered 'Use API key' ('about CHF 0.00') when nothing could run, and under Stop all. Pressing it wrote the person's standing yes (limits.grant by 'start') before the start was refused, so every project's work and chat moved onto the key for a start that never ran.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-cred-screens, run C' > 'CS-3 (fix-up): Use API key is offered only for a start that runs something; a start refused for nothing to run or for Stop all writes no yes' (before the fix, runOut was offered with 'about CHF 0.00'); apps/ui/test/credential-start.test.tsx 'nothing to run: no Use API key ...' and 'Stop all: no Use API key ...' (failed before the fake daemon change)",
+      "how": "Root cause: credential-start.ts startCredential never read the runnable work. Also, server.ts POST /sessions wrote grantForStart before its removed-project, nothing-runnable and Stop all checks. Changes: startCredential takes a new facts parameter {runsWork, stopped}. The server passes runsWork(check) and kill.isFrozen. A start that runs nothing (with no session of the project waiting to go on and no kept start) or that Stop all refuses now gets no stopped-first-choice line (no 'so this runs on your API key', no 'You said yes ...') and no runOut or offer. In POST /sessions with useOtherCredential, the removed-project check comes first. A start with no offer is refused with its own reason: the Stop all message (killed), the start's sentence ('Nothing can run: no task is ready.'), or the generic sentence. The yes is written only after every refusal, right before the start. A kept continuation or kept start writes it just before it goes on. Use API key never keeps a start for the reset. The fake daemon mirrors the offer gate and the refusal.",
+      "check_in_the_app": "Bench: under 'ask' with the subscription rested, open Start on a project whose only task is a draft. The dialog shows 'Nothing can run: no task is ready.' and has no Use API key. A POST with useOtherCredential is refused and limits.grant stays empty. With Stop all on, a project with ready tasks shows 'Sessions are stopped (Stop all), so nothing can start.' and no Use API key. Seen on the bench: steps 01/02-fx-b3-*. Live check 4: with the real subscription at its limit, open Start on a project with nothing ready and confirm there is no Use API key. Then confirm in Settings that the now line does not say 'you said yes'."
+    },
+    {
+      "problem": "Review non-blocking (design §3: every action has a one-line consequence). Settings' 'Stop using it' had no line saying what it does.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/credential-policy.test.tsx 'with a yes standing the now line says so, and Stop using it ends it (the next pick waits)' (the new credential-policy-end-grant-explain assertion; the element did not exist)",
+      "how": "CredentialPolicyView gains grantEndLine, built by credential-policy-view.ts grantEndLine: 'Stop using it: what already runs on your API key finishes; new work waits for your subscription.' It is shown under the now line while a yes stands. The real-daemon CS-1 grant case asserts it. The fake builds its view with the daemon's own builder.",
+      "check_in_the_app": "Settings > Which Claude does the work, with a yes standing: under 'Your work and chat use your API key until HH:MM: you said yes.' with Stop using it, the line 'Stop using it: what already runs on your API key finishes; new work waits for your subscription.' appears. Press it: the line goes and the now line says the work waits. Seen on the bench: steps 11/12-fx-cs1-*."
+    },
+    {
+      "problem": "Review non-blocking (validation rule: a changed route needs its fake). The fake daemon's GET /costs never served CostView.byCredential.",
+      "u_ids": [
+        "U-078",
+        "U-074"
+      ],
+      "failing_test_before": "none (fixture coverage; the CS-9 UI test sets the field itself)",
+      "how": "apps/ui/test/fixtures.ts COSTS: proj_atlas carries byCredential with rows that add up to its total (API key CHF 22.40, subscription CHF 2.60 at 12% of its allowance). proj_beacon carries an empty list.",
+      "check_in_the_app": "No change visible on the daemon. In UI tests, Project > More > Costs on the fake shows 'By credential'."
+    },
+    {
+      "problem": "Review non-blocking (fix_scope restart list): no test ran a preset's Undo after a restart.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "none (new coverage; it passed on the first run)",
+      "how": "Real-daemon case \"CS-1 (fix-up): a preset's Undo works after a restart; the section shows the earlier preset again\": the pick's undoToken is used after the daemon is composed again on the same home.",
+      "check_in_the_app": "Settings: pick 'Subscription first, ask before API key' and restart the app. In Changes, press Undo on that row: the section shows 'Subscription first, then wait' again."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "Review non-blocking: 'Start on 1 Dec' for a share or key-month stop starts a session that stops at once and says 'Started: ...'. Its label is 5 words.",
+      "why": "keepStart keeps a start only for reason 'limit', and continuations / keepStartAtReset are d1109-starts-engine's engine (S-10). Keeping a start for a month-end reset changes that engine's wake. Left for a follow-up with the session lead's decision."
+    },
+    {
+      "problem": "Review non-blocking: when the stop line replaces the plan sentence, the Start dialog no longer names the tasks that will run. Three different figures exist for the same waiting work (ask card, dialog, plan card).",
+      "why": "These are words and layout across three areas' estimates, not a promise the app breaks. Left for a words pass."
+    },
+    {
+      "problem": "Review non-blocking: the Use API key line is over 100 characters when the subscription was refused. Settings' now line under 'ask' before a card is filed says '...; the work waits for it.'",
+      "why": "Both sentences are true. The second would need the asking mark in CredentialFacts to tell 'you are asked' from 'you already said wait'. Left for a words pass."
+    },
+    {
+      "problem": "Review non-blocking: the share wait on the status line and the session page has Cancel only; Change the allowance is only on the run bar.",
+      "why": "The status line is d1109-run-visible's (project-status.ts) and the session page block is shared with it. Not changed in this fix-up."
+    },
+    {
+      "problem": "Review non-blocking: chat's one-off press sends the question again as a new person line, so it shows twice.",
+      "why": "Conversation.tsx is shared with d1109-selftasks-chat in C6. Left to avoid a merge conflict; it is a display duplicate, not a second model call (the bench showed one call on the key)."
+    },
+    {
+      "problem": "Review non-blocking: the spec's Playwright cases for the Settings section and the Start dialog at phone and desktop widths.",
+      "why": "Not added. The reviewer checked 390 px by hand with no sideways scroll, and Playwright 38/38 passes with the real Vite build."
+    },
+    {
+      "problem": "The 'needs' row form of CS-5 ('Waits for your API key: only it can read web pages here.')",
+      "why": "As in the fixer's report: the wait entry does not carry the task's need (the engine's wait record). CS-5 is on the never-cut list, so the session lead decides."
+    }
+  ],
+  "validation": [
+    {
+      "command": "flock /tmp/frbench/heavy.lock pnpm check (on d6344cd)",
+      "result": "exit 0: lint, lint:paths, typecheck, unit 538 files / 5801 passed, 7 skipped; link-check ok (213 files); secret-scan clean. docs-check cannot diff origin/main here, so it was run separately."
+    },
+    {
+      "command": "pnpm docs:check -- --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (92 files)"
+    },
+    {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts",
+      "result": "101 files, 1347 passed"
+    },
+    {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts (real Vite build)",
+      "result": "38 passed"
+    },
+    {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "5 files passed, 6 skipped; 30 passed, 81 skipped (the Postgres-backed suites skip without FORERUNNER_TEST_PG)"
+    },
+    {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "13 files passed; 25 passed, 1 skipped"
+    },
+    {
+      "command": "vitest --project unit packages/runtime/test/{billing-*,continuation,credential-*,starts-words,oversized-task,task-usage-limit,subscription-path,task-budget-all}",
+      "result": "170 passed (includes the changed credential-ask-words.test.ts)"
+    },
+    {
+      "command": "real-daemon 'd1109-cred-screens, run C' describe",
+      "result": "18 passed (14 before plus 4 new fix-up cases). The 3 blocking cases failed first, on the assertions quoted in fixed[].failing_test_before."
+    },
+    {
+      "command": "Bench walk (fixup-d1109-cred-screens, --provider bench-api --api-key ok --subscription; scripts at /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fxwalk/walk.cjs and walk2.cjs; results in /tmp/frbench/fixup-d1109-cred-screens/steps/fx-walk.out.json)",
+      "result": "B3: nothing-to-run dialog shows no Use API key, the POST is refused with 'Nothing can run: no task is ready.', no grant written. Stop all: no Use API key, no grant. B1: 'Start at 04:28' kept ('Starts at 04:28 (your subscription's limit)' with Cancel); the Inbox has only the plan card; limits.asking.answer = 'wait'; no notifications; after a daemon restart still no ask card. B2: before the yes, a plan task line read 'Waits until 04:28 ... Press Start ...'. After Use API key on Garden, the foot read '...: you said yes, so your API key does the work meanwhile.' and the task lines were {api_key, null}; Garden's tasks ran to done on the key. Settings showed the Stop using it line; pressing it removed the grant. Bench stopped and its home deleted."
+    },
+    {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing found"
+    },
+    {
+      "command": "cargo checks",
+      "result": "not run: the desktop shell was not touched"
+    }
+  ],
+  "new_problems": [
+    "Seen on the bench, not changed. After 'Start at 04:28' the reopened dialog says 'Nothing can run until 04:28 (your subscription's limit); then your session goes on.' with 'Cancel the wait' for a kept person start, which is not a continuation. This is d1109-starts-engine's kept-start sentence; 'a session starts then' would match the header's 'Starts at 04:28'. Evidence: /tmp/frbench/fixup-d1109-cred-screens/steps/06-fx-b1-03-start-dialog-again.txt.",
+    "A POST /sessions refused for nothing to run answers HTTP 409 with code 'conflict', although the daemon raises a 'validation' error in both paths. Evidence: fx-walk.out.json b3NothingPost. It is the same answer as the plain Start, so the UI shows the sentence; no fix needed for the person."
+  ],
+  "notes_for_other_areas": [
+    "recordWait (packages/runtime/src/session/credential-ask.ts) changed signature: recordWait({store, clock, humanId}, {sourceId, stopKey}) -> {closedCard}. Besides marking limits.asking {answer: 'wait'} for the stop, it answers an open credential:ask card of that stop with 'Wait' and applies it (outcome waited, session_goes_on true). Its only caller is continuations.keepStart in compose.ts, under 'ask', before noteWait. server.ts no longer calls it.",
+    "startCredential(deps, projectId, estimateUsdMicro, facts = {runsWork: true, stopped: false}) in credential-start.ts. When facts.stopped is set, or when nothing runs (no runnable work, no kept continuation, no kept start), it returns {view: {line: null, runOut: null}, offer: null} for a stopped first choice. server.ts credentialAtStart passes runsWork(check) (start-blocked.ts) and kill.isFrozen.",
+    "POST /sessions with useOtherCredential checks a removed project first. Without an offer it refuses with the Stop all message (killed), the start's nothing-runnable sentence, or the generic sentence. It writes grantForStart only after every refusal, right before requestStart. It never calls keepStart. The removed-project check now runs before the continuation-wait check for every start (same sentence as before).",
+    "compose.ts chooserBatch now honours a standing grant. Per batch, granted maps a blocked kind to the kind its grant (limits.grant, for the source's current stop) names. A task whose choice is that blocked kind gets the next choice restricted to the granted kind. The plan card, New task and Settings' specialists' runsOn follow it.",
+    "CredentialPolicyView (credential-policy-types.ts) gains grantEndLine: string | null. It is set only while grant is true: 'Stop using it: what already runs on your API key finishes; new work waits for your subscription.' The UI shows it as credential-policy-end-grant-explain.",
+    "Fake daemon: GET /projects/:id/start-check drops credential.runOut (to {line: null, runOut: null}) when state.killActive, or when nothing is runnable, nothing is oversized and there is no goesOnLine. POST /sessions with useOtherCredential refuses nothing-runnable with the start's sentence before recording credentialGrants. COSTS.proj_atlas carries byCredential.",
+    "For d1109-selftasks-chat (merging after this area): this fix-up touches POST /sessions in server.ts (not GET /sessions/:id), compose.ts keepStart and chooserBatch, credential-ask.ts, credential-start.ts, credential-policy-view.ts and -types.ts, CredentialPolicySection.tsx, fake-daemon.ts (start-check and POST /sessions), fixtures.ts COSTS, and the 'd1109-cred-screens, run C' real-daemon describe (4 cases appended). It touches none of SessionPage.tsx, InboxPage.tsx, TaskDrawer.tsx or Conversation.tsx.",
+    "Suggested UPDATE-LOG/CHANGELOG line: 'Start at 15:40 under ask before API key is your answer for that stop (no card follows); while your yes stands the plan card names the key for each task; Use API key appears only for a start that runs something and is never recorded for a refused start; Stop using it says what it does (U-078, ADR 0120 amendment 2026-11-17).'",
+    "Live check 4 additions for this area: (1) under ask, press Start at HH:MM in the Start dialog: no ask card, no urgent notification, and the reopened dialog asks nothing; (2) with a yes standing, the plan card's task lines name no wait; (3) open Start on a project with nothing ready while the subscription is at its limit: no Use API key; (4) Settings with a yes standing shows the Stop using it line, and pressing it ends the yes."
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/review-d1109-cred-screens/steps/28-w5-01-inbox-ask-card-after-start-at.png",
+      "/tmp/frbench/review-d1109-cred-screens/steps/36-w6-01-inbox-plan-cards-under-yes.png"
+    ],
+    "after": [
+      "/tmp/frbench/fixup-d1109-cred-screens/steps/01-fx-b3-01-nothing-to-run-dialog.png",
+      "/tmp/frbench/fixup-d1109-cred-screens/steps/02-fx-b3-02-stop-all-dialog.png",
+      "/tmp/frbench/fixup-d1109-cred-screens/steps/03-fx-b1-01-start-dialog-ask.png",
+      "/tmp/frbench/fixup-d1109-cred-screens/steps/05-fx-b1-02-after-start-at.png",
+      "/tmp/frbench/fixup-d1109-cred-screens/steps/06-fx-b1-03-start-dialog-again.png",
+      "/tmp/frbench/fixup-d1109-cred-screens/steps/07-fx-b1-04-inbox-no-ask-card.png",
+      "/tmp/frbench/fixup-d1109-cred-screens/steps/08-fx-b2-01-plan-card-before-yes.png",
+      "/tmp/frbench/fixup-d1109-cred-screens/steps/10-fx-b2-03-plan-card-under-yes.png",
+      "/tmp/frbench/fixup-d1109-cred-screens/steps/11-fx-cs1-01-settings-yes-stop-using-it.png",
+      "/tmp/frbench/fixup-d1109-cred-screens/steps/12-fx-cs1-02-settings-after-stop-using-it.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "packages/runtime/test/credential-ask-words.test.ts \"a Start kept for the stop's end goes on at once after Use API key, and the Done line says so\" (d1109-cred-engine, FX-CE B3), now \"a Start kept for the stop's end files no ask card (the person's Wait) and goes on at once after the Start dialog's Use API key\"",
+      "why": "It asserted that the kept Start's own wait files the ask card under 'ask'. CS-3 decides the opposite ('under ask it also records the person's Wait for this stop, so no card follows'), and the review's blocking 1 asked for it. The intent is kept: the kept Start goes on at once, as the person's start, on the key, in one session, when the person says Use API key, now in the Start dialog. A new case covers a card filed earlier by other work being answered Wait by the keep, across a restart. The card's Use API key for a kept start (FX-CE B3's code path) is unchanged for a card filed before a keep under another preset."
+    }
+  ]
+}

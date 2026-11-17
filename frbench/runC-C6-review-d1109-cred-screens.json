@@ -1,0 +1,123 @@
+{
+  "verdict": "fix-needed",
+  "acceptance_walk": "Bench \"review-d1109-cred-screens\" (daemon 48790, UI 2390, --provider bench-api --api-key ok --subscription, started from this worktree at 21f3caf). I clicked through Playwright scripts. Stops were staged the way the fixer's walk did it, by patching billing_source.limits: restingUntil, planShareCap 0, refusedAt, monthlyUsdMicro. Screenshots and texts are in /tmp/frbench/review-d1109-cred-screens/steps/. The scripts are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk/. I stopped the bench and deleted its home afterwards.\n\nw1, Settings (steps 01-07): Basics shows \"Which Claude does the work\" right under Accounts and keys. All five presets are there with their lines, and the default is selected with \"Used until you choose: ...\". Clicking \"ask\" from the default brings up a read-back, because the engine ranks wait 0 below ask 1 (CE-13). Change stores it, and the now line becomes \"If your subscription runs out, you are asked before your API key is used.\" Clicking \"then API key\" shows the read-back \"...work goes on with your API key at once, at a cost per use.\" and nothing is stored until Change. Advanced has only the abilities table; its summary reads \"what each Claude credential can do here\".\nw2 (step 08): after a daemon restart the stored preset is still selected.\n\nw3, five presets with the subscription at its limit (steps 09-23):\n- then API key: the now line says \"...; your API key does the work meanwhile.\", the plan card's foot says the run-out form and no task line waits, and the Start dialog says \"Your subscription is at its limit until 03:37, so this runs on your API key (about CHF 0.11).\" with a plain Start.\n- ask: the dialog shows \"Your subscription is at its limit until 03:37.\", then Use API key (primary, with its line), then Start at 03:37.\n- wait: same, with the two buttons in the other order.\n- Key-first presets: the if-runs-out lines.\n\nw4/w5, ask plus \"Start at 03:37\" (steps 24-35): the start is kept and the header reads \"Starts at 03:37 (your subscription's limit)\" with Cancel. But the Inbox also gets \"Use your API key until 03:37?\" with an urgent notification. That is BLOCKING 1. Reopening Start then says \"Nothing can run yet. Waits for your answer: use your API key? The card is in the Inbox.\"\nUse API key ran both tasks on the key and closed the card. The session page shows \"Your API key took over at 03:03 (your subscription's limit): CHF 0.03 of CHF 0.03.\", the log line says '...\" runs on your API key: ..., and you said yes.', the drawer says \"On your API key after your subscription's limit · CHF 0.01\", and Costs shows \"By credential / Your API key: CHF 0.03\".\n\nw6, with that yes standing (steps 36-39): both plan cards show \"Waits until 03:37 (your subscription's limit). Press Start and the work starts then.\" on the task line. Their foot says \"...: you said yes, so your API key does the work meanwhile.\" Approve and start then ran both Quote page tasks on the key at once (billing.switch '... runs on your API key: ..., and you said yes.'). That is BLOCKING 2.\nAfter a restart Settings reads \"Your work and chat use your API key until 03:37: you said yes.\" with Stop using it. Pressing it changes the line to \"...; the work waits for it.\"\n\nw7/w8, ask flow on a new stop (steps 40-49): Approve and start on the Recipes card files one ask card (\"about CHF 0.09\", Use API key primary, Wait). Then:\n- The bar reads \"Recipes · waiting until 03:40, then it goes on\" with Answer next to the words, and Cancel with its line on the right.\n- The status line reads \"Waiting for you: use your API key?\" with Answer, and the row reads \"Waits for your answer: use your API key?\".\n- The session page's wait block has Answer.\n- The Start dialog says \"Your session of 03:05 goes on by itself at 03:40.\" and offers Use API key only.\n- The bar's Answer opens /inbox#card-<id>.\n- The card's Use API key shows \"Done: Your API key does the work until 03:40; your session goes on now.\" The session went on with the bar reading '... works on \"Check that...\" on your API key' and finished on the key.\n\nw9, chat under \"then wait\" (steps 50-53): the hold reply offers Use API key with \"Answers this question on your API key: less than CHF 0.01.\". One press made one call on the key and added the note \"Answered with your API key: ...\". The button is gone after the press.\n\nw10, share stop (steps 54-59): Settings shows \"Share used until Tue 1 Dec\" with Change the allowance. The dialog says \"Your subscription has used its share until Tue 1 Dec.\" with \"Start on 1 Dec\" and Use API key. Pressing \"Start on 1 Dec\" started a session that stopped to wait at once, and the dialog said \"Started: the session works until...\" (non-blocking 1).\n- The bar: \"Garden · waiting until Tue 1 Dec, 00:00, then it goes on\" with Change the allowance and Cancel.\n- The row: \"Waits until Tue 1 Dec (your subscription's share)\".\n- The status line and the session page give the same time.\n\nw11 (steps 60-64): with the key refused, the Settings row reads \"Refused: save a new key\" with its link and the Start dialog has no Use API key. With the key at its monthly cap, the row reads \"Monthly cap reached until Tue 1 Dec\". The C4b-left-5 line appeared word for word for a task with a CHF 0.07 budget.\n\nw12 (C5-left-2, CS-7, C4b-left-6):\n- The bar showed \"... on your API key\", and exactly one credential_switch notification arrived (\"Quote page: work goes on with your API key\").\n- A second session in the same stop gave none.\n- The Continue line reads \"Adds CHF 0.07 to its budget and starts a session that runs only its review.\" and the row's detail quotes \"The work is done; its review waits for room in the budget.\"\n\nw14: at 390 px wide neither the Settings section nor the Start dialog makes the page scroll sideways.\n\nI reproduced two findings at the client boundary against the real daemon with a scratch test, kept outside the worktree at /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/zz-review-ask-start-at.test.ts:\n- ask plus \"Start at 11:40\" leaves the open card \"Use your API key until 11:40?\".\n- With nothing runnable, start-check still offers runOut (\"about CHF 0.00\"). POST /sessions with useOtherCredential is then refused with \"Nothing can run: no task is ready.\", yet limits.grant {to: api_key, by: start} was written.\n\nTests:\n- Every runtime test file the fixer names passes (18 files, 170 tests).\n- The area's UI test files pass (15 files, 254 tests), and so does the 'd1109-cred-screens, run C' real-daemon describe (14/14).\n- Playwright with the real Vite build: 38/38.\n- pnpm check exit 0: lint, typecheck, 538 files / 5800 tests, links, secret scan. docs:check with --base claude/nifty-knuth-f9udt0 is ok.\n- Failing on base: I put the base source back in place (tests kept, then restored; worktree clean). The 14 real-daemon cases, credential-refused-closed (2), oversized-task C4b-left-5 and task-budget-all BA-3 all fail on assertions. For example, the CS-3 'wait' case received \"Nothing can run until 11:40 (your subscription's limit). Press Start and the work starts then.\"",
+  "blocking": [
+    {
+      "issue": "Under 'Subscription first, ask before API key', the Start dialog's 'Start at 15:40' still files the ask card 'Use your API key until 15:40?' for the same stop. The spec decision says 'under ask it also records the person's Wait for this stop, so no card follows', and the CS-3 acceptance says 'under ask no ask card is filed for that stop'.",
+      "evidence": "Bench step 24 (w4-01-after-start-at) shows the kept start 'Starts at 03:37'. Step 28 (w5-01-inbox-ask-card-after-start-at) shows the open card 'Use your API key until 03:37?' plus an urgent request_blocking notification. limits.asking had requestId 01a1e771... at 02:58:34.959, 3 ms before kept.at. Step 30: the reopened Start dialog says 'Nothing can run yet. Waits for your answer: use your API key? The card is in the Inbox.'\nRoot cause: rt.continuations.keepStart (compose.ts:4249) calls taskBilling.noteWait, which under 'ask' files the card (billing-pick.ts:990ff). The recordWait call that runs afterwards (server.ts:1933-1935) then does nothing, because asking.stopKey already equals the stop (credential-ask.ts:113-118). The card stays open.\nNo test covers it: the real-daemon 'Start at' case (real-daemon.test.ts:22249) runs under 'wait' only. My scratch real-daemon reproduction under 'ask' fails with: expected [ 'Use your API key until 11:40?' ] to deeply equal [].",
+      "expected": "Under 'ask', pressing 'Start at 15:40' keeps one person start and leaves no open ask card for that stop: the Wait is recorded before or instead of noteWait's card, or the card is closed as answered 'Wait'. Neither the Inbox, the status line nor the reopened dialog asks again. Add a real-daemon case under 'ask', and a restart variant, as the acceptance asks.",
+      "where": "packages/runtime/src/daemon/server.ts:1927-1935 (and compose.ts:4249 keepStart -> noteWait)"
+    },
+    {
+      "issue": "With the person's yes standing for a stop (from the Start dialog or the ask card's Use API key), the plan card contradicts itself, and its task line promises a wait that does not happen. Each task line says 'Waits until 03:37 (your subscription's limit). Press Start and the work starts then.' while this area's foot line on the same card says 'you said yes, so your API key does the work meanwhile.' Approve and start then runs the tasks on the API key at once. d0ad9cf fixed exactly this contradiction for the 'next' rule only. The grant case is its sibling (validation rule 8), and the plan card is where the person approves money (CS-4).",
+      "evidence": "Bench step 36 (w6-01-inbox-plan-cards-under-yes): both the Quote page and Recipes cards show the 'Waits until 03:37 ...' task line above the 'you said yes, so your API key does the work meanwhile.' foot. Pressing Approve and start on Quote page ran both tasks on the key straight away. The session log's billing.switch reads '\"Build the random quote page ...\" runs on your API key: your subscription is at its limit until 03:37, and you said yes.' and the switchLine reads 'Your API key took over at 03:04 ...: CHF 0.04 of CHF 0.04.'\nRoot cause: compose.ts chooserBatch (around 4105-4127) replaces the first choice's wait line only when credentialPolicyOf(prefs).rule.whenStopped === 'next'. It never checks a grant on the stopped source, which the pick honours.",
+      "expected": "While a yes stands for the first choice's stop, the plan card's task lines (and New task's runs-on line, which shares chooserBatch) name the key that does the work, as under 'then API key'. No line says the task waits. Test it at GET /inbox on the real daemon with a grant written by POST /sessions useOtherCredential.",
+      "where": "packages/runtime/src/daemon/compose.ts:4105-4127 (chooserBatch)"
+    },
+    {
+      "issue": "The Start dialog offers 'Use API key' even when nothing can run. The offer is computed without looking at the runnable work, and the dialog shows runOut whatever the blocked state is. Pressing it writes the person's standing yes (limits.grant: 'Your work and chat use your API key until 11:40') and only then is the start refused ('Nothing can run: no task is ready.'). The yes then moves every other project's work and chat onto the API key until the stop ends, from a start that never happened. The offer line also reads 'about CHF 0.00'. f02f441 fixed the same class for a start refused for its budget ('writes no yes'), but not this sibling. Starts refused for Stop all reach the grant before the refusal by the same path.",
+      "evidence": "Scratch real-daemon reproduction (subscription_then_ask, subscription resting until 10:40 UTC, a project with only a draft task). GET start-check returned blocked {kind: nothing_runnable, sentence: 'Nothing can run: no task is ready.'} together with credential.runOut {use: {explain: 'Runs now on your API key until 11:40, about CHF 0.00; nothing passes this session's budget.'}, later: 'Start at 11:40'}. POST /sessions {useOtherCredential: true} was refused with 'Nothing can run: no task is ready.' Afterwards the subscription row held grant {to: 'api_key', stopKey: 'limit:2026-03-05T10:40:00.000Z', by: 'start'}.\nCode paths: startCredential (credential-start.ts) never reads the runnable work. In StartSessionDialog.tsx, `runOut = notice ? null : credential?.runOut`, and the stops guard is skipped for useOther. server.ts writes grantForStart before the S-10 and nothing_runnable checks (server.ts ~1840-1860 versus ~1910).",
+      "expected": "Use API key is offered only when the start would run something: something is runnable or the project's own session waits to go on, and sessions are not stopped. The daemon writes the yes only after every refusal check has passed (nothing runnable, the kill switch, the budget). Add a real-daemon case asserting that no grant is written for a refused start, plus the dialog case.",
+      "where": "packages/runtime/src/daemon/server.ts:1838-1882; packages/runtime/src/daemon/credential-start.ts:68-160; apps/ui/src/pages/project/StartSessionDialog.tsx:398"
+    }
+  ],
+  "claims_checked": [
+    {
+      "claim": "CS-1: Settings > Basics 'Which Claude does the work': one radio group, the default shown as used until a pick, rows with role, state and month, a read-back for a widening pick, and the pick persisting across a restart",
+      "holds": true,
+      "note": "Bench w1/w2 plus the real-daemon CS-1 cases. Picking 'ask' from the default also reads back (CE-13 ranks wait 0 below ask 1), so the acceptance's 'acts at once' holds only from a higher preset."
+    },
+    {
+      "claim": "CS-2: Advanced has no order list and no mid-session row; POST /settings/billing-order maps onto the policy",
+      "holds": true,
+      "note": "Bench step 06 and the real-daemon CS-2 case. The palette count change 23 -> 22 follows the design."
+    },
+    {
+      "claim": "CS-3: under ask/wait the Start dialog shows the stop line, Use API key and Start at 15:40 with the preset's lean first, and Start at keeps one person start with no ask card under ask",
+      "holds": false,
+      "note": "The words, the order and the kept start hold. Under ask an ask card is still filed (blocking 1), and Use API key is offered and writes a yes when nothing can run (blocking 3)."
+    },
+    {
+      "claim": "CS-3: Use API key on the project's waiting session makes it go on now on the key; the grant survives a restart",
+      "holds": true,
+      "note": "Bench w7/w8 (via the card) and w5 (via the dialog). The real-daemon CS-3 'ask' case composes twice. The bench grant survived a daemon restart (step 38)."
+    },
+    {
+      "claim": "CS-4: the plan card's foot line follows the preset and the stop; under 'then API key' no task line says it waits",
+      "holds": false,
+      "note": "The foot line holds, and the 'then API key' case holds. With a yes standing the task lines still say 'Waits until ...' under a foot that says the key does the work (blocking 2)."
+    },
+    {
+      "claim": "CS-5 / C4b-left-6: rows and the status line give every stop and the question in words; Continue runs only the review",
+      "holds": true,
+      "note": "The share, key-month, ask and limit rows were seen on the bench. The status line reads 'Waiting for you: use your API key?' with Answer. The 'needs' form is in not_done although CS-5 is on the never-cut list."
+    },
+    {
+      "claim": "CS-6 / C5-left-1: switch log line, session page switch line, result line, drawer run line, not written twice after a restart",
+      "holds": true,
+      "note": "Bench w4/w5/w12, and credential-switch.test.ts (composed twice). A session that starts on the key logs '... runs on your API key: ...', not 'goes on ... from where it stopped'."
+    },
+    {
+      "claim": "CS-7: the indicator shows ' on your API key', the question with Answer, and the share/key-month waits; Answer sits beside the words",
+      "holds": true,
+      "note": "Bench w7, w8, w10 and w12, and the real-daemon CS-7 case."
+    },
+    {
+      "claim": "CS-8 / C5-left-3: ask card figure never 'about CHF 0.00'; chat's one-off press; no Think it through on a hold reply",
+      "holds": true,
+      "note": "Ask card 'about CHF 0.09'; chat one-off 'less than CHF 0.01', one call on the key, the button gone after the press. The Start dialog's Use API key line can still read 'about CHF 0.00' when nothing is runnable (part of blocking 3)."
+    },
+    {
+      "claim": "CS-9: Costs By credential adds up to the total",
+      "holds": true,
+      "note": "Bench 'Your API key: CHF 0.03' against a total of CHF 0.03, plus the real-daemon CS-9 case. The fake daemon's GET /costs does not produce byCredential by default."
+    },
+    {
+      "claim": "C4b-left-5: the Start dialog names a task whose budget may leave too little for its review; Use API key writes no yes for a start refused for its budget",
+      "holds": true,
+      "note": "Exact words seen on the bench (w11). The budget-refusal sibling is fixed; the nothing-runnable sibling is not (blocking 3)."
+    },
+    {
+      "claim": "C5-left-2: one notification per stop when the policy moves work onto the key, none on a yes, none in a second session",
+      "holds": true,
+      "note": "Bench w12 and credential-switch.test.ts."
+    },
+    {
+      "claim": "C5-left-4: what Settings reads comes from credential_policy, with the restart assertions back",
+      "holds": true,
+      "note": "billing-order.test.ts restart block, and the GET /settings/billing-order view reads the policy."
+    },
+    {
+      "claim": "C5-left-5: the refused card's closed line depends on whether work waited",
+      "holds": true,
+      "note": "credential-refused-closed.test.ts fails on base on assertions ('A new one is saved; ...') and passes on the branch."
+    },
+    {
+      "claim": "Validation: pnpm check, UI suite, Playwright, integration, e2e green",
+      "holds": true,
+      "note": "I re-ran pnpm check (exit 0, 5800 tests), the area's UI and real-daemon tests, and Playwright 38/38 with the real Vite build. I did not re-run integration or e2e."
+    },
+    {
+      "claim": "Every new or changed route has a real-daemon case and a fake change in the same commit",
+      "holds": false,
+      "note": "Real-daemon cases exist for every route. d631882 added CostView.byCredential without a fake-daemon change, and the fake never serves the field: the UI test sets it on the fixture."
+    }
+  ],
+  "non_blocking": [
+    "'Start on 1 Dec' (share or key-month stop): keepStart keeps a start only for reason 'limit' (compose.ts:4245). Pressing it therefore starts a session that stops to wait at once, the dialog then says 'Started: the session works until nothing more can run, the budget is used, or you stop it.', and the Sessions list gets a session with nothing done (bench steps 55-58). The outcome, going on at the month's start, is acceptable; the words and the extra session are not. The same holds for d1109-starts-engine's 'Start at Tue 1 Dec, 00:00' under key_only, whose label is also 5 words (design rule 1: at most 3).",
+    "The Start dialog drops the plan sentence ('This session runs ...') whenever the stop line replaces it. A person pressing Use API key sees the CHF figure but not which tasks will run (steps 14 and 17).",
+    "Three figures for the same waiting work: the ask card says 'about CHF 0.09', the dialog's Use API key says 'about CHF 0.05' (runnable tasks only), and the plan card says about CHF 0.13 per task (Recipes, steps 40 and 45).",
+    "The Use API key consequence line can pass 100 characters when the subscription was refused: 'Runs now on your API key until a new sign-in is saved, about CHF 0.90; nothing passes this session's budget.'",
+    "Under 'ask' with no card open yet, Settings' now line says 'Your subscription is at its limit until 03:37; the work waits for it.' The next work will in fact file a card that asks.",
+    "The share wait on the status line and the session page has Cancel only. 'Change the allowance' appears only on the bar, while CS-7 names it with the share form.",
+    "Chat's one-off press sends the question again as a new person line, so the question appears twice in the conversation (step 52).",
+    "Stop using it has no one-line explanation beside it (design §3: every action has a one-line consequence).",
+    "The spec's Playwright cases for the Settings section and the Start dialog at phone and desktop widths were not added. I checked 390 px by hand: no sideways scroll (w14).",
+    "No test of an Undo of a preset after a restart, which fix_scope's restart list names. The undoRisk change has a unit test, but no Undo is run after a second compose.",
+    "The 'needs' row form ('Waits for your API key: only it can read web pages here.') is in not_done with a reason. CS-5 is on the spec's never-cut list, so the session lead should decide.",
+    "Fixer's own new_problems confirmed on the bench: the header reads 'Ready: 2 tasks; nothing runs until 03:37' while Use API key is offered; the per-task 'Press Start and the work starts then.' sits on a card whose button is 'Approve and start'; the waiting session's result reads 'CHF 0.00'.",
+    "A pending Settings read-back left unanswered (navigating away) stays in the Inbox as an approval card 'Set which Claude does the work to ...?'. This is the generic settings pattern, not new here.",
+    "Bench limit, not the app: on bench-api a chat call that carries earlier turns is classed 'unknown' by testenv/src/bench/roles.ts and gets '[stand-in model] unrecognised role'. The one-off's live check must use the real model (live check 4).",
+    "Live-check steps to add for the session lead: (1) under ask, press Start at HH:MM in the Start dialog and confirm no ask card appears; (2) with a yes standing, the plan card's task lines name the key; (3) open Start on a project with nothing ready while the subscription is at its limit and confirm no Use API key is offered."
+  ]
+}

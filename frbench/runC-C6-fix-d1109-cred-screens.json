@@ -1,0 +1,323 @@
+{
+  "area": "d1109-cred-screens",
+  "branch": "fix/d1109-cred-screens",
+  "head_sha": "21f3caf",
+  "commits": [
+    {
+      "sha": "eb395fc",
+      "subject": "settings: one place for which Claude does the work (U-078, CS-1, CS-2, C5-left-4, C3-left-9)"
+    },
+    {
+      "sha": "62f39b6",
+      "subject": "start dialog: what happens if the first choice runs out, and Use API key or Start at 15:40 (U-078, CS-3, C3-left-9)"
+    },
+    {
+      "sha": "49c30ce",
+      "subject": "plan card: what happens if the first choice runs out, once at its foot (U-078, CS-4)"
+    },
+    {
+      "sha": "e7bb56a",
+      "subject": "rows and status: every credential stop and the question in words (U-078, CS-5, C4b-left-6)"
+    },
+    {
+      "sha": "f87ad69",
+      "subject": "session log and session page: the switch to the API key, once, as data (U-078, C5-left-1, CS-6)"
+    },
+    {
+      "sha": "fb245c1",
+      "subject": "inbox: the refused card's closed line says what became of waiting work only when work waited (U-078, C5-left-5)"
+    },
+    {
+      "sha": "8807212",
+      "subject": "chat and inbox: Use API key for one held question, no Think it through on a hold reply (U-078, CS-8, C5-left-3)"
+    },
+    {
+      "sha": "d631882",
+      "subject": "costs: by credential, from the ledger, adding up to the total (U-078, U-074, CS-9)"
+    },
+    {
+      "sha": "fd0c3b9",
+      "subject": "docs: the policy on the screens, the switch's data, chat's one-off (U-078, ADR 0120)"
+    },
+    {
+      "sha": "e1188ae",
+      "subject": "chat: the one-off line never says \"about CHF 0.00\" (U-078, CS-8)"
+    },
+    {
+      "sha": "f02f441",
+      "subject": "start dialog: a task whose budget may leave too little for its review; Use API key writes no yes for a start refused for its budget (U-078, C4b-left-5, CS-3)"
+    },
+    {
+      "sha": "872e9b2",
+      "subject": "run indicator: on your API key, the question with Answer, the share and key-month waits (U-078, U-052, CS-7)"
+    },
+    {
+      "sha": "46b0593",
+      "subject": "notifications: the person hears once when their choice moves work onto the API key (U-078, C5-left-2)"
+    },
+    {
+      "sha": "be49082",
+      "subject": "start dialog and ask card: the line above the two buttons says the stop; the card's figure is never \"about CHF 0.00\" (U-078, CS-3, CS-8, C3-left-9)"
+    },
+    {
+      "sha": "cd400db",
+      "subject": "test: the ask card prices the task whose run met the stop (U-078, CS-8)"
+    },
+    {
+      "sha": "3be905b",
+      "subject": "start dialog and run bar: a kept start's line names its button; Answer sits with the words it acts on (U-078, CS-3, CS-7, C3-left-9)"
+    },
+    {
+      "sha": "d0ad9cf",
+      "subject": "plan card and New task: under \"then API key\" a task's line no longer says it waits while the key runs it (U-078, CS-4, CS-10)"
+    },
+    {
+      "sha": "e10e84e",
+      "subject": "docs: the policy's screens as built through the resumed runs (U-078, ADR 0120)"
+    },
+    {
+      "sha": "9254b32",
+      "subject": "lint: compose.ts imports in order and run-indicator.ts formatted (U-078)"
+    },
+    {
+      "sha": "447a61d",
+      "subject": "test: S-10's start check sentence with Use API key beside Start at 15:00 (U-078, CS-3, C3-left-9)"
+    },
+    {
+      "sha": "f610084",
+      "subject": "inbox: the plan card's foot line reads the credentials through the request's one batch (U-078, CS-4, R-inboxperf)"
+    },
+    {
+      "sha": "21f3caf",
+      "subject": "ui e2e: the palette walk counts Settings without the mid-session row (U-078, CS-2)"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "CS-1 / D5-S1 (major, clarity), C5-left-4: the choice of which Claude does the work was split over two places under Advanced (an order list with Move up/down and a generic mid-session row); POST /settings/billing-order did not store the policy it maps onto.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/credential-policy.test.tsx (Settings section, pick, read-back, Stop using it); packages/runtime/test/credential-policy-view.test.ts (every preset/role/state sentence); apps/ui/test/real-daemon.test.ts 'd1109-cred-screens, run C' GET /settings/credential-policy, grant/end and billing-order cases incl. a restart",
+      "how": "New GET /settings/credential-policy (credential-policy-routes.ts, words in credential-policy-view.ts) and POST /settings/credential-policy/grant/end; CredentialPolicySection.tsx on Basics after Accounts and keys: one radio group of the five presets with their lines, until a pick the default shown as used ('Used until you choose: ...'), each saved credential's role and state now, the now line with Answer or Stop using it, the runs-out footnote; a pick that moves more money reads back and needs a tap. POST /settings/billing-order stores the preset its order maps onto (presetForOrder).",
+      "check_in_the_app": "Settings > Basics > 'Which Claude does the work': five presets with one line each; before picking, 'Subscription first, then wait' says 'Used until you choose: ...'. Pick 'Subscription first, then API key': the read-back appears, press Change; the section shows it selected and the API key row reads 'Takes over when your subscription runs out'. Restart the app: still selected. Live check 4: with the owner's real subscription and key both saved, the rows show 'Does the work' / 'Works now' and the month's CHF."
+    },
+    {
+      "problem": "CS-2 (and C3-left-9's Settings part): Advanced still listed the order list and 'When my first choice runs out mid-session'.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/settings tests (Basics/Advanced lists, changed for the design); e2e/palette.spec.ts setting-row count (23 -> 22, changed for the design in 21f3caf)",
+      "how": "Advanced keeps only the ability table (credential-abilities); MID_SESSION_LIMITS and the human.mid_session_limit row removed from settings-view.ts and SettingsFields.tsx; BillingOrderSection no longer mounted.",
+      "check_in_the_app": "Settings > Advanced: only 'What each can do here' for the credentials; no 'Claude: which to use first' and no 'When my first choice runs out mid-session'."
+    },
+    {
+      "problem": "CS-3 / D5-S2 (missing) and C3-left-9: the Start dialog said nothing of a run-out; with the first choice out it showed only the wait, and its sentence ('Nothing can run until 15:40 ... Press Start and the work starts then.') did not match the buttons beside it (with Use API key offered it was not true; a kept start alone showed 'Start: works until ...' under a button labelled 'Start at 15:40').",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/credential-start.test.tsx (CS-3 cases, incl. 'under ask with the subscription out: Use API key first ...' and 'the explain line under Start at 15:40 begins with Start at 15:40'); apps/ui/test/real-daemon.test.ts CS-3 cases ('under wait ... Start at 11:40 first; it keeps one person start ..., also after a restart', the ask/Use API key case with the grant after a restart, 'no Use API key while the key is refused or the month's cap has no room; ... writes no yes')",
+      "how": "GET /projects/:id/start-check carries credential {line, runOut {use, later, lean, goesOnLine, stoppedLine}} (credential-start.ts); under next with the first out 'Your subscription is at its limit until 15:40, so this runs on your API key (about CHF 0.90).'; under ask/wait 'Use API key' (grant for the stop by the person's start, month room checked before the yes) and 'Start at 15:40' (kept person start), the preset's lean first; with Use API key offered the sentence is the stop alone ('Your subscription is at its limit until 15:40.') and the plain Start's explain line is hidden; with the project's own session waiting, 'Your session of 14:05 goes on by itself at 15:40.' and Use API key alone; a kept start alone has 'Start at 15:40: works until ...'. ONE_OFF_UNDER_WAIT=true (owner question default).",
+      "check_in_the_app": "Bench (no real model needed): rest the subscription, preset 'Subscription first, ask before API key', open Start on a project with ready tasks: one line 'Your subscription is at its limit until HH:MM.', then 'Use API key' (with its CHF) and 'Start at HH:MM'; no plain Start. Under 'then wait' the order flips. Press Start at HH:MM: the project reads 'Starts at HH:MM (your subscription's limit)' with Cancel. Live check 4: when the owner's real subscription meets its limit, open Start and confirm the same two buttons, then press Use API key and see the session run on the key with the switch line on the session page."
+    },
+    {
+      "problem": "CS-4 / D5-S3 (missing): the plan card named a credential only for a task the chooser moved; nothing said what happens when the first choice runs out. Found in CS-10's walk: under 'Subscription first, then API key' with the subscription out, each task's line said 'Waits until 02:43 ... Press Start and the work starts then.' while the foot said the key does the work meanwhile.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/credential-start.test.tsx 'the plan card's foot line (CS-4)'; apps/ui/test/real-daemon.test.ts 'CS-4: the plan card's foot line ...' and 'CS-4, CS-10: under then API key with the subscription out, no task's line says it waits; under then wait it does'; real-daemon 'a plan card with five tasks: GET /inbox asks the vault at most once per source' (R-inboxperf, broken by the foot line, fixed in f610084)",
+      "how": "GET /inbox's open plan card carries planCredentialLine (credential-start.ts planCredentialLine), shown once at the card's foot, following a preset change without a restart; compose's chooserBatch gives a resting first choice up for the next saved credential that can do the task when the preset's rule is 'next'; the batch reads through RouterTaskBilling.withVaultMemo() and GET /inbox computes the foot line through the same view (vault asked once per credential).",
+      "check_in_the_app": "Inbox with a plan card: at its foot 'If your subscription runs out, you are asked before your API key is used.' (ask). Rest the subscription and choose 'Subscription first, then API key': foot reads '... your API key does the work meanwhile (costs money).' and no task line says 'Waits until'. Switch to 'then wait': the task lines say the wait."
+    },
+    {
+      "problem": "CS-5 / D5-S4 (minor) and C4b-left-6: rows and the project status knew only a limit and a refusal; a share or key-month wait fell through ('0 of 2 done'), the ask read as a plain wait; a task whose review waits for room had no words.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-policy-view.test.ts 'CS-5' (2); task-budget-all BA-3 (Continue line and the row's detail)",
+      "how": "credentialWaitRow reads the share and a key's monthly cap; waitRowWords: 'Waits until Tue 1 Dec (your subscription's share)' with Change the allowance, '(your API key's monthly cap)', 'Waits for your answer: use your API key?' with Answer, each with the after-the-wait clause; projectStatusLine puts the ask first ('Waiting for you: use your API key?' with Answer). C4b-left-6: Continue says '... starts a session that runs only its review.' and the row/drawer quote 'The work is done; its review waits for room in the budget.'",
+      "check_in_the_app": "Bench under 'ask' with the subscription at its limit: approve a plan; Tasks rows read 'Waits for your answer: use your API key?'; the project header reads 'Waiting for you: use your API key?' with Answer opening the Inbox card (screenshots 23/24-after-c)."
+    },
+    {
+      "problem": "CS-6 / D5-S5 (major, transparency) and C5-left-1 (major): nothing recorded or showed a switch to the API key or what it cost.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-switch.test.ts (both cases); apps/ui/test/credential-switch.test.tsx; the CS-3 real-daemon case's switch-line, session and drawer assertions",
+      "how": "TaskBillingPort.switchOf; the Run row's switchedFrom; billing.switch once per stop and session ('\"Style the page\" goes on with your API key from where it stopped: ...'), billing.back; SessionResult.switched from the ledger; GET /sessions/:id switchLine ('On your API key since 14:20 ...: CHF 0.42 so far.' / 'Your API key took over at 14:20 ...: CHF 0.42 of CHF 0.62.'); GET /tasks/:id runs' switchLine ('On your API key after your subscription's limit · CHF 0.43').",
+      "check_in_the_app": "Bench under 'Subscription first, then API key' with the subscription rested: Start the session; the session page shows the log line once and 'Your API key took over at HH:MM (your subscription's limit): CHF x of CHF x.'; the task drawer's run reads 'On your API key after your subscription's limit · CHF 0.01' (screenshots 19/20-after-b). Live check 4: same with the real subscription limit; the figures equal Costs > By credential."
+    },
+    {
+      "problem": "CS-7 / D5-S6 (missing): the running indicator could not say the task runs on the API key, that a task waits for the person's answer (with Answer), or the share and key-month waits. CS-10's walk: Answer stood right before Cancel's line 'Nothing starts when Claude is back; ...' and read as if Answer did that.",
+      "u_ids": [
+        "U-078",
+        "U-052"
+      ],
+      "failing_test_before": "packages/runtime/test/run-indicator.test.ts CS-7 (4); packages/runtime/test/credential-indicator.test.ts (4); apps/ui/test/run-indicator.test.tsx CS-7 (4, incl. the run-links group assertion added in 3be905b); real-daemon 'CS-7: GET /running shows the waiting session under ask with Answer ...'",
+      "how": "run-words.ts RunWords.on (' on your API key'), asking (' · 1 task waits for your answer'), RunWait share/key_month ('waiting until Tue 1 Dec, 01:00, then it goes on'); RunningView.links (Answer, Change the allowance); waitBlock.answer on GET /sessions/:id; the bar puts the links in their own run-links group right after the words, apart from Cancel and its line.",
+      "check_in_the_app": "Bench under 'ask' with the subscription out after approving a plan: the bar reads 'Quote page · waiting until HH:MM, then it goes on' with Answer beside the words and, on the right, the Cancel line and Cancel (screenshot 25-after-c). Click Answer: the Inbox card opens."
+    },
+    {
+      "problem": "CS-8 / D5-S7 (missing), C5-left-3, and CS-10's walk finding: no screen showed the ask card's money choice in full, chat had no one-off press, a hold reply still offered Think it through; the ask card read 'about CHF 0.00' (the claimed task left out of the estimate) and would read 'about less than CHF 0.01'.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/credential-chat.test.tsx (Chat and Talk); real-daemon 'CS-8: POST /chat's hold reply carries Use API key ...'; packages/runtime/test/credential-policy-view.test.ts \"the ask card's figure (CS-8)\" (2, seen failing on 46b0593); packages/runtime/test/credential-ask-figure.test.ts (seen failing with the in-flight sum taken out)",
+      "how": "ChatRequestBody.oneOff reaches the agent; ChatReplyView.oneOff and the stored turn carry 'Use API key' ('Answers this question on your API key: about CHF 0.02.' / 'less than CHF 0.01'); a held reply is a notice with no closer. The ask's estimate adds claimed and in-progress tasks' remaining estimates (capped at the work budget); askFigure: 'about CHF 0.40', 'less than CHF 0.01' alone, or ', at a cost per use' when nothing is known.",
+      "check_in_the_app": "Bench: Inbox ask card reads 'Your Claude subscription is at its limit until HH:MM. Your API key can do the waiting work now: about CHF 0.09.' with Use API key first (screenshot 22-after-c). Chat while the subscription rests under 'then wait': the reply offers Use API key with its CHF line (screenshot 32-after-e); pressing it answers once on the key with the note under the reply. Live check 4: the real model's answer after the press, and the ledger row on the key."
+    },
+    {
+      "problem": "CS-9: Costs had no split by credential.",
+      "u_ids": [
+        "U-078",
+        "U-074"
+      ],
+      "failing_test_before": "apps/ui/test/credential-switch.test.tsx 'Costs shows By credential ...'; real-daemon 'CS-9: GET /costs carries By credential ...'; CS-9 assertions in credential-switch.test.ts",
+      "how": "costView.byCredential (ledger rows by paying source kind at the totals' rate, rows add up to the total; subscription row an estimate with its share of the allowance); CostsTab 'By credential'.",
+      "check_in_the_app": "Project > More > Costs: 'By credential' with 'Your API key: CHF 0.03' after a key-run session (screenshot 21-after-b); with subscription work too, 'Your Claude subscription: CHF x (estimate, n% of its allowance)'; the rows add up to Total spend."
+    },
+    {
+      "problem": "C4b-left-5 (minor, words): the Start dialog said nothing about a task whose own budget may leave too little for its review; and 'Use API key' with a budget above the month's room wrote the yes before refusing.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/oversized-task.test.ts 'one line per task whose own budget cannot hold ...'; apps/ui/test/d1109-oversize.test.tsx 'one line per such task under the plan'; real-daemon 'C4b-left-5: GET /projects/:id/start-check names a task ...' and the CS-3 refused-yes case",
+      "how": "StartCheck.reviewMayWait (estimate plus one critic call's worst case against the task's budget), reviewMayWaitLine; the dialog lists at most three; POST /sessions checks the month's room before writing the yes; refusal reads 'Use API key is not offered for this start now: open Start again to see what it does.'",
+      "check_in_the_app": "Give a ready task a tiny budget (e.g. CHF 0.07) and open Start: a line names it '... may leave too little for its review, which then waits for Continue.'"
+    },
+    {
+      "problem": "C5-left-2 (minor): switchNotificationWords had no producer; the person was not told when the policy moved work onto the API key.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-switch.test.ts 'once per stop when the choice moves work onto the API key by itself ...'",
+      "how": "Notification kind credential_switch, once per stop when the policy (not a yes) moved work onto the key, kept by the audit row billing.switch_notice across sessions and restarts.",
+      "check_in_the_app": "Under 'Subscription first, then API key' with the subscription rested, start a session: one notification about the move and its cost; a second session in the same stop gives none."
+    },
+    {
+      "problem": "C5-left-5 (words): every closed refused card said 'A new one is saved; the work that waited for it goes on.' even when nothing was saved or nothing waited.",
+      "u_ids": [
+        "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-refused-closed.test.ts (both cases)",
+      "how": "closeRefusedCards records why it closed and whether work waited; refusedClosedLine words each case.",
+      "check_in_the_app": "Refuse the key on the bench (refusedAt), let the card file, then save a new key with nothing waiting: the closed card reads 'A new key is saved.'"
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "The 'needs' row form of CS-5 ('Waits for your API key: only it can read web pages here.')",
+      "why": "The wait entry does not carry the task's need, so the row cannot say it without the engine recording it (d1109-cred-engine's wait record); named in ADR 0120's amendment and runtime.md. The chooser's runs-on line already says 'Runs on your API key: only it can read web pages here.' where it applies."
+    },
+    {
+      "problem": "CS-10's screenshots of the rarer presets in their run phase (key_then_subscription and key_only with the key refused or at its month cap)",
+      "why": "Cut line allows it: the walk photographs Settings, plan card and Start dialog for all five presets with the subscription at its limit, the run on the key, the ask, the key refused and chat; the key-first presets' run-out with the key at its monthly cap was not staged on the bench (the engine records the data; the words are unit-tested in credential-policy-view.test.ts)."
+    }
+  ],
+  "validation": [
+    {
+      "command": "flock /tmp/frbench/heavy.lock pnpm check (final, on 21f3caf)",
+      "result": "exit 0: lint (0 errors, 42 pre-existing warnings), paths, typecheck, unit 538 files / 5800 passed, 7 skipped; link-check ok; secret-scan clean. docs-check could not diff origin/main here, so it was run separately with --base."
+    },
+    {
+      "command": "pnpm docs:check -- --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (92 files)"
+    },
+    {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts (after f610084)",
+      "result": "101 files, 1341 passed. The run before f610084 had 1 failure (R-inboxperf vault-read bound, caused by 49c30ce), fixed in f610084."
+    },
+    {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts (real Vite build)",
+      "result": "37 passed, 1 failed (palette.spec.ts setting-row count 23 vs 22, an intended CS-2 change); after 21f3caf the palette spec passes 2/2, so 38/38."
+    },
+    {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "5 files passed, 6 skipped; 30 passed, 81 skipped (Postgres-backed suites skip without FORERUNNER_TEST_PG, as expected)"
+    },
+    {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "13 files passed; 25 passed, 1 skipped"
+    },
+    {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing found"
+    },
+    {
+      "command": "cargo checks",
+      "result": "not run: the desktop shell (apps/desktop/src-tauri) was not touched"
+    },
+    {
+      "command": "CS-10 bench walk (node /tmp/frbench/fix-d1109-cred-screens/walk/cs10.cjs, --provider bench-api --api-key ok --subscription)",
+      "result": "BEFORE on d133246 (walk-before/, 29 steps), AFTER on 46b0593 (walk-after-46b0593/), on be49082 (walk-after-be49082/) and final AFTER on d0ad9cf (steps/, 32 steps). The final walk showed the fixes for the ask card's figure, the two-button sentence, the kept start's explain line, Answer's place on the bar and the plan card's task lines under 'then API key'. Bench stopped and its home deleted."
+    }
+  ],
+  "new_problems": [
+    "Project header under 'ask' with the API key able to run: 'Ready: 2 tasks; nothing runs until 02:51 (your subscription's limit)' (steps/06-after-p2-subscription-then-ask-start-dialog.txt). It is true that nothing runs by itself, but the Start dialog then offers 'Use API key' now. A later words pass could say 'nothing runs by itself until 02:51'. The status line is d1109-run-visible's (project-status.ts); not changed here.",
+    "The plan card's per-task wait line under 'then wait' still says 'Press Start and the work starts then.' (steps/02-after-p1-default-plan-card.txt), but the card's own button is 'Approve and start' and the Start dialog's button is 'Start at HH:MM'. This is credential-wait.ts waitThenStartSentence (W15-66, shared by New task and Settings). CS-4 said the per-task lines stay unchanged, so this area left it as it is.",
+    "Session page 'Last result' for a session that ended to wait under 'ask' reads '... 1 task waits on other tasks. CHF 0.00.' (steps/25-after-c-session-waits.txt): 'CHF 0.00' is a real spend, not an estimate, so it does not break rule 7, but it adds nothing. This is the session result's sentence (result.ts, d1109-starts-engine)."
+  ],
+  "notes_for_other_areas": [
+    "StartCredentialView.runOut gains stoppedLine (startStoppedLine). GET /projects/:id/start-check puts it in blocked.sentence when the start is startable and runOut is offered: 'Your subscription is at its limit until 15:40.' replaces 'Nothing can run until 15:40 (...). Press Start at 15:40 and the work starts then.' A kept start alone keeps the old sentence. continuation.test.ts S-10 was updated with its intent kept. The fake daemon mirrors it.",
+    "RuntimeApp.chooser.batch() now returns the chooser function with an optional `billing` (a RouterTaskBilling view from withVaultMemo()). Read the credentials through `batch.billing` in a request that also uses the batch (GET /inbox does this), so the vault is asked once per credential. RouterTaskBilling.withVaultMemo() is for views only, never for picks.",
+    "Under a preset whose rule is 'next' (subscription_then_key, key_then_subscription), compose's chooserBatch returns the next saved credential that is not resting and can do the task, not the first choice's wait line. This affects the plan card, New task and Settings' specialists' runsOn.",
+    "askCardWords and refusedAskWords take estimateChf as 'CHF 0.40', 'less than CHF 0.01' (moneyWords) or 'CHF 0.00' (no figure known: ', at a cost per use'). The ask's estimate (compose `ask`) includes the claimed and in-progress tasks' remaining estimates.",
+    "RunIndicator.tsx: the run's links render in data-testid run-links right after the words. CancelWait and its run-cancel-explain stay on the right. d1109-selftasks-chat does not touch this.",
+    "StartSessionDialog: start-session-explain is hidden while runOut is shown. Its text is `${blocked.startLabel}: works until ...` for a kept start ('Start at 15:40: ...'), else 'Start: works until ...'.",
+    "Owner question default (one constant): ONE_OFF_UNDER_WAIT = true in packages/runtime/src/daemon/credential-policy-view.ts. A one-off 'Use API key' is offered under 'then wait' too; false limits it to 'ask before API key'.",
+    "Suggested UPDATE-LOG/CHANGELOG lines for the session lead: 'Settings has one place for which Claude does the work (five presets, the default shown as used until you pick); the Start dialog, the plan card, rows, the status line, the run bar, the session page, the drawer, Costs and chat say what happens when the first choice runs out, what a move to the API key cost, and offer Use API key or Start at 15:40 with their consequences (U-078, ADR 0120).'",
+    "Live check 4 steps for this area: (1) Settings > 'Which Claude does the work': both credentials saved, 'Subscription first, then wait' shown as used, rows show states and the month's CHF. (2) Choose 'Subscription first, ask before API key'. Run work until the real subscription meets its limit: one Inbox card 'Use your API key until HH:MM?' with a non-zero 'about CHF x' (never 0.00); the bar reads 'waiting until HH:MM, then it goes on' with Answer next to the words. (3) Press Use API key: the session goes on, its page shows the switch line, the drawer's run reads 'On your API key after your subscription's limit · CHF x', and Costs > By credential agrees with the ledger. (4) Under 'then wait', ask chat a question: hold reply with Use API key and its CHF; press it once and confirm one answer on the key with the note. (5) Under 'Subscription first, then API key' with the limit hit: the plan card's task lines name no wait, and one notification of the move with its cost arrives."
+  ],
+  "tests_changed_for_design": [
+    {
+      "test": "packages/runtime/test/continuation.test.ts 'a Start pressed while the credential is out is kept ...' (447a61d)",
+      "why": "With the API key saved and serving, the start check's sentence beside 'Use API key' and 'Start at 15:00' is now the stop alone ('Your subscription is at its limit until 15:00.'). The startable/startLabel assertions are unchanged."
+    },
+    {
+      "test": "apps/ui/test/real-daemon.test.ts 'CS-3, C3-left-9: under wait ... Start at 11:40 first ...' (be49082)",
+      "why": "Same change: this area's own earlier sentence 'Nothing can run until 11:40 ... Press Start at 11:40 ...' becomes 'Your subscription is at its limit until 11:40.' beside the two buttons. Intent kept: the sentence matches the buttons."
+    },
+    {
+      "test": "apps/ui/test/credential-start.test.tsx the two CS-3 run-out cases (be49082)",
+      "why": "The fake daemon gives runOut.stoppedLine. The dialog shows the stop alone and no start-session-explain beside the two buttons."
+    },
+    {
+      "test": "apps/ui/e2e/palette.spec.ts setting-row count 23 -> 22 (21f3caf)",
+      "why": "CS-2 removed 'When my first choice runs out mid-session'; 'Which Claude does the work' is the one place for the choice."
+    },
+    {
+      "test": "Earlier runs' changes (eb395fc..d631882): settings tests (Basics/Advanced lists), w15-words W15-65, continuation (quiet hours), project TR-2, shell-live and two real-daemon assertions of the old start sentence (62f39b6); row-label assertions in credential-ask-words, credential-limits, credential-policy-session, credential-wait-session, task-usage-limit, continuation, tasks.test.tsx, fake-tasks and real-daemon (comma to parentheses, e7bb56a); task-usage-limit, subscription-path and the real-daemon 'Use the other one' case (f87ad69)",
+      "why": "Design changes: the order and mid-session settings gave way to the presets; the start sentence names its button; the limit reads 'Waits until 15:40 (your subscription's limit)'; a stopped run another credential takes over logs the switch, not 'continues on your API key now'. Each kept its intent, as the commit messages say."
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/fix-d1109-cred-screens/walk-before/01-before-p1-default-settings.png",
+      "/tmp/frbench/fix-d1109-cred-screens/walk-before/06-before-p2-subscription-then-ask-start-dialog.png",
+      "/tmp/frbench/fix-d1109-cred-screens/walk-before/16-before-advanced.png",
+      "/tmp/frbench/fix-d1109-cred-screens/walk-before/19-before-b-session-switch.png",
+      "/tmp/frbench/fix-d1109-cred-screens/walk-before/21-before-b-costs-by-credential.png",
+      "/tmp/frbench/fix-d1109-cred-screens/walk-before/22-before-c-inbox-ask-card.png",
+      "/tmp/frbench/fix-d1109-cred-screens/walk-before/28-before-d-start-dialog-key-refused.png",
+      "/tmp/frbench/fix-d1109-cred-screens/walk-before/29-before-e-chat-hold-one-off.png",
+      "/tmp/frbench/fix-d1109-cred-screens/walk-after-be49082/22-after-c-inbox-ask-card.png",
+      "/tmp/frbench/fix-d1109-cred-screens/walk-after-be49082/08-after-p3-subscription-then-key-plan-card.png"
+    ],
+    "after": [
+      "/tmp/frbench/fix-d1109-cred-screens/steps/01-after-p1-default-settings.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/06-after-p2-subscription-then-ask-start-dialog.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/08-after-p3-subscription-then-key-plan-card.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/16-after-advanced.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/19-after-b-session-switch.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/20-after-b-drawer-run-line.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/21-after-b-costs-by-credential.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/22-after-c-inbox-ask-card.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/23-after-c-overview-ask.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/25-after-c-session-waits.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/29-after-c-session-went-on.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/30-after-d-settings-key-refused.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/31-after-d-start-dialog-key-refused.png",
+      "/tmp/frbench/fix-d1109-cred-screens/steps/32-after-e-chat-hold-one-off.png"
+    ]
+  }
+}

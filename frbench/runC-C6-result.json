@@ -1,0 +1,1365 @@
+{
+  "wave": 22,
+  "areas": [
+    {
+      "key": "d1109-cred-screens",
+      "fix": {
+        "area": "d1109-cred-screens",
+        "branch": "fix/d1109-cred-screens",
+        "head_sha": "21f3caf",
+        "commits": [
+          {
+            "sha": "eb395fc",
+            "subject": "settings: one place for which Claude does the work (U-078, CS-1, CS-2, C5-left-4, C3-left-9)"
+          },
+          {
+            "sha": "62f39b6",
+            "subject": "start dialog: what happens if the first choice runs out, and Use API key or Start at 15:40 (U-078, CS-3, C3-left-9)"
+          },
+          {
+            "sha": "49c30ce",
+            "subject": "plan card: what happens if the first choice runs out, once at its foot (U-078, CS-4)"
+          },
+          {
+            "sha": "e7bb56a",
+            "subject": "rows and status: every credential stop and the question in words (U-078, CS-5, C4b-left-6)"
+          },
+          {
+            "sha": "f87ad69",
+            "subject": "session log and session page: the switch to the API key, once, as data (U-078, C5-left-1, CS-6)"
+          },
+          {
+            "sha": "fb245c1",
+            "subject": "inbox: the refused card's closed line says what became of waiting work only when work waited (U-078, C5-left-5)"
+          },
+          {
+            "sha": "8807212",
+            "subject": "chat and inbox: Use API key for one held question, no Think it through on a hold reply (U-078, CS-8, C5-left-3)"
+          },
+          {
+            "sha": "d631882",
+            "subject": "costs: by credential, from the ledger, adding up to the total (U-078, U-074, CS-9)"
+          },
+          {
+            "sha": "fd0c3b9",
+            "subject": "docs: the policy on the screens, the switch's data, chat's one-off (U-078, ADR 0120)"
+          },
+          {
+            "sha": "e1188ae",
+            "subject": "chat: the one-off line never says \"about CHF 0.00\" (U-078, CS-8)"
+          },
+          {
+            "sha": "f02f441",
+            "subject": "start dialog: a task whose budget may leave too little for its review; Use API key writes no yes for a start refused for its budget (U-078, C4b-left-5, CS-3)"
+          },
+          {
+            "sha": "872e9b2",
+            "subject": "run indicator: on your API key, the question with Answer, the share and key-month waits (U-078, U-052, CS-7)"
+          },
+          {
+            "sha": "46b0593",
+            "subject": "notifications: the person hears once when their choice moves work onto the API key (U-078, C5-left-2)"
+          },
+          {
+            "sha": "be49082",
+            "subject": "start dialog and ask card: the line above the two buttons says the stop; the card's figure is never \"about CHF 0.00\" (U-078, CS-3, CS-8, C3-left-9)"
+          },
+          {
+            "sha": "cd400db",
+            "subject": "test: the ask card prices the task whose run met the stop (U-078, CS-8)"
+          },
+          {
+            "sha": "3be905b",
+            "subject": "start dialog and run bar: a kept start's line names its button; Answer sits with the words it acts on (U-078, CS-3, CS-7, C3-left-9)"
+          },
+          {
+            "sha": "d0ad9cf",
+            "subject": "plan card and New task: under \"then API key\" a task's line no longer says it waits while the key runs it (U-078, CS-4, CS-10)"
+          },
+          {
+            "sha": "e10e84e",
+            "subject": "docs: the policy's screens as built through the resumed runs (U-078, ADR 0120)"
+          },
+          {
+            "sha": "9254b32",
+            "subject": "lint: compose.ts imports in order and run-indicator.ts formatted (U-078)"
+          },
+          {
+            "sha": "447a61d",
+            "subject": "test: S-10's start check sentence with Use API key beside Start at 15:00 (U-078, CS-3, C3-left-9)"
+          },
+          {
+            "sha": "f610084",
+            "subject": "inbox: the plan card's foot line reads the credentials through the request's one batch (U-078, CS-4, R-inboxperf)"
+          },
+          {
+            "sha": "21f3caf",
+            "subject": "ui e2e: the palette walk counts Settings without the mid-session row (U-078, CS-2)"
+          }
+        ],
+        "fixed": [
+          {
+            "problem": "CS-1 / D5-S1 (major, clarity), C5-left-4: the choice of which Claude does the work was split over two places under Advanced (an order list with Move up/down and a generic mid-session row); POST /settings/billing-order did not store the policy it maps onto.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/credential-policy.test.tsx (Settings section, pick, read-back, Stop using it); packages/runtime/test/credential-policy-view.test.ts (every preset/role/state sentence); apps/ui/test/real-daemon.test.ts 'd1109-cred-screens, run C' GET /settings/credential-policy, grant/end and billing-order cases incl. a restart",
+            "how": "New GET /settings/credential-policy (credential-policy-routes.ts, words in credential-policy-view.ts) and POST /settings/credential-policy/grant/end; CredentialPolicySection.tsx on Basics after Accounts and keys: one radio group of the five presets with their lines, until a pick the default shown as used ('Used until you choose: ...'), each saved credential's role and state now, the now line with Answer or Stop using it, the runs-out footnote; a pick that moves more money reads back and needs a tap. POST /settings/billing-order stores the preset its order maps onto (presetForOrder).",
+            "check_in_the_app": "Settings > Basics > 'Which Claude does the work': five presets with one line each; before picking, 'Subscription first, then wait' says 'Used until you choose: ...'. Pick 'Subscription first, then API key': the read-back appears, press Change; the section shows it selected and the API key row reads 'Takes over when your subscription runs out'. Restart the app: still selected. Live check 4: with the owner's real subscription and key both saved, the rows show 'Does the work' / 'Works now' and the month's CHF."
+          },
+          {
+            "problem": "CS-2 (and C3-left-9's Settings part): Advanced still listed the order list and 'When my first choice runs out mid-session'.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/settings tests (Basics/Advanced lists, changed for the design); e2e/palette.spec.ts setting-row count (23 -> 22, changed for the design in 21f3caf)",
+            "how": "Advanced keeps only the ability table (credential-abilities); MID_SESSION_LIMITS and the human.mid_session_limit row removed from settings-view.ts and SettingsFields.tsx; BillingOrderSection no longer mounted.",
+            "check_in_the_app": "Settings > Advanced: only 'What each can do here' for the credentials; no 'Claude: which to use first' and no 'When my first choice runs out mid-session'."
+          },
+          {
+            "problem": "CS-3 / D5-S2 (missing) and C3-left-9: the Start dialog said nothing of a run-out; with the first choice out it showed only the wait, and its sentence ('Nothing can run until 15:40 ... Press Start and the work starts then.') did not match the buttons beside it (with Use API key offered it was not true; a kept start alone showed 'Start: works until ...' under a button labelled 'Start at 15:40').",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/credential-start.test.tsx (CS-3 cases, incl. 'under ask with the subscription out: Use API key first ...' and 'the explain line under Start at 15:40 begins with Start at 15:40'); apps/ui/test/real-daemon.test.ts CS-3 cases ('under wait ... Start at 11:40 first; it keeps one person start ..., also after a restart', the ask/Use API key case with the grant after a restart, 'no Use API key while the key is refused or the month's cap has no room; ... writes no yes')",
+            "how": "GET /projects/:id/start-check carries credential {line, runOut {use, later, lean, goesOnLine, stoppedLine}} (credential-start.ts); under next with the first out 'Your subscription is at its limit until 15:40, so this runs on your API key (about CHF 0.90).'; under ask/wait 'Use API key' (grant for the stop by the person's start, month room checked before the yes) and 'Start at 15:40' (kept person start), the preset's lean first; with Use API key offered the sentence is the stop alone ('Your subscription is at its limit until 15:40.') and the plain Start's explain line is hidden; with the project's own session waiting, 'Your session of 14:05 goes on by itself at 15:40.' and Use API key alone; a kept start alone has 'Start at 15:40: works until ...'. ONE_OFF_UNDER_WAIT=true (owner question default).",
+            "check_in_the_app": "Bench (no real model needed): rest the subscription, preset 'Subscription first, ask before API key', open Start on a project with ready tasks: one line 'Your subscription is at its limit until HH:MM.', then 'Use API key' (with its CHF) and 'Start at HH:MM'; no plain Start. Under 'then wait' the order flips. Press Start at HH:MM: the project reads 'Starts at HH:MM (your subscription's limit)' with Cancel. Live check 4: when the owner's real subscription meets its limit, open Start and confirm the same two buttons, then press Use API key and see the session run on the key with the switch line on the session page."
+          },
+          {
+            "problem": "CS-4 / D5-S3 (missing): the plan card named a credential only for a task the chooser moved; nothing said what happens when the first choice runs out. Found in CS-10's walk: under 'Subscription first, then API key' with the subscription out, each task's line said 'Waits until 02:43 ... Press Start and the work starts then.' while the foot said the key does the work meanwhile.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/credential-start.test.tsx 'the plan card's foot line (CS-4)'; apps/ui/test/real-daemon.test.ts 'CS-4: the plan card's foot line ...' and 'CS-4, CS-10: under then API key with the subscription out, no task's line says it waits; under then wait it does'; real-daemon 'a plan card with five tasks: GET /inbox asks the vault at most once per source' (R-inboxperf, broken by the foot line, fixed in f610084)",
+            "how": "GET /inbox's open plan card carries planCredentialLine (credential-start.ts planCredentialLine), shown once at the card's foot, following a preset change without a restart; compose's chooserBatch gives a resting first choice up for the next saved credential that can do the task when the preset's rule is 'next'; the batch reads through RouterTaskBilling.withVaultMemo() and GET /inbox computes the foot line through the same view (vault asked once per credential).",
+            "check_in_the_app": "Inbox with a plan card: at its foot 'If your subscription runs out, you are asked before your API key is used.' (ask). Rest the subscription and choose 'Subscription first, then API key': foot reads '... your API key does the work meanwhile (costs money).' and no task line says 'Waits until'. Switch to 'then wait': the task lines say the wait."
+          },
+          {
+            "problem": "CS-5 / D5-S4 (minor) and C4b-left-6: rows and the project status knew only a limit and a refusal; a share or key-month wait fell through ('0 of 2 done'), the ask read as a plain wait; a task whose review waits for room had no words.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-policy-view.test.ts 'CS-5' (2); task-budget-all BA-3 (Continue line and the row's detail)",
+            "how": "credentialWaitRow reads the share and a key's monthly cap; waitRowWords: 'Waits until Tue 1 Dec (your subscription's share)' with Change the allowance, '(your API key's monthly cap)', 'Waits for your answer: use your API key?' with Answer, each with the after-the-wait clause; projectStatusLine puts the ask first ('Waiting for you: use your API key?' with Answer). C4b-left-6: Continue says '... starts a session that runs only its review.' and the row/drawer quote 'The work is done; its review waits for room in the budget.'",
+            "check_in_the_app": "Bench under 'ask' with the subscription at its limit: approve a plan; Tasks rows read 'Waits for your answer: use your API key?'; the project header reads 'Waiting for you: use your API key?' with Answer opening the Inbox card (screenshots 23/24-after-c)."
+          },
+          {
+            "problem": "CS-6 / D5-S5 (major, transparency) and C5-left-1 (major): nothing recorded or showed a switch to the API key or what it cost.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-switch.test.ts (both cases); apps/ui/test/credential-switch.test.tsx; the CS-3 real-daemon case's switch-line, session and drawer assertions",
+            "how": "TaskBillingPort.switchOf; the Run row's switchedFrom; billing.switch once per stop and session ('\"Style the page\" goes on with your API key from where it stopped: ...'), billing.back; SessionResult.switched from the ledger; GET /sessions/:id switchLine ('On your API key since 14:20 ...: CHF 0.42 so far.' / 'Your API key took over at 14:20 ...: CHF 0.42 of CHF 0.62.'); GET /tasks/:id runs' switchLine ('On your API key after your subscription's limit · CHF 0.43').",
+            "check_in_the_app": "Bench under 'Subscription first, then API key' with the subscription rested: Start the session; the session page shows the log line once and 'Your API key took over at HH:MM (your subscription's limit): CHF x of CHF x.'; the task drawer's run reads 'On your API key after your subscription's limit · CHF 0.01' (screenshots 19/20-after-b). Live check 4: same with the real subscription limit; the figures equal Costs > By credential."
+          },
+          {
+            "problem": "CS-7 / D5-S6 (missing): the running indicator could not say the task runs on the API key, that a task waits for the person's answer (with Answer), or the share and key-month waits. CS-10's walk: Answer stood right before Cancel's line 'Nothing starts when Claude is back; ...' and read as if Answer did that.",
+            "u_ids": [
+              "U-078",
+              "U-052"
+            ],
+            "failing_test_before": "packages/runtime/test/run-indicator.test.ts CS-7 (4); packages/runtime/test/credential-indicator.test.ts (4); apps/ui/test/run-indicator.test.tsx CS-7 (4, incl. the run-links group assertion added in 3be905b); real-daemon 'CS-7: GET /running shows the waiting session under ask with Answer ...'",
+            "how": "run-words.ts RunWords.on (' on your API key'), asking (' · 1 task waits for your answer'), RunWait share/key_month ('waiting until Tue 1 Dec, 01:00, then it goes on'); RunningView.links (Answer, Change the allowance); waitBlock.answer on GET /sessions/:id; the bar puts the links in their own run-links group right after the words, apart from Cancel and its line.",
+            "check_in_the_app": "Bench under 'ask' with the subscription out after approving a plan: the bar reads 'Quote page · waiting until HH:MM, then it goes on' with Answer beside the words and, on the right, the Cancel line and Cancel (screenshot 25-after-c). Click Answer: the Inbox card opens."
+          },
+          {
+            "problem": "CS-8 / D5-S7 (missing), C5-left-3, and CS-10's walk finding: no screen showed the ask card's money choice in full, chat had no one-off press, a hold reply still offered Think it through; the ask card read 'about CHF 0.00' (the claimed task left out of the estimate) and would read 'about less than CHF 0.01'.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/credential-chat.test.tsx (Chat and Talk); real-daemon 'CS-8: POST /chat's hold reply carries Use API key ...'; packages/runtime/test/credential-policy-view.test.ts \"the ask card's figure (CS-8)\" (2, seen failing on 46b0593); packages/runtime/test/credential-ask-figure.test.ts (seen failing with the in-flight sum taken out)",
+            "how": "ChatRequestBody.oneOff reaches the agent; ChatReplyView.oneOff and the stored turn carry 'Use API key' ('Answers this question on your API key: about CHF 0.02.' / 'less than CHF 0.01'); a held reply is a notice with no closer. The ask's estimate adds claimed and in-progress tasks' remaining estimates (capped at the work budget); askFigure: 'about CHF 0.40', 'less than CHF 0.01' alone, or ', at a cost per use' when nothing is known.",
+            "check_in_the_app": "Bench: Inbox ask card reads 'Your Claude subscription is at its limit until HH:MM. Your API key can do the waiting work now: about CHF 0.09.' with Use API key first (screenshot 22-after-c). Chat while the subscription rests under 'then wait': the reply offers Use API key with its CHF line (screenshot 32-after-e); pressing it answers once on the key with the note under the reply. Live check 4: the real model's answer after the press, and the ledger row on the key."
+          },
+          {
+            "problem": "CS-9: Costs had no split by credential.",
+            "u_ids": [
+              "U-078",
+              "U-074"
+            ],
+            "failing_test_before": "apps/ui/test/credential-switch.test.tsx 'Costs shows By credential ...'; real-daemon 'CS-9: GET /costs carries By credential ...'; CS-9 assertions in credential-switch.test.ts",
+            "how": "costView.byCredential (ledger rows by paying source kind at the totals' rate, rows add up to the total; subscription row an estimate with its share of the allowance); CostsTab 'By credential'.",
+            "check_in_the_app": "Project > More > Costs: 'By credential' with 'Your API key: CHF 0.03' after a key-run session (screenshot 21-after-b); with subscription work too, 'Your Claude subscription: CHF x (estimate, n% of its allowance)'; the rows add up to Total spend."
+          },
+          {
+            "problem": "C4b-left-5 (minor, words): the Start dialog said nothing about a task whose own budget may leave too little for its review; and 'Use API key' with a budget above the month's room wrote the yes before refusing.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/oversized-task.test.ts 'one line per task whose own budget cannot hold ...'; apps/ui/test/d1109-oversize.test.tsx 'one line per such task under the plan'; real-daemon 'C4b-left-5: GET /projects/:id/start-check names a task ...' and the CS-3 refused-yes case",
+            "how": "StartCheck.reviewMayWait (estimate plus one critic call's worst case against the task's budget), reviewMayWaitLine; the dialog lists at most three; POST /sessions checks the month's room before writing the yes; refusal reads 'Use API key is not offered for this start now: open Start again to see what it does.'",
+            "check_in_the_app": "Give a ready task a tiny budget (e.g. CHF 0.07) and open Start: a line names it '... may leave too little for its review, which then waits for Continue.'"
+          },
+          {
+            "problem": "C5-left-2 (minor): switchNotificationWords had no producer; the person was not told when the policy moved work onto the API key.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-switch.test.ts 'once per stop when the choice moves work onto the API key by itself ...'",
+            "how": "Notification kind credential_switch, once per stop when the policy (not a yes) moved work onto the key, kept by the audit row billing.switch_notice across sessions and restarts.",
+            "check_in_the_app": "Under 'Subscription first, then API key' with the subscription rested, start a session: one notification about the move and its cost; a second session in the same stop gives none."
+          },
+          {
+            "problem": "C5-left-5 (words): every closed refused card said 'A new one is saved; the work that waited for it goes on.' even when nothing was saved or nothing waited.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-refused-closed.test.ts (both cases)",
+            "how": "closeRefusedCards records why it closed and whether work waited; refusedClosedLine words each case.",
+            "check_in_the_app": "Refuse the key on the bench (refusedAt), let the card file, then save a new key with nothing waiting: the closed card reads 'A new key is saved.'"
+          }
+        ],
+        "not_done": [
+          {
+            "problem": "The 'needs' row form of CS-5 ('Waits for your API key: only it can read web pages here.')",
+            "why": "The wait entry does not carry the task's need, so the row cannot say it without the engine recording it (d1109-cred-engine's wait record); named in ADR 0120's amendment and runtime.md. The chooser's runs-on line already says 'Runs on your API key: only it can read web pages here.' where it applies."
+          },
+          {
+            "problem": "CS-10's screenshots of the rarer presets in their run phase (key_then_subscription and key_only with the key refused or at its month cap)",
+            "why": "Cut line allows it: the walk photographs Settings, plan card and Start dialog for all five presets with the subscription at its limit, the run on the key, the ask, the key refused and chat; the key-first presets' run-out with the key at its monthly cap was not staged on the bench (the engine records the data; the words are unit-tested in credential-policy-view.test.ts)."
+          }
+        ],
+        "validation": [
+          {
+            "command": "flock /tmp/frbench/heavy.lock pnpm check (final, on 21f3caf)",
+            "result": "exit 0: lint (0 errors, 42 pre-existing warnings), paths, typecheck, unit 538 files / 5800 passed, 7 skipped; link-check ok; secret-scan clean. docs-check could not diff origin/main here, so it was run separately with --base."
+          },
+          {
+            "command": "pnpm docs:check -- --base claude/nifty-knuth-f9udt0",
+            "result": "docs-check: ok (92 files)"
+          },
+          {
+            "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts (after f610084)",
+            "result": "101 files, 1341 passed. The run before f610084 had 1 failure (R-inboxperf vault-read bound, caused by 49c30ce), fixed in f610084."
+          },
+          {
+            "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts (real Vite build)",
+            "result": "37 passed, 1 failed (palette.spec.ts setting-row count 23 vs 22, an intended CS-2 change); after 21f3caf the palette spec passes 2/2, so 38/38."
+          },
+          {
+            "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+            "result": "5 files passed, 6 skipped; 30 passed, 81 skipped (Postgres-backed suites skip without FORERUNNER_TEST_PG, as expected)"
+          },
+          {
+            "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+            "result": "13 files passed; 25 passed, 1 skipped"
+          },
+          {
+            "command": "git grep -n '^<<<<<<< '",
+            "result": "nothing found"
+          },
+          {
+            "command": "cargo checks",
+            "result": "not run: the desktop shell (apps/desktop/src-tauri) was not touched"
+          },
+          {
+            "command": "CS-10 bench walk (node /tmp/frbench/fix-d1109-cred-screens/walk/cs10.cjs, --provider bench-api --api-key ok --subscription)",
+            "result": "BEFORE on d133246 (walk-before/, 29 steps), AFTER on 46b0593 (walk-after-46b0593/), on be49082 (walk-after-be49082/) and final AFTER on d0ad9cf (steps/, 32 steps). The final walk showed the fixes for the ask card's figure, the two-button sentence, the kept start's explain line, Answer's place on the bar and the plan card's task lines under 'then API key'. Bench stopped and its home deleted."
+          }
+        ],
+        "new_problems": [
+          "Project header under 'ask' with the API key able to run: 'Ready: 2 tasks; nothing runs until 02:51 (your subscription's limit)' (steps/06-after-p2-subscription-then-ask-start-dialog.txt). It is true that nothing runs by itself, but the Start dialog then offers 'Use API key' now. A later words pass could say 'nothing runs by itself until 02:51'. The status line is d1109-run-visible's (project-status.ts); not changed here.",
+          "The plan card's per-task wait line under 'then wait' still says 'Press Start and the work starts then.' (steps/02-after-p1-default-plan-card.txt), but the card's own button is 'Approve and start' and the Start dialog's button is 'Start at HH:MM'. This is credential-wait.ts waitThenStartSentence (W15-66, shared by New task and Settings). CS-4 said the per-task lines stay unchanged, so this area left it as it is.",
+          "Session page 'Last result' for a session that ended to wait under 'ask' reads '... 1 task waits on other tasks. CHF 0.00.' (steps/25-after-c-session-waits.txt): 'CHF 0.00' is a real spend, not an estimate, so it does not break rule 7, but it adds nothing. This is the session result's sentence (result.ts, d1109-starts-engine)."
+        ],
+        "notes_for_other_areas": [
+          "StartCredentialView.runOut gains stoppedLine (startStoppedLine). GET /projects/:id/start-check puts it in blocked.sentence when the start is startable and runOut is offered: 'Your subscription is at its limit until 15:40.' replaces 'Nothing can run until 15:40 (...). Press Start at 15:40 and the work starts then.' A kept start alone keeps the old sentence. continuation.test.ts S-10 was updated with its intent kept. The fake daemon mirrors it.",
+          "RuntimeApp.chooser.batch() now returns the chooser function with an optional `billing` (a RouterTaskBilling view from withVaultMemo()). Read the credentials through `batch.billing` in a request that also uses the batch (GET /inbox does this), so the vault is asked once per credential. RouterTaskBilling.withVaultMemo() is for views only, never for picks.",
+          "Under a preset whose rule is 'next' (subscription_then_key, key_then_subscription), compose's chooserBatch returns the next saved credential that is not resting and can do the task, not the first choice's wait line. This affects the plan card, New task and Settings' specialists' runsOn.",
+          "askCardWords and refusedAskWords take estimateChf as 'CHF 0.40', 'less than CHF 0.01' (moneyWords) or 'CHF 0.00' (no figure known: ', at a cost per use'). The ask's estimate (compose `ask`) includes the claimed and in-progress tasks' remaining estimates.",
+          "RunIndicator.tsx: the run's links render in data-testid run-links right after the words. CancelWait and its run-cancel-explain stay on the right. d1109-selftasks-chat does not touch this.",
+          "StartSessionDialog: start-session-explain is hidden while runOut is shown. Its text is `${blocked.startLabel}: works until ...` for a kept start ('Start at 15:40: ...'), else 'Start: works until ...'.",
+          "Owner question default (one constant): ONE_OFF_UNDER_WAIT = true in packages/runtime/src/daemon/credential-policy-view.ts. A one-off 'Use API key' is offered under 'then wait' too; false limits it to 'ask before API key'.",
+          "Suggested UPDATE-LOG/CHANGELOG lines for the session lead: 'Settings has one place for which Claude does the work (five presets, the default shown as used until you pick); the Start dialog, the plan card, rows, the status line, the run bar, the session page, the drawer, Costs and chat say what happens when the first choice runs out, what a move to the API key cost, and offer Use API key or Start at 15:40 with their consequences (U-078, ADR 0120).'",
+          "Live check 4 steps for this area: (1) Settings > 'Which Claude does the work': both credentials saved, 'Subscription first, then wait' shown as used, rows show states and the month's CHF. (2) Choose 'Subscription first, ask before API key'. Run work until the real subscription meets its limit: one Inbox card 'Use your API key until HH:MM?' with a non-zero 'about CHF x' (never 0.00); the bar reads 'waiting until HH:MM, then it goes on' with Answer next to the words. (3) Press Use API key: the session goes on, its page shows the switch line, the drawer's run reads 'On your API key after your subscription's limit · CHF x', and Costs > By credential agrees with the ledger. (4) Under 'then wait', ask chat a question: hold reply with Use API key and its CHF; press it once and confirm one answer on the key with the note. (5) Under 'Subscription first, then API key' with the limit hit: the plan card's task lines name no wait, and one notification of the move with its cost arrives."
+        ],
+        "tests_changed_for_design": [
+          {
+            "test": "packages/runtime/test/continuation.test.ts 'a Start pressed while the credential is out is kept ...' (447a61d)",
+            "why": "With the API key saved and serving, the start check's sentence beside 'Use API key' and 'Start at 15:00' is now the stop alone ('Your subscription is at its limit until 15:00.'). The startable/startLabel assertions are unchanged."
+          },
+          {
+            "test": "apps/ui/test/real-daemon.test.ts 'CS-3, C3-left-9: under wait ... Start at 11:40 first ...' (be49082)",
+            "why": "Same change: this area's own earlier sentence 'Nothing can run until 11:40 ... Press Start at 11:40 ...' becomes 'Your subscription is at its limit until 11:40.' beside the two buttons. Intent kept: the sentence matches the buttons."
+          },
+          {
+            "test": "apps/ui/test/credential-start.test.tsx the two CS-3 run-out cases (be49082)",
+            "why": "The fake daemon gives runOut.stoppedLine. The dialog shows the stop alone and no start-session-explain beside the two buttons."
+          },
+          {
+            "test": "apps/ui/e2e/palette.spec.ts setting-row count 23 -> 22 (21f3caf)",
+            "why": "CS-2 removed 'When my first choice runs out mid-session'; 'Which Claude does the work' is the one place for the choice."
+          },
+          {
+            "test": "Earlier runs' changes (eb395fc..d631882): settings tests (Basics/Advanced lists), w15-words W15-65, continuation (quiet hours), project TR-2, shell-live and two real-daemon assertions of the old start sentence (62f39b6); row-label assertions in credential-ask-words, credential-limits, credential-policy-session, credential-wait-session, task-usage-limit, continuation, tasks.test.tsx, fake-tasks and real-daemon (comma to parentheses, e7bb56a); task-usage-limit, subscription-path and the real-daemon 'Use the other one' case (f87ad69)",
+            "why": "Design changes: the order and mid-session settings gave way to the presets; the start sentence names its button; the limit reads 'Waits until 15:40 (your subscription's limit)'; a stopped run another credential takes over logs the switch, not 'continues on your API key now'. Each kept its intent, as the commit messages say."
+          }
+        ],
+        "screenshots": {
+          "before": [
+            "/tmp/frbench/fix-d1109-cred-screens/walk-before/01-before-p1-default-settings.png",
+            "/tmp/frbench/fix-d1109-cred-screens/walk-before/06-before-p2-subscription-then-ask-start-dialog.png",
+            "/tmp/frbench/fix-d1109-cred-screens/walk-before/16-before-advanced.png",
+            "/tmp/frbench/fix-d1109-cred-screens/walk-before/19-before-b-session-switch.png",
+            "/tmp/frbench/fix-d1109-cred-screens/walk-before/21-before-b-costs-by-credential.png",
+            "/tmp/frbench/fix-d1109-cred-screens/walk-before/22-before-c-inbox-ask-card.png",
+            "/tmp/frbench/fix-d1109-cred-screens/walk-before/28-before-d-start-dialog-key-refused.png",
+            "/tmp/frbench/fix-d1109-cred-screens/walk-before/29-before-e-chat-hold-one-off.png",
+            "/tmp/frbench/fix-d1109-cred-screens/walk-after-be49082/22-after-c-inbox-ask-card.png",
+            "/tmp/frbench/fix-d1109-cred-screens/walk-after-be49082/08-after-p3-subscription-then-key-plan-card.png"
+          ],
+          "after": [
+            "/tmp/frbench/fix-d1109-cred-screens/steps/01-after-p1-default-settings.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/06-after-p2-subscription-then-ask-start-dialog.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/08-after-p3-subscription-then-key-plan-card.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/16-after-advanced.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/19-after-b-session-switch.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/20-after-b-drawer-run-line.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/21-after-b-costs-by-credential.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/22-after-c-inbox-ask-card.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/23-after-c-overview-ask.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/25-after-c-session-waits.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/29-after-c-session-went-on.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/30-after-d-settings-key-refused.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/31-after-d-start-dialog-key-refused.png",
+            "/tmp/frbench/fix-d1109-cred-screens/steps/32-after-e-chat-hold-one-off.png"
+          ]
+        }
+      },
+      "review": {
+        "verdict": "fix-needed",
+        "acceptance_walk": "Bench \"review-d1109-cred-screens\" (daemon 48790, UI 2390, --provider bench-api --api-key ok --subscription, started from this worktree at 21f3caf). I clicked through Playwright scripts. Stops were staged the way the fixer's walk did it, by patching billing_source.limits: restingUntil, planShareCap 0, refusedAt, monthlyUsdMicro. Screenshots and texts are in /tmp/frbench/review-d1109-cred-screens/steps/. The scripts are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk/. I stopped the bench and deleted its home afterwards.\n\nw1, Settings (steps 01-07): Basics shows \"Which Claude does the work\" right under Accounts and keys. All five presets are there with their lines, and the default is selected with \"Used until you choose: ...\". Clicking \"ask\" from the default brings up a read-back, because the engine ranks wait 0 below ask 1 (CE-13). Change stores it, and the now line becomes \"If your subscription runs out, you are asked before your API key is used.\" Clicking \"then API key\" shows the read-back \"...work goes on with your API key at once, at a cost per use.\" and nothing is stored until Change. Advanced has only the abilities table; its summary reads \"what each Claude credential can do here\".\nw2 (step 08): after a daemon restart the stored preset is still selected.\n\nw3, five presets with the subscription at its limit (steps 09-23):\n- then API key: the now line says \"...; your API key does the work meanwhile.\", the plan card's foot says the run-out form and no task line waits, and the Start dialog says \"Your subscription is at its limit until 03:37, so this runs on your API key (about CHF 0.11).\" with a plain Start.\n- ask: the dialog shows \"Your subscription is at its limit until 03:37.\", then Use API key (primary, with its line), then Start at 03:37.\n- wait: same, with the two buttons in the other order.\n- Key-first presets: the if-runs-out lines.\n\nw4/w5, ask plus \"Start at 03:37\" (steps 24-35): the start is kept and the header reads \"Starts at 03:37 (your subscription's limit)\" with Cancel. But the Inbox also gets \"Use your API key until 03:37?\" with an urgent notification. That is BLOCKING 1. Reopening Start then says \"Nothing can run yet. Waits for your answer: use your API key? The card is in the Inbox.\"\nUse API key ran both tasks on the key and closed the card. The session page shows \"Your API key took over at 03:03 (your subscription's limit): CHF 0.03 of CHF 0.03.\", the log line says '...\" runs on your API key: ..., and you said yes.', the drawer says \"On your API key after your subscription's limit · CHF 0.01\", and Costs shows \"By credential / Your API key: CHF 0.03\".\n\nw6, with that yes standing (steps 36-39): both plan cards show \"Waits until 03:37 (your subscription's limit). Press Start and the work starts then.\" on the task line. Their foot says \"...: you said yes, so your API key does the work meanwhile.\" Approve and start then ran both Quote page tasks on the key at once (billing.switch '... runs on your API key: ..., and you said yes.'). That is BLOCKING 2.\nAfter a restart Settings reads \"Your work and chat use your API key until 03:37: you said yes.\" with Stop using it. Pressing it changes the line to \"...; the work waits for it.\"\n\nw7/w8, ask flow on a new stop (steps 40-49): Approve and start on the Recipes card files one ask card (\"about CHF 0.09\", Use API key primary, Wait). Then:\n- The bar reads \"Recipes · waiting until 03:40, then it goes on\" with Answer next to the words, and Cancel with its line on the right.\n- The status line reads \"Waiting for you: use your API key?\" with Answer, and the row reads \"Waits for your answer: use your API key?\".\n- The session page's wait block has Answer.\n- The Start dialog says \"Your session of 03:05 goes on by itself at 03:40.\" and offers Use API key only.\n- The bar's Answer opens /inbox#card-<id>.\n- The card's Use API key shows \"Done: Your API key does the work until 03:40; your session goes on now.\" The session went on with the bar reading '... works on \"Check that...\" on your API key' and finished on the key.\n\nw9, chat under \"then wait\" (steps 50-53): the hold reply offers Use API key with \"Answers this question on your API key: less than CHF 0.01.\". One press made one call on the key and added the note \"Answered with your API key: ...\". The button is gone after the press.\n\nw10, share stop (steps 54-59): Settings shows \"Share used until Tue 1 Dec\" with Change the allowance. The dialog says \"Your subscription has used its share until Tue 1 Dec.\" with \"Start on 1 Dec\" and Use API key. Pressing \"Start on 1 Dec\" started a session that stopped to wait at once, and the dialog said \"Started: the session works until...\" (non-blocking 1).\n- The bar: \"Garden · waiting until Tue 1 Dec, 00:00, then it goes on\" with Change the allowance and Cancel.\n- The row: \"Waits until Tue 1 Dec (your subscription's share)\".\n- The status line and the session page give the same time.\n\nw11 (steps 60-64): with the key refused, the Settings row reads \"Refused: save a new key\" with its link and the Start dialog has no Use API key. With the key at its monthly cap, the row reads \"Monthly cap reached until Tue 1 Dec\". The C4b-left-5 line appeared word for word for a task with a CHF 0.07 budget.\n\nw12 (C5-left-2, CS-7, C4b-left-6):\n- The bar showed \"... on your API key\", and exactly one credential_switch notification arrived (\"Quote page: work goes on with your API key\").\n- A second session in the same stop gave none.\n- The Continue line reads \"Adds CHF 0.07 to its budget and starts a session that runs only its review.\" and the row's detail quotes \"The work is done; its review waits for room in the budget.\"\n\nw14: at 390 px wide neither the Settings section nor the Start dialog makes the page scroll sideways.\n\nI reproduced two findings at the client boundary against the real daemon with a scratch test, kept outside the worktree at /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/zz-review-ask-start-at.test.ts:\n- ask plus \"Start at 11:40\" leaves the open card \"Use your API key until 11:40?\".\n- With nothing runnable, start-check still offers runOut (\"about CHF 0.00\"). POST /sessions with useOtherCredential is then refused with \"Nothing can run: no task is ready.\", yet limits.grant {to: api_key, by: start} was written.\n\nTests:\n- Every runtime test file the fixer names passes (18 files, 170 tests).\n- The area's UI test files pass (15 files, 254 tests), and so does the 'd1109-cred-screens, run C' real-daemon describe (14/14).\n- Playwright with the real Vite build: 38/38.\n- pnpm check exit 0: lint, typecheck, 538 files / 5800 tests, links, secret scan. docs:check with --base claude/nifty-knuth-f9udt0 is ok.\n- Failing on base: I put the base source back in place (tests kept, then restored; worktree clean). The 14 real-daemon cases, credential-refused-closed (2), oversized-task C4b-left-5 and task-budget-all BA-3 all fail on assertions. For example, the CS-3 'wait' case received \"Nothing can run until 11:40 (your subscription's limit). Press Start and the work starts then.\"",
+        "blocking": [
+          {
+            "issue": "Under 'Subscription first, ask before API key', the Start dialog's 'Start at 15:40' still files the ask card 'Use your API key until 15:40?' for the same stop. The spec decision says 'under ask it also records the person's Wait for this stop, so no card follows', and the CS-3 acceptance says 'under ask no ask card is filed for that stop'.",
+            "evidence": "Bench step 24 (w4-01-after-start-at) shows the kept start 'Starts at 03:37'. Step 28 (w5-01-inbox-ask-card-after-start-at) shows the open card 'Use your API key until 03:37?' plus an urgent request_blocking notification. limits.asking had requestId 01a1e771... at 02:58:34.959, 3 ms before kept.at. Step 30: the reopened Start dialog says 'Nothing can run yet. Waits for your answer: use your API key? The card is in the Inbox.'\nRoot cause: rt.continuations.keepStart (compose.ts:4249) calls taskBilling.noteWait, which under 'ask' files the card (billing-pick.ts:990ff). The recordWait call that runs afterwards (server.ts:1933-1935) then does nothing, because asking.stopKey already equals the stop (credential-ask.ts:113-118). The card stays open.\nNo test covers it: the real-daemon 'Start at' case (real-daemon.test.ts:22249) runs under 'wait' only. My scratch real-daemon reproduction under 'ask' fails with: expected [ 'Use your API key until 11:40?' ] to deeply equal [].",
+            "expected": "Under 'ask', pressing 'Start at 15:40' keeps one person start and leaves no open ask card for that stop: the Wait is recorded before or instead of noteWait's card, or the card is closed as answered 'Wait'. Neither the Inbox, the status line nor the reopened dialog asks again. Add a real-daemon case under 'ask', and a restart variant, as the acceptance asks.",
+            "where": "packages/runtime/src/daemon/server.ts:1927-1935 (and compose.ts:4249 keepStart -> noteWait)"
+          },
+          {
+            "issue": "With the person's yes standing for a stop (from the Start dialog or the ask card's Use API key), the plan card contradicts itself, and its task line promises a wait that does not happen. Each task line says 'Waits until 03:37 (your subscription's limit). Press Start and the work starts then.' while this area's foot line on the same card says 'you said yes, so your API key does the work meanwhile.' Approve and start then runs the tasks on the API key at once. d0ad9cf fixed exactly this contradiction for the 'next' rule only. The grant case is its sibling (validation rule 8), and the plan card is where the person approves money (CS-4).",
+            "evidence": "Bench step 36 (w6-01-inbox-plan-cards-under-yes): both the Quote page and Recipes cards show the 'Waits until 03:37 ...' task line above the 'you said yes, so your API key does the work meanwhile.' foot. Pressing Approve and start on Quote page ran both tasks on the key straight away. The session log's billing.switch reads '\"Build the random quote page ...\" runs on your API key: your subscription is at its limit until 03:37, and you said yes.' and the switchLine reads 'Your API key took over at 03:04 ...: CHF 0.04 of CHF 0.04.'\nRoot cause: compose.ts chooserBatch (around 4105-4127) replaces the first choice's wait line only when credentialPolicyOf(prefs).rule.whenStopped === 'next'. It never checks a grant on the stopped source, which the pick honours.",
+            "expected": "While a yes stands for the first choice's stop, the plan card's task lines (and New task's runs-on line, which shares chooserBatch) name the key that does the work, as under 'then API key'. No line says the task waits. Test it at GET /inbox on the real daemon with a grant written by POST /sessions useOtherCredential.",
+            "where": "packages/runtime/src/daemon/compose.ts:4105-4127 (chooserBatch)"
+          },
+          {
+            "issue": "The Start dialog offers 'Use API key' even when nothing can run. The offer is computed without looking at the runnable work, and the dialog shows runOut whatever the blocked state is. Pressing it writes the person's standing yes (limits.grant: 'Your work and chat use your API key until 11:40') and only then is the start refused ('Nothing can run: no task is ready.'). The yes then moves every other project's work and chat onto the API key until the stop ends, from a start that never happened. The offer line also reads 'about CHF 0.00'. f02f441 fixed the same class for a start refused for its budget ('writes no yes'), but not this sibling. Starts refused for Stop all reach the grant before the refusal by the same path.",
+            "evidence": "Scratch real-daemon reproduction (subscription_then_ask, subscription resting until 10:40 UTC, a project with only a draft task). GET start-check returned blocked {kind: nothing_runnable, sentence: 'Nothing can run: no task is ready.'} together with credential.runOut {use: {explain: 'Runs now on your API key until 11:40, about CHF 0.00; nothing passes this session's budget.'}, later: 'Start at 11:40'}. POST /sessions {useOtherCredential: true} was refused with 'Nothing can run: no task is ready.' Afterwards the subscription row held grant {to: 'api_key', stopKey: 'limit:2026-03-05T10:40:00.000Z', by: 'start'}.\nCode paths: startCredential (credential-start.ts) never reads the runnable work. In StartSessionDialog.tsx, `runOut = notice ? null : credential?.runOut`, and the stops guard is skipped for useOther. server.ts writes grantForStart before the S-10 and nothing_runnable checks (server.ts ~1840-1860 versus ~1910).",
+            "expected": "Use API key is offered only when the start would run something: something is runnable or the project's own session waits to go on, and sessions are not stopped. The daemon writes the yes only after every refusal check has passed (nothing runnable, the kill switch, the budget). Add a real-daemon case asserting that no grant is written for a refused start, plus the dialog case.",
+            "where": "packages/runtime/src/daemon/server.ts:1838-1882; packages/runtime/src/daemon/credential-start.ts:68-160; apps/ui/src/pages/project/StartSessionDialog.tsx:398"
+          }
+        ],
+        "claims_checked": [
+          {
+            "claim": "CS-1: Settings > Basics 'Which Claude does the work': one radio group, the default shown as used until a pick, rows with role, state and month, a read-back for a widening pick, and the pick persisting across a restart",
+            "holds": true,
+            "note": "Bench w1/w2 plus the real-daemon CS-1 cases. Picking 'ask' from the default also reads back (CE-13 ranks wait 0 below ask 1), so the acceptance's 'acts at once' holds only from a higher preset."
+          },
+          {
+            "claim": "CS-2: Advanced has no order list and no mid-session row; POST /settings/billing-order maps onto the policy",
+            "holds": true,
+            "note": "Bench step 06 and the real-daemon CS-2 case. The palette count change 23 -> 22 follows the design."
+          },
+          {
+            "claim": "CS-3: under ask/wait the Start dialog shows the stop line, Use API key and Start at 15:40 with the preset's lean first, and Start at keeps one person start with no ask card under ask",
+            "holds": false,
+            "note": "The words, the order and the kept start hold. Under ask an ask card is still filed (blocking 1), and Use API key is offered and writes a yes when nothing can run (blocking 3)."
+          },
+          {
+            "claim": "CS-3: Use API key on the project's waiting session makes it go on now on the key; the grant survives a restart",
+            "holds": true,
+            "note": "Bench w7/w8 (via the card) and w5 (via the dialog). The real-daemon CS-3 'ask' case composes twice. The bench grant survived a daemon restart (step 38)."
+          },
+          {
+            "claim": "CS-4: the plan card's foot line follows the preset and the stop; under 'then API key' no task line says it waits",
+            "holds": false,
+            "note": "The foot line holds, and the 'then API key' case holds. With a yes standing the task lines still say 'Waits until ...' under a foot that says the key does the work (blocking 2)."
+          },
+          {
+            "claim": "CS-5 / C4b-left-6: rows and the status line give every stop and the question in words; Continue runs only the review",
+            "holds": true,
+            "note": "The share, key-month, ask and limit rows were seen on the bench. The status line reads 'Waiting for you: use your API key?' with Answer. The 'needs' form is in not_done although CS-5 is on the never-cut list."
+          },
+          {
+            "claim": "CS-6 / C5-left-1: switch log line, session page switch line, result line, drawer run line, not written twice after a restart",
+            "holds": true,
+            "note": "Bench w4/w5/w12, and credential-switch.test.ts (composed twice). A session that starts on the key logs '... runs on your API key: ...', not 'goes on ... from where it stopped'."
+          },
+          {
+            "claim": "CS-7: the indicator shows ' on your API key', the question with Answer, and the share/key-month waits; Answer sits beside the words",
+            "holds": true,
+            "note": "Bench w7, w8, w10 and w12, and the real-daemon CS-7 case."
+          },
+          {
+            "claim": "CS-8 / C5-left-3: ask card figure never 'about CHF 0.00'; chat's one-off press; no Think it through on a hold reply",
+            "holds": true,
+            "note": "Ask card 'about CHF 0.09'; chat one-off 'less than CHF 0.01', one call on the key, the button gone after the press. The Start dialog's Use API key line can still read 'about CHF 0.00' when nothing is runnable (part of blocking 3)."
+          },
+          {
+            "claim": "CS-9: Costs By credential adds up to the total",
+            "holds": true,
+            "note": "Bench 'Your API key: CHF 0.03' against a total of CHF 0.03, plus the real-daemon CS-9 case. The fake daemon's GET /costs does not produce byCredential by default."
+          },
+          {
+            "claim": "C4b-left-5: the Start dialog names a task whose budget may leave too little for its review; Use API key writes no yes for a start refused for its budget",
+            "holds": true,
+            "note": "Exact words seen on the bench (w11). The budget-refusal sibling is fixed; the nothing-runnable sibling is not (blocking 3)."
+          },
+          {
+            "claim": "C5-left-2: one notification per stop when the policy moves work onto the key, none on a yes, none in a second session",
+            "holds": true,
+            "note": "Bench w12 and credential-switch.test.ts."
+          },
+          {
+            "claim": "C5-left-4: what Settings reads comes from credential_policy, with the restart assertions back",
+            "holds": true,
+            "note": "billing-order.test.ts restart block, and the GET /settings/billing-order view reads the policy."
+          },
+          {
+            "claim": "C5-left-5: the refused card's closed line depends on whether work waited",
+            "holds": true,
+            "note": "credential-refused-closed.test.ts fails on base on assertions ('A new one is saved; ...') and passes on the branch."
+          },
+          {
+            "claim": "Validation: pnpm check, UI suite, Playwright, integration, e2e green",
+            "holds": true,
+            "note": "I re-ran pnpm check (exit 0, 5800 tests), the area's UI and real-daemon tests, and Playwright 38/38 with the real Vite build. I did not re-run integration or e2e."
+          },
+          {
+            "claim": "Every new or changed route has a real-daemon case and a fake change in the same commit",
+            "holds": false,
+            "note": "Real-daemon cases exist for every route. d631882 added CostView.byCredential without a fake-daemon change, and the fake never serves the field: the UI test sets it on the fixture."
+          }
+        ],
+        "non_blocking": [
+          "'Start on 1 Dec' (share or key-month stop): keepStart keeps a start only for reason 'limit' (compose.ts:4245). Pressing it therefore starts a session that stops to wait at once, the dialog then says 'Started: the session works until nothing more can run, the budget is used, or you stop it.', and the Sessions list gets a session with nothing done (bench steps 55-58). The outcome, going on at the month's start, is acceptable; the words and the extra session are not. The same holds for d1109-starts-engine's 'Start at Tue 1 Dec, 00:00' under key_only, whose label is also 5 words (design rule 1: at most 3).",
+          "The Start dialog drops the plan sentence ('This session runs ...') whenever the stop line replaces it. A person pressing Use API key sees the CHF figure but not which tasks will run (steps 14 and 17).",
+          "Three figures for the same waiting work: the ask card says 'about CHF 0.09', the dialog's Use API key says 'about CHF 0.05' (runnable tasks only), and the plan card says about CHF 0.13 per task (Recipes, steps 40 and 45).",
+          "The Use API key consequence line can pass 100 characters when the subscription was refused: 'Runs now on your API key until a new sign-in is saved, about CHF 0.90; nothing passes this session's budget.'",
+          "Under 'ask' with no card open yet, Settings' now line says 'Your subscription is at its limit until 03:37; the work waits for it.' The next work will in fact file a card that asks.",
+          "The share wait on the status line and the session page has Cancel only. 'Change the allowance' appears only on the bar, while CS-7 names it with the share form.",
+          "Chat's one-off press sends the question again as a new person line, so the question appears twice in the conversation (step 52).",
+          "Stop using it has no one-line explanation beside it (design §3: every action has a one-line consequence).",
+          "The spec's Playwright cases for the Settings section and the Start dialog at phone and desktop widths were not added. I checked 390 px by hand: no sideways scroll (w14).",
+          "No test of an Undo of a preset after a restart, which fix_scope's restart list names. The undoRisk change has a unit test, but no Undo is run after a second compose.",
+          "The 'needs' row form ('Waits for your API key: only it can read web pages here.') is in not_done with a reason. CS-5 is on the spec's never-cut list, so the session lead should decide.",
+          "Fixer's own new_problems confirmed on the bench: the header reads 'Ready: 2 tasks; nothing runs until 03:37' while Use API key is offered; the per-task 'Press Start and the work starts then.' sits on a card whose button is 'Approve and start'; the waiting session's result reads 'CHF 0.00'.",
+          "A pending Settings read-back left unanswered (navigating away) stays in the Inbox as an approval card 'Set which Claude does the work to ...?'. This is the generic settings pattern, not new here.",
+          "Bench limit, not the app: on bench-api a chat call that carries earlier turns is classed 'unknown' by testenv/src/bench/roles.ts and gets '[stand-in model] unrecognised role'. The one-off's live check must use the real model (live check 4).",
+          "Live-check steps to add for the session lead: (1) under ask, press Start at HH:MM in the Start dialog and confirm no ask card appears; (2) with a yes standing, the plan card's task lines name the key; (3) open Start on a project with nothing ready while the subscription is at its limit and confirm no Use API key is offered."
+        ]
+      },
+      "fixup": {
+        "area": "d1109-cred-screens",
+        "branch": "fix/d1109-cred-screens",
+        "head_sha": "d6344cd",
+        "commits": [
+          {
+            "sha": "4ec635c",
+            "subject": "start dialog and plan card: Start at 15:40 is the Wait, a yes names the key, Use API key only for a start that runs (U-078, CS-3, CS-4)"
+          },
+          {
+            "sha": "9fd65c6",
+            "subject": "settings, start dialog and costs: Stop using it says what it does; the fake mirrors the offer gate and By credential (U-078, CS-1, CS-3, CS-9)"
+          },
+          {
+            "sha": "d6344cd",
+            "subject": "docs: Start at 15:40 is the Wait, a yes names the key, Use API key only for a start that runs (U-078, ADR 0120)"
+          }
+        ],
+        "fixed": [
+          {
+            "problem": "Review blocking 1. The preset was 'Subscription first, ask before API key'. Pressing 'Start at 15:40' in the Start dialog kept the start, but it also filed the card 'Use your API key until 15:40?' with an urgent notification. When the dialog was opened again it said 'Waits for your answer'. The spec says the opposite: 'under ask it also records the person's Wait for this stop, so no card follows'.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-cred-screens, run C' > \"CS-3 (fix-up): under 'ask', 'Start at 11:40' is the person's Wait for this stop: one start kept and no ask card, also after a restart\" (before the fix: expected [] but got ['Use your API key until 11:40?'])",
+            "how": "Root cause: compose.ts continuations.keepStart calls taskBilling.noteWait, and under 'ask' noteWait's CE-7 ask files the card. The server's recordWait ran only after that, found asking.stopKey already set, and did nothing. Now keepStart records the person's Wait for the stop first (recordWait, under 'ask' only), so noteWait files no card. recordWait (session/credential-ask.ts) has a new signature: recordWait({store, clock, humanId}, {sourceId, stopKey}) -> {closedCard}. If an ask card for the same stop is already open (another project's work met the stop first), it is answered 'Wait' and applied at once: outcome waited, Done line 'Nothing moves until 15:00; then your session goes on.'. So one stop asks one question, also after a restart. The server's recordWait call after keepStart is removed. A runtime case in credential-ask-words.test.ts covers the open-card case (answered Wait, no card after a restart).",
+            "check_in_the_app": "Bench (bench-api with a key and a subscription): set 'Subscription first, ask before API key' and rest the subscription. Open Start on a project with ready tasks. The dialog shows 'Your subscription is at its limit until HH:MM.', then Use API key, then Start at HH:MM. Press Start at HH:MM. The header reads 'Starts at HH:MM (your subscription's limit)' with Cancel. The Inbox has no 'Use your API key' card and there is no urgent notification. Open Start again: no 'Waits for your answer'. Restart the daemon: still no card. Seen on the bench: /tmp/frbench/fixup-d1109-cred-screens/steps/03..07-fx-b1-*. Live check 4: under 'ask', when the owner's real subscription meets its limit, open Start on a project with ready work and press Start at HH:MM. Confirm that no ask card and no urgent notification appear. If an ask card was already open, confirm it now shows in Answered as Wait with 'Nothing moves until HH:MM; then your session goes on.'."
+          },
+          {
+            "problem": "Review blocking 2. While the person's yes stood for the stop (given in the Start dialog or on the ask card), every task line on the plan card said 'Waits until 03:37 (your subscription's limit). Press Start and the work starts then.' The card's foot line said 'you said yes, so your API key does the work meanwhile', and Approve and start ran the tasks on the key at once.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-cred-screens, run C' > \"CS-4 (fix-up): with a yes standing for the stop, no task line of the plan card says it waits; the foot line says the yes\" (before the fix, each line was 'Waits until 09:40 (your subscription's limit). Press Start and the work starts then.')",
+            "how": "Root cause: compose.ts chooserBatch replaced the first choice's wait line only when the rule was 'next', and never read a grant. It now reads, once per batch, the limits.grant on each blocked source and keeps it when its stopKey matches the source's current stop (currentStopOf through the batch's vault-memo view). The credential the person said yes to then serves, as the pick does. The task line becomes that credential's choice, here {kind: api_key, line: null}, as under 'then API key'. New task's and Settings' runs-on lines use the same chooserBatch; the test asserts them through GET /settings/models with a projectId.",
+            "check_in_the_app": "Bench: under 'ask' with the subscription rested, an open plan card has a task line 'Waits until HH:MM ... Press Start and the work starts then.'. Press Use API key in the Start dialog of another project with ready tasks. The plan card's foot then reads '...: you said yes, so your API key does the work meanwhile.' and no task line says Waits until. Seen on the bench: steps 08-fx-b2-01 (before) and 10-fx-b2-03 (after). Live check 4: after pressing Use API key on the ask card or in the dialog, open the Inbox plan card. The task lines name no wait, and Approve and start runs the tasks on the key."
+          },
+          {
+            "problem": "Review blocking 3. The Start dialog offered 'Use API key' ('about CHF 0.00') when nothing could run, and under Stop all. Pressing it wrote the person's standing yes (limits.grant by 'start') before the start was refused, so every project's work and chat moved onto the key for a start that never ran.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-cred-screens, run C' > 'CS-3 (fix-up): Use API key is offered only for a start that runs something; a start refused for nothing to run or for Stop all writes no yes' (before the fix, runOut was offered with 'about CHF 0.00'); apps/ui/test/credential-start.test.tsx 'nothing to run: no Use API key ...' and 'Stop all: no Use API key ...' (failed before the fake daemon change)",
+            "how": "Root cause: credential-start.ts startCredential never read the runnable work. Also, server.ts POST /sessions wrote grantForStart before its removed-project, nothing-runnable and Stop all checks. Changes: startCredential takes a new facts parameter {runsWork, stopped}. The server passes runsWork(check) and kill.isFrozen. A start that runs nothing (with no session of the project waiting to go on and no kept start) or that Stop all refuses now gets no stopped-first-choice line (no 'so this runs on your API key', no 'You said yes ...') and no runOut or offer. In POST /sessions with useOtherCredential, the removed-project check comes first. A start with no offer is refused with its own reason: the Stop all message (killed), the start's sentence ('Nothing can run: no task is ready.'), or the generic sentence. The yes is written only after every refusal, right before the start. A kept continuation or kept start writes it just before it goes on. Use API key never keeps a start for the reset. The fake daemon mirrors the offer gate and the refusal.",
+            "check_in_the_app": "Bench: under 'ask' with the subscription rested, open Start on a project whose only task is a draft. The dialog shows 'Nothing can run: no task is ready.' and has no Use API key. A POST with useOtherCredential is refused and limits.grant stays empty. With Stop all on, a project with ready tasks shows 'Sessions are stopped (Stop all), so nothing can start.' and no Use API key. Seen on the bench: steps 01/02-fx-b3-*. Live check 4: with the real subscription at its limit, open Start on a project with nothing ready and confirm there is no Use API key. Then confirm in Settings that the now line does not say 'you said yes'."
+          },
+          {
+            "problem": "Review non-blocking (design §3: every action has a one-line consequence). Settings' 'Stop using it' had no line saying what it does.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "apps/ui/test/credential-policy.test.tsx 'with a yes standing the now line says so, and Stop using it ends it (the next pick waits)' (the new credential-policy-end-grant-explain assertion; the element did not exist)",
+            "how": "CredentialPolicyView gains grantEndLine, built by credential-policy-view.ts grantEndLine: 'Stop using it: what already runs on your API key finishes; new work waits for your subscription.' It is shown under the now line while a yes stands. The real-daemon CS-1 grant case asserts it. The fake builds its view with the daemon's own builder.",
+            "check_in_the_app": "Settings > Which Claude does the work, with a yes standing: under 'Your work and chat use your API key until HH:MM: you said yes.' with Stop using it, the line 'Stop using it: what already runs on your API key finishes; new work waits for your subscription.' appears. Press it: the line goes and the now line says the work waits. Seen on the bench: steps 11/12-fx-cs1-*."
+          },
+          {
+            "problem": "Review non-blocking (validation rule: a changed route needs its fake). The fake daemon's GET /costs never served CostView.byCredential.",
+            "u_ids": [
+              "U-078",
+              "U-074"
+            ],
+            "failing_test_before": "none (fixture coverage; the CS-9 UI test sets the field itself)",
+            "how": "apps/ui/test/fixtures.ts COSTS: proj_atlas carries byCredential with rows that add up to its total (API key CHF 22.40, subscription CHF 2.60 at 12% of its allowance). proj_beacon carries an empty list.",
+            "check_in_the_app": "No change visible on the daemon. In UI tests, Project > More > Costs on the fake shows 'By credential'."
+          },
+          {
+            "problem": "Review non-blocking (fix_scope restart list): no test ran a preset's Undo after a restart.",
+            "u_ids": [
+              "U-078"
+            ],
+            "failing_test_before": "none (new coverage; it passed on the first run)",
+            "how": "Real-daemon case \"CS-1 (fix-up): a preset's Undo works after a restart; the section shows the earlier preset again\": the pick's undoToken is used after the daemon is composed again on the same home.",
+            "check_in_the_app": "Settings: pick 'Subscription first, ask before API key' and restart the app. In Changes, press Undo on that row: the section shows 'Subscription first, then wait' again."
+          }
+        ],
+        "not_done": [
+          {
+            "problem": "Review non-blocking: 'Start on 1 Dec' for a share or key-month stop starts a session that stops at once and says 'Started: ...'. Its label is 5 words.",
+            "why": "keepStart keeps a start only for reason 'limit', and continuations / keepStartAtReset are d1109-starts-engine's engine (S-10). Keeping a start for a month-end reset changes that engine's wake. Left for a follow-up with the session lead's decision."
+          },
+          {
+            "problem": "Review non-blocking: when the stop line replaces the plan sentence, the Start dialog no longer names the tasks that will run. Three different figures exist for the same waiting work (ask card, dialog, plan card).",
+            "why": "These are words and layout across three areas' estimates, not a promise the app breaks. Left for a words pass."
+          },
+          {
+            "problem": "Review non-blocking: the Use API key line is over 100 characters when the subscription was refused. Settings' now line under 'ask' before a card is filed says '...; the work waits for it.'",
+            "why": "Both sentences are true. The second would need the asking mark in CredentialFacts to tell 'you are asked' from 'you already said wait'. Left for a words pass."
+          },
+          {
+            "problem": "Review non-blocking: the share wait on the status line and the session page has Cancel only; Change the allowance is only on the run bar.",
+            "why": "The status line is d1109-run-visible's (project-status.ts) and the session page block is shared with it. Not changed in this fix-up."
+          },
+          {
+            "problem": "Review non-blocking: chat's one-off press sends the question again as a new person line, so it shows twice.",
+            "why": "Conversation.tsx is shared with d1109-selftasks-chat in C6. Left to avoid a merge conflict; it is a display duplicate, not a second model call (the bench showed one call on the key)."
+          },
+          {
+            "problem": "Review non-blocking: the spec's Playwright cases for the Settings section and the Start dialog at phone and desktop widths.",
+            "why": "Not added. The reviewer checked 390 px by hand with no sideways scroll, and Playwright 38/38 passes with the real Vite build."
+          },
+          {
+            "problem": "The 'needs' row form of CS-5 ('Waits for your API key: only it can read web pages here.')",
+            "why": "As in the fixer's report: the wait entry does not carry the task's need (the engine's wait record). CS-5 is on the never-cut list, so the session lead decides."
+          }
+        ],
+        "validation": [
+          {
+            "command": "flock /tmp/frbench/heavy.lock pnpm check (on d6344cd)",
+            "result": "exit 0: lint, lint:paths, typecheck, unit 538 files / 5801 passed, 7 skipped; link-check ok (213 files); secret-scan clean. docs-check cannot diff origin/main here, so it was run separately."
+          },
+          {
+            "command": "pnpm docs:check -- --base claude/nifty-knuth-f9udt0",
+            "result": "docs-check: ok (92 files)"
+          },
+          {
+            "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts",
+            "result": "101 files, 1347 passed"
+          },
+          {
+            "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts (real Vite build)",
+            "result": "38 passed"
+          },
+          {
+            "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+            "result": "5 files passed, 6 skipped; 30 passed, 81 skipped (the Postgres-backed suites skip without FORERUNNER_TEST_PG)"
+          },
+          {
+            "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+            "result": "13 files passed; 25 passed, 1 skipped"
+          },
+          {
+            "command": "vitest --project unit packages/runtime/test/{billing-*,continuation,credential-*,starts-words,oversized-task,task-usage-limit,subscription-path,task-budget-all}",
+            "result": "170 passed (includes the changed credential-ask-words.test.ts)"
+          },
+          {
+            "command": "real-daemon 'd1109-cred-screens, run C' describe",
+            "result": "18 passed (14 before plus 4 new fix-up cases). The 3 blocking cases failed first, on the assertions quoted in fixed[].failing_test_before."
+          },
+          {
+            "command": "Bench walk (fixup-d1109-cred-screens, --provider bench-api --api-key ok --subscription; scripts at /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fxwalk/walk.cjs and walk2.cjs; results in /tmp/frbench/fixup-d1109-cred-screens/steps/fx-walk.out.json)",
+            "result": "B3: nothing-to-run dialog shows no Use API key, the POST is refused with 'Nothing can run: no task is ready.', no grant written. Stop all: no Use API key, no grant. B1: 'Start at 04:28' kept ('Starts at 04:28 (your subscription's limit)' with Cancel); the Inbox has only the plan card; limits.asking.answer = 'wait'; no notifications; after a daemon restart still no ask card. B2: before the yes, a plan task line read 'Waits until 04:28 ... Press Start ...'. After Use API key on Garden, the foot read '...: you said yes, so your API key does the work meanwhile.' and the task lines were {api_key, null}; Garden's tasks ran to done on the key. Settings showed the Stop using it line; pressing it removed the grant. Bench stopped and its home deleted."
+          },
+          {
+            "command": "git grep -n '^<<<<<<< '",
+            "result": "nothing found"
+          },
+          {
+            "command": "cargo checks",
+            "result": "not run: the desktop shell was not touched"
+          }
+        ],
+        "new_problems": [
+          "Seen on the bench, not changed. After 'Start at 04:28' the reopened dialog says 'Nothing can run until 04:28 (your subscription's limit); then your session goes on.' with 'Cancel the wait' for a kept person start, which is not a continuation. This is d1109-starts-engine's kept-start sentence; 'a session starts then' would match the header's 'Starts at 04:28'. Evidence: /tmp/frbench/fixup-d1109-cred-screens/steps/06-fx-b1-03-start-dialog-again.txt.",
+          "A POST /sessions refused for nothing to run answers HTTP 409 with code 'conflict', although the daemon raises a 'validation' error in both paths. Evidence: fx-walk.out.json b3NothingPost. It is the same answer as the plain Start, so the UI shows the sentence; no fix needed for the person."
+        ],
+        "notes_for_other_areas": [
+          "recordWait (packages/runtime/src/session/credential-ask.ts) changed signature: recordWait({store, clock, humanId}, {sourceId, stopKey}) -> {closedCard}. Besides marking limits.asking {answer: 'wait'} for the stop, it answers an open credential:ask card of that stop with 'Wait' and applies it (outcome waited, session_goes_on true). Its only caller is continuations.keepStart in compose.ts, under 'ask', before noteWait. server.ts no longer calls it.",
+          "startCredential(deps, projectId, estimateUsdMicro, facts = {runsWork: true, stopped: false}) in credential-start.ts. When facts.stopped is set, or when nothing runs (no runnable work, no kept continuation, no kept start), it returns {view: {line: null, runOut: null}, offer: null} for a stopped first choice. server.ts credentialAtStart passes runsWork(check) (start-blocked.ts) and kill.isFrozen.",
+          "POST /sessions with useOtherCredential checks a removed project first. Without an offer it refuses with the Stop all message (killed), the start's nothing-runnable sentence, or the generic sentence. It writes grantForStart only after every refusal, right before requestStart. It never calls keepStart. The removed-project check now runs before the continuation-wait check for every start (same sentence as before).",
+          "compose.ts chooserBatch now honours a standing grant. Per batch, granted maps a blocked kind to the kind its grant (limits.grant, for the source's current stop) names. A task whose choice is that blocked kind gets the next choice restricted to the granted kind. The plan card, New task and Settings' specialists' runsOn follow it.",
+          "CredentialPolicyView (credential-policy-types.ts) gains grantEndLine: string | null. It is set only while grant is true: 'Stop using it: what already runs on your API key finishes; new work waits for your subscription.' The UI shows it as credential-policy-end-grant-explain.",
+          "Fake daemon: GET /projects/:id/start-check drops credential.runOut (to {line: null, runOut: null}) when state.killActive, or when nothing is runnable, nothing is oversized and there is no goesOnLine. POST /sessions with useOtherCredential refuses nothing-runnable with the start's sentence before recording credentialGrants. COSTS.proj_atlas carries byCredential.",
+          "For d1109-selftasks-chat (merging after this area): this fix-up touches POST /sessions in server.ts (not GET /sessions/:id), compose.ts keepStart and chooserBatch, credential-ask.ts, credential-start.ts, credential-policy-view.ts and -types.ts, CredentialPolicySection.tsx, fake-daemon.ts (start-check and POST /sessions), fixtures.ts COSTS, and the 'd1109-cred-screens, run C' real-daemon describe (4 cases appended). It touches none of SessionPage.tsx, InboxPage.tsx, TaskDrawer.tsx or Conversation.tsx.",
+          "Suggested UPDATE-LOG/CHANGELOG line: 'Start at 15:40 under ask before API key is your answer for that stop (no card follows); while your yes stands the plan card names the key for each task; Use API key appears only for a start that runs something and is never recorded for a refused start; Stop using it says what it does (U-078, ADR 0120 amendment 2026-11-17).'",
+          "Live check 4 additions for this area: (1) under ask, press Start at HH:MM in the Start dialog: no ask card, no urgent notification, and the reopened dialog asks nothing; (2) with a yes standing, the plan card's task lines name no wait; (3) open Start on a project with nothing ready while the subscription is at its limit: no Use API key; (4) Settings with a yes standing shows the Stop using it line, and pressing it ends the yes."
+        ],
+        "screenshots": {
+          "before": [
+            "/tmp/frbench/review-d1109-cred-screens/steps/28-w5-01-inbox-ask-card-after-start-at.png",
+            "/tmp/frbench/review-d1109-cred-screens/steps/36-w6-01-inbox-plan-cards-under-yes.png"
+          ],
+          "after": [
+            "/tmp/frbench/fixup-d1109-cred-screens/steps/01-fx-b3-01-nothing-to-run-dialog.png",
+            "/tmp/frbench/fixup-d1109-cred-screens/steps/02-fx-b3-02-stop-all-dialog.png",
+            "/tmp/frbench/fixup-d1109-cred-screens/steps/03-fx-b1-01-start-dialog-ask.png",
+            "/tmp/frbench/fixup-d1109-cred-screens/steps/05-fx-b1-02-after-start-at.png",
+            "/tmp/frbench/fixup-d1109-cred-screens/steps/06-fx-b1-03-start-dialog-again.png",
+            "/tmp/frbench/fixup-d1109-cred-screens/steps/07-fx-b1-04-inbox-no-ask-card.png",
+            "/tmp/frbench/fixup-d1109-cred-screens/steps/08-fx-b2-01-plan-card-before-yes.png",
+            "/tmp/frbench/fixup-d1109-cred-screens/steps/10-fx-b2-03-plan-card-under-yes.png",
+            "/tmp/frbench/fixup-d1109-cred-screens/steps/11-fx-cs1-01-settings-yes-stop-using-it.png",
+            "/tmp/frbench/fixup-d1109-cred-screens/steps/12-fx-cs1-02-settings-after-stop-using-it.png"
+          ]
+        },
+        "tests_changed_for_design": [
+          {
+            "test": "packages/runtime/test/credential-ask-words.test.ts \"a Start kept for the stop's end goes on at once after Use API key, and the Done line says so\" (d1109-cred-engine, FX-CE B3), now \"a Start kept for the stop's end files no ask card (the person's Wait) and goes on at once after the Start dialog's Use API key\"",
+            "why": "It asserted that the kept Start's own wait files the ask card under 'ask'. CS-3 decides the opposite ('under ask it also records the person's Wait for this stop, so no card follows'), and the review's blocking 1 asked for it. The intent is kept: the kept Start goes on at once, as the person's start, on the key, in one session, when the person says Use API key, now in the Start dialog. A new case covers a card filed earlier by other work being answered Wait by the keep, across a restart. The card's Use API key for a kept start (FX-CE B3's code path) is unchanged for a card filed before a keep under another preset."
+          }
+        ]
+      }
+    },
+    {
+      "key": "d1109-selftasks-chat",
+      "fix": {
+        "area": "d1109-selftasks-chat",
+        "branch": "fix/d1109-selftasks-chat",
+        "head_sha": "d03d7f6fdb5950fc9a7064f9382d78b2860c1878",
+        "commits": [
+          {
+            "sha": "36a7a7e",
+            "subject": "chat: \"fix the tasks\" runs the agent's task check with the autonomy rule (U-084, U-095)"
+          },
+          {
+            "sha": "3a5d404",
+            "subject": "commands: the agent's task changes say so where they are stored; an added step marks only itself (SC-12, C4-left-1)"
+          },
+          {
+            "sha": "5fa9abc",
+            "subject": "session page and Changes: each change line has its Undo; the agent's change names the agent (SC-6, SC-7)"
+          },
+          {
+            "sha": "a84edb2",
+            "subject": "inbox: the agent's suggested task changes show open on their card (SC-9)"
+          },
+          {
+            "sha": "d646a72",
+            "subject": "docs: fix the tasks from chat, Undo where a change is shown, the agent's words (ADR 0119 amended)"
+          },
+          {
+            "sha": "7691be1",
+            "subject": "test: the C4-left-1 brief case reads the message without an unsafe optional chain"
+          },
+          {
+            "sha": "aff67b0",
+            "subject": "e2e: the phase 7 gate reads the agent's new task as 'Added by the agent' (SC-12)"
+          },
+          {
+            "sha": "d03d7f6",
+            "subject": "chat: 'fix the tasks' reads its set back once; why it asks first goes under it (bench walk)"
+          }
+        ],
+        "fixed": [
+          {
+            "problem": "D7-3/SC-1/SC-2: chat could not ask the agent to fix its tasks. Now 'fix the tasks', 'tidy up the task list', 'check the tasks', 'räum die Aufgaben auf', 'korrigiere die Aufgaben' (intent.ts fixTasksAskOf; never a line naming one task) run one task check with no chat-model call first. The chat model gets a fix_tasks tool (definition FIX_TASKS_DESCRIPTION, parameter project only) and CHAT_TASK_RULES in the stable system part. task_split is a chat tool again.",
+            "u_ids": [
+              "U-084",
+              "U-095"
+            ],
+            "failing_test_before": "packages/commands/test/intent.test.ts \"d1109-selftasks-chat, run C: 'fix the tasks' (SC-1)\"; packages/runtime/test/chat-fix-tasks.test.ts (whole file)",
+            "how": "conversation/task-fix-tool.ts fixTasksInChat runs runTaskCheck, fenceTaskChanges and then applyTaskChanges or one composed read-back through CommandLoop.planFix. agent.ts adds the parser branch, the tool registration and CHAT_TASK_RULES. The person's line is passed verbatim (at most 500 characters) in its own data envelope. The task check's rules get a chat variant of the first paragraph (task-check@1.1.0). compose wires ConversationDeps.taskCheck from the runner's deps. The bench stand-in reads the request lines.",
+            "check_in_the_app": "Project at Standard with plan-written tasks > Chat tab > type 'fix the tasks: \"Style the page\" is two jobs, the layout and the colours; nothing checks that the links work.' > the waiting line says 'Checking the tasks of <project>…' > the reply is 'I changed 2 tasks of <project>.' with one row and one Undo per change, and the line under it is 'Checking the tasks cost ... CHF'. Live check 4: with the real model, see that it returns strict JSON and that a split carries every criterion. Also ask in other words ('can you tidy the task list up?'), check that the model calls fix_tasks and that the check's message holds your line verbatim (model-call log)."
+          },
+          {
+            "problem": "D7-4b/SC-3: in chat the project's autonomy never decided. Now from Standard each change is made at once as the agent's (source chat, the person's words, one Undo each, no Inbox line). At Advisor and Assisted, when the fence asks first, or after a lookup returned records (recordsRead), the set is one read-back with Yes and No. A Yes after a daemon restart makes it with no second check.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts 'at Standard ...', 'at Assisted ...', 'a Yes after a restart ...', 'after a lookup returned records ...'; apps/ui/test/real-daemon.test.ts describe 'd1109-selftasks-chat, run C' (POST /chat at Standard and at Assisted with the restart)",
+            "how": "executor: planFix below Standard, or planFix.askFirst, always reads back. StoredCardContext keeps planFix, so a restored card is decided and told as before. compose(..., {ask}) gives a composed card its own question, kept for a restart. CommandLoop.planFix builds the planFix context in code.",
+            "check_in_the_app": "Set the project to Assisted > Chat 'fix the tasks' > one yellow read-back 'Make these N changes to the tasks of <project>? ...' with Yes and No, and one card in the Inbox > quit and restart Forerunner within 10 minutes > answer Yes > the changes are made as one row with one Undo, and the model-call log shows no second task-check call. At Standard on tasks you added yourself, it asks once and the line under it says 'Asks you first: \"X\" is a task you added or changed yourself.'"
+          },
+          {
+            "problem": "SC-4/SC-14: money and the credential policy. The check is booked to the project, with its cost in CHF under the reply. A check that would pass the project's budget or the monthly cap makes no call ('Fixing the tasks would pass this project's budget; nothing changed.'). A second request while one runs reads 'The agent is checking the tasks of <project> now; ask again in a moment.' Under subscription_then_wait or an unanswered then_ask, with the subscription at its limit, no call is made, nothing is booked, no task changes, and chat says 'Fixing the tasks waits for Claude: your subscription is at its limit until 15:40. Nothing changed.' Under then_key the check runs once on the key, with its cost in CHF. Without Claude: 'Fixing the tasks needs Claude.'",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "packages/runtime/test/credential-policy.test.ts \"d1109-selftasks-chat, run C: 'fix the tasks' follows the one policy (SC-14)\" (3 cases); chat-fix-tasks.test.ts 'no room', 'busy', 'without Claude'",
+            "how": "fixTasksInChat checks taskCheckRunning, chatRoom and runTaskCheck's not_made reasons (no_provider, no_room, held with its wait, worded through the exported shortStoppedPhrase). It runs under withTaskCheckLock. Its sentences are in conversation/sentences.ts.",
+            "check_in_the_app": "Settings > Which Claude does the work > subscription first, then wait. Let the subscription reach its limit (ask a question that meets it). Chat 'fix the tasks' > the reply is 'Fixing the tasks waits for Claude: your subscription is at its limit until HH:MM. Nothing changed.', Costs has no new row, and the tasks are unchanged."
+          },
+          {
+            "problem": "D7-3/SC-5: one turn that called several task tools read back the first and left the others as Yes/No cards in the Inbox. Now they are one question naming them all and one card. Yes makes them as one row with one Undo.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts 'task_update and task_dependencies in one turn ...'",
+            "how": "CommandLoop.recompose marks the separate pending rows chat_only, cancels them, and composes their calls into one card. The agent's results loop calls it for 2 or more pending task.* results. mergeCards and the executor's questionOf use oneQuestion: 'A, b and c?'.",
+            "check_in_the_app": "Chat (model path) 'Publish the page is urgent and should not wait on anything.' > one read-back 'Change \"Publish the page\": priority to High and let \"Publish the page\" run without waiting for another task?' > the Inbox has one card for it > Yes > one row on Changes with one Undo."
+          },
+          {
+            "problem": "D7-7/SC-6: a change made during a run showed on the session page with no Undo. Each change line now has its Undo (POST /changes/:id/undo, after which the line reads the undo's sentence), or 'Cannot be undone now: <why>.' After a restart the Undo is still offered.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "apps/ui/test/session.test.tsx 'each change line has its Undo where it is shown (SC-6)' (2 cases); real-daemon.test.ts 'SC-6: a session's change lines carry their change and its Undo, after a restart too'",
+            "how": "EventView gains changeId, undoable, undoBlocked and undone (append-only). GET /sessions/:id/events sets them for JSON and SSE (withUndo, from the change log row and CommandLoop.undoBlocked). SessionPage has ChangeUndo. The fake daemon serves the same fields.",
+            "check_in_the_app": "Project at Standard, a task 'Create the page' whose report says '\"Style the page\" is two jobs' (bench: FORERUNNER_BENCH_TASK_LIST), and Style waiting for a person task > Start > open the session page > the 'Split ...' line has Undo > restart Forerunner > Undo is still there > click it > the line reads 'Undone: \"Style the page\" is one task again.'"
+          },
+          {
+            "problem": "D7-5b/SC-7: Changes showed an agent's change as 'In the app' and named the person. A session row now reads 'In a session', and an agent's change shows the agent's name.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "apps/ui/test/changes.test.tsx 'Changes says the agent made it (SC-7)'",
+            "how": "ChangeLogView.byAgent (author_agent and no author_human) in change-rows.ts. ChangesPage sourceWords('session') = 'In a session' and whoOf prefers agentName when byAgent. The fake daemon matches.",
+            "check_in_the_app": "After the session above, More > Changes > the split row says 'In a session' and 'Alice', with Undo. A 'fix the tasks' row says 'Chat' and 'Alice'."
+          },
+          {
+            "problem": "D7-5/SC-12: an agent's change was stored as 'Changed by you: …' or 'created by agent <id> via session'. Now: 'Added by the agent: <why>', 'Changed by the agent: …', 'What it waits for changed by the agent', 'Paused/Cancelled/Made ready by the agent'. Split and drop keep 'Split from \"X\" by the agent' and 'Dropped by the agent: same as \"Y\"'. The person's own moves read as before.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "packages/commands/test/selftasks-chat.test.ts (session and chat bodies)",
+            "how": "task.ts: agentReason and movedByAgent; task.update and task.dependencies reasons by actor.",
+            "check_in_the_app": "After 'fix the tasks' at Standard > Tasks > open 'Check that the links work' > its reason reads 'Added by the agent: ...' with no id and no 'via chat'."
+          },
+          {
+            "problem": "D7-10/SC-9: a suggestion card's changes sat under a collapsed Details. They now show open; every other card keeps its Details.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "apps/ui/test/selftasks.test.tsx 'names the project and the count, ... lists each change' (no details element)",
+            "how": "RequestView.openDetails (append-only), set by request-words taskProposalCard. InboxPage renders such details as an open list.",
+            "check_in_the_app": "Project at Assisted, a session whose report has 'For the task list:' lines > Inbox > the card 'Quote page: the agent suggests 2 changes to the tasks' lists both changes without a click."
+          },
+          {
+            "problem": "C4-left-1 (major, model-facing): an added step marked the tasks it comes before as agent-written, so their briefs said 'The project's agent wrote this task from an earlier run's report'.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "packages/runtime/test/executor-brief.test.ts 'an added step marks only itself as the agent's (C4-left-1)' (failed with the old line, passes now)",
+            "how": "applyTaskChanges marks only madeIds for kind 'add'.",
+            "check_in_the_app": "Live check 4: a session whose report ends 'For the task list: nothing checks that the links work' > in the model-call log, the brief of the plan task after the new step has no 'The project's agent wrote this task' line, and the step's own brief has it once."
+          },
+          {
+            "problem": "C5-left-7: the task check's model ignored the principal's planning override and the project's highest model. It is now chosen as the intake's.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "none at the model boundary: compose-level change, covered by the composed suites (see not_done)",
+            "how": "compose taskCheckDeps.model resolves the planning mode (resolveRunSettings with modeOverride from the agent row and criticSettingsOf(project).ceiling). TaskCheckDeps.model may be async.",
+            "check_in_the_app": "Live check 4: set Settings > Models > planning to another tier > chat 'fix the tasks' > the model-call log's task-check call uses that model."
+          },
+          {
+            "problem": "SC-11: Talk with no project on screen asks 'Which project: Quote page or Bakery site?' and runs no check until the person names one; answering with the name runs it, with the first line as the request.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts 'SC-11 ...'",
+            "how": "ConversationAgent.fixTarget plus an in-memory conv.fixWhich.",
+            "check_in_the_app": "With two projects, open Talk on Home > 'fix the tasks' > 'Which project: A or B?' with the names as buttons > click A > the check runs on A."
+          }
+        ],
+        "not_done": [
+          {
+            "problem": "SC-8 (drawer words) has no UI test of its own.",
+            "why": "The reason line is the row's stored reason, which SC-12 now writes as 'Added by the agent: …' / 'Split from …' (commands test). The drawer shows it as stored, so the spec's 'SC-8 when its test passes without a change' cut applies. No tasks.test.tsx case was added for time."
+          },
+          {
+            "problem": "SC-13: the critic's session review counts a split or dropped task as replaced.",
+            "why": "Cut line (critic unit test, session-review.ts:288). Not built for time; the spec allows not_done."
+          },
+          {
+            "problem": "SC-4's live waiting line beyond the one step line, and SC-10 as separate unit tests of each sentence function.",
+            "why": "The step 'Checking the tasks of <project>…' is sent through onStep. Each sentence is asserted exactly in the composed and real-daemon cases (no id, no raw state), but there is no separate sentences unit file."
+          },
+          {
+            "problem": "C4-left-2 (refusals as Details lines), C4-left-3 (fingerprint test after Keep the tasks), C4-left-4 (researcher injection case report-006), C4-left-5 (three words: the split-plus-step Undo sentence, 'Changed 1 task; your next Start runs them.', 'ops-deploy' name), C4-left-6 (split Undo after a later step-before), C4-left-7 (applying-card crash recovery), C4-left-8 (queue-row author, reason to next brief), C4-left-9 (closed-project chat words: the fixer refuses a closed project before any call; the panel sentence is not built).",
+            "why": "Time and context. The never-cut items, the money and security paths and C4-left-1 came first. Each needs its own failing test; they are left for the session lead."
+          },
+          {
+            "problem": "C3-left-10 (injection judge for the hand-over channel), C3-left-11 (Stop during the claim guard's nudge).",
+            "why": "Not built for time. C3-left-11: the code already re-reads entry.stopped after the nudge (the row is marked stopped and the footer is the stopped line), but the reply is still the guard's true line. No test was added."
+          },
+          {
+            "problem": "C5-left-6 (deterministic order in d1109-selftasks-run's restart case), L3-left-16 (session review's revise cause words).",
+            "why": "Not built for time. Both are in files outside this area's main path."
+          },
+          {
+            "problem": "C5-left-7 has no test at the model boundary (the check's model id under a planning override).",
+            "why": "The cred-world and composed worlds use fixed model ids. A case needs a ladder fixture with two tiers. The change is in compose only and the existing suites pass."
+          },
+          {
+            "problem": "Bench 'before' screenshots.",
+            "why": "The base build has no 'fix the tasks'. The before state is the failing-before tests. Only 'after' screenshots were taken."
+          }
+        ],
+        "validation": [
+          {
+            "command": "pnpm check",
+            "result": "green: lint, paths, typecheck, 535 unit files (5787 passed, 7 skipped), docs check, links, secret scan"
+          },
+          {
+            "command": "pnpm test:integration",
+            "result": "green: 5 files passed, 6 skipped (Postgres not set), 30 passed / 81 skipped"
+          },
+          {
+            "command": "pnpm test:e2e",
+            "result": "green after the phase7 gate assertion update: 13 files, 25 passed, 1 skipped (first run failed 3 cases on the old 'created by agent <id> via chat' reason)"
+          },
+          {
+            "command": "cd apps/ui && pnpm vitest run --config vitest.config.ts",
+            "result": "green: 97 files, 1303 tests"
+          },
+          {
+            "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts (real Vite build)",
+            "result": "green: 38 passed"
+          },
+          {
+            "command": "pnpm test:injection",
+            "result": "PASS: 81 cases (58 hostile, 23 controls)"
+          },
+          {
+            "command": "real-daemon d1109-selftasks describes after the last commit",
+            "result": "6 passed"
+          },
+          {
+            "command": "git grep -n '^<<<<<<< '",
+            "result": "nothing"
+          },
+          {
+            "command": "cargo",
+            "result": "not run: the desktop shell was not touched"
+          }
+        ],
+        "screenshots": {
+          "before": [],
+          "after": [
+            "/tmp/frbench/fix-d1109-selftasks-chat-shots/01-01-chat-before.png",
+            "/tmp/frbench/fix-d1109-selftasks-chat-shots/02-02-fix-the-tasks-read-back.png",
+            "/tmp/frbench/fix-d1109-selftasks-chat-shots/03-03-inbox-one-card.png",
+            "/tmp/frbench/fix-d1109-selftasks-chat-shots/04-04-after-yes-with-undo.png",
+            "/tmp/frbench/fix-d1109-selftasks-chat-shots/05-05-changes-agent-row.png",
+            "/tmp/frbench/fix-d1109-selftasks-chat-shots/06-06-tasks-after.png"
+          ]
+        },
+        "tests_changed_for_design": [
+          {
+            "test": "packages/commands/test/registry.test.ts 'generates one ToolSpec per command the chat may call'",
+            "why": "task.split is a chat tool again (the person's own split, read back): every command is a tool."
+          },
+          {
+            "test": "packages/commands/test/selftasks-run.test.ts 'task.split is no tool of the chat's model'",
+            "why": "Renamed and inverted: C6 gives chat task_split, as d1109-selftasks-run's note said."
+          },
+          {
+            "test": "packages/runtime/test/chat-recall.test.ts CR-9 token bound",
+            "why": "fix_tasks, task_split and CHAT_TASK_RULES ride on every turn. They are measured as sent and taken off, as earlier areas' additions are, so the bound keeps its intent."
+          },
+          {
+            "test": "packages/runtime/test/conversation.test.ts tool names and 'a combined request is one change card'",
+            "why": "fix_tasks is an allowed tool name. A composed card is now one question ('Switch to PharmaWatch and raise ...?'), not two (SC-5)."
+          },
+          {
+            "test": "apps/ui/test/selftasks.test.tsx proposal card",
+            "why": "SC-9: the changes are an open list (request-details-open), not under Details."
+          },
+          {
+            "test": "tests/e2e/scenarios/phase7-gate.integration.test.ts reason assertion",
+            "why": "SC-12: 'Added by the agent' replaces 'created by agent <id> via chat' (no id or channel). The agent-as-actor intent is kept."
+          }
+        ],
+        "new_problems": [
+          "A chat read-back card waits 10 minutes (PENDING_TTL_MS). After a later restart it has expired, so 'a Yes after a restart' holds only within that window (real-daemon case restarts on the same clock start). Whether the read-back should live longer is the session lead's decision.",
+          "Bench walk: chat model tool calls (actor agent, source chat, no planFix) still post an Inbox info line after the person's Yes (executor.post: not theirOwn). This is pre-existing for every model-issued command. fix_tasks avoids it through planFix.",
+          "The conversation's 'Note for the next session' textbox is the last textbox on the Overview. A walk script that typed into getByRole('textbox').last() saved a note there (not an app bug, but the Chat tab is not reachable by ?tab=chat)."
+        ],
+        "notes_for_other_areas": [
+          "ConversationCommands gains optional planFix(changes, turn, {level, readBack, askFirst?, ask?}) and recompose(pendingIds, turn) (CommandLoop implements both). The planFix context is built only there.",
+          "CommandContext.planFix gains askFirst?: boolean. The executor reads back every change of a planFix context below Standard or with askFirst. StoredCardContext keeps planFix for restorePending. executor.compose(calls, ctx, {ask}) gives a composed card its own question, restored after a restart.",
+          "change-card.ts exports oneQuestion. mergeCards' ask is now one question ('A, b and c?'). Any later area that composes cards gets one-question read-backs.",
+          "EventView (append-only): changeId, undoable, undoBlocked, undone on 'change' lines (GET /sessions/:id/events JSON and SSE). ChangeLogView.byAgent. RequestView.openDetails (RequestWords.openDetails in request-words.ts).",
+          "ConversationDeps.taskCheck (the runner's TaskCheckDeps, compose's taskCheckDeps). TaskCheckDeps.model may return a Promise. taskCheckRules/taskCheckSystem take {fromChat} and TASK_CHECK_PROMPT_VERSION is task-check@1.1.0.",
+          "credential-words.ts exports shortStoppedPhrase (was private shortStopped).",
+          "Sentences for the session lead's words list (conversation/sentences.ts): 'I changed 3 tasks of Quote page.'; 'Make these 3 changes to the tasks of Quote page? …'; 'The tasks of Quote page look right; nothing changed.'; 'Checking the tasks of Quote page…'; 'Fixing the tasks needs Claude.'; 'Fixing the tasks would pass this project's budget; nothing changed.' (and '… your monthly cap …'); 'The agent is checking the tasks of Quote page now; ask again in a moment.'; 'Which project: A or B?'; 'Fixing the tasks waits for Claude: your subscription is at its limit until 15:40. Nothing changed.'; 'Checking the tasks cost CHF 0.03.'; 'Asks you first: \"X\" is a task you added or changed yourself.'; Changes 'In a session'; session page 'Cannot be undone now: …'.",
+          "Owner question default built (one place): 'Fix the tasks' is chat only (and the agent's own check during a run), no Tasks-tab button. A button would call POST /chat with the line or a new route over fixTasksInChat.",
+          "d1109-cred-screens (C6 sibling): SessionPage.tsx changed only in the log line (ChangeUndo after the line's text), and InboxPage.tsx only in the details block (openDetails). GET /sessions/:id/events, not GET /sessions/:id, carries the log line fields."
+        ]
+      },
+      "review": {
+        "verdict": "fix-needed",
+        "acceptance_walk": "I ran the bench \"review-d1109-selftasks-chat\" from this worktree at d03d7f6 (daemon 48791, UI 2391, --provider bench). For most walks I injected FORERUNNER_BENCH_TASK_LIST=page skeleton with a report line '\"Style the page in styles.css\" is two jobs, the layout and the colours.', plus FORERUNNER_BENCH_ASK=page skeleton and DELAY_MS=1500. Screenshots and texts are in /tmp/frbench/review-d1109-selftasks-chat/steps/01..21. Each project was planned from a long brief, so the plan's tasks are the agent's. The specialist asked the person first, so the other tasks waited.\n\n- **Standard, \"fix the tasks\" (SC-1/3/4, steps 01-04):** Shop page > Chat > 'fix the tasks: \"Style the page in styles.css\" is two jobs ...; nothing checks that the links work.'\n  - While it ran, the reply line read \"Checking the tasks of Shop page…\".\n  - The reply was \"I changed 2 tasks of Shop page.\" with one row and one Undo per change, and under it \"Checking the tasks cost less than CHF 0.01.\"\n  - The model-call log shows exactly one call in the turn: task-check. No chat-model call came first. The check's message ends with \"The person asked, in their words:\" and the line verbatim inside its own envelope.\n  - Changes shows two \"Chat · Shop page · Alice\" rows, each with \"Said: …\" and Undo. The Inbox got no line.\n  - The chat Undo on the split row (step 08) took back only the split (\"Undone: … is one task again.\"). The added step stayed.\n- **Drawer and rows (SC-8/SC-12, steps 05-07): fails.** The drawers of \"Check that the links work\" and \"Style the page in styles.css: colours\" show no reason line. The stored reasons (\"Added by the agent: …\", \"Split from … by the agent\") are never shown on the row or in the drawer.\n- **Assisted with a restart (SC-3, steps 09-12):** Garden club at Assisted > Chat 'fix the tasks: …'.\n  - The reply is one read-back \"Make these 2 changes to the tasks of Garden club? Split …; add \"Check that the links work\".\" with Yes and No. The Inbox has exactly one card for it.\n  - I restarted the daemon with restart-daemon.mjs and the read-back was still there. Yes made one Changes row (\"chat\", the agent, undoable). The task-check count stayed at 2, so there was no second check, and the Inbox got no line.\n- **Two changes the person names in one turn (SC-5, steps 13-14):** \"tool: task_update {priority high} then tool: task_dependencies {depends_on []}\".\n  - The reply was one question: 'Change \"Write the README…\": priority to High and let \"Write the README…\" run without waiting for another task?'. It filed one new card (open cards went from 2 to 3).\n  - Yes made one row with one Undo.\n  - Side effects:\n    - An Inbox Update echoed the change after the Yes. This was there before the branch.\n    - The task's reason became \"What it waits for changed by the agent\", and Changes names \"Alice\" for this change the person asked for.\n- **Session page Undo (SC-6):**\n  - Shop page session (steps 15-17): the change line showed \"Cannot be undone now: …\" while the session ran.\n  - Tea page (steps 18-19): I started a session and pressed \"stop after this task\" just after the split, so the parts never ran. The session page showed the split line with Undo. I restarted the daemon and Undo was still offered. I clicked it: POST /changes/:id/undo went out, the line read 'Undone: \"Style the page in styles.css\" is one task again.', and GET /sessions/:id/events then gave undoable=false, undone=true.\n- **Suggestion card (SC-9, step 21):** Garden club at Assisted, session started after answering the question. The Inbox card \"Garden club: the agent suggests 1 change to the tasks\" lists its change open (request-details-open: 1, collapsed details: 0), with Make these changes / Keep the tasks and their explanation lines.\n- **Talk with no project (SC-11, step 20):** Talk on Home > \"fix the tasks\" asked \"Which project: Quote page, Bakery site or Shop page (or another of your 5)?\" with five name buttons. Clicking \"Tea page\" ran one check with \"fix the tasks\" as the request.\n- **Over budget (SC-4):** with Shop page's budget set to CHF 0.05 (already spent), \"tidy up the task list\" replied \"Fixing the tasks would pass this project's budget; nothing changed.\" with 0 model calls.\n- **Not walked on the bench:** SC-14 needs the subscription path, which the stand-in does not have. I verified it through credential-policy.test.ts instead (see below).\n- **Bench cleanup:** stopped with stop.mjs; home and browser profile deleted. Only the steps are kept under /tmp/frbench/review-d1109-selftasks-chat/.\n\n**Failing-before checks.** I restored the base (claude/nifty-knuth-f9udt0) source files and kept the branch's tests. These all failed:\n- The 3 real-daemon cases of 'd1109-selftasks-chat, run C'.\n- session.test.tsx SC-6 (2 cases), changes.test.tsx SC-7 and selftasks.test.tsx SC-9.\n- credential-policy SC-14 (3 cases) and intent.test.ts (3 cases).\n- selftasks-chat.test.ts (2 cases, task.ts reverted).\n- executor-brief C4-left-1, with only the madeIds line reverted.\n\nAll pass again on HEAD. The worktree is clean after restoring.\n\n**Full validation on HEAD, all green on this machine:**\n- pnpm check: 535 files, 5787 passed.\n- pnpm test:integration: 30 passed, 81 skipped.\n- pnpm test:e2e: 25 passed, 1 skipped.\n- pnpm test:injection: PASS, 81 cases.\n- UI vitest: 97 files, 1303 tests.\n- Playwright with the real Vite build: 38 passed.",
+        "blocking": [
+          {
+            "issue": "The SC-8/SC-12 words on screen are missing. A task the agent added or split shows no 'Added by the agent: …' or 'Split from \"X\" by the agent' on its row or in its drawer. The report puts SC-8 in not_done because 'the drawer shows it as stored', which is false, and the user guide promises the words.",
+            "where": "apps/ui/src/pages/project/TaskDrawer.tsx:163 (only task.display.detail is shown; task.reason is rendered nowhere in TasksTab/TaskDrawer); docs/user-guide.md:1455",
+            "evidence": "Bench steps 06 and 07: the drawers of 'Check that the links work' (Ready) and 'Style the page in styles.css: colours' show only status, 'What done looks like', actions and Runs. GET /projects/:id/tasks has reason 'Added by the agent: [stand-in model] Nothing checks that the links work' with display.detail null. grep finds no use of task.reason in TasksTab.tsx or TaskDrawer.tsx. SC-12's acceptance says the words read 'on its row and in its drawer'. The cut line allows SC-8 only 'when its test passes without a change', and it would not pass. shared_files assigns 'the reason line only if SC-8's test fails' to this area. The user guide paragraph at line 1455 promises the row and drawer words (design §5 rule 9).",
+            "expected": "Write SC-8's UI test against the real daemon's task view first; it fails today. Then add the drawer's reason line (the agent's words, no id), or correct both SC-12's claim and the user-guide paragraph and give SC-8 a true reason in not_done."
+          },
+          {
+            "issue": "The read-back of 'fix the tasks' names a priority change as 'reword', and the area's own test asserts the untrue word.",
+            "where": "packages/runtime/src/conversation/task-fix-tool.ts:213 (fixAsk built from proposalLine); packages/runtime/src/session/task-proposal.ts:60; packages/runtime/test/chat-fix-tasks.test.ts:62",
+            "evidence": "In fixture THREE the edit is { kind: 'edit', task: 'Publish the page', priority: 'high' }. ASK_THREE asserts the read-back '…; add \"Check the links\" before \"Publish the page\"; reword \"Publish the page\".' The person answers Yes to a 'reword' and gets a priority change. Design §3.9 says a change is read back; design §5 rules 4 and 9 require true words and no promise the code does not keep. The rules sent to the model list priority among the edit fields, so the real model can send a priority-only edit.",
+            "expected": "The chat read-back names what each edit changes (for example 'raise the priority of \"Publish the page\" to High'), with the test asserting it. If proposalLine stays d1109-selftasks-run's, log it in new_problems with a failing test (the suggestion card has the same wording) instead of locking 'reword' into this area's assertion."
+          },
+          {
+            "issue": "The new real-daemon describe removes its homes with rmSync instead of removeHomes, against this sub-run's explicit rule for composed tests that run a session.",
+            "where": "apps/ui/test/real-daemon.test.ts:21874",
+            "evidence": "afterAll(() => { for (const h of homes) rmSync(h, { recursive: true, force: true }); }). The SC-6 case in this describe runs a session. The task's run note says such a test removes its homes with removeHomes(homes) because CI runs on Windows. ba9874a replaced exactly this pattern after EBUSY on Windows CI. The other run C describes in this file use afterAll(() => removeHomes(homes)) at lines 21103, 21465 and 21671.",
+            "expected": "afterAll(() => removeHomes(homes)) from packages/runtime/test/helpers.ts (it is already imported at line 56), keeping settleSessions before each close."
+          },
+          {
+            "issue": "C5-left-7 changes which paid model the task check uses, with no test that fails without the change (validation rule 8).",
+            "where": "packages/runtime/src/daemon/compose.ts:2865",
+            "evidence": "The report itself says 'failing_test_before: none at the model boundary' and lists the missing test in not_done. The acceptance for C5-left-7 asks for a failing test first, or not_done with the reason. Here the code was changed and shipped without a test. Wiring the principal override (principal.id) and the ceiling wrong would go unnoticed.",
+            "expected": "Add a composed case first (for example a principal planning override or a project ceiling, with the check's request model asserted from the provider calls), then the change. Otherwise revert the compose change and leave C5-left-7 in not_done with its reason."
+          }
+        ],
+        "claims_checked": [
+          {
+            "claim": "SC-1: 'fix the tasks' and its synonyms run one task check with the person's words and no chat-model call before it; 'fix the login task' is not this intent",
+            "holds": true,
+            "note": "Bench: one model call (task-check) in the turn, with the line verbatim in its envelope. intent.test.ts and chat-fix-tasks fail on base and pass now."
+          },
+          {
+            "claim": "SC-2: fix_tasks has the spec's definition and only a project parameter; task_split is a chat tool; CHAT_TASK_RULES is in the system part",
+            "holds": true,
+            "note": "The texts match the spec word for word. The tests compare against the exported constants and taskCheckSystem(...{fromChat}), not literals, so a wording change would pass every test."
+          },
+          {
+            "claim": "SC-3: at Standard each change is made at once with its own Undo and no Inbox line; at Assisted one read-back and one card; Yes after a restart makes the set with no second check",
+            "holds": true,
+            "note": "Bench walks 1 and 3; real-daemon cases fail on base and pass now. The read-back card expires after 10 minutes (PENDING_TTL), as the fixer noted."
+          },
+          {
+            "claim": "SC-4: cost shown in CHF; a check past the project budget makes no call; a second request while one runs is refused",
+            "holds": true,
+            "note": "Bench: 'Fixing the tasks would pass this project's budget; nothing changed.' with 0 model calls. Busy is covered by a composed test. A small race remains between taskCheckRunning and withTaskCheckLock."
+          },
+          {
+            "claim": "SC-5: several task changes in one model turn become one question and one card; Yes makes one row with one Undo",
+            "holds": true,
+            "note": "Bench walk 4. After the Yes an Inbox Update still echoes the change (pre-existing, noted by the fixer)."
+          },
+          {
+            "claim": "SC-6: each change line on the session page has its Undo or says why not, also after a restart; the fake daemon serves the same fields",
+            "holds": true,
+            "note": "Bench: Tea page Undo before and after a daemon restart, click, 'Undone: …'. Fake and real daemon changed in the same commit."
+          },
+          {
+            "claim": "SC-7: a session row reads 'In a session' and the agent's name",
+            "holds": true,
+            "note": "Holds, but byAgent now also names the agent on every chat change the chat model made at the person's request (see non_blocking)."
+          },
+          {
+            "claim": "SC-12: the agent's change says so where it is stored and on its row and in its drawer",
+            "holds": false,
+            "note": "The stored reasons are right (commands tests fail on base). The row and drawer never show them (bench steps 06-07)."
+          },
+          {
+            "claim": "SC-8 not_done: 'the drawer shows it as stored'",
+            "holds": false,
+            "note": "The drawer renders no reason at all for these tasks."
+          },
+          {
+            "claim": "SC-9: the suggestion card's changes show open",
+            "holds": true,
+            "note": "Bench step 21. The 'Asks you first: …' reason appears as a bullet among the changes."
+          },
+          {
+            "claim": "SC-11: Talk with no project asks which project, then runs on the one named",
+            "holds": true,
+            "note": "Bench step 20."
+          },
+          {
+            "claim": "SC-14: under then_wait and an unanswered then_ask nothing is called, booked or changed, with the stated sentence; under then_key one call on the key with its cost in CHF",
+            "holds": true,
+            "note": "credential-policy.test.ts, composed with cred-world and no injected provider; fails on base, passes now."
+          },
+          {
+            "claim": "C4-left-1: an added step marks only itself as the agent's",
+            "holds": true,
+            "note": "executor-brief case fails with only the madeIds line reverted and passes on HEAD."
+          },
+          {
+            "claim": "C5-left-7: the check's model is chosen as the intake's",
+            "holds": true,
+            "note": "Code matches intake.ts (resolveRunSettings, principal override, criticSettingsOf ceiling), but no test covers it."
+          },
+          {
+            "claim": "Validation commands green",
+            "holds": true,
+            "note": "Re-run here: pnpm check, test:integration, test:e2e, test:injection, UI vitest, Playwright (38) all green."
+          },
+          {
+            "claim": "tests_changed_for_design keep their intent",
+            "holds": true,
+            "note": "registry and selftasks-run tool-list inversions, the chat-recall token bound measured and subtracted, conversation.test one-question wording, phase7 gate now toBe('Added by the agent'). None was weakened without a design reason."
+          }
+        ],
+        "non_blocking": [
+          "Attribution change for chat-model changes the person asked for (bench walk 4). Before this branch, a change the person named in chat and confirmed read 'What it waits for changed by you' / 'Changed by you: …'. Now it reads '… changed by the agent', and Changes names the agent instead of the person, through byAgent (change-rows.ts:53, ChangesPage.tsx:103, task.ts:1840/1995). The same change through the parser path still reads 'by you'. This conflicts with the decision 'Changes the person names in their own words stay the person's instruction' and with Changes' own 'who asked'. The codebase has long treated chat-model calls as the agent's (the phase 7 gate's author_human null), so the session lead should decide whether byAgent and the agent words belong only to planFix and session-source changes.",
+          "The intent catches some lines a person may mean as questions or as something else. 'can you go through the tasks?', 'review the tasks' and 'check the tasks: what is left?' all run a paid check, which at Standard changes tasks at once. 'go through' and 'review' are beyond the spec's list. 'check the tasks for errors', 'check the tasks in the Inbox' and 'check the tasks on Monday' read 'errors', 'the Inbox' and 'Monday' as project names and reply 'There is no project called \"errors\".'",
+          "SC-1's 'with the Connect action' is not built. 'Fixing the tasks needs Claude.' has no Connect action and no 'what to do' (design §5 rule 8).",
+          "'Make this a task' is offered under a refused 'tidy up the task list' line (the over-budget reply), because isOwnRequest only skips replies that have actions or a read-back.",
+          "Model-facing texts are not pinned as literals. The chat variant of the task-check paragraph, FIX_TASKS_DESCRIPTION, CHAT_TASK_RULES and the project parameter's description are compared against their own constants or functions. task-check.test.ts pins only the session variant.",
+          "There is no pnpm test:injection case for the fix_tasks path. A record asking the chat model to call fix_tasks is covered only by the composed recordsRead case.",
+          "CommandLoop.recompose builds the composed card with a plain agent context (no planFix). If the model calls fix_tasks, the check reads the set back, and the model also calls another task tool in the same turn, the two are merged and the planFix / askFirst context is lost.",
+          "taskCheckRunning() is checked before awaits (room, session) and before withTaskCheckLock. Two concurrent requests from two conversations could both pass, and the second would wait and then run a second paid check.",
+          "Session page: during a run, a split line read 'Cannot be undone now: \"Style the page in styles.css: layout\" has run since …' before that part had started (events 17 vs 34). These are d1109-selftasks-run's undoBlocked words, now shown on this area's Undo; they should only say 'has run' once it has. After a reload an undone line shows only 'Undone.', not the undo's sentence.",
+          "Commit 36a7a7e changed POST /chat behaviour without a real-daemon case; the case came two commits later in 5fa9abc. GET /inbox's new openDetails field has no real-daemon assertion. The fake derives it from the shared requestWords, so they cannot drift.",
+          "The suggestion card's open list mixes the reason line 'Asks you first: …' in as a bullet among the changes (bench step 21).",
+          "The chat read-back card expires after 10 minutes (PENDING_TTL_MS). At Advisor or Assisted the owner's 'asks first on one card' then silently lapses, after the check's cost was booked and the kept notes taken. The fixer noted this; it is the session lead's decision."
+        ]
+      },
+      "fixup": {
+        "area": "d1109-selftasks-chat",
+        "branch": "fix/d1109-selftasks-chat",
+        "head_sha": "3110217b57b8f96584de1d0c4537d0519d724853",
+        "commits": [
+          {
+            "sha": "450e9de",
+            "subject": "test: the selftasks-chat real-daemon homes are removed with removeHomes (review)"
+          },
+          {
+            "sha": "8682c75",
+            "subject": "tasks: the drawer says what the agent did to a task (SC-8, SC-12, U-095)"
+          },
+          {
+            "sha": "28513df",
+            "subject": "chat: the read-back names what an edit changes, never 'reword' for a priority (U-095)"
+          },
+          {
+            "sha": "9eab4f1",
+            "subject": "test: the task check's model under a planning override and a project's ceiling, at the API (C5-left-7)"
+          },
+          {
+            "sha": "6cad17e",
+            "subject": "chat: 'check the tasks for errors' goes to the model; two requests at once make one check (U-095)"
+          },
+          {
+            "sha": "b81d26e",
+            "subject": "chat: 'review the tasks' and 'go through the tasks' are not the paid check; GET /inbox's openDetails asserted (U-095)"
+          },
+          {
+            "sha": "46010de",
+            "subject": "docs: the read-back names what an edit changes; 'review' is not the paid check (ADR 0119 amended)"
+          },
+          {
+            "sha": "3110217",
+            "subject": "bench: the stand-in's task check plays a priority edit ('\"X\" is urgent')"
+          }
+        ],
+        "fixed": [
+          {
+            "problem": "Blocking 1 (SC-8/SC-12): a task the agent added or split showed nothing about it. The stored reasons ('Added by the agent: …', 'Split from \"X\" by the agent') reached no screen; the drawer showed only display.detail. This was done in the earlier, interrupted run (commit 8682c75), and this report covers it.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "apps/ui/test/tasks.test.tsx 'SC-8: the drawer of a task the agent added or split reads what the agent did; a person's task has no such line'; apps/ui/test/real-daemon.test.ts 'SC-8: the task view of a task the agent added or split says what the agent did (GET /projects/:id/tasks and GET /tasks/:id); …'; packages/commands/test/selftasks-chat.test.ts 'a why that starts with a word in capitals keeps it' (stored \"rEADME.md\")",
+            "how": "daemon/task-words.ts agentChangeLine(reason) turns the reasons task.ts stores for the agent into one plain sentence: plainReason, no id, at most 200 characters. Every other reason gives null. taskView sets TaskView.agentChange (append-only, optional), so the list, GET /tasks/:id and every task answer carry it. The fake daemon sets it with the same function. TaskDrawer shows it under the status line (data-testid drawer-agent-change). The user guide now promises the drawer only. Sibling fix: agentReason lowercases only an ordinary capitalised first word, so 'README is missing' keeps its capitals. New test: packages/runtime/test/agent-change-line.test.ts.",
+            "check_in_the_app": "Project at Standard with plan-written tasks. Open Chat and type: fix the tasks: \"Style the page in styles.css\" is two jobs, the layout and the colours; nothing checks that the links work. The reply is 'I changed 2 tasks of <project>.' Go to Tasks and click 'Check that the links work': the drawer reads 'Added by the agent: Nothing checks that the links work.' Click 'Style the page in styles.css: colours': it reads 'Split from \"Style the page in styles.css\" by the agent.' Neither line has an id, 'via chat' or 'by you'. Bench: /tmp/frbench/fixup-d1109-selftasks-chat-shots/run2/02-w1-drawer-added-step.png and 03-w1-drawer-split-part.png. Live check 4: with the real model the 'why' after 'Added by the agent:' is the model's own sentence; check that it reads as one plain sentence."
+          },
+          {
+            "problem": "Blocking 2: the read-back of 'fix the tasks' called a priority change 'reword \"Publish the page\"'. A Yes to a 'reword' changed the priority, and the area's own test asserted that untrue word. The suggestion card has the same fault because it lists the same proposalLine. The session result's line, a sibling, read 'reworded \"X\"' for any edit.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts 'at Assisted the set is ONE read-back …', 'at Standard, after a lookup returned records, the same request is read back …' and 'the read-back names what an edit changes (review)'; packages/runtime/test/session-update.test.ts 'an edit is named as edited, never reworded (review)'",
+            "how": "proposalLine (session/task-proposal.ts) names the fields an edit changes, as task.update's own read-back does: 'Change \"Publish the page\": priority to High.', the title, what done looks like, the criteria, in any mix. A new title alone stays 'Rename \"X\" to \"Y\".' Nothing reads 'Reword'. Chat's read-back and the suggestion card both use proposalLine, so both are fixed in one place. changeWords in session/result.ts reads 'edited' for the stored kind 'reworded'; the stored kind is unchanged. The WIP patch of the earlier run (a chat-only fixChangeLine) was replaced by this one-place fix.",
+            "check_in_the_app": "Set a project to Assisted. Open Chat and type: fix the tasks: \"Write the README: what the page does and how to open it\" is urgent; nothing checks that the links work. One yellow read-back appears: 'Make these 2 changes to the tasks of <project>? Change \"Write the README: …\": priority to High; add \"Check that the links work\".' with Yes and No. 'reword' appears nowhere. Press Yes: the README task is High priority and the step is added. Bench: /tmp/frbench/fixup-d1109-selftasks-chat-shots/run1/05-w2-garden-read-back.png. Live check 4: when the real model sends a priority-only or outcome-only edit, the read-back and the Inbox suggestion card name exactly that field."
+          },
+          {
+            "problem": "Blocking 3: the new real-daemon describe removed its homes with rmSync instead of removeHomes. Windows CI hit EBUSY with this pattern before (ba9874a). Done in the earlier run (450e9de).",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "none: test hygiene for Windows CI; no Linux test fails without it",
+            "how": "apps/ui/test/real-daemon.test.ts describe 'd1109-selftasks-chat, run C' now uses afterAll(() => removeHomes(homes)) and keeps settleSessions before each close.",
+            "check_in_the_app": "Nothing to see in the app. On the next CI run, the Windows job's real-daemon suite has no EBUSY in this describe."
+          },
+          {
+            "problem": "Blocking 4 (C5-left-7): the task check's model choice changed (planning row, the principal's planning override, capped by the project's highest model) with no test that fails without the change.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "packages/runtime/test/task-check-model.test.ts (new). With compose's model put back to the planning row's tier alone, 3 of its 4 cases fail: each request got claude-sonnet-5-5. All 4 pass on the change.",
+            "how": "New composed test, cred-world with the API key only and no injected provider. Chat's 'fix the tasks' makes only the check's call, and the request the Messages API stand-in receives names the model. With nothing set it is Sonnet. With an Opus override it is Opus. A Fable override is capped to Opus by the default ceiling and becomes Fable only with the project's own critic_ceiling. A project ceiling of Haiku gives Haiku. The session's boundary check uses the same deps object.",
+            "check_in_the_app": "Settings > Models > planning: choose another model (bench: model.settings.set planning tier opus). In Chat, type 'tidy up the task list'. In the model-call log, the task-check call uses that model (bench run2: fake-opus; before the override it was fake-sonnet). Live check 4: the same steps with the real model; the task-check request's model in the log is the chosen tier's model id, and a project with a lower 'highest model' caps it."
+          },
+          {
+            "problem": "Review non-blocking: 'check the tasks for errors', '… in the Inbox' and '… on Monday' read 'errors', 'the Inbox' and 'Monday' as project names and replied 'There is no project called \"errors\".'",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts \"a 'check the tasks for …' line that names no project (review)\" (3 cases)",
+            "how": "conversation/agent.ts: fixTarget marks its no-match reply as unknown. When the parser named that project, the line is not the plain 'fix the tasks' and goes on to the chat model with its tools. A line that names one of the person's projects still runs the check at once.",
+            "check_in_the_app": "In Chat, type 'check the tasks for errors'. The answer is a chat reply (bench: '[stand-in model] I was given …'), never 'There is no project called \"errors\".' Bench: run1/07-w3-shop-check-for-errors.png. Live check 4: the real chat model reads this line and either answers or calls fix_tasks; in the log, any check it runs carries the person's line verbatim."
+          },
+          {
+            "problem": "Review non-blocking: two 'fix the tasks' requests at once paid for two checks. The busy test ran before the room and the session were read, so the second request waited on the lock and then ran.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts 'two requests at once make one check (review)' (2 checks before, 1 now)",
+            "how": "fixTasksInChat tests taskCheckRunning again just before withTaskCheckLock, with no await in between. withTaskCheckLock takes the lock in the same tick.",
+            "check_in_the_app": "Hard to time by hand. Covered by the composed test. The second request reads 'The agent is checking the tasks of <project> now; ask again in a moment.' and the model-call log shows one task-check call."
+          },
+          {
+            "problem": "Review non-blocking: 'review the tasks' and 'can you go through the tasks?' ran the paid check, which changes tasks at once from Standard. A person often means 'show me' them, and these verbs are beyond the spec's list.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "packages/commands/test/intent.test.ts \"'review' and 'go through' the tasks are not the paid check (review)\"",
+            "how": "intent.ts FIX_VERB no longer has 'review' or 'go through'. Such lines go to the chat model, which calls fix_tasks when the person asks for a fix. 'correct', 'check over' and 'sort out' still read as this intent.",
+            "check_in_the_app": "In Chat, type 'review the tasks': a chat reply comes back and the model-call log has no task-check call. Bench: run1/08-w4-shop-review-the-tasks.png. Live check 4: the real model may still call fix_tasks for 'review the tasks'. If it does, the result follows the project's autonomy, and a lookup in the same turn makes it a read-back."
+          },
+          {
+            "problem": "Review non-blocking: the model-facing texts of this path were checked only against their own constants. GET /inbox's openDetails had no real-daemon assertion.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "none: these are pins of current text and a new assertion. They fail on any future wording change or field drop.",
+            "how": "chat-fix-tasks.test.ts pins word for word: FIX_TASKS_DESCRIPTION, the project parameter's description, CHAT_TASK_RULES and the check's chat paragraph. Every other line of the chat rules equals the session's. The selftasks-run suggestion card case in real-daemon.test.ts now also asserts openDetails === true.",
+            "check_in_the_app": "Nothing new to see. Live check 4: in the model-call log, the chat request's fix_tasks tool and system text match these pinned texts."
+          },
+          {
+            "problem": "Bench: the stand-in's task check could not play an edit, so the corrected read-back words could not be walked.",
+            "u_ids": [
+              "U-095"
+            ],
+            "failing_test_before": "testenv/test/bench-task-check.test.ts 'the stand-in plays a priority edit (review)' (new; before, the stand-in returned no change)",
+            "how": "testenv/src/bench/task-check-play.ts: the line '\"<task>\" is urgent' gives an edit with priority high. Documented in docs/maintainers/testing.md.",
+            "check_in_the_app": "Bench only: as in blocking 2, with 'is urgent' in the request."
+          }
+        ],
+        "not_done": [
+          {
+            "problem": "SC-12 'on its row': a Tasks row does not show the agent's reason line. Only the drawer does.",
+            "why": "shared_files gives this area only the drawer's reason line (TaskDrawer, 'only if SC-8's test fails'). The row's second line belongs to other areas (C4b TaskCap, polish words). The earlier run corrected the user guide to promise the drawer only. Whether the row needs it is for the session lead to decide."
+          },
+          {
+            "problem": "SC-1 'with the Connect action': 'Fixing the tasks needs Claude.' has no Connect action and does not say what to do (design §5 rule 8).",
+            "why": "A chat reply has no offer kind for Connect (ChatOfferView.action is only go_ahead or think). Adding one means a new offer kind, a UI button and both daemons. That is not a cheap fix-up item."
+          },
+          {
+            "problem": "'Make this a task' is offered under a refused fix line (for example the over-budget reply).",
+            "why": "ChatTaskFixResult already sets notice: true, but Conversation.tsx isOwnRequest ignores notice for every reply. Skipping notice replies would change all of them (no Claude key, other refusals), which is a cross-cutting UI decision. Logged in new_problems."
+          },
+          {
+            "problem": "CommandLoop.recompose builds the merged card with a plain agent context. When fix_tasks reads back and another task tool runs in the same turn, the planFix/askFirst context is lost.",
+            "why": "It needs a merge rule for planFix contexts in recompose and the executor's stored card. That is not a cheap item. The usual paths (the parser line, fix_tasks alone, several named changes) keep their context."
+          },
+          {
+            "problem": "Session page: a split line read 'Cannot be undone now: \"…: layout\" has run since …' before that part started. After a reload, an undone line shows only 'Undone.'",
+            "why": "The first is d1109-selftasks-run's undoBlocked wording (CommandLoop.undoBlocked), outside this area. 'Undone.' after a reload is true and short. The undo's own sentence is on Changes."
+          },
+          {
+            "problem": "The suggestion card's open list shows 'Asks you first: …' as a bullet among the changes.",
+            "why": "The card's details come from task-proposal (d1109-selftasks-run) as one list. Separating the reason needs a RequestView field and a matching change in both daemons. Left as polish."
+          },
+          {
+            "problem": "No pnpm test:injection case for the fix_tasks channel.",
+            "why": "The check's request is the person's line verbatim, and the model can pass only a project name. A record that asks the model to call fix_tasks is covered by the composed recordsRead case (it is read back, not applied). A judged injection case needs new corpus wiring."
+          },
+          {
+            "problem": "The fixer's own not_done items stand as reported: SC-13, SC-10 unit file, C4-left-2..9, C3-left-10/11, C5-left-6, L3-left-16.",
+            "why": "This fix-up covered the review's blocking items and the cheap non-blocking ones. Those leftovers need their own failing tests and were not in its scope."
+          }
+        ],
+        "validation": [
+          {
+            "command": "flock /tmp/frbench/heavy.lock pnpm check",
+            "result": "green: lint, paths, typecheck, 537 unit files (5806 passed, 7 skipped), docs check (no origin/main in the worktree, nothing to diff), links ok (213 files), secret scan clean"
+          },
+          {
+            "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+            "result": "green: 5 files passed, 6 skipped (no Postgres); 30 passed, 81 skipped"
+          },
+          {
+            "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+            "result": "green: 13 files, 25 passed, 1 skipped"
+          },
+          {
+            "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts",
+            "result": "green: 97 files, 1305 tests"
+          },
+          {
+            "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts (real Vite build)",
+            "result": "green: 38 passed"
+          },
+          {
+            "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+            "result": "PASS: 81 cases (58 hostile, 23 controls), 0 failed"
+          },
+          {
+            "command": "real-daemon 'the card in the Inbox names the project, …' (selftasks-run suggestion card, now with openDetails)",
+            "result": "1 passed"
+          },
+          {
+            "command": "failing-first checks",
+            "result": "chat-fix-tasks (3 cases) and session-update (1) failed before the proposalLine/changeWords fix; task-check-model failed 3 of 4 with compose's old model wiring; unknown-project (3 cases), two-at-once (1) and intent review/go-through (1) failed before their fixes; all pass on HEAD"
+          },
+          {
+            "command": "bench re-walk fixup-d1109-selftasks-chat (daemon 48801, UI 2401, --provider bench, FORERUNNER_BENCH_ASK=page skeleton)",
+            "result": "W1 Standard 'I changed 2 tasks of Shop page.'; drawer 'Added by the agent: Nothing checks that the links work.' and 'Split from \"Style the page in styles.css\" by the agent.'; W2 Assisted read-back 'Change \"Write the README: …\": priority to High; add \"Check that the links work\".' with one task-check call, Yes made both changes, no card left open; W3 'check the tasks for errors' answered by the chat model; W4 'review the tasks' made no task check; W5 after a planning override (opus) the check ran on fake-opus (fake-sonnet before). Bench stopped, home and profile deleted; steps in /tmp/frbench/fixup-d1109-selftasks-chat-shots/"
+          },
+          {
+            "command": "cargo",
+            "result": "not run: the desktop shell was not touched"
+          }
+        ],
+        "screenshots": {
+          "before": [
+            "/tmp/frbench/review-d1109-selftasks-chat/steps/06-w2-drawer-check-that-the-links-work.png",
+            "/tmp/frbench/review-d1109-selftasks-chat/steps/07-w2-drawer-style-the-page-in-styles-css.png"
+          ],
+          "after": [
+            "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run2/02-w1-drawer-added-step.png",
+            "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run2/03-w1-drawer-split-part.png",
+            "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run1/05-w2-garden-read-back.png",
+            "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run1/06-w2-garden-after-yes.png",
+            "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run1/07-w3-shop-check-for-errors.png",
+            "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run1/08-w4-shop-review-the-tasks.png",
+            "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run2/04-w5-garden-tidy-after-override.png"
+          ]
+        },
+        "tests_changed_for_design": [
+          {
+            "test": "packages/runtime/test/chat-fix-tasks.test.ts ASK_THREE (used by 'at Assisted …' and 'after a lookup returned records …')",
+            "why": "The fixer's assertion locked the untrue 'reword \"Publish the page\"' for a priority-only edit. It now expects 'change \"Publish the page\": priority to High' (design §3.9; §5 rules 4 and 9). The intent, one read-back naming all three changes, is kept."
+          },
+          {
+            "test": "apps/ui/test/real-daemon.test.ts selftasks-run 'the card in the Inbox names the project, …'",
+            "why": "Strengthened, not changed: one added assertion that GET /inbox gives openDetails true (SC-9). Every earlier assertion is kept."
+          }
+        ],
+        "new_problems": [
+          "Attribution, for the session lead to decide (review non-blocking 1): a change the person names in chat that the chat model makes now reads '… changed by the agent', and Changes names the agent (ChangeLogView.byAgent, task.ts agentReason/movedByAgent). The same change through the parser path reads 'by you'. This conflicts with 'Changes the person names in their own words stay the person's instruction'. One option: keep byAgent and the agent words for planFix and session-source changes only.",
+          "Chat read-back card lifetime: it waits 10 minutes (PENDING_TTL_MS). At Advisor or Assisted, a 'fix the tasks' read-back left longer quietly expires after the check's cost was booked and the kept notes were taken. The owner's 'asks first on one card' then lapses. For the session lead to decide.",
+          "'Make this a task' shows under refusal replies (for example 'Fixing the tasks would pass this project's budget; nothing changed.') because Conversation.tsx isOwnRequest ignores reply.notice. ChatTaskFixResult documents notice as the way to skip it. Fixing this changes every notice reply in chat.",
+          "Pre-existing: after a Yes, a chat-model command (actor agent, source chat, no planFix) still posts an Inbox Update that echoes the change (executor.post, not theirOwn). Seen in the review's SC-5 walk."
+        ],
+        "notes_for_other_areas": [
+          "proposalLine (session/task-proposal.ts) now names an edit's fields: 'Change \"X\": priority to High.' / 'Change \"X\": what done looks like and the criteria.'; a new title alone is 'Rename \"X\" to \"Y\".'; nothing reads 'Reword'. Both the suggestion card's list and chat's read-back use it. A suggestion set that contains an edit gets a new fingerprint, so a 'Keep the tasks' given on such a set before the upgrade may be asked again once.",
+          "session/result.ts changeWords reads 'edited \"X\"' for the TaskChangeFact kind 'reworded'; the stored kind is unchanged.",
+          "TaskView.agentChange (append-only, optional; daemon/task-words.ts agentChangeLine) is shown in TaskDrawer under the status detail line (data-testid drawer-agent-change). d1109-cred-screens owns the drawer's run line; this line sits apart from it.",
+          "conversation/agent.ts fixTarget returns { reply, unknown: true } when a named project matches none; the parser branch then lets the line go to the chat model. Model tool calls (fix_tasks with a bad project) still get the 'There is no project called …' content.",
+          "intent.ts FIX_VERB no longer includes 'review' or 'go through'.",
+          "fixTasksInChat tests taskCheckRunning again right before withTaskCheckLock; keep no await between the two.",
+          "Bench stand-in: '\"<task>\" is urgent' in the person's words or a report's lines gives an edit raising that task to High (testenv/src/bench/task-check-play.ts).",
+          "packages/runtime/test/task-check-model.test.ts uses credWorld({ subscription: false }) and reads the model from world.keyCalls(); a later area that changes how the task check picks its model updates its four expectations.",
+          "Suggested lines for the session lead's words list: 'Make these 2 changes to the tasks of Garden club? Change \"Write the README: …\": priority to High; add \"Check that the links work\".'; drawer: 'Added by the agent: Nothing checks that the links work.', 'Split from \"Style the page in styles.css\" by the agent.'; session result: 'Changed 1 task: edited \"Publish the page\".'"
+        ]
+      }
+    }
+  ],
+  "missing": [],
+  "merge": {
+    "merged": [
+      "fix/d1109-cred-screens at d6344cd -> merge commit 71dcc7a (no conflicts)",
+      "fix/d1109-selftasks-chat at 3110217 -> merge commit d41d55b (2 conflicted files, resolved)"
+    ],
+    "head_sha": "4cf11fdb0a1e10af94d948c6fcf79a89a083cfbb",
+    "pushed": true,
+    "conflicts_resolved": [
+      "packages/runtime/src/conversation/agent.ts imports: kept d1109-cred-screens' moneyWords import and d1109-selftasks-chat's TaskCheckDeps type import side by side.",
+      "packages/runtime/src/conversation/agent.ts finish()'s chat.reply row: kept cred-screens' oneOff field (C5-left-3, the hold reply keeps its one-off press) and selftasks-chat's footer field, both in the stored row.",
+      "apps/ui/test/real-daemon.test.ts: both new describe blocks appended in merge order ('d1109-cred-screens, run C' with its 18 cases, then 'd1109-selftasks-chat, run C'); each keeps its own afterAll (selftasks-chat's uses removeHomes)."
+    ],
+    "integration_fixes": [
+      "4cf11fd merge: the switch log line uses the renamed shortStoppedPhrase (U-078, U-095). d1109-selftasks-chat exported the private shortStopped in packages/runtime/src/session/credential-words.ts as shortStoppedPhrase. d1109-cred-screens added a new caller under the old name: switchLineWords' 'runs on your API key' form, line 314. Each branch typechecked alone, but the merge failed tsc with \"Cannot find name 'shortStopped'\". Fix: the same function under its new name. No sentence changes, so no behaviour test was needed; the typecheck was the failing check."
+    ],
+    "validation": [
+      {
+        "command": "pnpm install --frozen-lockfile",
+        "result": "ok"
+      },
+      {
+        "command": "flock heavy.lock pnpm typecheck (right after the merge)",
+        "result": "FAILED: credential-words.ts(314,55) Cannot find name 'shortStopped'. Fixed in 4cf11fd; re-run green (root tsc and all four apps)."
+      },
+      {
+        "command": "flock heavy.lock pnpm check (on 4cf11fd)",
+        "result": "exit 0. lint: 0 errors, 42 warnings (pre-existing, same count as the area reports), 1 info. lint:paths ok (1595 files). typecheck ok. unit: 542 files, 5841 passed, 7 skipped. docs:check found no origin/main to diff here, so it was run separately (next line). link-check ok (213 files). secret-scan clean (2232 files)."
+      },
+      {
+        "command": "pnpm docs:check -- --base origin/claude/nifty-knuth-f9udt0",
+        "result": "docs-check: ok (126 files)"
+      },
+      {
+        "command": "flock heavy.lock pnpm test:integration",
+        "result": "exit 0: 5 files passed, 6 skipped; 30 passed, 81 skipped (Postgres-backed suites skip without FORERUNNER_TEST_PG, as expected)"
+      },
+      {
+        "command": "flock heavy.lock pnpm test:e2e",
+        "result": "exit 0: 13 files passed; 25 passed, 1 skipped"
+      },
+      {
+        "command": "flock heavy.lock pnpm --filter @forerunner/live test (live harness dry runs)",
+        "result": "exit 0: 11 files passed, 4 skipped; 63 passed, 17 skipped"
+      },
+      {
+        "command": "flock heavy.lock pnpm test:injection",
+        "result": "exit 0, PASS: 81 cases (58 hostile, 23 controls), 81 passed, 0 failed"
+      },
+      {
+        "command": "flock heavy.lock env HOME=<empty dir> FORCE_COLOR=1 pnpm test (CI conditions)",
+        "result": "exit 0: 542 files, 5841 passed, 7 skipped"
+      },
+      {
+        "command": "cd apps/ui && flock heavy.lock env HOME=<empty dir> FORCE_COLOR=1 pnpm vitest run --config vitest.config.ts",
+        "result": "exit 0: 101 files, 1355 passed"
+      },
+      {
+        "command": "cd apps/ui && flock heavy.lock npx playwright test --config playwright.local.config.ts (real Vite build)",
+        "result": "exit 0: 38 passed"
+      },
+      {
+        "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+        "result": "not run: no area touched apps/desktop (git diff d133246..HEAD -- apps/desktop is empty)"
+      },
+      {
+        "command": "git grep -n '^<<<<<<< '",
+        "result": "nothing found"
+      },
+      {
+        "command": "signature check over origin/claude/nifty-knuth-f9udt0..HEAD (44 commits)",
+        "result": "prints nothing: every commit has a gpgsig, both merge commits and the fix included"
+      },
+      {
+        "command": "git push -u origin claude/nifty-knuth-f9udt0",
+        "result": "d133246..4cf11fd fast-forward on the first try; origin now equals HEAD 4cf11fd"
+      }
+    ],
+    "smoke": "Bench merge-w22 (daemon 48810, UI 2410, --fresh, --provider bench): node scripts/bench/journeys/smoke.cjs merge-w22 passed 25/25 checks with 0 findings and 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1 (17 stand-in calls, USD 0.000). Approve and start ran both planned tasks to done in one session, and the page files were written. The journey script needed no change. After the run the bench was stopped with stop.mjs and its home and browser profile were deleted. The steps and logs are kept in /tmp/frbench/merge-w22/.",
+    "problems_left": [
+      "Nothing is broken on the merged head. Every suite listed above is green here. CI and the Desktop app workflow on Windows and Linux have not run yet for 4cf11fd; the session lead checks them before live check 4.",
+      "Areas' own leftovers carry over unchanged, as their fix-ups report. d1109-cred-screens: CS-5's 'needs' row form (not built; CS-5 is on the never-cut list, so the session lead decides). Also: 'Start on 1 Dec' for a share or key-month stop starts a session that stops at once. And: the Settings/Start dialog Playwright cases at phone and desktop widths were not added. d1109-selftasks-chat: SC-12 'on its row' (only the drawer shows the line). Also left: SC-1's Connect action; 'Make this a task' under refusal replies; recompose losing the planFix context; SC-13; C4-left-2..9; C3-left-10/11; C5-left-6; L3-left-16.",
+      "Owner/session-lead decisions both fix-ups flagged, still open. (1) A change the person names in chat but the chat model makes now reads 'changed by the agent' and Changes names the agent (byAgent). (2) The chat read-back card expires after 10 minutes (PENDING_TTL_MS)."
+    ]
+  }
+}

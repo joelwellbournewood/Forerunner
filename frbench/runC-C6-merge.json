@@ -1,0 +1,84 @@
+{
+  "merged": [
+    "fix/d1109-cred-screens at d6344cd -> merge commit 71dcc7a (no conflicts)",
+    "fix/d1109-selftasks-chat at 3110217 -> merge commit d41d55b (2 conflicted files, resolved)"
+  ],
+  "head_sha": "4cf11fdb0a1e10af94d948c6fcf79a89a083cfbb",
+  "pushed": true,
+  "conflicts_resolved": [
+    "packages/runtime/src/conversation/agent.ts imports: kept d1109-cred-screens' moneyWords import and d1109-selftasks-chat's TaskCheckDeps type import side by side.",
+    "packages/runtime/src/conversation/agent.ts finish()'s chat.reply row: kept cred-screens' oneOff field (C5-left-3, the hold reply keeps its one-off press) and selftasks-chat's footer field, both in the stored row.",
+    "apps/ui/test/real-daemon.test.ts: both new describe blocks appended in merge order ('d1109-cred-screens, run C' with its 18 cases, then 'd1109-selftasks-chat, run C'); each keeps its own afterAll (selftasks-chat's uses removeHomes)."
+  ],
+  "integration_fixes": [
+    "4cf11fd merge: the switch log line uses the renamed shortStoppedPhrase (U-078, U-095). d1109-selftasks-chat exported the private shortStopped in packages/runtime/src/session/credential-words.ts as shortStoppedPhrase. d1109-cred-screens added a new caller under the old name: switchLineWords' 'runs on your API key' form, line 314. Each branch typechecked alone, but the merge failed tsc with \"Cannot find name 'shortStopped'\". Fix: the same function under its new name. No sentence changes, so no behaviour test was needed; the typecheck was the failing check."
+  ],
+  "validation": [
+    {
+      "command": "pnpm install --frozen-lockfile",
+      "result": "ok"
+    },
+    {
+      "command": "flock heavy.lock pnpm typecheck (right after the merge)",
+      "result": "FAILED: credential-words.ts(314,55) Cannot find name 'shortStopped'. Fixed in 4cf11fd; re-run green (root tsc and all four apps)."
+    },
+    {
+      "command": "flock heavy.lock pnpm check (on 4cf11fd)",
+      "result": "exit 0. lint: 0 errors, 42 warnings (pre-existing, same count as the area reports), 1 info. lint:paths ok (1595 files). typecheck ok. unit: 542 files, 5841 passed, 7 skipped. docs:check found no origin/main to diff here, so it was run separately (next line). link-check ok (213 files). secret-scan clean (2232 files)."
+    },
+    {
+      "command": "pnpm docs:check -- --base origin/claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (126 files)"
+    },
+    {
+      "command": "flock heavy.lock pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped; 30 passed, 81 skipped (Postgres-backed suites skip without FORERUNNER_TEST_PG, as expected)"
+    },
+    {
+      "command": "flock heavy.lock pnpm test:e2e",
+      "result": "exit 0: 13 files passed; 25 passed, 1 skipped"
+    },
+    {
+      "command": "flock heavy.lock pnpm --filter @forerunner/live test (live harness dry runs)",
+      "result": "exit 0: 11 files passed, 4 skipped; 63 passed, 17 skipped"
+    },
+    {
+      "command": "flock heavy.lock pnpm test:injection",
+      "result": "exit 0, PASS: 81 cases (58 hostile, 23 controls), 81 passed, 0 failed"
+    },
+    {
+      "command": "flock heavy.lock env HOME=<empty dir> FORCE_COLOR=1 pnpm test (CI conditions)",
+      "result": "exit 0: 542 files, 5841 passed, 7 skipped"
+    },
+    {
+      "command": "cd apps/ui && flock heavy.lock env HOME=<empty dir> FORCE_COLOR=1 pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 101 files, 1355 passed"
+    },
+    {
+      "command": "cd apps/ui && flock heavy.lock npx playwright test --config playwright.local.config.ts (real Vite build)",
+      "result": "exit 0: 38 passed"
+    },
+    {
+      "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+      "result": "not run: no area touched apps/desktop (git diff d133246..HEAD -- apps/desktop is empty)"
+    },
+    {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "nothing found"
+    },
+    {
+      "command": "signature check over origin/claude/nifty-knuth-f9udt0..HEAD (44 commits)",
+      "result": "prints nothing: every commit has a gpgsig, both merge commits and the fix included"
+    },
+    {
+      "command": "git push -u origin claude/nifty-knuth-f9udt0",
+      "result": "d133246..4cf11fd fast-forward on the first try; origin now equals HEAD 4cf11fd"
+    }
+  ],
+  "smoke": "Bench merge-w22 (daemon 48810, UI 2410, --fresh, --provider bench): node scripts/bench/journeys/smoke.cjs merge-w22 passed 25/25 checks with 0 findings and 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1 (17 stand-in calls, USD 0.000). Approve and start ran both planned tasks to done in one session, and the page files were written. The journey script needed no change. After the run the bench was stopped with stop.mjs and its home and browser profile were deleted. The steps and logs are kept in /tmp/frbench/merge-w22/.",
+  "problems_left": [
+    "Nothing is broken on the merged head. Every suite listed above is green here. CI and the Desktop app workflow on Windows and Linux have not run yet for 4cf11fd; the session lead checks them before live check 4.",
+    "Areas' own leftovers carry over unchanged, as their fix-ups report. d1109-cred-screens: CS-5's 'needs' row form (not built; CS-5 is on the never-cut list, so the session lead decides). Also: 'Start on 1 Dec' for a share or key-month stop starts a session that stops at once. And: the Settings/Start dialog Playwright cases at phone and desktop widths were not added. d1109-selftasks-chat: SC-12 'on its row' (only the drawer shows the line). Also left: SC-1's Connect action; 'Make this a task' under refusal replies; recompose losing the planFix context; SC-13; C4-left-2..9; C3-left-10/11; C5-left-6; L3-left-16.",
+    "Owner/session-lead decisions both fix-ups flagged, still open. (1) A change the person names in chat but the chat model makes now reads 'changed by the agent' and Changes names the agent (byAgent). (2) The chat read-back card expires after 10 minutes (PENDING_TTL_MS)."
+  ]
+}
