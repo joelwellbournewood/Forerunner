@@ -150,24 +150,50 @@ ${(args.fixupNotes && args.fixupNotes[key]) ? args.fixupNotes[key] + '\n\n' : ''
 Fix every blocking finding (failing test first where it applies), re-walk the acceptance journey on the bench, run the same validation as the fixer (pnpm check, test:integration, test:e2e, UI suite and Playwright if UI changed, cargo checks if the desktop shell changed). If you judge a finding wrong, say why with evidence instead of changing code. Commit (same message rules), then \`git branch -f fix/${key} HEAD\`. Stop your bench. Return the same report shape as the fixer, covering only your changes plus the final branch head.`
 
 phase('Fix')
-const results = await pipeline(
-  keys,
-  // args.existingFixes[key]: a finished fixer's saved report (its branch fix/<key> restored locally), used instead of running the fixer again.
-  (key, _o, i) => (args.existingFixes && args.existingFixes[key])
-    ? Promise.resolve(args.existingFixes[key])
-    : agent(fixPrompt(key, i), { label: `fix:${key}`, phase: 'Fix', isolation: 'worktree', schema: FIX_SCHEMA }),
-  (fix, key, i) => {
-    if (!fix) return null
-    return agent(reviewPrompt(key, i, fix), { label: `review:${key}`, phase: 'Review', isolation: 'worktree', schema: REVIEW_SCHEMA })
-      .then((review) => ({ key, fix, review }))
-  },
-  (r, key, i) => {
-    if (!r) return null
-    if (!r.review || r.review.verdict !== 'fix-needed') return { ...r, fixup: null }
-    return agent(fixupPrompt(key, i, r.fix, r.review), { label: `fixup:${key}`, phase: 'Fixup', isolation: 'worktree', schema: FIX_SCHEMA })
-      .then((fixup) => ({ ...r, fixup }))
-  },
-)
+// Saved stage results (after a container restart): args.existingFixes[key], args.existingReviews[key] and
+// args.existingFixups[key] are a finished agent's saved report, used instead of running that agent again.
+const saved = (kind, key) => (args[kind] && args[kind][key]) || null
+const stageFix = (key, i) => saved('existingFixes', key)
+  ? Promise.resolve(saved('existingFixes', key))
+  : agent(fixPrompt(key, i), { label: `fix:${key}`, phase: 'Fix', isolation: 'worktree', schema: FIX_SCHEMA })
+const stageReview = (fix, key, i) => {
+  if (!fix) return null
+  if (saved('existingReviews', key)) return Promise.resolve({ key, fix, review: saved('existingReviews', key) })
+  return agent(reviewPrompt(key, i, fix), { label: `review:${key}`, phase: 'Review', isolation: 'worktree', schema: REVIEW_SCHEMA })
+    .then((review) => ({ key, fix, review }))
+}
+const stageFixup = (r, key, i) => {
+  if (!r) return null
+  if (!r.review || r.review.verdict !== 'fix-needed') return { ...r, fixup: null }
+  if (saved('existingFixups', key)) return Promise.resolve({ ...r, fixup: saved('existingFixups', key) })
+  return agent(fixupPrompt(key, i, r.fix, r.review), { label: `fixup:${key}`, phase: 'Fixup', isolation: 'worktree', schema: FIX_SCHEMA })
+    .then((fixup) => ({ ...r, fixup }))
+}
+// args.sequential: one area at a time (fix, review, fix-up), in args.order (default: keys), so that two
+// agents never run heavy suites at once; ports still follow each key's index in keys.
+let results
+if (args.sequential) {
+  const byKey = {}
+  for (const key of (args.order || keys)) {
+    const i = keys.indexOf(key)
+    try {
+      const fix = await stageFix(key, i)
+      const r = await stageReview(fix, key, i)
+      byKey[key] = await stageFixup(r, key, i)
+    } catch (e) {
+      log(`${key}: stopped with ${String(e && e.message ? e.message : e).slice(0, 200)}`)
+      byKey[key] = null
+    }
+  }
+  results = keys.map((k) => byKey[k] || null)
+} else {
+  results = await pipeline(
+    keys,
+    (key, _o, i) => stageFix(key, i),
+    (fix, key, i) => stageReview(fix, key, i),
+    (r, key, i) => stageFixup(r, key, i),
+  )
+}
 
 const ok = results.filter(Boolean)
 const missing = keys.filter((k) => !ok.find((r) => r.key === k))

@@ -1,0 +1,374 @@
+diff --git a/apps/ui/src/pages/project/StartSessionDialog.tsx b/apps/ui/src/pages/project/StartSessionDialog.tsx
+index 1b8077a..5d670c1 100644
+--- a/apps/ui/src/pages/project/StartSessionDialog.tsx
++++ b/apps/ui/src/pages/project/StartSessionDialog.tsx
+@@ -632,7 +632,9 @@ export function StartSessionDialog({
+             again from the start check the new session itself made busy). A refused start
+             waits for nothing: another project's session makes nothing here runnable (later
+             #38), so it never reads "Starts after the current session". */}
+-        {notice ? null : (
++        {/* CS-3: beside "Use API key" and "Start at 15:40" each button says what it does; the
++            line about a plain Start is not shown (there is none). */}
++        {notice || runOut ? null : (
+           <p className="text-xs text-neutral-500" data-testid="start-session-explain">
+             {data?.busy && !blocked && !planning
+               ? runningElsewhere
+diff --git a/apps/ui/test/credential-start.test.tsx b/apps/ui/test/credential-start.test.tsx
+index b7998c3..a5180d1 100644
+--- a/apps/ui/test/credential-start.test.tsx
++++ b/apps/ui/test/credential-start.test.tsx
+@@ -52,7 +52,13 @@ describe("d1109-cred-screens, run C: the Start dialog's credential line and butt
+     };
+     harness.daemon.state.startCredential.proj_atlas = {
+       line: null,
+-      runOut: { use: USE, later: LATER, lean: "use", goesOnLine: null },
++      runOut: {
++        use: USE,
++        later: LATER,
++        lean: "use",
++        goesOnLine: null,
++        stoppedLine: "Your subscription is at its limit until 15:40.",
++      },
+     };
+     const { user, dialog } = await openDialog(harness);
+     const list = await within(dialog).findByTestId("start-session-run-out");
+@@ -60,6 +66,12 @@ describe("d1109-cred-screens, run C: the Start dialog's credential line and butt
+       .getAllByRole("button")
+       .map((b) => b.textContent);
+     expect(buttons).toEqual(["Use API key", "Start at 15:40"]);
++    // The line above the two buttons says the stop: "Nothing can run until 15:40" is not true
++    // when Use API key runs now; no "Start: works until ..." line for a Start that is not there.
++    expect(within(dialog).getByTestId("start-session-blocked")).toHaveTextContent(
++      /^Your subscription is at its limit until 15:40\.$/,
++    );
++    expect(within(dialog).queryByTestId("start-session-explain")).toBeNull();
+     expect(list).toHaveTextContent(USE.explain);
+     expect(list).toHaveTextContent(LATER.explain);
+     // No third Start beside the two.
+@@ -81,7 +93,13 @@ describe("d1109-cred-screens, run C: the Start dialog's credential line and butt
+     };
+     harness.daemon.state.startCredential.proj_atlas = {
+       line: null,
+-      runOut: { use: USE, later: LATER, lean: "later", goesOnLine: null },
++      runOut: {
++        use: USE,
++        later: LATER,
++        lean: "later",
++        goesOnLine: null,
++        stoppedLine: "Your subscription is at its limit until 15:40.",
++      },
+     };
+     const { user, dialog } = await openDialog(harness);
+     const list = await within(dialog).findByTestId("start-session-run-out");
+@@ -90,9 +108,10 @@ describe("d1109-cred-screens, run C: the Start dialog's credential line and butt
+         .getAllByRole("button")
+         .map((b) => b.textContent),
+     ).toEqual(["Start at 15:40", "Use API key"]);
+-    // C3-left-9: the sentence names the button beside it.
++    // C3-left-9 (intent kept: the sentence matches the buttons beside it): with two buttons, the
++    // stop alone; each button says what it does.
+     expect(within(dialog).getByTestId("start-session-blocked")).toHaveTextContent(
+-      "Nothing can run until 15:40 (your subscription's limit). Press Start at 15:40 and the work starts then.",
++      /^Your subscription is at its limit until 15:40\.$/,
+     );
+     await user.click(within(list).getByTestId("start-session-later"));
+     expect(await within(dialog).findByTestId("start-session-notice")).toHaveTextContent(
+diff --git a/apps/ui/test/fake-daemon.ts b/apps/ui/test/fake-daemon.ts
+index 01a7fc2..546bae4 100644
+--- a/apps/ui/test/fake-daemon.ts
++++ b/apps/ui/test/fake-daemon.ts
+@@ -3261,7 +3261,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
+     // project's own session already waits, its line in place of the wait's sentence.
+     view.credential = state.startCredential[id] ?? null;
+     const goesOn = view.credential?.runOut?.goesOnLine ?? null;
++    const stoppedLine = view.credential?.runOut?.stoppedLine ?? null;
+     if (goesOn && view.blocked) view.blocked = { ...view.blocked, sentence: goesOn };
++    else if (stoppedLine && view.blocked?.startable)
++      view.blocked = { ...view.blocked, sentence: stoppedLine };
+     // C2-left-2, as the daemon: nothing is ready because a task waits on the person's card.
+     if (view.blocked?.sentence === "Nothing can run: no task is ready.") {
+       const held = state.tasks.find(
+diff --git a/apps/ui/test/real-daemon.test.ts b/apps/ui/test/real-daemon.test.ts
+index 2bf6937..0f9aebd 100644
+--- a/apps/ui/test/real-daemon.test.ts
++++ b/apps/ui/test/real-daemon.test.ts
+@@ -22257,9 +22257,12 @@ describe("d1109-cred-screens, run C", () => {
+       await addReady(first.client, project.id, "Style the page");
+       await restSubscription(first.rt, resetAt);
+       const check = await first.client.startCheck(project.id);
+-      // One sentence that names the button beside it (C3-left-9).
+-      expect(check.blocked?.sentence).toBe(
+-        "Nothing can run until 11:40 (your subscription's limit). Press Start at 11:40 and the work starts then.",
++      // One sentence that matches the buttons beside it (C3-left-9): with "Use API key" and
++      // "Start at 11:40" offered, the stop alone ("Nothing can run until 11:40" is not true when
++      // the key can run it now; each button says what it does).
++      expect(check.blocked?.sentence).toBe("Your subscription is at its limit until 11:40.");
++      expect(check.credential?.runOut?.stoppedLine).toBe(
++        "Your subscription is at its limit until 11:40.",
+       );
+       expect(check.credential?.line).toBeNull();
+       const runOut = check.credential?.runOut;
+diff --git a/packages/runtime/src/daemon/api-types.ts b/packages/runtime/src/daemon/api-types.ts
+index 638c5b9..6bf6e8d 100644
+--- a/packages/runtime/src/daemon/api-types.ts
++++ b/packages/runtime/src/daemon/api-types.ts
+@@ -2064,6 +2064,12 @@ export const StartCheckView = z.object({
+           later: z.object({ label: z.string(), explain: z.string() }).nullable(),
+           lean: z.enum(["use", "later"]),
+           goesOnLine: z.string().nullable(),
++          /**
++           * The one line above the two buttons ("Your subscription is at its limit until
++           * 15:40."), the dialog's sentence in place of "Nothing can run until 15:40 ...".
++           * Absent from an older daemon.
++           */
++          stoppedLine: z.string().optional(),
+         })
+         .nullable(),
+     })
+diff --git a/packages/runtime/src/daemon/compose.ts b/packages/runtime/src/daemon/compose.ts
+index 66896f5..91a740d 100644
+--- a/packages/runtime/src/daemon/compose.ts
++++ b/packages/runtime/src/daemon/compose.ts
+@@ -1790,9 +1790,25 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
+           projectId,
+           cap,
+         ).catch(() => null);
++        // d1109-cred-screens (CS-8): the task whose run met the stop is claimed while the card is
++        // filed, so the ready tasks alone left it out (the bench's card read "about CHF 0.00"):
++        // its own estimate counts too, at the start check's fallback pricing.
++        const inFlight = (
++          await store.task
++            .forProject(projectId, { status: ["claimed", "in_progress"] }, { limit: 50 })
++            .catch(() => [])
++        ).reduce(
++          (sum, t) =>
++            sum +
++            Math.max(
++              0,
++              (t.est_cost_usd_micro || t.budget_usd_micro || 500_000) - t.actual_cost_usd_micro,
++            ),
++          0,
++        );
+         if (check)
+           estimateUsdMicro += Math.min(
+-            check.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0),
++            check.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0) + inFlight,
+             check.workBudgetUsdMicro,
+           );
+       }
+diff --git a/packages/runtime/src/daemon/credential-start.ts b/packages/runtime/src/daemon/credential-start.ts
+index 442c68c..8a64342 100644
+--- a/packages/runtime/src/daemon/credential-start.ts
++++ b/packages/runtime/src/daemon/credential-start.ts
+@@ -14,6 +14,7 @@ import {
+   startLaterExplain,
+   startLaterLabel,
+   startRunOutLine,
++  startStoppedLine,
+   useApiKeyExplain,
+ } from "./credential-policy-view.ts";
+ 
+@@ -36,6 +37,11 @@ export interface StartCredentialView {
+     lean: "use" | "later";
+     /** The project's own session already waits to go on: "Your session of 14:05 goes on by itself at 15:40." */
+     goesOnLine: string | null;
++    /**
++     * The one line above the two buttons ("Your subscription is at its limit until 15:40."): with
++     * "Use API key" offered, "Nothing can run until 15:40" would not be true.
++     */
++    stoppedLine: string;
+   } | null;
+ }
+ 
+@@ -138,6 +144,7 @@ export async function startCredential(
+         later,
+         lean: whenStopped === "ask" ? "use" : "later",
+         goesOnLine,
++        stoppedLine: startStoppedLine(first.kind, stop, opts),
+       },
+     },
+     offer: {
+diff --git a/packages/runtime/src/daemon/request-words.ts b/packages/runtime/src/daemon/request-words.ts
+index a1f41cf..f35a731 100644
+--- a/packages/runtime/src/daemon/request-words.ts
++++ b/packages/runtime/src/daemon/request-words.ts
+@@ -1387,9 +1387,13 @@ function askCard(
+     },
+     ...(ask?.timezone ? { timezone: ask.timezone } : {}),
+     nowMs: ask?.nowMs ?? Date.now(),
+-    estimateChf: chfText(
++    // d1109-cred-screens (CS-8): under a centime "less than CHF 0.01" (never "CHF 0.00").
++    estimateChf: moneyWords(
++      chfText(
++        typeof card.estimate_usd_micro === "number" ? card.estimate_usd_micro : 0,
++        typeof card.chf_per_usd === "number" ? card.chf_per_usd : undefined,
++      ),
+       typeof card.estimate_usd_micro === "number" ? card.estimate_usd_micro : 0,
+-      typeof card.chf_per_usd === "number" ? card.chf_per_usd : undefined,
+     ),
+     sessionWaits: r.status === "open" ? (ask?.sessionWaits ?? false) : answeredGoesOn,
+     ...(ask?.goesOnAt ? { goesOnAt: ask.goesOnAt } : {}),
+diff --git a/packages/runtime/src/daemon/server.ts b/packages/runtime/src/daemon/server.ts
+index b9b75d7..70ee764 100644
+--- a/packages/runtime/src/daemon/server.ts
++++ b/packages/runtime/src/daemon/server.ts
+@@ -1655,7 +1655,15 @@ export function createDaemonApp(
+     // CS-3: the project's own session already waits to go on (one wait per project): the dialog
+     // says when it goes on by itself, beside its "Use API key".
+     const goesOn = credential.view?.runOut?.goesOnLine ?? null;
+-    const blocked = found && goesOn ? { ...found, sentence: goesOn } : found;
++    // With "Use API key" and "Start at 15:40" offered, the sentence above them says the stop
++    // alone ("Nothing can run until 15:40" would not be true; each button says what it does).
++    const stoppedLine = credential.view?.runOut?.stoppedLine ?? null;
++    const blocked =
++      found && goesOn
++        ? { ...found, sentence: goesOn }
++        : found?.startable && stoppedLine
++          ? { ...found, sentence: stoppedLine }
++          : found;
+     const view: StartCheckView = {
+       projectId: r.projectId,
+       sessionBudget: money(r.sessionBudgetUsdMicro, rate),
+diff --git a/packages/runtime/src/session/credential-words.ts b/packages/runtime/src/session/credential-words.ts
+index 644a82c..b9f88f9 100644
+--- a/packages/runtime/src/session/credential-words.ts
++++ b/packages/runtime/src/session/credential-words.ts
+@@ -78,6 +78,18 @@ export interface AskCardWords {
+   closed: string;
+ }
+ 
++/**
++ * d1109-cred-screens (CS-8; design §5 rule 7): the ask card's figure: "about CHF 0.40", "less than
++ * CHF 0.01" alone under a centime, and none when no figure is known ("CHF 0.00": the work's
++ * estimate was not known when the card was filed): the sentence then says the cost per use.
++ */
++function askFigure(estimateChf: string): { body: string; use: string } {
++  if (/^CHF 0\.00$/.test(estimateChf.trim()))
++    return { body: ", at a cost per use", use: ", at a cost per use" };
++  const est = /^less than /.test(estimateChf) ? estimateChf : `about ${estimateChf}`;
++  return { body: `: ${est}`, use: `: ${est} for what waits now` };
++}
++
+ /** The Ask card's option labels, in their order (Use API key first). */
+ export const ASK_OPTIONS = ["Use API key", "Wait"] as const;
+ 
+@@ -90,14 +102,14 @@ export const ASK_OPTIONS = ["Use API key", "Wait"] as const;
+ function refusedAskWords(input: AskCardInput): AskCardWords {
+   const saved =
+     input.wait.kind === "subscription" ? "a new sign-in is saved" : "a new key is saved";
+-  const est = input.estimateChf;
++  const fig = askFigure(input.estimateChf);
+   return {
+     title: `Use your API key until ${saved}?`,
+-    body: `${stoppedPhrase(input.wait, null)}. Your API key can do the waiting work now: about ${est}.`,
++    body: `${stoppedPhrase(input.wait, null)}. Your API key can do the waiting work now${fig.body}.`,
+     options: [
+       {
+         label: "Use API key",
+-        explain: `Your work and chat use your API key until ${saved}: about ${est} for what waits now.`,
++        explain: `Your work and chat use your API key until ${saved}${fig.use}.`,
+       },
+       {
+         label: "Wait",
+@@ -134,10 +146,11 @@ export function askCardWords(input: AskCardInput): AskCardWords {
+   const title = share
+     ? `Use your API key until ${w?.untilShort ?? "the month's end"}?`
+     : `Use your API key until ${until}?`;
++  const fig = askFigure(input.estimateChf);
+   const body = `${stoppedPhrase(input.wait, share ? null : until)}${
+     share ? " this month" : ""
+-  }. Your API key can do the waiting work now: about ${input.estimateChf}.`;
+-  const useExplain = `Your work and chat use your API key until ${share ? (w?.untilShort ?? until) : until}: about ${input.estimateChf} for what waits now.`;
++  }. Your API key can do the waiting work now${fig.body}.`;
++  const useExplain = `Your work and chat use your API key until ${share ? (w?.untilShort ?? until) : until}${fig.use}.`;
+   const waitExplain = share
+     ? input.sessionWaits
+       ? `Nothing moves until ${until}, or until you raise the allowance; then your session goes on.`
+diff --git a/packages/runtime/test/credential-policy-view.test.ts b/packages/runtime/test/credential-policy-view.test.ts
+index 4009999..9ae0c78 100644
+--- a/packages/runtime/test/credential-policy-view.test.ts
++++ b/packages/runtime/test/credential-policy-view.test.ts
+@@ -31,7 +31,12 @@ import { eventAudience } from "../src/daemon/event-audience.ts";
+ import { projectStatusLine } from "../src/daemon/project-status.ts";
+ import { describeEvent } from "../src/daemon/views.ts";
+ import { waitRowWords } from "../src/session/credential-wait.ts";
+-import { backLogLine, chatOneOffExplain, switchRunLine } from "../src/session/credential-words.ts";
++import {
++  askCardWords,
++  backLogLine,
++  chatOneOffExplain,
++  switchRunLine,
++} from "../src/session/credential-words.ts";
+ 
+ /**
+  * d1109-cred-screens (run C, C6; ADR 0120 amended 2026-11-16): every screen sentence of "which
+@@ -421,3 +426,69 @@ describe("d1109-cred-screens, run C (CS-8): chat's one-off line never says CHF 0
+     );
+   });
+ });
++
++/**
++ * d1109-cred-screens (CS-8, CS-10's walk; design §5 rule 7: "CHF ... 'about' for estimates", and
++ * W15-74's rule, never "about CHF 0.00" for a cost): the ask card the person answers named "about
++ * CHF 0.00" on the bench, for work whose estimate was not known when the card was filed, and would
++ * say "about less than CHF 0.01" under a centime. Now: the figure when there is one, "less than
++ * CHF 0.01" alone under a centime, and no figure ("at a cost per use") when none is known.
++ */
++describe("d1109-cred-screens, run C: the ask card's figure (CS-8)", () => {
++  const base = {
++    wait: {
++      reason: "limit" as const,
++      kind: "subscription" as const,
++      until: "2026-11-16T14:40:00Z",
++    },
++    timezone: "Europe/Zurich",
++    nowMs: Date.parse("2026-11-16T13:00:00Z"),
++    sessionWaits: true,
++  };
++  it("a known figure reads 'about CHF 0.40'; under a centime 'less than CHF 0.01'; none known, no figure", () => {
++    const known = askCardWords({ ...base, estimateChf: "CHF 0.40" });
++    expect(known.body).toBe(
++      "Your Claude subscription is at its limit until 15:40. Your API key can do the waiting work now: about CHF 0.40.",
++    );
++    expect(known.options[0]?.explain).toBe(
++      "Your work and chat use your API key until 15:40: about CHF 0.40 for what waits now.",
++    );
++    const tiny = askCardWords({ ...base, estimateChf: "less than CHF 0.01" });
++    expect(tiny.body).toBe(
++      "Your Claude subscription is at its limit until 15:40. Your API key can do the waiting work now: less than CHF 0.01.",
++    );
++    expect(tiny.options[0]?.explain).toBe(
++      "Your work and chat use your API key until 15:40: less than CHF 0.01 for what waits now.",
++    );
++    const none = askCardWords({ ...base, estimateChf: "CHF 0.00" });
++    expect(none.body).toBe(
++      "Your Claude subscription is at its limit until 15:40. Your API key can do the waiting work now, at a cost per use.",
++    );
++    expect(none.options[0]?.explain).toBe(
++      "Your work and chat use your API key until 15:40, at a cost per use.",
++    );
++    for (const w of [known, tiny, none])
++      for (const s of [w.body, ...w.options.map((o) => o.explain)]) {
++        expect(s).not.toContain("about CHF 0.00");
++        expect(s).not.toContain("about less than");
++        expect(s.length).toBeLessThanOrEqual(140);
++      }
++    for (const w of [known, tiny, none])
++      for (const o of w.options) expect(o.explain.length).toBeLessThanOrEqual(100);
++  });
++
++  it("the refused form says the same", () => {
++    const refused = {
++      ...base,
++      wait: { reason: "refused" as const, kind: "subscription" as const, until: null },
++    };
++    expect(askCardWords({ ...refused, estimateChf: "CHF 0.00" }).body).toBe(
++      "Anthropic refused your Claude sign-in. Your API key can do the waiting work now, at a cost per use.",
++    );
++    expect(
++      askCardWords({ ...refused, estimateChf: "less than CHF 0.01" }).options[0]?.explain,
++    ).toBe(
++      "Your work and chat use your API key until a new sign-in is saved: less than CHF 0.01 for what waits now.",
++    );
++  });
++});

@@ -1,0 +1,114 @@
+diff --git a/packages/runtime/src/conversation/task-fix-tool.ts b/packages/runtime/src/conversation/task-fix-tool.ts
+index 8cb808a..6da56b4 100644
+--- a/packages/runtime/src/conversation/task-fix-tool.ts
++++ b/packages/runtime/src/conversation/task-fix-tool.ts
+@@ -19,6 +19,7 @@ import {
+   applyTaskChanges,
+   type ChangeRunResult,
+   callsOf,
++  type FencedChange,
+   fenceTaskChanges,
+   makesFixesAtOnce,
+   type RefusedChange,
+@@ -28,6 +29,7 @@ import {
+   taskCheckRunning,
+   withTaskCheckLock,
+ } from "../session/task-check.ts";
++import { PRIORITY_LABELS } from "../priority.ts";
+ import { keptNotesOf, takeNotes } from "../session/task-list-notes.ts";
+ import { proposalLine } from "../session/task-proposal.ts";
+ import {
+@@ -47,6 +49,27 @@ import {
+ 
+ const logger = log("chat-fix-tasks");
+ 
++/**
++ * One change as chat's read-back names it: the suggestion card's words (`proposalLine`), except
++ * that an edit says the fields it changes, as task.update's own read-back does ('Change "Publish
++ * the page": priority to High.'); a new title alone stays 'Rename "X" to "Y".'. Before, any edit
++ * without a new title read 'Reword "X".', so a Yes to a "reword" changed a priority (review of
++ * d1109-selftasks-chat; design section 3.9 and section 5 rules 4 and 9).
++ */
++export function fixChangeLine(f: FencedChange): string {
++  const c = f.change;
++  if (c.kind !== "edit") return proposalLine(f);
++  const parts: string[] = [];
++  if (c.title) parts.push(`the title to "${c.title.trim()}"`);
++  if (c.outcome) parts.push("what done looks like");
++  if (c.acceptanceCriteria) parts.push("the criteria");
++  if (c.priority) parts.push(`priority to ${PRIORITY_LABELS[c.priority]}`);
++  if (parts.length === 0 || (c.title && parts.length === 1)) return proposalLine(f);
++  const list =
++    parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
++  return `Change "${c.task.trim()}": ${list}.`;
++}
++
+ /**
+  * d1109-selftasks-chat (ADR 0119, the owner's D7 of 2026-11-09: "I would also like that being
+  * talking to the agent would also allow the agent to have dynamic control over its tasks"):
+@@ -210,7 +233,7 @@ export async function fixTasksInChat(input: ChatTaskFixInput): Promise<ChatTaskF
+       const reasons = fence.askFirst.filter((a) => !a.quote).map((a) => a.reason);
+       const ask = fixAsk(
+         now.name,
+-        fence.changes.map((f) => proposalLine(f)),
++        fence.changes.map((f) => fixChangeLine(f)),
+       );
+       const [r] = await planFix(planned, turn, {
+         level,
+diff --git a/packages/runtime/test/chat-fix-tasks.test.ts b/packages/runtime/test/chat-fix-tasks.test.ts
+index b1910a9..61a9fb4 100644
+--- a/packages/runtime/test/chat-fix-tasks.test.ts
++++ b/packages/runtime/test/chat-fix-tasks.test.ts
+@@ -7,7 +7,7 @@ import {
+   ConversationAgent,
+   type ConversationDeps,
+ } from "../src/conversation/agent.ts";
+-import { FIX_TASKS_DESCRIPTION } from "../src/conversation/task-fix-tool.ts";
++import { FIX_TASKS_DESCRIPTION, fixChangeLine } from "../src/conversation/task-fix-tool.ts";
+ import { CommandLoop } from "../src/loop/commands.ts";
+ import {
+   type TaskCheckDeps,
+@@ -58,8 +58,10 @@ const THREE = JSON.stringify({
+   why: "Three changes.",
+ });
+ const NONE = JSON.stringify({ changes: [], flagged: [], why: "Nothing is wrong." });
++// The edit says what it changes, as task.update's own read-back does (review: a priority change
++// read 'reword "Publish the page"', and Yes then changed its priority).
+ const ASK_THREE =
+-  'Make these 3 changes to the tasks of Quote page? Split "Style the page" into "Style the page: layout" and "Style the page: colours"; add "Check the links" before "Publish the page"; reword "Publish the page".';
++  'Make these 3 changes to the tasks of Quote page? Split "Style the page" into "Style the page: layout" and "Style the page: colours"; add "Check the links" before "Publish the page"; change "Publish the page": priority to High.';
+ 
+ interface World {
+   store: StateStore;
+@@ -459,3 +461,31 @@ describe("d1109-selftasks-chat, run C: several changes the person names are one
+     expect(publish.priority).not.toBe(w.tasks.publish?.priority);
+   });
+ });
++
++describe("d1109-selftasks-chat, run C: the read-back names what an edit changes (review)", () => {
++  // Design section 3.9: a change is read back as what it does; section 5 rules 4 and 9: the words
++  // are true. The check's rules let an edit change only the priority, so "reword" was untrue.
++  const edit = (fields: Record<string, unknown>) =>
++    fixChangeLine({
++      change: { kind: "edit", task: "Publish the page", why: "It is the goal.", ...fields },
++      taskIds: [],
++      sourceId: null,
++      newTasks: 0,
++      why: "It is the goal.",
++    } as never);
++  it("each edit says the fields it changes; a new title alone is a rename", () => {
++    expect(edit({ priority: "high" })).toBe('Change "Publish the page": priority to High.');
++    expect(edit({ priority: "low" })).toBe('Change "Publish the page": priority to Low.');
++    expect(edit({ title: "Publish the quote page" })).toBe(
++      'Rename "Publish the page" to "Publish the quote page".',
++    );
++    expect(edit({ title: "Publish the quote page", priority: "medium" })).toBe(
++      'Change "Publish the page": the title to "Publish the quote page" and priority to Medium.',
++    );
++    expect(edit({ outcome: "The page is online", acceptanceCriteria: ["it loads"] })).toBe(
++      'Change "Publish the page": what done looks like and the criteria.',
++    );
++    for (const line of [edit({ priority: "high" }), edit({ outcome: "The page is online" })])
++      expect(line).not.toMatch(/reword/i);
++  });
++});

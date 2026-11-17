@@ -1,0 +1,126 @@
+{
+  "verdict": "fix-needed",
+  "acceptance_walk": "I ran the bench \"review-d1109-selftasks-chat\" from this worktree at d03d7f6 (daemon 48791, UI 2391, --provider bench). For most walks I injected FORERUNNER_BENCH_TASK_LIST=page skeleton with a report line '\"Style the page in styles.css\" is two jobs, the layout and the colours.', plus FORERUNNER_BENCH_ASK=page skeleton and DELAY_MS=1500. Screenshots and texts are in /tmp/frbench/review-d1109-selftasks-chat/steps/01..21. Each project was planned from a long brief, so the plan's tasks are the agent's. The specialist asked the person first, so the other tasks waited.\n\n- **Standard, \"fix the tasks\" (SC-1/3/4, steps 01-04):** Shop page > Chat > 'fix the tasks: \"Style the page in styles.css\" is two jobs ...; nothing checks that the links work.'\n  - While it ran, the reply line read \"Checking the tasks of Shop page…\".\n  - The reply was \"I changed 2 tasks of Shop page.\" with one row and one Undo per change, and under it \"Checking the tasks cost less than CHF 0.01.\"\n  - The model-call log shows exactly one call in the turn: task-check. No chat-model call came first. The check's message ends with \"The person asked, in their words:\" and the line verbatim inside its own envelope.\n  - Changes shows two \"Chat · Shop page · Alice\" rows, each with \"Said: …\" and Undo. The Inbox got no line.\n  - The chat Undo on the split row (step 08) took back only the split (\"Undone: … is one task again.\"). The added step stayed.\n- **Drawer and rows (SC-8/SC-12, steps 05-07): fails.** The drawers of \"Check that the links work\" and \"Style the page in styles.css: colours\" show no reason line. The stored reasons (\"Added by the agent: …\", \"Split from … by the agent\") are never shown on the row or in the drawer.\n- **Assisted with a restart (SC-3, steps 09-12):** Garden club at Assisted > Chat 'fix the tasks: …'.\n  - The reply is one read-back \"Make these 2 changes to the tasks of Garden club? Split …; add \"Check that the links work\".\" with Yes and No. The Inbox has exactly one card for it.\n  - I restarted the daemon with restart-daemon.mjs and the read-back was still there. Yes made one Changes row (\"chat\", the agent, undoable). The task-check count stayed at 2, so there was no second check, and the Inbox got no line.\n- **Two changes the person names in one turn (SC-5, steps 13-14):** \"tool: task_update {priority high} then tool: task_dependencies {depends_on []}\".\n  - The reply was one question: 'Change \"Write the README…\": priority to High and let \"Write the README…\" run without waiting for another task?'. It filed one new card (open cards went from 2 to 3).\n  - Yes made one row with one Undo.\n  - Side effects:\n    - An Inbox Update echoed the change after the Yes. This was there before the branch.\n    - The task's reason became \"What it waits for changed by the agent\", and Changes names \"Alice\" for this change the person asked for.\n- **Session page Undo (SC-6):**\n  - Shop page session (steps 15-17): the change line showed \"Cannot be undone now: …\" while the session ran.\n  - Tea page (steps 18-19): I started a session and pressed \"stop after this task\" just after the split, so the parts never ran. The session page showed the split line with Undo. I restarted the daemon and Undo was still offered. I clicked it: POST /changes/:id/undo went out, the line read 'Undone: \"Style the page in styles.css\" is one task again.', and GET /sessions/:id/events then gave undoable=false, undone=true.\n- **Suggestion card (SC-9, step 21):** Garden club at Assisted, session started after answering the question. The Inbox card \"Garden club: the agent suggests 1 change to the tasks\" lists its change open (request-details-open: 1, collapsed details: 0), with Make these changes / Keep the tasks and their explanation lines.\n- **Talk with no project (SC-11, step 20):** Talk on Home > \"fix the tasks\" asked \"Which project: Quote page, Bakery site or Shop page (or another of your 5)?\" with five name buttons. Clicking \"Tea page\" ran one check with \"fix the tasks\" as the request.\n- **Over budget (SC-4):** with Shop page's budget set to CHF 0.05 (already spent), \"tidy up the task list\" replied \"Fixing the tasks would pass this project's budget; nothing changed.\" with 0 model calls.\n- **Not walked on the bench:** SC-14 needs the subscription path, which the stand-in does not have. I verified it through credential-policy.test.ts instead (see below).\n- **Bench cleanup:** stopped with stop.mjs; home and browser profile deleted. Only the steps are kept under /tmp/frbench/review-d1109-selftasks-chat/.\n\n**Failing-before checks.** I restored the base (claude/nifty-knuth-f9udt0) source files and kept the branch's tests. These all failed:\n- The 3 real-daemon cases of 'd1109-selftasks-chat, run C'.\n- session.test.tsx SC-6 (2 cases), changes.test.tsx SC-7 and selftasks.test.tsx SC-9.\n- credential-policy SC-14 (3 cases) and intent.test.ts (3 cases).\n- selftasks-chat.test.ts (2 cases, task.ts reverted).\n- executor-brief C4-left-1, with only the madeIds line reverted.\n\nAll pass again on HEAD. The worktree is clean after restoring.\n\n**Full validation on HEAD, all green on this machine:**\n- pnpm check: 535 files, 5787 passed.\n- pnpm test:integration: 30 passed, 81 skipped.\n- pnpm test:e2e: 25 passed, 1 skipped.\n- pnpm test:injection: PASS, 81 cases.\n- UI vitest: 97 files, 1303 tests.\n- Playwright with the real Vite build: 38 passed.",
+  "blocking": [
+    {
+      "issue": "The SC-8/SC-12 words on screen are missing. A task the agent added or split shows no 'Added by the agent: …' or 'Split from \"X\" by the agent' on its row or in its drawer. The report puts SC-8 in not_done because 'the drawer shows it as stored', which is false, and the user guide promises the words.",
+      "where": "apps/ui/src/pages/project/TaskDrawer.tsx:163 (only task.display.detail is shown; task.reason is rendered nowhere in TasksTab/TaskDrawer); docs/user-guide.md:1455",
+      "evidence": "Bench steps 06 and 07: the drawers of 'Check that the links work' (Ready) and 'Style the page in styles.css: colours' show only status, 'What done looks like', actions and Runs. GET /projects/:id/tasks has reason 'Added by the agent: [stand-in model] Nothing checks that the links work' with display.detail null. grep finds no use of task.reason in TasksTab.tsx or TaskDrawer.tsx. SC-12's acceptance says the words read 'on its row and in its drawer'. The cut line allows SC-8 only 'when its test passes without a change', and it would not pass. shared_files assigns 'the reason line only if SC-8's test fails' to this area. The user guide paragraph at line 1455 promises the row and drawer words (design §5 rule 9).",
+      "expected": "Write SC-8's UI test against the real daemon's task view first; it fails today. Then add the drawer's reason line (the agent's words, no id), or correct both SC-12's claim and the user-guide paragraph and give SC-8 a true reason in not_done."
+    },
+    {
+      "issue": "The read-back of 'fix the tasks' names a priority change as 'reword', and the area's own test asserts the untrue word.",
+      "where": "packages/runtime/src/conversation/task-fix-tool.ts:213 (fixAsk built from proposalLine); packages/runtime/src/session/task-proposal.ts:60; packages/runtime/test/chat-fix-tasks.test.ts:62",
+      "evidence": "In fixture THREE the edit is { kind: 'edit', task: 'Publish the page', priority: 'high' }. ASK_THREE asserts the read-back '…; add \"Check the links\" before \"Publish the page\"; reword \"Publish the page\".' The person answers Yes to a 'reword' and gets a priority change. Design §3.9 says a change is read back; design §5 rules 4 and 9 require true words and no promise the code does not keep. The rules sent to the model list priority among the edit fields, so the real model can send a priority-only edit.",
+      "expected": "The chat read-back names what each edit changes (for example 'raise the priority of \"Publish the page\" to High'), with the test asserting it. If proposalLine stays d1109-selftasks-run's, log it in new_problems with a failing test (the suggestion card has the same wording) instead of locking 'reword' into this area's assertion."
+    },
+    {
+      "issue": "The new real-daemon describe removes its homes with rmSync instead of removeHomes, against this sub-run's explicit rule for composed tests that run a session.",
+      "where": "apps/ui/test/real-daemon.test.ts:21874",
+      "evidence": "afterAll(() => { for (const h of homes) rmSync(h, { recursive: true, force: true }); }). The SC-6 case in this describe runs a session. The task's run note says such a test removes its homes with removeHomes(homes) because CI runs on Windows. ba9874a replaced exactly this pattern after EBUSY on Windows CI. The other run C describes in this file use afterAll(() => removeHomes(homes)) at lines 21103, 21465 and 21671.",
+      "expected": "afterAll(() => removeHomes(homes)) from packages/runtime/test/helpers.ts (it is already imported at line 56), keeping settleSessions before each close."
+    },
+    {
+      "issue": "C5-left-7 changes which paid model the task check uses, with no test that fails without the change (validation rule 8).",
+      "where": "packages/runtime/src/daemon/compose.ts:2865",
+      "evidence": "The report itself says 'failing_test_before: none at the model boundary' and lists the missing test in not_done. The acceptance for C5-left-7 asks for a failing test first, or not_done with the reason. Here the code was changed and shipped without a test. Wiring the principal override (principal.id) and the ceiling wrong would go unnoticed.",
+      "expected": "Add a composed case first (for example a principal planning override or a project ceiling, with the check's request model asserted from the provider calls), then the change. Otherwise revert the compose change and leave C5-left-7 in not_done with its reason."
+    }
+  ],
+  "claims_checked": [
+    {
+      "claim": "SC-1: 'fix the tasks' and its synonyms run one task check with the person's words and no chat-model call before it; 'fix the login task' is not this intent",
+      "holds": true,
+      "note": "Bench: one model call (task-check) in the turn, with the line verbatim in its envelope. intent.test.ts and chat-fix-tasks fail on base and pass now."
+    },
+    {
+      "claim": "SC-2: fix_tasks has the spec's definition and only a project parameter; task_split is a chat tool; CHAT_TASK_RULES is in the system part",
+      "holds": true,
+      "note": "The texts match the spec word for word. The tests compare against the exported constants and taskCheckSystem(...{fromChat}), not literals, so a wording change would pass every test."
+    },
+    {
+      "claim": "SC-3: at Standard each change is made at once with its own Undo and no Inbox line; at Assisted one read-back and one card; Yes after a restart makes the set with no second check",
+      "holds": true,
+      "note": "Bench walks 1 and 3; real-daemon cases fail on base and pass now. The read-back card expires after 10 minutes (PENDING_TTL), as the fixer noted."
+    },
+    {
+      "claim": "SC-4: cost shown in CHF; a check past the project budget makes no call; a second request while one runs is refused",
+      "holds": true,
+      "note": "Bench: 'Fixing the tasks would pass this project's budget; nothing changed.' with 0 model calls. Busy is covered by a composed test. A small race remains between taskCheckRunning and withTaskCheckLock."
+    },
+    {
+      "claim": "SC-5: several task changes in one model turn become one question and one card; Yes makes one row with one Undo",
+      "holds": true,
+      "note": "Bench walk 4. After the Yes an Inbox Update still echoes the change (pre-existing, noted by the fixer)."
+    },
+    {
+      "claim": "SC-6: each change line on the session page has its Undo or says why not, also after a restart; the fake daemon serves the same fields",
+      "holds": true,
+      "note": "Bench: Tea page Undo before and after a daemon restart, click, 'Undone: …'. Fake and real daemon changed in the same commit."
+    },
+    {
+      "claim": "SC-7: a session row reads 'In a session' and the agent's name",
+      "holds": true,
+      "note": "Holds, but byAgent now also names the agent on every chat change the chat model made at the person's request (see non_blocking)."
+    },
+    {
+      "claim": "SC-12: the agent's change says so where it is stored and on its row and in its drawer",
+      "holds": false,
+      "note": "The stored reasons are right (commands tests fail on base). The row and drawer never show them (bench steps 06-07)."
+    },
+    {
+      "claim": "SC-8 not_done: 'the drawer shows it as stored'",
+      "holds": false,
+      "note": "The drawer renders no reason at all for these tasks."
+    },
+    {
+      "claim": "SC-9: the suggestion card's changes show open",
+      "holds": true,
+      "note": "Bench step 21. The 'Asks you first: …' reason appears as a bullet among the changes."
+    },
+    {
+      "claim": "SC-11: Talk with no project asks which project, then runs on the one named",
+      "holds": true,
+      "note": "Bench step 20."
+    },
+    {
+      "claim": "SC-14: under then_wait and an unanswered then_ask nothing is called, booked or changed, with the stated sentence; under then_key one call on the key with its cost in CHF",
+      "holds": true,
+      "note": "credential-policy.test.ts, composed with cred-world and no injected provider; fails on base, passes now."
+    },
+    {
+      "claim": "C4-left-1: an added step marks only itself as the agent's",
+      "holds": true,
+      "note": "executor-brief case fails with only the madeIds line reverted and passes on HEAD."
+    },
+    {
+      "claim": "C5-left-7: the check's model is chosen as the intake's",
+      "holds": true,
+      "note": "Code matches intake.ts (resolveRunSettings, principal override, criticSettingsOf ceiling), but no test covers it."
+    },
+    {
+      "claim": "Validation commands green",
+      "holds": true,
+      "note": "Re-run here: pnpm check, test:integration, test:e2e, test:injection, UI vitest, Playwright (38) all green."
+    },
+    {
+      "claim": "tests_changed_for_design keep their intent",
+      "holds": true,
+      "note": "registry and selftasks-run tool-list inversions, the chat-recall token bound measured and subtracted, conversation.test one-question wording, phase7 gate now toBe('Added by the agent'). None was weakened without a design reason."
+    }
+  ],
+  "non_blocking": [
+    "Attribution change for chat-model changes the person asked for (bench walk 4). Before this branch, a change the person named in chat and confirmed read 'What it waits for changed by you' / 'Changed by you: …'. Now it reads '… changed by the agent', and Changes names the agent instead of the person, through byAgent (change-rows.ts:53, ChangesPage.tsx:103, task.ts:1840/1995). The same change through the parser path still reads 'by you'. This conflicts with the decision 'Changes the person names in their own words stay the person's instruction' and with Changes' own 'who asked'. The codebase has long treated chat-model calls as the agent's (the phase 7 gate's author_human null), so the session lead should decide whether byAgent and the agent words belong only to planFix and session-source changes.",
+    "The intent catches some lines a person may mean as questions or as something else. 'can you go through the tasks?', 'review the tasks' and 'check the tasks: what is left?' all run a paid check, which at Standard changes tasks at once. 'go through' and 'review' are beyond the spec's list. 'check the tasks for errors', 'check the tasks in the Inbox' and 'check the tasks on Monday' read 'errors', 'the Inbox' and 'Monday' as project names and reply 'There is no project called \"errors\".'",
+    "SC-1's 'with the Connect action' is not built. 'Fixing the tasks needs Claude.' has no Connect action and no 'what to do' (design §5 rule 8).",
+    "'Make this a task' is offered under a refused 'tidy up the task list' line (the over-budget reply), because isOwnRequest only skips replies that have actions or a read-back.",
+    "Model-facing texts are not pinned as literals. The chat variant of the task-check paragraph, FIX_TASKS_DESCRIPTION, CHAT_TASK_RULES and the project parameter's description are compared against their own constants or functions. task-check.test.ts pins only the session variant.",
+    "There is no pnpm test:injection case for the fix_tasks path. A record asking the chat model to call fix_tasks is covered only by the composed recordsRead case.",
+    "CommandLoop.recompose builds the composed card with a plain agent context (no planFix). If the model calls fix_tasks, the check reads the set back, and the model also calls another task tool in the same turn, the two are merged and the planFix / askFirst context is lost.",
+    "taskCheckRunning() is checked before awaits (room, session) and before withTaskCheckLock. Two concurrent requests from two conversations could both pass, and the second would wait and then run a second paid check.",
+    "Session page: during a run, a split line read 'Cannot be undone now: \"Style the page in styles.css: layout\" has run since …' before that part had started (events 17 vs 34). These are d1109-selftasks-run's undoBlocked words, now shown on this area's Undo; they should only say 'has run' once it has. After a reload an undone line shows only 'Undone.', not the undo's sentence.",
+    "Commit 36a7a7e changed POST /chat behaviour without a real-daemon case; the case came two commits later in 5fa9abc. GET /inbox's new openDetails field has no real-daemon assertion. The fake derives it from the shared requestWords, so they cannot drift.",
+    "The suggestion card's open list mixes the reason line 'Asks you first: …' in as a bullet among the changes (bench step 21).",
+    "The chat read-back card expires after 10 minutes (PENDING_TTL_MS). At Advisor or Assisted the owner's 'asks first on one card' then silently lapses, after the check's cost was booked and the kept notes taken. The fixer noted this; it is the session lead's decision."
+  ]
+}
