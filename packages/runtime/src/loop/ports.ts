@@ -423,6 +423,25 @@ export interface ConversationCommands {
   pendingCard?(id: string): PendingCardView | null;
   /** The active project the registry keeps for the human. */
   activeProject(humanId: string): Promise<string | null>;
+  /**
+   * d1109-selftasks-chat (ADR 0119): the agent's own fix of a project's task list from chat, as
+   * the agent (source chat, the person's words as the words used) in the planFix context at the
+   * project's level, which code alone sets. `readBack`: one composed read-back of every change
+   * (`ask` its one question); else each change is made at once as its own change log row with
+   * its Undo and no Inbox line. Absent: chat cannot fix the tasks.
+   */
+  planFix?(
+    changes: readonly (readonly CommandCallLike[])[],
+    turn: CommandTurn,
+    opts: { level: number; readBack: boolean; askFirst?: boolean; ask?: string },
+  ): Promise<CommandResultView[]>;
+  /**
+   * d1109-selftasks-chat (SC-5): the task changes of one chat turn that each wait for a yes, as
+   * ONE read-back: the separate cards are cancelled before the Inbox lists them (kept as the
+   * conversation's own) and their calls composed into one card. Null: not composed (fewer than
+   * two, or a card without its calls).
+   */
+  recompose?(pendingIds: readonly string[], turn: CommandTurn): Promise<CommandResultView | null>;
 }
 
 // ---------------------------------------------------------------------------------------

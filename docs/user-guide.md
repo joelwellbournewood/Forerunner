@@ -465,6 +465,23 @@ them as you left them; an open file or task stays on its own tab.
   bubble says "Checking what changed…" and the untrue words go away. A reload shows
   the same line and Stop; a line Forerunner closed on before answering says so, with **Ask
   again**.
+  **Fix the tasks.** Say "fix the tasks" (or "tidy up the task list", "check the tasks", "räum
+  die Aufgaben auf"), with what you saw if you like ("fix the tasks: Style the page is two
+  jobs"): the agent checks the whole task list of the project on screen and splits a task that
+  is too big, adds a missing step, changes what waits for what, drops a duplicate or corrects
+  wording. While it checks, the reply line says "Checking the tasks of Quote page…". At Standard
+  and above it makes the changes at once and lists each with its own **Undo** ("I changed 3 tasks
+  of Quote page."); at Advisor and Assisted, when a change touches a task you added yourself, or
+  after the agent looked something up in that turn, it asks once with **Yes** and **No** ("Make
+  these 3 changes to the tasks of Quote page? …"), naming what each change does ('change "Publish
+  the page": priority to High'). The line under the reply says what the check
+  cost in CHF, booked to the project. Nothing starts a session. It says so instead when it cannot
+  run: "Fixing the tasks needs Claude.", "Fixing the tasks would pass this project's budget;
+  nothing changed.", "The agent is checking the tasks of Quote page now; ask again in a moment."
+  or, when your rule for Claude waits, "Fixing the tasks waits for Claude: your subscription is at
+  its limit until 15:40. Nothing changed." In Talk with no project on screen it asks which
+  project first. Changes you name yourself in one line ("make Publish wait for Style and raise
+  its priority") are read back as one question.
 
 **A project linked to a GitHub repository**: each task works on a branch of its own and opens a
 pull request when it is done; Forerunner makes the commits, pushes and opens the pull request
@@ -1458,6 +1475,14 @@ change reads **Cannot be undone** and says why instead of offering Undo, and not
 change for tonight that went back by itself) or **Cannot be undone**; the line an Undo itself
 leaves ("Undone: …") has no such badge. "Said:" shows the words you
 typed in chat, said aloud or wrote in an email; a click in the app has none.
+
+A change the agent made itself (its own fix of the task list during a session, or "fix the
+tasks" in chat) names the agent, not you; one made during a session reads **In a session**. On a
+session's page each change line has its own **Undo** (or says why it cannot be undone), and the
+task's drawer says what the agent did, under its status: "Added by the agent: …", "Split from
+"Style the page" by the agent." or "Dropped by the agent: same as "Add the README"."; a task you
+added or changed yourself has no such line. The agent's suggested changes on an Inbox card
+are listed open, so you read them before **Make these changes** or **Keep the tasks**.
 
 ## Seeing what runs
 

@@ -14,6 +14,7 @@ import { firstUserText } from "./roles.ts";
  * - a line `nothing checks <what>` adds the step "Check <what>" after the reporting task, before
  *   the changeable tasks that wait for it;
  * - `"<a>" is the same as "<b>"` drops a; `"<a>" must wait for "<b>"` orders a after b;
+ * - `"<a>" is urgent` raises a's priority to high (an edit with no new title);
  * - a line that asks for budgets, settings, merges, deploys or other projects is quoted in
  *   `flagged` and changes nothing (the runtime's fence decides in any case).
  *
@@ -62,8 +63,31 @@ export function readCheckRequest(req: ModelRequest): CheckMessageSeen {
   const lines = message.split("\n");
   const tasks: CheckTaskSeen[] = [];
   const notes: CheckNoteSeen[] = [];
-  let part: "none" | "tasks" | "evidence" = "none";
+  let part: "none" | "tasks" | "evidence" | "request" = "none";
   for (const raw of lines) {
+    // d1109-selftasks-chat: chat's "fix the tasks" adds the person's words in an envelope of
+    // their own; the stand-in reads their sentences as it reads a report's lines.
+    if (raw === "The person asked, in their words:") {
+      part = "request";
+      notes.push({ taskTitle: "", specialist: null, lines: [] });
+      continue;
+    }
+    if (part === "request") {
+      if (raw.startsWith("<<<UNTRUSTED_CONTENT")) continue;
+      if (raw.endsWith("UNTRUSTED_CONTENT>>>")) {
+        part = "none";
+        continue;
+      }
+      const note = notes.at(-1);
+      // "fix the tasks: X is two jobs; nothing checks Y" reads as two lines after the colon.
+      const said = raw.includes(":") ? raw.slice(raw.indexOf(":") + 1) : raw;
+      for (const l of said
+        .split(/\s*;\s*|(?<=[.!?])\s+/)
+        .map((x) => x.trim())
+        .filter(Boolean))
+        note?.lines.push(l);
+      continue;
+    }
     if (raw === "Tasks, in run order:") {
       part = "tasks";
       continue;
@@ -203,6 +227,20 @@ export function taskCheckReply(req: ModelRequest): string {
           task: same[1],
           sameAs: same[2],
           why: why("The report says the two tasks are the same."),
+        });
+        continue;
+      }
+      // d1109-selftasks-chat (review): `"<task>" is urgent` raises its priority, an edit that
+      // changes no title, so a walk can read what the read-back names for it.
+      const urgent = /"([^"]+)" is urgent/i.exec(line);
+      const urgentTask = urgent ? changeable(urgent[1] as string) : null;
+      if (urgentTask && !done.has(`urgent:${urgentTask.title}`)) {
+        done.add(`urgent:${urgentTask.title}`);
+        changes.push({
+          kind: "edit",
+          task: urgentTask.title,
+          priority: "high",
+          why: why("The person says it is urgent."),
         });
         continue;
       }

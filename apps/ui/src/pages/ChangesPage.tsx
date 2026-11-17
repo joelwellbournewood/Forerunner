@@ -56,6 +56,8 @@ export function commandNames(commands: unknown[]): string[] {
  */
 export function sourceWords(source: ChangeLogView["source"]): string {
   if (source === "chat") return "Chat";
+  // d1109-selftasks-chat (SC-7): the agent's own fix of its task list during a session.
+  if (source === "session") return "In a session";
   if (source === "voice") return "Voice";
   if (source === "email") return "Email";
   return "In the app";
@@ -97,6 +99,8 @@ export function ChangesPage() {
     return name ? { name, removed: false } : null;
   };
   const whoOf = (c: ChangeLogView): string =>
+    // d1109-selftasks-chat (SC-7): the agent's own change names the agent, never the person.
+    (c.byAgent ? (c.agentName ?? "the agent") : null) ??
     c.humanName ??
     (c.humanId && me && c.humanId === me.id ? me.name : null) ??
     (c.humanId ? "another person" : (c.agentName ?? "the agent"));

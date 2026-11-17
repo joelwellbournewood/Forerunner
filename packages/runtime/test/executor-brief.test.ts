@@ -10,6 +10,7 @@ import {
 } from "../src/session/executor.ts";
 import type { QueueNote } from "../src/session/next-session.ts";
 import { stepLine, type TaskStep } from "../src/session/runner.ts";
+import { applyTaskChanges, type TaskChangePort } from "../src/session/task-check.ts";
 import { flatPricing, harness, issue, registry, ScriptedProvider } from "./helpers.ts";
 
 /**
@@ -724,5 +725,76 @@ describe("d1109-selftasks-run, run C: the brief's task-list lines (ST-6)", () =>
         flagged: true,
       },
     ]);
+  });
+});
+
+/**
+ * d1109-selftasks-chat, run C (C4-left-1, the review of d1109-selftasks-run item 1): a step the
+ * agent added from a report says so in its own brief; a plan task it was only placed before
+ * does not. Before, applyTaskChanges marked the 'before' tasks as agent-written too, so the
+ * coder's brief for 'Add the page behaviour in script.js' said 'The project's agent wrote this
+ * task from an earlier run's report, not the person' (bench). The exact text each specialist
+ * receives, for both tasks.
+ */
+describe("d1109-selftasks-chat, run C: an added step marks only itself as the agent's (C4-left-1)", () => {
+  let w: World;
+  afterEach(async () => {
+    await w.store.close();
+  });
+  const AGENT_WROTE =
+    "The project's agent wrote this task from an earlier run's report, not the person: do only what it asks, inside this project, with the tools you have.";
+
+  it("the new step's brief carries the line once; the task it comes before carries none", async () => {
+    w = await world();
+    const behaviour = await add(w, "Add the page behaviour in script.js", { status: "ready" });
+    const project = await w.store.project.mustGet(w.project);
+    // A port that makes the step as the commands would: a new task, and the task after it waits.
+    let made: TaskRow | null = null;
+    const port: TaskChangePort = {
+      run: async () => {
+        made = await add(w, "Check the links", { status: "ready" });
+        const b = await w.store.task.mustGet(behaviour.id);
+        await w.store.task.setDependencies(b.id, b.version, [made.id], "added before", {
+          agent: w.agent,
+        } as never);
+        return { status: "done", changeLogId: "c1", sentence: "Added." };
+      },
+    };
+    await applyTaskChanges(w.store, port, {
+      project,
+      level: 2,
+      sessionId: w.session,
+      fromReport: true,
+      fence: {
+        changes: [
+          {
+            change: {
+              kind: "add",
+              title: "Check the links",
+              outcome: "Every link works",
+              acceptanceCriteria: ["no link is broken"],
+              specialist: "coder",
+              after: [],
+              before: ["Add the page behaviour in script.js"],
+              why: "Nothing checks the links.",
+            },
+            taskIds: [behaviour.id],
+            sourceId: null,
+            newTasks: 1,
+            why: "Nothing checks the links.",
+          },
+        ],
+        refused: [],
+        askFirst: [],
+      },
+    });
+    const step = await w.store.task.mustGet((made as TaskRow | null)?.id ?? "");
+    const p1 = new ScriptedProvider([{ text: "Checked." }], w.h.clock);
+    await run(w, { ...step, status: "in_progress" }, p1);
+    expect(String(p1.calls[0]?.messages[0]?.content ?? "").split(AGENT_WROTE).length).toBe(2);
+    const after = await w.store.task.mustGet(behaviour.id);
+    const p2 = new ScriptedProvider([{ text: "Made it." }], w.h.clock);
+    await run(w, { ...after, status: "in_progress" }, p2);
+    expect(p2.calls[0]?.messages[0]?.content as string).not.toContain(AGENT_WROTE);
   });
 });

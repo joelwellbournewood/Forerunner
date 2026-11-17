@@ -416,3 +416,59 @@ describe("l3-small, run L3: Details in words, the raw events behind their own sw
     expect(screen.queryByTestId("raw-toggle")).not.toBeInTheDocument();
   });
 });
+
+describe("d1109-selftasks-chat, run C: each change line has its Undo where it is shown (SC-6)", () => {
+  /** A session's change line, as the daemon logs the agent's own fix, with its change log row. */
+  function withChange(state: { blocked?: string; undone?: boolean } = {}) {
+    const harness = createHarness();
+    const base = harness.daemon.state.events[0];
+    const change = harness.daemon.state.changes[0];
+    if (!base || !change) throw new Error("no fixture");
+    harness.daemon.state.changes.unshift({
+      ...change,
+      id: "chg_split",
+      source: "session",
+      sentence:
+        'Split "Style the page" into "Style the page: layout" and "Style the page: colours".',
+      undoState: state.undone ? "undone" : "undoable",
+      expiresAt: null,
+      byAgent: true,
+      ...(state.blocked ? { undoBlockedReason: state.blocked } : {}),
+    });
+    harness.daemon.state.events.push({
+      ...base,
+      id: "ev_change",
+      seq: 200,
+      type: "change",
+      text: 'Split "Style the page" into "Style the page: layout" and "Style the page: colours".',
+      payload: { changeLogId: "chg_split", source: "session", kind: "change" },
+      audience: "person",
+      level: "info",
+    });
+    return harness;
+  }
+
+  it("Undo on the line sends POST /changes/:id/undo and the line then reads the undo's sentence", async () => {
+    const user = userEvent.setup();
+    const harness = withChange();
+    renderApp("/sessions/sess_1", harness);
+    const button = await screen.findByTestId("change-undo");
+    expect(button).toHaveTextContent("Undo");
+    await user.click(button);
+    await waitFor(() => expect(postedCalls(harness, "/changes/chg_split/undo")).toHaveLength(1));
+    const said = await screen.findByTestId("change-undone");
+    expect(said.textContent).toMatch(/^Undone/);
+    expect(screen.queryByTestId("change-undo")).not.toBeInTheDocument();
+  });
+
+  it("a change whose Undo is blocked says why in words, with no button", async () => {
+    const harness = withChange({
+      blocked: '"Style the page: layout" has run since, so the split cannot be undone',
+    });
+    renderApp("/sessions/sess_1", harness);
+    expect(await screen.findByTestId("change-undo-blocked")).toHaveTextContent(
+      'Cannot be undone now: "Style the page: layout" has run since, so the split cannot be undone.',
+    );
+    expect(screen.queryByTestId("change-undo")).not.toBeInTheDocument();
+  });
+});

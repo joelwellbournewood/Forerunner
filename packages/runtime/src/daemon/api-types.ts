@@ -526,6 +526,13 @@ export const TaskView = z.object({
   runOrder: z.number().int().optional(),
   /** How its work was checked, for a done task (ADR 0104); absent from an older service. */
   check: TaskCheck.nullable().optional(),
+  /**
+   * d1109-selftasks-chat (SC-8, ADR 0119): what the project's agent did to the task when its
+   * last change was the agent's, as the drawer says it ("Added by the agent: nothing checks the
+   * links.", 'Split from "Style the page" by the agent.'; `agentChangeLine`). Absent otherwise
+   * (the person's own moves, the plan's, the runner's) and from an older daemon.
+   */
+  agentChange: z.string().optional(),
 });
 export type TaskView = z.infer<typeof TaskView>;
 
@@ -902,6 +909,15 @@ export const EventView = z.object({
    * `detail` lines (the brief, memory, peers, each tool step, notifications) are under Details.
    */
   audience: z.enum(["person", "detail"]),
+  /**
+   * d1109-selftasks-chat (SC-6; the owner's D7: "each change shown with one Undo"): on a change
+   * line, the change log row it names, whether its Undo works now (`undoable`), else why not in
+   * words (`undoBlocked`), and whether it was undone. Read when the log is read.
+   */
+  changeId: z.string().optional(),
+  undoable: z.boolean().optional(),
+  undoBlocked: z.string().nullable().optional(),
+  undone: z.boolean().optional(),
 });
 export type EventView = z.infer<typeof EventView>;
 
@@ -982,6 +998,8 @@ export const HumanRequestView = z.object({
     .optional(),
   reply: z.enum(["none", "text", "form"]).optional(),
   details: z.array(z.string()).optional(),
+  /** d1109-selftasks-chat (SC-9): the details are the card's subject: shown open. */
+  openDetails: z.boolean().optional(),
   /**
    * Items the card lists whole under its body, each list with its label: a paused run's "Where it
    * stopped" and "Left to do" (L3-research-2; run together into one sentence they were cut in
@@ -2940,6 +2958,11 @@ export const ChangeLogView = z.object({
   /** Who asked: the person's name (`humanId`), else the agent's (`agentId`). */
   humanName: z.string().nullable().optional(),
   agentName: z.string().nullable().optional(),
+  /**
+   * d1109-selftasks-chat (SC-7): the project's agent made the change (its own fix of the task
+   * list, in a session or from chat): the row names the agent, never the person.
+   */
+  byAgent: z.boolean().optional(),
 });
 export type ChangeLogView = z.infer<typeof ChangeLogView>;
 

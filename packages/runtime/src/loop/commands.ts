@@ -149,6 +149,15 @@ export class CommandLoop implements ConversationCommands {
             timezone: human?.timezone || "UTC",
             deviceId: stored.deviceId,
             sessionId: stored.sessionId,
+            // d1109-selftasks-chat: the agent's own fix keeps its rule across the restart.
+            ...(stored.planFix
+              ? {
+                  planFix: {
+                    level: stored.planFix.level,
+                    ...(stored.planFix.askFirst ? { askFirst: true } : {}),
+                  },
+                }
+              : {}),
           };
         })
       ).length;
@@ -314,6 +323,82 @@ export class CommandLoop implements ConversationCommands {
       },
       ctxFor: () => this.contextFor(turn, { actor: { kind: "agent", id: turn.agentId } }),
     });
+  }
+
+  async planFix(
+    changes: readonly (readonly CommandCallLike[])[],
+    turn: CommandTurn,
+    opts: { level: number; readBack: boolean; askFirst?: boolean; ask?: string },
+  ): Promise<CommandResultView[]> {
+    const level = Math.max(0, Math.min(4, Math.round(opts.level))) as 0 | 1 | 2 | 3 | 4;
+    // The agent's change (never "by you"), told by chat's reply: no Inbox line (the executor's
+    // planFix rule). The planFix context is built here, in code, never from a request.
+    const ctx = await this.contextFor(turn, {
+      actor: { kind: "agent", id: turn.agentId },
+      planFix: { level, ...(opts.askFirst ? { askFirst: true } : {}) },
+    });
+    const calls = changes.flat() as CommandCall[];
+    if (!calls.length) return [];
+    const names = (cs: readonly CommandCallLike[]) => cs.map((c) => c.name);
+    if (opts.readBack) {
+      const r = await this.executor.compose(calls, ctx, opts.ask ? { ask: opts.ask } : {});
+      return [viewOf(r, names(calls))];
+    }
+    const out: CommandResultView[] = [];
+    for (const change of changes) {
+      const r = await this.executor.compose(change as CommandCall[], ctx);
+      // Made at once or not at all: a change that would wait for a yes here is cancelled (the
+      // caller decided it acts at once; a record read meanwhile reads the whole set back).
+      if (r.status === "pending") {
+        await this.executor.cancel(r.pendingId, { kind: "agent", id: turn.agentId });
+        out.push({
+          status: "refused",
+          reason: "it would wait for your yes",
+          commands: names(change),
+        });
+        continue;
+      }
+      out.push(viewOf(r, names(change)));
+    }
+    return out;
+  }
+
+  async recompose(
+    pendingIds: readonly string[],
+    turn: CommandTurn,
+  ): Promise<CommandResultView | null> {
+    if (pendingIds.length < 2) return null;
+    const rows = [];
+    for (const id of pendingIds) {
+      const row = await this.deps.store.humanRequest.get(id);
+      const card = row?.change_card as { calls?: unknown } | null | undefined;
+      if (row?.status !== "open" || !Array.isArray(card?.calls) || !card.calls.length) return null;
+      rows.push(row);
+    }
+    const calls = rows.flatMap(
+      (r) => (r.change_card as unknown as { calls: CommandCall[] }).calls,
+    ) as CommandCall[];
+    // The separate cards are the conversation's own from here (out of the Inbox and its
+    // Answered list), then cancelled: the one composed card is the turn's read-back.
+    for (const row of rows) {
+      try {
+        await this.deps.store.humanRequest.patch(row.id, {
+          change_card: { ...(row.change_card as JsonObject), chat_only: true },
+        });
+      } catch (e) {
+        this.logger.warn("a separate read-back was not folded into the turn's one", {
+          id: row.id,
+          error: errorMessage(e),
+        });
+      }
+      await this.executor.cancel(row.id, { kind: "human", id: turn.humanId });
+    }
+    const ctx = await this.contextFor(turn, { actor: { kind: "agent", id: turn.agentId } });
+    const r = await this.executor.compose(calls, ctx);
+    return viewOf(
+      r,
+      calls.map((c) => c.name),
+    );
   }
 
   async confirmByText(

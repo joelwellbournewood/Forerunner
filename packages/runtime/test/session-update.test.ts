@@ -313,3 +313,14 @@ describe("d1109-selftasks-run, run C: the words of the agent's own task changes 
     }
   });
 });
+
+describe("d1109-selftasks-chat, run C: an edit is named as edited, never reworded (review)", () => {
+  // The task check's edit can change only the priority or what done looks like; the session's
+  // result then read 'reworded "Publish"', untrue (design section 5 rules 4 and 9). The stored
+  // kind stays 'reworded' (sessions already ended keep their facts); only the words change.
+  it("the result line says 'edited' for an edit", () => {
+    expect(tasksChangedLine([{ kind: "reworded", title: "Publish the page" }])).toBe(
+      'Changed 1 task: edited "Publish the page".',
+    );
+  });
+});

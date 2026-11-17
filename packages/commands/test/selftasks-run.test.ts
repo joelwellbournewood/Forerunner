@@ -173,14 +173,14 @@ describe("d1109-selftasks-run, run C: the agent's own changes through the execut
     await w.store.close();
   });
 
-  it("task.split is no tool of the chat's model (d1109-selftasks-chat adds chat's own)", () => {
+  it("task.split is a tool of the chat's model (d1109-selftasks-chat: the person's own split, read back)", () => {
     const specs = toToolSpecs(defaultRegistry(), {
       execute: async () => ({ status: "done", sentence: "ok" }),
       ctxFor: () => {
         throw new Error("unused");
       },
     });
-    expect(specs.map((s) => s.name)).not.toContain("task_split");
+    expect(specs.map((s) => s.name)).toContain("task_split");
     expect(specs.map((s) => s.name)).toContain("task_create");
   });
 });

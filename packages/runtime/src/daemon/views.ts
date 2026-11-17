@@ -139,7 +139,7 @@ import {
   spentOf,
 } from "./session-list.ts";
 import { loadTaskDisplayContext, runOrder, taskDisplay, taskHeldWork } from "./task-display.ts";
-import { plainPlurals, withoutIds } from "./task-words.ts";
+import { agentChangeLine, plainPlurals, withoutIds } from "./task-words.ts";
 
 /** An agent as `GET /agents` lists it and `POST /agents/:id/rename` answers it. */
 export function agentView(a: AgentRow): AgentView {
@@ -531,6 +531,8 @@ export function taskView(
 ): TaskView {
   const limit = specialistLimit?.(t.specialist ?? "coder");
   const cap = t.budget_usd_micro > 0 || limit !== undefined ? runCapOf(t, limit ?? 0) : null;
+  // d1109-selftasks-chat (SC-8): what the agent did to the task, for the drawer.
+  const agentChange = agentChangeLine(t.reason);
   return {
     id: t.id,
     projectId: t.project_id,
@@ -561,6 +563,7 @@ export function taskView(
     ...(extra.display ? { display: extra.display } : {}),
     ...(extra.runOrder !== undefined ? { runOrder: extra.runOrder } : {}),
     ...(extra.check !== undefined ? { check: extra.check } : {}),
+    ...(agentChange ? { agentChange } : {}),
   };
 }
 
@@ -947,6 +950,7 @@ export function requestView(
     links: words.links,
     reply: words.reply,
     details: words.details,
+    ...(words.openDetails ? { openDetails: true } : {}),
     ...(words.lists?.length ? { lists: words.lists } : {}),
     outcome: words.outcome,
     // d1109-run-visible (V-6): the Done line's Start.

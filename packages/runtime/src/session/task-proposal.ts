@@ -12,6 +12,7 @@ import {
   TASK_PROPOSAL_KEY,
   TASK_PROPOSAL_OPTIONS,
 } from "../daemon/task-proposal-words.ts";
+import { PRIORITY_LABELS } from "../priority.ts";
 import type { CommandCallLike, FencedChange, FenceResult } from "./task-check.ts";
 import type { TaskListNote } from "./task-list-notes.ts";
 
@@ -56,8 +57,22 @@ export function proposalLine(f: FencedChange): string {
       return c.waitsFor.length
         ? `Make ${q(c.task)} wait for ${list(c.waitsFor)}.`
         : `Let ${q(c.task)} run without waiting for another task.`;
-    case "edit":
-      return c.title ? `Rename ${q(c.task)} to ${q(c.title)}.` : `Reword ${q(c.task)}.`;
+    case "edit": {
+      // What the edit changes, as task.update's own read-back says it ('priority to High'); a new
+      // title alone is a rename. Before, any edit without a new title read 'Reword "X".', so a Yes
+      // to a "reword" changed a priority (review of d1109-selftasks-chat; design section 3.9 and
+      // section 5 rules 4 and 9). Chat's read-back and the suggestion card both list these words.
+      const parts: string[] = [];
+      if (c.title) parts.push(`the title to ${q(c.title)}`);
+      if (c.outcome) parts.push("what done looks like");
+      if (c.acceptanceCriteria) parts.push("the criteria");
+      if (c.priority) parts.push(`priority to ${PRIORITY_LABELS[c.priority]}`);
+      if (c.title && parts.length === 1) return `Rename ${q(c.task)} to ${q(c.title)}.`;
+      if (!parts.length) return `Change ${q(c.task)}.`;
+      const what =
+        parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+      return `Change ${q(c.task)}: ${what}.`;
+    }
   }
 }
 

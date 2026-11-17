@@ -3609,12 +3609,32 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const s = state.sessions.find((x) => x.id === c.req.param("id"));
     return s ? c.json(s) : errorBody(c, 404, "not_found", "no such session");
   });
+  /**
+   * d1109-selftasks-chat (SC-6), as the daemon: a change line names its change log row and
+   * whether its Undo works now, else why not in words.
+   */
+  const withChangeUndo = (e: EventView): EventView => {
+    const changeLogId = (e.payload as { changeLogId?: unknown } | null)?.changeLogId;
+    if (e.type !== "change" || typeof changeLogId !== "string") return e;
+    const entry = state.changes.find((ch) => ch.id === changeLogId);
+    if (!entry) return e;
+    const view = withUndoable(entry, new Date().toISOString());
+    return {
+      ...e,
+      changeId: entry.id,
+      undoable: view.undoable,
+      undoBlocked: view.undoable ? null : (view.undoBlockedReason ?? null),
+      undone: entry.undoState === "undone",
+    };
+  };
   app.get("/sessions/:id/events", (c) => {
     const id = c.req.param("id");
     const session = state.sessions.find((x) => x.id === id);
     if (!session) return errorBody(c, 404, "not_found", "no such session");
     const afterSeq = Number(c.req.query("afterSeq") ?? "0");
-    const backlog = state.events.filter((e) => e.sessionId === id && e.seq > afterSeq);
+    const backlog = state.events
+      .filter((e) => e.sessionId === id && e.seq > afterSeq)
+      .map(withChangeUndo);
     const wantsSse = (c.req.header("accept") ?? "").includes("text/event-stream");
     if (!wantsSse) return c.json(backlog);
     return streamSSE(c, async (stream) => {
@@ -7528,7 +7548,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   };
   const withUndoable = (ch: ChangeLogView, now: string): ChangeLogView => {
     const open = ch.undoState === "undoable" && (!ch.expiresAt || ch.expiresAt > now);
-    const blocked = open ? undoBlocked(ch) : null;
+    // A fixture may give the reason a state of its own would (d1109-selftasks-chat SC-6).
+    const blocked = open ? (ch.undoBlockedReason ?? undoBlocked(ch)) : null;
     return {
       ...ch,
       undoable: open && !blocked,
@@ -7578,6 +7599,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         projectRemoved: !!removed,
         humanName: ch.humanName ?? (ch.humanId === me.id ? me.name : null),
         agentName: ch.agentName ?? agent?.name ?? null,
+        // d1109-selftasks-chat (SC-7), as the daemon: the agent's own change says so.
+        byAgent: ch.byAgent ?? false,
       };
     };
     const rows = state.changes

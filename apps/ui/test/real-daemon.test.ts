@@ -20525,6 +20525,9 @@ describe("d1109-selftasks-run, run C", () => {
         reply: "none",
         outcome: null,
       });
+      // d1109-selftasks-chat (SC-9): GET /inbox says the card's changes show open, not under a
+      // collapsed Details (review: the field had no real-daemon assertion).
+      expect(card?.openDetails).toBe(true);
       // The session's log says what the check did; the tasks are as they were.
       expect((await a.client.sessionEvents(sessionId)).map((e) => e.text)).toContain(
         'Checked the task list after "Create the page in index.html": suggested 2 changes in the Inbox (less than CHF 0.01).',
@@ -23002,4 +23005,229 @@ describe("d1109-cred-screens, run C", () => {
       await rt.close();
     }
   }, 60_000);
+});
+
+describe("d1109-selftasks-chat, run C", () => {
+  // The owner (D7, 2026-11-09): "I would also like that being talking to the agent would also
+  // allow the agent to have dynamic control over its tasks"; confirmed "the agent changes its own
+  // tasks, the autonomy level deciding when it asks first", "each change shown with one Undo".
+  // The daemon as composed with the bench's stand-in, which plays the task check from the
+  // person's words; POST /chat, GET /changes, GET /inbox and GET /sessions/:id/events as the UI
+  // reads them, before and after the daemon starts again on the same home.
+  const LINE =
+    'fix the tasks: "Style the page" is two jobs, the layout and the colours; nothing checks that the links work.';
+  const homes: string[] = [];
+  // removeHomes retries a home Windows still holds open (EBUSY, ba9874a).
+  afterAll(() => removeHomes(homes));
+  async function open(home: string, later = false, env: Record<string, string> = {}) {
+    const e = { FORERUNNER_HOME: home };
+    return composeWithRolePlayer(env, {
+      env: e,
+      dirs: appDirs({ env: e }),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      ...(later ? { clock: new ShiftedClock("2026-03-05T11:00:00Z") } : {}),
+    });
+  }
+  type Open = Awaited<ReturnType<typeof open>>;
+  /** Quote page at `level`; its plan's tasks are the agent's own (the fence asks for the person's). */
+  async function quotePage(a: Open, level: number, opts: { logo?: boolean } = {}) {
+    const project = await a.client.createProject({
+      name: "Quote page",
+      goal: "A page that quotes prices",
+      autonomyLevel: level,
+    });
+    // "Style the page" may wait for the person's logo, so no session runs it.
+    const logo = opts.logo
+      ? await a.client.createTask(project.id, {
+          title: "Send the logo",
+          outcome: "The logo is in the folder",
+          specialist: "person",
+        })
+      : null;
+    const task = (title: string, extra: Record<string, unknown> = {}) =>
+      a.rt.store.task.insert({
+        project_id: project.id,
+        title,
+        outcome: `${title} is done`,
+        acceptance_criteria: ["it is done"],
+        risk_tier: 1,
+        status: "ready",
+        priority: 5,
+        reason: "From the plan",
+        specialist: "coder",
+        author_agent: a.rt.agent.id,
+        ...extra,
+      } as never);
+    const create = await task("Create the page in index.html", { priority: 9 });
+    const style = await task("Style the page", {
+      acceptance_criteria: ["the layout is a grid", "the colours match the logo"],
+      depends_on: logo ? [logo.id] : [create.id],
+    });
+    return { project, create, style };
+  }
+  const chat = async (a: Open, projectId: string, text: string) =>
+    a.client.chat({
+      humanId: (await a.client.me()).id,
+      agentId: (await a.client.agents())[0]?.id ?? "",
+      projectId,
+      projectTab: true,
+      text,
+      source: "text",
+    });
+  const checkRuns = async (a: Open) =>
+    (await a.rt.store.run.list({} as never, { limit: 500 })).filter(
+      (r) => r.specialist === "task-check",
+    ).length;
+
+  it("at Standard 'fix the tasks' makes each change at once as the agent's, each with its Undo on Changes, and files nothing in the Inbox", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-fixchat-"));
+    homes.push(home);
+    const a = await open(home);
+    try {
+      const w = await quotePage(a, 2);
+      const reply = await chat(a, w.project.id, LINE);
+      expect(reply.reply).toBe("I changed 2 tasks of Quote page.");
+      expect(reply.pendingConfirmation).toBeNull();
+      expect(await checkRuns(a)).toBe(1);
+      const rows = await a.client.changes({ projectId: w.project.id });
+      expect(rows.map((r) => [r.source, r.wordsUsed, r.byAgent, r.undoable])).toEqual([
+        ["chat", LINE, true, true],
+        ["chat", LINE, true, true],
+      ]);
+      expect(rows.map((r) => r.sentence).sort()).toEqual([
+        'Added "Check that the links work" to Quote page, for the coder. It runs at your next Start.',
+        'Split "Style the page" into "Style the page: layout" and "Style the page: colours".',
+      ]);
+      const inbox = await a.client.inbox((await a.client.me()).id);
+      expect(inbox.requests.filter((r) => r.projectId === w.project.id)).toEqual([]);
+      expect(inbox.messages.filter((m) => m.projectId === w.project.id)).toEqual([]);
+      // The reply names no id and no raw state.
+      expect(reply.reply).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}|ready|needs_human/);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+
+  it("SC-8: the task view of a task the agent added or split says what the agent did (GET /projects/:id/tasks and GET /tasks/:id); a plan task it did not change says nothing", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-fixchat-drawer-"));
+    homes.push(home);
+    const a = await open(home);
+    try {
+      const w = await quotePage(a, 2);
+      expect((await chat(a, w.project.id, LINE)).reply).toBe("I changed 2 tasks of Quote page.");
+      const rows = await a.client.tasks(w.project.id);
+      const said = Object.fromEntries(rows.map((t) => [t.title, t.agentChange ?? null]));
+      expect(said).toEqual({
+        // The bench's stand-in starts its why with "[stand-in model]", which the view leaves out.
+        "Check that the links work": "Added by the agent: Nothing checks that the links work.",
+        "Create the page in index.html": null,
+        "Style the page: colours": 'Split from "Style the page" by the agent.',
+        "Style the page: layout":
+          'Split into "Style the page: layout" and "Style the page: colours" by the agent.',
+      });
+      // The drawer reads GET /tasks/:id: the same line, with no id and no channel.
+      const added = rows.find((t) => t.title === "Check that the links work");
+      const drawer = await a.client.task(added?.id ?? "");
+      expect(drawer.task.agentChange).toBe(said["Check that the links work"]);
+      expect(Object.values(said).join(" ")).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}|via chat|by you/);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+
+  it("at Assisted it is ONE read-back with one card in the Inbox; the Yes after a restart makes the set with no second check", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-fixchat-yes-"));
+    homes.push(home);
+    const a = await open(home);
+    let projectId = "";
+    try {
+      const w = await quotePage(a, 1);
+      projectId = w.project.id;
+      const reply = await chat(a, projectId, LINE);
+      expect(reply.reply).toBe(
+        'Make these 2 changes to the tasks of Quote page? Split "Style the page" into "Style the page: layout" and "Style the page: colours"; add "Check that the links work".',
+      );
+      expect(reply.pendingConfirmation?.readback).toBe(reply.reply);
+      const open1 = (await a.client.inbox((await a.client.me()).id)).requests.filter(
+        (r) => r.projectId === projectId && r.status === "open",
+      );
+      expect(open1).toHaveLength(1);
+      expect(await a.client.changes({ projectId })).toEqual([]);
+    } finally {
+      await a.rt.close();
+    }
+    // The daemon starts again within the card's ten minutes (a later start finds it expired).
+    const b = await open(home);
+    try {
+      const yes = await chat(b, projectId, "yes");
+      expect(yes.actions).toHaveLength(1);
+      expect(await checkRuns(b)).toBe(1);
+      const tasks = (await b.client.tasks(projectId)).map((t) => t.title).sort();
+      expect(tasks).toEqual([
+        "Check that the links work",
+        "Create the page in index.html",
+        "Style the page: colours",
+        "Style the page: layout",
+      ]);
+      const rows = await b.client.changes({ projectId });
+      expect(rows.map((r) => [r.source, r.byAgent, r.undoable])).toEqual([["chat", true, true]]);
+    } finally {
+      await b.rt.close();
+    }
+  }, 90_000);
+
+  it("SC-6: a session's change lines carry their change and its Undo, after a restart too; the Undo is POST /changes/:id/undo", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-fixchat-log-"));
+    homes.push(home);
+    const env = {
+      FORERUNNER_BENCH_TASK_LIST: "Create the page",
+      FORERUNNER_BENCH_TASK_LIST_SAYS: '"Style the page" is two jobs, the layout and the colours.',
+    };
+    const a = await open(home, false, env);
+    let sessionId = "";
+    try {
+      // "Style the page" waits for the person's logo, so no session runs it: its split stays
+      // undoable after the session.
+      const w = await quotePage(a, 2, { logo: true });
+      const started = await a.client.startSession({
+        agentId: (await a.client.agents())[0]?.id ?? "",
+        projectId: w.project.id,
+      });
+      sessionId = started.session?.id ?? "";
+      await eventually(
+        async () => (await a.client.session(sessionId)).status !== "running",
+        "the session to end",
+        async () => (await a.client.session(sessionId)).status,
+        30_000,
+      );
+      await settleSessions(a.rt);
+      const lines = (await a.client.sessionEvents(sessionId)).filter((e) => e.type === "change");
+      expect(lines.map((l) => [l.text, !!l.changeId, l.undoable])).toEqual([
+        [
+          'Split "Style the page" into "Style the page: layout" and "Style the page: colours".',
+          true,
+          true,
+        ],
+      ]);
+      const rows = await a.client.changes({ projectId: w.project.id });
+      expect(rows.find((r) => r.id === lines[0]?.changeId)).toMatchObject({
+        source: "session",
+        byAgent: true,
+      });
+    } finally {
+      await a.rt.close();
+    }
+    const b = await open(home, false, env);
+    try {
+      const [line] = (await b.client.sessionEvents(sessionId)).filter((e) => e.type === "change");
+      expect(line?.undoable).toBe(true);
+      const undone = await b.client.undoChange(line?.changeId ?? "");
+      expect(undone.status).toBe("done");
+      const [after] = (await b.client.sessionEvents(sessionId)).filter((e) => e.type === "change");
+      expect([after?.undoable, after?.undone]).toEqual([false, true]);
+      await settleSessions(b.rt);
+    } finally {
+      await b.rt.close();
+    }
+  }, 120_000);
 });

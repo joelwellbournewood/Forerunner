@@ -119,7 +119,10 @@ describe("d1109-selftasks-run, run C: the agent's suggested task changes in the 
         .getAllByTestId("option-explain")
         .map((e) => e.textContent),
     ).toEqual(["Changes the tasks as listed; one Undo takes them back.", "Nothing changes."]);
-    const details = within(card).getByTestId("request-details");
+    // d1109-selftasks-chat (SC-9): the changes show open, never under a collapsed Details.
+    const details = within(card).getByTestId("request-details-open");
+    expect(details.closest("details")).toBeNull();
+    expect(within(card).queryByTestId("request-details")).not.toBeInTheDocument();
     expect(details).toHaveTextContent(SPLIT_LINE);
     expect(details).toHaveTextContent(ADD_LINE);
     expect(details).toHaveTextContent(

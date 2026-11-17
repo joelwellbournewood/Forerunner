@@ -161,6 +161,12 @@ function DrawerBody({
         </span>
       </div>
       {d.detail ? <p className="text-neutral-700 dark:text-neutral-300">{d.detail}</p> : null}
+      {/* d1109-selftasks-chat (SC-8): what the agent did to the task, in the daemon's words. */}
+      {task.agentChange ? (
+        <p className="text-neutral-700 dark:text-neutral-300" data-testid="drawer-agent-change">
+          {task.agentChange}
+        </p>
+      ) : null}
 
       <section data-testid="drawer-asks">
         <h3 className="font-medium">What done looks like</h3>

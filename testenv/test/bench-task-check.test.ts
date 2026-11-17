@@ -215,3 +215,22 @@ describe("bench stand-in: the session's task check (d1109-selftasks-run, ST-14)"
     ]);
   });
 });
+
+describe("d1109-selftasks-chat, run C: the stand-in plays a priority edit (review)", () => {
+  // The review: the read-back named a priority change 'reword'; the stand-in had no edit to walk
+  // it with. '"X" is urgent' raises X's priority, an edit with no new title.
+  it("'\"Publish\" is urgent' is one edit of the priority, read by the runtime's reader", async () => {
+    const reply = readTaskCheckReply(
+      await textOf(player(), checkRequest([{ text: '"Publish" is urgent.' }])),
+    );
+    if (!reply.ok) throw new Error(reply.reason);
+    expect(reply.changes).toEqual([
+      {
+        kind: "edit",
+        task: "Publish",
+        priority: "high",
+        why: `${STAND_IN} The person says it is urgent.`,
+      },
+    ]);
+  });
+});

@@ -229,6 +229,29 @@ export function plainReason(reason: string, max = 100): string {
 }
 
 /**
+ * The reasons the commands store for a change the project's agent made to a task (task.ts,
+ * d1109-selftasks-chat SC-12): "Added by the agent: …", "Changed by the agent: …", 'Split from
+ * "X" by the agent', 'Split into "A" and "B" by the agent', "Dropped by the agent: same as …",
+ * "What it waits for changed by the agent", "Paused / Stopped / Cancelled / Made ready (again) /
+ * Marked … by the agent".
+ */
+const AGENT_CHANGE =
+  /^(?:Added|Changed|Paused|Stopped|Cancelled|Dropped|Made ready(?: again)?|Marked [^:"]+|What it waits for changed|Split (?:from|into) .+) by the agent(?::|$)/;
+
+/**
+ * d1109-selftasks-chat (SC-8, ADR 0119; the owner, D7: "every change shown"): the task drawer's
+ * line when the agent made the task's last change, as one plain sentence ("Added by the agent:
+ * nothing checks the links.", 'Split from "Style the page" by the agent.'): no id, at most 200
+ * characters. Null for every other reason (the person's own moves, the plan's, the runner's),
+ * which the drawer does not show. The daemon's task view and the UI's fake daemon both use it.
+ */
+export function agentChangeLine(reason: string): string | null {
+  if (!AGENT_CHANGE.test(reason.replace(/\s+/g, " ").trim())) return null;
+  const r = plainReason(reason, 200);
+  return /[.!?…]$/.test(r) ? r : `${r}.`;
+}
+
+/**
  * What an open finding still asks for, as the person (and the chat) reads it: the fix the critic
  * named, or what it found when it named none. The critic's code fills an unnamed fix with
  * `NO_ACTION_GIVEN` ("Resolve it and show the evidence") for the retry brief; shown to a person it

@@ -154,6 +154,75 @@ export function isStopLine(text: string): boolean {
     .some((clause) => stopScopeOf(clause) !== null);
 }
 
+/** What a "fix the tasks" line asks (d1109-selftasks-chat): the project it names, if any. */
+export interface FixTasksAsk {
+  /** A project the line names ("fix the tasks of Bakery site"), as said; absent: the one on screen. */
+  project?: string;
+}
+
+// No "review" or "go through": a person often means "show me" or "walk me through" the tasks,
+// and this line runs a paid check that changes tasks at once from Standard; such a line goes to
+// the chat model, which calls fix_tasks when the person asks for a fix (review of the area).
+const FIX_VERB =
+  /(?:fix|repair|correct|tidy(?:\s+up)?|clean\s+up|sort\s+out|check(?:\s+over)?|straighten\s+out)/;
+const FIX_LIST = /(?:(?:the|my|your|our|its)\s+)?(?:tasks|task\s+list|list\s+of\s+tasks|to-?dos?)/;
+const FIX_EN = new RegExp(
+  String.raw`^(?:(?:please|can\s+you|could\s+you|would\s+you|pls)\s+)?${FIX_VERB.source}\s+${FIX_LIST.source}(?:\s+(?:of|in|for|on)\s+(.+?))?(?:\s+(?:please|now|for\s+me))?$`,
+  "i",
+);
+const FIX_EN_AFTER = new RegExp(
+  String.raw`^(?:(?:please|can\s+you|could\s+you)\s+)?${FIX_LIST.source}\s*(?::\s*)?(?:fix|tidy(?:\s+up)?|clean\s+up)(?:\s+(?:please|them))?$`,
+  "i",
+);
+const FIX_DE = [
+  /^(?:bitte\s+)?(?:r[äa]ume?|korrigiere|pr[üu]fe|[üu]berpr[üu]fe|ordne|bereinige|repariere)\s+(?:die|meine|deine|unsere)?\s*(?:aufgaben(?:liste)?|tasks)(?:\s+(?:von|in|f[üu]r|bei)\s+(.+?))?(?:\s+(?:auf|bitte|durch))*$/i,
+  /^(?:bitte\s+)?(?:die\s+)?(?:aufgaben(?:liste)?|tasks)(?:\s+(?:von|in|f[üu]r)\s+(.+?))?\s+(?:aufr[äa]umen|korrigieren|pr[üu]fen|[üu]berpr[üu]fen|bereinigen|ordnen)(?:\s+bitte)?$/i,
+];
+
+/**
+ * d1109-selftasks-chat (SC-1, ADR 0119): whether a line asks the agent to fix, tidy, clean up or
+ * check the whole task list ("fix the tasks", "tidy up the task list", "räum die Aufgaben auf"),
+ * read without a model call. A line that names one task ("fix the login task", 'check the task
+ * "Style the page"') is never this: it is that task's own command. A line may go on after a colon
+ * ("fix the tasks: the page is two jobs"): the whole line is the person's request. Text carrying
+ * the data envelope is never a request.
+ */
+export function fixTasksAskOf(text: string): FixTasksAsk | null {
+  if (text.includes(DATA_ENVELOPE_OPEN) || text.includes(DATA_ENVELOPE_CLOSE)) return null;
+  const line = text.trim().replace(/\s+/g, " ");
+  if (!line || line.length > 500) return null;
+  // The part before a colon or a dash says what is asked; what follows is the person's detail.
+  const head = (/^(.+?)\s*(?::|\s[-–—]\s)\s*\S/.exec(line)?.[1] ?? line)
+    .replace(/[.!?]+$/, "")
+    .trim();
+  const en = FIX_EN.exec(head);
+  if (en) {
+    const project = projectNameOf(en[1]);
+    return project === undefined ? {} : project ? { project } : null;
+  }
+  if (FIX_EN_AFTER.test(head)) return {};
+  for (const re of FIX_DE) {
+    const de = re.exec(head);
+    if (de) {
+      const project = projectNameOf(de[1]);
+      return project === undefined ? {} : project ? { project } : null;
+    }
+  }
+  return null;
+}
+
+/** The project a "fix the tasks of X" line names, undefined for none; null for a task's name. */
+function projectNameOf(raw: string | undefined): string | null | undefined {
+  const name = (raw ?? "")
+    .trim()
+    .replace(/^(?:the\s+)?project\s+/i, "")
+    .replace(/^["'“”‘’](.*)["'“”‘’]$/, "$1")
+    .trim();
+  if (!name) return undefined;
+  if (/^(?:this|the)\s+project$|^(?:it|this|here|now)$/i.test(name)) return undefined;
+  return name;
+}
+
 export interface When {
   until: string;
   label: string;

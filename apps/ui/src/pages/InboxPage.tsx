@@ -1073,7 +1073,17 @@ function RequestCard({
           onSend={unlock.send}
         />
       ) : null}
-      {details.length > 0 ? (
+      {details.length > 0 && request.openDetails ? (
+        // d1109-selftasks-chat (SC-9): what the card asks about is read before the answer.
+        <ul
+          className="mt-1 list-disc pl-5 text-sm text-neutral-700 dark:text-neutral-300"
+          data-testid="request-details-open"
+        >
+          {details.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ul>
+      ) : details.length > 0 ? (
         <details className="mt-1 text-sm" data-testid="request-details">
           <summary className="cursor-pointer text-neutral-600 dark:text-neutral-400">
             Details

@@ -73,6 +73,11 @@ export interface RequestLinkWords {
 export interface RequestWords {
   /** The card's title, naming the task (or what it is about). */
   title: string;
+  /**
+   * d1109-selftasks-chat (SC-9): the details are what the card asks about (the agent's
+   * suggested changes), so they show open, never under a collapsed Details.
+   */
+  openDetails?: boolean;
   /** One or two sentences: what and why, in the specialist's own words where there are any. */
   body: string | null;
   choices: RequestChoiceWords[];
@@ -1542,6 +1547,8 @@ function taskProposalCard(
     links: [],
     reply: "none",
     details: r.steps,
+    // SC-9: the person approves what they can read: the changes show open.
+    openDetails: true,
     outcome: proposalOutcome(card),
   };
 }

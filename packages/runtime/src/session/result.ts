@@ -152,7 +152,9 @@ export function leftForNextStartLine(
 
 /** A change's words in the result line: 'split "Style the page"', 'added "Check the links"'. */
 function changeWords(c: TaskChangeFact): string {
-  return `${c.kind} "${c.title}"`;
+  // An edit can change only the priority or what done looks like, so it reads 'edited', never
+  // 'reworded' (review of d1109-selftasks-chat). The stored kind stays 'reworded'.
+  return `${c.kind === "reworded" ? "edited" : c.kind} "${c.title}"`;
 }
 
 /**

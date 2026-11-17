@@ -2969,3 +2969,19 @@ named) and "Keep the tasks" changes nothing; nothing starts a session. Tests:
 "d1109-selftasks-run, run C". The Changes page shows the session's own rows (source `session`) as
 "In the app" until chat's task changes (C6) give them their words.
 
+
+## Undo where a change is shown (d1109-selftasks-chat, ADR 0119)
+
+The session page's change lines carry their Undo (`ChangeUndo` in SessionPage.tsx, POST
+/changes/:id/undo; a blocked one says "Cannot be undone now: …"); Changes shows "In a session"
+for source `session` and the agent's name for `byAgent` rows; an Inbox card with `openDetails`
+(the agent's suggested task changes) lists its details open. Tests: `test/session.test.tsx`,
+`test/changes.test.tsx`, `test/selftasks.test.tsx`, `test/real-daemon.test.ts` (describe
+"d1109-selftasks-chat, run C").
+
+The task drawer shows `TaskView.agentChange` under the status line (`drawer-agent-change`):
+what the agent did to the task when its last change was the agent's ("Added by the agent: …",
+'Split from "Style the page" by the agent.'), in the daemon's words; the person's own changes
+show no such line. The fake daemon sets it from the row's reason with the daemon's own
+`agentChangeLine` (fake-tasks.ts). Tests: `test/tasks.test.tsx` and `test/real-daemon.test.ts`
+(describe "d1109-selftasks-chat, run C", SC-8).

@@ -504,9 +504,11 @@ export interface CommandContext {
    * schema; the context is built in code). At a level that frees `plan_fix` (Standard and up),
    * a change said in words acts at once without its read-back and posts no Inbox line (the
    * session's one Update tells it); a turn that read a record still reads it back (`recordsRead`
-   * wins), and every risk rule holds as before.
+   * wins), and every risk rule holds as before. d1109-selftasks-chat: below Standard every
+   * change of it is read back, a new task too; `askFirst` (the fence asked first: the person's
+   * own task, a further reach, a deploy) reads it back at every level.
    */
-  planFix?: { level: AutonomyLevel };
+  planFix?: { level: AutonomyLevel; askFirst?: boolean };
 }
 
 export interface CommandOutcome {

@@ -715,6 +715,7 @@ export function SessionPage() {
                   <Money value={e.cost} className="ml-auto text-neutral-500" />
                 ) : null}
               </div>
+              {e.changeId ? <ChangeUndo line={e} /> : null}
               {showRaw ? (
                 <pre
                   className="overflow-auto rounded bg-neutral-100 p-1 text-[11px] dark:bg-neutral-900"
@@ -729,6 +730,69 @@ export function SessionPage() {
       </div>
     </section>
   );
+}
+
+/**
+ * d1109-selftasks-chat (SC-6; the owner's D7: "each change shown with one Undo"): a change line
+ * of the session (the agent's own fix of its task list, a change asked in chat) has its Undo
+ * where it is shown; one whose Undo would not work says why in words instead. The click sends
+ * POST /changes/:id/undo, as Changes does, and the line then reads the undo's sentence.
+ */
+function ChangeUndo({ line }: { line: EventView }) {
+  const client = useClient();
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const undo = async () => {
+    if (busy || !line.changeId) return;
+    setBusy(true);
+    try {
+      const r = await client.undoChange(line.changeId);
+      setSaid(
+        r.status === "done" || r.status === "partial"
+          ? (r.sentence ?? "Undone.")
+          : r.status === "pending"
+            ? "The undo waits for your yes on Changes."
+            : r.status === "cancelled"
+              ? "Undo cancelled. Nothing changed."
+              : `Not undone: ${(r.reason ?? "refused").replace(/[.\s]+$/, "")}.`,
+      );
+    } catch (err) {
+      setSaid(`Not undone: ${describeError(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (said)
+    return (
+      <p className="text-xs text-neutral-600 dark:text-neutral-400" data-testid="change-undone">
+        {said}
+      </p>
+    );
+  if (line.undone)
+    return (
+      <p className="text-xs text-neutral-500" data-testid="change-undone">
+        Undone.
+      </p>
+    );
+  if (line.undoable)
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          className="px-2 py-0.5 text-xs"
+          onClick={() => void undo()}
+          disabled={busy}
+          title="Takes back this change."
+          data-testid="change-undo"
+        >
+          Undo
+        </Button>
+      </div>
+    );
+  return line.undoBlocked ? (
+    <p className="text-xs text-neutral-500" data-testid="change-undo-blocked">
+      Cannot be undone now: {line.undoBlocked.replace(/[.\s]+$/, "")}.
+    </p>
+  ) : null;
 }
 
 /**
