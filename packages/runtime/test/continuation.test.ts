@@ -402,9 +402,11 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     const check = await w1.get<{ blocked: Record<string, unknown> | null }>(
       `/projects/${project.id}/start-check`,
     );
+    // d1109-cred-screens (CS-3, C3-left-9; intent kept): with the API key saved and serving, the
+    // dialog offers "Use API key" beside "Start at 15:00", so its sentence is the stop alone
+    // ("Nothing can run until 15:00" would not be true); the kept start is unchanged.
     expect(check.json.blocked).toMatchObject({
-      sentence:
-        "Nothing can run until 15:00 (your subscription's limit). Press Start at 15:00 and the work starts then.",
+      sentence: "Your subscription is at its limit until 15:00.",
       startable: true,
       startLabel: "Start at 15:00",
     });
