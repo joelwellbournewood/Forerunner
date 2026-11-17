@@ -7825,8 +7825,10 @@ channel (ST-13).
   waiting tasks, or the person's session that ended to wait starts now as theirs (`by: "person"`,
   its kept continuation dropped); Wait moves nothing. `settleAsks` (the wake, before `takeReady`)
   ends grants whose stop is over and withdraws cards whose stop ended or whose preset changed.
-  `recordWait` marks a stop answered without a card (the Start dialog's "Start at 15:40" under ask,
-  for d1109-cred-screens). The card's words: `request-words.ts` `askCard`, from
+  `recordWait` marks a stop answered Wait without a card (the Start dialog's "Start at 15:40"
+  under ask, d1109-cred-screens): `continuations.keepStart` calls it before `noteWait`, so the
+  kept start's own wait files no card, and an ask card of the stop already open is answered Wait
+  and applied at once (outcome `waited`), also after a restart. The card's words: `request-words.ts` `askCard`, from
   `session/credential-words.ts` `askCardWords`; its facts (`credentialAsk`) are read when shown.
 - **Refusals**: `refuse` files the card only when it set the mark (and stores
   `limits.refusedCategory` and `limits.refusedCard {refusedAt, open}`); `noteWait`'s TR-10 filing
@@ -7937,9 +7939,22 @@ log's lines stay in `session/credential-words.ts`); the shapes are in
   in-progress tasks' remaining estimates to the runnable ones (the task whose run met the stop is
   claimed while the card is filed), never above the session's work budget; `askCardWords` reads
   "about CHF 0.40", "less than CHF 0.01" alone, or ", at a cost per use" with no figure known.
-- **The runs-on line under "next"** (CS-10's walk): `chooserBatch` gives a resting first choice up
-  for the next saved credential that is not resting and can do the task (as the pick does) when
-  the preset goes on with the next one; under "then wait" and "ask" the line stays the wait.
+- **The runs-on line under "next" or a yes** (CS-10's walk; the review of the fix-up):
+  `chooserBatch` gives a resting first choice up for the next saved credential that is not
+  resting and can do the task (as the pick does) when the preset goes on with the next one, or
+  when the person's yes stands for the stop it is at now (`limits.grant` read once per batch:
+  only the credential the yes names); under "then wait" and "ask" without a yes the line stays
+  the wait.
+- **"Use API key" only for a start that runs** (the review of the fix-up): `startCredential`
+  takes `{runsWork, stopped}` (the server passes `runsWork(check)` and Stop all); a start that
+  runs nothing (and no session of the project waits to go on) or that Stop all refuses gets no
+  stopped-first-choice line and no `runOut`. `POST /sessions` with `useOtherCredential` refuses
+  such a start with its own sentence ("Nothing can run: no task is ready.", the Stop all message)
+  and writes the yes (`grantForStart`) only after every refusal (a removed project, the month's
+  room, nothing to run), right before the start; it never keeps a start for the reset.
+- **Stop using it's line** (CS-1): `CredentialPolicyView.grantEndLine` (`grantEndLine`: "Stop
+  using it: what already runs on your API key finishes; new work waits for your subscription.")
+  while a yes stands.
 - **The review that may wait** (C4b-left-5): `StartCheck.reviewMayWait` (`session/start-check.ts`):
   per task with a budget of its own, its estimate plus one critic call's worst case against what
   is left of its budget; `StartCheckView.reviewMayWait` with `reviewMayWaitLine`. `POST

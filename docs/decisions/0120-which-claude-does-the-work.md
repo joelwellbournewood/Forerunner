@@ -133,3 +133,24 @@ under a preset that goes on with the next credential (it names that credential, 
 one's wait). Not built: the "needs" row form ("Waits for your API key: only it can read web pages
 here."), for want of the need in the wait entry.
 
+## Amendment 2026-11-17: the review of the policy's screens (d1109-cred-screens fix-up)
+
+The review of the screens found three places where a screen promised what the app did not do:
+
+1. **"Start at 15:40" under 'ask' is the person's Wait for the stop.** The kept start's own wait
+   filed "Use your API key until 15:40?" right after the person chose to wait. The person's Wait is
+   now recorded before the wait is noted, and an ask card of the same stop that was already open
+   (another project's work met the stop first) is answered Wait: one stop asks one question (point
+   2 of the 2026-11-16 amendment: "under ask it also records the person's Wait for this stop, so no
+   card follows"), also after a restart.
+2. **A yes for the stop names the key on the plan card.** With the person's yes standing, each
+   task's line said "Waits until 15:40" while the key ran the work at once. The runs-on line now
+   follows the yes as the pick does, as it follows "then API key".
+3. **"Use API key" only for a start that runs something.** With nothing ready or under Stop all
+   the dialog offered it ("about CHF 0.00") and its yes was written before the start was refused,
+   so every project's work and chat moved onto the key for a start that never ran (the owner's 7b:
+   "It should definitely not automatically do something even when told to wait"). The offer now
+   needs a start that runs, and the yes is written only after every refusal.
+
+Settings' "Stop using it" also says what it does ("Stop using it: what already runs on your API
+key finishes; new work waits for your subscription.").

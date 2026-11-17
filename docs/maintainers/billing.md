@@ -92,7 +92,8 @@ person's next Start. `noteWait(sourceId, projectId, agentId, sessionId?, kept?)`
 (`packages/runtime/src/wiring/billing-pick.ts`) read and write it with the limits' version
 check. `keepStartAtReset` needs the project's entry on the source first: the runtime's
 `continuations.keepStart` (a Start pressed while the credential rests, "Start at 15:40") calls
-`noteWait` and then it; the entry's `note` is the Start dialog's note, passed to the start. `RouteContext.waitOnRest`
+`noteWait` and then it (under "ask before API key" it first records the person's Wait for the
+stop, `recordWait`, so `noteWait`'s ask files no card); the entry's `note` is the Start dialog's note, passed to the start. `RouteContext.waitOnRest`
 ("When my first choice runs out mid-session: Wait", task runs only): a resting source that
 ranks ahead of every source that could serve makes `pick` throw `unavailable` with
 `details.waitFor` ({ sourceId, kind, until, reason }) instead of moving on; a refused source

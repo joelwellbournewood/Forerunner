@@ -1095,11 +1095,16 @@ pages, search, run commands) is under Advanced.
 The Start dialog says what happens if your first choice runs out while the session works. When it
 is already out and your choice waits or asks, it offers **Use API key** (the session runs on the
 key until the stop ends, about the cost it names; no session budget is raised) and **Start at
-15:40** (nothing moves before; the session starts then), the one your choice leans to first. When
+15:40** (nothing moves before; the session starts then), the one your choice leans to first.
+**Start at 15:40** is your answer for this stop: the Inbox does not ask you about your API key
+again until then. **Use API key** is offered only when the start would run something; with
+nothing ready, or with Stop all on, the dialog says why and offers neither. When
 your own session already waits to go on, the dialog says "Your session of 14:05 goes on by itself
 at 15:40." and **Use API key** lets it go on now. The plan card in the Inbox says the same once at
-its foot. Under "Subscription first, then API key" each task's line on the card names the key that
-does it meanwhile, never a wait. If a task's own budget may leave too little for its review, the
+its foot. Under "Subscription first, then API key", or once you said yes to your API key for this
+stop, each task's line on the card names the key that does it meanwhile, never a wait. In
+Settings, **Stop using it** ends your yes: what already runs on your API key finishes, and new
+work waits for your subscription. If a task's own budget may leave too little for its review, the
 dialog names that task before you start; its review then waits for Continue.
 
 With your subscription at its limit and your choice "ask before API key", the work waits for your
