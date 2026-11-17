@@ -1196,9 +1196,11 @@ function agentReason(verb: string, why: string | undefined): string {
     ?.trim()
     .replace(/\s+/g, " ")
     .replace(/[.\s]+$/, "");
-  return said
-    ? `${verb} by the agent: ${said.charAt(0).toLowerCase()}${said.slice(1)}`
-    : `${verb} by the agent`;
+  if (!said) return `${verb} by the agent`;
+  // "Nothing checks …" reads "nothing checks …" after the colon; "README is missing", "CSS …"
+  // and "I …" keep their capitals.
+  const lower = /^[A-Z][a-z]/.test(said) ? `${said.charAt(0).toLowerCase()}${said.slice(1)}` : said;
+  return `${verb} by the agent: ${lower}`;
 }
 
 /** A move the agent made, in words (never an id or the channel). */

@@ -517,6 +517,13 @@ export const TaskView = z.object({
   runOrder: z.number().int().optional(),
   /** How its work was checked, for a done task (ADR 0104); absent from an older service. */
   check: TaskCheck.nullable().optional(),
+  /**
+   * d1109-selftasks-chat (SC-8, ADR 0119): what the project's agent did to the task when its
+   * last change was the agent's, as the drawer says it ("Added by the agent: nothing checks the
+   * links.", 'Split from "Style the page" by the agent.'; `agentChangeLine`). Absent otherwise
+   * (the person's own moves, the plan's, the runner's) and from an older daemon.
+   */
+  agentChange: z.string().optional(),
 });
 export type TaskView = z.infer<typeof TaskView>;
 

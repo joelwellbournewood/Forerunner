@@ -7828,6 +7828,15 @@ by the agent (C4-left-1).
 Tests: `test/chat-fix-tasks.test.ts`, `test/credential-policy.test.ts` (SC-14),
 `test/executor-brief.test.ts` (C4-left-1).
 
+The task view carries `agentChange` when the agent made the task's last change (SC-8):
+`agentChangeLine(reason)` in `daemon/task-words.ts` reads the reasons the commands store for the
+agent (SC-12: "Added by the agent: …", "Changed by the agent: …", 'Split from/into … by the
+agent', "Dropped by the agent: same as …", "What it waits for changed by the agent", "Paused /
+Stopped / Cancelled / Made ready (again) / Marked … by the agent") as one plain sentence
+(`plainReason`, at most 200 characters); every other reason gives none, so the field is absent.
+`taskView` sets it, so the list, GET /tasks/:id and every task answer carry it. Tests:
+`test/agent-change-line.test.ts`.
+
 ### One credential policy for every call (d1109-cred-engine, [ADR 0120](../decisions/0120-which-claude-does-the-work.md))
 
 - **The policy** (`@forerunner/billing` `policy.ts`, read by `RouterTaskBilling.pick` through

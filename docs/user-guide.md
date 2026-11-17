@@ -1452,8 +1452,9 @@ typed in chat, said aloud or wrote in an email; a click in the app has none.
 A change the agent made itself (its own fix of the task list during a session, or "fix the
 tasks" in chat) names the agent, not you; one made during a session reads **In a session**. On a
 session's page each change line has its own **Undo** (or says why it cannot be undone), and the
-task's row and drawer say "Added by the agent: …", "Split from "Style the page" by the agent" or
-"Dropped by the agent: same as "Add the README"". The agent's suggested changes on an Inbox card
+task's drawer says what the agent did, under its status: "Added by the agent: …", "Split from
+"Style the page" by the agent." or "Dropped by the agent: same as "Add the README"."; a task you
+added or changed yourself has no such line. The agent's suggested changes on an Inbox card
 are listed open, so you read them before **Make these changes** or **Keep the tasks**.
 
 ## Seeing what runs

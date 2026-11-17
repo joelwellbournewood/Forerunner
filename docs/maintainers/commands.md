@@ -820,7 +820,9 @@ every change of a `planFix` context below Standard or with `askFirst`, keeps `pl
 card for a restart, and reads a composed card as one question (`oneQuestion` in change-card.ts;
 `compose(..., { ask })` gives it its own). An agent's change says so where it is stored: "Added
 by the agent: <why>", "Changed by the agent: …", "What it waits for changed by the agent",
-"Paused/Cancelled/Made ready by the agent" (never an id or the channel).
+"Paused/Cancelled/Made ready by the agent" (never an id or the channel). The why's first letter
+reads lower case after the colon only when its first word is an ordinary capitalised word
+("Nothing checks …"); "README is missing", "CSS …" and "I …" keep their capitals.
 
 Tests: `test/intent.test.ts`, `test/selftasks-chat.test.ts`.
 

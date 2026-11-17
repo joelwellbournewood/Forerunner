@@ -127,6 +127,25 @@ describe("d1109-selftasks-chat, run C: the agent's change says so where it is st
       }
     });
 
+  it("a why that starts with a word in capitals keeps it ('README', 'CSS'); an ordinary first word reads lower case after the colon", async () => {
+    const w = await world();
+    const ex = new CommandExecutor({ registry: reg, store: w.store, clock: w.clock });
+    const ctx = agentCtx(w, "session");
+    const add = (title: string, why: string) =>
+      ex.compose(
+        [{ name: "task.create", params: { title, status: "ready", project: w.pharma.id, why } }],
+        ctx,
+      );
+    expect((await add("Add the README", "README.md is missing.")).status).toBe("done");
+    expect((await add("Split the styles", "CSS and layout are mixed.")).status).toBe("done");
+    expect((await add("Check the links", "Nothing checks the links.")).status).toBe("done");
+    const tasks = await w.store.task.forProject(w.pharma.id, {}, { limit: 50 });
+    const reason = (title: string) => tasks.find((t) => t.title === title)?.reason ?? "";
+    expect(reason("Add the README")).toBe("Added by the agent: README.md is missing");
+    expect(reason("Split the styles")).toBe("Added by the agent: CSS and layout are mixed");
+    expect(reason("Check the links")).toBe("Added by the agent: nothing checks the links");
+  });
+
   it("the person's own moves read as before ('Changed by you: …', 'Added by you')", async () => {
     const w = await world();
     const ex = new CommandExecutor({ registry: reg, store: w.store, clock: w.clock });

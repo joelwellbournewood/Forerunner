@@ -2181,3 +2181,44 @@ describe("d1116-budget-all, run C", () => {
     expect(after.spent?.usdMicro).toBe(after.actual.usdMicro);
   });
 });
+
+describe("d1109-selftasks-chat, run C", () => {
+  // SC-8 (ADR 0119; the owner, D7: "every change shown"): the drawer of a task the agent added,
+  // split or dropped says so with why, in the words the commands store (SC-12), as the daemon's
+  // task view gives them (`agentChange`, from the shared task-words function the fake uses too);
+  // a task the person added or changed shows no such line. Never an id or the channel.
+  it("SC-8: the drawer of a task the agent added or split reads what the agent did; a person's task has no such line", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "t_added", "Check that the links work", {
+      status: "ready",
+      specialist: "coder",
+      reason: "Added by the agent: the coder said nothing checks the links",
+    });
+    addTask(harness, "t_part", "Style the page: colours", {
+      status: "ready",
+      specialist: "coder",
+      reason: 'Split from "Style the page" by the agent',
+    });
+    addTask(harness, "t_mine", "Write the README", {
+      status: "ready",
+      specialist: "coder",
+      reason: "Added by you",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const lineOf = async (id: string) => {
+      await user.click(within(await rowOf(id)).getByTestId("task-title"));
+      const drawer = await screen.findByTestId("task-drawer");
+      await within(drawer).findByTestId("drawer-asks");
+      const line = within(drawer).queryByTestId("drawer-agent-change")?.textContent ?? null;
+      await user.click(within(drawer).getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByTestId("task-drawer")).toBeNull());
+      return line;
+    };
+    expect(await lineOf("t_added")).toBe(
+      "Added by the agent: the coder said nothing checks the links.",
+    );
+    expect(await lineOf("t_part")).toBe('Split from "Style the page" by the agent.');
+    expect(await lineOf("t_mine")).toBeNull();
+  });
+});

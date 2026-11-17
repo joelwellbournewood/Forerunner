@@ -15,6 +15,7 @@ import { redoWhileTakingOutSentence } from "@forerunner/runtime/daemon/take-out-
 import {
   ACTION_FROM,
   ACTION_WORDS,
+  agentChangeLine,
   runOrder,
   taskDisplay,
 } from "@forerunner/runtime/daemon/task-words";
@@ -163,11 +164,16 @@ export function projectTaskViews(
     ...(meta.heldWork?.size ? { heldWork: meta.heldWork } : {}),
   };
   const byId = new Map(mine.map((t) => [t.id, t]));
-  return runOrder(rows).map((row, i) => ({
-    ...(byId.get(row.id) as TaskView),
-    display: taskDisplay(row, ctx),
-    runOrder: i,
-  }));
+  return runOrder(rows).map((row, i) => {
+    // As the daemon's taskView (d1109-selftasks-chat, SC-8): the agent's change, for the drawer.
+    const agentChange = agentChangeLine(row.reason);
+    return {
+      ...(byId.get(row.id) as TaskView),
+      display: taskDisplay(row, ctx),
+      runOrder: i,
+      ...(agentChange ? { agentChange } : {}),
+    };
+  });
 }
 
 /** The status a person's action leads to, or a refusal in the daemon's words. */

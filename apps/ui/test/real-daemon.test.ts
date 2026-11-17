@@ -21961,6 +21961,33 @@ describe("d1109-selftasks-chat, run C", () => {
     }
   }, 60_000);
 
+  it("SC-8: the task view of a task the agent added or split says what the agent did (GET /projects/:id/tasks and GET /tasks/:id); a plan task it did not change says nothing", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-fixchat-drawer-"));
+    homes.push(home);
+    const a = await open(home);
+    try {
+      const w = await quotePage(a, 2);
+      expect((await chat(a, w.project.id, LINE)).reply).toBe("I changed 2 tasks of Quote page.");
+      const rows = await a.client.tasks(w.project.id);
+      const said = Object.fromEntries(rows.map((t) => [t.title, t.agentChange ?? null]));
+      expect(said).toEqual({
+        // The bench's stand-in starts its why with "[stand-in model]", which the view leaves out.
+        "Check that the links work": "Added by the agent: Nothing checks that the links work.",
+        "Create the page in index.html": null,
+        "Style the page: colours": 'Split from "Style the page" by the agent.',
+        "Style the page: layout":
+          'Split into "Style the page: layout" and "Style the page: colours" by the agent.',
+      });
+      // The drawer reads GET /tasks/:id: the same line, with no id and no channel.
+      const added = rows.find((t) => t.title === "Check that the links work");
+      const drawer = await a.client.task(added?.id ?? "");
+      expect(drawer.task.agentChange).toBe(said["Check that the links work"]);
+      expect(Object.values(said).join(" ")).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}|via chat|by you/);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+
   it("at Assisted it is ONE read-back with one card in the Inbox; the Yes after a restart makes the set with no second check", async () => {
     const home = mkdtempSync(join(tmpdir(), "fr-ui-real-fixchat-yes-"));
     homes.push(home);
