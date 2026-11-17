@@ -311,7 +311,7 @@ export function switchRunLine(
   const wait = { reason: sw.stop, kind: sw.from } as const;
   const line = continues
     ? switchLogLine(title, sw.to, wait, until)
-    : `"${title}" runs on ${yourCredential(sw.to)}: ${shortStopped(wait, until)}.`;
+    : `"${title}" runs on ${yourCredential(sw.to)}: ${shortStoppedPhrase(wait, until)}.`;
   return sw.by === "grant" ? `${line.slice(0, -1)}, and you said yes.` : line;
 }
 
