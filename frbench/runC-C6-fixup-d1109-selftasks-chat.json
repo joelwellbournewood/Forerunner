@@ -1,0 +1,240 @@
+{
+  "area": "d1109-selftasks-chat",
+  "branch": "fix/d1109-selftasks-chat",
+  "head_sha": "3110217b57b8f96584de1d0c4537d0519d724853",
+  "commits": [
+    {
+      "sha": "450e9de",
+      "subject": "test: the selftasks-chat real-daemon homes are removed with removeHomes (review)"
+    },
+    {
+      "sha": "8682c75",
+      "subject": "tasks: the drawer says what the agent did to a task (SC-8, SC-12, U-095)"
+    },
+    {
+      "sha": "28513df",
+      "subject": "chat: the read-back names what an edit changes, never 'reword' for a priority (U-095)"
+    },
+    {
+      "sha": "9eab4f1",
+      "subject": "test: the task check's model under a planning override and a project's ceiling, at the API (C5-left-7)"
+    },
+    {
+      "sha": "6cad17e",
+      "subject": "chat: 'check the tasks for errors' goes to the model; two requests at once make one check (U-095)"
+    },
+    {
+      "sha": "b81d26e",
+      "subject": "chat: 'review the tasks' and 'go through the tasks' are not the paid check; GET /inbox's openDetails asserted (U-095)"
+    },
+    {
+      "sha": "46010de",
+      "subject": "docs: the read-back names what an edit changes; 'review' is not the paid check (ADR 0119 amended)"
+    },
+    {
+      "sha": "3110217",
+      "subject": "bench: the stand-in's task check plays a priority edit ('\"X\" is urgent')"
+    }
+  ],
+  "fixed": [
+    {
+      "problem": "Blocking 1 (SC-8/SC-12): a task the agent added or split showed nothing about it. The stored reasons ('Added by the agent: …', 'Split from \"X\" by the agent') reached no screen; the drawer showed only display.detail. This was done in the earlier, interrupted run (commit 8682c75), and this report covers it.",
+      "u_ids": [
+        "U-095"
+      ],
+      "failing_test_before": "apps/ui/test/tasks.test.tsx 'SC-8: the drawer of a task the agent added or split reads what the agent did; a person's task has no such line'; apps/ui/test/real-daemon.test.ts 'SC-8: the task view of a task the agent added or split says what the agent did (GET /projects/:id/tasks and GET /tasks/:id); …'; packages/commands/test/selftasks-chat.test.ts 'a why that starts with a word in capitals keeps it' (stored \"rEADME.md\")",
+      "how": "daemon/task-words.ts agentChangeLine(reason) turns the reasons task.ts stores for the agent into one plain sentence: plainReason, no id, at most 200 characters. Every other reason gives null. taskView sets TaskView.agentChange (append-only, optional), so the list, GET /tasks/:id and every task answer carry it. The fake daemon sets it with the same function. TaskDrawer shows it under the status line (data-testid drawer-agent-change). The user guide now promises the drawer only. Sibling fix: agentReason lowercases only an ordinary capitalised first word, so 'README is missing' keeps its capitals. New test: packages/runtime/test/agent-change-line.test.ts.",
+      "check_in_the_app": "Project at Standard with plan-written tasks. Open Chat and type: fix the tasks: \"Style the page in styles.css\" is two jobs, the layout and the colours; nothing checks that the links work. The reply is 'I changed 2 tasks of <project>.' Go to Tasks and click 'Check that the links work': the drawer reads 'Added by the agent: Nothing checks that the links work.' Click 'Style the page in styles.css: colours': it reads 'Split from \"Style the page in styles.css\" by the agent.' Neither line has an id, 'via chat' or 'by you'. Bench: /tmp/frbench/fixup-d1109-selftasks-chat-shots/run2/02-w1-drawer-added-step.png and 03-w1-drawer-split-part.png. Live check 4: with the real model the 'why' after 'Added by the agent:' is the model's own sentence; check that it reads as one plain sentence."
+    },
+    {
+      "problem": "Blocking 2: the read-back of 'fix the tasks' called a priority change 'reword \"Publish the page\"'. A Yes to a 'reword' changed the priority, and the area's own test asserted that untrue word. The suggestion card has the same fault because it lists the same proposalLine. The session result's line, a sibling, read 'reworded \"X\"' for any edit.",
+      "u_ids": [
+        "U-095"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts 'at Assisted the set is ONE read-back …', 'at Standard, after a lookup returned records, the same request is read back …' and 'the read-back names what an edit changes (review)'; packages/runtime/test/session-update.test.ts 'an edit is named as edited, never reworded (review)'",
+      "how": "proposalLine (session/task-proposal.ts) names the fields an edit changes, as task.update's own read-back does: 'Change \"Publish the page\": priority to High.', the title, what done looks like, the criteria, in any mix. A new title alone stays 'Rename \"X\" to \"Y\".' Nothing reads 'Reword'. Chat's read-back and the suggestion card both use proposalLine, so both are fixed in one place. changeWords in session/result.ts reads 'edited' for the stored kind 'reworded'; the stored kind is unchanged. The WIP patch of the earlier run (a chat-only fixChangeLine) was replaced by this one-place fix.",
+      "check_in_the_app": "Set a project to Assisted. Open Chat and type: fix the tasks: \"Write the README: what the page does and how to open it\" is urgent; nothing checks that the links work. One yellow read-back appears: 'Make these 2 changes to the tasks of <project>? Change \"Write the README: …\": priority to High; add \"Check that the links work\".' with Yes and No. 'reword' appears nowhere. Press Yes: the README task is High priority and the step is added. Bench: /tmp/frbench/fixup-d1109-selftasks-chat-shots/run1/05-w2-garden-read-back.png. Live check 4: when the real model sends a priority-only or outcome-only edit, the read-back and the Inbox suggestion card name exactly that field."
+    },
+    {
+      "problem": "Blocking 3: the new real-daemon describe removed its homes with rmSync instead of removeHomes. Windows CI hit EBUSY with this pattern before (ba9874a). Done in the earlier run (450e9de).",
+      "u_ids": [
+        "U-095"
+      ],
+      "failing_test_before": "none: test hygiene for Windows CI; no Linux test fails without it",
+      "how": "apps/ui/test/real-daemon.test.ts describe 'd1109-selftasks-chat, run C' now uses afterAll(() => removeHomes(homes)) and keeps settleSessions before each close.",
+      "check_in_the_app": "Nothing to see in the app. On the next CI run, the Windows job's real-daemon suite has no EBUSY in this describe."
+    },
+    {
+      "problem": "Blocking 4 (C5-left-7): the task check's model choice changed (planning row, the principal's planning override, capped by the project's highest model) with no test that fails without the change.",
+      "u_ids": [
+        "U-095"
+      ],
+      "failing_test_before": "packages/runtime/test/task-check-model.test.ts (new). With compose's model put back to the planning row's tier alone, 3 of its 4 cases fail: each request got claude-sonnet-5-5. All 4 pass on the change.",
+      "how": "New composed test, cred-world with the API key only and no injected provider. Chat's 'fix the tasks' makes only the check's call, and the request the Messages API stand-in receives names the model. With nothing set it is Sonnet. With an Opus override it is Opus. A Fable override is capped to Opus by the default ceiling and becomes Fable only with the project's own critic_ceiling. A project ceiling of Haiku gives Haiku. The session's boundary check uses the same deps object.",
+      "check_in_the_app": "Settings > Models > planning: choose another model (bench: model.settings.set planning tier opus). In Chat, type 'tidy up the task list'. In the model-call log, the task-check call uses that model (bench run2: fake-opus; before the override it was fake-sonnet). Live check 4: the same steps with the real model; the task-check request's model in the log is the chosen tier's model id, and a project with a lower 'highest model' caps it."
+    },
+    {
+      "problem": "Review non-blocking: 'check the tasks for errors', '… in the Inbox' and '… on Monday' read 'errors', 'the Inbox' and 'Monday' as project names and replied 'There is no project called \"errors\".'",
+      "u_ids": [
+        "U-095"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts \"a 'check the tasks for …' line that names no project (review)\" (3 cases)",
+      "how": "conversation/agent.ts: fixTarget marks its no-match reply as unknown. When the parser named that project, the line is not the plain 'fix the tasks' and goes on to the chat model with its tools. A line that names one of the person's projects still runs the check at once.",
+      "check_in_the_app": "In Chat, type 'check the tasks for errors'. The answer is a chat reply (bench: '[stand-in model] I was given …'), never 'There is no project called \"errors\".' Bench: run1/07-w3-shop-check-for-errors.png. Live check 4: the real chat model reads this line and either answers or calls fix_tasks; in the log, any check it runs carries the person's line verbatim."
+    },
+    {
+      "problem": "Review non-blocking: two 'fix the tasks' requests at once paid for two checks. The busy test ran before the room and the session were read, so the second request waited on the lock and then ran.",
+      "u_ids": [
+        "U-095"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts 'two requests at once make one check (review)' (2 checks before, 1 now)",
+      "how": "fixTasksInChat tests taskCheckRunning again just before withTaskCheckLock, with no await in between. withTaskCheckLock takes the lock in the same tick.",
+      "check_in_the_app": "Hard to time by hand. Covered by the composed test. The second request reads 'The agent is checking the tasks of <project> now; ask again in a moment.' and the model-call log shows one task-check call."
+    },
+    {
+      "problem": "Review non-blocking: 'review the tasks' and 'can you go through the tasks?' ran the paid check, which changes tasks at once from Standard. A person often means 'show me' them, and these verbs are beyond the spec's list.",
+      "u_ids": [
+        "U-095"
+      ],
+      "failing_test_before": "packages/commands/test/intent.test.ts \"'review' and 'go through' the tasks are not the paid check (review)\"",
+      "how": "intent.ts FIX_VERB no longer has 'review' or 'go through'. Such lines go to the chat model, which calls fix_tasks when the person asks for a fix. 'correct', 'check over' and 'sort out' still read as this intent.",
+      "check_in_the_app": "In Chat, type 'review the tasks': a chat reply comes back and the model-call log has no task-check call. Bench: run1/08-w4-shop-review-the-tasks.png. Live check 4: the real model may still call fix_tasks for 'review the tasks'. If it does, the result follows the project's autonomy, and a lookup in the same turn makes it a read-back."
+    },
+    {
+      "problem": "Review non-blocking: the model-facing texts of this path were checked only against their own constants. GET /inbox's openDetails had no real-daemon assertion.",
+      "u_ids": [
+        "U-095"
+      ],
+      "failing_test_before": "none: these are pins of current text and a new assertion. They fail on any future wording change or field drop.",
+      "how": "chat-fix-tasks.test.ts pins word for word: FIX_TASKS_DESCRIPTION, the project parameter's description, CHAT_TASK_RULES and the check's chat paragraph. Every other line of the chat rules equals the session's. The selftasks-run suggestion card case in real-daemon.test.ts now also asserts openDetails === true.",
+      "check_in_the_app": "Nothing new to see. Live check 4: in the model-call log, the chat request's fix_tasks tool and system text match these pinned texts."
+    },
+    {
+      "problem": "Bench: the stand-in's task check could not play an edit, so the corrected read-back words could not be walked.",
+      "u_ids": [
+        "U-095"
+      ],
+      "failing_test_before": "testenv/test/bench-task-check.test.ts 'the stand-in plays a priority edit (review)' (new; before, the stand-in returned no change)",
+      "how": "testenv/src/bench/task-check-play.ts: the line '\"<task>\" is urgent' gives an edit with priority high. Documented in docs/maintainers/testing.md.",
+      "check_in_the_app": "Bench only: as in blocking 2, with 'is urgent' in the request."
+    }
+  ],
+  "not_done": [
+    {
+      "problem": "SC-12 'on its row': a Tasks row does not show the agent's reason line. Only the drawer does.",
+      "why": "shared_files gives this area only the drawer's reason line (TaskDrawer, 'only if SC-8's test fails'). The row's second line belongs to other areas (C4b TaskCap, polish words). The earlier run corrected the user guide to promise the drawer only. Whether the row needs it is for the session lead to decide."
+    },
+    {
+      "problem": "SC-1 'with the Connect action': 'Fixing the tasks needs Claude.' has no Connect action and does not say what to do (design §5 rule 8).",
+      "why": "A chat reply has no offer kind for Connect (ChatOfferView.action is only go_ahead or think). Adding one means a new offer kind, a UI button and both daemons. That is not a cheap fix-up item."
+    },
+    {
+      "problem": "'Make this a task' is offered under a refused fix line (for example the over-budget reply).",
+      "why": "ChatTaskFixResult already sets notice: true, but Conversation.tsx isOwnRequest ignores notice for every reply. Skipping notice replies would change all of them (no Claude key, other refusals), which is a cross-cutting UI decision. Logged in new_problems."
+    },
+    {
+      "problem": "CommandLoop.recompose builds the merged card with a plain agent context. When fix_tasks reads back and another task tool runs in the same turn, the planFix/askFirst context is lost.",
+      "why": "It needs a merge rule for planFix contexts in recompose and the executor's stored card. That is not a cheap item. The usual paths (the parser line, fix_tasks alone, several named changes) keep their context."
+    },
+    {
+      "problem": "Session page: a split line read 'Cannot be undone now: \"…: layout\" has run since …' before that part started. After a reload, an undone line shows only 'Undone.'",
+      "why": "The first is d1109-selftasks-run's undoBlocked wording (CommandLoop.undoBlocked), outside this area. 'Undone.' after a reload is true and short. The undo's own sentence is on Changes."
+    },
+    {
+      "problem": "The suggestion card's open list shows 'Asks you first: …' as a bullet among the changes.",
+      "why": "The card's details come from task-proposal (d1109-selftasks-run) as one list. Separating the reason needs a RequestView field and a matching change in both daemons. Left as polish."
+    },
+    {
+      "problem": "No pnpm test:injection case for the fix_tasks channel.",
+      "why": "The check's request is the person's line verbatim, and the model can pass only a project name. A record that asks the model to call fix_tasks is covered by the composed recordsRead case (it is read back, not applied). A judged injection case needs new corpus wiring."
+    },
+    {
+      "problem": "The fixer's own not_done items stand as reported: SC-13, SC-10 unit file, C4-left-2..9, C3-left-10/11, C5-left-6, L3-left-16.",
+      "why": "This fix-up covered the review's blocking items and the cheap non-blocking ones. Those leftovers need their own failing tests and were not in its scope."
+    }
+  ],
+  "validation": [
+    {
+      "command": "flock /tmp/frbench/heavy.lock pnpm check",
+      "result": "green: lint, paths, typecheck, 537 unit files (5806 passed, 7 skipped), docs check (no origin/main in the worktree, nothing to diff), links ok (213 files), secret scan clean"
+    },
+    {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "green: 5 files passed, 6 skipped (no Postgres); 30 passed, 81 skipped"
+    },
+    {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "green: 13 files, 25 passed, 1 skipped"
+    },
+    {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts",
+      "result": "green: 97 files, 1305 tests"
+    },
+    {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts (real Vite build)",
+      "result": "green: 38 passed"
+    },
+    {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+      "result": "PASS: 81 cases (58 hostile, 23 controls), 0 failed"
+    },
+    {
+      "command": "real-daemon 'the card in the Inbox names the project, …' (selftasks-run suggestion card, now with openDetails)",
+      "result": "1 passed"
+    },
+    {
+      "command": "failing-first checks",
+      "result": "chat-fix-tasks (3 cases) and session-update (1) failed before the proposalLine/changeWords fix; task-check-model failed 3 of 4 with compose's old model wiring; unknown-project (3 cases), two-at-once (1) and intent review/go-through (1) failed before their fixes; all pass on HEAD"
+    },
+    {
+      "command": "bench re-walk fixup-d1109-selftasks-chat (daemon 48801, UI 2401, --provider bench, FORERUNNER_BENCH_ASK=page skeleton)",
+      "result": "W1 Standard 'I changed 2 tasks of Shop page.'; drawer 'Added by the agent: Nothing checks that the links work.' and 'Split from \"Style the page in styles.css\" by the agent.'; W2 Assisted read-back 'Change \"Write the README: …\": priority to High; add \"Check that the links work\".' with one task-check call, Yes made both changes, no card left open; W3 'check the tasks for errors' answered by the chat model; W4 'review the tasks' made no task check; W5 after a planning override (opus) the check ran on fake-opus (fake-sonnet before). Bench stopped, home and profile deleted; steps in /tmp/frbench/fixup-d1109-selftasks-chat-shots/"
+    },
+    {
+      "command": "cargo",
+      "result": "not run: the desktop shell was not touched"
+    }
+  ],
+  "screenshots": {
+    "before": [
+      "/tmp/frbench/review-d1109-selftasks-chat/steps/06-w2-drawer-check-that-the-links-work.png",
+      "/tmp/frbench/review-d1109-selftasks-chat/steps/07-w2-drawer-style-the-page-in-styles-css.png"
+    ],
+    "after": [
+      "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run2/02-w1-drawer-added-step.png",
+      "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run2/03-w1-drawer-split-part.png",
+      "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run1/05-w2-garden-read-back.png",
+      "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run1/06-w2-garden-after-yes.png",
+      "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run1/07-w3-shop-check-for-errors.png",
+      "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run1/08-w4-shop-review-the-tasks.png",
+      "/tmp/frbench/fixup-d1109-selftasks-chat-shots/run2/04-w5-garden-tidy-after-override.png"
+    ]
+  },
+  "tests_changed_for_design": [
+    {
+      "test": "packages/runtime/test/chat-fix-tasks.test.ts ASK_THREE (used by 'at Assisted …' and 'after a lookup returned records …')",
+      "why": "The fixer's assertion locked the untrue 'reword \"Publish the page\"' for a priority-only edit. It now expects 'change \"Publish the page\": priority to High' (design §3.9; §5 rules 4 and 9). The intent, one read-back naming all three changes, is kept."
+    },
+    {
+      "test": "apps/ui/test/real-daemon.test.ts selftasks-run 'the card in the Inbox names the project, …'",
+      "why": "Strengthened, not changed: one added assertion that GET /inbox gives openDetails true (SC-9). Every earlier assertion is kept."
+    }
+  ],
+  "new_problems": [
+    "Attribution, for the session lead to decide (review non-blocking 1): a change the person names in chat that the chat model makes now reads '… changed by the agent', and Changes names the agent (ChangeLogView.byAgent, task.ts agentReason/movedByAgent). The same change through the parser path reads 'by you'. This conflicts with 'Changes the person names in their own words stay the person's instruction'. One option: keep byAgent and the agent words for planFix and session-source changes only.",
+    "Chat read-back card lifetime: it waits 10 minutes (PENDING_TTL_MS). At Advisor or Assisted, a 'fix the tasks' read-back left longer quietly expires after the check's cost was booked and the kept notes were taken. The owner's 'asks first on one card' then lapses. For the session lead to decide.",
+    "'Make this a task' shows under refusal replies (for example 'Fixing the tasks would pass this project's budget; nothing changed.') because Conversation.tsx isOwnRequest ignores reply.notice. ChatTaskFixResult documents notice as the way to skip it. Fixing this changes every notice reply in chat.",
+    "Pre-existing: after a Yes, a chat-model command (actor agent, source chat, no planFix) still posts an Inbox Update that echoes the change (executor.post, not theirOwn). Seen in the review's SC-5 walk."
+  ],
+  "notes_for_other_areas": [
+    "proposalLine (session/task-proposal.ts) now names an edit's fields: 'Change \"X\": priority to High.' / 'Change \"X\": what done looks like and the criteria.'; a new title alone is 'Rename \"X\" to \"Y\".'; nothing reads 'Reword'. Both the suggestion card's list and chat's read-back use it. A suggestion set that contains an edit gets a new fingerprint, so a 'Keep the tasks' given on such a set before the upgrade may be asked again once.",
+    "session/result.ts changeWords reads 'edited \"X\"' for the TaskChangeFact kind 'reworded'; the stored kind is unchanged.",
+    "TaskView.agentChange (append-only, optional; daemon/task-words.ts agentChangeLine) is shown in TaskDrawer under the status detail line (data-testid drawer-agent-change). d1109-cred-screens owns the drawer's run line; this line sits apart from it.",
+    "conversation/agent.ts fixTarget returns { reply, unknown: true } when a named project matches none; the parser branch then lets the line go to the chat model. Model tool calls (fix_tasks with a bad project) still get the 'There is no project called …' content.",
+    "intent.ts FIX_VERB no longer includes 'review' or 'go through'.",
+    "fixTasksInChat tests taskCheckRunning again right before withTaskCheckLock; keep no await between the two.",
+    "Bench stand-in: '\"<task>\" is urgent' in the person's words or a report's lines gives an edit raising that task to High (testenv/src/bench/task-check-play.ts).",
+    "packages/runtime/test/task-check-model.test.ts uses credWorld({ subscription: false }) and reads the model from world.keyCalls(); a later area that changes how the task check picks its model updates its four expectations.",
+    "Suggested lines for the session lead's words list: 'Make these 2 changes to the tasks of Garden club? Change \"Write the README: …\": priority to High; add \"Check that the links work\".'; drawer: 'Added by the agent: Nothing checks that the links work.', 'Split from \"Style the page in styles.css\" by the agent.'; session result: 'Changed 1 task: edited \"Publish the page\".'"
+  ]
+}
