@@ -300,6 +300,18 @@ export function stoppedNowLine(
   return `${head}; the work waits for it.`;
 }
 
+/**
+ * What Settings' "Stop using it" does (CS-1; the review of the fix-up: the button had no line):
+ * the yes ends, a run already going on the other credential finishes (a run is never moved
+ * mid-way, ADR 0100 point 3), and the next pick waits for the stopped one.
+ */
+export function grantEndLine(
+  stoppedKind: CredentialKind | string,
+  to: CredentialKind | string,
+): string {
+  return `Stop using it: what already runs on ${short(to)} finishes; new work waits for ${short(stoppedKind)}.`;
+}
+
 /** Settings' now line with a yes standing (CS-1): "Your work and chat use your API key until 15:40: you said yes." */
 export function grantNowLine(
   stoppedKind: CredentialKind | string,
@@ -489,6 +501,7 @@ export interface CredentialPolicySectionView {
   nowLine: string | null;
   answer: { label: string; to: string } | null;
   grant: boolean;
+  grantEndLine: string | null;
   runsOutLine: string | null;
   footnote: string | null;
   single: { sentence: string; link: { label: string; to: string } } | null;
@@ -562,11 +575,13 @@ export function credentialPolicySection(input: {
   let nowLine: string | null = null;
   let answer: CredentialPolicySectionView["answer"] = null;
   let grant = false;
+  let grantEnd: string | null = null;
   if (both && first?.stop) {
     const g = first.grant && first.grant.stopKey === first.stop.stopKey ? first.grant : null;
     if (g) {
       nowLine = grantNowLine(first.kind, g.to, first.stop, opts);
       grant = true;
+      grantEnd = grantEndLine(first.kind, g.to);
     } else {
       const askOpen = policy.rule.whenStopped === "ask" && !!input.openAskId;
       nowLine = stoppedNowLine(first.kind, first.stop, policy.rule.whenStopped, {
@@ -588,6 +603,7 @@ export function credentialPolicySection(input: {
     nowLine,
     answer,
     grant,
+    grantEndLine: grantEnd,
     runsOutLine: both ? RUNS_OUT_LINE : null,
     footnote: both && policy.rule.order[0] === "subscription" ? SUBSCRIPTION_FIRST_FOOTNOTE : null,
     single: both

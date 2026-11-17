@@ -167,6 +167,48 @@ describe("d1109-cred-screens, run C: the Start dialog's credential line and butt
     );
     expect(within(dialog).queryByTestId("start-session-run-out")).toBeNull();
   });
+
+  // The review of the fix-up: with nothing to run the dialog offered "Use API key" ("about CHF
+  // 0.00"), and pressing it wrote the person's yes before the start was refused.
+  const STOPPED = {
+    line: null,
+    runOut: {
+      use: USE,
+      later: LATER,
+      lean: "use" as const,
+      goesOnLine: null,
+      stoppedLine: "Your subscription is at its limit until 15:40.",
+    },
+  };
+
+  it("nothing to run: no Use API key, only the start's own sentence, and no yes", async () => {
+    const harness = createHarness();
+    for (const t of harness.daemon.state.tasks)
+      if (t.projectId === "proj_atlas" && t.status === "ready") t.status = "draft";
+    harness.daemon.state.startCredential.proj_atlas = STOPPED;
+    const { dialog } = await openDialog(harness);
+    expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(
+      /^Nothing can run/,
+    );
+    expect(within(dialog).queryByTestId("start-session-run-out")).toBeNull();
+    expect(within(dialog).queryByText("Use API key")).toBeNull();
+    expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
+    expect(postedCalls(harness, "/sessions")).toHaveLength(0);
+    expect(harness.daemon.state.credentialGrants).toEqual([]);
+  });
+
+  it("Stop all: no Use API key, only the Stop all sentence", async () => {
+    const harness = createHarness();
+    harness.daemon.state.killActive = true;
+    harness.daemon.state.startCredential.proj_atlas = STOPPED;
+    const { dialog } = await openDialog(harness);
+    expect(await within(dialog).findByTestId("start-session-blocked")).toHaveTextContent(
+      "Sessions are stopped (Stop all), so nothing can start.",
+    );
+    expect(within(dialog).queryByTestId("start-session-run-out")).toBeNull();
+    expect(within(dialog).queryByText("Use API key")).toBeNull();
+    expect(harness.daemon.state.credentialGrants).toEqual([]);
+  });
 });
 
 describe("d1109-cred-screens, run C: the plan card's foot line (CS-4)", () => {

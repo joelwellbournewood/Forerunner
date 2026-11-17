@@ -3258,8 +3258,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           : {}),
       };
     // d1109-cred-screens (CS-3), as the daemon: which Claude does the work, and when the
-    // project's own session already waits, its line in place of the wait's sentence.
+    // project's own session already waits, its line in place of the wait's sentence. As the
+    // daemon (the review of the fix-up): a start that runs nothing (unless the project's own
+    // session waits) or that Stop all refuses says nothing of the stop and offers no Use API key.
     view.credential = state.startCredential[id] ?? null;
+    if (
+      view.credential?.runOut &&
+      (state.killActive ||
+        (view.runnable.length === 0 && !view.oversized && !view.credential.runOut.goesOnLine))
+    )
+      view.credential = { line: null, runOut: null };
     const goesOn = view.credential?.runOut?.goesOnLine ?? null;
     const stoppedLine = view.credential?.runOut?.stoppedLine ?? null;
     if (goesOn && view.blocked) view.blocked = { ...view.blocked, sentence: goesOn };
@@ -3446,6 +3454,26 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // (the key serves), and the start goes on as usual below.
     if (parsed.data.useOtherCredential && parsed.data.projectId) {
       const offered = state.startCredential[parsed.data.projectId]?.runOut;
+      // As the daemon: nothing to run is refused with the start's own sentence, before any yes.
+      const check = fakeStartCheck(
+        state.tasks,
+        parsed.data.projectId,
+        parsed.data.budgetUsdMicro ?? null,
+        state.sandbox,
+        {
+          killActive: false,
+          busy: (options.startOutcome ?? "started") === "queued",
+          busyHere: options.busyProjectId === parsed.data.projectId,
+          continuing: fakeContinuing(state.requests),
+        },
+      );
+      if (
+        check.blocked?.kind === "nothing_runnable" &&
+        check.runnable.length === 0 &&
+        !check.oversized &&
+        !offered?.goesOnLine
+      )
+        return errorBody(c, 400, "validation", check.blocked.sentence);
       if (!offered)
         return errorBody(
           c,

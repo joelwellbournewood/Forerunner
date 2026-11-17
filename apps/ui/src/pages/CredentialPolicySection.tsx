@@ -253,6 +253,14 @@ export function CredentialPolicySection() {
               ) : null}
             </p>
           ) : null}
+          {view.grant && view.grantEndLine ? (
+            <p
+              className="text-xs text-neutral-600 dark:text-neutral-400"
+              data-testid="credential-policy-end-grant-explain"
+            >
+              {view.grantEndLine}
+            </p>
+          ) : null}
           {view.runsOutLine ? (
             <p className="text-xs text-neutral-600 dark:text-neutral-400">{view.runsOutLine}</p>
           ) : null}

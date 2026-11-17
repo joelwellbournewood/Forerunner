@@ -61,6 +61,12 @@ export const CredentialPolicyView = z.object({
   answer: LinkView.nullable(),
   /** A yes stands (the now line names it): "Stop using it" ends it (POST .../grant/end). */
   grant: z.boolean(),
+  /**
+   * What "Stop using it" does, beside it (design §3: every action has its one-line
+   * consequence): "Stop using it: what already runs on your API key finishes; new work waits
+   * for your subscription."; null when no yes stands.
+   */
+  grantEndLine: z.string().nullable(),
   /** "Runs out means: ..."; null with one credential saved. */
   runsOutLine: z.string().nullable(),
   /** The subscription-first presets' footnote; null otherwise. */

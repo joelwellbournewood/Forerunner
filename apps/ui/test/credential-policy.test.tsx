@@ -226,7 +226,14 @@ describe("d1109-cred-screens, run C: Which Claude does the work (CS-1)", () => {
     expect(within(section).getByTestId("credential-row-api_key")).toHaveTextContent(
       "CHF 2.10 this month",
     );
+    // What the button does, beside it (design §3).
+    expect(within(section).getByTestId("credential-policy-end-grant-explain")).toHaveTextContent(
+      "Stop using it: what already runs on your API key finishes; new work waits for your subscription.",
+    );
     await user.click(within(now).getByRole("button", { name: "Stop using it" }));
+    await waitFor(() =>
+      expect(within(section).queryByTestId("credential-policy-end-grant-explain")).toBeNull(),
+    );
     await waitFor(() =>
       expect(within(section).getByTestId("credential-policy-now")).toHaveTextContent(
         `Your subscription is at its limit until ${at}; the work waits for it.`,

@@ -22094,6 +22094,9 @@ describe("d1109-cred-screens, run C", () => {
       expect(view.selected).toBe("subscription_then_ask");
       expect(view.nowLine).toBe("Your work and chat use your API key until 11:40: you said yes.");
       expect(view.grant).toBe(true);
+      expect(view.grantEndLine).toBe(
+        "Stop using it: what already runs on your API key finishes; new work waits for your subscription.",
+      );
       expect(view.rows[0]?.state).toBe("At its limit until 11:40");
     } finally {
       await first.rt.close();
@@ -22781,6 +22784,47 @@ describe("d1109-cred-screens, run C", () => {
       await share.rt.close();
     }
   }, 120_000);
+
+  // fixup-d1109-cred-screens (the review: fix_scope's restart list names an Undo of a preset
+  // after a restart; only a unit test covered undoRisk): the pick's Undo token works after the
+  // daemon is composed again, and the section shows the preset before it.
+  it("CS-1 (fix-up): a preset's Undo works after a restart; the section shows the earlier preset again", async () => {
+    const first = await composeCs();
+    let token = "";
+    try {
+      const done = await first.client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "credential_policy", value: "subscription_then_ask" },
+          },
+        ],
+        wordsUsed: "Settings: Which Claude does the work to Subscription first, ask before API key",
+        source: "ui",
+      });
+      const result =
+        done.status === "pending"
+          ? await first.client.confirmCommand(done.pendingId ?? "", { answer: "tap" })
+          : done;
+      expect(result.status, JSON.stringify(result)).toBe("done");
+      token = result.undoToken ?? "";
+      expect(token).not.toBe("");
+      expect((await first.client.credentialPolicy()).selected).toBe("subscription_then_ask");
+    } finally {
+      await first.rt.close();
+    }
+    const second = await composeCs({ home: first.home, vault: first.vault, clock: first.clock });
+    try {
+      expect((await second.client.credentialPolicy()).selected).toBe("subscription_then_ask");
+      const undone = await second.client.undoChange(token);
+      expect(undone.status, JSON.stringify(undone)).toBe("done");
+      const view = await second.client.credentialPolicy();
+      expect(view.selected).toBe("subscription_then_wait");
+      expect(view.nowLine).toBe("If your subscription runs out, the work waits for it.");
+    } finally {
+      await second.rt.close();
+    }
+  }, 60_000);
 
   // fixup-d1109-cred-screens (review blocking 1): under "ask", "Start at 11:40" kept the start
   // but the kept start's own wait filed "Use your API key until 11:40?" (keepStart's noteWait
