@@ -815,7 +815,8 @@ Tests: `test/selftasks-run.test.ts` (ST-2, ST-3, ST-5), `test/registry.test.ts` 
 
 `intent.ts` `fixTasksAskOf(line)`: "fix/tidy up/clean up/check the tasks (task list)", German
 "räum die Aufgaben auf", "korrigiere die Aufgaben"; never a line that names one task; returns the
-project a line names. `task.split` is a chat tool again (read back first). The executor reads back
+project a line names. "review" and "go through" the tasks are not this intent (a person often
+means "show me" them, and the line runs a paid check): such a line goes to the chat model. `task.split` is a chat tool again (read back first). The executor reads back
 every change of a `planFix` context below Standard or with `askFirst`, keeps `planFix` on a stored
 card for a restart, and reads a composed card as one question (`oneQuestion` in change-card.ts;
 `compose(..., { ask })` gives it its own). An agent's change says so where it is stored: "Added

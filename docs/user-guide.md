@@ -473,7 +473,8 @@ them as you left them; an open file or task stays on its own tab.
   and above it makes the changes at once and lists each with its own **Undo** ("I changed 3 tasks
   of Quote page."); at Advisor and Assisted, when a change touches a task you added yourself, or
   after the agent looked something up in that turn, it asks once with **Yes** and **No** ("Make
-  these 3 changes to the tasks of Quote page? …"). The line under the reply says what the check
+  these 3 changes to the tasks of Quote page? …"), naming what each change does ('change "Publish
+  the page": priority to High'). The line under the reply says what the check
   cost in CHF, booked to the project. Nothing starts a session. It says so instead when it cannot
   run: "Fixing the tasks needs Claude.", "Fixing the tasks would pass this project's budget;
   nothing changed.", "The agent is checking the tasks of Quote page now; ask again in a moment."

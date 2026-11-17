@@ -7828,6 +7828,18 @@ by the agent (C4-left-1).
 Tests: `test/chat-fix-tasks.test.ts`, `test/credential-policy.test.ts` (SC-14),
 `test/executor-brief.test.ts` (C4-left-1).
 
+After the area's review (fix-up): a read-back and the suggestion card name what an edit changes
+(`proposalLine` in `session/task-proposal.ts`: 'Change "Publish the page": priority to High.', a
+new title alone 'Rename "X" to "Y".', never 'Reword'), and the session result's line reads
+'edited "X"' for an edit (`changeWords` in `session/result.ts`; the stored kind stays
+`reworded`). When the words after "for", "in", "of" or "on" in a "fix the tasks" line name none
+of the person's projects ("check the tasks for errors"), the parser branch leaves the line to the
+chat model (`fixTarget` marks the no-match `unknown`). `fixTasksInChat` tests `taskCheckRunning`
+again with no await before it takes the lock, so two requests at once make one check. The check's
+model under a planning override and a project's ceiling is tested at the Messages API stand-in
+(`test/task-check-model.test.ts`, cred-world, no injected provider); the model-facing texts of
+this path are pinned word for word in `test/chat-fix-tasks.test.ts`.
+
 The task view carries `agentChange` when the agent made the task's last change (SC-8):
 `agentChangeLine(reason)` in `daemon/task-words.ts` reads the reasons the commands store for the
 agent (SC-12: "Added by the agent: …", "Changed by the agent: …", 'Split from/into … by the

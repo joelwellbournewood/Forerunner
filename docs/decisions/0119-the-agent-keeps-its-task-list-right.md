@@ -136,3 +136,16 @@ own tasks, the autonomy level deciding when it asks first".
   project's highest model). An added step marks only itself as written by the agent.
 - Open owner question (default built): "Fix the tasks" is chat only (and the agent's own check
   during a run), no button on the Tasks tab.
+
+## Amendment 2026-11-17 (d1109-selftasks-chat, run C sub-run C6: after the area's review)
+
+- A change read back for a yes, and the suggestion card's list, say what each change does: an
+  edit names the fields it changes ('Change "Publish the page": priority to High.'), a new title
+  alone is 'Rename "X" to "Y".', never "reword" (design section 3.9, section 5 rules 4 and 9).
+  The session result names an edit as "edited".
+- "review the tasks" and "go through the tasks" are not the parser's "fix the tasks" (a person
+  often means "show me" them, and the check is paid and changes tasks at once from Standard);
+  nor is a line whose words after "for", "in", "of" or "on" name none of the person's projects
+  ("check the tasks for errors"). Both go to the chat model, which calls fix_tasks when the
+  person asks for a fix.
+- Two requests at once make one check: the second says the check runs and makes no call.
