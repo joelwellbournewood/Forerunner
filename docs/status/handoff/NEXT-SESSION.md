@@ -15,6 +15,59 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
+## Status at 2026-11-17 16:50 UTC (run C done, live check 4 done, run L4 planned; paused at the weekly limit)
+
+Session `claude/nifty-knuth-f9udt0` paused here because the owner asked to stop at 90% of the
+weekly usage limit (82% when this was written; the limit resets on Sunday 2026-11-22 at 05:00
+UTC). A continuation is scheduled for that morning. **Head: 4cf11fd**; CI 315 and the Desktop
+app workflow 80 are green on Windows and Linux (the window job drove the installed app).
+
+- **Run C is complete**: sub-runs C1 to C6 and C4b (15 areas) built the owner's decisions D1 to
+  D8 of 2026-11-09 and the answer of 2026-11-16 (a task's budget counts its work, the critic's
+  reviews and the fixes). D9 (working together needs only GitHub) is wave 8's.
+- **Live check 4** (run `wf_29412894-90f`, on 4cf11fd): USD 4.47 of its USD 7 cap, 32 steps
+  with the real model and forerunner-sandbox (all its pull requests closed or merged). 103
+  findings, each checked against the code: 98 real (24 major, 46 minor, 28 words), 2 the model
+  alone, 3 not real. Result: `frbench/live4/result.json` in the plan files.
+- **Run L4 is planned** (triage run `wf_9df91932-254`): live check 4's findings and the 121
+  leftovers of run C and run L3 became 190 items (102 fix, 34 words, the rest already fixed, not
+  a problem, accepted, live only or later), in 11 areas and 8 sub-runs (L4a `l4-cred-engine`;
+  L4b `l4-selftasks-check` + `l4-chat-depth`; L4c `l4-money-pause` + `l4-chat-answers`; L4d
+  `l4-cred-screens`; L4e `l4-github-link` + `l4-github-merge`; L4f `l4-selftasks-chat`; L4g
+  `l4-starts-sessions`; L4h `l4-chat-carried`). Plan: `frbench/runL4-plan.json`; the areas are
+  also in `frbench/phaseE.json`. Nothing of run L4 is built yet.
+- **The owner's answers of 2026-11-17** (in `owner-decisions-2026-11-09.md`): every chat
+  read-back waits until the person answers it (no 10-minute lapse); while a failed task's card
+  is open, chat reads back every change first; chat's fixed lines stay English. One question is
+  open, with today's behaviour kept: a Close button for a cancelled task's pull request still
+  open on GitHub (L4-github-130).
+- **Machine**: the container restarted four times on 16-17 November, likely when two agents ran
+  heavy test suites at once. The fix workflow now reuses saved stages (`existingFixes`,
+  `existingReviews`, `existingFixups`), runs areas one at a time (`sequential`), and agents run
+  one heavy command at a time under `flock /tmp/frbench/heavy.lock`.
+
+**To continue** (the scheduled continuation does this):
+
+1. If `/tmp/frbench` is missing (a new machine), restore the plan files and the workflow
+   scripts: `git fetch origin claude/nifty-knuth-f9udt0-backup/plan-files`, then
+   `git archive FETCH_HEAD frbench | tar -x -C /tmp` and
+   `git archive FETCH_HEAD workflow-scripts | tar -x -C <scratch dir>`; copy
+   `forerunner-phase-e6.js` to `.claude/worktrees/_wf-scripts/`.
+2. Check the weekly usage, the head (4cf11fd or later) and CI.
+3. Build each sub-run's settings with `node build-runL4-args.cjs <L4a..L4h> <base sha>`, which
+   writes `.claude/worktrees/_wf-scripts/forerunner-phase-e6-<name>.js`, and launch that file
+   with the Workflow tool. L4a's file is built on 4cf11fd already.
+4. After each sub-run: save its results, check the merge and the push, wait for CI and the
+   Desktop app on Windows and Linux, remove the worktrees, place its leftovers into the later
+   run L4 areas or a `leftovers-L4<x>.json`, back up the plan files, then build the next one.
+5. Then wave 8 (re-planned around D9), F (the final check: `runL4-plan.json` final_check, about
+   USD 4), G, G2 and H as described below. The live-check budget used so far is about USD 16.50
+   of the owner's USD 40.
+
+Owner items (not blocking): delete the merged backup branches under
+`claude/nifty-knuth-f9udt0-backup/` (all but `plan-files`); create the forerunner-registry
+repository.
+
 ## Status at 2026-11-16 11:00 UTC (run C steps 1 to 4 merged; C4b next)
 
 Session `claude/nifty-knuth-f9udt0` resumed on 2026-11-15 at 05:35 UTC after the weekly reset
