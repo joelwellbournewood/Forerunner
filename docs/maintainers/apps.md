@@ -993,7 +993,12 @@ answers the card with the option it shows.
   (`credential-abilities`); the mid-session setting is gone.
 - **Start dialog**: `start-session-credential` (the line) and, while the first choice is out,
   `start-session-run-out` with **Use API key** (`useOtherCredential: true`) and **Start at 15:40**
-  in the lean's order; the plain Start is hidden then.
+  in the lean's order; the plain Start and its `start-session-explain` line are hidden then, and
+  `start-session-blocked` is the stop alone. A kept start alone ("Start at 15:40") has its explain
+  line begin with that label. `start-session-review-may-wait` lists a task whose budget may leave
+  too little for its review (C4b-left-5).
+- **Run bar** (`shell/RunIndicator.tsx`, CS-7): the run's links (Answer, Change the allowance) sit
+  in `run-links` right after the words, apart from Cancel and its own line.
 - **Inbox**: the plan card's `intake-credential-line`; the ask card through the generic card.
 - **Session page**: `session-switch-line` under the spend; **drawer**: `drawer-run-switch`.
 - **Chat and Talk** (`components/Conversation.tsx`): a hold reply's `<ids>-one-off` press and

@@ -7929,16 +7929,39 @@ log's lines stay in `session/credential-words.ts`); the shapes are in
   monthly cap and the open ask (Answer, `/inbox#card-<id>`); `projectStatusLine` puts the ask
   first.
 
-The open owner question "a one-off Use API key under 'then wait'" is built as yes:
-`ONE_OFF_UNDER_WAIT` in `credential-policy-view.ts`. Not built here: the switch notification
-(CE-12, `switchNotificationWords` has no producer), the run indicator's ' on your API key' and
-'1 task waits for your answer' forms (CS-7), `StartCheck.reviewMayWait` (C4b-left-5).
+- **The two buttons' line** (CS-3, C3-left-9): `runOut.stoppedLine` (`startStoppedLine`: "Your
+  subscription is at its limit until 15:40.") replaces the start check's "Nothing can run until
+  ..." beside "Use API key" and "Start at 15:40"; a kept start alone keeps that sentence, which
+  names "Start at 15:40".
+- **The ask card's figure** (CS-8): the ask's estimate (compose's `ask`) adds the claimed and
+  in-progress tasks' remaining estimates to the runnable ones (the task whose run met the stop is
+  claimed while the card is filed), never above the session's work budget; `askCardWords` reads
+  "about CHF 0.40", "less than CHF 0.01" alone, or ", at a cost per use" with no figure known.
+- **The runs-on line under "next"** (CS-10's walk): `chooserBatch` gives a resting first choice up
+  for the next saved credential that is not resting and can do the task (as the pick does) when
+  the preset goes on with the next one; under "then wait" and "ask" the line stays the wait.
+- **The review that may wait** (C4b-left-5): `StartCheck.reviewMayWait` (`session/start-check.ts`):
+  per task with a budget of its own, its estimate plus one critic call's worst case against what
+  is left of its budget; `StartCheckView.reviewMayWait` with `reviewMayWaitLine`. `POST
+  /sessions` checks the month's room before it writes a yes for "Use API key".
+- **The run indicator** (CS-7): `RunWords.on` (" on your API key"), `asking` (" · 1 task waits for
+  your answer"), `RunWait` share and key_month forms, `RunningView.links` (Answer, Change the
+  allowance); `GET /sessions/:id`'s `waitBlock.answer`.
+- **The switch notification** (C5-left-2, CE-12): kind `credential_switch`, once per stop when the
+  policy (not a grant) moved work onto the API key, kept by the audit row `billing.switch_notice`.
 
-Tests: `credential-policy-view.test.ts` (every sentence), `credential-switch.test.ts` (composed on
-`cred-world.ts`: one switch line, the detail, the back line, the Run rows, the result, the page's
-line, Costs, and composed again), `credential-refused-closed.test.ts`, and the UI's
+The open owner question "a one-off Use API key under 'then wait'" is built as yes:
+`ONE_OFF_UNDER_WAIT` in `credential-policy-view.ts`. Not built: the "needs" row form ("Waits for
+your API key: only it can read web pages here."), for want of the need in the wait entry.
+
+Tests: `credential-policy-view.test.ts` (every sentence, the ask card's figure),
+`credential-switch.test.ts` (composed on `cred-world.ts`: one switch line, the detail, the back
+line, the Run rows, the result, the page's line, Costs, the notification, and composed again),
+`credential-ask-figure.test.ts` (the card prices the task that met the stop),
+`credential-indicator.test.ts`, `credential-refused-closed.test.ts`, and the UI's
 `credential-policy.test.tsx`, `credential-start.test.tsx`, `credential-switch.test.tsx`,
-`credential-chat.test.tsx` with the real-daemon describe "d1109-cred-screens, run C".
+`credential-chat.test.tsx`, `run-indicator.test.tsx` with the real-daemon describe
+"d1109-cred-screens, run C".
 
 ## How to change it
 

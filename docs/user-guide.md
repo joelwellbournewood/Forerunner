@@ -1098,7 +1098,15 @@ key until the stop ends, about the cost it names; no session budget is raised) a
 15:40** (nothing moves before; the session starts then), the one your choice leans to first. When
 your own session already waits to go on, the dialog says "Your session of 14:05 goes on by itself
 at 15:40." and **Use API key** lets it go on now. The plan card in the Inbox says the same once at
-its foot.
+its foot. Under "Subscription first, then API key" each task's line on the card names the key that
+does it meanwhile, never a wait. If a task's own budget may leave too little for its review, the
+dialog names that task before you start; its review then waits for Continue.
+
+With your subscription at its limit and your choice "ask before API key", the work waits for your
+answer on one card in the Inbox ("Use your API key until 15:40?"); the bar at the top of every
+page says so with **Answer**, and the card names what the waiting work costs on the key ("about
+CHF 0.40"). If your choice moves work onto the key by itself, you get one notification for that
+stop with its cost.
 
 A waiting task's row says why and until when: "Waits until 15:40 (your subscription's limit)",
 "Waits until Tue 1 Dec (your subscription's share)" with **Change the allowance**, "Waits for your

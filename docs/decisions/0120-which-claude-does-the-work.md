@@ -124,7 +124,12 @@ Open owner question built as its default (one constant): a one-off "Use API key"
 "then wait" too (`ONE_OFF_UNDER_WAIT = true` in `credential-policy-view.ts`): 'wait' means the app
 does nothing by itself, not that the person cannot choose.
 
-Not built in this round: the switch notification (CE-12), the run indicator's credential forms
-(CS-7), the Start dialog's review-may-wait line (C4b-left-5), and the "needs" row form ("Waits for
-your API key: only it can read web pages here."), for want of the need in the wait entry.
+Built later in the same round (C6, resumed): the switch notification (CE-12: once per stop when
+the policy, not a yes, moved work onto the API key), the run indicator's credential forms (CS-7:
+" on your API key", "1 task waits for your answer" with Answer, the share and key-month waits),
+the Start dialog's review-may-wait line (C4b-left-5), the line above the two buttons that says
+the stop alone ("Your subscription is at its limit until 15:40."), and the runs-on line of a task
+under a preset that goes on with the next credential (it names that credential, never the first
+one's wait). Not built: the "needs" row form ("Waits for your API key: only it can read web pages
+here."), for want of the need in the wait entry.
 
