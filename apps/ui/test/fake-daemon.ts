@@ -574,6 +574,12 @@ export interface FakeDaemonState {
    */
   runningExtra: RunningView[];
   /**
+   * d1109-cred-screens (CS-7), as the daemon's run fold and `askWaiting` read them for a running
+   * session: the credential kind its running task went on with (' on your API key') and the
+   * tasks that wait on the open ask card (' · 1 task waits for your answer' with Answer).
+   */
+  runCredential: Record<string, { on?: string; asking?: { count: number; to: string } }>;
+  /**
    * d1109-run-visible (V-3): what waits to start for a project, as the daemon's `startsWaitOf`
    * reads it (the person's session going on, a kept Start, a held hands-off start, a person start
    * behind another session); its status line says it. Cancel drops a continuation or kept start.
@@ -1369,6 +1375,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     runs: clone(RUNS),
     sessions: clone(SESSIONS),
     runningExtra: [],
+    runCredential: {},
     startsWait: {},
     waitBlockAfterCancel: {},
     projectSessions: clone(PROJECT_SESSIONS),
@@ -1504,10 +1511,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const task = s.currentTask;
       const runState: RunningView["state"] =
         s.status === "paused" ? "stopping" : task ? "working" : "between";
+      // CS-7, as the daemon: the running task on the credential its choice puts second, and
+      // the tasks that wait for the person's answer on the ask card.
+      const credential = state.runCredential[s.id];
       const words = {
         state: runState,
         taskTitle: task?.title ?? null,
         specialist: task?.specialist ?? null,
+        ...(runState === "working" && credential?.on ? { on: credential.on } : {}),
+        ...(credential?.asking ? { asking: credential.asking.count } : {}),
       };
       const text = runText({ projectName: project.name, ...words });
       views.push({
@@ -1523,6 +1535,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         cancel: false,
         nextProject: null,
         explain: null,
+        ...(credential?.asking ? { links: [{ label: "Answer", to: credential.asking.to }] } : {}),
       });
     }
     for (const extra of state.runningExtra)

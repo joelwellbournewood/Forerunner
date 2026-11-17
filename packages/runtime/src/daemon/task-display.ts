@@ -246,7 +246,7 @@ export async function credentialWaitRow(
  * the subscription at the share Forerunner may use, or a key at a monthly cap it was given; until
  * the next month's start (UTC). Null otherwise.
  */
-async function monthStopOf(
+export async function monthStopOf(
   store: StateStore,
   row: BillingSource,
   nowMs: number,

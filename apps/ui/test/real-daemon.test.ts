@@ -22641,4 +22641,92 @@ describe("d1109-cred-screens, run C", () => {
       await rt.close();
     }
   }, 60_000);
+
+  it("CS-7: GET /running shows the waiting session under 'ask' with Answer opening the card and Cancel; GET /sessions/:id's wait block says the time with Answer; the share's wait reads its time with Change the allowance", async () => {
+    const sdkCalls: string[] = [];
+    const { rt, client } = await composeCs({ sdkQuery: claudeCodeAtLimit(sdkCalls) });
+    try {
+      await setPolicyCs(client, "subscription_then_ask");
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addReady(client, project.id, "Style the page");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end to wait (at least 10 s of real time)",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      await settleSessions(rt);
+      const me = await client.me();
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.status === "open" && (r.title ?? "").startsWith("Use your API key"),
+      );
+      expect(card).toBeDefined();
+      const to = `/inbox#card-${encodeURIComponent(card?.id ?? "")}`;
+      expect(await client.running()).toEqual([
+        expect.objectContaining({
+          projectId: project.id,
+          state: "waiting",
+          text: "Quote page · waiting until 11:40, then it goes on",
+          cancel: true,
+          links: [{ label: "Answer", to }],
+        }),
+      ]);
+      const page = await client.session(sessionId);
+      expect(page.waitBlock?.text).toBe(
+        'Waiting until 11:40 (your subscription\'s limit), then it goes on with "Style the page".',
+      );
+      expect(page.waitBlock?.answer).toEqual({ label: "Answer", to });
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+    // The share: a person's session waiting on it reads the month's start in the person's clock.
+    const share = await composeCs();
+    try {
+      const sub = (
+        await share.rt.store.billingSource.list({ human_id: share.rt.human.id }, { limit: 10 })
+      ).find((r) => r.kind === "subscription");
+      await share.rt.store.costLedger.record({
+        human_id: share.rt.human.id,
+        agent_id: share.rt.agent.id,
+        billing_source_id: sub?.id ?? null,
+        kind: "subscription",
+        usd_micro: 0,
+        chf_micro: 0,
+        plan_usage_share: 0.95,
+        model: "claude-sonnet-5-5",
+      } as never);
+      const project = await share.client.createProject({ name: "Quote page", goal: "A quote" });
+      await addReady(share.client, project.id, "Style the page");
+      const agentId = (await share.client.agents())[0]?.id ?? "";
+      const started = await share.client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes(
+            (await share.client.session(sessionId)).status,
+          ),
+        "the session to end to wait (at least 10 s of real time)",
+        async () => (await share.client.session(sessionId)).status,
+        20_000,
+      );
+      await settleSessions(share.rt);
+      // The clock is 5 March: the share ends on 1 April, 00:00 UTC, 02:00 in Zurich (summer time).
+      expect(await share.client.running()).toEqual([
+        expect.objectContaining({
+          state: "waiting",
+          text: "Quote page · waiting until Wed 1 Apr, 02:00, then it goes on",
+          cancel: true,
+          links: [{ label: "Change the allowance", to: "/settings#plan-allowance" }],
+        }),
+      ]);
+    } finally {
+      await settleSessions(share.rt);
+      await share.rt.close();
+    }
+  }, 120_000);
 });

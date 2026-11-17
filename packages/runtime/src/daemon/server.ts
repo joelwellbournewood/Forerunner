@@ -2023,7 +2023,9 @@ export function createDaemonApp(
       : null;
     const budgetLeft = money(Math.max(0, s.budget_cap_usd_micro - s.spent_usd_micro), chf());
     const wait = await rt.billing.waits.now(projectId).catch(() => null);
-    const text = wait?.text ?? "";
+    // d1109-cred-screens (CS-7): under 'ask' with its card open, the wait's own time and stop
+    // (before: "Waiting for Claude, then it goes on with ..."), and Answer opening the card.
+    const text = wait?.asking?.plain ?? wait?.text ?? "";
     const until = /until (.+?) \((.+?)\)/.exec(text);
     const continuation = await keptContinuationOf(rt.store, projectId);
     if (continuation?.kept.continues === s.id && names) {
@@ -2035,6 +2037,7 @@ export function createDaemonApp(
         explain: CANCEL_WAIT_EXPLAIN,
         projectId,
         budgetLeft,
+        ...(wait?.asking ? { answer: { label: "Answer", to: wait.asking.to } } : {}),
       };
     }
     if ((await keptStartOf(rt.store, projectId)) && names) {

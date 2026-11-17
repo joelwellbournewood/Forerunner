@@ -100,8 +100,11 @@ const fitted = (w: RunWords & { projectName: string; nextProject?: string | null
  * hands-off start are said on their project's status line, not here (nothing runs for them yet).
  *
  * The words never carry an id or USD; task titles are data, quoted and shortened (design §5).
- * d1109-cred-screens (C6) adds the share and key-month forms of the waiting state in place of the
- * generic 'waiting for Claude, then it goes on'.
+ * d1109-cred-screens (CS-7) adds the share and key-month forms of the waiting state in place of
+ * the generic 'waiting for Claude, then it goes on', ' on your API key' after a running task that
+ * went on with the credential the person's choice puts second, ' · 1 task waits for your answer'
+ * while tasks of the session wait on the ask card, and the entry's `links` (Answer while the ask
+ * card is open, Change the allowance for the share).
  */
 
 // --- The views ------------------------------------------------------------------------------------
@@ -114,7 +117,15 @@ export interface WaitingContinuation {
   /** When it was kept (the wait's start). */
   since: string | null;
   wait: RunWait;
+  /** d1109-cred-screens (CS-7): the open ask card of its stop (Answer opens it). */
+  answer?: string | null;
 }
+
+/** A link beside an indicator entry (`RunningView.links`): Answer, Change the allowance. */
+type RunLink = { label: string; to: string };
+
+/** CS-7: where the share's allowance is raised (Settings, the subscription's allowance). */
+const ALLOWANCE_LINK: RunLink = { label: "Change the allowance", to: "/settings#plan-allowance" };
 
 export interface RunIndicatorDeps {
   store: StateStore;
@@ -128,6 +139,11 @@ export interface RunIndicatorDeps {
   waitingContinuations(): Promise<WaitingContinuation[]>;
   /** The monthly check's budget in CHF and whether its calls run on the Claude plan. */
   calibration(sessionId: string): Promise<{ budgetChfMicro: number; onPlan: boolean }>;
+  /**
+   * d1109-cred-screens (CS-7): the project's tasks that wait for the person's answer on the one
+   * open ask card, and where the card is (`/inbox#card-<id>`); null when none waits on it.
+   */
+  askWaiting?(projectId: string): Promise<{ count: number; to: string } | null>;
 }
 
 const RUNNING = ["planned", "running", "paused"] as const;
@@ -230,10 +246,17 @@ export async function runViews(deps: RunIndicatorDeps): Promise<RunningView[]> {
       (p) => p.agentId === row.agent_id && p.projectId && p.projectId !== row.project_id,
     );
     const then = behind ? await nameOf(behind.projectId) : null;
+    // CS-7: the question on the ask card that tasks of this session wait for, with Answer.
+    const asking = deps.askWaiting
+      ? await deps.askWaiting(row.project_id).catch(() => null)
+      : null;
     const words: RunWords = {
       state,
       taskTitle: state === "between" || state === "planning" ? null : fold.taskTitle,
       specialist: fold.specialist,
+      // CS-7: the running task went on with the credential the person's choice puts second.
+      ...(state === "working" && fold.on ? { on: fold.on } : {}),
+      ...(asking && asking.count > 0 ? { asking: asking.count } : {}),
     };
     const f = fitted({ ...words, projectName, nextProject: then });
     views.push({
@@ -249,6 +272,7 @@ export async function runViews(deps: RunIndicatorDeps): Promise<RunningView[]> {
       cancel: false,
       nextProject: then,
       explain: null,
+      ...(asking && asking.count > 0 ? { links: [{ label: "Answer", to: asking.to }] } : {}),
     });
   }
   // The person's own sessions that wait to go on, when nothing of their project runs now.
@@ -258,6 +282,11 @@ export async function runViews(deps: RunIndicatorDeps): Promise<RunningView[]> {
     if (!projectName) continue;
     busy.add(w.projectId);
     const f = fitted({ projectName, state: "waiting", wait: w.wait });
+    // CS-7: Answer while its ask card is open; Change the allowance for the share.
+    const links: RunLink[] = [
+      ...(w.answer ? [{ label: "Answer", to: w.answer }] : []),
+      ...(w.wait.kind === "share" ? [ALLOWANCE_LINK] : []),
+    ];
     views.push({
       key: `wait:${w.projectId}`,
       sessionId: w.sessionId,
@@ -271,6 +300,7 @@ export async function runViews(deps: RunIndicatorDeps): Promise<RunningView[]> {
       cancel: true,
       nextProject: null,
       explain: null,
+      ...(links.length ? { links } : {}),
     });
   }
   return views;

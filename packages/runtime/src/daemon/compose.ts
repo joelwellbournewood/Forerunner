@@ -231,7 +231,9 @@ import {
   needsOf,
 } from "../session/credential-choice.ts";
 import {
+  askCardOpen,
   askShown,
+  CREDENTIAL_WAIT_REASON,
   type CredentialWait,
   clockTime,
   credentialWaitOf,
@@ -242,6 +244,7 @@ import {
   waitThenStartSentence,
 } from "../session/credential-wait.ts";
 import { DependentBranches } from "../session/dependent-branches.ts";
+import { credentialWaitRow, monthStopOf } from "./task-display.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
   type BlockedSyncResult,
@@ -956,6 +959,12 @@ export interface RuntimeApp {
         startLabel?: string;
         /** S-10: a kept person Start: "Starts at 15:40 (your subscription's limit)". */
         startsAt?: string;
+        /**
+         * d1109-cred-screens (CS-7): while the one ask card of the stop is open (`text` is then its
+         * "Waits for your answer: ..." form), the wait's own sentence with its time ("Waits until
+         * 15:40 (your subscription's limit); then your session goes on.") and the card to open.
+         */
+        asking?: { plain: string; to: string };
       } | null>;
     };
   };
@@ -4157,17 +4166,46 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               wait = ends
                 ? { kind: "quiet", at: clockTime(ends, human.timezone, nowMs) }
                 : { kind: "limit", at: clockTime(until, human.timezone, nowMs) };
+            } else {
+              // d1109-cred-screens (CS-7): the share and a key's monthly cap end at the month's
+              // start (UTC), said in the person's clock, or the end of their quiet hours if later.
+              const month = await monthStopOf(store, row as never, nowMs).catch(() => null);
+              if (month) {
+                const ends = quietHours.endsAt(Date.parse(month.until));
+                wait = {
+                  kind: month.reason,
+                  at: clockTime(ends ?? month.until, human.timezone, nowMs),
+                };
+              }
             }
           }
+          // CS-7: while the one ask card of its stop is open, the bar's Answer opens it.
+          const asking = (limits as { asking?: { requestId?: unknown } }).asking;
+          const answer =
+            typeof asking?.requestId === "string" &&
+            (await askCardOpen(store, row.id).catch(() => false))
+              ? `/inbox#card-${encodeURIComponent(asking.requestId)}`
+              : null;
           out.push({
             projectId: w.projectId,
             sessionId: w.kept.continues ?? w.sessionId ?? null,
             since: w.kept.at || w.since || null,
             wait,
+            ...(answer ? { answer } : {}),
           });
         }
       }
       return out;
+    },
+    // d1109-cred-screens (CS-7): the project's tasks that wait for the person's answer on the
+    // one ask card (their rows read "Waits for your answer: use your API key?"), with the card.
+    askWaiting: async (projectId) => {
+      const row = await credentialWaitRow(store, projectId);
+      if (!row?.ask) return null;
+      const count = (
+        await store.task.forProject(projectId, { status: "ready" }, { limit: 500 })
+      ).filter((t) => t.reason === CREDENTIAL_WAIT_REASON).length;
+      return count > 0 ? { count, to: row.save?.to ?? "/inbox" } : null;
     },
     calibration: async (sessionId) => {
       const h = await store.human.get(human.id).catch(() => undefined);
@@ -4466,10 +4504,24 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             ? { startLabel: `Start at ${clockTime(wait.until, words.timezone, words.nowMs)}` }
             : {}),
         };
+      // CS-7: under 'ask' with the card open, the plain wait with its time and the card.
+      const askingId = (source?.limits as { asking?: { requestId?: unknown } } | undefined)
+        ?.asking?.requestId;
+      const asking =
+        wait.ask && wait.reason !== "refused" && typeof askingId === "string"
+          ? {
+              plain: waitSentence(
+                { ...wait, ask: false },
+                { ...words, goesOn: !!kept, ...goesOnAtOf(wait, kept) },
+              ),
+              to: `/inbox#card-${encodeURIComponent(askingId)}`,
+            }
+          : null;
       return {
         text: waitSentence(wait, { ...words, goesOn: !!kept, ...goesOnAtOf(wait, kept) }),
         save: wait.reason === "refused" ? saveLink(wait.kind) : null,
         ...(kept ? { kept: true } : {}),
+        ...(asking ? { asking } : {}),
         // S-10: the person's kept Start, as the project's status says it.
         ...(kept?.by === "person" && keptStartLine(wait, words)
           ? { startsAt: keptStartLine(wait, words) as string }

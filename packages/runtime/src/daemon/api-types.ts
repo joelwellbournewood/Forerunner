@@ -783,6 +783,11 @@ export const SessionView = z.object({
       explain: z.string(),
       projectId: z.string(),
       budgetLeft: Money,
+      /**
+       * d1109-cred-screens (CS-7): while the one ask card of its stop is open, "Answer" opening
+       * it beside Cancel. Absent otherwise (and from an older daemon).
+       */
+      answer: z.object({ label: z.string(), to: z.string() }).optional(),
     })
     .nullable()
     .optional(),
@@ -3590,6 +3595,12 @@ export const RunningView = z.object({
   cancel: z.boolean(),
   nextProject: z.string().nullable(),
   explain: z.string().nullable(),
+  /**
+   * d1109-cred-screens (CS-7): links beside the entry, in the daemon's words: "Answer" (the open
+   * ask card a task of the session, or the waiting session, waits on) and "Change the allowance"
+   * (a session waiting on the subscription's share). Absent when none (and from an older daemon).
+   */
+  links: z.array(z.object({ label: z.string(), to: z.string() })).optional(),
 });
 export type RunningView = z.infer<typeof RunningView>;
 
