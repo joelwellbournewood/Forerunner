@@ -23,6 +23,7 @@ export const NOTIFICATION_KINDS = [
   "critic_calibration",
   "handover_report",
   "pr_merged",
+  "credential_switch",
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
@@ -60,6 +61,8 @@ export const KIND_URGENCY: Readonly<Record<NotificationKind, Urgency>> = {
   handover_report: "normal",
   // leftovers7-merge2: a merge the app made by itself (the retry pass, the resume at start).
   pr_merged: "normal",
+  // d1109-cred-screens (C5-left-2, CE-12): the person's choice moved work onto the API key.
+  credential_switch: "normal",
 };
 
 /** Kinds that always go through, whatever the hour (ADR 0017). */

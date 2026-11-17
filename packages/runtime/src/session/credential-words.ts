@@ -316,9 +316,13 @@ export function switchNotificationWords(input: {
   until: string | null;
   estimateChf: string;
 }): { title: string; body: string } {
+  // d1109-cred-screens (C5-left-2): "less than CHF 0.01" stands alone, as in chat's one-off line.
+  const est = /^less than /.test(input.estimateChf)
+    ? input.estimateChf
+    : `about ${input.estimateChf}`;
   return {
     title: `${input.projectName}: work goes on with your API key`,
-    body: `${stoppedPhrase(input.wait, input.until)}. Your API key costs money: about ${input.estimateChf} for what is left.`,
+    body: `${stoppedPhrase(input.wait, input.until)}. Your API key costs money: ${est} for what is left.`,
   };
 }
 

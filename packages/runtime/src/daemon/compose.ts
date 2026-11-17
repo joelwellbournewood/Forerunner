@@ -215,7 +215,15 @@ import {
   StoreSharedSecretService,
   sharedSecretNamesFor,
 } from "../secrets/index.ts";
-import { CODE_COMMANDS_SETTING, codeCommandsOf, type TaskBillingPort } from "../session/billing.ts";
+import {
+  BILLING_SWITCH_EVENT,
+  CODE_COMMANDS_SETTING,
+  codeCommandsOf,
+  type TaskBillingPort,
+} from "../session/billing.ts";
+import { chfText } from "../money-words.ts";
+import { switchNotificationWords } from "../session/credential-words.ts";
+import { aboutWords } from "../session/money-words.ts";
 import {
   type BudgetStopSyncResult,
   syncBudgetStopAnswers,
@@ -3446,6 +3454,77 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     );
     await notifier.notify({ ...n, urgency: "normal" });
   };
+  // d1109-cred-screens (C5-left-2, CE-12; the owner's 7a: "in a transparent way"): when the
+  // person's choice moved work onto the API key by itself (`billing.switch` by the policy, the
+  // first line of its stop, to the key), they hear it once per stop, with what is left of the
+  // session's work at its cost. A move they said yes to (a grant) is no news; the stop's audit
+  // row keeps it once across sessions and restarts.
+  const SWITCH_NOTICE_AUDIT_TOOL = "billing.switch_notice";
+  const noticeSwitch = async (e: SessionBusEvent, p: Record<string, unknown>): Promise<void> => {
+    const stopKey = typeof p.stopKey === "string" ? p.stopKey : "";
+    const taskId = typeof p.taskId === "string" ? p.taskId : "";
+    if (!stopKey || !taskId) return;
+    const told = await store.auditLog.list(
+      { humanId: human.id, tool: SWITCH_NOTICE_AUDIT_TOOL },
+      { limit: 500 },
+    );
+    if (told.some((r) => r.input_summary === JSON.stringify({ stopKey }))) return;
+    const runs = await store.run.forTask(taskId);
+    const run = runs.find((r) => r.outcome === "running") ?? runs[runs.length - 1];
+    const session = run?.session_id ? await store.session.get(run.session_id) : undefined;
+    // What is left: the session's planned tasks not done yet, at their estimates, never more than
+    // what is left of its budget (the key cannot spend past it).
+    const items = ((session?.plan as { items?: unknown } | null)?.items ?? []) as {
+      taskId?: unknown;
+      estimateUsdMicro?: unknown;
+    }[];
+    let leftUsd = 0;
+    for (const i of items) {
+      if (typeof i.taskId !== "string" || typeof i.estimateUsdMicro !== "number") continue;
+      const t = await store.task.get(i.taskId).catch(() => undefined);
+      if (t && t.status !== "done" && t.status !== "cancelled") leftUsd += i.estimateUsdMicro;
+    }
+    if (session)
+      leftUsd = Math.min(
+        leftUsd,
+        Math.max(0, session.budget_cap_usd_micro - session.spent_usd_micro),
+      );
+    const projectId = e.projectId ?? session?.project_id ?? null;
+    const projectName = projectId
+      ? ((await store.project.get(projectId).catch(() => undefined))?.name ?? "Your project")
+      : "Your project";
+    const from = typeof p.from === "string" ? p.from : "subscription";
+    const reason =
+      p.stop === "refused" || p.stop === "share" || p.stop === "key_month" ? p.stop : "limit";
+    const until =
+      typeof p.until === "string" ? clockTime(p.until, human.timezone, clock.now()) : null;
+    await store.auditLog.append({
+      tool: SWITCH_NOTICE_AUDIT_TOOL,
+      allowed: true,
+      human_id: human.id,
+      session_id: session?.id ?? null,
+      input_summary: JSON.stringify({ stopKey }),
+      result_summary: "the person's choice moved work onto the API key; they are told once",
+      occurred_at: clock.nowIso(),
+    });
+    await notifications.credentialSwitch(human.id, {
+      words: switchNotificationWords({
+        projectName,
+        wait: { reason, kind: from as never },
+        until,
+        estimateChf: aboutWords(chfText(leftUsd, chfPerUsd()), leftUsd).replace(/^about /, ""),
+      }),
+      sessionId: session?.id ?? null,
+      projectId,
+      stopKey,
+    });
+  };
+  events.on("session", (e: SessionBusEvent) => {
+    if (e.type !== BILLING_SWITCH_EVENT) return;
+    const p = e.payload ?? {};
+    if (p.repeat === true || p.by !== "policy" || p.to !== "api_key") return;
+    notifyLater(noticeSwitch(e, p), `switch ${String(p.stopKey ?? "")}`);
+  });
   events.on("session", (e: SessionBusEvent) => {
     const p = e.payload;
     if (p?.escalation !== true || p.humanRequestId) return;

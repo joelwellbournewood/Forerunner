@@ -806,6 +806,36 @@ export function prMerged(humanId: string, f: PrMergedFacts): Notification {
   };
 }
 
+/** What the switch notification is written from (C5-left-2): its words come in whole. */
+export interface CredentialSwitchFacts {
+  /** `switchNotificationWords` (session/credential-words.ts): title and body. */
+  words: { title: string; body: string };
+  sessionId: string | null;
+  projectId: string | null;
+  /** The stop it moved for (one notification per stop). */
+  stopKey: string;
+}
+
+/**
+ * d1109-cred-screens (C5-left-2, CE-12; the owner's 7a: "allow the task to be completed by the
+ * API, but in a transparent way"): the person's choice moved work onto the API key by itself:
+ * "Quote page: work goes on with your API key", "Your subscription is at its limit until 15:40.
+ * Your API key costs money: about CHF 0.40 for what is left." Once per stop (the caller keeps
+ * that across restarts); it opens the session.
+ */
+export function credentialSwitch(humanId: string, f: CredentialSwitchFacts): Notification {
+  return {
+    kind: "credential_switch",
+    humanId,
+    title: f.words.title,
+    body: f.words.body,
+    link: f.sessionId ? `/sessions/${f.sessionId}` : f.projectId ? `/projects/${f.projectId}` : "/",
+    ...(f.projectId ? { projectId: f.projectId } : {}),
+    ...(f.sessionId ? { sessionId: f.sessionId } : {}),
+    dedupeKey: `credential-switch:${f.stopKey}`,
+  };
+}
+
 /** What `bindProducers` needs: `Notifier` satisfies it, so does a fake in tests. */
 export interface NotifierLike {
   notify(n: Notification): Promise<NotificationRecord>;
@@ -851,6 +881,8 @@ export function bindProducers(notifier: NotifierLike) {
     handoverReport: (humanId: string, f: HandoverFacts) =>
       notifier.notify(handoverReport(humanId, f)),
     prMerged: (humanId: string, f: PrMergedFacts) => notifier.notify(prMerged(humanId, f)),
+    credentialSwitch: (humanId: string, f: CredentialSwitchFacts) =>
+      notifier.notify(credentialSwitch(humanId, f)),
   };
 }
 
