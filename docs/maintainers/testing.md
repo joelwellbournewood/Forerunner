@@ -1049,9 +1049,10 @@ label (`task-check <project id>`, `BenchRole` `task_check`) and answers from the
 message (`testenv/src/bench/task-check-play.ts`): no change by default; '"X" is two jobs[, the a
 and the b]' splits X in turn with every criterion carried; "nothing checks <what>" adds "Check
 <what>" after the reporting task; '"a" is the same as "b"' drops a; '"a" must wait for "b"'
-orders it; a line about budgets, settings, merges, deploys or other projects is quoted in
-`flagged`. `FORERUNNER_BENCH_TASK_LIST=<title substring>` ends a matching specialist's report with
-lines "For the task list:" (before its lesson line), `FORERUNNER_BENCH_TASK_LIST_SAYS` gives them,
+orders it; '"a" is urgent' raises a's priority to high (an edit with no new title, for the
+read-back's words: d1109-selftasks-chat); a line about budgets, settings, merges, deploys or
+other projects is quoted in `flagged`. `FORERUNNER_BENCH_TASK_LIST=<title substring>` ends a
+matching specialist's report with lines "For the task list:" (before its lesson line), `FORERUNNER_BENCH_TASK_LIST_SAYS` gives them,
 "|"-separated. Tests: `testenv/test/bench-task-check.test.ts`, against the runtime's
 `taskCheckSystem`, `taskCheckMessage`, `readTaskCheckReply` and `parseTaskListNotes`.
 
