@@ -7,6 +7,7 @@ import {
   CapChecker,
   type CapCheckOptions,
   CostLedger,
+  credentialPolicyOf,
   FixedRateSource,
   loadPricing,
   PRICING_FILE_NAME,
@@ -4091,6 +4092,26 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // R-runsonrefused: the credential it would run on is refused or rests now: the line says
       // the wait (the words a waiting task's session result uses), never "Runs on your API key".
       const wait = choice ? blocked.get(choice.kind as BillingSource["kind"]) : undefined;
+      // d1109-cred-screens (CS-10's walk): under a preset that goes on with the next credential
+      // when the first runs out ("Subscription first, then API key"), the task runs on the next
+      // one that can do it now, as the pick does; the card's foot line says why. Under "then
+      // wait" and "ask" the wait stays the line.
+      if (choice && wait && credentialPolicyOf(prefs).rule.whenStopped === "next") {
+        const next = credentialChoiceFor({
+          kindsInOrder: kinds.filter(
+            (k) => k !== choice.kind && !blocked.has(k as BillingSource["kind"]),
+          ),
+          needs: needsOf({
+            registryTools: spec.registryTools ?? spec.allowedTools,
+            task: task ?? null,
+            codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
+          }),
+          facts: chooserFacts(),
+          specialist: name,
+          dependencies: await dependencies,
+        });
+        if (next) return next;
+      }
       return choice && wait
         ? {
             ...choice,

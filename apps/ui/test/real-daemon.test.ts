@@ -22449,6 +22449,55 @@ describe("d1109-cred-screens, run C", () => {
     }
   }, 120_000);
 
+  // CS-10's walk: under "Subscription first, then API key" with the subscription at its limit,
+  // the card's foot said "your API key does the work meanwhile" while each task's line said
+  // "Waits until 02:43 (your subscription's limit). Press Start and the work starts then.": the
+  // runs-on line read the stop without the preset. A task the key can do runs on it then.
+  it("CS-4, CS-10: under 'then API key' with the subscription out, no task's line says it waits; under 'then wait' it does", async () => {
+    const both = await composeWithRolePlayer(
+      {},
+      {
+        vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      },
+    );
+    const { rt, client } = both;
+    try {
+      await setPolicyCs(client, "subscription_then_key");
+      const brief = "A small web page that shows a quote of the day.";
+      const project = await client.createProject({
+        name: "Quote page",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const me = await client.me();
+      const card = async () =>
+        (await client.inbox(me.id)).requests.find(
+          (r) => r.projectId === project.id && r.status === "open" && r.planTasks,
+        );
+      const until = new Date(rt.clock.now() + 40 * 60_000).toISOString();
+      await restSubscription(rt, until);
+      const at = clockTime(until, rt.human.timezone, rt.clock.now());
+      const first = await card();
+      expect(first?.planCredentialLine).toBe(
+        `Your subscription is at its limit until ${at}: your API key does the work meanwhile (costs money).`,
+      );
+      const lines = (first?.planTasks ?? []).map((t) => t.runsOn?.line ?? null);
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) expect(line ?? "").not.toMatch(/^Waits until/);
+      // Under "then wait" the same tasks wait for the reset, and say so.
+      await setPolicyCs(client, "subscription_then_wait");
+      const waiting = (await card())?.planTasks ?? [];
+      expect(waiting.some((t) => (t.runsOn?.line ?? "").startsWith(`Waits until ${at}`))).toBe(
+        true,
+      );
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
   // CS-8, C5-left-3 (CE-9, the owner's 7b): under "then wait", chat holds with the hold reply
   // and its one-off press; POST /chat with oneOff answers that one question on the API key (one
   // ledger row on the key, the note under it), and the next plain question holds again.
