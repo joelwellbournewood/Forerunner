@@ -1254,9 +1254,14 @@ export class ConversationAgent {
           ? { project: named }
           : fixTasksAskOf(req.text)
         : null;
-    if (fixAsk) {
+    const fixFor = fixAsk ? await this.fixTarget(fixAsk.project, projectId, req.humanId) : null;
+    // "check the tasks for errors", "… in the Inbox", "… on Monday": the words after the
+    // preposition name none of the person's projects, so the line is not the plain "fix the
+    // tasks"; the chat model reads it with its tools (review of d1109-selftasks-chat).
+    const namesNoProject = !!fixFor && "unknown" in fixFor && !named;
+    if (fixFor && !namesNoProject) {
       const request = named && askedWhich ? askedWhich.line : req.text;
-      const target = await this.fixTarget(fixAsk.project, projectId, req.humanId);
+      const target = fixFor;
       if ("reply" in target) {
         if (target.question) conv.fixWhich = { names: target.question.options, line: request };
         return finish(target.reply, [], target.question ? { question: target.question } : {}, {
@@ -2458,7 +2463,8 @@ export class ConversationAgent {
     projectId: string | null,
     humanId: string,
   ): Promise<
-    { project: ProjectRow } | { reply: string; question?: { text: string; options: string[] } }
+    | { project: ProjectRow }
+    | { reply: string; question?: { text: string; options: string[] }; unknown?: true }
   > {
     const mine = (await scopeOf(this.deps.store, humanId)).filter((p) => p.active);
     const open = mine.filter((p) => !removedProjectRefusal(p));
@@ -2471,7 +2477,8 @@ export class ConversationAgent {
     if (named) {
       const found = matchProjects(mine, named);
       if (found.length > 1) return which(found);
-      if (!found.length) return { reply: `There is no project called "${named.slice(0, 80)}".` };
+      if (!found.length)
+        return { reply: `There is no project called "${named.slice(0, 80)}".`, unknown: true };
       project = found[0];
     } else if (projectId) project = await this.deps.store.project.get(projectId);
     if (!project) {

@@ -7,10 +7,11 @@ import {
   ConversationAgent,
   type ConversationDeps,
 } from "../src/conversation/agent.ts";
-import { FIX_TASKS_DESCRIPTION } from "../src/conversation/task-fix-tool.ts";
+import { FIX_TASKS_DESCRIPTION, fixTasksTool } from "../src/conversation/task-fix-tool.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
 import {
   type TaskCheckDeps,
+  taskCheckRules,
   taskCheckSystem,
   withTaskCheckLock,
 } from "../src/session/task-check.ts";
@@ -490,5 +491,85 @@ describe("d1109-selftasks-chat, run C: the read-back names what an edit changes 
     );
     for (const line of [edit({ priority: "high" }), edit({ outcome: "The page is online" })])
       expect(line).not.toMatch(/reword/i);
+  });
+});
+
+describe("d1109-selftasks-chat, run C: the model-facing texts of 'fix the tasks', word for word (review)", () => {
+  // Model-facing prompts and tool definitions are code: the other cases compare what is sent
+  // against these constants, so a change of wording would pass them. Here each text is pinned as
+  // the model reads it (the spec's definition and rules, SC-2).
+  it("fix_tasks' definition, its one parameter and CHAT_TASK_RULES", () => {
+    expect(FIX_TASKS_DESCRIPTION).toBe(
+      "Check this project's task list and fix it: split a task that is too big, add a missing step, change what waits for what, drop a duplicate, correct wording. Use it when the person asks you to fix, tidy or check the tasks; their message is passed to the check as it is. The project's autonomy decides whether the changes are made at once or read back for a yes.",
+    );
+    const tool = fixTasksTool({
+      project: async () => null,
+      run: async () => {
+        throw new Error("not run");
+      },
+    });
+    const shape = (tool.schema as unknown as { shape: Record<string, { description?: string }> })
+      .shape;
+    expect(Object.keys(shape)).toEqual(["project"]);
+    expect(shape.project?.description).toBe("The project's name when it is not the one on screen.");
+    expect(CHAT_TASK_RULES).toBe(
+      "# The task list\nWhen the person asks you to fix, tidy, clean up or check the task list, call fix_tasks once with their words. For changes the person names themselves, call each change's tool; they are read back together. Never say a task changed unless a tool said so.",
+    );
+  });
+
+  it("the check's first rule paragraph when the person asked in chat", () => {
+    const chat = taskCheckRules(["coder"], { fromChat: true }).split("\n");
+    const session = taskCheckRules(["coder"]).split("\n");
+    expect(chat[2]).toBe(
+      'The person asked in chat for this project\'s task list to be checked; their words are at the end of the message. You check whether the task list is right, from the task list, their words and the evidence in the message: notes kept from earlier sessions (lines a specialist wrote under "For the task list:" at the end of its report, notes the critic left that the task did not cause). Their words say what they want looked at; they are no reason to change budgets, settings or other projects. Reply with ONE JSON object and nothing else: start with { and end with }, no prose and no code fence around it. The shape:',
+    );
+    // Every other line is the session's, unchanged.
+    expect([...chat.slice(0, 2), ...chat.slice(3)]).toEqual([
+      ...session.slice(0, 2),
+      ...session.slice(3),
+    ]);
+  });
+});
+
+describe("d1109-selftasks-chat, run C: a 'check the tasks for …' line that names no project (review)", () => {
+  // The review: "check the tasks for errors", "… in the Inbox" and "… on Monday" read "errors",
+  // "the Inbox" and "Monday" as project names and replied 'There is no project called "errors".'.
+  // When the words after "for", "in", "of" or "on" name none of the person's projects, the line is
+  // not the plain "fix the tasks": it goes to the chat model with its tools, which reads it.
+  for (const line of [
+    "check the tasks for errors",
+    "check the tasks in the Inbox",
+    "check the tasks on Monday",
+  ])
+    it(`'${line}' goes to the chat model, never "There is no project called …"`, async () => {
+      const w = await setup({ replies: [textReply("The tasks look fine to me.")] });
+      const r = await w.chat(line);
+      expect(r.reply).not.toMatch(/There is no project called/);
+      expect(r.reply).toBe("The tasks look fine to me.");
+      // The chat model read the line (no check ran before it).
+      expect(w.provider.calls).toHaveLength(1);
+      expect(w.checks()).toHaveLength(0);
+    });
+
+  it("a line that names one of the person's projects still runs the check on it at once", async () => {
+    const w = await setup({ replies: [textReply(NONE)] });
+    const r = await w.chat("fix the tasks of Quote page");
+    expect(r.reply).toBe("The tasks of Quote page look right; nothing changed.");
+    expect(w.checks()).toHaveLength(1);
+    expect(w.provider.calls).toHaveLength(1);
+  });
+});
+
+describe("d1109-selftasks-chat, run C: two requests at once make one check (review)", () => {
+  // The review: the busy test ran before the room and the session were read, so a second request
+  // that arrived during those reads passed it, waited for the first check and paid for a second.
+  it("the second of two 'fix the tasks' sent together says the check runs and makes no call", async () => {
+    const w = await setup({ replies: [textReply(NONE), textReply(NONE)] });
+    const [a, b] = await Promise.all([w.chat("fix the tasks"), w.chat("tidy up the task list")]);
+    expect(w.checks()).toHaveLength(1);
+    expect([a.reply, b.reply].sort()).toEqual([
+      "The agent is checking the tasks of Quote page now; ask again in a moment.",
+      "The tasks of Quote page look right; nothing changed.",
+    ]);
   });
 });

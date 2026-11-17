@@ -147,6 +147,10 @@ export async function fixTasksInChat(input: ChatTaskFixInput): Promise<ChatTaskF
     deadlineMs: clock.now() + TASK_CHECK_TIMEOUT_MS + 60_000,
     reserveShare: 0,
   });
+  // Asked again with no await before the lock is taken: a second request that arrived while the
+  // room and the session were read would otherwise wait for this check and pay for another
+  // (review of d1109-selftasks-chat).
+  if (taskCheckRunning(project.id)) return nothing(fixBusyReply(project.name));
   input.onStep?.(fixCheckingStep(project.name));
   return withTaskCheckLock(project.id, async () => {
     const fresh = (await store.project.get(project.id)) ?? project;
