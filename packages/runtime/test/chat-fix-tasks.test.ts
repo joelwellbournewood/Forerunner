@@ -14,6 +14,7 @@ import {
   taskCheckSystem,
   withTaskCheckLock,
 } from "../src/session/task-check.ts";
+import { proposalLine } from "../src/session/task-proposal.ts";
 import { flatPricing, harness } from "./helpers.ts";
 
 /**
@@ -58,8 +59,11 @@ const THREE = JSON.stringify({
   why: "Three changes.",
 });
 const NONE = JSON.stringify({ changes: [], flagged: [], why: "Nothing is wrong." });
+// The edit says what it changes, as task.update's own read-back does (review: a priority change
+// read 'reword "Publish the page"', and Yes then changed its priority). The suggestion card lists
+// the same words (proposalLine).
 const ASK_THREE =
-  'Make these 3 changes to the tasks of Quote page? Split "Style the page" into "Style the page: layout" and "Style the page: colours"; add "Check the links" before "Publish the page"; reword "Publish the page".';
+  'Make these 3 changes to the tasks of Quote page? Split "Style the page" into "Style the page: layout" and "Style the page: colours"; add "Check the links" before "Publish the page"; change "Publish the page": priority to High.';
 
 interface World {
   store: StateStore;
@@ -457,5 +461,34 @@ describe("d1109-selftasks-chat, run C: several changes the person names are one 
     const publish = await w.store.task.mustGet(w.tasks.publish?.id ?? "");
     expect(publish.depends_on).toEqual([]);
     expect(publish.priority).not.toBe(w.tasks.publish?.priority);
+  });
+});
+
+describe("d1109-selftasks-chat, run C: the read-back names what an edit changes (review)", () => {
+  // Design section 3.9: a change is read back as what it does; section 5 rules 4 and 9: the words
+  // are true. The check's rules let an edit change only the priority, so "reword" was untrue.
+  // Chat's read-back and the suggestion card's list are both proposalLine.
+  const edit = (fields: Record<string, unknown>) =>
+    proposalLine({
+      change: { kind: "edit", task: "Publish the page", why: "It is the goal.", ...fields },
+      taskIds: [],
+      sourceId: null,
+      newTasks: 0,
+      why: "It is the goal.",
+    } as never);
+  it("each edit says the fields it changes; a new title alone is a rename", () => {
+    expect(edit({ priority: "high" })).toBe('Change "Publish the page": priority to High.');
+    expect(edit({ priority: "low" })).toBe('Change "Publish the page": priority to Low.');
+    expect(edit({ title: "Publish the quote page" })).toBe(
+      'Rename "Publish the page" to "Publish the quote page".',
+    );
+    expect(edit({ title: "Publish the quote page", priority: "medium" })).toBe(
+      'Change "Publish the page": the title to "Publish the quote page" and priority to Medium.',
+    );
+    expect(edit({ outcome: "The page is online", acceptanceCriteria: ["it loads"] })).toBe(
+      'Change "Publish the page": what done looks like and the criteria.',
+    );
+    for (const line of [edit({ priority: "high" }), edit({ outcome: "The page is online" })])
+      expect(line).not.toMatch(/reword/i);
   });
 });
