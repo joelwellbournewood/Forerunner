@@ -97,7 +97,7 @@ c6.merged = Object.assign({}, c6.merged || {}, {
   review: "fix-needed on both areas (cred-screens 3 blocking, selftasks-chat 4 blocking); both fix-ups fixed every blocking item; the merge needed one integration fix (4cf11fd, a renamed function's new caller)",
   leftovers_for_triage: "/tmp/frbench/leftovers-C6.json",
 });
-if (!c6.merged.ci) c6.merged.ci = "pending: CI 315 (44018245420) and Desktop app 80 (44018245416), started 2026-11-17 04:35 UTC";
+c6.merged.ci = "green on Windows and Linux: CI 315 (44018245420) and Desktop app 80 (44018245416; its window job read the bar and the title live, the same words as run 77), 2026-11-17 05:17 UTC";
 
 fs.writeFileSync(P, JSON.stringify(p, null, 1));
 console.log("triage", triage.length, "; live steps amended", Object.keys(adds).join(","), "; decisions", p.session_lead_decisions.length);

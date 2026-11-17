@@ -222,7 +222,7 @@
     "runs": "four: wf_2ce6c7a0-0e2, wf_77c66af8-06c and wf_b8a050fb-2fb stopped by container restarts; wf_66aeb76f-01d finished",
     "review": "fix-needed on both areas (cred-screens 3 blocking, selftasks-chat 4 blocking); both fix-ups fixed every blocking item; the merge needed one integration fix (4cf11fd, a renamed function's new caller)",
     "leftovers_for_triage": "/tmp/frbench/leftovers-C6.json",
-    "ci": "pending: CI 315 (44018245420) and Desktop app 80 (44018245416), started 2026-11-17 04:35 UTC"
+    "ci": "green on Windows and Linux: CI 315 (44018245420) and Desktop app 80 (44018245416; its window job read the bar and the title live, the same words as run 77), 2026-11-17 05:17 UTC"
    }
   }
  ],
