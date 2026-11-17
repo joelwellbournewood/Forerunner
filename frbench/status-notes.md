@@ -94,3 +94,10 @@
 ## 2026-11-17 ~05:30 UTC: live check 4 launched
 - CI 315 and Desktop app 80 green on 4cf11fd (Windows and Linux); window job read the bar and title live (same words as run 77). runC-plan.json C6 merged.ci set. (Another container restart at about 05:16 UTC with nothing running.)
 - Live check 4: workflow wf_29412894-90f, task wqqknz4sd, script .claude/worktrees/_wf-scripts/live-check-4.js (scratchpad/live4-gen.cjs). Ledger /tmp/frbench/live4/ledger.jsonl (cap USD 7.00, no new step after 6.30). On a restart: collect finished results from the run's journal.jsonl into a done.json keyed by label (live1:<journey>, live2:<journey>, verify:<finding id>), regenerate with `node live4-gen.cjs done.json`, relaunch; journeys skip steps already in /tmp/frbench/live4/<journey>/steps/.
+
+## 2026-11-17 ~13:00 UTC: live check 4 done
+- wf_29412894-90f finished (117 agents, ~8.5 h, no restart): spend USD 4.47 of the USD 7.00 cap (ledger 39 lines). Steps: pass 1 all six journeys, pass 2 all seven, pass 3 LC-C26; LC-C20 read by the session lead (runs 77 and 80).
+- 103 findings verified: 98 real (24 major, 46 minor, 28 words), 2 the model alone, 3 not real; 11 of the real ones already named by a leftover. Result: /tmp/frbench/live4/result.json.
+- forerunner-sandbox: PRs #50-#64 opened by the check, all closed or merged; 0 open now. No bench running.
+- Next: the triage of the live check 4 findings with leftovers-L3/C2/C3/C4/C4b-design/C4b/C5/C6 into one fix run.
+- 13:10 UTC: run L4 triage launched: wf_9df91932-254, task wu7fejn78 (script saved under /root/.claude/projects/.../workflows/scripts/run-l4-triage-wf_9df91932-254.js). Inputs /tmp/frbench/runL4/sources-<group>.json (scratchpad/l4-sources.cjs: selftasks, creds, chat, github, money, other; 103 findings, 30 non-pass steps, 121 leftovers). Outputs runL4/triage-<group>.json and /tmp/frbench/runL4-plan.json (areas, sub_runs, shared_files, owner_questions, owner_checklist, final_check).

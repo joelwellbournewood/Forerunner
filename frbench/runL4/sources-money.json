@@ -1,0 +1,991 @@
+{
+ "group": "money",
+ "base": "4cf11fd",
+ "live_findings": [
+  {
+   "key": "live4:L4-session-4",
+   "finding": {
+    "id": "L4-session-4",
+    "severity": "minor",
+    "title": "A question card's options do not say what pressing them does as things stand",
+    "step": "LC-C18 (C3 adds)",
+    "what_the_person_sees": "While the session ran, the card '\"Add the club's phone number to contact.html\": the specialist asks you' showed [Send answers] with no line, [Go ahead without] 'The specialist decides and says what it assumed.' and [Cancel task] 'Drops it. Nothing waits on it.'. Pressing Send answers then joined the running session. The Redo dialog likewise says only 'Reopens it; say what is wrong and the next attempt fixes it.'",
+    "expected": "C3 addition: each Inbox option says what pressing it does as things stand ('...; it joins the running session if it fits' or '...; it runs at your next Start'), as Try again's explain does. Design 3.8: Send answers 'The task goes on with your answers now'.",
+    "evidence": "c18-run.json cards[0].choices; screenshot /tmp/frbench/live4/session/s1/steps/36-c18-40-card-1-inbox-card.png; packages/runtime/src/daemon/request-words.ts:546 (fixed explain, no preparedExplain(ctx))",
+    "repro": "Bench s1 (bench-live): a coder task that needs a fact only the person has ('Add the club's phone number to contact.html') plus one more task; Start; when the question card arrives while the other task runs, open the Inbox.",
+    "suspected_cause": "questionsCard builds Go ahead without with a fixed explain, and Send answers has none; only the Try again, rework and conflict options use preparedExplain(ctx).",
+    "journey": "session",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-session-4",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The finding is real. Both options on the specialist's questions card prepare work. Go ahead without and Send answers each call prepareAnswer, which calls prepareWork (packages/runtime/src/session/person-questions.ts:1051-1085 and the answered branch after it). Pressing either one therefore joins the running session if it fits, and otherwise waits for the next Start. The card does not say this before the press.\n\n1. Go ahead without has a fixed explain, \"The specialist decides and says what it assumed.\" (packages/runtime/src/daemon/request-words.ts:546). questionsCard never calls preparedExplain(ctx), even though requestContexts already gives it the prepared context (daemon/views.ts:976, wired in the C3 fix-up's B1). Only the retry/verdict card (:445-446), the failed card (:1143), the rebuild card (:1328) and the conflict card (:1714-1716) use preparedExplain(ctx).\n\n2. Send answers cannot have an explain at all. RequestWords (request-words.ts:73-106) has no field for the form's submit button, and the reply is just 'form'. The UI's PersonQuestionsForm hard-codes a bare `<Button>Send answers</Button>` (apps/ui/src/pages/InboxPage.tsx:259-266). So the design §3.8 one-line consequence (\"The task goes on with your answers now\") never appears.\n\nThe live evidence matches the code exactly:\n- c18-run.json, card 01a1e806-1dca: choices are only Go ahead without and Cancel task, with fixed explains, while sessionStatus is running.\n- Screenshot 36: Send answers has no line.\n- The Done line after the press does say \"it joins the session that is running.\", so the outcome words are fine. Only the words before the press are missing.\n\nThe second card (\"Write the FAQ\") shows the same thing. The fix-up's starts-words test covers only the Try again wording (starts-words.test.ts:72-107), so nothing caught the questions card.\n\nThe Redo aside is also real, but it sits outside the C3 addition's 'Inbox option' scope. The Tasks-row explains are static UI strings (apps/ui/src/lib/task-actions.ts:44-58). Make ready and Resume give both branches ('the running session takes it if it fits, else your next Start'). Redo ('Reopens it; say what is wrong and the next attempt fixes it.'), Try again and Go ahead without say nothing about what follows. The sentence after Redo does say 'It joins the session that is running.'",
+    "where": "packages/runtime/src/daemon/request-words.ts:546 (questionsCard's fixed Go ahead without explain; RequestWords :73-106 has no field for the form's submit); apps/ui/src/pages/InboxPage.tsx:259-266 (Send answers rendered with no explain); secondary: apps/ui/src/lib/task-actions.ts:44-58 (Redo/Try again/Go ahead without row explains)",
+    "fix_sketch": "1. In request-words.ts questionsCard, change the Go ahead without explain to `The specialist decides and says what it assumed; ${preparedExplain(ctx)}.`\n\n2. Add an optional field to RequestWords, for example `submit?: { label: string; explain: string } | null`, and set it in questionsCard:\n   - specialist or critic card: label \"Send answers\", explain `The task goes on with your answers; ${preparedExplain(ctx)}.`\n   - planned (person's own) card: \"Writes your answers to the decision record and closes the task\", then \"; what waits on it \" plus preparedExplain(ctx) when `waiting` is not empty.\n\n3. Render submit.explain beside the Send answers button in InboxPage's PersonQuestionsForm, in the same style as the other choices' explains.\n\n4. Mirror the field in the UI client type and the fake daemon's questions card, worded from its running sessions and the start_by_itself setting, as B1 did for Try again.\n\n5. In project-facts.ts:339, chat's list of the card's options should carry the same explain.\n\n6. Optional, same area: give the Tasks row's Redo, Try again and Go ahead without the same tail. Use the static 'the running session takes it if it fits, else your next Start' as Make ready and Resume already do, or better, a daemon-supplied prepared clause on TaskView.",
+    "failing_test_idea": "Unit test (packages/runtime/test/starts-words.test.ts): table questionsCard over the PreparedContext cases already listed for Try again.\n- With running 'this_project', Go ahead without's explain is 'The specialist decides and says what it assumed; it joins the running session if it fits.' and words.submit.explain is 'The task goes on with your answers; it joins the running session if it fits.'\n- With {}, both end '; it runs at your next Start.'\n- Today submit is undefined and the Go ahead without explain has no clause, so both checks fail.\n\nBoundary test (apps/ui/test/real-daemon.test.ts): compose a project whose session holds one task in progress, with a specialist questions card filed on another task.\n- Render InboxPage against the real daemon through the client.\n- Expect the text 'it joins the running session if it fits' beside both Send answers and Go ahead without.\n- Fill the answer and press Send answers. Expect the Done line 'Answers sent: \"<task>\" goes on with them; it joins the session that is running.'\n- Repeat with no session running and expect 'it runs at your next Start' beside both buttons.",
+    "area_hint": "d1109-starts-engine",
+    "known_leftover": "",
+    "notes": "I verified this from the code at 4cf11fd and the live evidence: c18-run.json cards[0] and cards[1], and screenshot 36-c18-40-card-1-inbox-card.png, which shows Send answers with no line. A bench run was not needed because the code is unambiguous.\n\nNone of the eight leftovers files names this. C3-left-3 covers only the Done line, which works. The C3 fix-up's B1 (S-9) added preparedExplain wiring through requestContexts but changed only the retry/verdict, failed, rebuild and conflict options; questionsCard was missed.\n\nDesign §3.8's 'The task goes on with your answers now' predates D6. Under D6 and C, the right wording is the as-things-stand clause, not 'now'.\n\nSeverity: I agree with minor. The words are true but leave out what happens next, the Done line afterwards states the outcome correctly, and nothing starts unexpectedly. Still, it fails LC-C18's C3 pass criterion ('each Inbox option says what pressing it does as things stand').\n\nThe Redo-dialog part of the finding is a Tasks-row action, not an Inbox option. It is real as an inconsistency (task-actions.ts:55-58 against Make ready and Resume) and belongs to the same area, but it is weaker."
+   }
+  },
+  {
+   "key": "live4:L4-session-5",
+   "finding": {
+    "id": "L4-session-5",
+    "severity": "minor",
+    "title": "Make ready on a draft too big for the running session says it may join it",
+    "step": "LC-C18",
+    "what_the_person_sees": "\"Research local garden suppliers\" is ready. It joins this session if budget is left after its own tasks, else your next Start.",
+    "expected": "Its estimate (about CHF 1.10) is above the whole session budget (CHF 1.00), so the line that is true now is 'it runs at your next Start' (design section 5 rule 4). It did not run; the end log read 'Left for your next Start: ... (about CHF 1.10)'.",
+    "evidence": "c18-run.json makeReady.sentence; screenshot /tmp/frbench/live4/session/s1/steps/35-c18-32-make-ready-draft-after.png; prepared-work.ts preparedLine('no_room')",
+    "repro": "While a CHF 1.00 session runs, press Make ready on a researcher draft whose outcome names five files.",
+    "suspected_cause": "prepareWork returns 'no_room' whenever a session runs, without comparing the task's estimate with what the session could ever give it.",
+    "journey": "session",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-session-5",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The running session's admit treats two different cases as one outcome. At runner.ts:2067-2072, when a task's estimate is above the whole work budget (`est > workBudgetUsdMicro`), the code's own comment says it \"never joins (D4: it runs in its turn at the next Start)\". It still returns the same `no_room` as a task that only lacks room right now (`est > room`). prepareWork (prepared-work.ts:131-132) turns that outcome into preparedLine(\"no_room\") at prepared-work.ts:200-201: \"Ready: it joins this session if budget is left after its own tasks, else your next Start.\" task.ts withNextLine/afterMove (commands/task.ts:1656-1677) adds that line after the Make ready sentence. The first clause can never come true for this task. The session's re-plan (runner.ts:2251) takes a newcomer only when `est <= workBudgetUsdMicro && est <= room`, so no budget left over after the session's own tasks ever lets it in. The evidence matches the code. The session budget was USD 1,250,000 (CHF 1.00), so the work budget was USD 1,000,000 (CHF 0.80). The draft was priced at USD 1,378,000 (session.left_for_next_start, about CHF 1.10). Its line still said it may join, and the session ended with \"Left for your next Start\". This breaks design section 5 rule 4 (\"True now\") and rule 9 (\"No promises the code does not keep\"). The finding's suspected cause is half right. prepareWork does not call no_room for every running session: it asks the session's admit, and admit compares the estimate with the work budget correctly. The bug is that admit then reports the result with the wrong outcome and words. The spec (runC-plan d1109-starts-engine: \"an oversized task ... -> no_room (it cannot fit ...)\") carried the same conflation.",
+    "where": "packages/runtime/src/session/runner.ts:2069 (oversized and no-room-now share `no_room`); packages/runtime/src/session/prepared-work.ts:200-201 (the no_room words); packages/runtime/src/session/prepared-work.ts:106-111 (summarize)",
+    "fix_sketch": "1. In live-sessions.ts, add an AdmitOutcome `too_large`: the task's estimate is above the session's whole work budget, so it runs at the next Start.\n2. In the runner's admit (runner.ts:2069), split the condition. `est > workBudgetUsdMicro` sets `too_large`; `est > room` keeps `no_room`. Both still record `asked` and keep D7's `before` handling.\n3. In prepared-work.ts, add `too_large` to PrepareOutcome, preparedLine, isPreparedOutcome and preparedClause. Proposed line (at most 100 characters, true now): \"Ready: it is larger than this session's budget, so it runs at your next Start.\" The plain \"Ready: it runs at your next Start.\" would also be true.\n4. In summarize: if every task is too_large, return too_large. If too_large is mixed with joined or no_room, do not return the may-join words for the too_large task. The simplest true choice is to treat too_large like `stopping` in the mixed case, or name the larger task.\n5. Optional: previewWork and preparedExplain (the read-back and card explain) cannot see the estimate, so their general \"if it fits\" words stay as they are.\n6. Update docs/maintainers for the starts engine and ADR 0118's outcome list.",
+    "failing_test_idea": "At the person's boundary, a real-daemon (composed) test on a stand-in provider:\n1. Start a session on a project at CHF 1.00. Its first task runs on a scripted stand-in that waits.\n2. While that task runs, send the Tasks-row Make ready command (task transition draft→ready) for a draft priced above the work budget, e.g. a researcher task whose outcome names five files (about CHF 1.10).\n3. Assert the returned sentence is '\"Research local garden suppliers\" is ready. It is larger than this session's budget, so it runs at your next Start.' and does not contain \"joins\".\n4. Assert the session never runs the task, its result reads 'Left for your next Start: \"...\" (about CHF 1.10)', and the ledger stays at or under CHF 1.00.\nToday step 3 fails: the sentence ends \"It joins this session if budget is left after its own tasks, else your next Start.\"\nCheaper unit form: in packages/runtime/test/session-join.test.ts:225 (\"a task larger than the work budget never joins\"), assert answers[1].line equals the new words. Today it checks only the outcome, `no_room`, which is why this passed.",
+    "area_hint": "d1109-starts-engine",
+    "known_leftover": "",
+    "notes": "Not reproduced on the bench; the code accounts for every step. The live evidence (c18-run.json: makeReady.sentence, startCheck.workBudget USD 1,000,000, the left_for_next_start event estimate of USD 1,378,000, the summary \"Left for your next Start ... (about CHF 1.10)\") matches the code path exactly. Correction to the finding's \"expected\": the limit that matters is the work budget, CHF 0.80 (the session budget less the fifth kept for reviews), not the CHF 1.00 session budget. Here the estimate was above both. The words for no_room-now (a task within the work budget but past the current room) are fine: the re-plan does take it when room frees up (session-join.test.ts \"spare budget is not wasted\"). The Make ready tooltip (\"the running session takes it if it fits, else your next Start\") is general and stays true. LC-C18's pass rule (\"its line names the next Start and it does not run\") was met only loosely: the line names the next Start as a fallback but also says the task may join. No entry in leftovers-{L3,C2,C3,C4,C4b-design,C4b,C5,C6}.json names this. Severity is minor: the person is not led into a wrong action, but the consequence line promises something the code never does."
+   }
+  },
+  {
+   "key": "live4:L4-session-6",
+   "finding": {
+    "id": "L4-session-6",
+    "severity": "minor",
+    "title": "Inbox 'Answered' line for a specialist's questions still names the running session after it ended",
+    "step": "LC-C18",
+    "what_the_person_sees": "After the session ended, Inbox > Answered: 'Answers saved in the decision record; \"Add the club's phone number to contact.html\" is done; what waits on it joins the session that is running.' (nothing waits on the task)",
+    "expected": "True now (design section 5 rule 4): no running session once it has ended, and no 'what waits on it' when nothing does.",
+    "evidence": "screenshot /tmp/frbench/live4/session/s1/steps/44-c18-60-inbox-answered-open.png; request-words.ts questionsOutcome rewrites the stored start outcome 'joined' against the task's current status",
+    "repro": "Answer a specialist's question while the session runs, let the session end, then open Inbox > Answered.",
+    "suspected_cause": "questionsOutcome words the stored start outcome against the task's status, never against the session's current state.",
+    "journey": "session",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-session-6",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "questionsOutcome (request-words.ts:576-588) builds the Answered line from the start outcome saved when the person answered (card.start = \"joined\", meaning the task itself joined the session that was running then). It checks only the task's status now. When the task is done, the S-2 rewrite at :578-581 turns \"it joins the session that is running\" into \"what waits on it joins the session that is running\". That rewrite was written for the person's own task (card.on_answer === \"done\"), where the answer closes the task and the prepared work is what waits on it. A specialist's card has on_answer === \"ready\": the prepared work was the task itself, and that work is now finished. The rewrite never checks on_answer, never checks ctx.waiting (empty here; the open card said \"Nothing waits on it\"), and never checks whether a session still runs. requestContexts reads the running/prepared facts only for open cards (views.ts:1004), so an answered card cannot know the session ended. The same false clause appears on the \"without\" branch (:583-584) for a specialist's task finished after Go ahead without, and with waits_start (\"what waits on it runs at your next Start\"). Checked against the bench's state.sqlite (opened read-only): both C18 cards hold outcome \"answered\", start \"joined\", on_answer \"ready\". Both tasks are done, and no task depends on the phone-number task. A probe against the 4cf11fd code (/tmp/frbench/verify-L4-session-6/probe.ts) gives the screenshot's sentence word for word: 'Answers saved in the decision record; \"Add the club's phone number to contact.html\" is done; what waits on it joins the session that is running.' The person-task case still gives the intended \"...; what waits on it runs at your next Start.\"",
+    "where": "packages/runtime/src/daemon/request-words.ts:578-588 (the S-2 rewrite at 578-581 and the done branches at 583-584 and 587-588); contributing: packages/runtime/src/daemon/views.ts:1004 (no running or prepared facts are read for answered cards)",
+    "fix_sketch": "In questionsOutcome, once ctx.taskStatus === \"done\":\n- Specialist's card (card.on_answer !== \"done\"): drop the start clause. What the answer started was the task's own work, and that work is over. Say 'Answers saved in the decision record; \"X\" is done.' and for without, '\"X\" is done without your answers.'\n- Person's own task (on_answer === \"done\"): keep the \"what waits on it ...\" clause only while ctx.waiting is not empty. Do not repeat a stored \"joined\" (\"joins the session that is running\") unless the running state is read for answered cards too. For example, requestContexts passes running for a done person task with waiting work, or the clause is dropped once nothing waits.\nPut the same guard in the matching retryOutcome \"accept\" branch if a review finds the same pattern. Keep the existing person-task test lines (inbox.test.tsx:973, real-daemon.test.ts:3524), which still hold.",
+    "failing_test_idea": "real-daemon.test.ts (the person's boundary is GET /inbox through the client). Set up a project with one specialist task that nothing depends on. The bench stand-in asks a question during a running session. The person answers while the session runs, and the Done line reads '...goes on with them; it joins the session that is running.' Wait until the task is done and the session has ended. Then the Answered row's outcome for that card equals 'Answers saved in the decision record; \"<task>\" is done.' and contains neither \"what waits on it\" nor \"session that is running\". It fails today with the screenshot's sentence. Add a unit case in packages/runtime/test for requestWords: card {key: \"person_questions:t\", outcome: \"answered\", start: \"joined\", on_answer: \"ready\"}, ctx {taskStatus: \"done\", waiting: []}. Add a second unit case with outcome \"without\". The existing person-task cases (on_answer \"done\", waits_start, with a waiting dependant) stay as they are.",
+    "area_hint": "d1109-starts-engine (S-2 prepared-outcome words; the rewrite came in 3a5981d)",
+    "known_leftover": "",
+    "notes": "Evidence: steps/44-c18-60-inbox-answered-open.txt shows the same false line on both C18 cards, \"Write the FAQ\" too, although its card's task is done and nothing waits on it. The live Done lines at answer time (37-..., 39-...) were true then. The bug appears only when the card is shown again after the task finished. No leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names it. C5L-C3-left-5 lists \"a restart after an answered card (S-2)\" only as a test gap of the continuation, so it is not this bug. I did not run the bench; the evidence is the read-only check of the stored state.sqlite plus the probe against the 4cf11fd code (/tmp/frbench/verify-L4-session-6/probe.ts, q.cjs). Severity: minor, not words-only. The sentence claims something false now: work waiting on the task, and a session running. It does this in the Answered history, which design §5 rule 4 covers, and nothing is lost or blocked."
+   }
+  },
+  {
+   "key": "live4:L4-session-8",
+   "finding": {
+    "id": "L4-session-8",
+    "severity": "words",
+    "title": "A done task's row no longer says what budget its cost counts against",
+    "step": "LC-C32",
+    "what_the_person_sees": "Task A's row after it is done reads only 'CHF 0.02' (before the run it read 'of CHF 0.10 budget'); the drawer says 'spent CHF 0.02 of CHF 0.10 budget'.",
+    "expected": "Step branch (i): 'its row reads its cost with \"of CHF 0.10 budget\"'.",
+    "evidence": "/tmp/frbench/live4/session/s1/steps/52-c32-42-tasks-after.png; c32-run.json drawerA.rowText; apps/ui/src/pages/project/TasksTab.tsx:563 hides TaskCap when isFinished(t)",
+    "repro": "Give a task Budget 0.10, run it to done, open the Tasks tab.",
+    "suspected_cause": "TaskCap is rendered only for unfinished tasks.",
+    "journey": "session",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-session-8",
+    "real": false,
+    "model_only": false,
+    "severity": "none",
+    "root_cause": "The observation is accurate. After task A is done, its row shows only 'CHF 0.02' (screenshot 52-c32-42-tasks-after.png; c32-run.json drawerA.rowText; capTitle null). The drawer reads 'spent CHF 0.02 of CHF 0.10 budget'. This is the designed behaviour, not a defect.\n\nWhat the code does: TasksTab.tsx:562-564 renders TaskCap only when the task is neither finished nor a person's task. isFinished (task-actions.ts:214-217, doc comment 'Finished: no cap, no \"waits for\" edits, no cost limit line') returns true for done and cancelled. taskCapWords' doc comment (TasksTab.tsx:80) says 'for a task not done or cancelled'.\n\nEach spec agrees with the code:\n- docs/design/core-experience.md section 3.5 lists 'the cap line on finished tasks' under 'Must not show'.\n- The d1116-budget-all design (/tmp/frbench/d1116-budget-all-design.json, its BA-9 test notes) says: \"Keep 'never CHF 0.00' and 'no line on done or cancelled'\".\n- docs/maintainers/apps.md (tasks tab) says 'nothing on a done or cancelled one'.\n- docs/user-guide.md:1254 says 'a done or cancelled task shows no limit'.\n- apps/ui/test/tasks.test.tsx:206-208 tests it: 'A finished task has no cap line.'\n\nThe owner's answer of 2026-11-16 asks that 'the Tasks row, the drawer and Costs show one figure against the budget'. That holds: the row, the drawer and Costs > By task all show the same CHF 0.02 (spentChf 22922), and the drawer shows it against the CHF 0.10 budget.\n\nThe mistake is in the step text. Branch (i) of LC-C32 ('its row reads its cost with \"of CHF 0.10 budget\"') expects a line on a done row, which contradicts the design the step was written from. The loose phrase 'Each Tasks row reads its cost with \"of CHF x budget\"' in that design's Check in the app likely fed into it. The app did what it was designed to do. The model played no part.",
+    "where": "apps/ui/src/pages/project/TasksTab.tsx:563 (isFinished(t) hides TaskCap), apps/ui/src/lib/task-actions.ts:215; spec at docs/design/core-experience.md section 3.5 'Must not show: ... the cap line on finished tasks'",
+    "fix_sketch": "No code fix. Correct the live-check step instead. LC-C32 branch (i) should read: 'A is done; its row reads its cost (the same figure as the drawer and Costs > By task) with no budget line under it, and the drawer reads \"spent CHF x of CHF 0.10 budget\"'. The d1116 Check-in-the-app line 'Each Tasks row reads its cost with \"of CHF x budget\" under it' should become 'Each open Tasks row ...' so the next live check does not trip on it.\n\nIf the owner wants done rows to show 'of CHF 0.10 budget', that is a design change and needs an owner question first, because it reverses core-experience section 3.5. That change would be: in TasksTab.tsx:563, render taskCapWords for a finished task when capSource === 'task_budget', but never the specialist-limit line or 'budget used up'. It would also update section 3.5, apps.md, the user guide and tasks.test.tsx:206-208.",
+    "failing_test_idea": "None fails today, and none should. The existing UI test apps/ui/test/tasks.test.tsx:206-208 ('A finished task has no cap line') already pins the designed behaviour at the person's boundary. Only if the owner changes the design: a tasks.test.tsx case with a done task that has budget 0.10, spent 0.02 and capSource task_budget. It would expect the row's task-cap text to be exactly 'of CHF 0.10 budget', while a done task with capSource specialist_limit and a cancelled task still have no task-cap line.",
+    "area_hint": "d1116-budget-all (BA-9 screens); live-check step text (live_check_4_steps LC-C32), not code",
+    "known_leftover": "",
+    "notes": "I verified this against the code and docs at 4cf11fd. I did not run the stand-in bench because the evidence and the code already settle it. Costs > By task, the row and the drawer show the same figure for A (CHF 0.02, spentChf 22922 out of a 100000 budget), which meets the LC-C32 pass line 'one figure' for each task. No leftover file names this, which fits a non-defect. The only candidate source of confusion is C4b-design's CHANGELOG text 'The Tasks row reads the cost with \"of CHF 0.20 budget\" under it', which is loose wording, not a leftover. Every other C32 outcome in the evidence (A done within budget, reviewed and tried) is outside this finding."
+   }
+  },
+  {
+   "key": "live4:L4-pause-1",
+   "finding": {
+    "id": "L4-pause-1",
+    "severity": "major",
+    "title": "'Left to do: nothing the criteria require.' is read as one thing left to do, so finished research pauses with a card asking for more money instead of going to review",
+    "step": "LC-C7",
+    "what_the_person_sees": "The research was finished, but the person is asked to pay for another session to 'continue' it, and the screens say one thing is left to do when there is none.\n- Inbox card: '\"Compare three static site hosts ...\" paused before this session's budget ran out', with 'Left to do • nothing the criteria require.' and the button 'Continue (CHF 0.40 more)'.\n- Session log and task drawer: '... paused before this session's budget of CHF 0.40 ran out: it spent CHF 0.23 and listed one thing left to do.'\n- Tasks row: 'Paused before the session's budget ran out'.",
+    "expected": "When a wrap-up report says the criteria need nothing more, the run goes to its review and can be done in the same session, with no pause card. This is the l3-handoff-checks / L3-research-1 rule: the session still had CHF 0.17 of its CHF 0.40, and a fifth is kept for reviews.",
+    "evidence": "- Model-call log seq 8 (the researcher's last reply) ends: 'Where I stopped: `hosts.md` is complete and meets the three acceptance criteria as I read them. Nothing is half done. ...' and 'Left to do: nothing the criteria require.'\n- Card lists: [{label:'Left to do', items:['nothing the criteria require.']}].\n- Run outcome 'Paused'.\n- parseHandoff() run read-only with tsx on the 4cf11fd checkout (/tmp/frbench/live4/pause/scripts/parse-check.mts):\n  - 'Left to do: nothing the criteria require.' => ['nothing the criteria require.']\n  - '- nothing the criteria require.' => ['nothing the criteria require.']\n  - 'Left to do: nothing.' => []\n  - 'Left to do: nothing for the criteria.' => []\n- The continuing run's brief then said 'Left to do ... - \"nothing the criteria require.\" Start with the first item of its list'. That run made no change, and the critic accepted the work. The extra session cost CHF 0.13 for this task.",
+    "repro": "On bench-live, make a researcher task estimated above the work budget (the researcher's starting estimate is about CHF 0.42) and start a session with CHF 0.40. When the real model ends its wrap-up with 'Left to do: nothing the criteria require.', the task pauses with a Continue card instead of being reviewed.",
+    "suspected_cause": "The NOTHING regex in packages/runtime/src/session/budget-pause.ts only accepts a 'nothing' followed by a preposition (for, in, by, to meet ...) or by punctuation. 'nothing the criteria require' has neither, so isNothing() is false and the line is kept as an item. The wrap-up instruction itself says '(only what the task's criteria still need, as a list with the next step first, or nothing ...)', which invites this phrasing.",
+    "journey": "pause",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-pause-1",
+    "real": true,
+    "model_only": false,
+    "severity": "major",
+    "root_cause": "The \"nothing\" detector in parseHandoff has a fixed list of phrasings. `NOTHING` (budget-pause.ts:80-83) accepts nothing/none followed by (a) left/required/needed words, then (b) an ABOUT clause that has to start with a preposition (for, in, by, under, within, to meet/satisfy/...; :76), or (c) punctuation followed by a reason (AFTER, :78). A relative-clause form that has no preposition (\"nothing [that] the criteria require\", \"nothing the task needs\") matches none of these. So isNothing() (:92) is false, add() (:176-183) keeps the line, and leftToDo = [\"nothing the criteria require.\"]. executor.ts:1725-1732 then sees result.wrapUpSent && parsed.leftToDo.length > 0 and sets stoppedBy \"wrap_up\", so the outcome is \"paused\" instead of a review. That gives the person the budget card with Continue, the log line \"listed one thing left to do\" (pauseSentence, budget-pause.ts:317), and a continuing brief (task-context.ts:160/218) that says \"paused at a budget before its work was done\" and \"Start with the first item of its list: 'nothing the criteria require.'\". The app itself prompts this phrasing: the wrap-up text the model hears (agent/loop.ts:109) and WRAP_UP_BRIEF_LINE (budget-pause.ts:53) both say \"only what the task's criteria still need ... or nothing\". ADR 0112 (lines 75-76, 339-348) says a \"nothing\" about the criteria is nothing and the run is reviewed. I reproduced this read-only with tsx on 4cf11fd. These lines all parse as one item: \"nothing the criteria require.\", \"- nothing the criteria require.\", \"Nothing the acceptance criteria require.\", \"nothing the criteria still need.\", \"nothing that the criteria require.\", \"nothing the task needs.\". These parse as nothing: \"nothing required by the criteria.\", \"nothing for the criteria.\", \"nothing, the criteria are met.\". In the model-call log, seq 8 (session 01a1e81b) ends with exactly \"Left to do: nothing the criteria require.\". The seq 9 brief quotes it as the first item to start with.",
+    "where": "packages/runtime/src/session/budget-pause.ts:80-83 (NOTHING; ABOUT at :76 needs a preposition), used by isNothing :92 and add() :176-185; decision at packages/runtime/src/session/executor.ts:1725-1732; the wording that invites it is at packages/runtime/src/agent/loop.ts:109 and budget-pause.ts:53",
+    "fix_sketch": "In budget-pause.ts, add a relative-clause alternative to NOTHING after the left/required group: `(?:\\s+(?:that|which))?\\s+(?:the\\s+)?(?:task'?s\\s+)?(?:(?:acceptance|three|two|\\d+)\\s+)?(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)(?:\\s+(?:still|yet))?\\s+(?:requires?|needs?|asks?\\s+for|calls?\\s+for|demands?)`. It takes the same optional REASON tail as ABOUT. NOT_NOTHING and ONE_CRITERION stay as they are: \"nothing the criteria require yet: tests fail\" stays an item, and \"nothing criterion 2 needs\" says nothing about the rest. WHOLE_SET already matches \"criteria\", so aboutWholeSet turns the other lines into notes, as under L3-research-1. This is the third live phrasing patched one at a time (W15-14 \"Nothing for the acceptance criteria.\", L3-research-1 \"Nothing is needed for the two criteria: ...\", now this one). So also consider a general rule: a Left-to-do line that starts with nothing/none, names the whole set (WHOLE_SET), and has no NOT_NOTHING word is nothing. That needs the existing \"Nothing in the task works yet\" / \"Nothing works yet\" cases to stay items; they already do through \"yet\" in NOT_NOTHING. Optionally, the wording at loop.ts:109 and WRAP_UP_BRIEF_LINE could ask for \"the word 'nothing'\". The parse fix is the necessary part, because the model will keep adding qualifiers. Update ADR 0112's parse paragraph and the maintainer doc for session/budget-pause.",
+    "failing_test_idea": "Composed test in packages/runtime/test/budget-pause.test.ts, next to \"a run that hears the wrap-up and lists only 'Nothing for the acceptance criteria.' ... is reviewed and done, with no budget card\" (around :1164). Use the same FakeProvider setup, with the researcher's post-wrap-up reply set to live check 4's seq 8 report. That report ends \"Where I stopped: `hosts.md` is complete and meets the three acceptance criteria as I read them. Nothing is half done. I did not fetch ...\\n\\nLeft to do: nothing the criteria require.\". Expected: task.status \"done\", a review exists for the task, run outcomes [\"completed\"], no \"paused before ... ran out\" or \"listed one thing left to do\" line, and GET /inbox has no card for the task. Today the task pauses with a Continue card. Add unit cases to the parseHandoff describe: \"Left to do: nothing the criteria require.\", \"- Nothing the acceptance criteria require.\", \"Left to do: nothing that the brief still needs.\" each give leftToDo []. \"Left to do: nothing the criteria require yet: the tests fail\" stays one item. Optionally add a matching apps/ui/test/real-daemon.test.ts case: no budget card in the Inbox, and the Tasks row shows done, not 'Paused before the session's budget ran out'.",
+    "area_hint": "d1109-oversize-pause (owns budget-pause.ts's handoff and wrap-up words, and loop.ts wrapUpText); as a small fix area it follows run L3's l3-handoff-checks, which last widened NOTHING for L3-research-1",
+    "known_leftover": "",
+    "notes": "Reproduced deterministically at the parser with tsx on the 4cf11fd checkout (script: /tmp/frbench/verify-L4-pause-1/check.mts); I did not need the bench. No leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names this phrasing or the parse fragility. LL-7/LL-8 from l3-handoff-checks are about other things. The model followed the app's own instruction, and ADR 0112 says a \"nothing\" about the criteria is nothing, so this is not model-only. Severity major: finished work is held back from review, the person is asked to pay CHF 0.40 to \"continue\", and three screens say one thing is left. The continuing brief also tells the next run that the work was not done. One correction to the evidence: the second session's CHF 0.13 includes the critic's review (USD 0.128), which would have run in the first session anyway. The real waste is the continuing researcher run (USD 0.035, about CHF 0.03), plus an extra session and an action from the person. The CHF 0.06 tagline task not running is a separate finding (L4-pause-2)."
+   }
+  },
+  {
+   "key": "live4:L4-pause-2",
+   "finding": {
+    "id": "L4-pause-2",
+    "severity": "minor",
+    "title": "The session says 'the budget is used' with CHF 0.17 of its CHF 0.40 left, and the CHF 0.06 task after it does not run",
+    "step": "LC-C7 / LC-C5",
+    "what_the_person_sees": "The same screens say the budget is used and show 58% of it spent.\n- Session page: the badge 'Stopped: the budget is used' sits beside 'CHF 0.23 of CHF 0.40 (58%)'.\n- Session result: '... The session's budget is used. \"Write a one-line tagline for the bakery in tagline.md\" waits for your next session: \"Compare ...\" used the rest of this one. CHF 0.23.'\n- More > Sessions row: '\"Compare ...\" paused before this session's budget of CHF 0.40 ran out.' over '... 1 paused · Stopped: the budget is used · CHF 0.23 on your API key'. The same row says 'before ... ran out' and 'the budget is used'.",
+    "expected": "Words that are true now (design section 5.4). CHF 0.09 of the CHF 0.32 work budget was still unspent, and the dialog had said the tagline task 'runs if \"Compare ...\" leaves budget'. Either the next task runs in what is left, or the words say why it does not (for example, that the larger task's run keeps the rest).",
+    "evidence": "- c7-run.json session: status 'stopped', stopReason 'budget_exceeded', statusText 'Stopped: the budget is used', spent chfMicro 233586 of budget 400000.\n- Screenshots /tmp/frbench/live4/pause/p1/steps/09-c7-20-session-page-ended.png and 30-c5-11-sessions-via-more.png.\n- Log: 'This run may spend CHF 0.32: before a step that could take it past CHF 0.25 it is told to wrap up, keeping a reserve of CHF 0.07 to finish.'",
+    "repro": "Run LC-C7 (a larger task first, a CHF 0.06 task after it, session budget CHF 0.40). The larger task wraps up at CHF 0.21 and pauses at CHF 0.23. The session ends 'the budget is used' and the small task waits.",
+    "journey": "pause",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-pause-2",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The session ends on any pause it labels as being at the session's budget, even when most of that budget is still unspent. The runner (runner.ts:3544-3558) ends the session for every paused result where stopEndsSession(source) is true, and budget-pause.ts:241-243 counts source \"session\" as ending the session. Its comment says \"nothing else of it can run there\". That is false for a larger task's wrap-up. The larger task's run is capped at what is left of the work budget, so executor.ts:1081 sets runCapSource = \"session\". A clean wrap-up has no budget error, so executor.ts:1883 (stopSourceOf) keeps \"session\" as the pause's source. The wrap-up line holds back a reserve of the larger of a fifth of the run cap and two calls (budget.ts:56-66). Here it wrapped at CHF 0.21, paused at CHF 0.23, and left CHF 0.09 of the CHF 0.32 work budget. That is room for the CHF 0.06 tagline task (the re-plan's room, runner.ts:2303-2307, would be 0.09). But the break at :3556 comes before any re-plan. stopReason becomes \"budget_exceeded\", which shows as \"Stopped: the budget is used\" (stop-words.ts:138) and \"The session's budget is used.\" (result.ts:257). The task after the larger one keeps its \"after_large\" reason, so result.ts:440-447 writes oversize-words.ts:145-148's \"... used the rest of this one\". The tests lock this in: oversized-task.test.ts:362-369 and :391-393 assert \"waits for your next session: ... used the rest of this one\" after a wrap-up pause, without checking how much is left. The run C plan (d1109-oversize-pause decisions) assumed a pause at the session's budget means the work budget is used. It lists only done, failed, paused at its own budget, and paused without progress as the cases where the re-plan takes the tasks after it. That breaks design 4.2 (the session stops only when nothing can run or the budget is used), 5.4 (\"true now\") and 5.9 (the Start dialog's \"it runs if ... leaves budget\"). It also misses the owner's option C (\"spare budget isn't wasted\").",
+    "where": "packages/runtime/src/session/runner.ts:3544-3558 (with budget-pause.ts:241-243, executor.ts:1081 and :1883, result.ts:440-447, oversize-words.ts:145-148)",
+    "fix_sketch": "In the runner's paused branch (runner.ts:3544), end the session at a \"session\" source only when the session really cannot take more work. That is when the run was refused at the session cap (result.errorCode budget_exceeded at level session), or budget.noNewWork is set, or budget.workRemainingUsdMicro() is below the smallest after_large estimate. For a wrap-up pause (budgetStop.stoppedBy === \"wrap_up\") with room left, keep the card and the needs_human row as today. Then hand the larger task's after_large items to the re-plan, as takeLarger's no_room path does at :2152-2153 (\"after_others\"), and continue the loop so the queue-empty re-plan (cutPlanToBudget with the room left) takes those that fit. If one still does not fit, the result says so in true words, e.g. '\"B\" (about CHF 0.06) waits for your next session: \"Compare ...\" left CHF 0.03 of this one.' Never say \"used the rest\" or \"The session's budget is used\" while spent is under the work budget. The status sentence should follow the real reason, e.g. the needs-your-decision stop. Update the plan wording in runner.ts:5335 and oversize-words.ts, and change the composed tests at oversized-task.test.ts:362-369 and :391-393 so they assert on the room actually left.",
+    "failing_test_idea": "Composed real-runtime test with the stand-in provider in packages/runtime/test/oversized-task.test.ts, describe 'd1109-oversize-pause'. Ready tasks: Big at high priority, larger than the work budget, and a small B whose estimate is under a fifth of the work budget. The stand-in wraps up Big early, so its pause leaves more than B's estimate of the work budget unspent; assert that through the ledger (session spent < work budget − B's estimate). Expect task.started events [Big, B] in the same session, B done, and Big needs_human with one card. Also expect the session's stopReason not \"budget_exceeded\", and neither the result nor GET /sessions/:id containing \"used the rest of this one\", \"The session's budget is used\" or \"Stopped: the budget is used\". Mirror it in a real-daemon POST /sessions case and the Sessions-row UI test (no row saying both \"paused before ... ran out\" and \"the budget is used\"). Today it fails: B stays ready and the session stops \"budget_exceeded\" at 58% of its budget.",
+    "area_hint": "d1109-oversize-pause",
+    "known_leftover": "",
+    "notes": "The code fully explains the evidence: c7-run.json shows stopReason budget_exceeded with 233586 of 400000 spent, and the log shows the run told to wrap up at CHF 0.21 against a CHF 0.25 line with a CHF 0.07 reserve. The live run used the real model (provider bench-live), but the path is deterministic and does not depend on the model: any larger task that wraps up cleanly at the session's work budget ends the session with its reserve unspent, so the tasks behind it never get the room it leaves. They run in this session only if the larger task finishes or fails. The journey's own check 'the small task did not run (still ready, no run)' passed because the script encodes run C's acceptance (OP-0: B 'used the rest of this one'), which is the same wrong assumption. I did not re-run it on the stand-in; the run C plan text, the code path and the existing composed tests agree. The contradictory Sessions row ('paused before this session's budget of CHF 0.40 ran out' beside 'Stopped: the budget is used') has the same cause: the card label is true, the session's stop reason is not. No leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names it. CL-13..16 (C2) are other oversize-pause items. Minor: the small task only waits for the next Start, but three screens state something untrue about money, and the Start dialog's promise is broken."
+   }
+  },
+  {
+   "key": "live4:L4-pause-3",
+   "finding": {
+    "id": "L4-pause-3",
+    "severity": "minor",
+    "title": "The session's Details count the plan two ways: 'It promised 2 tasks', then '0 of 1 planned task done'",
+    "step": "LC-C7",
+    "what_the_person_sees": "Session page > Details shows three lines that count the plan differently:\n- 'Plan: \"Compare ...\" (about CHF 0.42), larger than this session's work budget: it works until that budget is used. 2 ready tasks in priority order (1 item cut to fit the budget).'\n- 'It promised 2 tasks, about CHF 0.32.'\n- 'Session review measured: 0 of 1 planned task done; the planned tasks cost CHF 0.23 against an estimate of CHF 0.32.'",
+    "expected": "One count of what the session planned and promised, consistent across the Details lines (design section 5: no numbers that disagree).",
+    "evidence": "/tmp/frbench/live4/pause/p1/steps/c7-run.json notes.logLines; screenshot 10-c7-21-session-page-details.png",
+    "repro": "Start a session with a larger task first and a small task after it (LC-C7) and open Details on the session page.",
+    "journey": "pause",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-pause-3",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The code counts the task that waits behind the larger one (`after_large`) three different ways:\n(1) In `cutPlanToBudget`, every `leftOutForBudget` item goes into the summary clause \"(N item cut to fit the budget)\", and that includes the `after_large` ones (runner.ts:5376-5380). So the Plan line says \"2 ready tasks in priority order (1 item cut to fit the budget)\". But the Start dialog, and OP-0's design, say that task is the session's own and \"runs after it only if budget is left\". It was never cut.\n(2) The promise is built from `first = plan.items + afterLarge` (runner.ts:1731-1751) and emitted as session.promised (runner.ts:1844-1849). So \"It promised 2 tasks, about CHF 0.32\" counts 2. The 0.32 is only the larger task's room.\n(3) The session review's planned set comes only from `planItemsOf(session.plan)`, which reads `plan.items` (critic/src/session-review.ts:136-156, :207 and :346-352). The `after_large` task is in `leftOutForBudget`/`promise`, not in `items`. So views.ts:854 prints \"0 of 1 planned task done\". The run indicator showed \"(0 of 2 done)\" during the same session.\nI reproduced this with tsx against the code at 4cf11fd (/tmp/frbench/verify-L4-pause-3/cut.mts). `cutPlanToBudget([big 0.47, small 0.03], 0.355)` gives items `[big]`, `small` as `after_large`, and summary \"2 ready tasks in priority order (1 item cut to fit the budget)\". `describeEvent` then gives \"It promised 2 tasks, about CHF 0.32.\" and \"Session review measured: 0 of 1 planned task done; ...\" for the same plan. These are exactly the three Details lines in the evidence. The app produced this deterministically. The model's choices played no part.",
+    "where": "packages/runtime/src/session/runner.ts:5376-5380 (cut clause counts after_large); packages/runtime/src/session/runner.ts:1731-1751 (promise = items + afterLarge); packages/critic/src/session-review.ts:136-156 and :346-352 (planned = plan.items only); packages/runtime/src/daemon/views.ts:854 (the 'N of M planned' line)",
+    "fix_sketch": "Use the promise as the one count for this kind of session.\n(a) In `cutPlanToBudget`, count only the items left out for `no_room` or `after_others` in \"(N cut to fit the budget)\". Name the `after_large` items as the dialog does, e.g. \"(1 comes after it if budget is left)\", or drop the clause for them. The session.planned line then agrees with the dialog and the promise.\n(b) In `loadSessionReviewData` and `runSessionReviewChecks`, make the planned set `plan.items` ∪ `plan.promise.taskIds` (at least the `after_large` ids; the promise is already stored on the plan row via setPlan). Then the metric reads \"0 of 2 planned tasks done\", like \"It promised 2 tasks\" and the run indicator's \"(0 of 2 done)\". Keep the estimate as the promise's figure (CHF 0.32). A promised task that never ran must not be graded as a plan defect, or \"Plan item references a task\" findings would start to fire.\nAlternative: the metric line says \"of the 2 tasks it promised\". Either way there should be one number.",
+    "failing_test_idea": "Composed test in packages/runtime/test/oversized-task.test.ts, describe 'd1109-oversize-pause' (or real-daemon GET /sessions/:id/events, which feeds Session page > Details):\n- Set up ready tasks Big (estimate above the work budget) then Small, with a session budget of CHF 0.40 (work budget CHF 0.32).\n- The stand-in makes Big pause at the session's budget, so Small never runs.\n- Read the Details lines through eventView.\nAssert:\n- the session.planned line does not contain \"cut to fit the budget\";\n- the session.promised line is \"It promised 2 tasks, about CHF 0.32.\";\n- the critic.session_review_metrics line contains \"0 of 2 planned tasks done\".\nToday the first and third assertions fail (\"(1 item cut to fit the budget)\", \"0 of 1 planned task done\").\nUnit companion: `cutPlanToBudget([Big 6.00, A 0.40], 4.00).summary` has no \"cut\" clause, while `[A 3.50, Big 6.00, B 0.30]` still says \"(1 item cut to fit the budget)\".",
+    "area_hint": "d1109-oversize-pause",
+    "known_leftover": "",
+    "notes": "Evidence matches: /tmp/frbench/live4/pause/p1/steps/10-c7-21-session-page-details.txt and c7-run.json notes.logLines show the three lines verbatim. The Start dialog (06-c7-10) and the header after Start (\"Working on ... (0 of 2 done)\") both treat the small task as part of this session. That makes \"1 item cut\" and \"of 1 planned\" the odd ones out.\nDesign core-experience.md §5 has no literal \"no numbers that disagree\" rule. The finding's paraphrase best fits rule 4 (true now) and rule 9 (no promise the code does not keep): calling a promised task \"cut\" contradicts the dialog.\nThis happens only when a larger task has tasks after it (`after_large`). In the plain `after_others` case, cut items are not promised, so the \"cut\" clause is true there.\nAll three lines are under Details (internal events), so minor rather than major.\nNo leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names it. The nearest are C5L-23 (wording of a promise kept after Cancel) and C3-left-5 (promise test gaps); neither covers it.\nThe tasks.md cost figure CHF 0.23 versus the estimate CHF 0.32 is consistent; that part is not a defect."
+   }
+  },
+  {
+   "key": "live4:L4-pause-4",
+   "finding": {
+    "id": "L4-pause-4",
+    "severity": "minor",
+    "title": "Costs > By task reads 'Accepted 1 / 2 (50%)' for a task whose only review accepted it",
+    "step": "LC-C8",
+    "what_the_person_sees": "Costs > By task: 'Compare three static site hosts ... | 2 | 1 / 2 (50%) | CHF 0.36 | CHF 0.36'. The first run paused at the session's budget and was never reviewed. The critic reviewed once and accepted the work. The 50% reads as if half the work was rejected.",
+    "expected": "A paused run that a later run finished is not counted as a run the critic did not accept, or the column says what it counts.",
+    "evidence": "/tmp/frbench/live4/pause/p1/steps/19-c8-12-costs.txt line 45. GET /costs byTask {runs:2, accepted:1}. The drawer's runs are: Paused (CHF 0.23), Finished (CHF 0.03), review Finished (CHF 0.10).",
+    "repro": "After LC-C7 and LC-C8, open More > Costs on the project.",
+    "journey": "pause",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-pause-4",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The code produces this result every time. In costFacts (packages/runtime/src/daemon/views.ts:1461-1468), every non-critic Run row of a task counts as a \"run\", whatever its outcome: runsByTask at :1464, runsByModel at :1467, and the specialist's run set at :1446. The paused run (outcome `paused`, ADR 0112 clean pause) is counted too. Only the last work run before each accepting review counts as accepted (:1412-1426, `before` at :1423). costView then sets By task runs=2 and accepted=1 (:1264-1265). CostsTab renders `${accepted} / ${runs} (%)` (apps/ui/src/pages/project/CostsTab.tsx:53-55), and its header tooltip reads \"Accepted by the critic / runs\" (:38). So a run the critic never saw shows as a run the critic did not accept. ADR 0112 point 5 says the opposite: \"A paused run gets no critic and no failed try ... neither is a sample\". Spec I.6 / billing's own allocation defines the success rate as accepted / (accepted + rejected), null until decided (packages/billing/src/ledger.ts:91, :562-574). The live evidence matches this exactly. c8-run.json has costs.byTask {runs:2, accepted:1}, bySpecialist researcher {runs:2, accepted:1} and byModel {runs:3, accepted:2}. The drawer shows: researcher Paused CHF 0.23, researcher Finished CHF 0.03, and one critic review Finished CHF 0.10. The same paused run also pulls down \"the researcher 1 / 2 (50%)\" and \"claude-sonnet-5-5 2 / 3 (67%)\" on the same screen. The existing real-daemon case (\"Broken page check\" runs 2, accepted 1) covers a failed first try, where 1/2 is right. Nothing tells a paused-then-continued run apart from a failed one.",
+    "where": "packages/runtime/src/daemon/views.ts:1461-1468 (runsByTask/runsByModel count paused runs), :1444-1447 (bySpecialist run set), :1264-1265 (By task runs/accepted); apps/ui/src/pages/project/CostsTab.tsx:38,53-55 (accepted / runs ratio)",
+    "fix_sketch": "In costFacts, keep `runs` as the number of runs, so it still matches the drawer's list of runs. Add a separate denominator `tries` to each bucket. tries counts work runs that ended in a result the critic or the failure ladder judged: finished/reviewed, failed or sent back. It leaves out runs whose outcome is `paused` or `budget_exceeded` (ADR 0112: no failed try, no sample). Two ways to apply this:\n(a) Leave every such run out of tries.\n(b) Leave it out only when a later work run of the same task continued it. A pause that ended the task (cancelled) would then still count as a try.\nApply the same rule to runsByTask, runsByModel and the bySpecialist run set. Add `tries` to CostBucket in api-types.ts:1095 and to the fake daemon. CostsTab renders `${accepted} / ${tries} (%)`, with the tooltip \"Accepted by the critic / tries; a run paused and continued is one try\". Expected result on this project: By task 1 / 1 (100%), the researcher 1 / 1, claude-sonnet-5-5 2 / 2. Per accepted and Cost are unchanged. Update docs/maintainers/runtime.md (the costView paragraph near :7135) and apps.md's costs row.",
+    "failing_test_idea": "Real daemon (apps/ui/test/real-daemon.test.ts, beside \"Costs: tasks by title...\"): use a project whose session budget makes the first researcher/coder run of a task wrap up and pause (Run outcome `paused`, budget_stop card). Answer Continue. The second run finishes and the critic accepts. Then GET /costs?projectId= gives this task's byTask row with accepted 1 against a denominator of 1, not runs 2 / accepted 1. The specialist's bySpecialist row and byModel likewise exclude the paused run from the denominator. The existing \"Broken page check\" case (failed then fixed) must still read 1 / 2. UI (apps/ui/test/project.test.tsx with the fake daemon in step): the Costs tab's By task row reads \"1 / 1 (100%)\" and not \"1 / 2 (50%)\". The same case can be composed in packages/runtime/test/budget-pause.test.ts by calling costView after a pause, a continue and an accept.",
+    "area_hint": "d1116-budget-all (it owns costView's Costs > By task in packages/runtime/src/daemon/views.ts, BA-9). The paused-run semantics come from d1109-oversize-pause / ADR 0112. Can also go to a small fix area, \"costs-accepted-tries\".",
+    "known_leftover": "",
+    "notes": "Not a misreading. The API itself returns runs:2 accepted:1 (/tmp/frbench/live4/pause/p1/steps/c8-run.json), and the screen text matches (19-c8-12-costs.txt). The model's choice to wrap up at the session budget is the designed pause journey, not a model deviation. The counting is code. No leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names the Costs accepted ratio, costFacts, or paused runs on Costs. A side observation, not part of this finding: costFacts counts sub-runs (parent_run_id) as work runs, while task-display.ts isWorkRun (:391-393) excludes them. Fixing both in the same pass would keep the drawer and Costs in step. I did not run a bench repro because the code path is deterministic and the live API capture already shows the exact figures."
+   }
+  },
+  {
+   "key": "live4:L4-creds-1",
+   "finding": {
+    "id": "L4-creds-1",
+    "severity": "minor",
+    "title": "Sessions tab leaves out the session that ended to wait, while Last result and the continuation point to it",
+    "step": "LC-C21",
+    "what_the_person_sees": "While the session waits, the Overview shows 'Last result ... Open the session' but the Sessions tab says 'No sessions yet.' Afterwards the Sessions tab shows '1 session ... goes on with your session of 07:24', a session the list never shows.",
+    "expected": "The list shows every session other screens name (D2), or rows do not name a hidden one.",
+    "evidence": "GET /projects/:id/sessions returned {count:0, rows:[]} while session 01a1e82d... existed (status stopped). Files: /tmp/frbench/live4/creds/c21/steps/10-c21-waiting-sessions-tab.txt, 18-c21-sessions-tab-after-work.txt.",
+    "repro": "With only the refused key, start a session on a ready task. Open Sessions. Save a new key and open Sessions again.",
+    "suspected_cause": "listedCountForProject / pageForProject leave out sessions that ended with nothing done.",
+    "journey": "creds",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-creds-1",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The rule for which sessions get listed leaves out any session that ended with no run row and no cost-ledger row. SessionRepo.listedWhere (packages/state/src/repos/session.ts:158-170) keeps a row only when its status is planned, running or paused, or EXISTS a run, or EXISTS a ledger row, or plan.intake is set. Both pageForProject (:176) and listedCountForProject (:193) use this rule, so the session list (session-list.ts:669 count, :684 ended page) leaves the session out. Its working query (session-list.ts:672-682) only covers planned, running and paused, so it misses the session there too. The Overview's sessionCount (views.ts:507) also comes from this rule. In this journey the person pressed Start (plan.startedBy.by='person', trigger 'manual'), and the credential pick refused before any run was written. The session went straight to status 'stopped' with handoff.stop_reason 'credential_wait', 0 steps and no ledger row (checked read-only in /tmp/frbench/live4/creds/c21/home/data/state.sqlite). Applying the listed SQL to that database gives only the continuation 01a1e83a. 01a1e82d is left out, although summary_cache.last_session pointed to it during the wait (Overview 'Last result ... Open the session') and the continuation's plan.startedBy.continues names it (row: 'goes on with your session of 07:24'). ADR 0116 rule 5 says the exclusion is there because 'an automatic start that found nothing is not news (design §4.8)'. A person's Start that stopped to wait is not that case, and owner decision D2 says every project lists its sessions. The plan expected a row for this case: d1109-sessions SL-11 says 'a session that ended at a credential wait reads ... on its page's badge and its row'. But the SL-11 real-daemon case seeds a run row into every session (apps/ui/test/real-daemon.test.ts:16130), so the real path never got tested: in that path the wait comes before any run.",
+    "where": "packages/state/src/repos/session.ts:158 (listedWhere; used by pageForProject :176 and listedCountForProject :193); consumers packages/runtime/src/daemon/session-list.ts:669,672-688 and packages/runtime/src/daemon/views.ts:507; test gap apps/ui/test/real-daemon.test.ts:16130",
+    "fix_sketch": "In listedWhere, also list (1) a session the person started, (2) a session that ended to wait, and (3) a session another row continues. For (1), json_extract(s.\"plan\",'$.startedBy.by') IN ('person','continuation'), plus the Postgres form. For (2), json_extract(s.\"handoff\",'$.stop_reason') IN ('credential_wait','plan_awaiting_approval'). For (3), EXISTS (SELECT 1 FROM session c WHERE json_extract(c.\"plan\",'$.startedBy.continues') = s.\"id\"). Automatic starts (hands_off, schedule) that found nothing stay out, as ADR 0116 intends. The count, the page and the Overview's sessionCount follow, because they share the rule. Amend ADR 0116 point 5 and the runtime.md listed-rule paragraph (around :7431) to match. Extend the state suite: a person's start that stopped at a credential wait with no run is in pageForProject(ended) and in the count, and an automatic one is not. A narrower alternative: the session list skips the stored rule for the session that summary_cache.last_session names and for any session a listed row continues. That is less clean.",
+    "failing_test_idea": "A real-daemon case in apps/ui/test/real-daemon.test.ts through the client. Use the stand-in provider and the w15-run credential helpers with only a refused API key. Make a project with one ready task and client.startSession, which stops at once with 'Stopped to wait for a Claude credential: nothing done'. Then client.projectSessions(project.id) should give count 1 and a row with the waiting session's id, endedWords 'Stopped to wait for a Claude credential' and the 'Waits for a new API key' gist (today: count 0, rows []). client.projectSummary(...).sessionCount should be 1. Save a working key so the continuation runs to done. Then the list should hold 2 rows, and the continuation row's startedBy 'goes on with your session of HH:MM' should name a session id in the same list. Also compose a second time on the same home and read again. On the UI side, the Sessions tab while the session waits should show that row, not 'No sessions yet.'",
+    "area_hint": "d1109-sessions",
+    "known_leftover": "",
+    "notes": "Evidence is consistent. c21-evidence/c21-api-start.txt shows SESSIONS {count:0, rows:[]} while RUNNING has sessionId 01a1e82d in state 'waiting'. The database shows 01a1e82d with status stopped, trigger manual, startedBy person, stop_reason credential_wait, no run and no ledger rows. Continuation 01a1e83a has startedBy {by:'continuation', continues:'01a1e82d...', continuesAt:'07:24'}, 2 runs and 8 api ledger rows. No model is involved: the credential refusal and the listed rule are deterministic. C6L-2 (cred-screens, 'Start on 1 Dec') is related but not the same: it is about a start that should have been kept, and it assumes such a session would show in the list. Side observation, not this finding: the session page title reads 'session at 06:24' (startedAtWords, browser zone; the bench browser looks like UTC). The row reads 'your session of 07:24' (runner.ts:1169 clockTime in the person's zone, Europe/Zurich). This is probably a bench artefact, but the two screens would disagree for any person whose Settings timezone differs from the device's."
+   }
+  },
+  {
+   "key": "live4:L4-session-10",
+   "finding": {
+    "id": "L4-session-10",
+    "severity": "minor",
+    "title": "With 'Start a session by itself' on, a question card's options do not say that answering starts a paid session",
+    "step": "LC-C19",
+    "what_the_person_sees": "With the setting on and nothing running, the Inbox card \"\\\"Add the choir's rehearsal address to index.html\\\": the specialist asks you\" shows [Send answers] with no line, [Go ahead without] \"The specialist decides and says what it assumed.\" and [Cancel task] \"Drops it. Nothing waits on it.\". Pressing Send answers on the phone card then started a session at once: \"...; a session started for it (this project starts by itself when work is ready).\". With the setting off the options read exactly the same, but Send answers then waited for the next Start.",
+    "expected": "C3 adds and the C3 fixup (S-9) say an option that prepares work tells what pressing it does as things stand. Here that would be \"...; a session starts for it by itself.\" with the setting on (as Try again's explain says) and \"...; it runs at your next Start.\" with it off.",
+    "evidence": "c19-b.json cardsOn (choices identical to c19-a.json cards and c19-c.json cardsOff); screenshots 68-c19-22-inbox-with-hands-off-on.png and 70-c19-23-phone-card-answered.png",
+    "repro": "Bench s1 (bench-live): a project with a coder task that asks the person (\"Add the choir's phone number to contact.html\", criterion \"shows the choir's real phone number\"). Start, then let the card arrive. Turn on Settings > Advanced > When work is ready > Start a session by itself > Yes. Read the card's options in the Inbox.",
+    "suspected_cause": "Same root as L4-session-4: the person-questions card gives Go ahead without a fixed explain and Send answers none. Only the Try again, rework and conflict options use preparedExplain(ctx).",
+    "journey": "session",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-session-10",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The words of a specialist's question card never read what prepared work would meet. In packages/runtime/src/daemon/request-words.ts, questionsCard (:518-567) builds Go ahead without with a fixed explain, \"The specialist decides and says what it assumed.\" (:544-550). It never uses ctx.startsByItself, ctx.running, ctx.continuationWaits, ctx.stopped or ctx.quiet. views.ts requestContexts (:1002-1052) does put these facts in ctx for every open card (fix-up B1 of C3). Only retryCard (:445-446), cannotRunCard (:1143), mergeLeftOpenCard (:1328) and the rebase card (:1714-1716) append preparedExplain(ctx).\n\nSend answers has no explain at all. RequestWords (:73-106) has no slot for the form's button, and questionsCard only sets reply \"form\" (:563). apps/ui/src/pages/InboxPage.tsx:258-266 draws the button with no line. That is also short of design §3.8, which gives Send answers the line \"The task goes on with your answers now\".\n\nPressing either option does prepare work. person-questions.ts applyAnswers calls deps.prepare, and questionsOutcome (:569-593) words the result with startWords(card.start, card.start_by). So with \"Start a session by itself\" on, a session starts at once, as the Done line in c19-b.json shows. The options read the same as with the setting off.\n\nReproduced directly: requestWords on a person_questions card gives identical choices for ctx {}, {startsByItself:true} and {running:\"this_project\"}. The evidence in c19-b.json cardsOn and in 68-c19-22-inbox-with-hands-off-on.txt matches.\n\nThe run C plan scoped this to C3. The d1109-starts-engine files list names \"the questions card's Send answers\" among the explains to change, and problem D6-1 names Send answers and Go ahead without. The C3 fix and fix-up never touched them.",
+    "where": "packages/runtime/src/daemon/request-words.ts:544-550 (Go ahead without, fixed explain) and :563 (reply \"form\", nothing for Send answers); RequestWords type :73-106; apps/ui/src/pages/InboxPage.tsx:258-266 (Send answers button, no line)",
+    "fix_sketch": "In questionsCard, use preparedExplain(ctx) as retryCard does:\n- Go ahead without: `The specialist decides and says what it assumed; ${preparedExplain(ctx)}.` That is about 85 characters, under the 100-character limit for a consequence line.\n- Add a line for the form's button, either a new RequestWords field (for example `send: { explain }`) or a send choice the UI draws under the form. For a specialist's card: `The task goes on with your answers; ${preparedExplain(ctx)}.`\n- For a planned person task (no specialist): answering makes the task done, so the line covers only what waits on it. For example \"Your answers close it; what waits on it ${clause}.\" when ctx.waiting is not empty, and \"Your answers close it.\" otherwise (the same S-2 rewrite questionsOutcome makes).\n- Carry the field through the request view: views.ts requestView, the UI client type, and the fake daemon's open-card words with its start_by_itself:<project> setting. InboxPage's PersonQuestionsForm then shows the line under Send answers, the same way it shows other options' explains.\n- Optionally let project-facts.ts:339 give chat the same explain.\n- Update docs/design/core-experience.md §3.8 and docs/maintainers/runtime.md. Change the inbox.test.tsx expectations that pin the old text.",
+    "failing_test_idea": "In apps/ui/test/real-daemon.test.ts 'd1109-starts-engine, run C', next to the S-9 Try again case (:19029): \"S-9: GET /inbox's question card says what Send answers and Go ahead without do now\".\n- Set up a project with a coder task whose run files a person_questions card, and nothing running.\n- With the setting off, GET /inbox shows the card's Go ahead without explain ending \"; it runs at your next Start.\" and a Send answers line \"The task goes on with your answers; it runs at your next Start.\".\n- Turn on project.start_by_itself. Both lines end \"; a session starts for it by itself.\".\n- With a session of the project running, both end \"; it joins the running session if it fits.\".\n- Then POST the answer and assert the outcome matches the line: one session started (hands-off on) or none (off).\nAdd a UI case in inbox.test.tsx that the explain shows under Send answers, and a unit case in starts-words.test.ts for questionsCard with each PreparedContext. Today the first assertion fails: it reads \"The specialist decides and says what it assumed.\" and there is no Send answers line.",
+    "area_hint": "d1109-starts-engine (run C sub-run C3; its files list names \"the questions card's Send answers\" in request-words.ts)",
+    "known_leftover": "",
+    "notes": "Same root as L4-session-4 (LC-C18: same card, same missing explain, with a session running). The two should become one fix that covers all five PreparedContext cases. None of the leftover files (L3, C2, C3, C4, C4b-design, C4b, C5, C6) names it. The closest is C3L-4, which is about the setting's own effect line, a different place.\n\nSeverity minor, agreed. The person did get an explicit yes when turning the setting on (\"Sessions of Choir will start by themselves when work you made ready can run, up to CHF 1.00 each\"), so the start was not a surprise. But each option on the card does not say what pressing it does now, which design §5 rule 4 (true now), S-9 and the owner's \"the user clearly states when a session will run\" ask for. Send answers also lacks the §3.8 line in every state, not only under the setting.\n\nCheck done: a tsx probe of requestWords at 4cf11fd (run, then removed), no bench needed. The live evidence already shows both behaviours: a session starts with the setting on, and no session in 150 s with it off."
+   }
+  },
+  {
+   "key": "live4:L4-session-11",
+   "finding": {
+    "id": "L4-session-11",
+    "severity": "minor",
+    "title": "A session started by the hands-off setting does not say so on its own page or in its log",
+    "step": "LC-C19",
+    "what_the_person_sees": "The session page header reads \"Choir · session at 08:21  Done  Alice\" and its first log line \"The session started with a budget of CHF 1.00.\". While it ran, the run bar read \"Choir · the coder works on \\\"Add the choir's phone number to contact.html\\\" just started\". Only the Sessions list row says \"started by itself when work was ready\".",
+    "expected": "A session the person did not start should say why it started where the person opens it (design section 5: what happened and why), as the Sessions row does. For example: \"Started by itself when work was ready (this project's setting), with a budget of CHF 1.00.\"",
+    "evidence": "c19-b.json events[0] = \"The session started with a budget of CHF 1.00.\"; screenshot 71-c19-24-hands-off-session-page.png next to 72-c19-25-sessions-tab.png; packages/runtime/src/daemon/event-lines.ts:216-219. GET /sessions gives this session trigger \"message\"; the Sessions row gets its words from plan.startedBy (session-list.ts startedByWords).",
+    "repro": "As in LC-C19: turn the setting on, answer a question card, then open the session that starts.",
+    "suspected_cause": "personLine('session.started') checks only trigger === 'manual' and never reads plan.startedBy. A hands_off start therefore gets the generic line used for any non-manual start.",
+    "journey": "session",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-session-11",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The runner records who asked for the session on the session.started event itself: runner.ts:1210-1212 writes `by: startedBy.by`, and the captured event's payload is {trigger:\"message\", by:\"hands_off\", ...}. The person-level line ignores that field. event-lines.ts:216-219 (personLine 'session.started') looks only at `trigger === \"manual\"`. Every other start gets the same generic line, \"The session started with a budget of CHF X.\": hands_off, schedule, and a person's start that uses trigger \"message\" (Approve and start, Continue, the prepared person start). Only startedByWords in session-list.ts:377-390, which reads plan.startedBy, puts the hands-off reason into words, and only the Sessions list row (session-list.ts:649) uses it. SessionPage.tsx:376-399 builds its header from the project name, start time, status and agent, with no reason. One correction to the suspected cause: personLine does not need plan.startedBy, because the event payload already carries `by`. For continuation, S-10 added its own first log line, and the hands-off start never got one. I reproduced it at the unit level with tsx on the base: personLine('session.started', {trigger:'message', by:'hands_off', budgetCapUsdMicro:1250000}, 0.8) gives \"The session started with a budget of CHF 1.00.\", and by 'schedule' and by 'person' with trigger 'message' give the same line. Only trigger 'manual' gives \"You started the session...\".",
+    "where": "packages/runtime/src/daemon/event-lines.ts:216-219 (reads p.trigger only; p.by is written at packages/runtime/src/session/runner.ts:1210-1212; the only reader of the reason is packages/runtime/src/daemon/session-list.ts:377-390 startedByWords, used at session-list.ts:649 for the Sessions row)",
+    "fix_sketch": "In personLine 'session.started', choose the line from `p.by`, and fall back to startByOf({trigger}) for rows written before `by` existed:\n- person: \"You started the session with a budget of CHF X.\" This also covers trigger 'message' starts the person made (Approve and start, Continue, a prepared person start).\n- hands_off: \"Started by itself when work was ready (this project's setting), with a budget of CHF X.\" This is under 100 characters and is the same fact as the Sessions row's \"started by itself when work was ready\".\n- schedule: \"Started on its schedule, with a budget of CHF X.\"\n- continuation: keep the generic budget line, because CONTINUES_EVENT already comes first.\n- unknown: the generic line.\nTo keep one wording per fact (design section 5 rule 10), share the phrase with startedByWords in session-list.ts, or move both into one map. The S-12 rule (\"by itself\" only where the setting makes it true) holds, because this line is used only when by === 'hands_off'. No change is needed to the run bar or the header: the log's first line is where the session page says what happened.",
+    "failing_test_idea": "Real-daemon case in apps/ui/test/real-daemon.test.ts, describe 'd1109-starts-engine, run C':\n1. Set project.start_by_itself on through the settings route.\n2. Send answers to an open question card through the inbox route, as the app does.\n3. Wait for the session that starts, then read client.sessionEvents(id).\n4. Assert that the first person-audience event's text is \"Started by itself when work was ready (this project's setting), with a budget of CHF 1.00.\" and is not \"The session started with a budget...\".\n5. Assert that the Sessions row's startedBy names the same reason.\nSiblings for packages/runtime/test/event-lines.test.ts:\n- by 'person' with trigger 'message' gives \"You started the session...\".\n- by 'schedule' gives \"Started on its schedule...\".\n- An old event with no `by` and trigger 'manual' still gives \"You started...\".",
+    "area_hint": "d1109-starts-engine",
+    "known_leftover": "",
+    "notes": "The evidence supports the claim:\n- c19-b.json events[0] has payload.by 'hands_off' and text \"The session started with a budget of CHF 1.00.\".\n- The session page text 71-c19-24 has no reason in its header or log.\n- 72-c19-25 shows the Sessions row reading \"started by itself when work was ready\".\n\nThe person was told once, when they answered: the Inbox Done line said \"a session started for it (this project starts by itself when work is ready)\". A person who opens the session later from Home, the run bar or the notification sees no reason on the session page.\n\nThe spec does not name this line. S-10 named a first log line only for continuation, and S-5 and S-12 cover the setting, cards and Done lines. That is why it slipped through, and why I keep severity at minor rather than major.\n\nSibling with the same root cause: a person's own Approve and start or Continue (trigger 'message', by 'person') reads \"The session started...\" instead of \"You started...\".\n\nNo leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names it. The nearest are C3L-4, about the setting's effect line, and the C5-left-1 precedent, a similar \"log only says 'The session started with a budget'\" gap that was fixed for the key switch.\n\nBench not run: the unit reproduction with tsx on the base is decisive. The probe script is at /tmp/frbench/verify-L4-session-11/check.mts."
+   }
+  },
+  {
+   "key": "live4:L4-session-12",
+   "finding": {
+    "id": "L4-session-12",
+    "severity": "minor",
+    "title": "The Sessions row of a session that ended on questions shows two different counts",
+    "step": "LC-C19",
+    "what_the_person_sees": "After the phone card was answered and that task was done, the row reads \"\\\"Add the choir's phone number to…\\\" and \\\"Add the choir's rehearsal address to…\\\" needed your answer.\" over \"08:19 · under a minute · 2 needed you · Ended: 1 task needs you · CHF 0.02 on your API key\".",
+    "expected": "One count, or two counts clearly told apart (what the session ended with and what still waits now), so the row does not say 2 and 1 about the same thing.",
+    "evidence": "screenshot 72-c19-25-sessions-tab.png; c19-b.json sessionsTab",
+    "repro": "End a session with two question cards open, answer one, open the project's Sessions tab.",
+    "suspected_cause": "The 'Ended: N task needs you' status seems to come from the tasks' current states, while '2 needed you' is the count at the session's end.",
+    "journey": "session",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-session-12",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "One Sessions row reads two different moments. The gist and the task counts come from the record written when the session ended: handoff.outcome.needsYou held both tasks, so the row says \"2 needed you\" and '\"…phone…\" and \"…rehearsal…\" needed your answer.' The ended words come from what still waits now. The daemon passes blockedNow = stillBlocked (server.ts:1796), which drops the phone task because it is now done, and endedStatusText then prints \"Ended: 1 task needs you\". This was built on purpose: d1109-sessions decided \"'Ended: 1 task needs you' stays true now\" (L-21 rule, ADR 0116 rule 10, the same map as the session page's badge). Nobody thought about what happens when the row's past-tense counts sit next to it. The \"Ended:\" prefix makes the current count read as the count at the session's end, so the person sees 2 and 1 for the same thing. The live evidence matches the code. c19-b.json \"after\" shows the phone task done and the rehearsal task still needs_human. The second session's handoff has the phone task done. The row text in 72-c19-25-sessions-tab.txt is exactly countsWords + endedWords joined by SessionsTab.sessionRowLine.",
+    "where": "packages/runtime/src/daemon/session-list.ts:632-643 (waits = ctx.blockedNow(row.handoff) gives endedWords, while counts/countsWords at :623 and :642 and the \"needed you\" words at :200 come from the end record); packages/runtime/src/session/stop-words.ts:221 (\"Ended: N task(s) need(s) you\"); packages/runtime/src/daemon/server.ts:1796 (blockedNow: stillBlocked); apps/ui/src/pages/project/SessionsTab.tsx:37 (joins countsWords and endedWords on one line)",
+    "fix_sketch": "Leave the session page's badge as it is. On the list row, word the current-state part so it reads as now and not as the end, and keep the past-tense counts. In sessionRowView: when the session completed, its record has needsYou/failed/paused tasks, and waits (stillBlocked) is above zero, set endedWords to a \"still\" phrase such as \"1 still needs you\" (or \"1 still needs you, 1 still paused\"), not \"Ended: 1 task needs you\". When waits is zero after the person answered everything, keep \"Done\" (the row then reads \"2 needed you · Done\", which is already coherent). The row would read \"08:19 · under a minute · 2 needed you · 1 still needs you · CHF 0.02 on your API key\". When nothing changed since the end (waits equal to the end counts), the plain \"Ended: 2 tasks need you\" can stay, or the \"still\" form can be used everywhere for consistency. Put the phrase builder next to endedStatusText in stop-words.ts so there is still one map, and update the fake daemon (apps/ui/test/fake-daemon.ts around :9348) and the d1109-sessions maintainer doc and ADR 0116 rule 10 to say how the list tells the end and now apart.",
+    "failing_test_idea": "Real-daemon case in apps/ui/test/real-daemon.test.ts, next to the L-21 case at :11914. Have the bench stand-in ask on two tasks so one session ends with two open question cards. Answer one card so its task moves on (Cancel task, or Go ahead without followed by a session that finishes it). Read client.projectSessions(projectId) and take the first session's row. Assert sessionRowLine(row) contains \"2 needed you\" and \"1 still needs you\" and does not contain \"Ended: 1 task needs you\". Also assert client.session(id).statusText still follows L-21. Today it fails: the row reads \"2 needed you · Ended: 1 task needs you\". Add a unit case in packages/runtime/test/session-list.test.ts for the words with waits {needYou:1} against a record with needsYou of 2.",
+    "area_hint": "d1109-sessions",
+    "known_leftover": "",
+    "notes": "The code fully explains this, so I did not run the stand-in bench. Both parts of the row are each correct: the counts are past tense and true about the end, and the ended words follow design §5 rule 4 \"true now\". The problem is only how they are told apart on one line, so I rate it words, not minor. The header bar and the Inbox show the right current state (\"Waiting for you: rehearsal address\"). The d1109-sessions acceptance text says \"'Ended: 1 task needs you' stays true now\" and \"one map for the badge and the row\", so this follows the area's own decision; the gap is that the decision never looked at the counts next to it. None of leftovers-L3/C2/C3/C4/C4b-design/C4b/C5/C6 names this. The closest are C6L-2 (Sessions list, a different issue) and the round-2026-11-01 L-21 item, which built the current-state badge."
+   }
+  },
+  {
+   "key": "live4:L4-session-13",
+   "finding": {
+    "id": "L4-session-13",
+    "severity": "words",
+    "title": "The Answered line reads 'is done; a session started for it'",
+    "step": "LC-C19",
+    "what_the_person_sees": "Inbox > Answered: \"Answers saved in the decision record; \\\"Add the choir's phone number to contact.html\\\" is done; a session started for it (this project starts by itself when work is ready).\"",
+    "expected": "Events in the order they happened: your answers started a session for it and it is now done (design section 5). Related: L4-session-6, where the Answered line kept a stale 'is running'.",
+    "evidence": "c19-c.json inboxAfter; screenshot 82-c19-35-inbox-answered-after-hands-off-off.png",
+    "repro": "With the setting on, answer a question card, let the session finish, then open Answered.",
+    "suspected_cause": "The answered line puts the task's current state in front of the outcome that was kept when the card was answered.",
+    "journey": "session",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-session-13",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "questionsOutcome builds the Answered line from the task's status now (ctx.taskStatus, which views.ts:1043 reads from the task when the list is shown) plus the start clause the card stored when it was answered. When the task is done, it writes `<task> is done` first and then adds the stored clause. Only prepared outcomes get rewritten to \"what waits on it ...\" (lines 578-581, isPreparedOutcome). The hands-off start is stored as start \"started\" with start_by \"hands_off\", which isPreparedOutcome does not cover. So startWords -> preparedClause gives \"a session started for it (this project starts by itself when work is ready)\", a clause about the task itself, and it lands after \"is done\". The line then puts the later event (done) before the earlier one (a session started for it), against design section 5 rule 2. The bench state confirms the stored card for the phone task is {outcome: answered, start: started, start_by: hands_off} with the task done. A tsx probe of requestWords with that card and taskStatus done prints the live line word for word.",
+    "where": "packages/runtime/src/daemon/request-words.ts:569-591 (questionsOutcome; the done branch at :587-588 and `after` at :578-581); the clause comes from startWords :404-406 -> preparedClause in packages/runtime/src/session/prepared-work.ts:211-214,230-239",
+    "fix_sketch": "In questionsOutcome, when ctx.taskStatus === \"done\" and the stored start is a start rather than a prepared outcome (\"started\"/\"queued\", with or without start_by hands_off), write the events in the order they happened:\n- On a specialist's card (the answer sent the task back to work), for example: `Answers sent: a session started for \"X\" by itself (this project starts by itself when work is ready); it is done.`\n- On the person's own task (card.on_answer === \"done\", where the answer closed the task and the session ran what waits on it): `Answers saved in the decision record; \"X\" is done; a session started for what waits on it (this project starts by itself when work is ready).`\nApply the same rule to the \"without\" branch (:582-584), which gives \"is done without your answers; a session started for it\". Do it in one helper, e.g. doneThenStarted(card, ctx), used by every Done line that adds startWords after \"is done\". Also fix retryOutcome's accept branch (:494-499): with hands_off it currently produces the broken sentence `\"T\" is done; what comes after it a session started for it (...)`, because `.replace(/^it /, \"\")` assumes a clause that starts with \"it \". Keep each line at 160 characters or fewer.",
+    "failing_test_idea": "Boundary test in apps/ui/test/real-daemon.test.ts, describe 'd1109-starts-engine, run C' (append-only). Set up a project with project.start_by_itself on and one stand-in coder task that asks the person a question. Answer the card through the client. Wait for the hands-off session to finish the task. Read the Answered list (GET /requests answered, the way the Inbox reads it) and assert the card's outcome equals the new event-order sentence (a session started for \"X\" ... it is done) and does not match /is done; a session started for it/. Add unit cases next to the request-words tests in packages/runtime/test for:\n(a) a specialist card {outcome: answered, start: started, start_by: hands_off} with taskStatus done;\n(b) the same card with on_answer: done, which must name \"what waits on it\", not \"it\";\n(c) outcome \"without\" with the same start;\n(d) a critic:signoff accept with start_by hands_off, which today prints \"what comes after it a session started for it\".\nMatch the fake daemon (apps/ui/test/fake-daemon.ts) and the inbox.test.tsx Answered line.",
+    "area_hint": "d1109-starts-engine (owns startWords and the Done lines in request-words.ts, S-2/S-12)",
+    "known_leftover": "",
+    "notes": "The finding is real at 4cf11fd. I confirmed it with a read-only query of /tmp/frbench/live4/session/s1/home/data/state.sqlite (card 01a1e896-55db...: answered/started/hands_off, task done). A probe, /tmp/frbench/verify-L4-session-13/probe.ts, reproduces the exact Inbox text. While the task is running or ready, the same card reads correctly (\"Answers sent: ... goes on with them; a session started for it ...\"). The order only flips once the task is done.\n\nSame-root siblings the fix should cover:\n(1) A person's own task (on_answer done) under hands-off would read \"is done; a session started for it\". There \"it\" names the wrong thing: the session ran what waits on it.\n(2) The \"without\" branch.\n(3) retryOutcome accept with hands_off, where the probe /tmp/frbench/verify-L4-session-13/probe2.ts prints the ungrammatical '\"T\" is done; what comes after it a session started for it (...)'.\n\nRelated but different: L4-session-6. The Garden club lines in the same screenshot ('is done; what waits on it joins the session that is running') are a stale prepared clause, not an order problem.\n\nNo leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names this. C3L-4 is about the hands-off setting's effect line, not the Answered line. I agree with severity \"words\": nothing is wrong in what happened, only the order of the words."
+   }
+  },
+  {
+   "key": "live4:L4-pause-5",
+   "finding": {
+    "id": "L4-pause-5",
+    "severity": "minor",
+    "title": "The crash Update has no Continue button, and the interrupted log line carries the restart's time",
+    "step": "LC-C6",
+    "what_the_person_sees": "Inbox > Updates shows 'Your last session was interrupted when Forerunner closed. \"Write a two-sentence welcome note for the bakery in welcome.md\" is ready again.' with only 'Mark read'. The session page's last log line reads '08:36 Interrupted: Forerunner closed: nothing done. CHF 0.01.' Forerunner closed at 08:34; 08:36 is when it started again.",
+    "expected": "Design section 5 (Stop, crash 'after' example): '... is ready again. [Continue]'. The user guide only promises 'one line in the Inbox', and Start session in the header works. A log line's time should be when the thing happened, or the line should say Forerunner started again then.",
+    "evidence": "/tmp/frbench/live4/pause/p2/steps/08-c6-14-inbox-after-restart.png; 07-c6-13-session-page-details.txt; kill 08:34:53.6 (c6-run.json notes.killedAt), restart 08:36:54 (/tmp/frbench/live4/pause/c6-restart-at.txt)",
+    "repro": "Start a session on one small task. Kill the daemon's process group during the task's first model call. Start Forerunner two minutes later. Open the Inbox and the session page.",
+    "suspected_cause": "packages/runtime/src/session/recovery.ts posts the Update without a Continue action. The interrupted event is written at recovery time.",
+    "journey": "pause",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-pause-5",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "Both halves come from the code at 4cf11fd, not from the model.\n\n(1) No Continue. recoverInterruptedSessions posts the crash news as a plain message: store.message.send with type \"info\" and a body only (recovery.ts:309-323). A message cannot carry an action at all. MessageRow (packages/state/src/types.ts:354-368) has no action, link or session field. The Inbox's Updates list (apps/ui/src/pages/InboxPage.tsx:700-723) renders MessageBody, the badges, the sender and time, and Mark read. Its only link is \"Undo in Changes\", for change sentences (InboxPage.tsx:861-881). The person-start Continue that does exist (POST /sessions with continues, ADR 0118) is wired only to the session page's credential-wait block (SessionPage.tsx:805-870), not to an interrupted session. So the design's \"[Continue]\" (core-experience.md:367-370, §5 Stop, crash \"after\") was never built. Run C's d1109-starts-engine decision (runC-plan areas/6/decisions/0) even lists \"the recovery Update's Continue\" as a person start, but nothing creates one. The user guide (user-guide.md:910-913) promises only \"one line in the Inbox; the next Start works at once\", which is why the gap went unnoticed.\n\n(2) The end line's time. endDeadSession appends the session.ended event at recovery time (recovery.ts:181-188). EventRepo.append stamps it with the clock's now, and AppendEventOptions (packages/state/src/repos/event.ts:8-12) has no createdAt. The session page shows each event's created_at, so the line event-lines.ts:364-380 makes (\"Interrupted: Forerunner closed: nothing done. CHF 0.01.\") reads 08:36, the restart. The recovery already computes the right moment, handoff.last_worked_at = the last logged event (recovery.ts:159-166, the owner's D2-7). Only the session list's duration uses it (session-list.ts:522-532); the log line does not.\n\nThe evidence matches. c6-run.json gives killedAt 08:34:53.6Z, and daemon.log shows 'interrupted sessions ended at start' at 08:36:56.6Z. 08-c6-14 shows only Mark read, and 07-c6-13's last line is stamped 08:36.",
+    "where": "packages/runtime/src/session/recovery.ts:315 (Update sent with body only; MessageRow has no action, packages/state/src/types.ts:354; Inbox Updates render only Mark read, apps/ui/src/pages/InboxPage.tsx:700-723) and packages/runtime/src/session/recovery.ts:181 (session.ended appended at recovery time though last_worked_at is computed at :165)",
+    "fix_sketch": "(a) Continue on the crash Update:\n- Give a message an optional action. Either add a nullable `action` JSON column (a small migration), e.g. {kind:\"continue_session\", projectId, sessionId}, or derive the action in the inbox view from a reference the recovery writes.\n- Have recoverInterruptedSessions set it when exactly one project has tasks ready again. With several projects, post one Update per project, each with its own Continue.\n- Add MessageView.action to the inbox route and the fake daemon.\n- In InboxPage's Updates row, render a primary Continue button. It opens StartSessionDialog for that project with `continues: sessionId`, the same person start as WaitBlock's Continue (POST /sessions with continues, by: person). It goes on with what is left of the interrupted session's budget, or starts fresh when none is left.\n- Hide the button when the project already has a running session or none of the released tasks is still ready. Mark the Update read on press.\n- Optionally show the same Continue on the session page's interrupted state.\n- Update user-guide.md:910-913 and docs/maintainers/runtime.md (\"posts one line in the Inbox with Continue\").\n\n(b) The end line's time: stamp the session.ended line at the moment the session last worked. Add `createdAt` to AppendEventOptions and pass handoff.last_worked_at from recovery.ts:181; seq order still holds, because it is the last event's time. Also use that time for the session row's ended_at. If moving an event's time is unwanted, say the restart in the line instead: for stopReason \"interrupted\", event-lines.ts session.ended reads \"Forerunner started again after closing during this session: nothing done. CHF 0.01.\" Either way, the session list, the page and the Overview must agree with D2-7 (the downtime is not the session's).",
+    "failing_test_idea": "1) apps/ui/test/real-daemon.test.ts, restart case (around line 7013, after \"Your last session was interrupted when Forerunner closed. \"Contact page in contact.html\" is ready again.\"):\n- Assert the inbox message has action Continue.\n- In the UI suite (InboxPage against the fake daemon and the real daemon), the Update row shows a \"Continue\" button. Pressing it opens the Start dialog for the project, and confirming posts /sessions with continues=<interrupted session id>. The started session runs \"Contact page in contact.html\".\n- This fails today: the row has only \"Mark read\" (data-testid mark-read).\n\n2) packages/runtime/test/session-recovery.test.ts, composed restart on the simulated clock:\n- A session logs its last step at T. The daemon dies, the clock moves 2 minutes (and, in a second case, 3 days), and the next compose recovers it.\n- The session page's last log line (GET /sessions/:id events or lines) carries T, the last worked moment, or reads \"Forerunner started again …\"; it never shows \"Interrupted: Forerunner closed\" at T+2 min.\n- This fails today: session.ended.created_at equals the recovery's now.",
+    "area_hint": "d1109-starts-engine (the recovery Update's Continue as a person start; the end line's time touches d1109-sessions' D2-7 rule) — or a small fix area \"recovery-update\"",
+    "known_leftover": "",
+    "notes": "No leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names either half. The closest are C5L-5 (a crash between the grant and the card) and D2-7 (the session's length, already fixed via last_worked_at), and neither covers this. Run C's plan (areas/6/decisions/0, d1109-starts-engine) lists \"the recovery Update's Continue\" among the person starts, so the plan assumed a button that was never built. Not model-related: the recovery path does not involve the model.\n\nSeverity minor, as reported. The tasks are Ready and Start session in the header works, so the person can go on; the gap is a missing design affordance plus a timestamp that misattributes when Forerunner closed. Verified from the code and the live4 evidence (c6-run.json killedAt 08:34:53.6Z, daemon.log recovery at 08:36:56.6Z, screenshot 08-c6-14). The stand-in bench was not run: the code explains both halves. Evidence: /tmp/frbench/live4/pause/p2/steps/08-c6-14-inbox-after-restart.png, /tmp/frbench/live4/pause/p2/steps/07-c6-13-session-page-details.txt, /tmp/frbench/live4/pause/p2/steps/c6-run.json, /tmp/frbench/live4/pause/p2/daemon.log."
+   }
+  },
+  {
+   "key": "live4:L4-l3-3",
+   "finding": {
+    "id": "L4-l3-3",
+    "severity": "minor",
+    "title": "The questions card quotes a scope-check line, not why the specialist asks",
+    "step": "LC-L3 / L3-research-3",
+    "what_the_person_sees": "'The specialist said: \"The one commit is 'Workspace before 'Review the launch plan in notes/plan.md''.\"'",
+    "expected": "The report's lead reason: 'notes/plan.md does not exist, and I am not allowed to write review.md ...'",
+    "evidence": "/tmp/frbench/live4/l3/evidence/lr-look.json; l3b/steps/68-lr-inbox-card.png",
+    "repro": "New task, reviewer, 'Review the launch plan in notes/plan.md' (the file does not exist), outcome review.md; Start; open the Inbox.",
+    "suspected_cause": "specialistReason picks a sentence from the body of the report.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-3",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The finding's suspected cause names the wrong function. `specialistReason` (request-words.ts:213-220) only removes markdown and a findings tag. The sentence is picked earlier, when the card is filed, and stored on it. In the l3b store, human_request 01a1e8d7-298b… has change_card.context = \"The one commit is \\\"Workspace before 'Review the launch plan in notes/plan.md'\\\".\" with source \"critic\".\n\nThat value comes from `questionsReason(finalReport, questions)` (critic.ts:1076-1079 → person-questions.ts:382-401). It scores each report sentence only by the content words it shares with the first question, plus 1 for an \"open\" section and 1 for REASON_WORDS (:395). The question \"Where is the launch plan? `notes/plan.md` is not in the project. Should it be created, or is it one of the existing `docs/` files?\" gives the words {launch, plan, notes/plan.md, project, created, existing, docs}.\n\nThe Scope check bullet quotes the workspace commit message, and that message contains the task title, which the question repeats. So it shares launch, plan and notes/plan.md and scores 3. The report's lead sentence, \"notes/plan.md does not exist, and I am not allowed to write review.md, so I could not produce the deliverable.\", shares only notes/plan.md and scores 1. REASON_WORDS (:328-329) has no \"does not exist\", \"not allowed\" or \"could not\", so it gets no bonus. The blocker finding scores 2 (\"missing\").\n\nI ran the base's own `reportedQuestions`, `questionsReason` and `specialistReason` (tsx at 4cf11fd) on the live report, word for word from event seq 13 of session 01a1e8d6-eae6…. They return exactly the quoted line, and a per-sentence trace gives the scores above. The model's report is well formed: the reason comes first, then the \"Questions for the person:\" list the brief asks for. The code chose the wrong sentence.\n\nLive check 3's L3-research-3 had the same repro. That report's best sentence happened to be the blocker line, and l3-small fixed only its tag. Any report that quotes the task title (a commit message, a heading) can win this match again.",
+    "where": "packages/runtime/src/session/person-questions.ts:382-401 (questionsReason; scoring at :395; REASON_WORDS :328-329; reportSentences :336-371), called from packages/runtime/src/loop/critic.ts:1076-1079; quoted by packages/runtime/src/daemon/request-words.ts:527-534",
+    "fix_sketch": "Three changes in `questionsReason` and its helpers, with no change to the card's words in request-words.ts:\n\n(1) Do not count words inside a quoted span toward the match: double quotes, and single quotes only where they open after a space or the start and close before a space or punctuation. Apostrophes (\"doesn't\", \"club's\") must stay, or the L-12 Home page case breaks. A quoted commit message or task title says what the work is, not why it asks. With this alone the commit line scores 0, but the blocker bullet (\"blocker, notes/plan.md: …\", comma, so no tag is stripped) would win. So (1) is not enough by itself.\n\n(2) Widen REASON_WORDS with does not exist / doesn't exist / not allowed / could not / couldn't / cannot / can't / not found / no such. Optionally reuse COULD_NOT from daemon/event-lines.ts:124-125.\n\n(3) Give the report's lead sentence +1 when it says the work could not be done, as `couldNotWords` already does for the log line. On ties, keep the first sentence (the strict > at :396).\n\nWith (1) to (3), the live report quotes the lead sentence, and the L-12 contact and home cases and L3-research-3's report keep their quotes. Update the docs/maintainers/runtime.md paragraph at :1950-1960, which says where the quote comes from.",
+    "failing_test_idea": "In packages/runtime/test/person-questions.test.ts, describe \"the critic path\", add a case \"live check 4 L4-l3-3: the reviewer's lead reason, not a scope-check line that quotes the task title\".\n\n- Fixture: the live reviewer report word for word (task.finished summary, event seq 13, l3b store; add it to test/fixtures/asking-live.json as live4_launch_review).\n- Setup: loopWorld with submitReply({verdict: \"human\", grade: 10}), w.addTask(\"Review the launch plan in notes/plan.md\"), doneExecutor(w, {finalReport}).\n- Expect: task needs_human, one questions card with steps [the one question], and requestWords(card, {taskTitle}).body toBe 'The specialist said: \"notes/plan.md does not exist, and I am not allowed to write review.md, so I could not produce the deliverable.\"'.\n- Today the body is 'The specialist said: \"The one commit is \\'Workspace before \\'Review the launch plan in notes/plan.md\\'\\'.\"'.\n\nAlso add a unit case: questionsReason(report, listedQuestions(report)) toBe that lead sentence. The existing L-12 cases (contact_page, home_page) must stay green.",
+    "area_hint": "No run C area owns questionsReason: d1109-starts-engine touches person-questions.ts only at :1075-1085 and :1180-1190, for the start words. This needs a small fix area for the questions card's reason, the follow-up to run L3's l3-small, which fixed L3-research-3 on the same card. Files: packages/runtime/src/session/person-questions.ts (questionsReason, REASON_WORDS, reportSentences), packages/runtime/test/person-questions.test.ts and test/fixtures/asking-live.json (append), docs/maintainers/runtime.md (:1950-1960).",
+    "known_leftover": "",
+    "notes": "Evidence matches the claim:\n- lr-look.json's card text reads 'The specialist said: \"The one commit is 'Workspace before 'Review the launch plan in notes/plan.md''.\"'.\n- l3b/steps/68-lr-inbox-card.png and .txt exist.\n- The drawer shows the report's lead sentence. The task.finished and critic.verdict events already quote that lead sentence as `couldNot`, so the app has the right reason; the questions card's matcher just does not use it.\n\nSeverity: I agree with minor. The question itself says notes/plan.md is missing, so the person can still answer. But the \"why\" sentence that design §3.8 asks for (\"in the specialist's own words\") says nothing about why the specialist asks.\n\nNo leftover in leftovers-{L3,C2,C3,C4,C4b-design,C4b,C5,C6}.json names it. The only related item, LL in L3 about the 'To fix' line, is a different issue. I did not run the stand-in bench: its reviewer writes its own report shape, so it cannot replay this text, and the probe runs the base's own functions on the live text.\n\nRead-only: I copied the l3b state store to /tmp/frbench/v-L4-l3-3/ and wrote probes there (q.cjs, run/probe.ts, run/score.ts). No ports were used and nothing in the checkout changed."
+   }
+  },
+  {
+   "key": "live4:L4-l3-5",
+   "finding": {
+    "id": "L4-l3-5",
+    "severity": "minor",
+    "title": "Just after the project budget is raised, Start says the paused task 'needs your answer', but there is no card",
+    "step": "LC-L3 / L3-run-10",
+    "what_the_person_sees": "Ten seconds after raising the budget: 'Nothing can run: \"Write the club motto in motto.txt\" needs your answer.' with Open it, and no card in the Inbox. A minute later the task is Ready.",
+    "expected": "The task is ready at once, or the dialog says it goes on shortly.",
+    "evidence": "/tmp/frbench/live4/l3/evidence/cm-run2.json; l3b/steps/83-cm-run2-start-dialog.png",
+    "repro": "Set project budget 0.06; a writer task pauses before its review; raise the budget to 0.50; open Start within 10 s.",
+    "suspected_cause": "The wake after the raise waits for the scheduler tick.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-5",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "Raising a limit does not wake the tasks paused at it. The only caller of `wakeBudgetWaits` is the scheduler's `refresh`, which runs before each tick (compose.ts:3963), and the tick comes every 30 s (`tickMs = 30_000`, session/triggers.ts:289). The `budget.set` run for a project only writes the project row (commands/budget.ts:362-368): it calls no wake and no prepare. Credentials are handled differently: `credentialSaved` wakes credential waits at once (compose.ts:4663). Until the next tick, the task stays `needs_human` and its budget_stop card stays open. The Start check's `needsYou` (server.ts:1606-1624) picks up that open card, and `startBlocked` (start-blocked.ts:185-190) then says 'Nothing can run: \"X\" needs your answer.' with Open it. The test suite expects this delay: budget-pause.test.ts:709 says 'The next tick wakes it' and calls `rt.scheduler.tick()` after the raise. The live state database confirms the timing. Raise applied at 09:32:57.486. Start dialog captured at 09:33:07.8, while the card was still open (the Overview in step 83 shows 'Needs you … paused at the project's budget of CHF 0.06 / Answer'). Tick at 09:33:16.822 withdrew the card (`outcome: went_on`) and set the task to ready. Inbox looked at 09:33:50, after the card was gone. So the delay is real, but the 'no card' part is a timing misreading: the card existed when the dialog named it, and the wait was 19 s, not 'a minute'. A second, smaller point: `needsYou` counts any open card on a `needs_human` task. A budget pause at an outer limit (only option: Cancel task; it 'goes on by itself once you raise that budget') is therefore read as 'needs your answer' even before any raise. The plan's comment meant only a pause that got no further, or a question.",
+    "where": "packages/runtime/src/daemon/compose.ts:3963 (wake only in Scheduler refresh; tick 30 s at packages/runtime/src/session/triggers.ts:289); packages/commands/src/commands/budget.ts:362-368 (project budget write, no wake); packages/runtime/src/daemon/server.ts:1606-1624 + daemon/start-blocked.ts:185-190 (sentence from the still-open card)",
+    "fix_sketch": "1) Move the `wakeBudgetWaitsDetailed` call out of the scheduler's refresh into one compose function, `wakeLimitWaits()` (it still calls `caps.forget` and prepares through `prepareWorkPort`). Expose it as a CommandPorts hook (e.g. `limitChanged?(scope, projectId)`). Call it from `budget.set`'s run for the project and month scopes (and from undoing a lowered limit) right after the write. Append `wokenLine(wentOn, prepared.result)` to the outcome sentence: 'Raised the project budget … to CHF 0.50. 1 paused task is ready again: it runs at your next Start.' This also closes C3L-3. Keep the tick call as the fallback for a new month. 2) Optional backstop: the `/projects/:id/start-check` route already awaits `refreshEstimates()`; have it await the same wake for its project first, so any write path that skips the command still gives a correct dialog. 3) Words, separately: do not count an outer-limit budget_stop card (no Continue offered) in `needsYou` as 'needs your answer'. Use the card's own sentence instead ('Nothing can run: \"X\" paused at the project's budget of CHF 0.06: raise it in Settings.'), with a link to Settings.",
+    "failing_test_idea": "In packages/runtime/test/budget-pause.test.ts, in the case 'a task paused at the project's budget goes on only once that budget changes': confirm `budget.set` through POST /commands/execute and /confirm, and do NOT call `rt.scheduler.tick()`. Then assert: (a) GET /projects/:id/start-check returns `blocked: null` with `runnable` naming \"Members chart\" (today: 'Nothing can run: \"Members chart\" needs your answer.'); (b) GET /inbox shows that task's card `withdrawn` with outcome '\"Members chart\" is ready again: its limit has room; it runs at your next Start.' (today: still open); (c) the confirm's sentence ends with '1 paused task is ready again: it runs at your next Start.' A UI case in real-daemon.test.ts: open the Start dialog right after the Settings raise; it reads 'This session runs \"X\"'.",
+    "area_hint": "d1109-starts-engine",
+    "known_leftover": "",
+    "notes": "No leftover names the delay. C3L-3 (words: Settings' change line after a budget raise does not say what follows) is the next-door symptom; `wokenLine` in budget-card.ts:634 is defined but never called, and the same fix closes it. Parts of the finding that are wrong: 'no card in the Inbox' (the card was open at 09:33:07 and withdrawn at 09:33:16.8; the Inbox was read at 09:33:50) and 'a minute later' (it was 19 s, and is at most 30 s). The suspected cause in the finding is correct. Evidence: the human_request and change_log rows in /tmp/frbench/live4/l3/l3b/home/data/state.sqlite (card 01a1e8d9-bde2…, applied_at 09:33:16.822; budget.set change 01a1e8da-370e…, 09:32:57.486) and the step file times of 82, 83 and 84. I did not run the stand-in bench: the code and the live timeline settle it, and the existing test asserts the tick-only wake."
+   }
+  },
+  {
+   "key": "live4:L4-l3-6",
+   "finding": {
+    "id": "L4-l3-6",
+    "severity": "minor",
+    "title": "The run's start line ignores the project budget",
+    "step": "LC-L3 / L3-run-10",
+    "what_the_person_sees": "'This run may spend CHF 1.20: before a step that could take it past CHF 0.96 ...' under a project budget of CHF 0.06.",
+    "expected": "The line names the limit that actually applies.",
+    "evidence": "/tmp/frbench/live4/l3/evidence/cm-run1.json",
+    "repro": "Same as L4-l3-5, first Start.",
+    "suspected_cause": "The line uses the specialist's run limit.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-6",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The run's start line comes from the run's own cap, and the project's budget and the month's cap are never part of that cap. executor.ts:1044 takes runCapOf(task, defaultSpec.maxBudgetUsdMicro). This task has no budget of its own, so that is the writer's per-run limit: USD 1.50 (evals/registry/specialists/writer-marketing/specialist.md:15), which is CHF 1.20. executor.ts:1071-1081 then takes the smaller of that and the session's work budget (CHF 5.00 x 0.8 = 4.00), so CHF 1.20 stays. runCapSource only knows task_budget, specialist_limit and session. executor.ts:1129 puts this figure into brief.budgetUsdMicro, and :1255 copies it into the run token's budgetUsdMicro. At the first model call, hooks.ts:160-166 calls SessionBudget.precheck(runId, claims.budgetUsdMicro, ...). budget.ts:247-252 fixes the wrap-up line from that cap with wrapUpLineOf: reserve 0.24, line 0.96. Only after that do hooks.ts:167-170 check the outer caps (caps.check: project, month, plan), and they only refuse a call; they never change the line. budget-pause.ts:358 then writes 'This run may spend CHF 1.20: before a step that could take it past CHF 0.96 ... reserve of CHF 0.24' while the project's budget is CHF 0.06. The evidence matches this exactly (cm-run1.json, all in one session): the session started with CHF 5.00, the writer's line said CHF 1.20, and the review then paused at 'the project's budget of CHF 0.06'. The wrong figure is more than a wording problem. The wrap-up line (0.96) sits far above the project's stop (0.06), so under a binding outer limit the run is never told to wrap up. It gets a hard stop instead ('its next step would have gone over'), and the line's promise of a reserve to finish is false. ADR 0112 point 6 says a stop names its real limit; the start line breaks that and points 3/4.",
+    "where": "packages/runtime/src/session/executor.ts:1129 (brief.budgetUsdMicro = min(work.capUsdMicro, sessionLeftUsdMicro), no outer cap; runCapSource at :1081); packages/runtime/src/enforcement/hooks.ts:160-166 (the line is fixed from claims.budgetUsdMicro before caps.check at :167); packages/runtime/src/enforcement/budget.ts:247-252; packages/runtime/src/session/budget-pause.ts:358 (the words)",
+    "fix_sketch": "1. In LoopTaskExecutor.execute, beside sessionLeftUsdMicro (executor.ts:1071), read what the outer limits still allow for this run's scope, together with the level that binds (project or month; for plan share, its room). Use the stop line, not the 80% room that callRoomUsdMicro uses: for example a CapsPort.remainingUsdMicro(scope, phase) that returns { usdMicro, level }, or CapChecker.check's remaining and level.\n2. Make brief.budgetUsdMicro the smaller of work.capUsdMicro, sessionLeftUsdMicro and that outer remainder. When the outer remainder is the smallest, set runCapSource to 'project' or 'month'. The token, the wrap-up line, the reserve and the stop sentence then all follow from one figure, and the run hears the wrap-up inside the project's budget.\n3. Optionally let budgetLineWords name a limit that is not the run's own ('This run may spend CHF 0.06, what is left of the project's budget: ...'), as limitWords already does for stops.\n4. Open point for the owner, as with BA-4: whether a run under a binding outer limit should keep room in it for its review. Today the review paused at the project's budget.\n5. Update the fake daemon and ADR 0112 point 4/7, plus docs/maintainers/runtime.md.",
+    "failing_test_idea": "Composed, through the runtime the daemon uses (packages/runtime/test/budget-pause.test.ts style, runOne). Setup: a session budget of USD 2-5, a project budget of USD 0.075 (CHF 0.06), and one writer or coder task with no budget of its own. The session log's 'This run may spend' line must name at most CHF 0.06, not the specialist's CHF 1.20 or the session's work budget. The wrap-up line and reserve must lie inside the project's budget. When the stand-in model keeps working, the run must hear the wrap-up (heardWrapUp) and pause as 'paused', not hit a hard stop with a budget_exceeded Run row. Mirror it in apps/ui/test/real-daemon.test.ts by reading the session's events through the client, next to the L3-run-10 case. Today the line reads 'This run may spend CHF 1.20: before a step that could take it past CHF 0.96 ...'.",
+    "area_hint": "d1116-budget-all (owns the run-cap block in executor.ts: runCapSource, the brief's budget, the room passed to the start line; and budgetLineWords in budget-pause.ts)",
+    "known_leftover": "",
+    "notes": "The code explains it without a bench run: the line is computed from caps and the first call's estimate, never from the model, and the live evidence (cm-run1.json) shows the CHF 1.20 line and the project's CHF 0.06 pause in the same session. No known leftover names it: LL-9 is about the Tasks row's 'left' figure and is closed for task budgets; C5L-C3-left-6 is chat's room; C3L-10 is chat's project-budget cap line. The run's figure is the writer's registry limit of USD 1.50 (CHF 1.20) because the session's work budget (CHF 4.00) is larger. The design's own figure for the line (ADR 0112 point 7) is min(own cap, session work budget), and the design never brought the outer limits into it. That is a gap, not an owner decision: point 6 says the stop names the limit that applies, and the start line then contradicts the stop it leads to. The existing tests cover only the run's own sources: budget-pause.test.ts:441, the session work budget at CHF 1.28, and the CHF 0.01 project-budget cases at :663 and :1957, which assert only the stop. Severity minor: a misleading figure, plus a missing graceful wrap-up under an outer limit. No money is lost, because the outer cap still stops the run."
+   }
+  },
+  {
+   "key": "live4:L4-l3-7",
+   "finding": {
+    "id": "L4-l3-7",
+    "severity": "minor",
+    "title": "Session review words do not match what the session did",
+    "step": "LC-L3 / L3-run-8 sibling, L3-run-2",
+    "what_the_person_sees": "'Session review: accepted (grade 100, 0 findings).' beside '0 of 1 planned task done' in three sessions whose only task paused. 'Session review: sent back for changes (grade 85, 1 finding).' on a session whose task was done; the finding is an overrun note.",
+    "expected": "Words that say what waits, and never 'sent back' for a session.",
+    "evidence": "cm-run1.json, ph-run.json, rg-run2.json, swiss.json; Reviews › Session checks: '85 / 100 sent back ... over their estimate of CHF 0.07 by 51%, with one task tried twice'",
+    "repro": "A session whose only task pauses; a session whose task overruns its estimate.",
+    "suspected_cause": "Verdict 'revise' is mapped to 'sent back' except in the two cases L3-run-8 fixed.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-7",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "The finding has two halves, and only the second one holds up.\n\n(1) A session whose only task paused reads \"accepted (grade 100, 0 findings)\". This is by design, not a defect. Wave 7's R-sessreview (L7S-5) chose this on purpose:\n- packages/critic/src/session-review.ts:449-466 (onlyPaused) records no finding for such a session.\n- docs/maintainers/critic.md:431-436 says the same.\n- budget-pause.test.ts:406-415 and event-lines.test.ts:425-427 assert it.\n- Live check 3's own L3-run-8 entry named \"Session review: accepted\" for the paused case as the wording to copy.\nThe line also sits only under the session page's Details, below the log line '... paused before its review: ...'.\n\n(2) \"Sent back for changes\" on a session whose only task was done is real. The session review reuses the task review's verdict words. Two lines of the code produce it:\n- sessionChecks makes any medium finding blocking (session-review.ts:586, `isBlocking(findings) ? \"revise\"`).\n- The overrun note is a medium finding (session-review.ts:417-423: \"Planned tasks cost ..., over their estimate ... with one task tried twice\").\n\nSo a done session that overran its estimate by more than 50% gets the verdict \"revise\", and two places turn that into \"sent back\":\n- The session log: views.ts:876 prints `waits ?? verdictWords(verdict)`, where verdictWords(\"revise\") is \"sent back for changes\" (event-lines.ts:421-422).\n- The Reviews tab: ReviewItem shows verdictLabel(r.verdict) for session checks too (ReviewsTab.tsx:108, plain-words.ts:83-84: \"sent back\"). Its finding badge also says \"to fix\" (findingStateWords).\n\nL3-run-8 replaced these words only for two cases (runner.ts:4379-4388, waitsFor answers or decision), and only in the log line. A session verdict sends nothing back: the runner and compose do nothing with \"revise\".\n\nReproduced by importing the code at 4cf11fd (/tmp/frbench/l4-l3-7/check.mts). One task done, tried twice, CHF 0.07 against a CHF 0.04 estimate:\n- Result: verdict revise, grade 85, one medium finding \"Planned tasks cost CHF 0.07, over their estimate of CHF 0.04 by 57%, with one task tried twice\".\n- describeEvent gives \"Session review: sent back for changes (grade 85, 1 finding).\"\n- The paused-only case gives accept, 100, no findings, 0 of 1 planned done, as designed.",
+    "where": "packages/runtime/src/daemon/views.ts:876 (verdictWords fallback; event-lines.ts:421-422); apps/ui/src/pages/project/ReviewsTab.tsx:108 (verdictLabel for session checks; plain-words.ts:83-84) and :141-150 (findingStateWords \"to fix\"); verdict source packages/critic/src/session-review.ts:586 with the overrun finding at :417-423; the only exceptions are at packages/runtime/src/session/runner.ts:4379-4388",
+    "fix_sketch": "Give a session review its own words, because it never sends anything back.\n\n1. Add a sessionReviewWords(verdict, waitsFor, firstFinding) next to verdictWords.\n   - accept: \"accepted\".\n   - human: \"needs you\".\n   - waitsFor: unchanged.\n   - revise: what the check noted, e.g. \"Session review: the planned tasks cost more than their estimate (grade 85, 1 finding).\" or \"Session review: 1 note (grade 85)\".\n   Use it in views.ts:876.\n\n2. Fix the Reviews tab's Session checks the same way.\n   - For a session check (r.taskId === null), have ReviewItem use a session label: \"accepted\", \"noted\" or \"needs you\", never \"sent back\". Give the warn tone to anything not accepted.\n   - Show a session finding's state as \"noted\", not \"to fix\" (a past session has nothing to fix).\n   - Carry waitsFor on the review view (store it on the review row, or read the critic.session_review event), so the L3-run-8 cases stop reading \"sent back\" there too. That is a sibling: L3-run-8 fixed only the log line.\n\n3. Leave the paused-only \"accepted\" and the verdict logic as they are; only the words change.\n\n4. Update critic.md, runtime.md and the user guide's session review words.",
+    "failing_test_idea": "Person-boundary test in apps/ui/test/real-daemon.test.ts:\n- Setup: one task with a small estimate, sent back once by the bench critic and then accepted, so the planned tasks cost more than 1.5 times the estimate (as in the Swiss pairing run).\n- Assert: the session page's Details log has the session review line and does not match /Session review: sent back/.\n- Assert: the project's Reviews tab › Session checks has no \"sent back\" badge and no \"to fix\" state on the overrun finding.\n- Sibling: the same assertions for the L3-run-8 ask case (\"waits for your answers\") on the Reviews tab.\n\nUnit test in packages/runtime/test/event-lines.test.ts: describeEvent(\"critic.session_review\", {verdict: \"revise\", grade: 85, findings: 1}) does not contain \"sent back\".",
+    "area_hint": "d1116-budget-all (BA-8 wrote the session review's 'over their estimate' finding and its cost words); it can also go to a small words fix area beside L3-run-8's waitsFor code",
+    "known_leftover": "",
+    "notes": "Only half of the claim holds.\n- The paused-only half (\"accepted (grade 100, 0 findings)\" beside \"0 of 1 planned task done\" in cm-run1, ph-run and rg-run2) does what was designed (R-sessreview, L7S-5). It is tested and documented, and live check 3's L3-run-8 entry named it as the wording to copy. Changing it would need a design decision, not a code fix.\n- The \"sent back\" half (swiss.json and 121-session-checks.txt) is real, and shows in two places: the Details log line and the Reviews › Session checks badge (verdictLabel), plus the \"to fix\" state on the finding.\n- Severity: words, not minor. Live check 3 rated the same class (L3-run-8) as words. Both places are folded away (Details; the Session checks block), and the finding is left out of the open-findings count, so nothing points the person at an action.\n- No leftover in leftovers-{L3,C2,C3,C4,C4b-design,C4b,C5,C6}.json names it.\n- How it was reproduced: no bench run. The worktree's own critic and views modules were imported with node --experimental-transform-types; the script and its output are in /tmp/frbench/l4-l3-7/."
+   }
+  },
+  {
+   "key": "live4:L4-l3-8",
+   "finding": {
+    "id": "L4-l3-8",
+    "severity": "minor",
+    "title": "A session whose only task the person stopped ends with the result 'CHF 0.01.' and nothing else",
+    "step": "LC-L3 / L3-run-4 step 5",
+    "what_the_person_sees": "The session result is just 'CHF 0.01.'; the end counts show paused 0.",
+    "expected": "'Stopped by you: \"...\" is paused. CHF 0.01.'",
+    "evidence": "Session 01a1e8fa-461d-74d7-b91c-0323cb1fb78a, summary 'CHF 0.01.' (l3b state.sqlite)",
+    "repro": "Redo a task, Start, then Stop it from its drawer.",
+    "suspected_cause": "A person's pause during the run is not counted in the end summary.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-8",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "When the person stops a running task from its drawer, the task becomes needs_human with reason 'Stopped by you'. recordMove (runner.ts:1477-1531) files it under needsHuman. At the end of the session the runner takes it out of needsYou on purpose (runner.ts:3825-3833, pausedByYou: \"Paused by you\" is not a decision, design §2). The outcome built at runner.ts:3853 has no other field that carries it: `paused` holds only budget-card pauses (pausedCards, :3838-3846), and `cancelled` (:3893, W15-59) holds only cancels. In result.ts, the RESULT_LINE_BUILDERS have a \"cancelled by you\" sentence (result.ts:360-377) but nothing for a task the person paused. So sessionResultLines returns only the money line. I confirmed this with tsx against the base: an outcome as the runner builds it gives [\"CHF 0.01.\"], and the same outcome with `cancelled` set gives ['You cancelled \"Write the club motto in motto.txt\"; nothing else ran.', 'CHF 0.01.']. The stored session matches: summary 'CHF 0.01.'; handoff outcome {done:[], needsYou:[], ...} with moved_while_running by_person true; session.ended counts all 0 (needsHuman 0 and paused 0 are what the code is meant to do, since both lists leave out a person's pause). This is the pause sibling of W15-59, which fixed only the cancel case.",
+    "where": "packages/runtime/src/session/runner.ts:3829 (pausedByYou excluded from needsYouNow) and :3853-3910 (outcome has no field for it); packages/runtime/src/session/result.ts:360-377 (only a 'cancelled by you' builder) and :65-68 (LastSessionOutcome has `cancelled` but no paused-by-you list)",
+    "fix_sketch": "Copy the W15-59 shape. (1) result.ts: add `pausedByYou?: NamedTask[]` to LastSessionOutcome. Add a line-2 builder \"paused by you\" next to \"cancelled by you\": when nothing else happened, it says 'You paused \"X\"; nothing else ran.' (or 'Stopped by you: \"X\" is paused until you press Resume.'). Combine it with the cancel sentence when both apply. Add the sentence to NOT_NEWS (result.ts:662) so the Inbox Update and the notification stay quiet (design §5.11, the person's own click). (2) runner.ts: in the outcome, set `pausedByYou: uniq(needsHuman).filter((id) => pausedByYou(id) && movedWhileRunning.some((m) => m.taskId === id && m.byPerson)).map(named)`, only when the list is not empty. (3) session-list.ts sessionGist/countsWords: read it from the outcome, so the Sessions row says '\"X\" paused by you.' and not 'Nothing finished.'. Optionally count it in session.ended (a pausedByYou count, or in `paused`) with endedCounts in event-lines.ts. While there, fix the sibling at runner.ts:4008-4012: the docs/status.md note counts the person-paused task as needing you. This session's status.md reads 'Note: Ended: 1 task needs you.' and contradicts the result. Filter it with pausedByYou, as needsYouNow does.",
+    "failing_test_idea": "Composed runner/real-daemon test like continuity-cancel.test.ts:787 (W15-59). Start a session on a project whose only ready task is a writer task. While its run is live, move the task to needs_human as the person (the drawer's Stop, POST task move with by person). Let the session end, then GET /sessions/:id (and the project Overview's Last result). Expect the first summary line to be 'You paused \"About page\"; nothing else ran.' and the summary to match /^You paused \"About page\"; nothing else ran\\.\\n(?:Less than )?CHF \\d+\\.\\d{2}\\.$/. Today it is only 'CHF 0.01.'. Also expect no Inbox Update for the session, and the docs/status.md note not to say 'needs you'. Unit counterpart in writing-rules.test.ts beside the W15-59 case: sessionResultLines with outcome.pausedByYou set gives the sentence plus the money line.",
+    "area_hint": "small fix area: session-result-words (runner.ts outcome plus result.ts builders and NOT_NEWS, the old w15-run outcome/sentence ownership), touching d1109-sessions' session-list.ts sessionGist for the Sessions row",
+    "known_leftover": "",
+    "notes": "The evidence checks out in l3b state.sqlite, session 01a1e8fa-461d-74d7-b91c-0323cb1fb78a. The events are task.finished outcome 'killed', then task.moved_while_running {status needs_human, byPerson true, reason 'Stopped by you'}, then session.ended with every count 0 and summary 'CHF 0.01.'. I rated it words, not minor, to match the precedent. W15-59, the identical cancel case ('CHF 0.01.' and nothing else), was triaged as [words]. Nothing the person sees is false. The project status line says 'Paused: \"Write the club motto in motto.txt\"', the row and the drawer say 'Paused by you', and the session log has 'You paused it while \"...\" ran; the session goes on.' and 'Session over: nothing done. CHF 0.01.'. Only the result block (session page and Overview Last result) and the Sessions row ('Nothing finished.') say nothing about what happened. The finding's 'paused 0, needsHuman 0' is correct by design and is not itself the defect. No leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names it. The owner's 2026-11-09 decisions do not touch it. I ran no bench: the code and a tsx call of sessionResultLines at the base show the behaviour. The temporary script and the DB copy under /tmp/frbench are removed."
+   }
+  },
+  {
+   "key": "live4:L4-l3-14",
+   "finding": {
+    "id": "L4-l3-14",
+    "severity": "words",
+    "title": "Card items are still cut mid-phrase with '…'",
+    "step": "LC-L3 / L3-research-2",
+    "what_the_person_sees": "Left to do: '... plus a short introduction. Put…'. A failed card reads '... (the git status check below shows… \"Write kite/club-day.txt ...\" waits on it.'",
+    "expected": "No cut inside an item.",
+    "evidence": "l3b/steps/117-rg-card.png; g1-inbox.json",
+    "repro": "A writer task 'Write a 3,000-word guide to the club in guide.md' with Budget 0.15.",
+    "suspected_cause": "Items are clipped at a fixed length.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-14",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "The two cuts have different causes in the code, and both reproduce.\n\n(1) Budget card, \"Left to do\". parseHandoff caps every item at 200 characters with `cut` (budget-pause.ts:146 and :207, MAX_ITEM_CHARS=200 at :57). `cut` breaks inside a word. The live state shows this: card.left[0] in l3b's state.sqlite is exactly 200 characters and ends in \"... plus a short introduction. Put cl…\". The display step, cardItem (request-words.ts:227-238, called from pausedWorkLists :985), sees the stored \"…\", drops the broken word and keeps the ellipsis, so the person reads \"Put…\". cardItem also cuts at 220 with cutWords, so a long item never shows whole. The comment on budget-card.ts:170-176 and runtime.md:2453 say \"each item whole\", but the 200-character bound on the parsed handoff is still there. The wrap-up words (loop.ts:109, budget-pause.ts:53) never ask the model to keep items short, so a long item from the model is expected, not a model fault. The same cut item also goes into the continuation brief (task-context.ts:163, quote(t, 200)), so the next run loses the end of its own next step.\n\n(2) Failed-task card, \"It reported: ...\". emptyChangeSummary (pr-executor.ts:612-624) takes the report's first sentence and cuts it at a word past 160 characters. Its sentence split, /(?<=[.!?])\\s+(?=[\"'(\\p{Lu}])/u, does not split after a full stop followed by a closing quote: in `Sundays.\" I rewrote` the character before the space is `\"`. So the \"first sentence\" runs on to \"...(the git status check below shows whether anything actually changed).\" That is over 160 characters, so it is cut to \"(the git status check below shows…\", which also leaves a parenthesis open. With a correct split the first sentence is 'Summary: kite/club.txt already existed with one line, \"The kite club meets on Sundays.\"' (about 85 characters), which fits whole.\n\nReproduced with tsx on the 4cf11fd source (/tmp/frbench/v-L4-l3-14/repro/repro.ts): parseHandoff and then requestWords give exactly \"... plus a short introduction. Put…\", and emptyChangeSummary on the run's real report (l3a run 01a1e8e3-234b-…) gives exactly \"...(the git status check below shows…\".",
+    "where": "packages/runtime/src/session/budget-pause.ts:146,207 (cut at MAX_ITEM_CHARS=200, :57); packages/runtime/src/daemon/request-words.ts:227-238 (cardItem keeps the stored '…', cuts at 220), :985; packages/capabilities/src/githost/pr-executor.ts:615-622 (emptyChangeSummary: sentence split misses a closing quote after the stop; 160-character cut)",
+    "fix_sketch": "(a) parseHandoff should keep each item whole up to a generous limit (for example 1000 characters, the same order as the note's 600). If an item is still too long, end it at its last whole sentence, never inside a word. Keep the whole item in the handoff, so the continuation brief (task-context.ts:163, raise quote 200 to match) gets it too.\n(b) cardItem for \"Left to do\" items should show the item whole when it is up to about 400 characters. Above that, end at the last whole sentence that fits, using the same sentence rule as firstSentences, and add \"…\" only when a single first sentence is itself too long. Cards stored before the fix still go through the existing drop-the-broken-word path.\n(c) In emptyChangeSummary, let the split accept a closing quote or bracket after the stop: (?<=[.!?][\"'”’)\\]]?)\\s+(?=[\"'(\\p{Lu}]). When the line must still be cut, cut at a clause and close any open parenthesis, or use balancedCut as titles do, so the card never shows \"(… shows…\". Update docs/maintainers/runtime.md (the budget card words) and the capabilities doc to match.",
+    "failing_test_idea": "Real-daemon, next to apps/ui/test/real-daemon.test.ts:9328 (the budget pause case). A stand-in run hears the wrap-up and ends its report with \"Left to do:\\n1. Check the unread docs files for club facts. Then write `guide.md` in sections, each about 500 words: History, Meetings, Rules, Tournaments, Membership and Etiquette, plus a short introduction. Put club-specific facts in clearly marked placeholders.\\n2. Run `wc -w guide.md` ...\". The test asserts that GET /requests' card lists[1].items[0] contains no \"…\" and ends with \"placeholders.\" (the item whole, without markdown), and that the continuation brief quotes the same whole item.\n\nFor the failed card, a second case: a coder run that changes no file and whose report starts with '**Summary**: `kite/club.txt` already existed with one line, \"The kite club meets on Sundays.\" I rewrote it with the same content (the `git status` check below shows whether anything actually changed). ...'. The card body must equal 'What failed: The run changed no file. It reported: Summary: kite/club.txt already existed with one line, \"The kite club meets on Sundays.\"' with no \"…\" and no unclosed \"(\". Both cases fail at 4cf11fd.",
+    "area_hint": "small words fix area (card cuts): budget card lists are d1109-oversize-pause's code (budget-pause.ts parseHandoff, request-words.ts cardItem/pausedWorkLists); the failed card's quote is pr-executor.ts emptyChangeSummary (w15-words lineage)",
+    "known_leftover": "",
+    "notes": "The finding's suspected cause, \"items clipped at a fixed length\", is right for both cards, but the two cards have separate cuts. On the budget card, the 200-character cut happens when the handoff is stored, before any display. The display then turns \"Put cl…\" into \"Put…\". On the failed card, a sentence-split bug makes the 160-character cut hit the second sentence; with a correct split nothing would be cut. A cut at a word with \"…\" is otherwise a designed pattern for quoted reports (design section 5 rule 1: card body ≤ 2 sentences), so the fix for the failed card is the split and the open parenthesis, not \"never cut\". The \"Left to do\" list is promised whole (RequestListWords: \"each whole\"; runtime.md:2453), so there \"no cut inside an item\" is the right expectation.\n\nNo leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names this. CL-11 is about recall answers cut at 160 characters, which is unrelated.\n\nEvidence checked: l3b/steps/117-rg-card.png and .txt; l3b state.sqlite human_request 01a1e8f6-d22f-73ea-8e11-24708c48723e (left[0].length == 200, ends \"Put cl…\"); l3a state.sqlite human_request 01a1e8e3-48b7-759a-b5c0-ff8a3d4375b9 and run 01a1e8e3-234b-7224-a206-7a69033c3fa1 (the full report).\n\nAlso noticed, out of scope: the failed card keeps the report's \"Summary:\" label (\"It reported: Summary: ...\").\n\nCopies of the state databases and the repro are in /tmp/frbench/v-L4-l3-14/. No bench or server was started."
+   }
+  },
+  {
+   "key": "live4:L4-l3-15",
+   "finding": {
+    "id": "L4-l3-15",
+    "severity": "minor",
+    "title": "A step cut off at max_tokens is paid for and lost, with no line in the log",
+    "step": "LC-L3 / L3-research-2",
+    "what_the_person_sees": "'read README.md', then 'Told the writer to wrap up: it spent CHF 0.06 ...'; the card says 'No files created or changed.' CHF 0.08 spent, nothing written, no reason given.",
+    "expected": "A line saying the step was cut, and the writer told to write in parts.",
+    "evidence": "Model-call log seq 33: max_tokens 6308, stopReason max_tokens, USD 0.065244, no tool call",
+    "repro": "Same as L4-l3-14.",
+    "suspected_cause": "The budget caps max_tokens, and a one-call write of a long file is truncated.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-15",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The evidence checks out (l3b/home/bench/model-calls.jsonl, run 01a1e8f5-d110, the second seq 33 in the file): max_tokens 6308, stop max_tokens, 6308 output tokens, USD 0.065244, no text and no tool call. The session's own events (state.sqlite, session 01a1e8f5-d08b) go from 'read README.md' (seq 11) straight to 'Told the writer to wrap up' (seq 12). The code explains each part.\n\n(1) The cap comes from the budget, as designed (W15-13). A file-writing run's call may use only the money below the run's wrap-up line (loop.ts:640-659: room = line - spent - searches, then fitMaxTokens). Line CHF 0.06 minus USD 0.0075 already spent gives 6308 tokens, and that one reply used all of the money below the line.\n\n(2) The cut reply had nothing it could keep, so the loop asks again (loop.ts:910-947). The retry's cap cannot be raised, because no money is left below the line. loop.ts:647-649 checks `!wrapUpSent` before beforeModelCall decides on the wrap-up, so the reserve never pays for the retry and seq 34 gets the 4096 floor. The same request carries both the cut note and 'Wrap up now'. Because the reply showed no blocks, `where` is 'before it said anything' (loop.ts:920). That picks 'Answer again, more briefly.' (loop.ts:1335-1336), not the 'one file per call, short enough to fit' wording. Two different causes look the same here, and the log cannot tell them apart: hidden thinking (call-log.ts:302-330 does not record thinking_delta), or a write_file whose tool_use_end never came (collectStream drops it, types.ts:457).\n\n(3) No log line. The loop reports the cut only as a bare `warning` RunEvent (loop.ts:943-946). The executor's onEvent (executor.ts:1442-1520) turns budget_line, web_search*, wrap_up_sent, model_call_end and tool events into steps, but has no branch for `warning`. compose.ts:3624 ignores it too. The person sees no line, and the CHF 0.05 call shows up only as spend (runner.ts:2728). The budget pause card is built from the handoff alone ('No files created or changed'), so it never gives the reason. The only mention is in the model's own report ('My previous attempt hit the output limit and produced nothing'), which the card does not show. This breaks design §3.7 and §4.14 ('Each model and tool call ... emits one step line').\n\nPaying for a cut reply and not using it is by design (U-085: 'Every call is billed, the cut ones included'). The model's choice to spend 6308 tokens in one reply is its own. But the missing line and the wrong-variant note are app behaviour, so this is not the model alone.",
+    "where": "packages/runtime/src/session/executor.ts:1442-1520 (onEvent has no branch for the loop's cut-off warning); packages/runtime/src/agent/loop.ts:937-947 (cut reported only as a bare `warning`), :1331-1338 (cutOffNote 'Answer again, more briefly'), :640-659 (cap = money below the line)",
+    "fix_sketch": "1. loop.ts, cut branch (:910-948): emit a typed RunEvent such as `reply_cut` {maxOut, where, kept, costUsdMicro, specialist} instead of the bare warning. The current warning also claims 'asking again with up to 25232', a cap the next call never asked, so fix that too.\n2. executor.ts onEvent: map `reply_cut` to a step note in person words, for example: 'The writer's reply was cut off at its length limit and could not be used (CHF 0.05); it was asked to send less in one reply.' Keep it to one log line (§5.1).\n3. cutOffNote: in a file-writing run, 'before it said anything' should get the 'one file per call, short enough to fit' wording, with the limit in words. A hidden thinking block and an unclosed write_file both reach this branch.\n4. budget-card / handoff: when the run's last cut kept nothing, add one clause to the card ('its last reply was cut off at its length limit, so nothing was written').\n5. For the owner or ADR 0112 (a design question, not a must): when the retry after a cut lands in the same request as the wrap-up, let the reserve pay the retry's raised cap. The `!wrapUpSent` check at :647-649 runs before the wrap-up decision. Or say the per-reply output limit in a file-writing brief. Note that the writer's write_file only overwrites a whole file, so 'write one file in parts' is not really possible with today's tools.\n6. testenv call-log.ts: record the thinking length (and any started but unfinished tool call), so a cut reply's content can be read in evidence.",
+    "failing_test_idea": "A composed real-daemon test with the Messages API stand-in (or a scripted provider through runner and executor). A writer task with budget CHF 0.15 and write_file offered. Call 1: list_dir. Call 2: stop_reason max_tokens with no blocks and output_tokens equal to the call's max_tokens. Call 3: a report with 'Where I stopped:' and 'Left to do:'. Assert three things:\n(a) GET /sessions/:id/events (the Session page log) has a task.step line between 'looked at the folder' and the wrap-up line that says the reply was cut off at its length limit and could not be used, with its CHF. This fails today: no such event.\n(b) The request after the cut tells a file-writing run 'one file per call, short enough to fit', not 'Answer again, more briefly'. This fails today.\n(c) The budget pause card or the result names the cut.\nTo walk it on the bench, the stand-in needs a way to play a max_tokens reply first: role-player.ts:440-446 never returns max_tokens, so it cannot reproduce on the bench today.",
+    "area_hint": "d1109-oversize-pause (a large task does as much as it can and pauses cleanly), or a small runtime fix area: agent/loop.ts cut-off event and note, plus session/executor.ts step line",
+    "known_leftover": "",
+    "notes": "I checked the evidence against l3b's model-call log and state.sqlite (bench-live, real model, pass 2). The cut call's cap of 6308 tokens matches the money below the wrap-up line: USD 0.065244 actual, against roughly USD 0.067 of room. After seq 33 the run had spent CHF 0.06 of its CHF 0.13, so the wrap-up came at once. The run ended at CHF 0.068 of 0.13, so about half the reserve was never used.\n\nThe app did tell the model about the cut, in the seq 34 request: 'Your last reply was cut off at the output limit (6308 tokens) before it said anything, and nothing of it was used. Answer again, more briefly.' That came together with the wrap-up text. So the 'writer told' half of the expected outcome partly happens. What is missing is the person-facing line, and the wording for a file-writing run.\n\nI could not reproduce this on the stand-in: neither the role-player nor the Messages API stand-in can produce a max_tokens stop. No bench, tests or edits were run; this verdict comes from reading the code and the evidence.\n\nNo leftover in L3, C2, C3, C4, C4b-design, C4b, C5 or C6 names this. C5L-L3-left-14 is about booking a Stop-now cut call on the right billing source, which is a different issue."
+   }
+  },
+  {
+   "key": "live4:L4-l3-16",
+   "finding": {
+    "id": "L4-l3-16",
+    "severity": "words",
+    "title": "'paused at its budget of CHF 0.15' when only CHF 0.08 was spent and only the review waits",
+    "step": "LC-L3 / L3-research-1",
+    "what_the_person_sees": "The card title, notification and result all read '... paused at its budget of CHF 0.15'. The body says 'The work is done; its review waits for room in the budget.'",
+    "expected": "A title that says the review is waiting for budget room.",
+    "evidence": "ph-run.json, ph-inbox.json",
+    "repro": "A researcher task with Budget 0.15 that finishes at about CHF 0.08.",
+    "suspected_cause": "The review-room pause reuses the at-budget title.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-16",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "When the critic's review does not fit the task's own budget, the pause reuses the generic at-limit title. runner.ts:3189-3198 builds the review-pause BudgetStop with `stoppedBy: \"budget\"` hard-coded and calls `budgetStopTitle(now, stop, rate)` (runner.ts:3199). budgetStopTitle (budget-card.ts:125-158) has only two families of title: \"paused before … ran out\" (stoppedBy wrap_up) and \"paused at …\". It has no form for \"the work is done and only its review waits\", so it returns `\"X\" paused at its budget of ${cap}` (budget-card.ts:148). That one string becomes:\n- the task's reason (runner.ts:3204),\n- the card's `why` and `title` (budget-card.ts:261, 270),\n- the notification title, cut to '\"Search MDN…\" paused at its budget of CHF 0.15'.\n\nThe session result and the session page row go the same way on purpose. runner.ts:3876 sets `before` only when `stopped_by === \"wrap_up\" && review_waits !== true`, so result.ts:603 `pausedSentences` writes `paused at its budget of CHF 0.15: continue or cancel it in the Inbox.`, and task-words.ts:409 `budgetPauseLabelOf` falls back to \"Paused at its budget\". Only three places got a review-waits wording: the card body (request-words.ts:996-997), the drawer/row detail (task-words.ts:430) and the log line `reviewPausedWords` (budget-pause.ts:282-293, '… paused before its review: its own budget of CHF 0.15 has no room for it.'). So the headline says the budget was reached while the body, the log and the CHF 0.08 figure say the work finished with CHF 0.07 left.\n\nThe base pins this behaviour. task-budget-all.test.ts:527 asserts the reason '\"Write the footer\" paused at its budget of CHF 0.06.', and :534 asserts the same text as the card title, with only CHF 0.01 spent. I ran that test at 4cf11fd under the lock and it passes. Live check 3's L3-research-2 found the same mismatch ('paused at its budget of CHF 0.15' beside 'it spent CHF 0.09'). Its fix covered only the wrap-up stop and left the review-room pause out.",
+    "where": "packages/runtime/src/session/budget-card.ts:148 (budgetStopTitle has no review-waits form); packages/runtime/src/session/runner.ts:3189-3199 (review-pause stop with stoppedBy \"budget\" then budgetStopTitle); packages/runtime/src/session/runner.ts:3876 + packages/runtime/src/session/result.ts:603 (session result 'paused at …'); packages/runtime/src/daemon/task-words.ts:409-421 (row label)",
+    "fix_sketch": "1. Give budgetStopTitle a review-waits form, either as a `reviewWaits` argument or as a stop with `stoppedBy: \"review\"`. It names the limit the way reviewPausedWords does, one wording per source, for example:\n   - task_budget: '\"X\" is done; its review waits for room in its budget'\n   - session: '… in this session's budget'\n   - project: '… in the project's budget'\n   - month: '… under this month's cap'\n   - plan: '… in the share of your Claude subscription'\n   It must keep the 60-character notification title once the task title is cut.\n2. At runner.ts:3199, pass the review-waits form so the task reason, the card's why/title and the notification all use it.\n3. Carry `review: true` into PausedTask at runner.ts:3862-3880, from card.review_waits. pausedSentences then writes '\"X\" is done; its review waits for room in its budget of CHF 0.15: continue or cancel it in the Inbox.' (or goesOnByItself at the outer limits).\n4. Give budgetPauseLabelOf a label for card.review_waits === true, such as 'Review waits for room in its budget', so the Tasks row and the session page row match the card.\n5. Update the fake daemon (apps/ui/test/fake-tasks.ts) and the maintainer doc for budget-card in the same commit.",
+    "failing_test_idea": "packages/runtime/test/task-budget-all.test.ts, the BA-3 case \"a review its task's budget cannot pay a first call for…\", through the daemon's /inbox, /projects/:id/tasks and the session's result. Assert that:\n- the card title, task.reason, the session-end notification title and the session summary say the review waits for room in its budget, and none of them matches /paused at its budget of CHF 0\\.06/ (they do today, at :527 and :534);\n- the row label is not \"Paused at its budget\".\n\nApply the same change to the BA-3 case at :611 (\"Write the contact page\") and to a real-daemon case in apps/ui/test/real-daemon.test.ts. Add an apps/ui/test/inbox.test.tsx case: a review_waits card renders the new title above \"The work is done; its review waits for room in the budget.\"",
+    "area_hint": "d1116-budget-all",
+    "known_leftover": "",
+    "notes": "Evidence matches the code: /tmp/frbench/live4/l3/evidence/ph-run.json and ph-inbox.json.\n- The run was told to wrap up, then finished at CHF 0.08 of 0.15.\n- critic.review_paused reads '… paused before its review: its own budget of CHF 0.15 has no room for it.'\n- Card title, notification, session summary and session row all read 'paused at its budget of CHF 0.15'.\n- The body reads 'The work is done; its review waits for room in the budget.'\n\nNo known leftover names the title. C4b-left-6, built in d1109-cred-screens, asked only for the Continue explanation and the drawer/row detail of a review-waits card, and both are done at the base. The title, the task reason, the session summary and the row label were left at the at-budget form, and the BA-3 tests pin it. This is a sibling of live check 3's L3-research-2 (the wrap-up case, already fixed).\n\nThe model is not involved: the task's run finished normally, and the app picked the title.\n\nSeverity: words. Every figure is right and the card body is right, but the headline contradicts them, against design section 5 rule 4 (\"True now\") and the L3-research-2 precedent.\n\nNot in scope here, and designed per C4b-left-5: a review needing more than the CHF 0.07 room the run kept (the Start dialog warned of it)."
+   }
+  },
+  {
+   "key": "live4:L4-l3-18",
+   "finding": {
+    "id": "L4-l3-18",
+    "severity": "words",
+    "title": "Read-backs for same-titled tasks drop '(the older one)'; the resume read-back states the result before Yes",
+    "step": "LC-L3 / L3-run-6",
+    "what_the_person_sees": "'Pause \"Write the guide\"? ...'; 'Resume \"Write the guide\"? It is ready again. It runs at your next Start.'",
+    "expected": "Say which task, and describe the outcome in the future tense before Yes.",
+    "evidence": "gc-p.json, gc-r.json",
+    "repro": "Two tasks named 'Write the guide'; pause and resume the older one from chat.",
+    "suspected_cause": "The read-back uses the title only.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-18",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "The finding is half right.\n\nPart 1 is real. A move's read-back and its after-Yes line name the task by its title only, so when two tasks share a title the person cannot tell which one Yes will change. `findTask` (task.ts:243-288) uses the person's word to pick the right task at :261-263, but it returns a bare TaskRow and the word is lost. After that, `moveCard` (task.ts:1627-1649) builds `ask: moveAsk(task, ...)` and `sentence: moveSentence(task, ...)`. Both build their text from `const t = quote(task.title)` (moveAsk :509, moveSentence :572), which gives 'Pause \"Write the guide\"? No session runs it until you press Resume.' (:537), 'Resume \"Write the guide\"? It is ready again.' (:542), 'Paused \"Write the guide\": ...' (:580) and '\"Write the guide\" is ready again.' (:586). `task.transition`'s card (:1280-1301) has the same gap. The evidence confirms the app's own deterministic text: gc-p.json and gc-r.json show \"calls\": [] and usd 0, so no model call was made, and the person's \"(the older one)\" appears in neither the read-back nor the line after Yes. The user guide (docs/user-guide.md:322-325) says two same-titled tasks \"are named apart in Chat by what tells them apart\", and design §5 rule 3 asks for names that identify. Run L3's l3-small fix fixed which task the word picks (L3-run-6). Its own check_in_the_app step expected the read-back 'Resume \"Write the guide\"? …', so this gap was left untouched, not brought back by a later change.\n\nPart 2 is not a defect. The Resume read-back's 'It is ready again. It runs at your next Start.' follows the design. Its first sentence is the design's own consequence line for Resume (core-experience.md:147: \"It is ready again; the next session can run it.\"). The second comes from withPreview (task.ts:1681-1695), which drops 'Ready: ' from previewWork's line. The design writes every consequence line in the present tense to say what Yes does ('No session runs it until you press Resume.', 'Drops it.', §5 Move dialog). A future tense would be a change to the design, not a bug fix.",
+    "where": "packages/commands/src/commands/task.ts:509 (moveAsk quotes the title only), :572 (moveSentence the same), :1647 (moveCard's ask), :262 (findTask drops the word that picked the task); design core-experience.md:147 for the Resume consequence line",
+    "fix_sketch": "1. Add a helper in task.ts, say `taskLabel(ctx, task)`. It returns quote(title) when no other task of the project has the same `sameTitle()`. Otherwise it returns quote(title) plus the tag that tells this task apart: \"#17\" when each task in the group has its own pull request, else the age tag in brackets, \"(the older one)\". Use the age tag, not the state tag: it is the only kind that stays the same from read-back to after-Yes line to Undo, since a state tag changes when the move does (\"the ready one\" becomes \"the paused one\"). Simpler still: reuse the person's own word when it picked the task.\n2. Pass the label into moveAsk and moveSentence as an optional `name` that replaces `t`. Do this from moveCard, from task.transition's plan and run, and from the move's undoSentence.\n3. A task with a unique title keeps 'Pause \"X\"? …' exactly.\n4. Leave the Resume consequence line as designed. Change it to \"It will be ready again\" only if the owner rewords core-experience.md:147.\n5. Update docs/maintainers/commands.md, in the \"Tasks of one title\" entry.",
+    "failing_test_idea": "In packages/runtime/test/conversation-memory.test.ts, the chat boundary through w.chat with no model, next to the l3-small L3-run-6 case:\n- Add two \"Write the guide\" tasks one minute apart.\n- `pause Write the guide (the older one)`: expect pendingConfirmation.readback toBe 'Pause \"Write the guide\" (the older one)? No session runs it until you press Resume.'\n- Answer \"yes\": the reply contains 'Paused \"Write the guide\" (the older one): no session runs it until you press Resume.'\n- `resume Write the guide (the older one)`: the readback starts with 'Resume \"Write the guide\" (the older one)?'\n- Add a control: a task with a unique title still reads back 'Pause \"Write the notes\"? …'.\n\nToday the read-back is 'Pause \"Write the guide\"? …', so the test fails. A matching case in apps/ui/test/real-daemon.test.ts through the chat route would cover the screen.",
+    "area_hint": "Not a run C area. It is a small words fix in packages/commands/src/commands/task.ts (move read-backs and sentences), following run L3's l3-small same-title work (W15-37 / L3-run-6). d1109-starts-engine owns only the appended 'It runs at your next Start.' preview, which is correct.",
+    "known_leftover": "",
+    "notes": "Judged from the code at 4cf11fd and the live evidence; I did not run the stand-in bench. The text is the app's own deterministic text (calls [], usd 0 in /tmp/frbench/live4/l3/evidence/gc-p.json and gc-r.json), and the right task was picked: the header reads \"Ready: 1 task waits for your Start\" after the pause, and run L3's review checked the task ids. No leftovers file (L3, C2, C3, C4, C4b-design, C4b, C5, C6) names this, and the owner decisions of 2026-11-09 say nothing about read-back tense. I agree with the 'words' severity for part 1: Yes still changes the right task, but the person cannot check that before pressing it. The same title-only naming appears in assertFrom's '\"Write the guide\" is paused, not cancelled or done.' (gc-redo.json, task.ts:1621) and in the undo sentences. The fix should cover those too."
+   }
+  }
+ ],
+ "live_steps": [
+  {
+   "key": "live4-step:session:LC-C32",
+   "journey": "session",
+   "pass": 1,
+   "id": "LC-C32",
+   "step": "A task's own budget counts its review (real critic): A footer at Budget 0.10, B contact line at Budget 1.00, in LC-C18's bench home",
+   "result": "partial",
+   "usd": 0.0571,
+   "observed": "Start dialog (budget 5.00): 'This session runs \"Add a footer line with the club's name to index.html\" (about CHF 0.05) and 1 more (about CHF 0.05).' plus the BA-12 / C4b-left-5 line '\"Add a footer line with the club's name to index.html\": its budget of CHF 0.10 may leave too little for its review, which then waits for Continue.'. A's estimate was USD 0.057 (CHF 0.046): at most CHF 0.10, and above the fix walk's work-only figure of USD 0.029. A's start line: 'This run may spend CHF 0.10, too little to wrap up (two steps may cost CHF 0.07): it pauses at its budget and keeps its work.' (no review clause). B's start line: 'This run may spend CHF 0.90 (CHF 0.10 of the task's budget is kept for its review): before a step that could take it past CHF 0.72 it is told to wrap up, keeping a reserve of CHF 0.18 to finish.'. Branch (i): A's review fit (accepted, grade 93) and A is done, with no card and no refusal. B was accepted (grade 95) and is done within CHF 1.00. One figure per task on every screen: A's row 'CHF 0.02', drawer 'spent CHF 0.02 of CHF 0.10 budget', Costs > By task CHF 0.02; the ledger has USD 0.028652 = coder USD 0.014190 + critic USD 0.014462. B's row, drawer ('of CHF 1.00 budget') and Costs all read CHF 0.02; the ledger has USD 0.023502 (coder 0.011177 + critic 0.012325). No screen says 'reviews are not counted'. Review records: A's critic first call had max_tokens 8192 and 5,429 input tokens, a worst case of about USD 0.086 at list prices, and cost USD 0.0096; A's whole review cost USD 0.0145. B's first call had a worst case of about USD 0.086 and cost USD 0.0084; its whole review cost USD 0.0123. Across all 9 real tier 1 reviews in s1, a whole review cost USD 0.012-0.027 and a first call USD 0.006-0.014, against the USD 0.03 starting figure. The app's own admitted estimate (model_call_start) is not kept on bench-live, so the worst cases above are computed from the logged requests. A's coder calls ran at max_tokens 4096. C4bL-2: no run went past its cap. C4bL-5 and C4b-left-6 were not seen because no card came. The critic sent nothing back, so the send-back half rests on the bench and the owner's U-042 step. Partial only because A's done row shows 'CHF 0.02' without 'of CHF 0.10 budget'.",
+   "evidence": "/tmp/frbench/live4/session/s1/steps/c32-run.json; screenshots 48-c32-04-start-dialog.png, 50-c32-40-drawer-a.png, 51-c32-41-drawer-b.png, 52-c32-42-tasks-after.png, 53-c32-43-costs.png, 54-c32-50-session-page.png; model-call log /tmp/frbench/live4/session/s1/home/bench/model-calls.jsonl seq 64-75; /tmp/frbench/live4/session/steps/LC-C32.json"
+  },
+  {
+   "key": "live4-step:pause:LC-C7",
+   "journey": "pause",
+   "pass": 1,
+   "id": "LC-C7",
+   "step": "D4 research pause: a ready researcher task 'Compare three static site hosts for a bakery page (price, custom domain, HTTPS) and write hosts.md' above the work budget, Start at CHF 0.40 with a small task after it in the plan's order",
+   "result": "partial",
+   "usd": 0.292,
+   "observed": "Most of what the step expects happened, but the pause itself came from a parsing error (L4-pause-1). The task's estimate was about CHF 0.42 (the researcher's starting figure).\n\nStart dialog at CHF 0.40:\n- Plan line: 'This session works on \"Compare three static site hosts ...\" until its work budget is used; \"Write a one-line tagline for the bakery in tagline.md\" runs after it only if budget is left.'\n- Amber note: '\"Compare ...\" needs about CHF 0.42, more than this session's work budget of CHF 0.32: it works until that budget is used, keeps its work, and asks you to continue.'\n- Second line of the note: '\"Write a one-line tagline ...\" comes after it: it runs if \"Compare ...\" leaves budget, else in your next session.'\n- Start was on.\n- With the small task set to High (dialog only, not run, to save money): 'This session runs \"Write a one-line tagline ...\" (about CHF 0.06), then works on \"Compare ...\" with what is left.' and '... after \"Write a one-line tagline ...\" it works with about CHF 0.26, keeps its work, and asks you to continue.'\n\nThe run (Start pressed, big task first): 8 real calls, USD 0.292 (CHF 0.23), 46 s.\n- The log shows 'Took \"Compare ...\", larger than this session's work budget, with about CHF 0.32 left.' exactly once.\n- Then 'Told the researcher to wrap up: it spent CHF 0.21 of CHF 0.32, and its next step could take it past CHF 0.25.'\n- Then 'paused before this session's budget of CHF 0.40 ran out: it spent CHF 0.23 and listed one thing left to do.'\n- The report ends with 'Where I stopped: `hosts.md` is complete and meets the three acceptance criteria as I read them. Nothing is half done. I did not fetch ...' (the caveat is under Where I stopped) and 'Left to do: nothing the criteria require.'\n- One Inbox card:\n  - Title: '\"Compare ...\" paused before this session's budget ran out'\n  - Body: 'This session's budget was CHF 0.40.'\n  - Lists: Where it stopped / Left to do ['nothing the criteria require.']\n  - Buttons: 'Continue (CHF 0.40 more)' and 'Cancel task'. CHF 0.40 is at least (0.42 - 0.23) / 0.8 = 0.24, as the step requires.\n- Task row: 'Paused before the session's budget ran out' with 'Your next Start goes on with it, or Continue in the Inbox.'\n- hosts.md is in commit 4721bb4 'Work in progress: Compare ... (paused at the session's budget)'.\n- The small task stayed Ready and did not run.\n- After the pause, the start check prices the big task at what is left (CHF 0.19).",
+   "evidence": "/tmp/frbench/live4/pause/steps/LC-C7.json; /tmp/frbench/live4/pause/p1/steps/c7-setup.json, c7-run.json; screenshots 04-05 (dialog in both orders), 09-10 (session page and Details), 11 (Inbox card), 12 (Tasks); model-call log /tmp/frbench/live4/pause/p1/home/bench/model-calls.jsonl seq 1-8"
+  },
+  {
+   "key": "live4-step:pause:LC-C9",
+   "journey": "pause",
+   "pass": 2,
+   "id": "LC-C9",
+   "step": "D4 kept work checked (conditional): coder task with estimate CHF 1.00 by the bench fixture, session budget CHF 0.35; compare the card's checks clause with npm test by hand if it pauses; C2 adds the no-progress question card at the project's budget",
+   "result": "partial",
+   "observed": "Fixture: the coder task's cold estimate was CHF 0.12; I wrote its own estimate est_cost_usd_micro=1,184,000 into the bench's state database, so start-check read CHF 1.00. Start dialog at CHF 0.35: '\"Add a word-count CLI ...\" needs about CHF 1.00, more than this session's work budget of CHF 0.28: it works until that budget is used, keeps its work, and asks you to continue.' Start was on. Log: 'Took \"...\", larger than this session's work budget, with about CHF 0.28 left.' (once), 'This run may spend CHF 0.28: before a step that could take it past CHF 0.21 it is told to wrap up ...'. The coder then wrote wc.js, test/wc.test.js and package.json (test: node --test), 'ran npm test: ok', finished at CHF 0.03, light review accepted (CHF 0.02), 'Session over: 1 done. CHF 0.06.' It FINISHED BEFORE ITS WRAP-UP: no 'Wrap up now' in any request, no pause, no card, no work-in-progress commit. So the checks-clause comparison was NOT SEEN (no repeat at this cap, as the step says). npm test by hand in the folder: exit 0, 4 pass, 0 fail. Secret scan of the run rows, Inbox requests, log and cards: no key or token, whole or as any 12-character run; no stored kept-work output exists. C2 addition PASSED at CHF 0.00 (no model call). Project 'Line count': project budget CHF 0.01 in Settings, then Start. Card '\"...\" paused at the project's budget of CHF 0.01' / 'It stopped before it wrote anything. Ready again once you raise the project's budget in Settings; it runs at your next Start.' Raised to CHF 0.03: no session started by itself (D6), the task went Ready, and Answered read 'is ready again: its limit has room; it runs at your next Start.' After my Start it paused again, and the card read '\"Add a line-count CLI in lc.js with node:test…\" paused again without getting further' / 'It stopped before it wrote anything. Its last run changed no file and left the same list, so it waits for you.', with 'Open Settings: Raise it there; this card then asks how to go on.' Raised to CHF 2.00 and waited 150 s: no session started. The question card then read '... continue with a note on what to do differently, or cancel it.', with a note box, Continue and Cancel task; Answered read 'Its new card asks how to go on.' Continue was not pressed.",
+   "evidence": "/tmp/frbench/live4/pause/steps/LC-C9.json; /tmp/frbench/live4/pause/p2/steps/c9-setup.json, c9-run.json (byHand, secretScan, calls), c9b.json (cards1..3); screenshots /tmp/frbench/live4/pause/p2/steps/11-c9-02-start-dialog-0-35.png, 32-c9b-05-inbox-after-second-pause.png, 36-c9b-08-inbox-answered-open.png",
+   "usd": 0.078316
+  }
+ ],
+ "leftovers": [
+  {
+   "key": "C2:CL-13",
+   "file": "/tmp/frbench/leftovers-C2.json",
+   "id": "CL-13",
+   "severity": "words",
+   "from": "d1109-oversize-pause",
+   "text": "OP-7's drawer line (cut line): the drawer has no line of its own about the spend past the estimate; the card and the result carry the sentence."
+  },
+  {
+   "key": "C2:CL-14",
+   "file": "/tmp/frbench/leftovers-C2.json",
+   "id": "CL-14",
+   "severity": "minor",
+   "from": "d1109-oversize-pause",
+   "text": "Test gaps (cut line): OP-5 (the run again in the session) has no composed real-daemon test with a test registry (coder limit per run USD 0.50, session USD 2.00, asserted through the ledger and the model-call log), because the real-daemon harness has no test registry; no real-daemon GET /requests case reads kept_checks from a real kept-work check (no sandbox in that harness). Both are covered at the runner and on the bench."
+  },
+  {
+   "key": "C2:CL-15",
+   "file": "/tmp/frbench/leftovers-C2.json",
+   "id": "CL-15",
+   "severity": "minor",
+   "from": "d1109-oversize-pause",
+   "text": "The learned estimate swings a lot (the first Start said the shop 'needs about CHF 6.40'; after one session the card said 'more than its estimate of CHF 1.65'), and OP-7's new sentence shows the swing to the person.",
+   "note_2026_11_16": "2026-11-16: not closed by C4b. The review part is learned on its own ratio, so a send-back no longer swings the work's ratio twice, and one sample per task stops a task tried twice from counting twice."
+  },
+  {
+   "key": "C2:CL-16",
+   "file": "/tmp/frbench/leftovers-C2.json",
+   "id": "CL-16",
+   "severity": "words",
+   "from": "d1109-oversize-pause",
+   "text": "During OP-5's run again, that run's 'The coder finished … (CHF 0.33)' line is Details-only (the retry audience), so the person's log shows no spend for the second run; the task row and the session total include it."
+  },
+  {
+   "key": "C3:C3L-1",
+   "file": "/tmp/frbench/leftovers-C3.json",
+   "id": "C3L-1",
+   "severity": "minor",
+   "from": "d1109-starts-engine",
+   "text": "L3-left-12, carried (not built in C3): a review-only session's plan line and session review use the writer's estimate ('Plan: 1 task, about CHF 0.03.'; the review measured against item.estimateUsdMicro). It needs a review-only estimate in the estimates model (l3-money-engine's module).",
+   "note_2026_11_16": "2026-11-16: not built in C4b, but now buildable: the review estimate it needs exists after C4b (reviewPartUsdMicro); its plan line is views.ts lineOf's session.planned case (C1's region) and its price is start-check.ts'."
+  },
+  {
+   "key": "C3:C3L-3",
+   "file": "/tmp/frbench/leftovers-C3.json",
+   "id": "C3L-3",
+   "severity": "words",
+   "from": "d1109-starts-engine",
+   "text": "S-3 (cut line): Settings' change line after a budget raise does not say what follows ('Raised: … it runs at your next Start'); the cards and row words do."
+  },
+  {
+   "key": "C3:C3L-4",
+   "file": "/tmp/frbench/leftovers-C3.json",
+   "id": "C3L-4",
+   "severity": "words",
+   "from": "d1109-starts-engine",
+   "text": "With the hands-off setting turned on later, its session also runs a task made ready while it was off, whose line had said 'It runs at your next Start.': say so in the setting's effect line."
+  },
+  {
+   "key": "C3:C3L-6",
+   "file": "/tmp/frbench/leftovers-C3.json",
+   "id": "C3L-6",
+   "severity": "minor",
+   "from": "d1109-starts-engine",
+   "text": "runner.ts: priceNow was inserted between reviewOnlyResult's JSDoc and its function, so that doc comment sits on priceNow."
+  },
+  {
+   "key": "C3:C3L-15",
+   "file": "/tmp/frbench/leftovers-C3.json",
+   "id": "C3L-15",
+   "severity": "minor, tests",
+   "from": "ci-307-fix review",
+   "text": "The 'once' / 'no second one' / 'nothing more' checks tick right after 'task done' while that session may still be active; a start made by mistake at those ticks is queued (scheduler.pendingFor), not started, and with startServices false nothing drains it until a later tick, so the count right after can miss it (continuation.test.ts about :281-284, :465-472, :585-586; start-by-itself.test.ts about :197-199, :310-311). Strengthen without loosening: await settleSessions(rt) before the 'nothing more' ticks and before the count, and expect(rt.scheduler.pendingFor(rt.agent.id)).toBeUndefined()."
+  },
+  {
+   "key": "C3:C3L-16",
+   "file": "/tmp/frbench/leftovers-C3.json",
+   "id": "C3L-16",
+   "severity": "minor, CI",
+   "from": "ci-307-fix review",
+   "text": "Windows: other composed tests close while a session's tail may still run and then remove the home with plain rmSync, or compose again on the same home (stop-by.test.ts:288-289 after POST /shutdown; capabilities-wiring.test.ts:373-378; budget-pause.test.ts:461 and :1381; oversized-task.test.ts:218 and :451). They passed on Windows CI so far; give each the same settleSessions and removeHomes (packages/runtime/test/helpers.ts, ba9874a) where a session can still run."
+  },
+  {
+   "key": "C4b-design:C4bD-1",
+   "file": "/tmp/frbench/leftovers-C4b-design.json",
+   "id": "C4bD-1",
+   "severity": "minor",
+   "from": "design leftovers_resolved 6",
+   "text": "Run L3 l3-money-engine fixup not_done[0] (a room check before the critic's checks run): C4b meets it when what is left is below the review's output floor (no checks, no Run row); between that floor and the real first call it stays a leftover."
+  },
+  {
+   "key": "C4b-design:C4bD-2",
+   "file": "/tmp/frbench/leftovers-C4b-design.json",
+   "id": "C4bD-2",
+   "severity": "minor",
+   "from": "design leftovers_resolved 13",
+   "text": "Requirement I.4 ('15 to 25% of the session budget reserved for review and fixes by default'): its words stay, but work runs (fixes included) stop below the session's reserve so the reserve pays reviews only (packages/runtime/src/enforcement/budget.ts:318-326). Phase G: the session lead reconciles the requirement's words with the code."
+  },
+  {
+   "key": "C4b-design:C4bD-3",
+   "file": "/tmp/frbench/leftovers-C4b-design.json",
+   "id": "C4bD-3",
+   "severity": "minor",
+   "from": "design live_check_4_steps LC-C32",
+   "text": "Record each real review's first-call worst case and real cost from LC-C32 and tune REVIEW_EVIDENCE_ALLOWANCE_TOKENS and the tier 1 review start from them."
+  },
+  {
+   "key": "C4b:C4bL-1",
+   "file": "/tmp/frbench/leftovers-C4b.json",
+   "id": "C4bL-1",
+   "severity": "decision",
+   "from": "d1116-budget-all",
+   "text": "Validation rule 3 ('the fake is updated in the same commit') broke commit by commit on fix/d1116-budget-all: 1303798 and db706cb changed routes before the fake daemon and real-daemon cases (6d26ea7, b9c1503); the real-daemon suite was red in between. The merged head is consistent. Accepted (session lead decision (C4b-merge)); the merge commit stays (history is pushed and not rewritten)."
+  },
+  {
+   "key": "C4b:C4bL-2",
+   "file": "/tmp/frbench/leftovers-C4b.json",
+   "id": "C4bL-2",
+   "severity": "minor, bench",
+   "from": "d1116-budget-all",
+   "text": "Bench-only caveat: FORERUNNER_BENCH_USAGE and FORERUNNER_BENCH_CRITIC_USAGE add input tokens after the precheck, so a run they inflate can pass its work cap (real-daemon W15-14: 'after spending CHF 0.12' against a CHF 0.11 work cap). The task's own budget held. LC-C32 records whether a real run ever passes its work cap."
+  },
+  {
+   "key": "C4b:C4bL-3",
+   "file": "/tmp/frbench/leftovers-C4b.json",
+   "id": "C4bL-3",
+   "severity": "minor, tests",
+   "from": "d1116-budget-all",
+   "text": "wiring.test.ts now waits up to 30 s for the task's close, which includes the review, instead of the run's return. A slow Windows runner has a review's git and critic work inside that window: watch it on CI; widen with a reason if it flakes."
+  },
+  {
+   "key": "C4b:C4bL-4",
+   "file": "/tmp/frbench/leftovers-C4b.json",
+   "id": "C4bL-4",
+   "severity": "decision",
+   "from": "d1116-budget-all",
+   "text": "The BEFORE bench walk on the base 136d4f6 was not made (the auto-mode classifier denied checking the base code into the worktree, and one bench at a time). The before state comes from earlier walks of the same code: /tmp/frbench/fix-l3-money-screens/steps/23-after-tasks-after.png, 24-after-drawer-after.png and /tmp/frbench/fix-d1109-starts-engine/steps/13-after-retry-tasks.png, plus each item's failing test. Accepted."
+  },
+  {
+   "key": "C4b:C4bL-5",
+   "file": "/tmp/frbench/leftovers-C4b.json",
+   "id": "C4bL-5",
+   "severity": "decision",
+   "from": "d1116-budget-all",
+   "text": "Continue at a tiny budget adds much more than the budget, because one Continue must give what the task needs (the estimate left plus W, less what is left): CHF 0.004 gave 'Continue (CHF 0.07 more)', CHF 0.008 gave CHF 0.10. By the spec (BA-5, one Continue is enough) and the button names the amount. LC-C32 records how it reads to a person."
+  },
+  {
+   "key": "C5:C5L-11",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-11",
+   "severity": "decision",
+   "from": "d1109-run-visible",
+   "text": "The project status line's Cancel and Continue show their explanation only as a tooltip; the bar's and Working now's Cancel show it beside the button (design section 3). While a session waits the Overview already states the fact four times with three Cancel buttons, which is heavy at 375 px (/tmp/frbench/review-d1109-run-visible/steps/05-rv3-home-while-it-waits-375.png). Not decided now: LC-C31 looks at the waiting Overview at both widths first, then the session lead decides (for example: the status line keeps the fact and drops its own Cancel while the bar shows it)."
+  },
+  {
+   "key": "C5:C5L-12",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-12",
+   "severity": "words",
+   "from": "d1109-run-visible",
+   "text": "Two wordings of one fact (design section 5 rule 10): on Home and the Overview a running project's status line says 'Working on \"Create index.html\" (0 of 7 done)' beside the bar's 'Quote page · the coder works on \"Create index.html\"' (/tmp/frbench/fix-d1109-run-visible-after-steps/01-after-home-while-running.png); the session page says 'Current task: Choosing the next task…' while the bar says 'the critic checks \"X\"'."
+  },
+  {
+   "key": "C5:C5L-13",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-13",
+   "severity": "words",
+   "from": "d1109-run-visible",
+   "text": "The Overview says 'Last result: No session yet.' while the project's first session runs (/tmp/frbench/fix-d1109-run-visible-after-steps/08-after-stop-menu-open.png)."
+  },
+  {
+   "key": "C5:C5L-14",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-14",
+   "severity": "minor, words",
+   "from": "d1109-run-visible",
+   "text": "Stopping the critic's monthly check (Stop now or Stop all) aborts its run and the job records it as failed; its notification reads as a failed calibration, not as stopped by the person (packages/runtime/src/jobs)."
+  },
+  {
+   "key": "C5:C5L-16",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-16",
+   "severity": "minor",
+   "from": "d1109-run-visible",
+   "text": "A calibration (fr jobs calibrate) or a session that a CLI one-shot starts beside a running daemon shows on GET /running (shared store) but sends no run.changed: the bar learns it only at a reload or reconnect."
+  },
+  {
+   "key": "C5:C5L-17",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-17",
+   "severity": "minor",
+   "from": "d1109-run-visible",
+   "text": "While a start is queued behind another project's session, that project's header still offers 'Start session'; pressing it again asks for one more start (the status line offers nothing then)."
+  },
+  {
+   "key": "C5:C5L-18",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-18",
+   "severity": "minor, tests",
+   "from": "d1109-run-visible",
+   "text": "scripts/desktop-window-check.mjs passes trivially when the session has already ended, and reads document.title, not the native window title (state::window_title / set_main_title are covered only by Rust unit tests). Make it fail when no running state was seen; the native title and the tray stay for the owner's install walk."
+  },
+  {
+   "key": "C5:C5L-19",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-19",
+   "severity": "docs",
+   "from": "d1109-run-visible",
+   "text": "docs/maintainers/runtime.md says run.changed is poked by 'the wait list'; compose pokes it on session and project events, the scheduler's requestStart and cancelPending, and the calibration job's onRowChanged."
+  },
+  {
+   "key": "C5:C5L-20",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-20",
+   "severity": "minor, tests",
+   "from": "d1109-run-visible",
+   "text": "The real-daemon life-cycle case does not assert 'plans the session' during a live session (only through the restart ghost row)."
+  },
+  {
+   "key": "C5:C5L-22",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-22",
+   "severity": "decision",
+   "from": "d1109-run-visible",
+   "text": "The UI's unit suite runs in Node, so a browser-only failure (a value import that reaches a Node module) blanked every page while vitest stayed green during the fix; apps/ui/test/browser-imports.test.ts now guards the workspace packages, and Playwright with the real Vite build runs at every merge (it did at C5's). Accepted as is; keep Playwright in every merge's validation."
+  },
+  {
+   "key": "C5:C5L-23",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-23",
+   "severity": "decision",
+   "from": "d1109-run-visible",
+   "text": "The session log line written at the time of a wait keeps '...; then your session goes on.' after Cancel: a timestamped record of what was promised then, not a promise now. Accepted."
+  },
+  {
+   "key": "C5:C5L-24",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-24",
+   "severity": "minor, tests",
+   "from": "d1109-run-visible",
+   "text": "Not walked on a real desktop: the tray dot, tooltip and menu's first item, the native window title, the critic's monthly check on the bar (nothing on a running daemon can start it) and a working row past 49 steps (the stand-in's tasks stop at 30 parts). Covered by cargo tests, run-indicator.test.tsx and unit cases with 60 and 120 steps; the owner's install walk covers the tray and title (U-096)."
+  },
+  {
+   "key": "C5:C5L-25",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-25",
+   "severity": "words",
+   "from": "d1109-run-visible",
+   "text": "The Desktop app workflow's window job on d133246 (run 77, job 133641313286) read the bar while the session ran: 'Window check 21:56:35 · picks the next task just started Stop ▾', title '● Window check 21:56:35 · Forerunner'. The project and title are right (LC-C20's first part passes, read live, not after the end). Check whether 'picks the next task just started' is two elements (the state and an elapsed time) or one run-on sentence (design section 5): the screenshot is in that run's desktop-window-check artifact. The check reads one page only; LC-C20 also asks for Home, Inbox and Settings."
+  },
+  {
+   "key": "L3:LL-7",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-7",
+   "severity": "minor",
+   "from": "l3-handoff-checks",
+   "text": "The node --test marker check runs every script directly in test/, tests/ or __tests__/: a helper that never exits hits the check timeout and blocks the accept."
+  },
+  {
+   "key": "L3:LL-8",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-8",
+   "severity": "minor",
+   "from": "l3-handoff-checks",
+   "text": "Optional: one line in the intake prompt naming the checks Forerunner can run (the verifier's sketch item 4 for L3-research-4)."
+  },
+  {
+   "key": "L3:LL-9",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-9",
+   "severity": "minor",
+   "from": "l3-money-screens",
+   "text": "No vitest can render a screen against the real daemon (jsdom cannot bundle node:sqlite in packages/state); and the Tasks row's 'left' figure equals 'This run may spend' only at the run's start.",
+   "note_2026_11_16": "Second half closed by C4b d1116-budget-all (the row reads 'of CHF 0.20 budget' and the run's own line names the room kept for its review); the first half (no vitest renders against the real daemon) stays a test-infra leftover."
+  },
+  {
+   "key": "L3:LL-13",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-13",
+   "severity": "owner",
+   "from": "l3-money-screens",
+   "text": "Owner question (told 2026-11-15): a task's budget counts only the work, not the critic's reviews; run L3 made the screens say which figure each line counts. Should the budget count the reviews too?",
+   "note_2026_11_16": "Closed 2026-11-16: the owner answered ('yes it should count critics reviews, and fixes.'); built by C4b d1116-budget-all."
+  }
+ ]
+}

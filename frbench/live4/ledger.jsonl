@@ -1,0 +1,39 @@
+{"at":"2026-11-17T05:37:03.842Z","journey":"session","step":"LC-C17","usd":0.0036,"bench":"s1"}
+{"at":"2026-11-17T05:46:05.285Z","journey":"session","step":"LC-C18","usd":0.321,"bench":"s1"}
+{"at":"2026-11-17T05:48:42.814Z","journey":"github","step":"LC-C1","usd":0,"bench":"gh4a,gh4b (stand-in)"}
+{"at":"2026-11-17T05:49:33.379Z","journey":"session","step":"LC-C32","usd":0.0571,"bench":"s1"}
+{"at":"2026-11-17T05:54:17.831Z","journey":"session","step":"LC-C2","usd":0.2304,"bench":"s2"}
+{"at":"2026-11-17T05:57:00.067Z","journey":"github","step":"LC-C12","usd":0.005354,"bench":"gh4c"}
+{"at":"2026-11-17T06:05:42.218Z","journey":"pause","step":"LC-C7","usd":0.292,"bench":"p1"}
+{"at":"2026-11-17T06:08:26.909Z","journey":"pause","step":"LC-C8","usd":0.2142,"bench":"p1"}
+{"at":"2026-11-17T06:13:40.805Z","journey":"chat","step":"LC-C10","usd":0.013806,"bench":"c1"}
+{"at":"2026-11-17T06:18:48.053Z","journey":"chat","step":"LC-C11","usd":0.003261,"bench":"c1"}
+{"at":"2026-11-17T06:22:45.384Z","journey":"chat","step":"LC-C13","usd":0.057144,"bench":"c1"}
+{"at":"2026-11-17T06:40:43.950Z","journey":"selftasks","step":"LC-C27","usd":0.471604,"bench":"st1"}
+{"at":"2026-11-17T06:42:37.944Z","journey":"creds","step":"LC-C21","usd":0.035602,"bench":"c21 (routed provider, real API via logging proxy)"}
+{"at":"2026-11-17T06:45:40.307Z","journey":"creds","step":"LC-C23","usd":0.043126,"bench":"cs (routed provider, real key; bench subscription rested in state)"}
+{"at":"2026-11-17T06:48:52.401Z","journey":"selftasks","step":"LC-C29","usd":0.176378,"bench":"st2 (+scripted proxy)"}
+{"at":"2026-11-17T06:53:50.880Z","journey":"creds","step":"LC-C24","usd":0.85317,"bench":"cs (real key: 2 intakes 0.034859 + work after Use API key 0.818311)"}
+{"at":"2026-11-17T08:13:07.281Z","journey":"creds","step":"LC-C31","usd":0,"bench":"c31, c31e (no model call; bench subscription stand-in, real key saved second, unused)"}
+{"at":"2026-11-17T08:21:30.922Z","journey":"github","step":"LC-C3","usd":0.002398,"bench":"gh4d"}
+{"at":"2026-11-17T08:27:01.999Z","journey":"session","step":"LC-C19","usd":0.092051,"bench":"s1"}
+{"at":"2026-11-17T08:33:36.765Z","journey":"github","step":"LC-C4","usd":0,"bench":"gh4a (stand-in model, real GitHub)"}
+{"at":"2026-11-17T08:38:44.974Z","journey":"pause","step":"LC-C6","usd":0.0131,"bench":"p2 (1 logged call USD 0.008073 + 0.005 for the call in flight at the kill)"}
+{"at":"2026-11-17T08:47:19.867Z","journey":"chat","step":"LC-C14","usd":0.00455,"bench":"c1"}
+{"at":"2026-11-17T08:49:33.930Z","journey":"pause","step":"LC-C9","usd":0.078316,"bench":"p2 (coder task finished before its wrap-up; no-progress walk at the project's budget cost 0)"}
+{"at":"2026-11-17T08:49:57.691Z","journey":"chat","step":"LC-C15","usd":0.005161,"bench":"c1"}
+{"at":"2026-11-17T08:55:32.313Z","journey":"chat","step":"LC-C16","usd":0.106,"bench":"c1 (app ledger 0.105654 incl. the stopped Opus call; the call cut by the quit is unbooked)"}
+{"at":"2026-11-17T09:07:50.994Z","journey":"creds","step":"LC-C22","usd":0,"bench":"c22 (clean environment; routed provider; real Claude Code with the bench's invalid token sent to the real API; real key saved second, unused)"}
+{"at":"2026-11-17T09:11:38.051Z","journey":"creds","step":"LC-C25","usd":0.002543,"bench":"c25 (clean environment; routed provider; real key saved second; bench subscription rested in state)"}
+{"at":"2026-11-17T09:27:56.153Z","journey":"l3","step":"LC-L3","usd":0.045097,"bench":"l3b part 1 (chat L3-run-1/9 on 3 projects, L3-run-6, Stop now on Clamp review: app ledger)"}
+{"at":"2026-11-17T09:37:27.268Z","journey":"l3","step":"LC-L3","usd":0.194882,"bench":"l3b part 2 (L3-run-8 Club contact, L3-research-3 Launch review + chat, L3-run-10 Club motto two sessions, L3-github-4 three redos: app ledger 0.239979 - 0.045097)"}
+{"at":"2026-11-17T09:37:32.175Z","journey":"selftasks","step":"LC-C28","usd":0.064714,"bench":"st3 (bench-live; intake 0.036948, 4 task checks 0.023015, 6 chat calls 0.004751)"}
+{"at":"2026-11-17T09:41:33.660Z","journey":"selftasks","step":"LC-C30","usd":0.220692,"bench":"st4 (bench-live; intake 0.033481, 13 specialist 0.094107, 10 critic 0.08988, 1 task check 0.003224)"}
+{"at":"2026-11-17T09:50:25.172Z","journey":"l3","step":"LC-L3","usd":0.269412,"bench":"l3a part 3 (Kite flyers on forerunner-sandbox: 2 sessions, 9 coder tasks + reviews: app ledger)"}
+{"at":"2026-11-17T09:57:13.749Z","journey":"l3","step":"LC-L3","usd":0.00228,"bench":"l3a part 3b (chat 'what is left to merge?')"}
+{"at":"2026-11-17T09:59:57.101Z","journey":"l3","step":"LC-L3","usd":0.171872,"bench":"l3b part 4 (L3-research-1 Popover hint: researcher run + review after Continue: app ledger)"}
+{"at":"2026-11-17T10:02:14.812Z","journey":"l3","step":"LC-L3","usd":0.161339,"bench":"l3b part 5 (L3-research-4 Word count: intake + coder + tester + reviews: app ledger)"}
+{"at":"2026-11-17T10:04:57.174Z","journey":"l3","step":"LC-L3","usd":0.106209,"bench":"l3b part 6 (L3-research-2 writer guide: question run + paused run: app ledger)"}
+{"at":"2026-11-17T10:07:30.285Z","journey":"l3","step":"LC-L3","usd":0.14677,"bench":"l3b part 7 (L3-run-3 C4b Swiss pairing, sent back once, + L3-run-2/L3-run-4: app ledger)"}
+{"at":"2026-11-17T10:08:20.319Z","journey":"l3","step":"LC-L3","usd":0.008116,"bench":"l3b part 8 (L3-run-4 step 5: motto redo stopped from the drawer: app ledger)"}
+{"at": "2026-11-17T10:24:55.000Z", "journey": "creds", "step": "LC-C26", "usd": 0, "bench": "c26 (bench-api stand-in: the spend limit's 400; no real key; calls.mjs 0 calls; app ledger USD 0)"}

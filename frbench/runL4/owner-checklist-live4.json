@@ -1,0 +1,102 @@
+[
+ {
+  "journey": "github",
+  "pass": 1,
+  "item": "LC-C1 with a second GitHub account (wave 8's question, and C2's 'another login' sentence): on a second login, link joelwellbournewood/forerunner-sandbox. Expect 'another GitHub account worked on it on <day>' with only Work together and Cancel. Not possible here: only one token (one login) exists."
+ },
+ {
+  "journey": "session",
+  "pass": 1,
+  "item": "LC-C2 ran with the real model on the bench's stand-in GitHub (bench/seeded), not on forerunner-sandbox. If wanted, run Add to it once on a real GitHub repository that already has done tasks, and confirm on GitHub that approving opens no docs pull request and adds no second docs/decisions/0001 file."
+ },
+ {
+  "journey": "session",
+  "pass": 1,
+  "item": "LC-C32 saw only branch (i): the real critic's review fit A's CHF 0.10 budget and nothing was sent back. The waiting-review card ('paused at its budget of CHF 0.10' / 'The work is done; its review waits for room in the budget.'), what one Continue adds (C4bL-5) and the send-back half rest on the bench and on U-042's Check in the app on the owner's install."
+ },
+ {
+  "journey": "creds",
+  "pass": 1,
+  "item": "LC-C23 (subscription only): with your real subscription and 'Subscription first, then API key', run a two-file repository task whose Claude Code run hits the usage limit after its first file. The key's first call should start with '## Where the last run stopped' and 'continue from it, do not start again.'. The task's branch should have the work-in-progress commit under the key run's commit, with the switch lines as in LC-C23. The bench cannot do this: it has no Claude Code stand-in that does work and then reports the limit."
+ },
+ {
+  "journey": "creds",
+  "pass": 1,
+  "item": "LC-C24 (subscription only): when your real subscription is at its limit under 'ask', compare the card's 'about CHF' with Costs after Use API key. Also check that the session that waited goes on on the subscription itself at the real reset (on the bench the stand-in cannot do the work)."
+ },
+ {
+  "journey": "creds",
+  "pass": 1,
+  "item": "LC-C31 (subscription only): with your real subscription, under 'then wait', a session's first task is done and the second meets the limit. Check the continuation's work on the subscription at the reset, and a review on the subscription when nothing was chosen (the bench cannot finish a task on the stand-in)."
+ },
+ {
+  "journey": "creds",
+  "pass": 1,
+  "item": "LC-C22 (pass 2, but seen here): sign Claude Code out, or save an expired token. Does the app show 'Anthropic refused your Claude sign-in' with 'The sign-in has expired or was signed out. ...', or 'I ran out of time' / 'Claude did not answer (model call failed)' / a failed task, as on the bench (L4-creds-9)?"
+ },
+ {
+  "journey": "github",
+  "pass": 2,
+  "item": "Make one project dialog: the refusal 'A session of \"<project>\" waits to go on at <time>. Make one project after it ran, or cancel it first.' needs a session waiting for its Claude credential, or a Start kept for a reset. The stand-in bench cannot produce either; check it on a real install with a usage limit."
+ },
+ {
+  "journey": "github",
+  "pass": 2,
+  "item": "Chat join with the real model ('make Site and Kite club one project, keep Site' gets a Yes/No read-back; 'make them one project' must ask which to keep). This was not in LC-C4's USD 0 and was not run."
+ },
+ {
+  "journey": "github",
+  "pass": 2,
+  "item": "C4L-8 was checked only by setting a project to paused in the database, because no screen pauses a project. If a pause is added to the app, walk 'pause, Make one project, Undo' there."
+ },
+ {
+  "journey": "session",
+  "pass": 2,
+  "item": "LC-C19 passed on the API key, but the hands-off setting was not checked with a Claude subscription. In the app: turn on Settings > Advanced > <project> 'When work is ready' > Start a session by itself, answer a specialist's question card, and check that exactly one session starts and the Sessions row reads 'started by itself when work was ready'. Then turn it off, answer another card, and check that nothing starts and the Done line says 'it runs at your next Start'."
+ },
+ {
+  "journey": "chat",
+  "pass": 2,
+  "item": "After the L4-chat-12 fix: in a project's Chat, after one stronger answer has already run, type 'use a stronger model: why did \"<a failed task>\" fail and what should I change?' and press Go ahead. Check that Sonnet answers once with 'Thought it through with Sonnet · … s · CHF …', then press Stop about 3 s into a second one and check that 'You stopped this answer: CHF … spent.' matches Costs. This live check walked the Stop after a Go ahead only on the strongest model (Opus), because the stronger model's Go ahead looped."
+ },
+ {
+  "journey": "creds",
+  "pass": 2,
+  "item": "LC-C22 after the fix of L4-creds-10: sign out or revoke the subscription token (or paste a changed one), then Start one task and ask chat one question. Expect one card 'The sign-in has expired or was signed out. ...', the subscription row shown as refused, no Failed task, no urgent '... failed' notification, and chat's hold reply with no further subscription call."
+ },
+ {
+  "journey": "creds",
+  "pass": 2,
+  "item": "Because of L4-creds-10's cause: with the real subscription at its usage limit (or its 5-hour limit), check that a task run ends as 'waits until HH:MM (your subscription's limit)' and not as a Failed task. The real SDK throws after the error result, so the usage-limit path (CE-5) is probably misread the same way. The bench cannot play a real usage limit."
+ },
+ {
+  "journey": "l3",
+  "pass": 2,
+  "item": "L3-run-5 fixup step 2: in Talk with Reply: Voice, an answer that stops early stops at a whole sentence (no audio here)."
+ },
+ {
+  "journey": "l3",
+  "pass": 2,
+  "item": "L3-github-10: while a task on a repository project reads 'Being reviewed', type 'skip the <task> task' in Chat. Check the read-back names #N staying open, and that the Overview's 'Cancelled, still open on GitHub' line appears and goes away after the PR is closed (not run here: timing)."
+ },
+ {
+  "journey": "l3",
+  "pass": 2,
+  "item": "L3-github-3 at person speed: push a commit on GitHub, wait a few seconds, then press Merge on the Overview row. The red line should come at once, never 'Merging #N.' Also do the Update-branch counter-check."
+ },
+ {
+  "journey": "l3",
+  "pass": 2,
+  "item": "L3-run-1 again on the owner's PC: 'research may read any public website again' on a fresh project. Note whether the card comes on the first try or the reply asks 'Shall I ...?' in words."
+ },
+ {
+  "journey": "creds",
+  "pass": 3,
+  "item": "LC-C26 (U-078, ADR 0100), real spend limit: on a test API workspace, set a monthly spend limit at or below this month's spend (Anthropic Console, Limits). Save that workspace's key beside your Claude subscription, choose 'API key first, then subscription' in Settings, and press Start on a project with a ready task. Expect: the key's row in Settings reads 'At its limit until <the time Anthropic names, in your clock>', with the line 'Your API key is at its limit until HH:MM; your subscription does the work meanwhile.' The session log reads '\"<task>\" goes on with your Claude subscription from where it stopped: your API key is at its limit until HH:MM.' The task is done on your subscription, and the key gets no second request before that time. Also ask chat a question while the key rests: the answer comes from the subscription, with the note 'Answered with your Claude subscription: ...' once."
+ },
+ {
+  "journey": "creds",
+  "pass": 3,
+  "item": "Subscription stand-in for live checks: the bench cannot run any work on the subscription (no Claude Code stand-in, and task runs do not use config.json's anthropicApiBase). Every 'goes on with the subscription' step needs your own Claude subscription on your PC."
+ }
+]

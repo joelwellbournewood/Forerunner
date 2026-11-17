@@ -1,0 +1,551 @@
+{
+ "group": "github",
+ "base": "4cf11fd",
+ "live_findings": [
+  {
+   "key": "live4:L4-github-1",
+   "finding": {
+    "id": "L4-github-1",
+    "severity": "major",
+    "title": "Take it over opens no docs pull request when an old fr/docs-scaffold branch is on GitHub, and says nothing",
+    "step": "LC-C1, home A: New project (goal only) on forerunner-sandbox > Take it over",
+    "what_the_person_sees": "The project opens normally. No pull request appears on GitHub and the repository keeps naming \"Kite club\". No screen says so: the Overview has no line and Docs says \"8 of 8 present\". The line under Take it over had promised \"The repository then names this project\".",
+    "expected": "Take it over opens a docs PR from main that replaces the Kite club marker and says so, as the brief path did in #50. If it cannot, the app says why.",
+    "evidence": "evidence/a-home1/daemon.log:\n05:31:39 WARN [project-docs] install marker of another project kept {projectId: 01a1e7fd..., markedFor: 01a19979-481d-7639-aefe-2f35493fb5f1}\nINFO standard docs scaffolded {created: 0, prUrl: null}\n\nIn the docs worktree, git show fr/docs-scaffold:.forerunner/project.json names \"Sandbox hello\" (01a19979). The branch origin/fr/docs-scaffold@129324c is not in main: it is left from live check 2's PR #1, closed 2026-11-09 with its branch kept.\n\nGitHub before and after the press: no new branch or PR (c1-a-before-press.json vs c1-a-after-press.json).\n\nScreenshot: evidence/a-home1/steps/10-a02-overview.png.",
+    "repro": "Use forerunner-sandbox as it is today: main has another project's marker, and a remote fr/docs-scaffold branch from a closed PR is still there. New project with a goal only and the repository link > Take it over. No PR appears; the daemon log shows the lines above.",
+    "suspected_cause": "packages/runtime/src/loop/docs.ts: scaffoldInCopy calls checkout(..., 'fr/docs-scaffold', { ours }) without `fresh`. With no open PR it switches to the stale origin/fr/docs-scaffold instead of main.\n\nmark() then meets a third project's marker that is not in took_over.projects and keeps it. Nothing is written, so no PR opens, and the outcome is only logged.\n\nwriteSessionStatus passes fresh: (open) => !open for the same case.",
+    "journey": "github",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-github-1",
+    "real": true,
+    "model_only": false,
+    "severity": "major",
+    "root_cause": "When there is no open scaffold PR, scaffoldInCopy starts from the old branch on GitHub, not from main. At docs.ts:875 it calls checkout(project, target, 'fr/docs-scaffold', { ours }) without `fresh`. At docs.ts:1250-1254 checkout then picks `origin/fr/docs-scaffold` because that ref exists, so the copy is switched to the branch left from live check 2's closed PR #1 (129324c, not in main). Its .forerunner/project.json names \"Sandbox hello\" (01a19979), a third project.\n\nThe project has settings.took_over.projects = [01a1be66], which is Kite club only. So mark() → writeInstallMarker returns `other_project` (marker.ts:85-97). The other marker is kept and the case is only logged as a WARN (docs.ts:1434). scaffoldDocs finds all 8 docs already on that branch, so `written` is empty: no commit, no push, no PR. The outcome is created 0, prUrl null, marker other_project, and it is recorded silently in summary_cache.docs.\n\nNothing tells the person:\n- The create path (create-project.ts:210 → scaffoldProjectDocs) ignores the outcome.\n- repo.take_over's writeMarker (compose.ts:4916-4919) sets `failed` only when the scaffold throws, so a null prUrl reads as success.\n- No UI reads marker.status other_project.\n- settle() puts the copy back on main, which holds Kite club's docs, so Docs shows \"8 of 8 present\".\n\nwriteSessionStatus already handles the same case with `fresh: async (open) => !open` and `force: !existingPr` (docs.ts:983, :998).\n\nReproduced at 4cf11fd with a composed daemon (MemoryGitHost + bare repo, POST /projects with takeOver), script /tmp/frbench/verify-L4-github-1/repro.mts:\n- Without an old branch, PR #1 opens on fr/docs-scaffold with the marker replaced by \"Kite flyers\".\n- With an old fr/docs-scaffold (third project's marker, closed PR), no PR opens, the branch marker stays \"Sandbox hello\", and the daemon logs the same two lines as the live log (\"install marker of another project kept\" and \"standard docs scaffolded created 0 prUrl null\").",
+    "where": "packages/runtime/src/loop/docs.ts:875 (checkout without fresh); docs.ts:1250-1254 (from = origin/fr/docs-scaffold when it exists); docs.ts:921 (non-force push); docs.ts:1434 (other_project only logged); packages/runtime/src/daemon/compose.ts:4916-4919 and packages/runtime/src/daemon/create-project.ts:210 (outcome not surfaced)",
+    "fix_sketch": "1) In scaffoldInCopy, pass `fresh: async (open) => !open` to checkout, as writeSessionStatus does. With no open scaffold PR, fr/docs-scaffold then starts from origin/<base>; an old branch from a closed or merged PR is never built on. Push with `force: !existingPr`, because the new commit does not descend from the old remote tip. An open PR that is this project's (ours) keeps today's behaviour.\n\n2) Make a take-over whose docs PR did not open visible:\n- In compose's repositoryTakeOver.writeMarker, return failed (or a new `notOpened`) when the outcome has no prUrl and marker.status is not 'replaced', not only when the scaffold throws.\n- In the create path, have the project response or Overview say what tookOverNoPullRequestSentence already says (\"...so GitHub still names Kite club\") when took_over is set but summary_cache.docs has no pr_url or marker.status is other_project.\n- Optionally the Docs tab should not read \"8 of 8 present\" as if the take-over had landed.\n\n3) Update docs/maintainers/runtime.md (scaffold branch start rule) and ADR 0117's amendment. This shares its fix with C4L-2: rebuild the scaffold branch on the default branch under the copy's lock before writing the replaced marker.",
+    "failing_test_idea": "packages/runtime/test/docs-scaffold.test.ts, in the OR-06/OR-15 describe, using a composed daemon and app.request. Seed o/kite's main with the doc set and Kite club's marker. Also seed an fr/docs-scaffold branch that is not in main, carrying a third project's marker and the doc set, with its MemoryGitHost PR closed.\n\nSteps: POST /projects without takeOver gets 409 projects [KITE]; POST /projects with takeOver {projects:[KITE]} gets 201.\n\nExpect:\n- exactly one open PR on fr/docs-scaffold, whose body has 'This repository was the Forerunner project \"Kite club\"; it is now \"Kites\"'s.'\n- the branch marker names the new project\n- `git merge-base --is-ancestor main fr/docs-scaffold` is true, and the diff to main is only .forerunner/project.json.\n\nThis fails today: no PR opens and the branch marker names the third project.\n\nAdd a companion in apps/ui/test/real-daemon.test.ts for the OR-07 Overview take-over. When the docs PR cannot be opened (for example a host refusal), the repo.take_over sentence and the Overview say GitHub still names \"Kite club\", not 'Took over o/kite from \"Kite club\".'",
+    "area_hint": "d1109-onerepo-link",
+    "known_leftover": "",
+    "notes": "The evidence matches the code exactly:\n- daemon.log 05:31:39 has the WARN 'install marker of another project kept' (markedFor 01a19979) and then 'created 0, prUrl null'.\n- c1-a-before-press.json lists branch fr/docs-scaffold@129324c95a, and main's marker names Kite club (01a1be66).\n- c1-00-marks.json shows PR #1 on fr/docs-scaffold, closed unmerged on 2026-11-09.\n- a04-db-projects…jsonl shows took_over.projects = [01a1be66].\n- In another docs copy of this run, `git show origin/fr/docs-scaffold:.forerunner/project.json` names \"Sandbox hello\" and the branch is not an ancestor of origin/main.\n\nThe reproduction on the composed daemon gave the same two log lines.\n\nThe brief path (PR #50) is not affected: the intake writes its own fresh fr/intake-<id>-docs branch.\n\nRelated but not the same: C4L-2 (leftovers-C4.json) covers a take-over after this project's own open fr/docs-scaffold PR. It is a different trigger with the same fix shape (start the scaffold branch from the default branch), so fix the two together. C2-left-11 part 1 only covered a scaffold that throws: compose.ts writeMarker treats prUrl null without an error as success, so repo.take_over on the Overview would also say 'Took over…' here.\n\nA wider effect of the same root cause, reasoned from the code and not run: a new project, take-over or not, on a repository with an old fr/docs-scaffold branch that lacks some docs would add them on top of the old commit. It would then open a PR that carries the other project's marker, and merging it would put that marker on main.\n\nSeverity is major, not blocker. The project works in the app, but the take-over promise (\"The repository then names this project\") silently does not happen on GitHub, and an old branch from a closed PR is common (GitHub keeps head branches by default).\n\nThe repro script is /tmp/frbench/verify-L4-github-1/repro.mts. I removed its run folders. Nothing in the worktree was changed."
+   }
+  },
+  {
+   "key": "live4:L4-github-2",
+   "finding": {
+    "id": "L4-github-2",
+    "severity": "major",
+    "title": "After Undo of a taken-over project, the next New project on the repository gets no offer and no take-over",
+    "step": "LC-C1, home A: Changes > Undo of the project made with Take it over, then New project (with a brief) on the same repository",
+    "what_the_person_sees": "The project is made at once with no offer, although main still names \"Kite club\". Its Overview has no line about the other project. Its docs would keep the Kite club marker, so another Forerunner would be offered \"Kite club\", not this project.",
+    "expected": "The same offer as the first time (Work together, Take it over, Cancel). A removed project's take-over no longer counts.",
+    "evidence": "evidence/a04-takeover-brief.json: createStatus 201, noOffer true.\nevidence/a04-db-projects-after-undo-and-second-create.jsonl: the removed row 01a1e7fd keeps took_over {projects: [01a1be66...]}; the new row 01a1e7ff has no took_over.\nScreenshot: evidence/a-home1/steps/16-a04-takeover-brief-no-offer.png.\nMain's marker still named Kite club at that moment (c1-a-before-approve.json).",
+    "repro": "New project on a repository another project names > Take it over. Changes > Undo. New project again on the same repository.",
+    "suspected_cause": "packages/runtime/src/sources/repository-use.ts: RepositoryIndex.knows(id) counts tookOverOf(p).projects of every row, including the archived (removed) one. verdictOf then skips the marker's id and returns free. The Overview line (around line 988) also returns null when index.knows is true.",
+    "journey": "github",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-github-2",
+    "real": true,
+    "model_only": false,
+    "severity": "major",
+    "root_cause": "RepositoryIndex.knows(id) (repository-use.ts:354-361) loops over every row, archived and removed ones included, and returns true when any row's settings.took_over.projects names the id (line 358). project.create's Undo (packages/commands/src/commands/project.ts:404-411) archives the row and adds removed_name, but it keeps settings.took_over. So once a take-over project is removed, the marker's id (Kite club, 01a1be66) still counts as \"known\". In verdictOf (repository-use.ts:571), `if (index.knows(id)) continue;` skips that id, `unknown` stays empty and the result is {kind:\"free\"} (line 574). check() then returns {repository} with no offer and no tookOver (lines 886-892). The new row is therefore written without took_over, and its docs never replace the Kite club marker. overviewOf has the same fault: it returns null at line 988 (`index.row(id) || index.knows(id)`), so the Overview line is missing too. ADR 0117 point 2 already says \"a removed project uses nothing\", and repo.take_over's own Undo removes took_over so the line comes back (point 8). The removed row's take-over should no longer count. The evidence matches this: the removed row 01a1e7fd keeps took_over [01a1be66], the new row 01a1e7ff has none, createStatus is 201 with noOffer, main's marker still names 01a1be66 \"Kite club\" (c1-a-before-approve.json), the overview has no line (a05.json, repositoryElsewhere null), and no docs PR was open. I reproduced it at the module boundary against 4cf11fd with MemoryGitHost (/tmp/frbench/verify-L4-github-2/repro.mts). With a marker naming KITE, the first check gives the offer (canTakeOver true). Take it over returns tookOver. After a removed row with that took_over is inserted, check([\"o/kite\"]) returns {repository} only, and overviewOf of a second project with the copy's marker KITE returns null. This also bypasses the 14-day rule from then on: after one take-over and its Undo, this install treats the repository as free for any later New project, even if another account starts working on Kite club.",
+    "where": "packages/runtime/src/sources/repository-use.ts:358 (knows counts a removed row's took_over); consumed at :571 (verdictOf) and :988 (overviewOf); the row keeps took_over after packages/commands/src/commands/project.ts:404-411 (project.create undo)",
+    "fix_sketch": "In RepositoryIndex.knows, keep `row(id)` for any status, then skip removed rows inside the loop: `if (isRemovedProject(p)) continue;` before the projectIdsOf/tookOverOf checks. A removed project uses nothing, so neither its take-over nor its joined ids count. isRemovedProject is already imported. The \"removed\" verdict (the marker naming the person's own removed project) does not change, because verdictOf finds it through index.row before knows is called. Decide whether a plainly archived project's take-over should count, and write that down. Update the ADR 0117 point 2 line to \"an id a project here (not a removed one) took over\" and the module's maintainer doc. Optional: have project.create's undo record that the take-over ended, as repo.take_over's Undo does, but the index fix alone is enough and also covers rows already stored that way.",
+    "failing_test_idea": "Real-daemon case at POST /projects with MemoryGitHost. The repository's main has the marker {project: KITE, name: \"Kite club\"}. POST /projects {repos:[\"o/kite\"]} gives 409 repository_used_elsewhere with canTakeOver true. POST again with takeOver {projects:[KITE]} gives 201 with settings.took_over. Undo that change-log row through the change log's undo route; the row becomes \"(removed)\". POST /projects {repos:[\"o/kite\"], brief:\"...\"} again must give 409 repository_used_elsewhere with projectName \"Kite club\", canWorkTogether true and canTakeOver true (today it gives 201). Second assertion: a project inserted on o/kite whose copy marker names KITE gets a non-null repositoryElsewhere on GET /projects/:id (today null). Unit twin in packages/runtime/test/repository-use.test.ts: verdictOf/check with a removed row whose settings.took_over names KITE must give \"elsewhere\", not \"free\".",
+    "area_hint": "d1109-onerepo-link",
+    "known_leftover": "",
+    "notes": "No leftover names this. CL-3 (C2) and C4L-2 (C4) touch take-over branches and markers but not the index counting a removed row's take-over. knows() came in with 9f4b2b8 (d1109-onerepo-link). Model not involved: the offer and the create are decided by the code alone. The finding's \"would\" claim about docs follows from the missing took_over: writeInstallMarker never overwrites another project's marker without replace. I read that in ADR 0117 point 7 and did not run it. Bench not started; only the module-level repro script was run, under flock. Script: /tmp/frbench/verify-L4-github-2/repro.mts. Evidence checked: /tmp/frbench/live4/github/evidence/a01-takeover.json, a03-undo.json, a04-takeover-brief.json, a04-db-projects-after-undo-and-second-create.jsonl, a05.json, c1-a-before-approve.json."
+   }
+  },
+  {
+   "key": "live4:L4-github-3",
+   "finding": {
+    "id": "L4-github-3",
+    "severity": "words",
+    "title": "Docs PR body says: it is now \"Kite flyers\"'s.",
+    "step": "LC-C1, home A: take-over docs PR #50 on GitHub",
+    "what_the_person_sees": "\"This repository was the Forerunner project \\\"Kite club\\\"; it is now \\\"Kite flyers\\\"'s.\" The possessive after a quoted name reads badly.",
+    "expected": "For example: \"...; it is now the project \\\"Kite flyers\\\".\"",
+    "evidence": "evidence/c1-a-prs-50-51.json, body of #50",
+    "repro": "Take it over with a brief, Approve and start, then read the docs PR body.",
+    "suspected_cause": "tookOverLine in packages/runtime/src/sources/repository-use.ts",
+    "journey": "github",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-github-3",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "The sentence is a fixed template, not something the model wrote. tookOverLine builds `This repository was the Forerunner project \"${was}\"; it is now \"${name}\"'s.` (and `...another Forerunner project; it is now \"${name}\"'s.` when the old name is unknown), so the possessive always lands after a closing quote. For a name like \"Kite flyers\" the result is the awkward `\"Kite flyers\"'s`. Both callers paste the line into the docs pull request body unchanged: intake.ts:2550 for the intake's fr/intake-<id>-docs PR (the #50 in the evidence) and loop/docs.ts:918 for the scaffold PR. The evidence matches the code exactly: c1-a-prs-50-51.json, body of #50, reads 'This repository was the Forerunner project \"Kite club\"; it is now \"Kite flyers\"'s.' The wording was chosen on purpose. ADR 0058's amendment point 1, ADR 0117 point 7 and the run C plan (OR-06) all quote '...\"Kites\"'s.', and docs-scaffold.test.ts:594 pins it. So the app did what its design says, but the design's words break a rule the repo already has. runtime.md:6192-6195 (run L3, L3-github-8, which fixed \"Kite trips's Overview\") says a description never makes the project's name a possessive. Nothing in owner-decisions-2026-11-09.md fixes these exact words; they come from the session lead's plan.",
+    "where": "packages/runtime/src/sources/repository-use.ts:449 (and :450, the unknown-name branch); used at packages/runtime/src/session/intake.ts:2550 and packages/runtime/src/loop/docs.ts:918",
+    "fix_sketch": "1. In tookOverLine, drop the possessive: `This repository was the Forerunner project \"${was}\"; it is now the project \"${name}\".` and `This repository was another Forerunner project; it is now the project \"${name}\".` Keep markerNameOf as it is. projectIdsNamedBy's L-16 regex reads 'Forerunner project <uuid>.', so this change does not affect it.\n2. Update the quoted line in ADR 0058 (amendment of 2026-11-15, point 1) and ADR 0117 (point 7), with a one-line note that live check 4 (L4-github-3) changed the wording. Update runtime.md's take-over paragraph wherever it quotes the line.\n3. Update docs-scaffold.test.ts:594 and the fixture body at apps/ui/test/real-daemon.test.ts:18338. The fixture is input only, but keep it matching what the app writes.\n4. Under validation rule 8, fix the siblings that put a possessive after a quoted name in person-facing text:\n   - join-words.ts:183 settingAppliesLine (`\"Kite club\"'s setting applies...`), e.g. \"the setting of \"Kite club\" applies...\"\n   - repository-words.ts:219 heldStatusNote (`while \"Kite club\"'s status pull request is open`), e.g. \"while the status pull request of \"Kite club\" is open\"\n   - task-check.ts:854 (`the first part keeps \"<title>\"'s specialist`), e.g. \"keeps the specialist of \"<title>\"\"",
+    "failing_test_idea": "The person reads this line in the PR body on GitHub, so test the body the GitHost receives. In packages/runtime/test/docs-scaffold.test.ts, change the existing take-over case (POST /projects with takeOver {projects:[KITE]}, then host.listPullRequests on DOCS_SCAFFOLD_BRANCH). Expect the body to contain 'This repository was the Forerunner project \"Kite club\"; it is now the project \"Kites\".' and not to match /\"'s/. Add the same check for the intake path, which the live run took: a took-over project's first brief, approved, opens fr/intake-<id>-docs, and that PR's body gets the same toContain and not.toMatch(/\"'s/). Add a unit case in repository-use.test.ts for both branches of tookOverLine: a known name, and an unknown or flagged name (\"another Forerunner project\"). Optionally add one sweep assertion over settingAppliesLine and heldStatusNote that no output contains `\"'s`.",
+    "area_hint": "d1109-onerepo-link (OR-06 take-over effects); small enough for a words/polish batch",
+    "known_leftover": "",
+    "notes": "I verified this from the code and the evidence alone, without running the bench: tookOverLine is deterministic and the PR #50 body in /tmp/frbench/live4/github/evidence/c1-a-prs-50-51.json matches its template character for character. leftovers-C2.json CL-8 names takeOverLine too, but for another issue: the line can pass 100 characters with a 60-character marker name. It does not cover the possessive, so no known leftover names this finding. The fix touches the same function, so it can be done together with CL-8. Precedent: run L3 fixed the same pattern for Settings rows (L3-github-8, runtime.md:6192-6195), and the three siblings listed in the fix sketch are still in the code. Since ADR 0058 and ADR 0117 quote the current wording, the fix should amend their quotes. This does not need an owner question: owner-decisions-2026-11-09.md does not fix these words."
+   }
+  },
+  {
+   "key": "live4:L4-session-9",
+   "finding": {
+    "id": "L4-session-9",
+    "severity": "words",
+    "title": "First session's log says 'Plan: 1 task' then 'It promised 3 tasks'; Overview says 'Waiting for you: approve the plan' twice",
+    "step": "LC-C2",
+    "what_the_person_sees": "Session log: 'Plan: 1 task, about CHF 0.09. The first session you approved with the project plan: 1 task in its order.', then 'It promised 3 tasks, about CHF 0.34.', then 'Gave 1 note for the next session to \"Build the chess club page in index.html\".' at the start of the very session that runs that task. After Add to, the Overview shows 'Waiting for you: approve the plan [Open]' in the header and again as a banner.",
+    "expected": "Numbers that agree, and one place per fact (design section 5 rules 4 and 10).",
+    "evidence": "GET /sessions/01a1e80e-d73a-77d6-ab8b-26461a15cecb/events on s2 (05:50:49 session.planned, session.promised, task.notes); screenshot /tmp/frbench/live4/session/s2/steps/05-c2-12-add-to-landed.png",
+    "repro": "New project with a repository and a 3-task brief, Approve and start, read the session's log; then Add to on the same repository and look at the Overview.",
+    "suspected_cause": "session.planned counts only the approved first-session items, while session.promised counts the tasks the session takes; the project status line and the banner both render the open plan card.",
+    "journey": "session",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-session-9",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "Both halves come from the code, not from the model.\n\n(1) The session log (Details lines, eventAudience 'detail'). The runner writes two plan facts that count different things, one right after the other. `session.planned` (runner.ts:1796) gives `items: plan.items.length`. StaticPlanner.plan (runner.ts:5480-5510) builds those items from firstSessionPlan(summary, free) (next-session.ts:145-154), which keeps only the approved first-session tasks that are ready now. So 1 of the 3 approved tasks is counted, at CHF 0.09. The summary sentence then says \"the first session you approved with the project plan: 1 task in its order\", built from the same cut list (runner.ts:5509), although the person approved 3. `session.promised` (runner.ts:1845, worded at event-lines.ts:628-633) counts the plan items plus the followers that fit (3 tasks, CHF 0.34, the plan card's figure). views.ts:773-789 words the first fact and event-lines.ts:628 the second, so the log states the session's size twice, with two different numbers.\n\n(2) The `task.notes` line: views.ts:816-817 always reads 'Gave N note(s) for the next session to \"X\"'. The note here is the project brief, kept as a queue_item of kind 'note' (01a1e80e-6201-70a2-…, consumed_by_session = this session). In the session that uses it, \"for the next session\" reads as if the note were for a later session.\n\n(3) Overview after Add to. ProjectPage.tsx:130-137 hides the header status sentence (`planBanner`) only when `progress.total === 0`. IntakeBanner (rendered at ProjectPage.tsx:225, pending branch at IntakeBanner.tsx:110-121) shows \"Waiting for you: approve the plan.\" whatever the task count. project-status.ts:286-291 returns \"Waiting for you: approve the plan\" [Open] for plan === 'pending', also with no total check. A project that already has tasks and gets a plan-only intake (d1109-onerepo-link's Add to) therefore shows the sentence in the header and again as a banner. The third mention, the Needs you card \"Plan for \"Site\": 2 tasks [Answer]\", is what design §3.4 asks for and is not a defect.\n\nThe stand-in bench shows the log half too: /tmp/frbench/d1109-selftasks-run-walk/15-standard-session-details-499f.txt:60-64 reads \"Plan: 1 task, about CHF 0.03. The first session you approved with the project plan: 1 task in its order.\" / \"It promised 5 tasks, about CHF 0.32.\" / \"Gave 1 note for the next session to …\". The live s2 state.sqlite has the same events (seq 5-7) and a plan row whose summary says \"1 task\" while it holds 3 items and promise.taskIds of 3.",
+    "where": "packages/runtime/src/session/runner.ts:1796 and :5509 (session.planned count and first-session summary from the ready-only cut); packages/runtime/src/daemon/views.ts:773-789 (Plan line) and :816-817 (task.notes words); packages/runtime/src/daemon/event-lines.ts:628-633 (promise line); apps/ui/src/pages/ProjectPage.tsx:130-137, :185, :225; apps/ui/src/pages/project/IntakeBanner.tsx:110-121; packages/runtime/src/daemon/project-status.ts:286-291",
+    "fix_sketch": "Log: state the session's size once, as the promise.\n- When a `session.promised` follows, the `session.planned` line should not give a competing count. Either words.ts/views.ts folds it into one line, e.g. 'It promised 3 tasks, about CHF 0.34: \"Build…\" first; 2 wait on it', and drops the \"Plan: N task\" line, or the Plan line says 'Ready now: 1 task …'.\n- StaticPlanner's first-session summary counts `first.first.taskIds.length` (what the person approved), not the ready cut. Alternatively, the runner passes `promise.taskIds.length` in session.planned and the line uses it.\n- task.notes (views.ts:816): 'Gave your note to \"X\"' (or 'Gave the note you left to \"X\"'), never \"for the next session\" in the session that uses it.\n\nOverview:\n- Make the header status sentence and IntakeBanner exclusive for the pending state. In ProjectPage.tsx, `planBanner = !closed && (intake === 'pending' || ((view.progress?.total ?? 0) === 0 && intake in {drafting, failed, waiting, rejected}))`.\n- Or, the other way round: render IntakeBanner's pending branch only when total === 0 and let the header's ProjectStatus (project-status.ts:286) be the one place.\n- Mirror the change in apps/ui/test/fake-daemon.ts if it builds the status line.",
+    "failing_test_idea": "Two tests at the person's boundary.\n\nUI: apps/ui/test/project.test.tsx. In the fake daemon, a project with 3 done tasks (progress.total 3) gets intake state 'pending' (an Add to plan). Render /projects/:id/summary and expect screen.getAllByText(/Waiting for you: approve the plan/) to have length 1, with one Open link to /inbox. Today it has length 2: data-testid project-status and intake-banner.\n\nRuntime: a composed or real-daemon test. Approve an intake whose first session holds 3 tasks, where tasks 2 and 3 depend on task 1, then start. Read GET /sessions/:id/events with details:\n- the size is stated once, or the Plan line's count equals the promise's (no 'Plan: 1 task' beside 'It promised 3 tasks');\n- the first-session summary does not say \"1 task\" when 3 were approved;\n- no line reads 'note for the next session' for a note this session consumed.",
+    "area_hint": "d1109-starts-engine (the promise line beside the Plan line and task.notes words; views.ts session.planned is also C1/d1109-oversize-start's region) together with d1109-onerepo-link (Overview banner duplicated after Add to); a small words fix area would fit",
+    "known_leftover": "",
+    "notes": "The log lines in question are all Details lines (event-audience.ts: session.planned, session.promised and task.notes are not in PERSON_EVENT_TYPES), so the person sees them only under Details. That is why I agree with severity 'words'.\n\nNo leftover names this:\n- C3L-1 touches the same session.planned line, but for a review-only session's estimate, not the count clash.\n- C5L-12 is a different rule-10 duplication: the working status line beside the run bar.\n\nOn the Overview the plan wait shows three times: header, banner and the Needs you card. Design §3.4 asks for the status sentence plus the Needs you cards, so only header plus banner is the defect.\n\nThe duplicated banner existed in code before D1. A pending intake on a project with tasks was possible earlier, through a re-draft or a chat proposal. Add to makes it the main path.\n\nEvidence:\n- /tmp/frbench/live4/session/s2/steps/05-c2-12-add-to-landed.png and .txt\n- s2 state.sqlite, session 01a1e80e-d73a-77d6-ab8b-26461a15cecb, events seq 5-7. The plan row has items 3, a promise of 3 and summary '1 task'.\n- Stand-in reproduction of the log half: /tmp/frbench/d1109-selftasks-run-walk/15-standard-session-details-499f.txt:60-64.\n\nNo bench was started; the code and the existing stand-in capture were enough."
+   }
+  },
+  {
+   "key": "live4:L4-github-7",
+   "finding": {
+    "id": "L4-github-7",
+    "severity": "minor",
+    "title": "After Make one project, the closed project's open status pull request is listed nowhere (C4L-5 still open)",
+    "step": "LC-C4: Make one project keeping Kite flyers (Status pull request off) with Site (on; open fr/status PR #55)",
+    "what_the_person_sees": "The dialog has no status line (settings: []). After the join, Kite's Overview lists only #53 and #54. Kite's Docs says Status 'kept in the app: no status pull request (Settings turns it on)'. Site's joined page has no pull request list. #55 stays open on GitHub with nothing in the app pointing to it.",
+    "expected": "The dialog says what happens to the status pull request, or the kept project lists it so the person can merge or close it.",
+    "evidence": "evidence/c4a-walk.json previewApi.ifKept.settings = []; c4c-walk.json kitePrsApi [53, 54], statusPrListed false, kite_docs. Screenshots gh4a/steps/32-c4c-01-kite-overview-after-join.png and 40-c4c-07-kite-docs.png. After Undo, #55 is listed under Site again (c4d-walk.json).",
+    "repro": "Two projects on one repository. Only the one to close has Status pull request on and an open fr/status PR. Make one project keeping the other.",
+    "suspected_cause": "As C4L-5 says: isProjectDocsPr needs statusPullRequestOn(kept) (loop/docs.ts, pull-requests.ts), and join-preview.ts lists no status setting.",
+    "journey": "github",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-github-7",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The listing gate for the status pull request depends on the kept project's own setting, and the join dialog has no line for that setting. packages/runtime/src/loop/docs.ts:189-190 only treats a fr/status pull request as the project's when `statusPullRequestOn(project) && isProjectStatusPr(...)`. After the join, Kite's `projectIdsOf` includes Site's id (joined_from), so `isProjectStatusPr` would accept #55, which carries Site's mark. But Kite's `status_pull_request` is off, so `isProjectDocsPr` returns false. That keeps #55 off Kite's Overview list (packages/runtime/src/daemon/pull-requests.ts:468) and off the Docs tab's waiting-in-PR rows (docs.ts:1149). Site is archived with joined_into, and its page lists no pull requests. In the dialog, packages/runtime/src/daemon/join-preview.ts:294-303 builds the setting lines from only four labels (Budget per session, Project budget, Who merges, Research reads). Site on and Kite off therefore produces `settings: []`. Meanwhile join-words.ts:170-171 tells the person \"The tasks, plan, cards and pull requests of \\\"Site\\\" move into \\\"Kite flyers\\\"\", and ADR 0117 point 3 promises \"one status pull request again\". Nothing in the app tells the person that #55 now belongs to nobody. I reproduced the gate in a probe at /tmp/frbench/verify-L4-github-7/probe.ts. A kept project with joined_from [Site] and the setting off gives `isProjectDocsPr = false` for a fr/status PR marked with Site's id. The same project with the setting on gives true. The live evidence matches: c4a previewApi.ifKept.settings = [], c4c kitePrsApi [53, 54] with statusPrListed false, and after Undo c4d lists #55 under Site again. This is the case C4L-5 already names, and nothing at 4cf11fd fixes it (C4-left-5, placed in d1109-selftasks-chat, is a different word item).",
+    "where": "packages/runtime/src/loop/docs.ts:189 (status branch gated on statusPullRequestOn(kept)); packages/runtime/src/daemon/pull-requests.ts:468 (Overview list uses that gate); packages/runtime/src/daemon/join-preview.ts:294 (the dialog's setting lines leave out Status pull request); packages/runtime/src/daemon/join-words.ts:170 (the moves line says pull requests move)",
+    "fix_sketch": "Two parts, both in the join's own code. (1) Dialog: in join-preview.ts add a fifth setting to `own` for a repository project: label \"Status pull request\", value on or off as Settings words it, read with statusPullRequestOn. The existing differs loop then gives 'Status pull request: \"Kite flyers\"'s setting applies to the moved work: off (each session's status stays in the app).' Better still, when a closing project has the setting on and the kept one has it off, add one sentence such as '\"Site\"'s status pull request stays open on GitHub; \"Kite flyers\" keeps its status in the app. Turn on Status pull request in Settings, or close it on GitHub.' (2) After the join: in pull-requests.ts, list an open fr/status pull request whose hidden mark names a joined_from id as a docs row, even with the kept project's setting off. Use a separate listing predicate (for example `isJoinedStatusPr(project, pr)`: marked, and the mark is in projectIdsOf but is not the project's own id), so the status writer still never writes to it while the setting is off. Show it with Open and Merge, plus a line that new status stays in the app until Settings turns it on. Leave the writer path in docs.ts unchanged. Update ADR 0117 point 3 and the user guide's 'When two projects use one repository' paragraph.",
+    "failing_test_idea": "Add a real-daemon case in apps/ui/test/real-daemon.test.ts under describe \"d1109-onerepo-join, run C\" (beside the OJ-05/OJ-02 case at line ~19598). Use the fake host with o/site, Kite club with settings.status_pull_request true, Site with it off, and an open fr/status pull request on o/site whose body carries docsPrMarker({id: kite.id}). Assert that `client.joinPreview(site.id, [kite.id]).ifKept[site.id].settings` contains a Status pull request line (today it is [], or only the Who merges line). Then run project.join through POST /commands keeping Site, and assert that `client.pullRequests(site.id)` holds a docs row for the status pull request with Open (today only task rows). Add a UI case in apps/ui/test/onerepo-join.test.tsx for the dialog showing the line.",
+    "area_hint": "d1109-onerepo-join",
+    "known_leftover": "C4L-5",
+    "notes": "Not a misreading and not the model. LC-C4 in runC-plan.json asked the live check to note exactly this case (\"with only the closing project's on, note what the person can still find of its status pull request (C4L-5)\"), and the app does what the leftover says. I agree with minor: nothing is lost, #55 is still on GitHub, Undo brings it back under Site, and turning the kept project's setting on in Settings would list it again (and the status writer would then use it). But the dialog's moves line says the pull requests move, and the ADR says \"one status pull request again\", so the person is told something that is false for this pull request. The probe is in /tmp/frbench/verify-L4-github-7/probe.ts. I did not start the bench: the live evidence plus the function-level probe settle it."
+   }
+  },
+  {
+   "key": "live4:L4-github-8",
+   "finding": {
+    "id": "L4-github-8",
+    "severity": "minor",
+    "title": "Make one project dialog counts a closed pull request as open",
+    "step": "LC-C4: the dialog from Kite flyers' Overview",
+    "what_the_person_sees": "Under Keep \"Kite flyers\": '2 open pull requests'. GitHub has only #53 open. #51 was closed, and the app's own task row for it says 'Accepted · pull request closed'.",
+    "expected": "'1 open pull request', the same count as the Overview's Waiting for you to merge.",
+    "evidence": "evidence/c4a-walk.json previewApi.projects[0].lines; c4-01-kite-session.json (#51 'Accepted · pull request closed'). Screenshot gh4a/steps/30-c4a-04-dialog-keep-kite.png.",
+    "repro": "A project with one task PR closed without merging and one open. Open Make one project.",
+    "suspected_cause": "packages/runtime/src/daemon/join-preview.ts openPullRequests counts every task with a pr_url whose merge record is not 'merged'. Its own comment says 'closed ones included: the store cannot tell'.",
+    "journey": "github",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-github-8",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The Make one project dialog gets its \"N open pull requests\" line from openPullRequests (packages/runtime/src/daemon/join-preview.ts:257-266). It counts every task that has a pr_url, is not cancelled, and whose merge record is not 'merged' (line 263: `if (record?.state !== \"merged\") n += 1;`). The comment above it says the store cannot tell a closed pull request, and that is wrong. When GitHub closes a pull request without merging, the watcher moves the task's record to state 'left_to_you' with last_outcome 'closed'. Both paths do this: dependent-branches.ts:236-242 (closedOnHost) and merge.ts:1178-1182 (resume of a 'merging' record). The task row already reads that record: task-words.ts:639 maps last_outcome 'closed' to LEFT_TO_YOU_LABELS.closed, \"Accepted · pull request closed\". The Overview's Done line counts the same task under \"needs you\" (needsYouAfterAccept), not under waiting to merge. So the dialog contradicts the app's own task row and the Overview. The evidence matches this exactly. c4-00-before.json shows #51 closed and not merged on GitHub (the harness's C1 cleanup closed it at 05:48). c4-01-kite-session.json shows #51's task as 'Accepted · pull request closed' and #53 as 'Accepted · waiting for you to merge', and prs.waiting lists only #53. c4a-walk.json previewApi.projects[0].lines shows '2 tasks done', '2 open pull requests'. The Overview text in the same walk says '1 pull request waits for you to merge, and 1 needs you'. The suspected cause is right; the store can tell after all.",
+    "where": "packages/runtime/src/daemon/join-preview.ts:263 (openPullRequests, lines 257-266; comment at 257); the line it feeds is at 320",
+    "fix_sketch": "In openPullRequests, skip a task whose record is merged, and also one whose record is state 'left_to_you' with last_outcome 'closed': `if (record?.state === \"merged\" || (record?.state === \"left_to_you\" && record.last_outcome === \"closed\")) continue; n += 1;`. Fix the comment: only a task with no merge record (accepted before ADR 0111) is still unknown. Better still, share one predicate with task-words/pull-requests (for example an isClosedRecord(record) next to LEFT_TO_YOU_LABELS) so the dialog, the task row and the Overview's Done line cannot drift apart. Every other left_to_you outcome (checks_failed, head_moved, conflict, blocked_by_rules, ...) is still an open pull request and stays counted. Update the module doc in docs/maintainers (the dialog's facts) to match.",
+    "failing_test_idea": "apps/ui/test/real-daemon.test.ts, next to the OJ-05 dialog case (around line 19654). On MemoryGitHost 'o/site', give Kite club two done tasks, each with its own pull request and a merge record pinned through the real accept/pin path. Close one pull request on the host without merging, and let one watcher poll run (or call the githost watcher's closed path) so its record reads left_to_you/closed. Check through client.project/tasks that its row says 'Accepted · pull request closed'. Then `client.joinPreview(site.id, [kite.id])` must give Kite club's lines '2 tasks done', '1 open pull request', matching the Overview's single 'Waiting for you to merge' row. Today it gives '2 open pull requests'. The same answer must hold after the daemon starts again. No fake-daemon change is needed: the fake serves seeded previews and the UI only renders the lines.",
+    "area_hint": "d1109-onerepo-join",
+    "known_leftover": "",
+    "notes": "Not named by any leftover. The closest are LL-1 (merge cards stay open after a close on GitHub, L3) and CL-4 (a cancelled task's PR still described as left open in chat, C2), and neither covers the dialog's count. The C4 leftovers from d1109-onerepo-join (C4L-1..18) do not mention it. The existing OJ-05 real-daemon case only seeds a task with a pr_url and no closed record, so it never hits this path. I did not run the stand-in bench: the code path and the live evidence agree with no gap, and a repro would need a temporary test file in the read-only checkout. Severity minor: the join itself behaves correctly and nothing wrong is done, but a fact the person reads to choose which project to keep disagrees with GitHub, the task row and the Overview. A side note, not part of this finding: the count also ignores an open take-out pull request (take_out_state 'open') on a merged record. That is arguably also an open pull request the join moves, so it is worth a look when this is fixed."
+   }
+  },
+  {
+   "key": "live4:L4-github-9",
+   "finding": {
+    "id": "L4-github-9",
+    "severity": "minor",
+    "title": "Costs By task: a task moved by Make one project reads '6 runs, 0 / 6 (0%)' accepted",
+    "step": "LC-C4: Kite flyers > More > Costs after the join",
+    "what_the_person_sees": "'Write the opening hours in hours.md 6 0 / 6 (0%) CHF 0.01'. The task ran once (one coder run, one review), was accepted and merged (#54).",
+    "expected": "'1 1 / 1 (100%)', as for the kept project's own task 'Write the club notes in club-notes.md'.",
+    "evidence": "evidence/c4c-kite-costs-api.json byTask: runs 6, accepted 0. The run table has one coder run and one critic run for this task. Screenshot gh4a/steps/39-c4c-06-kite-costs.png.",
+    "repro": "Make one project where the closed project has a done task. Open the kept project's Costs > By task.",
+    "suspected_cause": "packages/runtime/src/daemon/views.ts costView: for a moved task, facts.runsByTask (the kept project's facts) has no entry. Runs falls back to the ledger's entry count (one per model call) and accepted to 0.",
+    "journey": "github",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-github-9",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "BA-9 widened only the money in Costs > By task. Under a project filter, costView reads each task's figure with costLedger.byTaskOf, which takes every ledger row of a task now in the project, whichever project the row names. It sets `runs: b.entries`, the number of ledger rows, which is one per model call and includes the critic's calls (views.ts:1229). The runs and accepted figures still come from costFacts, and costFacts reads only ledger rows booked to the kept project (`where.project_id = f.projectId`, views.ts:1395). A task that Make one project moved has all its earlier rows on the closed project, so facts.runsByTask and facts.acceptedRunsByTask have no entry for it. The loop then finds the task through store.task.get, keeps the ledger-row count as runs (`facts.runsByTask.get(b.key) ?? b.runs`, views.ts:1264) and sets accepted to 0 (`?? 0`, views.ts:1265). The bench state DB backs this up: task 01a1e89b-8e4a \"Write the opening hours in hours.md\" has one coder run and one critic run, 3 ledger rows each, 6 in all, all booked to Site, and one accepting review. That gives \"6 · 0 / 6 (0%) · —\". A related case: a task with rows on both projects. Its accepted count still includes runs from before the join (the accepted loop at views.ts:1408-1420 reads all of the task's reviews and work runs), but its runs count only the kept project's. So a task accepted once before the join and once after reads \"2 / 1 (200%)\". The period (from/to) also leaves out the moved rows. This is the app's own code, not the model's choice.",
+    "where": "packages/runtime/src/daemon/views.ts:1264",
+    "fix_sketch": "When filter.projectId is set, work out a task's runs and accepted runs from the task itself, not from the project-filtered ledger. Option 1: a helper taskRunFacts(store, taskIds, {from,to}) built from the same rules as costFacts. Work runs are store.run.forTask(id) without the critic's, inside the range. An accepted run is the last work run before each accepting review. Use the helper for every byTask key in the project, so moved and mixed tasks count all their runs. Option 2: let costFacts take a task-id scope for its task maps and no project filter. Either way, never fall back to the ledger-row count (b.entries) as \"runs\" for a known task: use its work-run count, 0 when it has none. Keep the totals, By model, By specialist and By project as the project's own ledger, as BA-9 and OJ-07 say. Copy the change into the fake daemon's costs fixture (validation rule 3), and add a line to docs/maintainers/runtime.md under BA-9.",
+    "failing_test_idea": "Add a case to apps/ui/test/real-daemon.test.ts under \"d1116-budget-all, run C\" next to the BA-9 case. Insert Kite and Site. Give Kite a task with a coder Run row and a critic Run row, each with three ledger rows that carry the run_id and are booked to Kite, plus an accepting review after the coder run. Run project.join with keep Site and close Kite. Then client.costs({projectId: site.id}).byTask for the task should read runs 1 and accepted 1. Today it reads runs 6 and accepted 0. Check the same after the daemon starts again. Second case: book a Redo after the join (a coder run and an accepting review on Site). Expect runs 2 and accepted 2, not 2 / 1. In the UI, the Costs tab's By task row should read \"1 · 1 / 1 (100%)\". Reproduced against the code at 4cf11fd with /tmp/frbench/l4gh9/repro.mts, which runs costView on a copy of the bench DB with the task moved back to Kite flyers: \"Write the opening hours in hours.md | runs 6 | accepted 0\".",
+    "area_hint": "d1116-budget-all",
+    "known_leftover": "",
+    "notes": "Evidence checked: c4c-kite-costs-api.json byTask has the task with runs 6 and accepted 0, cost 18013 µUSD. The cost equals the sum of its 6 ledger rows on Site (2177+2406+2593+3425+3676+3736), so the money figure is right and only runs and accepted are wrong. In the final bench DB (gh4a/home/data/state.sqlite) the task is back on Site after the cleanup's Undo. The repro sets its project_id to Kite on a copy (/tmp/frbench/l4gh9/state.sqlite). The existing BA-9 real-daemon test checks only cost.usdMicro, and its ledger rows have no run_id, so it cannot catch this. No leftover file names it. The C4 leftovers on d1109-onerepo-join cover the Home line, lessons, the status PR, Undo's active flag and Last result, not Costs' runs or accepted. Severity minor: the money is right, but Costs says a merged, accepted task was never accepted, against the I.6 success rate."
+   }
+  },
+  {
+   "key": "live4:L4-github-10",
+   "finding": {
+    "id": "L4-github-10",
+    "severity": "minor",
+    "title": "A joined project's page: the header names the other project, and Your files shows an internal folder with the project id",
+    "step": "LC-C4: Site's Overview after it joined Kite flyers",
+    "what_the_person_sees": "The header picker reads 'Kite flyers' while the page is 'Site'. Your files reads '/tmp/frbench/live4/github/gh4a/home/worktrees/docs/01a1e89b-1910-7707-a7b6-21e1ba8a4752' with Copy path. Before the join it read 'On GitHub: joelwellbournewood/forerunner-sandbox'.",
+    "expected": "The header names the project being viewed (as the user guide says). Your files points to where the files are now, without a project id (design section 5 rule 3).",
+    "evidence": "Screenshot gh4a/steps/34-c4c-03-site-joined-overview.png; evidence/c4c-walk.json siteOverview.",
+    "repro": "Make one project, then open the closed project's Overview.",
+    "suspected_cause": "The join clears the closed project's repos, so the files line falls back to the docs worktree path. The header looks the viewed project up in a list that leaves out archived (joined) projects.",
+    "journey": "github",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-github-10",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The finding has two parts, and the code at 4cf11fd explains both. The reporter's suspected causes are correct.\n\n(1) Header. apps/ui/src/shell/Shell.tsx:45-47 gets the viewed project only from state.projects. That list comes from GET /projects, which returns only active projects: the daemon's server.ts:1007-1009 calls rt.store.project.active(), and the fake daemon at fake-daemon.ts:2128 filters joined projects out. project.join archives the closed project (project-join.ts:343-351: status 'archived', active false). So for /projects/<Site>/..., `viewed` is null and the header falls back to activeProject(state), which here is \"Kite flyers\". This breaks design §3.1 (\"the project being viewed, not a hidden 'active' project\") and user-guide.md:183. Every archived project hits the same fallback, removed ones included.\n\n(2) Your files. project-join.ts:346 clears the closed project's repos (`repos: []`) and keeps them under settings.was_linked. projectCard (packages/runtime/src/daemon/views.ts:250-251) then finds no repository, so it asks the folder fact. That fact is server.ts:992, `rt.docs.docsDirsFor(project)[0]`, and docsDirsFor (packages/runtime/src/loop/docs.ts:499-507) returns the old docs clone `<home>/worktrees/docs/<project id>`, which still exists. SummaryTab.tsx:221-231 takes the folder branch and shows that path with Copy path. ADR 0106 (the comment at views.ts:248-249) says this clone is \"not your files\" for a repository project. It is an internal path with a UUID (design §5 rule 3), and it is no longer refreshed because the project is archived. Before the join the same section read \"On GitHub: joelwellbournewood/forerunner-sandbox\". The fake daemon keeps folder and repository on a joined project, so the UI tests never saw this.",
+    "where": "apps/ui/src/shell/Shell.tsx:46; packages/runtime/src/daemon/server.ts:992 (and :1008 GET /projects active only); packages/runtime/src/daemon/views.ts:251; packages/commands/src/commands/project-join.ts:346; packages/runtime/src/loop/docs.ts:499-507; apps/ui/src/pages/project/SummaryTab.tsx:221",
+    "fix_sketch": "Header: when the route's project id is not in state.projects, Shell names the card ProjectPage already reads, client.project(id). It can fetch that card itself, or ProjectPage can publish the viewed card into the UI store or ShellContext. Then `active-project` reads \"Site\" on every page of a joined or removed project. The switcher list stays active-only, and nothing in it is shown as current.\n\nYour files: in projectCard (views.ts) or the server's folder fact, a joined project (settings.joined_into) never falls back to the docs clone. A project whose was_linked[0] is the person's own absolute folder shows that folder, since that is where its files are. A repository project shows no clone path. SummaryTab instead shows a line in the style of the Tasks tab, e.g. 'Its files are in \"Kite flyers\".' with Open it (or the kept project's \"On GitHub: o/r\" line). Per ADR 0117 §6 the page offers no repository actions. The fake daemon's projectCardOf should mirror this: for a joined project, null repository and folder, plus the same words. Update docs/maintainers/apps.md and runtime.md.",
+    "failing_test_idea": "UI test (apps/ui/test/onerepo-join.test.tsx): join Beacon into Atlas (harness.daemon.state.joined.proj_beacon) with Atlas as the active project, render /projects/proj_beacon/summary, then expect(screen.getByTestId('active-project')).toHaveTextContent('Beacon'). I ran this on 4cf11fd from /tmp/frbench/l4g10/header-joined.test.tsx and it fails: the header reads 'Atlas▾'.\n\nReal-daemon or composed test (packages/runtime/test/project-join.test.ts, or apps/ui/test/real-daemon.test.ts): make two repository projects on one repository, refresh the copy so the docs clone exists, run project.join keeping A, then GET /projects/<B>. Assert the card's folder is null or the person's own folder, never under worktrees/docs and never containing B's id. Assert the rendered your-files section reads 'Its files are in \"A\".' with Open it. Today the test gets <home>/worktrees/docs/<B id>.",
+    "area_hint": "d1109-onerepo-join",
+    "known_leftover": "",
+    "notes": "Evidence: in gh4a/steps/34-c4c-03-site-joined-overview.png and the matching .txt, the header reads 'Kite flyers' and Your files reads '/tmp/frbench/live4/github/gh4a/home/worktrees/docs/01a1e89b-...'. That id is Site's (evidence/c4-pair.json). Step 28-c4a-02-site-overview.txt, before the join, shows 'On GitHub: joelwellbournewood/forerunner-sandbox'.\n\nThe walk opened the page by URL. Clicking 'Open it' or the switcher does not avoid the problem, because any route to an archived project gets the same fallback.\n\nNo leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names either part. C4L-9 (joined Last result words) and C4L-12 (research reads and note on the joined Overview) are neighbours: C4L-12 is already done at this base, and neither covers the header or Your files.\n\nSeverity is minor. The page title 'Site' and the 'Joined into \"Kite flyers\"' line make the state clear and nothing runs from the page, but the person sees the wrong project named in the header and an internal path with an id.\n\nThe repro scaffold is /tmp/frbench/l4g10: a test file, a vitest.config.mjs with root at the worktree's apps/ui, and a node_modules symlink. Run it with `node node_modules/vitest/vitest.mjs run --configLoader native --config /tmp/frbench/l4g10/vitest.config.mjs` from apps/ui. Nothing in the worktree was edited."
+   }
+  },
+  {
+   "key": "live4:L4-l3-10",
+   "finding": {
+    "id": "L4-l3-10",
+    "severity": "minor",
+    "title": "Status pull request turned on for a Work-together project opens nothing, though Settings said it would",
+    "step": "LC-L3 / L3-github-6",
+    "what_the_person_sees": "Settings: '... each session's status goes to the repository as one pull request ...'. The session log then says 'Created the project status in docs/status.md, kept in the app.', and no pull request appears.",
+    "expected": "Settings explains or refuses for a shared project.",
+    "evidence": "Docs note 'Kept in the app: you work on \"Kite flyers\" together, so GitHub's copy is left as it is.'; the sandbox had no open pull request after the session.",
+    "repro": "Work together on the sandbox; turn on Status pull request; run a session.",
+    "suspected_cause": "D9 keeps the status in the app, but the setting's read-back is generic.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-10",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "D9 says a Work-together project writes nothing to the repository, and the status writer follows that rule. Settings does not know the rule, so it offers the switch and promises a pull request that never opens. At 4cf11fd:\n(1) packages/runtime/src/loop/docs.ts:968 runs `if (!statusPullRequestOn(project) || isTogether(project)) return this.statusInApp(project, update);`. A together project's status stays in the app \"whatever the setting\" (the comment at :964-967). The session log line \"kept in the app\" and the Docs note (repository-words.ts:226 togetherStatusNote) are correct.\n(2) packages/runtime/src/daemon/settings-view.ts:315-323 shows the \"Status pull request\" row with its Change button whenever `onHostRepository(p)` is true. Nothing checks isTogether. The C-57 comment there already hides the row for a linked folder because \"the switch would change nothing there\". The same reasoning applies to a together project but was never applied. The row's description is also generic: \"Each session's status of X as one pull request on GitHub\".\n(3) packages/commands/src/commands/settings.ts:405-418: the effect sentence for status_pull_request ignores the project and always says \"each session's status goes to the repository as one pull request, docs: project status, which you merge when you like\". target() at settings.ts:968-981 gives the effect only the project's name and session cap, never its settings.together. settings.set has no together refusal, so the same false read-back reaches Settings, chat and voice.\nResult: the person turns the setting on, the change card promises a PR, and no PR opens. This breaks design section 5 rule 9 (\"No promises the code does not keep\") and run C's D9 decision (\"words that promise only what exists\"). The evidence matches the code: 08-kt-new-offer shows Work together on Kite flyers; 11-kt-statuspr-after shows the generic read-back; the status went to app-status/docs/status.md; the sandbox had no open PR.",
+    "where": "packages/runtime/src/daemon/settings-view.ts:315 (row shown for a together project); packages/commands/src/commands/settings.ts:414 (generic effect read-back; no together case in target() at :968); behaviour it contradicts: packages/runtime/src/loop/docs.ts:968",
+    "fix_sketch": "Make Settings follow D9 for a together project, at the command so chat and voice get it too.\n(a) packages/commands/src/commands/settings.ts: in target() (or a status_pull_request hook), when the project is a together project (isTogether from @forerunner/runtime/sources/repository-words; commands already imports from that module in repo.ts and project-join.ts) and the value is true, refuse in one sentence with nothing written. Suggested wording: `You work on \"Kite flyers\" together with another Forerunner, so its status stays in the app (Docs, Status); no status pull request is opened.` Use details { key, cause: \"together\" }. Turning it off still acts.\n(b) packages/runtime/src/daemon/settings-view.ts:315: show the row only when `onHostRepository(p) && !isTogether(p)`. The other option is a read-only row that reads \"Kept in the app: you work on X together\" with no Change button.\n(c) Mirror both in apps/ui/test/fake-daemon.ts (about line 6974).\n(d) Note the rule in the maintainer doc for settings/docs and in the user guide's \"Working with someone on one repository\" section.",
+    "failing_test_idea": "Extend the composed two-home case in packages/runtime/test/onerepo-together.test.ts (or add a real-daemon case under 'd1109-onerepo-link, run C' in apps/ui/test/real-daemon.test.ts). After home B presses Work together on o/kite, check two things through the HTTP API:\n(1) GET /settings on B has no row with key 'project.status_pull_request' and scopeId kiteId, or that row says the status is kept in the app and offers no change.\n(2) POST /commands settings.set {key:'status_pull_request', value:true, project:kiteId} answers a refusal naming the together reason, B's change log gains no row, and the project's settings.status_pull_request is unchanged.\nToday (1) lists the row with the generic description, and (2) answers a change card with the effect \"each session's status goes to the repository as one pull request…\". Add a UI test (SettingsPage with the fake daemon's together project) asserting there is no \"Status pull request\" Change button.",
+    "area_hint": "d1109-onerepo-link",
+    "known_leftover": "",
+    "notes": "Checked against the code; I did not reproduce it on the stand-in bench, because the code paths settle it. The existing together test (onerepo-together.test.ts:160-185) writes status_pull_request:true straight into the row and checks only the Docs note, so the Settings path was never covered. No leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names it. C4L-1 (Work together for a project already here) and C4L-5 (a closing project's fr/status after a join) are different problems. The model played no part: the change card and row come from fixed code. Minor is the right severity: it is a promise the code does not keep, but the session log and the Docs note tell the truth afterwards, and no data is lost and nothing is written to GitHub."
+   }
+  },
+  {
+   "key": "live4:L4-l3-12",
+   "finding": {
+    "id": "L4-l3-12",
+    "severity": "words",
+    "title": "The head-moved card cuts the task title",
+    "step": "LC-L3 / L3-github-9",
+    "what_the_person_sees": "'\"Write kite/ferry.txt about the ferry trip to…\" changed after the review'",
+    "expected": "The whole title.",
+    "evidence": "g3-inbox.json, inboxwatch-*.json",
+    "repro": "A 55-character title ending in '\"Seal Bay\"'; push a commit; press Merge.",
+    "suspected_cause": "q() avoids cutting inside the quotes by cutting before them.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-12",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "The finding is real, and the code explains it exactly. L3-github-9 added a rule to balancedCut that keeps a title whole when it is at most 15 characters over the limit. That rule only fires when the cut part leaves a quote open (quoted-title.ts:21-22). The task title 'Write kite/ferry.txt about the ferry trip to \"Seal Bay\"' is 55 characters. cutWords(t, 50) (request-words.ts:242-248) cuts at the last space inside the first 49 characters, which is the space just before the opening quote. The kept part 'Write kite/ferry.txt about the ferry trip to' has no quotes at all, so the quote count is even. balancedCut returns the cut at line 21 and never reaches the slack rule on line 22. q() (request-words.ts:251), used by leftOpenCardTitle for head_moved (request-words.ts:1303), therefore shows '\"Write kite/ferry.txt about the ferry trip to…\" changed after the review'. The Answered list shows the same card title. The finding's suspected cause is close but a little off: balancedCut does not move the cut before the quote. The plain word cut happens to land there, and balancedCut does not notice that the quoted part was dropped. I reproduced this with the source's balancedCut and a verbatim copy of cutWords (/tmp/frbench/v-L4-l3-12/repro.mts). It is inconsistent with L3-github-9's own intent ('a short overrun keeps the title whole'): 'Link trips page from kite/index.html as \"Our trips\"' (51 characters) and 'Write kite/ferry.txt about a ferry trip to \"Seal Bay\"' (53) are both kept whole, but the 55-character 'the ferry trip to \"Seal Bay\"' version loses its whole quoted name. Whether the title is kept whole depends only on where the word cut lands.",
+    "where": "packages/runtime/src/daemon/quoted-title.ts:21 (balancedCut returns early when the kept part has no quotes, even though the title has quoted words after the cut); called through q() at packages/runtime/src/daemon/request-words.ts:251 from leftOpenCardTitle at request-words.ts:1303",
+    "fix_sketch": "In balancedCut, check for a dropped quoted part before the early return. If the full title has a quote of its own that the cut removed or left open (t.slice(kept.length).includes('\"'), or kept has an odd number of quotes) and t.length <= max + slack, return t whole. Otherwise keep today's behaviour: cut before the open quote, or drop the marks when the title starts with its quote. Callers that pass slack 0 (notifications, the 'will be stuck' consequences) do not change. Card titles are computed when the card is read (leftOpenCardTitle via request-words and state-ports.ts:298), so cards already open read correctly after the fix. Extend the L3-github-9 test in packages/runtime/test/l3-merge.test.ts with the ferry title and the 53-character variant.",
+    "failing_test_idea": "At the boundary the person uses: in dependent-branches-merge.test.ts, following the existing L3-github-3 case (Merge pressed after a commit is pushed on the fake host), name the task 'Write kite/ferry.txt about the ferry trip to \"Seal Bay\"', press Merge, and read GET /requests. Expect the head-moved card's title to be '\"Write kite/ferry.txt about the ferry trip to \"Seal Bay\"\" changed after the review'. It fails today with '…trip to…\". A unit test beside it: leftOpenCardTitle({status:\"head_moved\"}, that title) gives the whole title. A 70-character title with a quote should still cut before its quote.",
+    "area_hint": "l3-merge (run L3's area that wrote quoted-title.ts for L3-github-9; small words fix in packages/runtime/src/daemon/quoted-title.ts)",
+    "known_leftover": "",
+    "notes": "Evidence matches: g3-inbox.json and both inboxwatch-*.json show the cut title, both in the card heading and in the Answered list. The same card's 'Task:' line and the Updates line show the whole title, so the person can still read it one line up. That is why I agree with severity 'words', not minor. No leftover in leftovers-{L3,C2,C3,C4,C4b-design,C4b,C5,C6}.json names this, and the owner decisions of 2026-11-09 say nothing about cutting titles. The design (core-experience.md section 5) allows cutting long titles at a word and does not ask for the whole title. The defect is the inconsistency with L3-github-9's own whole-title rule, not the 50-character limit. I did not need the stand-in bench, because the deterministic unit repro matches the live output byte for byte. The repro file is /tmp/frbench/v-L4-l3-12/repro.mts. No files in the checkout were changed."
+   }
+  },
+  {
+   "key": "live4:L4-l3-13",
+   "finding": {
+    "id": "L4-l3-13",
+    "severity": "words",
+    "title": "The rebuild card's Merge after a merge on GitHub says 'Merged #59.'",
+    "step": "LC-L3 / L3-github-2 step 5",
+    "what_the_person_sees": "'Done: Merged #59.' / Answered 'Merged #59.'",
+    "expected": "'#59 was merged on GitHub already.'",
+    "evidence": "g2-step5-card-merge.json; daemon log 09:54:54 'merge record ... merged', then 'pull request merged on the host'",
+    "repro": "Merge the PR on GitHub, then press the card's Merge at once.",
+    "suspected_cause": "The answer treats the record's 'merged' state as the app's own merge.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-13",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "The press's own merge step was the first part of Forerunner to see the merge GitHub had made, about 3 s earlier, before any watcher poll. Two parts of the code then treat it as Forerunner's own merge:\n- At packages/runtime/src/session/pr-answers.ts:320, applyRebuildMerge's mergedAlready() check comes back null. The record is not 'merged' yet, so the press goes to approveInOrder/mergeApproved.\n- In packages/runtime/src/loop/merge.ts, mergeChecked (:362-369) sees pr.merged and returns status 'closed' with alreadyMerged=true. ReviewedPrMerge.finish (:1818-1846) then folds that into a normal merge. The record goes to 'merged' with last_outcome 'merged', not 'merged_on_host', and method null. The returned MergeOutcome is status:'merged' with no already-merged flag; only the task reason says 'already merged on the host'.\n\npr-answers.ts:328-329 maps last.status==='merged' to merge_result 'merged'. request-words.ts:1352-1353 shows that as 'Merged #59.', and the Inbox shows it as 'Done: Merged #59.'. ADR 0111 point 3 says this press must read '#42 was merged on GitHub already.'.\n\nThe live log matches this path. At 09:54:54.169 the press's merge step logged 'merge record … merged', then '[compose] pull request merged' with method:null (method is null only on the alreadyMerged branch). The watcher's 'pull request merged on the host' came 0.5 s later.\n\nI reproduced it on the stand-in: a copy of the L3-github-2 test, run under flock with merge on the fake GitHub first, then syncPrAnswers, and no poll in between. It answers 'Merged #2.' and the record reads merged/last_outcome merged/method null. The existing test passes only because it runs m.poll() before syncPrAnswers, so the watcher reads the merge first.",
+    "where": "packages/runtime/src/loop/merge.ts:1818 (finish folds alreadyMerged into status 'merged', last_outcome 'merged'); packages/runtime/src/session/pr-answers.ts:328 (status 'merged' -> merge_result 'merged'); packages/runtime/src/daemon/request-words.ts:1352 ('Merged #N.')",
+    "fix_sketch": "In ReviewedPrMerge.finish (merge.ts:1818), when a.alreadyMerged is set and a.status is not 'merged', write last_outcome 'merged_on_host'. dependent-branches.mergedOnHost already writes that value. Also carry the fact on the outcome: add MergeOutcome.alreadyMerged (ports.ts:581), or set its sentence to '#N was merged on GitHub already.'. Then in applyRebuildMerge (pr-answers.ts:327-333), call mergedAlready(store, task) before mapping status 'merged' to 'merged', or look at last.alreadyMerged first. A merge found already made then reads '#N was merged on GitHub already.', and only Forerunner's own merge reads 'Merged #N.'. Separately, think about making mergedOnHost's early return (dependent-branches.ts:211) re-read the record after mergeMethodOf. In the live log, merge.merged was heard twice for #59 because the watcher read the record before finish moved it.",
+    "failing_test_idea": "Add to packages/runtime/test/dependent-branches-merge.test.ts, next to the existing L3-github-2 test at :2794: chainWorld level 2; run A, then B, which depends on A; close A; poll, so the rebuild card is open. Answer the card's Merge, then m.github.mergePullRequest(REPO, prB) with NO m.poll(), then syncPrAnswers({ …, merge: m.merge }). Expect answeredLine(m, row.id) to be `#${prB} was merged on GitHub already.` and the merge record's last_outcome to be 'merged_on_host'. Today it reads 'Merged #2.' and the record has last_outcome 'merged' (reproduced at 4cf11fd). At the UI boundary, a real-daemon case can check that the Inbox Answered line, and the 'Done:' line, of a rebuild card pressed right after a merge on GitHub do not read 'Merged #N.'.",
+    "area_hint": "l3-merge (run L3's merge area, which built L3-github-2 in pr-answers.ts, merge.ts and dependent-branches.ts); no run C d1109 area owns this code, so a small fix area such as live4-merge-words",
+    "known_leftover": "",
+    "notes": "The claim holds, and the suspected cause is almost right. The card does not read the record's 'merged' state. It reads the press's own merge outcome, whose status is 'merged', and the merge step writes the record as its own merge (last_outcome 'merged'). So even mergedAlready() would say '#59 was merged already.' instead of '… on GitHub already.'.\n\nNo known leftover names this. LL-1 to LL-6 in leftovers-L3.json cover nearby merge cases: a close on GitHub, a failed check after the last look, B merged on GitHub while it still holds A. The owner decisions of 2026-11-09 say nothing on this wording.\n\nSide observation, not part of this finding: two parts each moved the record to merged, the watcher's pullRequestState/mergedOnHost and the press's finish, so '[compose] pull request merged' was logged twice for #59. The record ended with method 'merge' and last_outcome 'merged_on_host' from the watcher's later write.\n\nThe scratch repro is /tmp/frbench/v-L4-l3-13/repro.test.ts with vitest.config.mjs. Nothing was changed in the worktree; the scratch node_modules symlinks are removed."
+   }
+  }
+ ],
+ "live_steps": [
+  {
+   "key": "live4-step:github:LC-C1",
+   "journey": "github",
+   "pass": 1,
+   "id": "LC-C1",
+   "step": "D1 with D9: Work together and the take-over on the real sandbox; two bench homes; stand-in model",
+   "result": "partial",
+   "usd": 0,
+   "observed": "Before: no open PR on the sandbox. Main's marker named \"Kite club\"; its only marked PR is #8 (merged on 9 Nov, our login).\n\nHome A, offer: \"joelwellbournewood/forerunner-sandbox is already the Forerunner project \\\"Kite club\\\", which is not on this computer; last active on GitHub on 9 Nov, from your account. Work on it together, or take it over if nobody works on it any more.\" Buttons in order: Work together, Take it over, Cancel. The take-over line was correct. PASS.\n\nTake it over with a goal only: NO docs PR was opened, and no screen said so (L4-github-1). Undo, then New project again: the project was made with NO offer and no take-over recorded (L4-github-2).\n\nFresh home A, with a brief: Take it over gave the same offer. The plan card read \"About CHF 0.37 for the 4 tasks; the docs go to the project's repository as a pull request.\" I changed the plan to one task and pressed Approve and start. Docs PR #50 changed only the Kite club marker to \"Kite flyers\" (plus the drafted architecture doc and decision 0001). Its body says \"This repository was the Forerunner project \\\"Kite club\\\"; it is now \\\"Kite flyers\\\"'s.\" Task PR #51 carries the mark project=01a1e801. I merged #50 via REST. A second New project in A got \"...is already the project \\\"Kite flyers\\\". Open it, or add this to it as new work.\" PASS.\n\nHome B, same login, offer: \"...is already the Forerunner project \\\"Kite flyers\\\", which is not on this computer; last active on GitHub on 17 Nov, from your account...\" Work together came first, Take it over second with its line. PASS.\n\nWork together opened A's project id. 30 s later GitHub had no new branch, PR, comment or issue, and #51's head and counts were unchanged. PASS.\n\nB's Overview: \"Shared on GitHub with another Forerunner: each keeps its own tasks.\" PASS. B's Changes row: \"Created the project Kite flyers and made it the active project.\" PASS. Undo, then Work together with a brief brought back the same project id. PASS. Its plan card total: \"About CHF 0.34 for the 4 tasks.\" with no docs clause. PASS.\n\nB's one task opened #52 with the project's mark and no docs or status PR; #51 was untouched. B's PR list shows only #52, with no Merge on A's PRs and no docs PR. PASS. B's Docs status row: \"Kept in the app: you work on \\\"Kite flyers\\\" together, so GitHub's copy is left as it is.\" A second New project in B got \"already the project\". PASS.\n\nA restarted: its list shows only #51, and #52 was unchanged after 60 s. PASS.\n\nThe second-GitHub-account parts are not possible here (one token).",
+   "evidence": "/tmp/frbench/live4/github/steps/LC-C1.json\n/tmp/frbench/live4/github/evidence/ (c1-*.json, a10..a21 and b01..b10 .json, c1-b-together-diff.json, c1-a-prs-50-51.json)\n/tmp/frbench/live4/github/gh4b/steps/08-b01-together-offer.png, 24-b09-overview.png, 18-b05-plan-card.png\n/tmp/frbench/live4/github/evidence/a-home1/"
+  },
+  {
+   "key": "live4-step:l3:LC-L3.L3-github-2",
+   "journey": "l3",
+   "pass": 2,
+   "id": "LC-L3.L3-github-2",
+   "step": "L3-github-2",
+   "result": "partial",
+   "observed": "#62 and #64 merged on GitHub: both cards were gone within 55 s, with Answered 'Closed: #62 was merged.' and 'Closed: #64 was merged.'. They stayed closed after a restart. Chat says everything is merged. Step 5: #59 merged on GitHub, then the card's Merge pressed -> 'Done: Merged #59.' instead of '#59 was merged on GitHub already.'",
+   "evidence": "/tmp/frbench/live4/l3/evidence/inboxwatch-*.json, g2-step5-card-merge.json",
+   "usd": 0.002
+  },
+  {
+   "key": "live4-step:l3:LC-L3.L3-github-3",
+   "journey": "l3",
+   "pass": 2,
+   "id": "LC-L3.L3-github-3",
+   "step": "L3-github-3 (+L3-github-9)",
+   "result": "fail",
+   "observed": "A commit was pushed, then Merge was pressed ~1 s later on an Overview opened before the push. The answer was 'Merging #62.' (1.0 s); 4 s later the row read '#62 changed after the review...'. Nothing was merged, the row and card were right, and the Tasks row read 'Accepted · changed after the review'. The card title was cut: '\"Write kite/ferry.txt about the ferry trip to…\" changed after the review'.",
+   "evidence": "/tmp/frbench/live4/l3/evidence/g3-pushC-pressC.json, g3-inbox.json",
+   "usd": 0
+  },
+  {
+   "key": "live4-step:l3:LC-L3.L3-github-6",
+   "journey": "l3",
+   "pass": 2,
+   "id": "LC-L3.L3-github-6",
+   "step": "L3-github-6",
+   "result": "partial",
+   "observed": "The status words in the app's copy are right: '### Session started 2026-11-17 09:42 UTC' / '- Note: Ended: 2 tasks need you. Spent CHF 0.08.'. No status pull request was opened, because the project is shared (Work together), although Settings said it would go to GitHub.",
+   "evidence": "l3a home app-status/docs/status.md",
+   "usd": 0
+  },
+  {
+   "key": "live4-step:l3:LC-L3.not-run",
+   "journey": "l3",
+   "pass": 2,
+   "id": "LC-L3.not-run",
+   "step": "L3-github-10, L3-run-7, L3-run-8 step 3, the L3-research-3 lower-case quote, #3 and #4 nudges, voice, #18 rebase variant, L3-github-3 counter-check",
+   "result": "not_seen",
+   "observed": "L3-github-10 needs a chat cancel inside the ~8 s review (not attempted). The others needed model behaviour that did not happen, voice is not available here, or (rebase variant, counter-check) more accepted pull requests, which I did not open, to save spend.",
+   "usd": 0
+  }
+ ],
+ "leftovers": [
+  {
+   "key": "C2:CL-1",
+   "file": "/tmp/frbench/leftovers-C2.json",
+   "id": "CL-1",
+   "severity": "minor",
+   "from": "d1109-onerepo-link",
+   "text": "OR-12 (cut line): GitHub's repository id is read (RepoInfo.id) but not stored on projects or used by the index, so a renamed or transferred repository is a new link until the project's link is updated (ADR 0117 Consequences)."
+  },
+  {
+   "key": "C2:CL-3",
+   "file": "/tmp/frbench/leftovers-C2.json",
+   "id": "CL-3",
+   "severity": "words",
+   "from": "d1109-onerepo-link",
+   "text": "L3-left-8, carried (not built in C2): the intake docs pull request's branch name still carries the project's id (fr/intake-<id>-docs; intake.ts:158). Renaming it needs the branch-to-project detection (projectIdsNamedBy, isProjectDocsPr) to keep reading every open pull request an earlier version opened, and the take-over and undo checks read that branch. A together project writes no intake branch."
+  },
+  {
+   "key": "C2:CL-5",
+   "file": "/tmp/frbench/leftovers-C2.json",
+   "id": "CL-5",
+   "severity": "words",
+   "from": "d1109-onerepo-link",
+   "text": "Add to it shows no 'Drafting the plan…' state: POST /projects/:id/intake is synchronous, so the dialog shows 'Adding…' for the whole planning call (design 3.3). LC-C2 times the wait on the real model."
+  },
+  {
+   "key": "C2:CL-6",
+   "file": "/tmp/frbench/leftovers-C2.json",
+   "id": "CL-6",
+   "severity": "minor",
+   "from": "d1109-onerepo-link",
+   "text": "IntakeProposalBody.docs is now IntakeDocs.default({}) for the first-plan form too: a first-plan reply missing 'docs' is accepted silently (no decision record on the card) instead of being asked again. Require docs unless the plan is plan-only."
+  },
+  {
+   "key": "C2:CL-7",
+   "file": "/tmp/frbench/leftovers-C2.json",
+   "id": "CL-7",
+   "severity": "minor",
+   "from": "d1109-onerepo-link",
+   "text": "create-project.ts:113 and :153 use new Date().toISOString() for settings.together.at (AGENTS.md: time goes through a Clock); discovery.ts reads a folder candidate's marker with node:fs readFileSync instead of the discovery's injected fs."
+  },
+  {
+   "key": "C2:CL-8",
+   "file": "/tmp/frbench/leftovers-C2.json",
+   "id": "CL-8",
+   "severity": "words",
+   "from": "d1109-onerepo-link",
+   "text": "otherHostSentence hardcodes 'github.com', untrue for an install configured with a GitHub Enterprise API base; takeOverLine can pass 100 characters with a 60-character marker name."
+  },
+  {
+   "key": "C2:CL-9",
+   "file": "/tmp/frbench/leftovers-C2.json",
+   "id": "CL-9",
+   "severity": "minor",
+   "from": "d1109-onerepo-link",
+   "text": "The 'Updated by Forerunner from the project's brief' comment path (W15B-13) lost its words test; it is nearly unreachable now: remove it or test it."
+  },
+  {
+   "key": "C4:C4L-2",
+   "file": "/tmp/frbench/leftovers-C4.json",
+   "id": "C4L-2",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "C2-left-11 part 2: a take-over after this project's own fr/docs-scaffold pull request was opened leaves that pull request without the take-over line, and its marker conflicts with main's on merge. Needs the docs loop to rebuild the scaffold branch on the default branch under the copy's lock before writing the replaced marker (ADR 0117's amendment)."
+  },
+  {
+   "key": "C4:C4L-3",
+   "file": "/tmp/frbench/leftovers-C4.json",
+   "id": "C4L-3",
+   "severity": "words",
+   "from": "d1109-onerepo-join",
+   "text": "OJ-06's Home line (cut line): Home lists the kept project only, and its card has no 'Includes the work of \"Kite club\"' line (the Overview, Sessions and Costs have it)."
+  },
+  {
+   "key": "C4:C4L-5",
+   "file": "/tmp/frbench/leftovers-C4.json",
+   "id": "C4L-5",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "The closing project's open fr/status pull request is listed on no Overview after the join when the kept project's 'Status pull request' is off (isProjectDocsPr needs statusPullRequestOn(kept)), and the dialog names only four settings, so the person is never told. A dialog line for the status setting, or the joined project's status pull request listed as information (loop/docs.ts and pull-requests.ts, d1109-onerepo-link's). LC-C4 reads it."
+  },
+  {
+   "key": "C4:C4L-6",
+   "file": "/tmp/frbench/leftovers-C4.json",
+   "id": "C4L-6",
+   "severity": "minor, tests",
+   "from": "d1109-onerepo-join",
+   "text": "OJ-02's Postgres case in the integration suite is missing (no FORERUNNER_TEST_PG here); the join runs in one store.transaction through the repository methods both backends share."
+  },
+  {
+   "key": "C4:C4L-8",
+   "file": "/tmp/frbench/leftovers-C4.json",
+   "id": "C4L-8",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "project.join's Undo sets active: true on the reopened project whatever the stored closed[].active: a project paused before the join comes back active. Undo restores what was stored, with a case."
+  },
+  {
+   "key": "C4:C4L-9",
+   "file": "/tmp/frbench/leftovers-C4.json",
+   "id": "C4L-9",
+   "severity": "words",
+   "from": "d1109-onerepo-join",
+   "text": "On a joined project's page, Last result still says '\"Write the rules in rules.md\" is ready to continue' about a task that now belongs to the kept project (d1109-sessions' summary text in views.ts)."
+  },
+  {
+   "key": "C4:C4L-10",
+   "file": "/tmp/frbench/leftovers-C4.json",
+   "id": "C4L-10",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "GitHubHost.send's AbortSignal.timeout also covers reading the response body after send() returns: a slow body throws a plain AbortError instead of the 'did not answer in time' error (C2-left-10's edge)."
+  },
+  {
+   "key": "C4:C4L-12",
+   "file": "/tmp/frbench/leftovers-C4.json",
+   "id": "C4L-12",
+   "severity": "words",
+   "from": "d1109-onerepo-join",
+   "text": "A joined project's Overview still offers 'Research reads: ... · Change' and the 'Note for the next session' input though nothing runs there; hide them as the Start button is hidden. The Undo of a join (and every undo) answers a change card whose undoHint reads 'This cannot be undone.' (pre-existing, generic)."
+  },
+  {
+   "key": "L3:LL-1",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-1",
+   "severity": "minor",
+   "from": "l3-merge",
+   "text": "Merge cards stay open when their pull request is closed on GitHub without a merge (run L3 closes them on every merge only)."
+  },
+  {
+   "key": "L3:LL-2",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-2",
+   "severity": "minor",
+   "from": "l3-merge",
+   "text": "A Merge press on a pull request whose check failed, or that stopped merging cleanly, after Forerunner's last look still answers 'Merging #N.' first (a sibling of L3-github-3, which now says a head move at once)."
+  },
+  {
+   "key": "L3:LL-3",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-3",
+   "severity": "words",
+   "from": "l3-merge",
+   "text": "notCheckedSentence (the press's 'could not check' path) has no boundary test and is two sentences."
+  },
+  {
+   "key": "L3:LL-4",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-4",
+   "severity": "major",
+   "from": "l3-merge",
+   "text": "L3-github-1 part 3: when B, still holding closed A, is merged on GitHub's website before any poll, A's record says only '#A was closed without merging.'; no card says A's change reached main through #B, and nothing offers Take this work out on A."
+  },
+  {
+   "key": "L3:LL-5",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-5",
+   "severity": "minor",
+   "from": "l3-merge",
+   "text": "The optional Close button on a cancelled task's open pull request (ADR 0105 point 4's amendment of 2026-11-15 records it as an option for later)."
+  },
+  {
+   "key": "L3:LL-6",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-6",
+   "severity": "words",
+   "from": "l3-merge",
+   "text": "After a press-time check A's Tasks row reads 'Accepted · waiting for you to merge' until the next poll; the Overview's cancelled block is plural with one row; a rebuilt-without row still sits under 'Reviewed by the critic'; the press-time rebuild costs a listPullRequests call and a git fetch per waiting dependent per retry."
+  }
+ ]
+}

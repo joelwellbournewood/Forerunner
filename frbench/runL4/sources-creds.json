@@ -1,0 +1,809 @@
+{
+ "group": "creds",
+ "base": "4cf11fd",
+ "live_findings": [
+  {
+   "key": "live4:L4-creds-4",
+   "finding": {
+    "id": "L4-creds-4",
+    "severity": "major",
+    "title": "The ask card's 'about CHF' is far below what Use API key then spends, and below the dialog's and plan card's figures for the same work",
+    "step": "LC-C24",
+    "what_the_person_sees": "Card: 'Your API key can do the waiting work now: about CHF 0.10.' After Use API key the session spends CHF 0.65: CHF 0.24 on the two tasks that waited, the rest on two tasks the agent added under the same yes. For the same waiting work the Start dialog said 'about CHF 0.15' and the plan card 'About CHF 0.37 for the 2 tasks'. Second stop: card CHF 0.05, plan card CHF 0.15, dialog CHF 0.10.",
+    "expected": "The card's figure is within a factor of two of the real spend after Use API key, and the card, the dialog and the plan card give one figure for the same waiting work (C6L-3).",
+    "evidence": "Inbox API body 'Your Claude subscription is at its limit until 08:26. Your API key can do the waiting work now: about CHF 0.10.'; start-session-run-out 'Runs now on your API key until 08:26, about CHF 0.15; nothing passes this session's budget.'; ledger after the press: 60 rows, USD 0.818311 (task 16874e 0.212904, task 5d66a1 0.088728, added 07a838 0.395557, added 0ce1e8 0.108554). Files: /tmp/frbench/live4/creds/cs-evidence/c24b.json, c24c.json.",
+    "repro": "Save both credentials, choose 'Subscription first, ask before API key', and have the subscription at its limit. Draft a 2-task plan and press Approve and start. Read the card, the Start dialog and the plan card. Press Use API key. Compare with Costs.",
+    "suspected_cause": "The card's estimate (credential-ask's estimate_usd_micro, priced with the Start check) seems to count only part of the waiting work. It has no margin for reviews and rework, and none for tasks the agent adds while the yes stands.",
+    "journey": "creds",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-creds-4",
+    "real": true,
+    "model_only": false,
+    "severity": "major",
+    "root_cause": "The ask card's figure is the closure in compose.ts that RouterTaskBilling's `ask` calls. For each waiting project it adds two things: `check.runnable` (ready tasks, priced by the planner), and the claimed or in_progress tasks at their raw stored figure, `(t.est_cost_usd_micro || t.budget_usd_micro || 500_000) - actual`. That second part was added in CS-8. Two gaps follow.\n(1) The task that hit the stop is claimed when the card is filed, so it is priced at the plan's raw work-only guess. That guess has no review part. The Start dialog and the plan card price the same task with planEstimateUsdMicro / estimates.of, which add the review part (d1116-budget-all). This goes against the owner's binding answer of 2026-11-16 (\"its estimate includes the reviews and fixes\").\n(2) It ignores `check.later`: the follower tasks that wait on the claimed task. A \"Use API key\" yes runs them in the same session (ADR 0120 §3: the waiting session goes on as the person's start, and promiseOf counts runnable + later).\nThe bench DB confirms this exactly. The first card's change_card.estimate_usd_micro = 126000, which equals the coder task's est_cost_usd_micro (126000); the tester task (est 207000) is not counted. The second card's 66000 equals the Bird walk coder's est_cost_usd_micro (66000); its tester (90000) is not counted.\nThe other two figures differ as well. The Start dialog's Use API key line (server.ts credentialAtStart) sums only `r.runnable`, so CHF 0.15 is the coder alone with its review part. The plan card prices every task with its review part: 0.15 + 0.22 = CHF 0.37. The result is three figures for one piece of waiting work. Real spend on the two waiting tasks was CHF 0.24 (0.212904 + 0.088728 USD), 2.4x the card's CHF 0.10. With the fix, the card would read about the plan card's 0.37, within a factor of two of 0.24 and also of the total 0.65.\nThe other CHF 0.41 went to two tasks the agent added during the run (D7, allowed by the owner). No up-front estimate can foresee them. That part is by design: the session budget still bounds it, and the explain line honestly says \"for what waits now\".",
+    "where": "packages/runtime/src/daemon/compose.ts:1811-1827 (ask closure: inFlight priced at raw est_cost_usd_micro at :1820; sum of check.runnable + inFlight only, no check.later, at :1826); packages/runtime/src/daemon/server.ts:1567-1572 (Start dialog's Use API key figure: r.runnable only); packages/runtime/src/session/start-check.ts:142-160 (promiseOf, the figure both should use)",
+    "fix_sketch": "Put one figure for \"the waiting work\" in start-check.ts, for example waitingWorkUsdMicro(check, inFlight). It would add up:\n- promiseOf(check).estimateUsdMicro (runnable + the larger task's room + later followers);\n- the claimed or in_progress tasks, priced as the planner prices them: planEstimateUsdMicro(estimates, t, keptWorkFor(...)) minus what the task has spent in total (work plus reviews), floored at 0;\n- the whole sum capped at the work budget.\nUse it in three places:\n1. the compose.ts ask closure, in place of the runnable + raw-est sum;\n2. server.ts credentialAtStart, in place of runnable only, so the dialog's \"Use API key ... about CHF N\" counts the followers the session would take;\n3. the plan card's foot line under a stop, so it is the same figure when the plan's tasks are what waits.\nThat closes C6L-3's \"one figure per thing\" as well. Update credential-ask-figure.test.ts: it now pins \"the task's own estimate\" (the raw est). Leave the words \"for what waits now\" as they are: the agent's added tasks are outside the estimate by design.",
+    "failing_test_idea": "Add a composed case to packages/runtime/test/credential-ask-figure.test.ts using credWorld with no injected provider. The project has two tasks, B depending on A, with planner estimates whose review part is non-zero. Set policy subscription_then_ask, limit the subscription, start a session and call settleSessions. Then read three things at the person's boundary: the \"Use your API key until 15:00?\" card body from GET /inbox, the start-check's Use API key line from GET /projects/:id/start-check, and the plan card's per-task figures for the same tasks. Assert that the card's \"about CHF N\" equals the dialog's figure, and that both equal the A+B promise priced with the review part. Assert that it is more than A's raw est_cost_usd_micro alone. Today the card gives A's raw estimate only (as with 126000 vs the plan's 0.37) and the dialog gives A only.",
+    "area_hint": "d1109-cred-screens",
+    "known_leftover": "C6L-3",
+    "notes": "C6L-3 (rated words) already names the three figures (card, runnable-only dialog, plan card per task) and asks for one figure per thing. This finding shows the root cause is more than words. The card leaves out the follower tasks the yes will run, and it prices the claimed task without its review part, so the money consent understates the waiting work by more than 2x on the real run. That is why I keep major; minor is also defensible, since the amounts are small and the session budget still caps everything.\nThe expectation that the card match spend that includes the agent-added tasks is too strong. That part is model and design (D7), not code.\nEvidence checked in the read-only DB /tmp/frbench/live4/creds/cs/home/data/state.sqlite: the human_request change_card estimate_usd_micro values 126000 and 66000 match the task rows' est_cost_usd_micro exactly.\nAlso seen in c24b, not part of this finding: the request_blocking notification title says \"until 07:26\" while the card says \"until 08:26\", which looks like a UTC vs local time mix-up in the notification words."
+   }
+  },
+  {
+   "key": "live4:L4-creds-5",
+   "finding": {
+    "id": "L4-creds-5",
+    "severity": "major",
+    "title": "The ask card's notification gives the reset time in UTC, an hour off the card",
+    "step": "LC-C24",
+    "what_the_person_sees": "Urgent notification: 'Use your API key until 07:26?' / 'Your Claude subscription is at its limit until 07:26. ...' The Inbox card, rows, bar and Settings all say 08:26 (the person's zone is Europe/Zurich). Same for the second stop: 07:01 against 08:01. The credential_switch notification in LC-C23 used the person's clock (08:28).",
+    "expected": "Every sentence uses the person's clock, never UTC (C5 CE-4).",
+    "evidence": "GET /notifications/recent: request_blocking at 06:47:11.532Z, title 'Use your API key until 07:26?'. Inbox card title 'Use your API key until 08:26?'. restingUntil 2026-11-17T07:26:44Z; config timezone Europe/Zurich. File: /tmp/frbench/live4/creds/cs-evidence/c24b.json.",
+    "repro": "Set a person's zone other than UTC and choose ask. With the subscription at its limit, press Approve and start on a plan. Read the desktop notification (GET /notifications/recent).",
+    "suspected_cause": "The notification text for the ask card is built without the person's timezone (formatted in the daemon's process zone, UTC on the bench). The card's own words are built with the timezone.",
+    "journey": "creds",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-creds-5",
+    "real": true,
+    "model_only": false,
+    "severity": "major",
+    "root_cause": "The finding is real. The suspected cause is slightly off: the time is not formatted in the daemon's process zone, it is hard-coded to UTC. The ask card's row stores only a placeholder `why`. Its title and body are computed when the card is shown, by askCard() in request-words.ts, from ctx.credentialAsk.timezone. The Inbox fills that context: views.ts:1059-1060 calls credentialAskFor(), which reads human.timezone at views.ts:1088. The notification path does not. compose.ts:3451 calls notifications.requestOpened(row, human.id, names), and producers.ts:187-190 calls requestWords(req, { projectName, taskTitle }) with no credentialAsk. So askCard (request-words.ts:1385-1394) passes no timezone, and askCardWords then calls stopWordsOf, then clockTime(), then validZone(undefined), which returns \"UTC\" (credential-wait.ts:231). The urgent request_blocking notification therefore always gives the reset in UTC, for any person whose zone is not UTC, on a real PC as well as on the bench. The credential_switch notification is right because compose.ts:3554 formats `until` with human.timezone itself. A smaller related point: askCard falls back to Date.now() for nowMs (request-words.ts:1394) instead of the clock, so near midnight the same-day check (\"07:26\" or \"Tue 18 Nov, 07:26\") can also differ from the card.",
+    "where": "packages/runtime/src/notifications/producers.ts:187 (requestWords without credentialAsk); packages/runtime/src/daemon/compose.ts:3451 (caller passes no zone); packages/runtime/src/daemon/request-words.ts:1393-1394 (timezone omitted, nowMs falls back to Date.now()); packages/runtime/src/session/credential-wait.ts:231 (no zone means \"UTC\")",
+    "fix_sketch": "1. Let requestOpened(req, humanId, names, ctx?) take the same RequestWordsContext pieces the Inbox uses, and pass them to requestWords.\n2. In compose's humanRequest.insert hook (compose.ts ~3436-3451), when the row's change_card.key is CREDENTIAL_ASK_KEY, build the context the way the Inbox does. Either export views.ts credentialAskFor (or a small shared helper in request-words / views) and call it, or at least pass { timezone: human.timezone, nowMs: Date.parse(card.filed_at) }. The notification then says what the card says, including the sessionWaits and goesOnAt words.\n3. Close the trap: askCardWords/stopWordsOf should not fall back silently to UTC for a person-facing sentence. Either make timezone required on AskCardInput, or have askCard take nowMs from card.filed_at instead of Date.now().\n4. Grep the siblings that render request words outside the Inbox: requestOpened, the email/Telegram channels (which reuse the same Notification), and any summary or chat path that calls requestWords for a credential:ask row. Give each the same context.\n5. Update docs/maintainers notifications and credential docs as the module rule requires.",
+    "failing_test_idea": "Real-daemon route case in apps/ui/test/real-daemon.test.ts, in the 'd1109-cred-engine' describe:\n1. Set the person's timezone to Europe/Zurich and the policy to subscription_then_ask.\n2. Put the subscription stand-in at its limit with a reset at 07:26Z.\n3. Approve and start a plan, then read GET /notifications/recent and GET /inbox.\n4. Assert that the request_blocking notification's title equals the ask card's requestView title, \"Use your API key until 08:26?\", and that its body contains \"until 08:26\" and not \"07:26\".\n\nToday this fails: the notification reads 07:26. Add a unit twin in packages/runtime/test/notifications-wiring.test.ts that drives the composed insert hook with a credential:ask row and a Europe/Zurich human, and asserts the notifier received 08:26. Run both with TZ unset and with TZ=Europe/Zurich: the fallback is hard-coded UTC, so it fails either way.",
+    "area_hint": "d1109-cred-engine (CE-7 ask card; the notification wiring in compose/producers)",
+    "known_leftover": "",
+    "notes": "I reproduced it at 4cf11fd with a tsx script, /tmp/frbench/verify-L4-creds-5/repro.ts, run with TZ=Europe/Zurich (process zone Europe/Zurich). requestOpened(askRow) gives \"Use your API key until 07:26?\" / \"...at its limit until 07:26...\". requestWords with credentialAsk.timezone=Europe/Zurich gives \"08:26\". So the daemon's process zone does not matter: any person outside UTC gets the wrong hour in the urgent notification, and the same Notification goes to the desktop tray, email and Telegram. The evidence matches for both stops: c24b/c24c show 07:26 against card 08:26, and c24d/c24e show 07:01 against 08:01. No known leftover names this. C5L-7 is about credentialHold reading the timezone once at compose time, which is a different issue. I agree with major: it is an urgent prompt for a money decision, and in Zurich at 07:47 local, \"until 07:26\" reads as a reset that has already passed."
+   }
+  },
+  {
+   "key": "live4:L4-creds-6",
+   "finding": {
+    "id": "L4-creds-6",
+    "severity": "minor",
+    "title": "'Waits for your answer ... The card is in the Inbox.' stays after the card is answered",
+    "step": "LC-C24",
+    "what_the_person_sees": "After Wait (and also after Use API key), these still read 'Waits for your answer: use your API key? The card is in the Inbox. 1 task waits on other tasks. CHF 0.00.': the session page result, the Overview's Last result, the Inbox Updates and the session_ended notification. Meanwhile the Inbox says 'Nothing needs you.' The rows are right.",
+    "expected": "That sentence shows only while the card is open (C5 leftovers).",
+    "evidence": "/tmp/frbench/live4/creds/cs-evidence/c24d.json (sessionB, overviewB, inboxAfterWait); c24c.json (overviewRunning).",
+    "repro": "Do the same as L4-creds-4, then press Wait on the card. Open the session page and the Overview.",
+    "suspected_cause": "The stored session summary and the Update are written when the session ends, while the card is still open, and are not reworded after the answer.",
+    "journey": "creds",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-creds-6",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The session result is stored when the session ends, while the ask card is still open. So it carries the ask form 'Waits for your answer: use your API key? The card is in the Inbox.': credential-wait.ts:291-292, reached through askShown in executor.ts:1842 / 2131, stored by runner.ts:3906-3914 (outcome.credentialWait = waitSentence(...)). Three places re-read that stored text: the session page (server.ts:2139), the Overview's Last result and Read aloud (views.ts:426), and the Inbox Update (server.ts:2475). All three go through resultAfterWait (run-indicator.ts:60-67). That function returns the text unchanged unless it contains '; then your session goes on.' (line 66), so nothing re-checks the ask sentence after the card is answered (askCardOpen false). The C5 fix-up (FX-CE B1) applied askShown only to sentences written after the answer, never to results already stored. Its test (credential-ask-words.test.ts, 'after Wait...') checks only the second session. Reproduced on the composed stand-in: after Wait, with no open ask card, GET /sessions/:first, GET /projects/:id/summary lastSession.summary and the GET /inbox Update all still say 'The card is in the Inbox'. After Use API key, the first session's page and its Update say the same.",
+    "where": "packages/runtime/src/daemon/run-indicator.ts:66 (resultAfterWait handles only the goes-on clause); stored at packages/runtime/src/session/runner.ts:3906; read at packages/runtime/src/daemon/server.ts:2139, server.ts:2475, views.ts:426; sentence at packages/runtime/src/session/credential-wait.ts:292",
+    "fix_sketch": "Keep the stored text as the record and reword it when shown, like C3-left-8. At session end, also store the structured wait (sourceId, stopKey, kind, until) on the session's handoff or outcome, or find the stop's ask card (CREDENTIAL_ASK_KEY with that stop_key). In resultAfterWait, or a storedResultNow wrapper all readers use: if the text has the ask form and askCardOpen(store, sourceId, stopKey) is false, swap it for what is true now. After Wait: waitSentence of the plain wait (askShown's plain form), which then passes through the existing goes-on rule ('Waits until 08:01 (your subscription's limit); then your session goes on.'). After Use API key: a line saying the work went on with your API key, or the plain stop sentence. Keep the 3-line result rule. Route chat's project facts (conversation/project-facts.ts) and the typed 'summary' command through the same rule (the port C5L-15 already asks for). The session_ended notification needs no change: it was sent while the card was open.",
+    "failing_test_idea": "In packages/runtime/test/credential-ask-words.test.ts, extend 'after Wait, a session started before the stop ends says the plain wait': after answering Wait on the card (before the second Start), read GET /sessions/:first.sessionId .summary, GET /projects/:id/summary .lastSession.summary and the GET /inbox messages[].body. Expect none to contain 'The card is in the Inbox'. Expect the session page and Last result to contain 'Waits until 15:00 (your subscription's limit); then your session goes on.'. Add a Use API key variant (choices[0]): the first session's page and its Inbox Update no longer say the card is in the Inbox. Both fail at 4cf11fd (throwaway repro: /tmp/frbench/verify-L4-creds-6/repro.test.ts, both cases fail).",
+    "area_hint": "d1109-cred-engine (it owns the rule that the ask form shows only while the card is open, askShown/askCardOpen); the fix lands in d1109-run-visible's resultAfterWait (run-indicator.ts)",
+    "known_leftover": "",
+    "notes": "Reproduced on the composed stand-in (cred-world, subscription_then_ask, subscription at its limit) through the daemon routes, both after Wait and after Use API key. One part of the finding is not a defect: the session_ended notification was sent at 06:55:20.414, after the card was filed at 06:55:20.389, so it was true when sent; a delivered notification is not reworded. After Use API key on the stand-in the continuation finishes at once, so the Overview shows the newer session's result; in the live run (c24c overviewRunning) the old result showed while the new session ran. That is the same defect on the Last result. Closest sibling leftover: C5L-15 (after Cancel, chat facts and the summary command read the stored result as written); it covers a different sentence, so no leftover names this one. The C5 fix-up's fixed[0] claimed 'shows only while that card is open' but tested only sessions written after the answer."
+   }
+  },
+  {
+   "key": "live4:L4-creds-9",
+   "finding": {
+    "id": "L4-creds-9",
+    "severity": "minor",
+    "title": "A 401 on the subscription is reported as a timeout or a failed call, not as a refused sign-in (bench caveat)",
+    "step": "LC-C31",
+    "what_the_person_sees": "With the subscription first and nothing chosen, chat says 'I ran out of time before I could answer. Ask again, or ask for a shorter answer.' Planning says 'Planning failed: Claude did not answer (model call failed).' Task runs fail with 'Claude Code returned an error result: Authentication error · This may be a temporary network issue'. No 'Anthropic refused your Claude sign-in' card appears, and the next session picks the subscription again.",
+    "expected": "LC-C22: the refusal is read as a refusal, with one card and no second request to the subscription.",
+    "evidence": "/tmp/frbench/live4/creds/c31e-proxy/requests.jsonl ids 6, 12-14: POST /v1/messages?beta=true 401 for the bench subscription token. limits.subscription has no refusedAt; GET /inbox is empty. Caveat: the bench daemon passes this machine's remote-session proxy variables to Claude Code, so a real Claude Code's report may differ.",
+    "repro": "Save both credentials with an invalid subscription token and choose nothing. Ask chat a question and draft a plan.",
+    "suspected_cause": "ClaudeCodeProvider / the SDK driver does not map this authentication error result to provider_auth (refused).",
+    "journey": "creds",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-creds-9",
+    "real": true,
+    "model_only": false,
+    "severity": "major",
+    "root_cause": "The core claim holds: a refused subscription sign-in is never read as a refusal. The timeout part is a bench artefact. Agent SDK 0.3.304 sends three things in order: an assistant message with error \"authentication_failed\", then a result with is_error true, and then the iterator throws \"Claude Code returned an error result: <text>\". The SDK replaces Claude Code's non-zero exit with the result text. Both drivers turn authentication_failed into provider_auth only after the for-loop ends normally, and their catch blocks ignore what the loop had already seen.\n\n(1) Chat and planning, ClaudeCodeProvider. packages/runtime/src/provider/claude-code.ts:184 runs errorFromSdk only after the loop. `sdkError` and `rejected` are declared inside the try, so the catch at :195-206 cannot see them. It yields code provider_error, \"Claude Code could not answer: ...\". routed.ts:287 then sees no provider_auth, so it never calls refuse(): no refusedAt, no card, and the next call goes to the subscription again.\n\n(2) Task runs, SdkAgentDriver. packages/runtime/src/agent/sdk.ts:586-604 is skipped when the iterator throws. The catch at :606-626 sets error = {code:\"internal\", message:\"Claude Code returned an error result: ...\"}. That overwrites even a correct provider_auth from the result handler at :487. The result-text check is weak anyway: REFUSED_TEXT in usage-limit.ts matches \"authentication_error\" but not \"Authentication error ·\". The c31 daemon.log shows exactly this catch line six times (\"sdk run failed ... Claude Code returned an error result: Authentication error · ...\"), so the tasks went to Failed.\n\nI reproduced it at the provider boundary (/tmp/frbench/verify-L4-creds-9/probe.mts). With the same events and a normal end, ClaudeCodeProvider yields provider_auth. With the SDK's throw after them, it yields provider_error.\n\nBench artefact: chat's \"I ran out of time before I could answer\", and the ~60 s per planning call / ~3 min per task run, come from this machine's CLAUDE_CODE_REMOTE reaching Claude Code. In the 0.3.304 binary, Z4t() returns CLAUDE_CODE_REMOTE, which selects the \"Authentication error · This may be a temporary network issue\" branch. LC-C22, run with a clean environment, gives \"Failed to authenticate. API Error: 401 OAuth access token is invalid.\" in 6 s, and chat says \"I could not answer (model call failed)\". It is still not a refusal. So only the wording and timing differ; the defect stands.",
+    "where": "packages/runtime/src/provider/claude-code.ts:195 (catch ignores sdkError; mapping only at :184); packages/runtime/src/agent/sdk.ts:606 (catch overwrites with \"internal\"; mapping only at :586-604 and :487)",
+    "fix_sketch": "claude-code.ts: hoist `sdkError` and `rejected` above the try. In the catch, when the request was not aborted and sdkError (or rejected) is set, yield errorFromSdk(sdkError.kind, sdkError.text, rejected) instead of the generic provider_error. The same goes for an is_error result seen before the throw.\n\nsdk.ts: move the failedTurn mapping (usage limit, then refusal kind) into a helper. Call it after a normal loop end, and also in the catch when the throw is not a ForerunnerError (not a timeout, kill, budget or withheld stop). Do not overwrite an `error` already set to provider_auth or provider_usage_limit by the result handler. A thrown \"Claude Code returned an error result\" after a mapped error keeps the mapped one.\n\nOptionally widen REFUSED_TEXT to cover \"Authentication error ·\" and \"Failed to authenticate. API Error: 401\". The kind is the main signal, though.\n\nThe same fix probably uncovers CE-5's billing_error and rate_limit usage-limit path on the real SDK, which is hidden by the same throw. Change the fake query in the existing tests to throw after the result, the way 0.3.304 does. Fix it once, together with L4-creds-10, which is the same defect.",
+    "failing_test_idea": "This tests at the person's boundary, through the composed or real daemon. Setup: the subscription saved first, an API key second, nothing chosen. The scripted Claude Code (the queryImpl/query test seam) yields three things, as Agent SDK 0.3.304 does: assistant {error:'authentication_failed', text 'Failed to authenticate. API Error: 401 OAuth access token is invalid.'}, then result {is_error:true}, then a throw of Error('Claude Code returned an error result: ...').\n\nSteps: ask chat a question, then draft a plan, then Start a ready task.\n\nExpected:\n- limits.subscription.refusedAt is set.\n- GET /inbox has exactly one 'Anthropic refused your Claude sign-in' card ('The sign-in has expired or was signed out. ...').\n- Chat gives the hold reply, not 'model call failed' or 'ran out of time'.\n- Planning and the task wait for a new sign-in; the task is not Failed and there is no failed-task card.\n- Settings shows the subscription as Refused.\n- The scripted query is called for the subscription exactly once in total.\n\nToday: provider_error/internal, no refusedAt, an empty Inbox for chat and planning, a Failed task card, and a second call to the subscription.\n\nUnit-level companions: ClaudeCodeProvider.stream yields code provider_auth, and SdkAgentDriver.run returns error.code provider_auth, both with the throwing fake.",
+    "area_hint": "d1109-cred-engine",
+    "known_leftover": "",
+    "notes": "No leftover in L3/C2/C3/C4/C4b-design/C4b/C5/C6 names it. It is the same defect as live-4 finding L4-creds-10 (LC-C22, major, clean environment, real API 401); the two should be fixed and tracked as one. I agree with the claim but not the severity: I rate it major, not minor. Reason: an expired or invalid subscription sign-in makes every task Failed instead of waiting, chat and planning fail with raw errors, and nothing tells the person to save a new sign-in. That goes against owner decision D5c, which says a refusal follows the run-out policy and tells the person.\n\nEvidence in c31e:\n- requests.jsonl ids 6 and 12-14 are POST /v1/messages 401s answered locally by the logging proxy (local:true), not by the bench stand-in.\n- daemon.log shows 'billing source picked ... kind subscription driver sdk' and then 'intake: the planning call ended error: model call failed'.\n- In c31, all six task runs ended in sdk.ts's catch log line.\n- The proxy's ws/ca-cert lines (ids 2-5, 8-11) are the CLAUDE_CODE_REMOTE contamination named in the caveat.\n\nProbe: /tmp/frbench/verify-L4-creds-9/probe.mts, run with node --experimental-transform-types from the worktree."
+   }
+  },
+  {
+   "key": "live4:L4-creds-2",
+   "finding": {
+    "id": "L4-creds-2",
+    "severity": "minor",
+    "title": "Two notifications for one refused key; the refusal's says 'Answer it in the Inbox' though there is nothing to answer",
+    "step": "LC-C21",
+    "what_the_person_sees": "First, urgent: 'Anthropic refused your API key' / '... until then the work waits. Answer it in the Inbox.' Then: 'Field notes: Waits for a new API key: save one in…' / 'CHF 0.00. Open the session for the details.' (the title is cut). The card has no options, only Save a new key.",
+    "expected": "One notification per refusal that says to save a new key.",
+    "evidence": "GET /notifications/recent in /tmp/frbench/live4/creds/c21-evidence/c21c-collect.json",
+    "repro": "Same as L4-creds-1.",
+    "suspected_cause": "The notify words add 'Answer it in the Inbox' to every request_blocking notification. The session_ended notification is sent as well.",
+    "journey": "creds",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-creds-2",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "Two separate code paths each send a notification, and neither knows about the other.\n\n(1) Wrong instruction in the urgent notification. `fileRefusedCard` (session/credential-wait.ts:647-667) files the refused card as kind \"info\" with `options: []`. Its words (request-words.ts:1433-1468) have `choices: []`, `reply: \"none\"` and one link, \"Save a new key\", to /setup. compose's humanRequest.insert hook (compose.ts:3434-3452) sends `notifications.requestOpened` for every card. `requestOpened` (notifications/producers.ts:198) always adds \"Answer it in the Inbox.\" and links to /inbox, so a card with nothing to answer is told as one to answer. The hook also passes only the project and task names, not the refusal context that only the Inbox view supplies (views.ts:1057, credentialRefusedFor). So `refusedCredentialCard` falls back to category null and rule \"wait\". The notification then says \"Anthropic did not accept it. ... until then the work waits.\" while the card says \"The key is not valid or was deleted. ...\". By the same code path, under a \"next\" policy the notification would say the work waits while the other credential takes it (read in the code, not reproduced).\n\n(2) A second notification that repeats the card. The runner leaves out of `news` only what open cards of the project say about their tasks. `openCards` is queried by project_id (runner.ts:3812-3824), and `told` is {tasks: carded, docker, plan} (runner.ts:3986-3990). The refused card has project_id and task_id null, so it is never counted. The \"credential wait\" result builder (result.ts:301-303) adds 'Waits for a new API key: save one in Settings; then your session goes on.' with no check against an open card. `isNewsLine` counts it as news, so `sessionEndIsNews` (producers.ts:305) is true and compose (compose.ts:3886-3889) sends a session_ended notification. The same lines also post an Inbox Update. `titled`/`fit` then cuts that one sentence to 'Field notes: Waits for a new API key: save one in…', leaving 'CHF 0.00. Open the session for the details.' as the body.\n\nThis breaks: design §4.3 and §5.10 (the person hears once; one place per fact), §5.1 and §5.8 (say what to do), §5.9 (no promise the code does not keep), notifications.md \"Hearing once\" (\"a session whose only news is its cards sends nothing of its own\"), and the owner's D5 ('also tells the person (what was refused, how to fix it)'; 'We don't need notifications like that' for waiting work).\n\nReproduced on the stand-in at 4cf11fd: bench-api with --api-key refused, one ready task. GET start-check showed blocked:null, so the Start dialog's Start is enabled before any refusal is known. One POST /sessions, as Start sends it, gave two notifications 24 ms apart:\n- request_blocking (urgent): 'Anthropic refused your API key' / 'Anthropic did not accept it. Save a new one in Settings; until then the work waits. Answer it in the Inbox.' (link /inbox)\n- session_ended: 'Field notes: Waits for a new API key: save one in…' / 'CHF 0.00. Open the session for the details.'\n\nIt also posted an Inbox Update, 'Field notes: Waits for a new API key: save one in Settings; then your session goes on.', beside the card. That card's body reads 'The key is not valid or was deleted. ...' with choices [] and the single link 'Save a new key'.",
+    "where": "packages/runtime/src/notifications/producers.ts:198 (requestOpened always adds 'Answer it in the Inbox.'); packages/runtime/src/daemon/compose.ts:3443-3451 (no credentialRefused context for the notification); packages/runtime/src/session/runner.ts:3812-3824 and :3986-3990 (told leaves out the refused card); packages/runtime/src/session/result.ts:301-303 (credential wait line added whatever cards are open); packages/runtime/src/notifications/producers.ts:302-306 (sessionEndIsNews true on that line)",
+    "fix_sketch": "(a) Give the refused card its own notification words. In requestOpened, a card whose words have no choices, `reply: \"none\"` and a link (CREDENTIAL_REFUSED_KEY in particular) gets no \"Answer it in the Inbox.\". Either it ends on its link's action ('Save a new key in Settings.') with `link: words.links[0].to` (/setup), or a `credentialRefused` producer does the same. compose's insert hook passes the same `credentialRefused` context the Inbox view uses (views.ts credentialRefusedFor), so the notification states the category and what the person's rule does ('until then the work waits' / 'until then your Claude subscription does the work'), as the card does.\n\n(b) Hear once. Add `credential?: boolean` to ToldByCards. In the runner, set it when the person has an open refused card for the source the session's wait names (openRefusedCards(store, humanId), not the project-scoped query). The \"credential wait\" builder then leaves its sentence out when `told.credential` is set. A session whose only news is the wait then sends no session_ended notification and posts no Inbox Update. The session page and the Overview keep the whole result, because the summary is built without `told`. Update docs/maintainers/notifications.md: the refused card speaks for the credential wait.",
+    "failing_test_idea": "This tests at the person's boundary: the composed daemon over the Messages API stand-in with a refused key, in the real-daemon or notifications-hear-once suite, read the same way as LC-C21. Make a project with one ready task and leave start-check's blocked at null. POST /sessions as the Start dialog sends it, and wait until the session stops with stopReason credential_wait.\n\nThen assert:\n- GET /notifications/recent holds exactly one notification: kind request_blocking, title 'Anthropic refused your API key'.\n- Its body equals the card's sentence ('The key is not valid or was deleted. Save a new one in Settings; until then the work waits.') and does not contain 'Answer it in the Inbox'.\n- Its link is /setup, or it names Save a new key.\n- There is no session_ended notification.\n- GET /inbox `messages` has no Update with 'Waits for a new API key'.\n\nThese fail today: there are two notifications, 'Answer it in the Inbox.' is in the body, and the Update is posted.\n\nAdd a second, unit case at producers or compose level: under key_then_subscription with the key refused, the notification body says the Claude subscription does the work, not 'waits'.",
+    "area_hint": "d1109-cred-engine",
+    "known_leftover": "",
+    "notes": "The claim holds, and the person can reach it, not just the bench. In LC-C21 the second notification came from a POST /sessions start that the Start dialog would have refused once the refusal was known: the chat question had already set the refused mark. But the same pair comes from a single Start the dialog does allow. When the session's own first call meets the refusal, start-check returns blocked:null, so Start is enabled. Chat's session.start also does not pass credentialWait to startBlockedReason (compose.ts:4824-4835), and POST /sessions deliberately does not refuse on a wait (server.ts:1586-1589). So a start from chat or the phone gets the second notification too.\n\nTwo related problems on the same code path:\n- The notification body comes from words built without the refusal context, so it says 'Anthropic did not accept it' where the card says 'The key is not valid or was deleted', and it would say 'waits' under a 'next' policy.\n- An Inbox Update repeats the card.\n\nThe cut title is a result of the session_ended notification existing at all; fix (b) removes it. No leftover in L3, C2, C3, C4, C4b-design, C4b, C5 or C6 names this. The nearest are C6L-2 ('Start on 1 Dec' starts a session that stops to wait at once) and C5L-14 (calibration notification words); both are different.\n\nEvidence: /tmp/frbench/verify-L4-creds-2/scripts/repro.cjs, run on the bench at /tmp/frbench/verify-L4-creds-2-bench (ports 49093/2693). The bench is stopped."
+   }
+  },
+  {
+   "key": "live4:L4-creds-3",
+   "finding": {
+    "id": "L4-creds-3",
+    "severity": "words",
+    "title": "Chat's hold reply promises it can start tasks while nothing can start",
+    "step": "LC-C21",
+    "what_the_person_sees": "Chat: 'Anthropic refused your API key, so I have not answered. I can still add, move and start tasks.' At the same time the Start dialog says 'Nothing can run until you save a new API key in Settings.' and Start is disabled.",
+    "expected": "The reply names what still works and what to do (save a new key).",
+    "evidence": "/tmp/frbench/live4/creds/c21/steps/02-c21-chat-question.png, 03-c21-start-dialog.png",
+    "repro": "With only the refused key, ask chat a question, then open Start.",
+    "journey": "creds",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-creds-3",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "The hold reply is written by code, not by the model: a held chat question makes no model call. `chatHoldReply` (packages/runtime/src/session/credential-words.ts:345-350) uses one template for every stop and always ends with \"I can still add, move and start tasks.\" It does not look at the wait's reason, and it never says what to do. The sentence was written for the subscription-limit case (run C plan CE-9; design §3.9 States; the unit test at packages/runtime/test/credential-refusal.test.ts:255-258). In that case Start stays on, because `waits.now` returns `startable` with \"Start at 15:40\" whenever `reason !== \"refused\"` (packages/runtime/src/daemon/compose.ts:4690-4700). A refused key gets no `startable`, so `startBlocked` (packages/runtime/src/daemon/start-blocked.ts:84-101) turns Start off with \"Nothing can run until you save a new API key in Settings.\" The refused case reuses the limit template unchanged. The reply's \"start\" also has no backing in chat itself. Chat's own `startBlocked` port (compose.ts:4809-4833) never passes the credential wait, even though its comment at :4808 says it \"refuses in words what the Start dialog refuses\". So \"start a session\" in chat is read back, the person says yes, and chat replies \"Started a session ...\" while that session ends at once to wait and runs nothing.",
+    "where": "packages/runtime/src/session/credential-words.ts:345 (the sentence at :349); called at packages/runtime/src/conversation/agent.ts:1355 (question held before any call) and :2236 (held after the first 401); the related chat start port is at packages/runtime/src/daemon/compose.ts:4809-4833",
+    "fix_sketch": "1. Make `chatHoldReply` depend on the reason. For a refusal: \"Anthropic refused your API key, so I have not answered. Save a new key in Settings; until then I can still add and change tasks.\" For a refused subscription, the same sentence with \"Sign in again in Settings\". For a limit, share or monthly cap, mention starting only where a start is actually kept: \"... I can still add and change tasks; a Start now runs at 15:40.\" Optionally put the save link on the reply view the way `oneOff` is carried, so chat shows \"Save a new key\" like the header and the Start dialog.\n2. Sibling fix: have chat's `startBlocked` port in compose.ts pass the refused credential wait, as the dialog's check does at server.ts:1655. Then \"start a session\" in chat answers \"Nothing can run until you save a new API key in Settings.\" instead of a read-back and \"Started a session\".\n3. Update design §3.9 States (core-experience.md:252), user-guide.md:1082, docs/maintainers/runtime.md, and the unit expectation in credential-refusal.test.ts.",
+    "failing_test_idea": "On the composed runtime (packages/runtime/test/chat-credential-hold.test.ts, or a refused-key case in apps/ui/test/real-daemon.test.ts): policy key_only, and the only credential is a refused API key. POST /chat with projectTab and \"What is next on this project?\". Assert that the reply equals the new refused sentence: it names \"Save a new key in Settings\" and does not contain \"start\". In the same test, assert that GET /projects/:id/start-check gives blocked.sentence === \"Nothing can run until you save a new API key in Settings.\" with no `startable`, so the two screens agree. Add a second case: chat \"start a session\" gets the dialog's sentence, not \"Start a session on ... ?\". A ChatTab UI test should assert the visible reply text. Today the first assertion fails: the reply is \"Anthropic refused your API key, so I have not answered. I can still add, move and start tasks.\"",
+    "area_hint": "d1109-cred-engine (owns credential-words.ts chatHoldReply and the agent.ts hold, item CE-9); d1109-cred-screens if the reply gets a \"Save a new key\" link",
+    "known_leftover": "",
+    "notes": "The finding reproduces on the stand-in (start.mjs --provider bench-api --api-key refused, ports 49098/2698, policy key_only, one ready task; bench stopped afterwards; evidence in /tmp/frbench/v-l4creds3/walk.json):\n- Both chat questions got \"Anthropic refused your API key, so I have not answered. I can still add, move and start tasks.\" The first was held after its 401 (the stand-in logged exactly one /v1/messages 401), the second before any call.\n- GET start-check: blocked \"Nothing can run until you save a new API key in Settings.\" with the action \"Save a new key\" and no `startable`.\n- Chat \"start a session\" was read back as \"Start a session on Field notes ... (up to CHF 5)?\". After \"yes\" it replied \"Started a session on Field notes ... (up to CHF 5).\", yet the task row reads \"Waits for a new API key\" and the Sessions list shows count 0 (a sibling of L4-creds-1).\n- A second \"start a session\" got \"Your session of 11:35 goes on by itself once its Claude credential is back.\"\n\nSo chat's \"start tasks\" only keeps a session that waits and runs nothing, and the Start dialog refuses the same start. The model plays no part.\n\nSeverity \"words\" fits the hold reply. The sibling, chat's start reading back and saying \"Started a session\" while the dialog refuses, is closer to minor (no promise the code does not keep, design §5 rule 9). No leftover names this finding. C5L-C3-left-4 (leftovers-C5.json) is related but different: chat's session.start under a resting credential is not kept for the reset the way the dialog's Start is. It covers neither the hold reply's words nor the refused case."
+   }
+  },
+  {
+   "key": "live4:L4-creds-7",
+   "finding": {
+    "id": "L4-creds-7",
+    "severity": "words",
+    "title": "Garbled and doubled words in notifications, the plan card and next to Cancel",
+    "step": "LC-C24",
+    "what_the_person_sees": "'Quote page: did 4 tasks: \"Build the…\" and 2 more and 1 more'. A session_ended body that says both 'The card is in the Inbox.' and '... Answer it in the Inbox.' A plan-card task line 'Press Start and the work starts then.' next to 'Approve and start: ... starts working on them now'. And beside every waiting Cancel: 'Nothing starts when Claude is back; its tasks wait for your Start.' right after 'waiting until 08:26, then it goes on' (it explains Cancel but reads as a contradiction).",
+    "expected": "One count, one pointer, and actions named as the buttons read them (design section 5).",
+    "evidence": "GET /notifications/recent in /tmp/frbench/live4/creds/cs-evidence/c24c.json and c24e.json; plan cards in c24b.json; /tmp/frbench/live4/creds/cs/steps/13-c24-inbox-ask-card.png",
+    "repro": "Same as L4-creds-4.",
+    "journey": "creds",
+    "pass": 1
+   },
+   "verdict": {
+    "id": "L4-creds-7",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "Three of the four sub-claims come from the code. I reproduced the two notification texts exactly by running `sessionEnded` from the 4cf11fd checkout under tsx (script at /tmp/frbench/verify-L4-creds-7/repro.ts).\n\n(1) \"and 2 more and 1 more\": the session result's first line is built by `namesOf` (packages/runtime/src/session/recovery.ts:39-44). In the evidence it reads 'Did 4 tasks: \"Build the quote…\", \"Check the page's…\", \"Make the quote selection test…\" and 1 more.' The title is too long for 60 characters, so `fit()` in packages/runtime/src/notifications/producers.ts:124-145 rebuilds the quoted list with fewer names. It writes `nameList(names.slice(0, keep), names.length - keep)` and then appends `text.slice(end)`, the text after the last quote. That tail still holds the old \" and 1 more\", so both counts are printed. Reproduced output: 'Quote page: did 4 tasks: \"Build the…\" and 2 more and 1 more'. Any session that finishes four or more tasks with long titles hits this.\n\n(2) Doubled pointer: under 'ask', `waitSentence` (packages/runtime/src/session/credential-wait.ts:292) writes \"Waits for your answer: use your API key? The card is in the Inbox.\". `splitResult` (producers.ts:262-279) puts the question in the title and starts the body with \"The card is in the Inbox.\". `sessionEnded` (producers.ts:321-329) then sets `asks` because a news line mentions \"Inbox\", and `bodyOf` adds \"Answer it in the Inbox.\" on top. Reproduced output: \"The card is in the Inbox. 1 task waits on other tasks. CHF 0.00. Answer it in the Inbox.\" Without `news`, the same body ends in \"Open the session for the details.\", which is still two pointers.\n\n(3) Plan-card line: the credential chooser in compose.ts:4180-4185 gives every resting credential the line from `waitThenStartSentence` (credential-wait.ts:342-350). That line ends with the constant PRESS_START_THEN (credential-wait.ts:320) and is written for New task. The plan card has no Start button; its button is \"Approve and start\". In c24b, pressing it started the session at once, which then waited (\"waiting until 08:26, then it goes on\") and filed the ask card. So \"Press Start\" names a button that is not on the card, and \"the work starts then\" contradicts what the button does. Leftover C6L-8 already names this.\n\n(4) The text next to Cancel is not a defect in the app as rendered. It is `CANCEL_WAIT_EXPLAIN` (packages/runtime/src/daemon/run-wait-words.ts:8-9), shown by `CancelWait` (apps/ui/src/shell/RunIndicator.tsx:219-229). This is the intended form from d1109-run-visible V-2/V-5, and the owner decided on \"Waiting until 15:40, then it goes on, with Cancel\". In screenshot 13 it sits right-aligned and directly against the Cancel button, far from \"waiting until 08:26, then it goes on\". It only reads as a contradiction in the flattened text dump. At most it is a wording nit, because the sentence does not name Cancel.",
+    "where": "packages/runtime/src/notifications/producers.ts:136-141 (fit: tail after the list keeps the old \"and N more\"); packages/runtime/src/notifications/producers.ts:321-329 (sessionEnded adds \"Answer it in the Inbox.\" to a body that already says \"The card is in the Inbox.\"); packages/runtime/src/session/credential-wait.ts:292 (the wait sentence carries its own pointer); packages/runtime/src/daemon/compose.ts:4184 with packages/runtime/src/session/credential-wait.ts:320,342-350 (the plan card gets New task's \"Press Start\" line); apps/ui/src/shell/RunIndicator.tsx:219-229 with packages/runtime/src/daemon/run-wait-words.ts:8-9 (the text beside Cancel; designed)",
+    "fix_sketch": "(1) In producers.ts `fit()`: when the listed names are followed by /^ and (\\d+) more/ in `text.slice(end)`, add that number to the dropped count (`names.length - keep + n`) and remove the match from the tail. One count then remains: '\"Build the…\" and 3 more'. Do the same in any other caller that rebuilds a list from `quotedNames`.\n\n(2) In `sessionEnded`: when `first` or `rest` already has an Inbox pointer, drop the sentence \"The card is in the Inbox.\" from `rest` and keep the one action. Alternatively, keep the sentence and pass no action. Either way the body points to the Inbox once.\n\nBetter still, treat the ask-wait line as already told by its card in the runner's `news` filter. The ask card's urgent request_blocking notification went out 9 ms earlier, at 06:47:11.532 against 06:47:11.541, so under design §4.3 this session_ended is an echo.\n\n(3) Give the chooser line a context: `waitThenStartSentence(wait, {..., on: \"plan\" | \"new_task\"})`. On the plan card it should name the card's own button. Under 'then wait': \"Waits until 08:26 (your subscription's limit); Approve and start keeps it for then.\" Under 'ask': \"...; Approve and start asks before your API key is used.\" New task keeps \"Press Start...\". This is C6L-8.\n\n(4) Optional: make the text beside Cancel name the button, for example \"Cancel: nothing starts when Claude is back; its tasks wait for your Start.\" The owner-decided indicator itself stays as it is.",
+    "failing_test_idea": "At the daemon boundary, with the composed real daemon and the stand-in provider, in packages/runtime/test/notifications-voice.test.ts or notifications-wiring.test.ts:\n\n(a) A session finishes 4 tasks with titles of 40 or more characters. GET /notifications/recent: the session_ended title matches /and \\d+ more/ exactly once and never /more and \\d+ more/. Expected: 'Quote page: did 4 tasks: \"Build the…\" and 3 more'. This fails today with \"and 2 more and 1 more\".\n\n(b) Policy subscription_then_ask, subscription limited, Start pressed. The session ends waiting for the ask card. GET /notifications/recent: no notification body contains \"Inbox\" twice. Better: no session_ended at all next to the ask card's request_blocking, since the person hears once.\n\n(c) In apps/ui real-daemon.test.ts, under 'ask' (or 'then wait') with the subscription resting, open the plan card in the Inbox. A task's runs-on line must not contain \"Press Start\", because the card's only start button is \"Approve and start\". It must name \"Approve and start\" or say what that button does.",
+    "area_hint": "Small fix area \"notification-words\" for (1) and (2): packages/runtime/src/notifications/producers.ts fit/sessionEnded, and the runner's news filter for the ask-wait line. No run C area owns producers.ts. (3) belongs to d1109-cred-screens: the plan card's chooser line, compose.ts:4184 and credential-wait.ts waitThenStartSentence. (4), if done at all, is d1109-run-visible: RunIndicator CancelWait and run-wait-words.ts.",
+    "known_leftover": "C6L-8",
+    "notes": "Sub-claim verdicts: (1) title \"and 2 more and 1 more\": real, reproduced exactly by running sessionEnded on the live summary text. (2) session_ended body with \"The card is in the Inbox. ... Answer it in the Inbox.\": real, reproduced exactly. (3) plan card \"Press Start and the work starts then.\" beside \"Approve and start: ... starts working on them now\": real, and C6L-8 already names it. (4) The sentence beside Cancel is the designed form (V-2/V-5, C5L-11). In the screenshot it sits next to the Cancel button, so it reads as a contradiction only in the text dump. I would not count it, except perhaps as an optional \"Cancel:\" prefix.\n\nC6L-8 covers only sub-claim (3); no leftover names (1) or (2).\n\nA separate observation, outside this finding: the ask card's request_blocking notification says \"Use your API key until 07:26?\" while the Inbox card says 08:26. `requestOpened` (producers.ts:186-190) calls requestWords without `credentialAsk`, and askCard (request-words.ts:1393) needs it to get the person's timezone, so the notification shows UTC. That is worth its own check if no other L4 finding has it.\n\nI did not need the bench: the code at 4cf11fd and the tsx run reproduce the texts byte for byte. Nothing in the checkout was edited.\n\nEvidence: /tmp/frbench/live4/creds/cs-evidence/c24b.json, c24c.json and c24e.json, and /tmp/frbench/live4/creds/cs/steps/13-c24-inbox-ask-card.png. Repro script: /tmp/frbench/verify-L4-creds-7/repro.ts."
+   }
+  },
+  {
+   "key": "live4:L4-github-6",
+   "finding": {
+    "id": "L4-github-6",
+    "severity": "words",
+    "title": "The refusal reply names the tool: 'open Site with a project switch'",
+    "step": "LC-C3, the reply to 'make a new project for bench/seeded called Shop'",
+    "what_the_person_sees": "'You can open Site with a project switch, or add the work to it as new tasks.'",
+    "expected": "'You can open Site, or add the work to it as new tasks.' (no command names, design section 5 rule 6)",
+    "evidence": "evidence/d01-make-shop.json reply text. The project.create tool description says 'open it with project.switch'.",
+    "repro": "LC-C3 turn 1 (these are the model's words and may vary).",
+    "suspected_cause": "packages/commands/src/commands/project.ts: the project.create description invites the model to name project.switch.",
+    "journey": "github",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-github-6",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "The words were written by the real model (claude-haiku-5-5, evidence d01-make-shop.json), but the app's own tool definition led it there. The refusal sentence the tool sent back is fine: inUseSentence in packages/runtime/src/sources/repository-words.ts:131 gives 'bench/seeded is already the project \"Site\". Open it, or add this to it as new work.' The problem is PROJECT_CREATE_DESCRIPTION in packages/commands/src/commands/project.ts:275. It tells the model what to offer and puts a command name inside that offer: 'then offer that project instead (open it with project.switch, or add the new work to it)'. The reply copies the description almost word for word. 'one repository can only belong to one project' comes from 'One repository or folder is one project', and 'open Site with a project switch' comes from 'open it with project.switch'. 'project.switch' is not even the tool name the model sees (it sees project_switch, see apps/ui/test/real-daemon.test.ts:18099), so the model turned it into the phrase 'a project switch'. Nothing in the chat's system prompt stops tool or command names from reaching the person either: evals/registry/principals/conversation-agent.md 'How you answer' (line 58ff) bans ids and raw statuses but says nothing about tool names, and CHAT_PLAN_RULES 'How to write' (packages/runtime/src/conversation/agent.ts:660ff) only bans markdown. This breaks design section 5 rule 6 (plain words, no module names).",
+    "where": "packages/commands/src/commands/project.ts:275",
+    "fix_sketch": "1) Rewrite PROJECT_CREATE_DESCRIPTION so the person-facing offer has no tool name in it, and the tool hint uses the name the model actually sees, as a separate sentence. For example: '...this is refused with that project's name. Then offer that project in plain words (\"You can open Site, or add the work to it as new tasks.\"), never a second project; if the person chooses to open it, call project_switch.' 2) Add one line to conversation-agent.md 'How you answer' (and bump its version): 'Never name a tool or command (project_switch, settings_set) to the person; say what it does (\"open Site\").' The same line could go into CHAT_PLAN_RULES' 'How to write' so it holds whatever the role prompt is. 3) Update the pinned strings in packages/commands/test/onerepo-link.test.ts:78 and apps/ui/test/real-daemon.test.ts:18101, and the description in docs/maintainers/commands.md:669-671.",
+    "failing_test_idea": "The words come from a model, so the nearest boundary that does not depend on a model is the chat call as the model receives it, in the real-daemon case at apps/ui/test/real-daemon.test.ts:~18099 ('tool: project_create {...repos:[O/site]}'). Assert that the project_create definition in chatCalls[0].tools has no dotted command name (no match for /\\b[a-z]+\\.[a-z_]+\\b/, no 'project.switch'), and that any tool it names uses a name from chatCalls[0].tools (project_switch). Assert that chatCalls[0].system has the 'never name a tool or command to the person' rule. Both fail today. Optional: a live-harness or eval case (not run here) with the line 'make a new project for bench/seeded called Shop' that checks the reply has no 'project switch', 'project.switch' or 'project_switch'.",
+    "area_hint": "d1109-onerepo-link",
+    "known_leftover": "",
+    "notes": "I checked this against the code at 4cf11fd and did not run the stand-in bench: the stand-in plays scripted words and cannot show this model's wording. The phrase appears only once in /tmp/frbench/live4 (d01, LC-C3 turn 1), so the model may word it differently on another run. Still, the reply follows the description clause by clause, which is why I count it as real rather than model alone. No leftover file names it. The nearest are C2's CL-2 (the chat together hint) and CL-8 (hardcoded github.com), which are different issues."
+   }
+  },
+  {
+   "key": "live4:L4-creds-10",
+   "finding": {
+    "id": "L4-creds-10",
+    "severity": "major",
+    "title": "Claude Code's refused sign-in is filed as a failed task, not as a refusal: no refused card, the subscription stays 'Works now', and chat asks it again",
+    "step": "LC-C22",
+    "what_the_person_sees": "After Start with an expired or invalid subscription token, the Inbox shows '\"Write notes/pond.md\" failed' / 'What failed: The run failed: Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token is invalid.' with Try again / Mark done anyway / Cancel task. There is an urgent notification '... failed', and the task is Failed. Settings still says 'Claude subscription · Does the work · Works now'. Chat answers 'I could not answer (model call failed).' with 'Think it through ... at most CHF 0.03'. Nothing tells the person the sign-in was refused or that a new one must be saved.",
+    "expected": "Claude Code's authentication_failed is read as a refusal (CE-8, LC-C22). The person gets one card 'The sign-in has expired or was signed out. Save a new one in Settings; until then the work waits.' The task waits for a new sign-in instead of failing. The subscription row reads refused, chat gives its hold reply, and no further request goes to the subscription.",
+    "evidence": "daemon.log: 'ERROR [agent-sdk] sdk run failed {error: \"Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token is invalid.\"}'. limits.subscription = {planShareCap, planUsdMicro}, with no refusedAt. Proxy ids 3-6: chat's 4 x 'POST /v1/messages?beta=true 401 authentication_error OAuth access token is invalid.' after the run's refusal. SDK probe output: '{type:\"system\",subtype:\"api_retry\",error:\"authentication_failed\"}' x2, '{type:\"assistant\",error:\"authentication_failed\",text:\"Failed to authenticate. API Error: 401 OAuth access token is invalid.\"}', '{type:\"result\",subtype:\"success\",is_error:true}', 'ITERATOR THREW after 2650 ms: Claude Code returned an error result: ...'. Screenshots /tmp/frbench/live4/creds/c22/steps/09-c22-inbox-after-refusal.png, 11-c22-settings-after-refusal.png, 12-c22-chat-question.png.",
+    "repro": "Save both credentials, with the subscription token invalid or expired (the bench's --subscription token reaching the real API through scripts/proxy-fwd.mjs --forward-subscription; bench started with scripts/start-clean.sh). Choose 'Subscription first, then wait'. Create a project with one ready task and press Start. Read the Inbox, Settings and the request log, then ask chat a question.",
+    "suspected_cause": "Agent SDK 0.3.304 replaces Claude Code's exit error with a thrown 'Claude Code returned an error result: <text>' after it has yielded the assistant error and the error result. packages/runtime/src/agent/sdk.ts (the refusal mapping after the for-loop, around lines 586-604; catch around 606) and packages/runtime/src/provider/claude-code.ts (mapping around lines 182-186; catch at 195) only map authentication_failed and the 401 result text when the loop ends normally. Their catch blocks make the throw 'internal' or 'provider_error'. The tests' fake query ends the stream normally. The same throw probably hides Claude Code's billing_error/rate_limit (the subscription's usage limit, CE-5) on the real SDK.",
+    "journey": "creds",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-creds-10",
+    "real": true,
+    "model_only": false,
+    "severity": "major",
+    "root_cause": "Agent SDK 0.3.304's Query.readMessages queues every message first: the assistant error (error:\"authentication_failed\") and the result (is_error:true, result \"Failed to authenticate. API Error: 401 ...\"). When Claude Code then exits non-zero, it fails the input stream with `Error(\"Claude Code returned an error result: <result text>\")`. In the bundled sdk.mjs, `lastErrorResultText` is set for any is_error result, so this replaces the exit error, and iterator.next() rejects after the last message. Forerunner's two consumers only read a refusal correctly when the loop ends normally.\n(1) SDK driver, packages/runtime/src/agent/sdk.ts. handle() does read the result as provider_auth (lines 482-490, since isClaudeCodeRefusal(null, said) matches \"API Error: 401\"). The for-loop at 572-581 then throws, so the post-loop sdkError mapping (usage limit, then authentication_failed, 583-605) never runs. The catch at 606-632 overwrites `error` with code \"internal\" (the thrown Error is not a ForerunnerError) and logs \"sdk run failed\". That is exactly the daemon.log line.\n(2) Chat provider, packages/runtime/src/provider/claude-code.ts. The post-loop errorFromSdk mapping (182-186) is skipped. The catch at 195-207 yields provider_error \"Claude Code could not answer: Claude Code returned an error result: ...\".\nDownstream, executor.ts:1755-1759 treats only provider_auth as credentialStop \"refused\", so the run and task read Failed and a failed-task card is filed. routed.ts:287 refuses a source only on provider_auth, so limits.subscription never gets refusedAt: no refused card, Settings still says \"Works now\", and every chat call still goes to the subscription.\nThe tests' fakes all end the stream normally: cred-world.ts refusedReply, subscription-path.test.ts:520-535 and claude-code-provider.test.ts:156-163. So the gap never showed.\nReproduced at 4cf11fd without the real API. I ran the real SDK 0.3.304 and Claude Code against a local fake server that answers 401 authentication_error. It yielded init, api_retry x2, the assistant error and the is_error result, then threw. SdkAgentDriver.run with that real query returned {outcome:\"error\", error:{code:\"internal\", message:\"Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token is invalid.\"}}. The same messages with no throw at the end return provider_auth. ClaudeCodeProvider.stream returned {code:\"provider_error\", message:\"Claude Code could not answer: Claude Code returned an error result: ...\"}.",
+    "where": "packages/runtime/src/agent/sdk.ts:606 (catch overwrites the provider_auth set at 487-489 and skips the mapping at 583-605); packages/runtime/src/provider/claude-code.ts:195 (catch yields provider_error and skips errorFromSdk at 182-186)",
+    "fix_sketch": "1. Put the stream's verdict in one place, per consumer, and apply it whether the stream ends normally or throws.\n2. In sdk.ts, wrap the iterator.next() race in its own try. If it rejects after the stream already reported a failure (sdkError set, or an is_error result seen), mark exited=true and fall through to the existing mapping (usage limit, then refusal) instead of the outer catch. Keep the error handle() set from the result: today provider_auth, and budget_exceeded for error_max_budget_usd, which the catch also turns into a plain error.\n3. As a fallback for a throw with no such message, classify the thrown text: strip the \"Claude Code returned an error result: \" prefix and test it with isClaudeCodeRefusal(null, text) and the usage-limit text check. A bare 401 in a run's own output must still not count (the REFUSED_TEXT rule stands).\n4. In claude-code.ts, catch the iterator error in the same way. If sdkError or failure is already set, yield errorFromSdk(sdkError.kind, sdkError.text, rejected) or failure. Otherwise map the thrown text the same way before falling back to provider_error. Never put the token in the text.\n5. Change the test fakes (cred-world refusedReply, subscription-path, claude-code-provider and the usage-limit fakes) to throw after the result, as SDK 0.3.304 does. Add one contract test that runs the real SDK against a local 401 stand-in, so the next SDK bump cannot bring this back.\n6. Check the siblings the same throw likely hides: Claude Code's billing_error and rate_limit at the plan limit (CE-5, ADR 0100: rest, not Failed) and error_max_budget_usd (a budget stop, not Failed).",
+    "failing_test_idea": "A composed cred-world test at the person's boundary:\n- Setup: both credentials saved, policy \"Subscription first, then wait\", one ready task.\n- Claude Code fake: yields init, then {type:\"assistant\", error:\"authentication_failed\", text \"Failed to authenticate. API Error: 401 OAuth access token is invalid.\"}, then {type:\"result\", subtype:\"success\", is_error:true, result: same}. Then it throws Error(\"Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token is invalid.\"), as SDK 0.3.304 does.\n- Press Start. Expect exactly one Inbox card reading \"The sign-in has expired or was signed out. Save a new one in Settings; until then the work waits.\" Expect no failed-task card and no \"... failed\" notification. The task waits (not Failed). The Run row is credential_refused, limits.subscription.refusedAt is set, and the policy row for the subscription reads refused, not \"Works now\".\n- Then ask chat a question. Expect the hold reply and no new Claude Code call (the call count is unchanged).\n- Today, with the throw, the card is the failed-task card, the task is Failed, the row reads \"Works now\" and chat calls Claude Code again.\nA unit sibling in claude-code-provider.test.ts: the same throwing fake must yield provider_auth, not provider_error.",
+    "area_hint": "d1109-cred-engine (CE-8 refusal handling; the SDK driver and the Claude Code provider)",
+    "known_leftover": "",
+    "notes": "I checked the evidence against what the person saw:\n- The Inbox text dump (09-...txt) shows the failed-task card with \"Claude Code returned an error result: ...\".\n- c22.json and the Settings dump show the subscription row \"Does the work / Works now\".\n- Proxy log ids 3-6 (09:01:41-42) are chat's calls: two Claude Code queries of two calls each, all 401. Ids 8-11 are the hand probe.\n\nSide observation, not this finding: the task run's own Claude Code calls are missing from the bench proxy log. config.anthropicApiBase reaches only ClaudeCodeProvider and AnthropicMessagesProvider (compose.ts:1869/1882), never the SDK driver's req.baseURL. So on the bench, task runs go straight to api.anthropic.com. A person on the default base is not affected, but bench request logs leave out task runs.\n\nSeverity is major, not blocker. Nothing is lost and a 401 costs nothing. But on the real SDK every expired or revoked subscription sign-in gives a Failed task with the wrong card, no refused state, and chat keeps calling the refused subscription. Under \"then API key\" it also does not move on to the key. This defeats CE-8 and owner decision c) for the subscription.\n\nThe usage-limit and max-budget siblings are inferred from the SDK code: lastErrorResultText is set for any is_error result. They were not reproduced here.\n\nScratch files are in /tmp/frbench/verify-L4-creds-10: fake401.mjs, probe.mjs, provider-probe.mts, runner-probe.mts. The local 401 stand-in on port 49091 is stopped."
+   }
+  },
+  {
+   "key": "live4:L4-creds-11",
+   "finding": {
+    "id": "L4-creds-11",
+    "severity": "minor",
+    "title": "Chat's one-off 'Use API key' keeps the question twice in the conversation (C6L-6)",
+    "step": "LC-C25",
+    "what_the_person_sees": "'What should I do next here?', then 'Your Claude subscription is at its limit until 10:59, so I have not answered. I can still add, move and start tasks.', then 'What should I do next here?' again, then the answer. The question is still there twice after a reload.",
+    "expected": "One press answers the held question in place, so the question shows once (C6L-6).",
+    "evidence": "c25.json b.questionShown = 2 and b.questionShownAfterReload = 2. c25-proxy/bodies/5-req.json: the one-off request's messages hold the question twice, with the hold reply between as the assistant turn. Screenshot /tmp/frbench/live4/creds/c25/steps/12-c25-b-chat-after-reload.png.",
+    "repro": "Save both credentials, choose 'Subscription first, then wait', with the subscription at its limit. Ask chat a question, press Use API key under the hold reply, then reload the Chat tab.",
+    "suspected_cause": "Conversation.tsx onOneOff calls send(t.said, {oneOff: true}), which stores the question again as a new person line. The C6 fix-up called it a display duplicate, but it is stored and sent to the model.",
+    "journey": "creds",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-creds-11",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The one-off press is a brand-new chat turn carrying the same text, not an answer to the held turn. (1) apps/ui/src/components/Conversation.tsx:311 handles the press as `send(t.said, { oneOff: true })`, which also draws a second person bubble. (2) packages/runtime/src/conversation/agent.ts:1082-1088 reads `earlier`, which already holds the held turn, then writes a new `chat.human` for every request; oneOffSwitch does not change this, so the transcript and conversation view hold the question twice, also after a reload. (3) The held turn was stored as an ordinary turn whose reply is the hold reply (agent.ts:1349-1373, notice:true with oneOff). (4) historyMessages (packages/runtime/src/conversation/transcript.ts:374-401, replyInHistory at 354) does not skip notice or hold replies, and agent.ts:1605-1607 passes `earlier` in whole. So the model gets: user question, assistant \"so I have not answered\", user question again. The proxy body /tmp/frbench/live4/creds/c25-proxy/bodies/5-req.json shows exactly this. C6L-6's description as \"a display duplicate\" is wrong: the extra line is stored and sent to the model. The answer was correct and booked once on the key, so the harm is a visible duplicate that survives a reload plus a few tokens of misleading model context. That makes it minor, not major.",
+    "where": "apps/ui/src/components/Conversation.tsx:311; packages/runtime/src/conversation/agent.ts:1082-1088 (chat.human written for the one-off too), agent.ts:1349-1373 (held turn stored), agent.ts:1605-1607 + packages/runtime/src/conversation/transcript.ts:374-401 (hold reply goes into the model history)",
+    "fix_sketch": "Let the press answer the held turn in place. (1) Screen: Conversation.tsx onOneOff sends the held turn's id, e.g. `send(t.said, { oneOff: true, heldTurn: t.id })`. The live answer renders under that turn with no second person bubble. (2) Daemon: add `heldTurn` to the chat request (api-types.ts, server.ts:2684/2713, agent.ts). When the newest turn in `earlier` is that held turn and its reply is a hold reply with the one-off: write no new chat.human; write the answer as a chat.reply for the held turn's transcriptId, so readTranscript keeps it in place of the hold reply; build the model history from `earlier` without that held turn, so the question goes to the model once. (3) Separately, historyMessages skips hold replies (a notice with oneOff), since the model never wrote them. (4) The fake daemon (apps/ui/test/fake-daemon.ts) does the same.",
+    "failing_test_idea": "UI, apps/ui/test/credential-chat.test.tsx (Chat tab and Talk): after pressing Use API key and getting the answer, the question text appears exactly once in the thread; after remounting the screen (the reload) it still appears once, and the hold reply line is gone. Real daemon, apps/ui/test/real-daemon.test.ts CS-8 at the stand-in model: after `client.chat({ text: \"what is next?\", oneOff: true })`, the turns from `client.conversation(null)` contain \"what is next?\" exactly once; the stand-in's last POST /v1/messages body has \"what is next?\" in exactly one user message; that body has no assistant message containing \"so I have not answered\". Both fail today: the existing tests check only that two requests are sent (credential-chat.test.tsx:62) and that the key is used once.",
+    "area_hint": "d1109-cred-screens (C6; built the press as CS-8, where C6L-6 comes from). The daemon half is in d1109-cred-engine's chat hold (CE-9, agent.ts).",
+    "known_leftover": "C6L-6",
+    "notes": "Reproduced from the code plus the live evidence; no stand-in run was needed because the path is deterministic. Evidence: c25.json shows questionShown = 2 and questionShownAfterReload = 2. The screenshot 12-c25-b-chat-after-reload.png shows the question, the hold reply, the question again, then the answer. Proxy body 5-req.json shows the question twice in the model's messages with the hold reply between as the assistant turn. C6L-6 already names the display duplicate, but its severity should go from words to minor and its \"display duplicate\" note be corrected, since the line is stored and sent to the model. ADR 0120 point 5 says the press answers \"that one question\"; nothing in the design calls for a second person line."
+   }
+  },
+  {
+   "key": "live4:L4-creds-12",
+   "finding": {
+    "id": "L4-creds-12",
+    "severity": "minor",
+    "title": "Costs shows 'By credential: Your API key: CHF 0.00' beside 'Total spend: less than CHF 0.01' for the same calls",
+    "step": "LC-C25",
+    "what_the_person_sees": "After three chat answers on the key (CHF 0.002), Total spend reads 'less than CHF 0.01' and By model reads 'less than CHF 0.01', but By credential reads 'Your API key: CHF 0.00'. That line reads as if nothing was charged to the key.",
+    "expected": "The same amount is written the same way on one screen, so the key's line reads 'less than CHF 0.01'.",
+    "evidence": "c25.json costsEnd: 'Total spend\\nless than CHF 0.01 ... By credential\\nYour API key: CHF 0.00 ... claude-haiku-5-5\\t3 ... less than CHF 0.01'. Ledger: 3 rows of kind api, chf_micro 1665+181+189. Screenshot /tmp/frbench/live4/creds/c25/steps/13-c25-costs-end.png.",
+    "repro": "Ask chat a few questions on the API key, then open the project's More > Costs.",
+    "journey": "creds",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-creds-12",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "The daemon writes the \"By credential\" sentence from formatChf alone and never applies the app's money rule (W14-6, moneyWords). That rule says an amount above zero never reads \"CHF 0.00\". In GET /costs, views.ts builds each byCredential row's `words` as costByCredentialWords(kind, formatChf(cost.chfMicro), share), and the \"Not tied to a credential\" line uses `${formatChf(cost.chfMicro)}`. formatChf(2035 micro) is \"CHF 0.00\". The UI's CostsTab.tsx:162 prints `c.words` exactly as sent. Total spend and the By model, By specialist and By task cells all go through the UI's <Money>, i.e. formatMoney -> chfWords, which reads \"less than CHF 0.01\". So one screen shows the same 2035 micro CHF two ways. The joinedSpend line just above in the same function (views.ts:1309) already wraps its amount in moneyWords; the byCredential lines were left out. I reproduced it on the base code: costByCredentialWords(\"api_key\", formatChf(1665+181+189), null) gives \"Your API key: CHF 0.00\", and moneyWords on the same amount gives \"less than CHF 0.01\". The live evidence agrees: the steps 09 and 13 text captures show both strings on one Costs screen, and the ledger has three api rows at 1665, 181 and 189 chf_micro. The tests encode the bug instead of catching it. packages/runtime/test/credential-switch.test.ts:166 expects `Your API key: ${formatChf(...)}`. apps/ui/test/real-daemon.test.ts:22599 checks /^Your API key: CHF \\d+\\.\\d\\d$/, which \"CHF 0.00\" passes, and its only case books CHF 1.20. The subscription regex at credential-switch.test.ts:167 allows \"less than CHF 0.01\", but the code can never produce it. Severity: I put it at words, not minor. It is one sentence breaking a wording rule: the figure is right after rounding, nothing is charged or routed wrongly, and it shows only while a credential's spend is under a centime. It still contradicts the total beside it on the screen that is meant to show what the key paid (CS-9), so fix it in the next words batch.",
+    "where": "packages/runtime/src/daemon/views.ts:1344-1345 (byCredential words from bare formatChf); shown as-is by apps/ui/src/pages/project/CostsTab.tsx:162; wording function packages/runtime/src/daemon/credential-policy-view.ts:456-466",
+    "fix_sketch": "In views.ts, in the byCredential map, set `const chf = moneyWords(formatChf(cost.chfMicro), cost.chfMicro);` (moneyWords is already imported at views.ts:52). Then use `Not tied to a credential: ${chf}` and costByCredentialWords(kind, chf, share). This yields \"Your API key: less than CHF 0.01\" and \"Your Claude subscription: less than CHF 0.01 (estimate, 3% of its allowance)\", which matches what credential-words.ts:354 already does (\"less than\" stands alone, no \"about\"). Update credential-switch.test.ts:166 to expect moneyWords(formatChf(x), x). Tighten the real-daemon regex so it no longer accepts \"CHF 0.00\" for an amount above zero. Update the fake daemon (apps/ui/test/fixtures.ts or the fake client's costs) if it builds these words itself. Touch docs/maintainers for the cost view (CS-9 words) as AGENTS.md requires.",
+    "failing_test_idea": "In apps/ui/test/real-daemon.test.ts, add a CS-9 case beside the existing one. On composeCs, insert three cost_ledger rows of kind 'api' on the API key's billing source with chf_micro 1665, 181 and 189 (usd 2081, 226, 236). Read client.costs({}) and render <CostsTab> against that real daemon. Expect the cost-by-credential item to read exactly \"Your API key: less than CHF 0.01\", the same as the cost-total text (\"less than CHF 0.01\"). Also expect no text matching /CHF 0\\.00/ anywhere in the costs section. Today it reads \"Your API key: CHF 0.00\". Add a matching unit case in packages/runtime/test for a subscription row under a centime (\"Your Claude subscription: less than CHF 0.01 (estimate, ...)\") and for the 'other' row.",
+    "area_hint": "d1109-cred-screens (CS-9 Costs 'By credential')",
+    "known_leftover": "",
+    "notes": "No leftover in L3, C2, C3, C4, C4b-design, C4b, C5 or C6 names this; the closest is C6L-3, which is about three different estimate figures, not this. Earlier fixes applied the rule (moneyWords) to joinedSpend and to the savings box (L3-run-13) but not to the byCredential rows added later. The subscription and 'Not tied to a credential' lines have the same gap. I did not need the bench: a direct call of the base code's functions on the ledger's own amounts gives the wrong string, and the live capture at /tmp/frbench/live4/creds/c25/steps/13-c25-costs-end.txt shows it on screen (as does step 09 after two answers)."
+   }
+  },
+  {
+   "key": "live4:L4-l3-11",
+   "finding": {
+    "id": "L4-l3-11",
+    "severity": "minor",
+    "title": "Merge pressed ~1 s after a push answers 'Merging #62.', then refuses 4 s later",
+    "step": "LC-L3 / L3-github-3",
+    "what_the_person_sees": "'Merging #62.' then the row reads '#62 changed after the review ...'. Nothing is merged.",
+    "expected": "The red line at once.",
+    "evidence": "g3-pushC-pressC.json: press answer 1032 ms {state: queued}",
+    "repro": "With the Overview open, push a commit to an accepted PR's branch, then press Merge within ~1 s.",
+    "suspected_cause": "GitHub's pull list was probably stale ~1 s after the push. A press at normal person speed was not retested.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-11",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The press checks for a moved head before it answers, but it compares the reviewed commit only with the head that GitHub's pull-request endpoints report. GitHub updates a pull request's head.sha in the background after a push, so for a moment after the push those endpoints still show the old head. The branch ref itself moves as soon as the push returns. On a pull request whose task builds on nothing gone, the press's only head check is pull-requests.ts:751-760. It reads `listed.find(...).head.sha` from the GET /pulls?state=open it just made (read() -> readView, pull-requests.ts:335). When that head equals reviewed_head_sha it does `continue` at line 757 and never calls headMovedNow. If the listing did have the new head, headMovedNow reads getPullRequest again (merge.ts:2094-2100, `moved = now?.head.sha || head`), which can be just as stale, and then returns null. Either way the press goes on to approveInOrder and answers {state: \"queued\", \"Merging #62.\"}. The background merge step reads getPullRequest again (merge.ts:363/378). By then GitHub has the new head, so it settles the record head_moved and the row shows the red line. Nowhere does the press read the branch ref (host.getBranchHead, already in the GitHost port). Timeline from the evidence: push 200 at 09:53:01.691Z. The press was clicked straight after it returned (press.cjs clicks right after act()); the ~1 s in the finding is how long the answer took, not the gap. The answer came at about 09:53:02.72. The daemon log has 'merge record ... left_to_you head_moved' at 09:53:04.256Z, and the screenshot taken just after the answer already shows '#62 is not merged yet: the row below says why.' So the refusal came about 1.5 s after the answer, not 4 s. Nothing wrong can merge: the final PUT pins sha (merge.ts:550). The harm is one contradicting answer.",
+    "where": "packages/runtime/src/daemon/pull-requests.ts:751-760 (head check on the listing's head.sha, skip at 757); packages/runtime/src/loop/merge.ts:2094-2100 (headMovedNow re-reads getPullRequest, which lags the same way)",
+    "fix_sketch": "Judge the press against the branch ref, which the push itself moves at once, not against the pull request's head as GitHub reports it. In ProjectPullRequests.merge (pull-requests.ts:751-760), for each chain task with a reviewed_head_sha, read `host.getBranchHead(ref, listedPr.head.ref)`. Take that head when it differs from the listing's head.sha, and call headMovedNow whenever either one differs from the reviewed commit. In headMovedNow (merge.ts:2094-2100), do not let a getPullRequest head equal to the reviewed commit override a newer head passed in from the branch read. Use the branch head when it is not the reviewed one, so that keepsOwnChange (GitHub's Update branch) and the rebuilt-by-Forerunner case still decide as they do today. This costs one extra GET per chain task per press. Leave the merge step's sha-pinned PUT as it is.",
+    "failing_test_idea": "In packages/runtime/test/dependent-branches-merge.test.ts (chainWorld), plus a real-daemon case in apps/ui/test/real-daemon.test.ts: give the fake git host a 'pull head lag' option, so a push moves refs/heads/<branch> at once but the pull request's head.sha keeps the old commit until a later read or clock tick. Today syncPullsForBranch in testenv/src/githost/ops.ts:296 updates it in the same step as the push, which is why the existing 'L3-github-3: Merge pressed...' case passes at the base. Run a task to accepted, push a commit to its branch with the lag on, then at once press Merge through POST /projects/:id/pull-requests/:n/merge, as the Overview's Merge does. Expect {state: 'refused', sentence: '#N changed after the review: look at the new commits, ...'}, nothing merged, the record left_to_you/head_moved and one card. At the base it answers {state: 'queued', sentence: 'Merging #N.'} and refuses afterwards.",
+    "area_hint": "l3-merge (run L3's merge area, which owned L3-github-3 and the press-time head check; no run C d1109-* area owns merge)",
+    "known_leftover": "",
+    "notes": "This does not reproduce on the stand-in bench: FakeGitHost moves a pull request's head in the same step as the push, and the existing L3-github-3 unit case passes at 4cf11fd (run under flock). The code still explains the live result: the press trusts only pull-request heads, which lag a push on real GitHub. Corrections to the finding: the press came milliseconds after the push's 200, not about 1 s after (1032 ms was the answer's latency), and the row turned red about 1.5 s after the answer (log at 09:53:04.256Z; the screenshot just after the answer already shows it), not 4 s. A person who pushes and then comes to the app will rarely be this fast, and nothing can be merged by mistake (the merge PUT pins the sha), so it stays minor: it is a race at machine speed and the cost is one contradicting answer. LL-2 in leftovers-L3.json is a sibling (a check failed or the PR stopped merging cleanly after the last look, and the press still says 'Merging #N.' first). It assumes head moves are already said at once, so it does not name this case."
+   }
+  },
+  {
+   "key": "live4:L4-creds-13",
+   "finding": {
+    "id": "L4-creds-13",
+    "severity": "major",
+    "title": "Chat says 'Answered with your Claude subscription' under a reply that says it could not answer",
+    "step": "LC-C26",
+    "what_the_person_sees": "In chat, with the API key at its limit, preset 'API key first, then subscription', and a subscription that Anthropic does not accept, the reply reads: 'I could not answer (model call failed).' Under it: [Think it through] 'Thinks longer on this model: about 30 seconds, at most CHF 0.03.' and the footer 'Answered with your Claude subscription: your API key is at its limit until 11:57.'",
+    "expected": "No 'Answered with ...' note when nothing answered. The note appears once, under the first answer the subscription really gives. A failed answer says why and what to do (design section 5), and no paid 'Think it through' is offered on the credential that just failed.",
+    "evidence": "c26.json: chatProxyReqs shows 4 POST /v1/messages?beta=true with the subscription token, all 401; chatApiReqs is [] (no call on the key); chatFooters is ['Answered with your Claude subscription: your API key is at its limit until 11:57.']. Daemon log at 10:20:21.758Z: 'ERROR [agent-loop] run failed {error: \"model call failed\"}'. Screenshot /tmp/frbench/live4/creds/c26/steps/12-c26-chat-question.png.",
+    "repro": "On a bench like c26: the key is resting (restingUntil set), the preset is key_then_subscription, and the subscription is one Anthropic refuses (the bench's token). Ask any chat question.",
+    "suspected_cause": "packages/runtime/src/conversation/agent.ts around l.1378-1390 builds switchNote before the model call, from the hold check (credHold.answersOn), and marks the stop as noted. Around l.2306 it is used as the footer whatever the call's outcome. The 'noted' mark then also keeps the note off the first real answer.",
+    "journey": "creds",
+    "pass": 3
+   },
+   "verdict": {
+    "id": "L4-creds-13",
+    "real": true,
+    "model_only": false,
+    "severity": "major",
+    "root_cause": "The CE-9 note comes from the hold check made before the model call, and the outcome of the call never gates it. At agent.ts:1378-1387, credentialHold() reports not held with answersOn=subscription because the key is resting. switchNote is built from that prediction. At :1388-1391 the stop goes into conv.notedStops at once, before any model call. At :2296-2307 the footer is `(stopped ? … : deep ? … : null) ?? switchNote ?? fixFooter`, and nothing there checks result.outcome. So when the call fails, the note \"Answered with your Claude subscription: …\" still sits under \"I could not answer (model call failed).\". The stop is already marked as noted, so the first answer the subscription really gives in this conversation gets no note. Separately, the Think it through closer at :2274-2292 needs only `result && longerFigures && !heldAfter && results.length===0`. It never checks result.outcome === \"completed\", so a failed call still gets the paid offer. A second cause explains why the reply says \"model call failed\" and not a refusal or hold reply. Agent SDK 0.3.304 throws \"Claude Code returned an error result: Failed to authenticate. API Error: 401 …\" from the iterator. claude-code.ts:195-204 catches it as provider_error and never runs isClaudeCodeRefusal on it. RoutedProvider therefore never marks the subscription refused, the loop throws provider_error \"model call failed\" (loop.ts:842), and agent.ts:2226-2239 never re-checks the hold, because provider_error is not in CREDENTIAL_HOLD_CODES.",
+    "where": "packages/runtime/src/conversation/agent.ts:1380 (switchNote built and noted at :1388-1391 before the call); agent.ts:2306 (footer uses switchNote whatever the outcome); agent.ts:2274 (closer offered under a failed call); contributing: packages/runtime/src/provider/claude-code.ts:200 (thrown 401 result text mapped to provider_error)",
+    "fix_sketch": "In agent.ts, keep switchNote as a candidate before the call, but do not add the stop to conv.notedStops there. After the run, use the note as the footer only if a model answer was really given: result?.outcome === \"completed\" (or deep.result completed), !stopped and !heldAfter. Only then add stopNoted to notedStops. A better version takes the credential from the call's own billing (message_end billing.sourceId and kind, or the ledger row) and not from the pre-call prediction, so a switch inside the call is named correctly. Add `result.outcome === \"completed\"` to the closer condition at :2274, so no Think it through appears under a failure. For the reply itself, the catch in claude-code.ts:195 should run isClaudeCodeRefusal(null, errorMessage(e)) and give provider_auth. Do the same in the sdk.ts catch at about :606 for task runs. RoutedProvider then marks the subscription refused, files the one card and tries the next source. Chat then gets the hold or refusal reply through CREDENTIAL_HOLD_CODES and not \"I could not answer (model call failed).\" The general wording of chat failures is C3L-7.",
+    "failing_test_idea": "A composed-runtime test through POST /chat, set up like packages/runtime/test/billing-order.test.ts (fetchImpl Messages API stand-in plus the sdkQuery Claude Code stand-in). Set credential_policy to key_then_subscription. The API answers 400 \"You have reached your specified API usage limits. You will regain access on 2026-10-31 at 11:00 UTC.\" Turn 1: the key rests and Claude Code answers. Then the sdkQuery stand-in throws Error(\"Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token is invalid.\"). Turn 2 must have no footer matching /^Answered with/, and its chat.reply event must have no closer. Then Claude Code answers again (a new token is saved). Turn 3's footer must be \"Answered with your Claude subscription: your API key is at its limit until 12:00.\" Today turn 2 gives \"I could not answer (model call failed).\" with that footer and a closer {estimateUsdMicro 16780, atMost 37500, 30 s}, and turn 3's footer is null. I reproduced exactly this with a throwaway test at /tmp/frbench/verify-L4-creds-13/switch-note.test.ts, output in /tmp/frbench/verify-L4-creds-13/out.txt. Add a sibling case for subscription_then_key with a resting subscription and the API failing with a 500: the note must not appear under the failure and must appear on the next answer on the key, because that is the answer the person pays per use for.",
+    "area_hint": "d1109-cred-engine (CE-9 chat note); the Think it through closer under a failure is d1109-chat-depth's",
+    "known_leftover": "",
+    "notes": "The bench evidence matches: c26.json has chatFooters = ['Answered with your Claude subscription: your API key is at its limit until 11:57.'], chatButtons = ['Think it through'], chatApiReqs = [] and 4 subscription POSTs with 401. It also reproduces on the code at 4cf11fd in a composed runtime. The throwaway test in /tmp/frbench/verify-L4-creds-13 sits outside the checkout and nothing in the checkout was edited. It ran under the heavy.lock and printed: STEP2 \"I could not answer (model call failed).\" with the footer and the closer; STEP3 \"From Claude Code.\" with footer null. Severity: major rather than words. The page contradicts itself, a paid offer appears under a failure, and the note is used up. In the subscription_then_key direction, a failed call would hide the note from the first answer that is charged per use to the API key, which goes against CE-9's \"once per stop per conversation\" and the owner's 7b. No leftover names the footer issue. C3L-7 (leftovers-C3) covers only the general 'I could not answer (<error>)' wording. The contributing cause is that claude-code.ts and sdk.ts do not classify the SDK's thrown 'Claude Code returned an error result: … API Error: 401' as provider_auth. That is also why c26's subscription was never marked refused (timeline subRefused null; the run outcome was 'error'). It may be reported as its own creds finding, so check before merging fixes."
+   }
+  },
+  {
+   "key": "live4:L4-creds-14",
+   "finding": {
+    "id": "L4-creds-14",
+    "severity": "minor",
+    "title": "Start dialog says nothing about the API key's limit under 'API key first, then subscription'",
+    "step": "LC-C26",
+    "what_the_person_sees": "Before the stop the dialog reads 'This session runs \"Write notes/moss.md\" (about CHF 0.07).' and 'If your API key runs out, the work goes on with your subscription.' While the key rests until 11:57 it reads only 'This session runs \"Write notes/lichen.md\" (about CHF 0.07).', with no line about the credential at all. Settings meanwhile says 'Your API key is at its limit until 11:57; your subscription does the work meanwhile.'",
+    "expected": "The dialog names the stop and says where the session runs, as it does in the other direction ('Your subscription is at its limit until 15:40, so this runs on your API key ...'). For example: 'Your API key is at its limit until 11:57, so this runs on your subscription.'",
+    "evidence": "c26.json dialog1 and dialog2; screenshots 04-c26-start-dialog-before.png and 11-c26-start-dialog-while-the-key-rests.png in /tmp/frbench/live4/creds/c26/steps/.",
+    "repro": "Choose preset key_then_subscription and let the key meet its limit (bench-api --api-key limited, FORERUNNER_BENCH_API_LIMIT_FORM=400). Open Start on a project with a ready task.",
+    "suspected_cause": "In packages/runtime/src/daemon/credential-start.ts, serves() starts with 'if (first.kind !== \"subscription\") return false'. Under whenStopped 'next' with the key as first choice the line is therefore null; only the subscription-to-key direction has a run-out line.",
+    "journey": "creds",
+    "pass": 3
+   },
+   "verdict": {
+    "id": "L4-creds-14",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "startCredential() has only one test for whether the other credential can serve, `serves()`, and it was written for one direction (\"The other credential (the API key, after the subscription) serves now\"). Its first statement is `if (first.kind !== \"subscription\") return false;`. Under key_then_subscription (whenStopped 'next'), firstChoiceStop() returns the resting API key with a stopKey. The early `ifRunsOutLine` return at l.98-99 is therefore skipped, and the 'next' branch at l.133-140 returns `line: (await serves()) ? startRunOutLine(...) : null`, which is null. The dialog loses the line it had before the stop and gets no stopped line in its place. The wording function already handles both directions: startRunOutLine('api_key', ...) at credential-policy-view.ts:336 produces \"Your API key is at its limit until 11:57, so this runs on your subscription (about CHF 0.07).\", but nothing calls it for the key-first case. CS-3's decision says \"with the first choice stopped: under next the run-out line\" and does not name a direction. Its acceptance and the real-daemon case (real-daemon.test.ts about l.22215-22240) only test subscription_then_key with the subscription resting, so the gap was never caught. The evidence fits this exactly: dialog1 shows the ifRunsOutLine, the key's limits hold restingUntil 10:57Z, subRefused is null (Settings: subscription \"Works now\"), lichen is Ready (runsWork true), there is no grant, and dialog2 shows only the plan sentence.",
+    "where": "packages/runtime/src/daemon/credential-start.ts:124 (serves() starts with `if (first.kind !== \"subscription\") return false`), used by the whenStopped 'next' branch at credential-start.ts:133-140",
+    "fix_sketch": "In credential-start.ts, split the check into two. (1) For the 'next' branch, add `nextServes()`. It looks at the other credential of first.kind: for an api_key first choice, the enabled subscription source, which must be in policy.rule.kinds; it must have no currentStopOf, and it needs no month-cap check because the subscription has no per-use cost. For a subscription first choice, it keeps today's checks (the key has no stop and the month has room). The 'next' branch then returns startRunOutLine(first.kind, stop, about, opts), which already gives \"Your API key is at its limit until 11:57, so this runs on your subscription (about CHF 0.07).\" (2) Keep today's subscription-only serves() for the ask/wait 'Use API key' buttons: those buttons only make sense when the subscription is the stopped first choice, and key_only must never offer them. If neither credential can serve under 'next', the start is blocked and start-blocked.ts gives the reason, so returning null there is fine. Sibling to fix in the same commit: planCardLine (credential-policy-view.ts:415) ends with \"(costs money)\" after whichever credential is the other one. Under key_then_subscription with the key resting, the plan card would read \"...: your subscription does the work meanwhile (costs money).\", which is false. Add the money clause only when the other credential is the API key. Update the fake daemon's start-check mirror if it builds this line.",
+    "failing_test_idea": "Add a real-daemon case in apps/ui/test/real-daemon.test.ts, in the 'd1109-cred-screens, run C' describe, next to the CS-3 case at about l.22215. Run composeCs() with both credentials saved, add one Ready task, then setPolicyCs(client, 'key_then_subscription'). Rest the API key source until resetAt, the key-side twin of restSubscription (billing_source.limits.restingUntil). Then `const out = await client.startCheck(project.id)`. Expect out.blocked to be null, out.credential.line to match /^Your API key is at its limit until 11:40, so this runs on your subscription \\((about CHF \\d+\\.\\d\\d|less than CHF 0\\.01)\\)\\.$/, and out.credential.runOut to be null. This fails today because line is null. Optionally press Start and check that the run row's billing source is the subscription, so the sentence matches what the engine does. Add a unit case in packages/runtime/test/credential-policy-view.test.ts for startRunOutLine('api_key', {reason:'limit', until}) with the exact string. Add a planCardLine case asserting that the key-first 'next' wording has no \"(costs money)\".",
+    "area_hint": "d1109-cred-screens (CS-3 Start dialog line; CS-4 plan card sibling)",
+    "known_leftover": "",
+    "notes": "No known leftover names this. C6L-3, C6L-4 and C6L-8 are other Start-dialog and credential wording items, all in the subscription-first direction. I did not rerun the bench: the c26 run already took place on the stand-in bench (bench-api with --api-key limited and FORERUNNER_BENCH_API_LIMIT_FORM=400), and the code path explains the result. Each branch before l.133 is ruled out by the evidence: first is non-null with a stopKey (key restingUntil 10:57Z), there is no grant, lichen is Ready, and Stop all is off. That leaves serves() returning false at l.124. The evidence also shows the subscription stand-in failing with a 401 (the bench token is not a real sign-in), but the app had recorded no refusal (subRefused null, Settings \"Works now\"), so the app's own view says the subscription serves and the line should appear. Severity is minor, not major: no money is spent unexpectedly (the session goes to the subscription, which has no per-use cost), and Settings and the session log name the stop. But at the moment it matters, the dialog drops even its earlier if-it-runs-out line. Sibling to check: planCardLine at credential-policy-view.ts:415 says \"(costs money)\" after the subscription under key-first 'next'. I saw this in the code only, not in this evidence. Files: /home/user/Forerunner/.claude/worktrees/live4-4cf11fd/packages/runtime/src/daemon/credential-start.ts, /home/user/Forerunner/.claude/worktrees/live4-4cf11fd/packages/runtime/src/daemon/credential-policy-view.ts, /tmp/frbench/live4/creds/c26-evidence/c26.json, /tmp/frbench/live4/creds/c26/steps/11-c26-start-dialog-while-the-key-rests.txt."
+   }
+  },
+  {
+   "key": "live4:L4-creds-15",
+   "finding": {
+    "id": "L4-creds-15",
+    "severity": "minor",
+    "title": "The session page shows two clocks: the computer's beside the person's zone",
+    "step": "LC-C26",
+    "what_the_person_sees": "The header reads 'Moss notes · session at 10:19' and the log times read '10:19'. Beside them: 'Your subscription took over at 11:19 (your API key's limit)' and 'your API key is at its limit until 11:57'. The Sessions list row reads '10:19 · under a minute'.",
+    "expected": "One clock per screen: the person's zone, which the daemon's sentences already use.",
+    "evidence": "Screenshot /tmp/frbench/live4/creds/c26/steps/06-c26-session-page.png. The config timezone is Europe/Zurich; the bench browser runs in UTC.",
+    "repro": "Set the person's zone in setup to a zone other than the computer's (or travel). Open a session page that has a credential switch.",
+    "suspected_cause": "The desktop UI formats times in the browser's zone (only apps/ui/src/mobile/time.ts passes timeZone), while the daemon's sentences use human.timezone. The mismatch shows only when the two zones differ.",
+    "journey": "creds",
+    "pass": 3
+   },
+   "verdict": {
+    "id": "L4-creds-15",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The UI and the daemon write times in different zones. Every desktop time helper in apps/ui/src/lib/time.ts calls toLocaleTimeString/toLocaleDateString(\"en-GB\", HH_MM) and never passes a timeZone, so it uses the browser's zone: formatTime :49-54, formatClock :23-30 (its \"today\" test at :28 is also the browser's day), formatDateTime :11-16, formatDate and formatDayMonth :33-46. The file's own header (:2-4) and formatClock's comment (:18-21) say they match \"the daemon's own sentences ... clockTime\". They do not. The daemon's clockTime (packages/runtime/src/session/credential-wait.ts:203-228) formats with timeZone = human.timezone, and the session result line uses it (packages/runtime/src/daemon/server.ts:2099-2100, credential-policy-view.ts:441 resultSwitchLine), as do the log line \"your API key is at its limit until 11:57\" and every other \"until/at HH:MM\" sentence. On the session page, the title (apps/ui/src/pages/SessionPage.tsx:70-75 startedAtWords -> formatTime, title built at :379) and each log row (:691 formatTime(e.at)) are in the browser's zone. The daemon's sentences on the same page are in the person's zone. The Sessions row (apps/ui/src/pages/project/SessionsTab.tsx:31 formatClock) and FilesTab.tsx:20-22 use the browser's zone too. The evidence matches exactly. The c26 config has timezone Europe/Zurich (home/config/config.json:5). The bench ran at 10:16-10:25 UTC and the browser was in UTC. So one instant (10:19Z) reads \"session at 10:19\" and \"10:19\" in the log, but \"took over at 11:19\" (UTC+1) beside them, and the reset \"until 11:57\" is 10:57Z. I reproduced it: under TZ=UTC, toLocaleTimeString of 2026-11-17T10:19:30Z gives 10:19, and Intl with Europe/Zurich gives 11:19. The run was on the stand-in (provider bench-api, live false), so it reproduces without the real model. The UI can already read the person's zone from GET /me (server.ts:850-856, timezone), but lib/time.ts never uses it. The mobile helpers take a zone, but the store passes deviceTimezone() (apps/ui/src/mobile/store.tsx:373), so the phone has the same gap.",
+    "where": "apps/ui/src/lib/time.ts:49 (formatTime, and :23 formatClock, :11 formatDateTime: no timeZone); apps/ui/src/pages/SessionPage.tsx:74 and :691; apps/ui/src/pages/project/SessionsTab.tsx:31; against packages/runtime/src/session/credential-wait.ts:203 (clockTime in human.timezone)",
+    "fix_sketch": "Make the person's zone the one display zone in the UI. (1) Load /me.timezone once into a small zone holder or React context. Refresh it after the setup or Settings save of the time zone. Fall back to the browser's zone only until /me has answered. (2) Give every helper in apps/ui/src/lib/time.ts a zone: add timeZone: zone to HH_MM and to the date options. In formatClock, compare the calendar day in that zone (Intl parts in the zone, not toDateString). Keep the en-GB 24-hour form. (3) Route FilesTab.tsx:20-22 through formatClock instead of its own toLocaleTimeString. (4) Mobile: seed env.timezone from /me.timezone instead of deviceTimezone() (store.tsx:373). Then parseWhen's \"until 15:00\" and describeUntil agree with the daemon too. (5) The fake daemon (apps/ui/test/fake-daemon.ts:8427 has timezone \"UTC\") should use the same zone as /me in its resultSwitchLine opts, so the fake and the real daemon agree. Optional: when the browser's zone differs from the person's, name the zone once in Settings (\"Times are shown in Europe/Zurich\"). Daemon sentences stay as they are; ADR-backed daemon wording already uses human.timezone.",
+    "failing_test_idea": "apps/ui/test/credential-switch.test.tsx (or a new session-zone.test.tsx). Run the process with TZ=UTC (process.env.TZ set before the first Date use, or vi.stubEnv in a separate worker). Give the fake daemon /me timezone \"Europe/Zurich\" and a session started at 2026-11-17T10:19:00Z with a credential switch at the same instant. Its result line comes from resultSwitchLine with opts.timezone \"Europe/Zurich\", so it reads \"took over at 11:19\". Render SessionPage. The test expects getByTestId(\"session-header\") to contain \"session at 11:19\", the first event-row time to read \"11:19\", and the switch line's \"11:19\". Today the header and rows read 10:19. Add a sibling assertion on SessionsTab: sessionRowLine starts \"11:19 · under a minute\". Add a unit case in a lib/time test: formatClock(\"2026-11-17T23:30:00Z\", now = 2026-11-17T12:00Z, zone \"Europe/Zurich\") reads \"18 Nov, 00:30\", not \"23:30\". At the real boundary: the bench walk c26 with a UTC browser and a Europe/Zurich config shows one clock on the session page.",
+    "area_hint": "small fix area: ui-person-zone (apps/ui/src/lib/time.ts plus the /me zone holder; touches SessionPage, SessionsTab, FilesTab, mobile store). No run C area owns UI-side times. The nearest owners are d1109-sessions (session title, Sessions row) and d1109-cred-screens (the switch lines that expose the mismatch).",
+    "known_leftover": "",
+    "notes": "No leftover names it. C5's item about compose capturing human.timezone at compose time is a different issue: the daemon side, a zone changed without a restart. The run C plan deliberately moved daemon sentences and chat facts to the person's zone (D3-6, recall windowOf, credential waits \"in the person's time zone\"), but it never changed the UI's own clocks, so the mismatch is a gap the plan left, not a decision. Scope is narrower than \"any person\": SetupPage prefills the person's zone from the browser (SetupPage.tsx:27, :323), so on a normal install the two zones match. It shows when the person picks another zone, travels with the laptop, or set up through the CLI without --timezone (schema default \"UTC\", packages/state/src/schema.ts:132; daemon falls back to \"UTC\"). The CLI case hits everyone outside UTC. Minor is right: no wrong action follows, but one screen shows two clocks an hour apart for the same instant, and the \"until 11:57\" reset reads as later than it is next to the log's times. Evidence files: /tmp/frbench/live4/creds/c26/steps/06-c26-session-page.png and .txt, 14-c26-end-projects-*.txt:32 (Sessions row \"10:19 · under a minute\"), 10-c26-settings-rows.txt:48 and 12-c26-chat-question.txt:32 (daemon \"until 11:57\"), /tmp/frbench/live4/creds/c26/home/config/config.json:5 (Europe/Zurich), bench.json startedAt 10:16:17Z."
+   }
+  },
+  {
+   "key": "live4:L4-creds-16",
+   "finding": {
+    "id": "L4-creds-16",
+    "severity": "minor",
+    "title": "Task runs on the subscription ignore the configured Anthropic API address",
+    "step": "LC-C26",
+    "what_the_person_sees": "With an API address set in setup (config.json anthropicApiBase, for example a company gateway), chat on the subscription and every call on the API key go through it. A task run on the subscription goes straight to api.anthropic.com.",
+    "expected": "Every call goes to the configured address, task runs on the subscription included.",
+    "evidence": "In c26 the proxy at anthropicApiBase logged 0 requests during the task run (10:19:35-10:19:38) and 4 during the chat turn (10:20:19). The run's 401 reads 'OAuth access token is invalid', which is the real API's wording; the proxy answers 'Invalid bearer token'. The same happened in c22: its run (09:00:57-09:01:03) has no proxy entry, and the proxy's subscription entries come only from chat at 09:01:41 (/tmp/frbench/live4/creds/c22-proxy/requests.jsonl).",
+    "repro": "Run fr setup --anthropic-api http://127.0.0.1:<port> with a logging proxy at that port and a subscription saved. Start a task that runs on the subscription and read the proxy log.",
+    "suspected_cause": "packages/runtime/src/agent/sdk.ts reads req.baseURL (l.523), but no caller ever sets it. compose.ts passes config.anthropicApiBase only to ClaudeCodeProvider (chat) and the Messages adapter (l.1869, l.1882).",
+    "journey": "creds",
+    "pass": 3
+   },
+   "verdict": {
+    "id": "L4-creds-16",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "The configured `anthropicApiBase` never reaches the Agent SDK driver that runs a task on the subscription. `SdkAgentDriver.run` only sets `ANTHROPIC_BASE_URL` from `req.baseURL` (sdk.ts:62, :523), and no caller sets that field. The executor's one SDK call (executor.ts:1549-1580) passes token, credential, model, prompt, cwd, tools and similar fields, plus `env` only when Headroom's `sessionContext.sdkEnv` is set. It never passes a baseURL. `SdkExecutorDeps` (executor.ts:363-378) has no base field. compose.ts builds the driver (2119-2125) and the executor's `sdk` deps (2602-2608) without `config.anthropicApiBase`. compose.ts passes the address only to the per-call providers: `ClaudeCodeProvider` (1869), which serves chat, planning and reviews on the subscription, and `AnthropicMessagesProvider` (1882), which serves the key. That is why chat on the subscription went through the gateway and the subscription task run did not. The evidence agrees with the code. In c26 (config.json anthropicApiBase http://127.0.0.1:49048) the daemon picked the subscription with driver \"sdk\" at 10:19:34.986. The run failed at 10:19:38.841 with Claude Code's \"401 OAuth access token is invalid\", which is the real API's wording; the proxy would have answered \"Invalid bearer token\" locally (proxy.mjs:136). The proxy log has only the 4 chat requests at 10:20:19-20. c22 shows the same pattern: the SDK run failed at 09:01:04 with no proxy entry, and the chat entries came at 09:01:41. A side effect: the bench's fake subscription token was sent to the real api.anthropic.com. It is fake, so nothing leaked, but a real token would also skip a company gateway.",
+    "where": "packages/runtime/src/session/executor.ts:1549 (sdk.driver.run without baseURL); packages/runtime/src/daemon/compose.ts:2119 and :2602 (SDK driver and sdk deps built without config.anthropicApiBase); packages/runtime/src/agent/sdk.ts:523 (the only consumer of req.baseURL)",
+    "fix_sketch": "In compose.ts, give the SDK path the same base URL that ClaudeCodeProvider gets, with the same rule as claude-code.ts:239: set ANTHROPIC_BASE_URL only when the address is not the default https://api.anthropic.com. The simplest place is `SdkDriverDeps` (sdk.ts:125): add `baseURL?: string` and set it at compose.ts:2119 from `config?.anthropicApiBase`. Then sdk.ts:523 uses `req.baseURL ?? this.deps.baseURL`, so every SDK run gets it, task runs and any later SDK caller included. Alternatively, add `baseURL` to `SdkExecutorDeps` (compose.ts:2602) and pass it at executor.ts:1549. Keep the current order: Headroom's `req.env` is spread after it and still wins while Headroom is on. Update docs/maintainers/runtime.md (SDK driver env) and the setup docs to say the API address covers subscription task runs too.",
+    "failing_test_idea": "Composed daemon test (compose with the `sdkQuery` seam capturing `options.env`). Use a config with anthropicApiBase \"http://gw.test\", a subscription saved in the vault and the policy set to the subscription. Approve and start a one-task plan so the task runs on the \"sdk\" driver. Assert that the captured query's env.ANTHROPIC_BASE_URL is \"http://gw.test\", the same as the chat turn's ClaudeCodeProvider env in the same daemon. Add a second case with the default https://api.anthropic.com and assert ANTHROPIC_BASE_URL is absent. This fails today: the SDK run's env has no ANTHROPIC_BASE_URL. Optional bench check: the creds journey's c26 setup (logging proxy at anthropicApiBase) shows proxy entries with benchSubscription:true during the task run, not only during chat.",
+    "area_hint": "d1109-cred-engine (provider and credential wiring in compose.ts); small enough to be its own fix area (compose.ts + sdk.ts/executor.ts)",
+    "known_leftover": "",
+    "notes": "I did not run the bench: the code explains the finding, and the c22 and c26 logs (daemon.log and the proxy's requests.jsonl) match it. One caveat on the finding's wording, \"every call on the API key go through it\". In c26 the key's loop run also left no proxy entry, because start-c26.sh uses --provider bench-api: the bench's stand-in answers the key's Messages calls before they reach the proxy. That is a bench artefact. The code shows the key path does pass baseURL (compose.ts:1882), and in c22 the proxy logged the key's /v1/models calls. None of the leftovers files (L3, C2, C3, C4, C4b-design, C4b, C5, C6) or the owner's decisions mention the API base or ANTHROPIC_BASE_URL. Minor is the right severity: it matters only to a person who set a gateway address and runs tasks on the subscription. Where api.anthropic.com is blocked, every subscription task run would fail; the 401 would then read as a refused sign-in."
+   }
+  },
+  {
+   "key": "live4:L4-creds-17",
+   "finding": {
+    "id": "L4-creds-17",
+    "severity": "words",
+    "title": "Costs lists a model named '<synthetic>'",
+    "step": "LC-C26",
+    "what_the_person_sees": "After a failed run on the subscription, the project's Costs page lists under By model: '<synthetic> · 1 · — · — · CHF 0.00'.",
+    "expected": "No internal marker shown as a model name. Book the run under the model it asked for, or show no row for a run that never reached a model.",
+    "evidence": "Screenshot /tmp/frbench/live4/creds/c26/steps/13-c26-end-projects-01a1e904-c8db-71ca-be07-d8530e9.png. The cost_ledger row has kind subscription, model '<synthetic>', USD 0.",
+    "repro": "Any run on the subscription that Claude Code ends with an error. Here it was a refused sign-in; Claude Code also sends a synthetic message when the plan's limit is reached.",
+    "suspected_cause": "The SDK driver books the usage of Claude Code's synthetic error message under that message's model field, '<synthetic>'.",
+    "journey": "creds",
+    "pass": 3
+   },
+   "verdict": {
+    "id": "L4-creds-17",
+    "real": true,
+    "model_only": false,
+    "severity": "words",
+    "root_cause": "When an API call fails (a refused sign-in, or the plan's limit), Claude Code makes up an assistant message itself. That message carries `error` (for example \"authentication_failed\"), `model: \"<synthetic>\"` (Claude Code's own constant, present in the bundled binary of @anthropic-ai/claude-agent-sdk 0.3.304) and an all-zero `usage` object. The SDK driver's assistant branch books any message that has a `usage` object (packages/runtime/src/agent/sdk.ts:424-432). R-modelusage takes the model from the message: `const model = typeof m?.model === \"string\" && m.model ? m.model : req.model`, so the model is \"<synthetic>\". The driver also adds one to numTurns. book() then calls hooks.afterModelCall with that model (sdk.ts:353-366), and afterModelCall writes a cost_ledger row with `model: opts.model ?? ctx.model` (packages/runtime/src/enforcement/hooks.ts:271). The price lookup for \"<synthetic>\" fails and falls back to the run model's price, so the cost is 0 and no money is wrong. The daemon's Costs view groups the ledger by its model column and uses the raw key as the label (packages/runtime/src/daemon/views.ts:1196-1205). The run facts know no run on \"<synthetic>\", so Runs shows the entry count of 1 and Accepted shows — (views.ts:1271-1280). The Costs tab then prints \"<synthetic> · 1 · — · — · CHF 0.00\". The evidence DB (/tmp/frbench/live4/creds/c26/home/data/state.sqlite) holds exactly that row: kind subscription, model '<synthetic>', all token counts 0, the anthropic-sdk run that failed with \"401 OAuth access token is invalid\". That run's own model is claude-sonnet-5-5. The Claude Code provider (packages/runtime/src/provider/claude-code.ts:166-169) skips the error message with `continue`, so only the SDK driver books it. The unit tests missed it because the fake error message in sdk-driver.test.ts:342-346 has no `model` and no `usage`, unlike the real shape. This breaks design §5 rules 3 and 6: an internal marker is shown as a name.",
+    "where": "packages/runtime/src/agent/sdk.ts:424-432 (the model taken from the synthetic message and booked); ledger write at packages/runtime/src/enforcement/hooks.ts:271; shown via packages/runtime/src/daemon/views.ts:1196-1205 and :1271-1280",
+    "fix_sketch": "In SdkAgentDriver.handle's assistant branch, treat Claude Code's synthetic error message as \"no model call\". When `msg.error` is a string, or `m.model === \"<synthetic>\"` (one named constant, for example CLAUDE_CODE_SYNTHETIC_MODEL), do not book, do not add to numTurns and do not run the beforeModelCall estimate. Still record sdkError as now. If such a message ever has usage above zero, book it under req.model, never under the marker. To be safe, resultTotals/resultShares should also map a \"<synthetic>\" key in modelUsage to the run model. Optionally, as defence for rows already in the ledger: the daemon's Costs view (and services/state-api/src/views.ts byModel) could leave out a model bucket whose key is \"<synthetic>\" and whose usd and tokens are all 0, or fold it into the run's model. Update the fake error messages in sdk-driver.test.ts (rate_limit) and in cred-world/subscription-path to Claude Code's real shape (id, model \"<synthetic>\", zero usage). Note it in docs/maintainers/runtime.md next to R-modelusage.",
+    "failing_test_idea": "This test fails today. In a composed or real-daemon test on the subscription path (the cred-world or subscription-path harness, with the SDK driver and a fake query), the fake query emits init, then `{type:\"assistant\", error:\"authentication_failed\", message:{id:<uuid>, model:\"<synthetic>\", content:[{type:\"text\", text:\"Failed to authenticate. API Error: 401 OAuth access token is invalid\"}], usage:{input_tokens:0, output_tokens:0, cache_read_input_tokens:0, cache_creation_input_tokens:0}}}`, then `{type:\"result\", subtype:\"success\", is_error:true, result:\"Failed to authenticate. ...\"}`. After the session ends, GET /projects/:id/costs must give a byModel with no entry whose key or label is \"<synthetic>\" (and no label starting with \"<\"), and no cost_ledger row may have model \"<synthetic>\". Today it lists `{label:\"<synthetic>\", runs:1, cost CHF 0.00}`. Do the same with error \"rate_limit\" (the plan's limit). A unit case in sdk-driver.test.ts checks that hooks.afterModelCall is never called with model \"<synthetic>\" and that the result's steps is 0.",
+    "area_hint": "small fix area: SDK driver booking (R-modelusage follow-up in packages/runtime/src/agent/sdk.ts). No run C area owns sdk.ts. The symptom is on the Costs tab (d1109-cred-screens/d1116-budget-all screens), but the fix belongs in the driver.",
+    "known_leftover": "",
+    "notes": "Confirmed from the evidence, not inferred. bench.json shows provider bench-api with live false, so the real Claude Code binary ran against the stand-in, and this is the stand-in bench's own reproduction. The steps text (13-c26-end-...txt) shows \"By model: <synthetic> 1 — — CHF 0.00\". c26.json's ledger shows the single row with model '<synthetic>' and zero tokens, while the run row says claude-sonnet-5-5 / anthropic-sdk / outcome error. The API-key run before it (usage_limit) booked no row. The money is right (CHF 0.00) and Costs sits behind More, so I agree with 'words'. Side effects of the same line: the synthetic message counts as a step (numTurns), and each failed subscription run adds one zero row under the marker, so \"Runs\" in By model counts a model that never ran. None of the leftovers files (L3, C2, C3, C4, C4b-design, C4b, C5, C6) mention synthetic, By model or SDK booking. The cloud runner's state-api byModel (services/state-api/src/views.ts:462) labels buckets by raw key the same way, so it would show the same row wherever the SDK driver books there. No unit test or bench was run: the real-run DB row plus the code path are conclusive, and the task was read-only."
+   }
+  }
+ ],
+ "live_steps": [
+  {
+   "key": "live4-step:chat:LC-C13",
+   "journey": "chat",
+   "pass": 1,
+   "id": "LC-C13",
+   "step": "D3 the need and the ask on the default setting: 4 depth lines and 4 quick lines, on 'API key first, then subscription'; C3 failure question with a waiting card",
+   "result": "fail",
+   "usd": 0.057144,
+   "observed": "The preset was set first: settings.set credential_policy=key_then_subscription; selected key_then_subscription, chosen 'stored'. Project 'Garden club': 'Write the welcome page' failed 3 times with reports, its failed-task card open, and 5 decisions with 2 conflicts. answer_thoroughly was called 0 of 4 times on the depth lines (3 needed), and 0 of 3 times on the U-094 failure question. The C3 ask line never appeared on the default path. The failure answer was given by Haiku alone after task_get; it named the cause from the reports (data/members.csv missing; the critic refused the placeholder) and two next steps. On the plan question Haiku twice wrote 'This plan needs the stronger model ... Should I go ahead?' without calling the tool, and 'yes' then got 'Yes to what?'. The review of decisions made no lookup and said 'That is the only conflict I found', missing photos (14 vs 15 Nov). Quick lines: 0 of 4 hand-overs. PASS. 'put the FAQ on hold for now' was read back as 'Pause \"Write the FAQ\"? ...' with Yes/No; No gave 'Cancelled; nothing was changed.' With 'use a stronger model:' the app's ask came at once: 'This needs a stronger model: about CHF 0.29 (at most CHF 0.57) and 30 seconds. Go ahead?'. Nothing was spent before Go ahead. Sonnet then answered in 6 s for CHF 0.04, but its reply begins 'I couldn't hand it to the stronger model, so this comes from what I have.' under the footer 'Thought it through with Sonnet · 6 s · CHF 0.04'. 'think it through:' ran on the same model without asking: 'Thought it through more carefully · 4 s · under CHF 0.01'. The ledger matched: Costs for Garden club showed the API key at CHF 0.04 (56157 micro-USD), equal to the model-call log; the Sonnet footer was 39053 micro-CHF. State was unchanged.",
+   "evidence": "/tmp/frbench/live4/chat/steps/LC-C13.json; /tmp/frbench/live4/chat/c1/steps/c13.json, c13b.json, c13c.json, 48-c13b-03-e3-go-ahead.png, 46-c13b-02-e2.png; /tmp/frbench/live4/chat/c13.log, c13b.log, c13c.log"
+  },
+  {
+   "key": "live4-step:creds:LC-C23",
+   "journey": "creds",
+   "pass": 1,
+   "id": "LC-C23",
+   "step": "Real key finishes a task the subscription stand-in stopped partway (two-file repository task, 'Subscription first, then API key'): '## Where the last run stopped', kept commit, WIP commit under the continuing run's commit, switch lines, figures agree with the ledger.",
+   "result": "partial",
+   "usd": 0.043126,
+   "observed": "Not playable on the bench: the bench's subscription stand-in cannot run any part of a task. There is no Claude Code stand-in, and the limit can only be written into state before a pick. So no run writes a file, commits work in progress and then stops; '## Where the last run stopped', the kept commit and the WIP-under-continuation commit (CE-5's repository case) were not seen. What is missing: a scripted Claude Code on the bench that does work through the SDK driver's tools and then reports the usage limit. What was played instead: the subscription at its limit until 08:28 before Start, preset chosen in Settings, task run on the real key. Start dialog: 'Your subscription is at its limit until 08:28, so this runs on your API key (about CHF 0.10).' Session log, once: '\"Write notes/a.md and notes/b.md\" runs on your API key: your subscription is at its limit until 08:28.' Session page: 'Your API key took over at 07:44 (your subscription's limit): CHF 0.03 of CHF 0.03.' Notification credential_switch: 'Two notes: work goes on with your API key' / '... about CHF 0.10 for what is left.' Result 'CHF 0.03'; Costs 'Your API key: CHF 0.03'. Ledger: 6 rows on the key, USD 0.043126 = CHF 0.0345. The figures agree. No request carried the subscription token.",
+   "evidence": "/tmp/frbench/live4/creds/steps/LC-C23.json; cs-evidence/c23.json; cs/steps/06-c23-start-dialog.png, 08-c23-session-page.png, 10-c23-costs.png"
+  },
+  {
+   "key": "live4-step:creds:LC-C24",
+   "journey": "creds",
+   "pass": 1,
+   "id": "LC-C24",
+   "step": "Ask card with the real key under 'Subscription first, ask before API key': card figure vs real spend, Wait on the next run-out, one continuation at the reset, C5/C6 leftovers, the three figures.",
+   "result": "fail",
+   "usd": 0.85317,
+   "observed": "Approve and start under ask, with the subscription at its limit, filed one card: 'Use your API key until 08:26?' / '... can do the waiting work now: about CHF 0.10.' Rows 'Waits for your answer: use your API key?'; header 'Waiting for you: use your API key?' with Answer. Three figures for the same waiting work: card CHF 0.10, Start dialog CHF 0.15, plan card CHF 0.37 (first task CHF 0.15). After Use API key the Inbox read 'Done: Your API key does the work until 08:26; your session goes on now.' (one 'Done:'), and the first request on the key came 0.18 s later. The session did the 2 planned tasks plus 2 the agent added: CHF 0.65 (USD 0.818311). The 2 waiting tasks alone cost CHF 0.24, which is 2.4x the card's figure: FAIL against the factor-of-two check. The card figure was below the session's budget left. While the yes stood: plan card B named no wait ('... you said yes, so your API key does the work meanwhile.'), and Settings showed 'Stop using it' with its line; pressing it ended the yes. Start on a project with nothing ready: no Use API key. Second run-out: card 2 (about CHF 0.05), then Wait: 'Done: Nothing moves until 08:01; then your session goes on.' The rows then showed the plain wait, and no request went to the key. Start at 08:01 on another project: no card and no notification; the reopened dialog asked nothing. At the reset: exactly one continuation ('Goes on with your session of 07:55.') on the subscription stand-in, which cannot do the work (Claude Code 'Authentication error' gave a failed task). The kept Start then went once. No second session for the project that said yes. No key call during the wait or at the reset. The urgent notification gave the reset in UTC (07:26) while every screen said 08:26.",
+   "evidence": "/tmp/frbench/live4/creds/steps/LC-C24.json; cs-evidence/c24a..c24e.json; cs-proxy/requests.jsonl; cs/steps/12..20 and later c24-* png"
+  },
+  {
+   "key": "live4-step:creds:LC-C31",
+   "journey": "creds",
+   "pass": 1,
+   "id": "LC-C31",
+   "step": "Owner's decision (a), no spend: 'Subscription first, then wait', a session whose second task meets the stand-in's limit; wait, bar, no requests, one continuation (also after a restart), Cancel, quiet hours, Stop after this task, Start while waiting, fifth run with nothing chosen; C3/C5 additions.",
+   "result": "partial",
+   "usd": 0,
+   "observed": "Under then wait, a Start made during the rest is kept ('A session of Bird notes starts at 08:22.'). Kept starts went once each at the reset. Main run: the first task ran on the stand-in and failed (the bench cannot do work on it). The second task met a new limit, and the session ended to wait. GET /running and the bar read 'Bird notes · waiting until 08:32, then it goes on' with Cancel. Start while it waits: 'Your session of 08:22 goes on by itself at 08:32.' with no Start button. The daemon was restarted during the wait. At the reset there was exactly one continuation ('Goes on with your session of 08:22.', budget CHF 5.00, none spent), started 3 min late because another project's continuation was using the one agent. Zero requests to Anthropic. Overview at 1280 px and 375 px: the wait shows up to 3 times (bar, Working now, status line). Cancel shows its explanation as visible text in the bar and Working now, but only as a tooltip on the status line. No horizontal scroll at 375 px. Kept start (C3): 'Start at 08:22', and one start was kept. Cancel on a kept start: nothing at the reset, and nothing said goes on. Cancel on a waiting session: nothing at the reset; session page, row and Update read '... then it runs at your next Start.', but chat 'summary' and the not-reloaded Overview still said '... then your session goes on.' Quiet hours covering the reset: every line named 08:53 (after your quiet hours), nothing started at the reset, and one continuation went at 08:53. Stop after this task: 'Stopped after the task, as asked'; no continuation; nothing at the reset. Fifth run (nothing chosen): chat and planning both picked the subscription, and nothing went to the key. The stand-in's 401 was not read as a refusal ('I ran out of time before I could answer.' / 'Planning failed: Claude did not answer (model call failed).'). A review on the stand-in could not be played.",
+   "evidence": "/tmp/frbench/live4/creds/steps/LC-C31.json; c31-evidence/*.json; c31e-evidence/c31g.json; c31/steps/17-20, 32, 37 png"
+  },
+  {
+   "key": "live4-step:github:LC-C4",
+   "journey": "github",
+   "pass": 2,
+   "id": "LC-C4",
+   "step": "D1, Make one project on forerunner-sandbox (stand-in model): pair, join keeping the first, merge the second's PR from the first's Overview, Sessions joined line, Undo after a restart, status PR (both on / only the closing one's on, C4L-5), dialog facts and refusals, Undo of a paused project (C4L-8)",
+   "result": "partial",
+   "usd": 0,
+   "observed": "Setup: Kite flyers (the project main's marker names) and Site, linked to the sandbox in the store. Kite (status PR off) opened task PR #53. Site (status PR on) opened task PR #54 and status PR #55 (fr/status).\n\nPASSED:\n- Both Overviews show the shared line '\"Kite flyers\" and \"Site\" both work in joelwellbournewood/forerunner-sandbox.' with Make one project.\n- The dialog shows facts for both projects. Make one project stays disabled until Keep is chosen. The moves and stays lines are correct.\n- With a slow Site session running, the dialog said 'A session is working on \"Site\". Make one project when it ends.' and the button stayed disabled.\n- After the join keeping Kite: 'Includes the work of \"Site\".' and #53 and #54 listed.\n- Merge on #54's row merged it on GitHub (main 89a80d1).\n- Site's page reads 'Joined into \"Kite flyers\" on 17 Nov.' with Open it and no Start session.\n- Kite's Sessions list ends with '\"Site\" had 2 sessions before it joined. Open'. Costs shows 'Spent in \"Site\" before it joined: CHF 0.02'.\n- After a daemon restart, Undo on Changes said '\"Site\" is its own project again.' Site got back its tasks (one done with #54, one ready), its shared line and #55.\n- C4L-8: Site was paused and inactive in the store; after a join and Undo it came back paused and inactive (fixed).\n- With both status PRs on, a second join and a session on Kite pushed commit e51a8f5 onto #55. No second fr/status PR was opened.\n- Undo of the second join after that session gave Site back its moved task (#56).\n\nNOT AS EXPECTED: see L4-github-7 to 10.\n\nNOT WALKED: the 'waits to go on at 15:40' refusal.\n\nAll PRs except the merged #54 were closed.",
+   "evidence": "/tmp/frbench/live4/github/evidence/c4*.json (c4a..c4g walks, c4-55-after-session.json, c4c-kite-costs-api.json, c4-cleanup-closed.json, c4-after-cleanup.json); screenshots /tmp/frbench/live4/github/gh4a/steps/26-c4a-01-home.png to 59-c4g-04-site-tasks-after-undo.png; step file /tmp/frbench/live4/github/steps/LC-C4.json"
+  },
+  {
+   "key": "live4-step:creds:LC-C22",
+   "journey": "creds",
+   "pass": 2,
+   "id": "LC-C22",
+   "step": "Real Claude Code refusal: an invalid OAuth token as the subscription, preset 'Subscription first, then wait'; expect a refusal, the card 'The sign-in has expired or was signed out. ...', nothing on the API key, no second request to the subscription.",
+   "result": "fail",
+   "usd": 0,
+   "observed": "Set-up: the bench's invalid subscription token (start.mjs --subscription), the real key saved second in the setup assistant, preset chosen in Settings. The bench was started with a clean environment (env -i), so none of this machine's remote-session variables reached Claude Code. The logging proxy forwarded the token to the REAL api.anthropic.com. Start was pressed at 09:00:57Z and the run was picked for the subscription. Claude Code got the real 401, and the run ended after 6.3 s with daemon line 'sdk run failed {error: \"Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token is invalid.\"}'. The app did NOT read this as a refusal: limits.subscription has no refusedAt, and the task is Failed. The Inbox shows the failed-task card '\"Write notes/pond.md\" failed' / 'What failed: The run failed: Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token is invalid.' with Try again / Mark done anyway / Cancel task. There is one urgent notification '... failed' and no refused card. Settings still reads 'Claude subscription · Does the work · Works now'. A chat question afterwards went to the subscription again: 4 POST /v1/messages?beta=true, each 401 'OAuth access token is invalid.' (proxy ids 3-6). Chat replied 'I could not answer (model call failed).' and offered 'Think it through ... at most CHF 0.03'. Nothing ran on the API key: only its two GET /v1/models, and one subscription ledger row of USD 0. There were no requests during 4 minutes of ticks; the task was Failed, so nothing was ready. Root cause, shown with the same SDK 0.3.304 outside the app (scripts/c22-probe.mjs): Claude Code yields api_retry(authentication_failed) twice, then assistant{error:'authentication_failed'}, then result{is_error:true}, and THEN the iterator throws 'Claude Code returned an error result: ...'. Both drivers only map authentication_failed after the loop ends normally. Their catch blocks turn the throw into internal/provider_error.",
+   "evidence": "/tmp/frbench/live4/creds/steps/LC-C22.json; /tmp/frbench/live4/creds/c22-evidence/c22.json; /tmp/frbench/live4/creds/c22-proxy/requests.jsonl; /tmp/frbench/live4/creds/c22/daemon.log lines 31-41; /tmp/frbench/live4/creds/scripts/c22-probe.mjs; screenshots /tmp/frbench/live4/creds/c22/steps/09-c22-inbox-after-refusal.png, 11-c22-settings-after-refusal.png, 12-c22-chat-question.png"
+  },
+  {
+   "key": "live4-step:creds:LC-C26",
+   "journey": "creds",
+   "pass": 3,
+   "id": "LC-C26",
+   "step": "Anthropic's own spend limit as the real API reports it: the key rests until the time Anthropic names, and the row or the Start dialog names that time in the person's zone; under 'API key first, then subscription' the work goes on with the subscription stand-in and the log line says so.",
+   "result": "partial",
+   "usd": 0,
+   "observed": "NOT POSSIBLE HERE (the step's core): no API workspace is at its spend limit. This environment's key works, and setting a limit needs the owner's console, so the step moves to the owner's checklist. I played it at USD 0 on the bench's Messages API stand-in instead, which answers the key in the real API's documented shape. PASS: the key's first call got 400 'You have reached your specified API usage limits. You will regain access on 2026-11-17 at 10:57 UTC.' (stand-in POST /v1/messages 10:19:34.982Z). The daemon logged 'billing source rests after a usage limit {until: 2026-11-17T10:57:00.000Z}' and the key's limits became {restingUntil:'2026-11-17T10:57:00.000Z'}, exactly the time the answer names. PASS (rows in the person's zone, UTC+1): Settings shows 'API key · Does the work · At its limit until 11:57 · CHF 0.00 this month', 'Claude subscription · Takes over when your API key runs out · Works now' and 'Your API key is at its limit until 11:57; your subscription does the work meanwhile.' PASS (switch and log line): event billing.switch {from: api_key, to: subscription, stop: limit, by: policy}; the daemon picked the subscription (driver sdk); the session log has one line '\"Write notes/moss.md\" goes on with your Claude subscription from where it stopped: your API key is at its limit until 11:57.'; the session page reads 'Your subscription took over at 11:19 (your API key's limit): CHF 0.00 of CHF 0.00.'; the bar reads 'Moss notes · the writer works on \"Write notes/moss.md\" on your subscription'. NOT PLAYABLE (the work going on): the run on the bench's subscription token failed in 3.8 s with 'Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token is invalid.' The task went to Failed and got a failed-task card, and the subscription kept 'Works now' (the L4-creds-10/9 family again). The Start dialog while the key rests named neither the limit nor the time (L4-creds-14). Chat while the key rests made no call on the key and 4 calls on the subscription (all 401), then replied 'I could not answer (model call failed).' with the footer 'Answered with your Claude subscription: your API key is at its limit until 11:57.' (L4-creds-13). What is missing: (1) a workspace at its real spend limit (owner); (2) a subscription stand-in that can do work. The bench's token is not a sign-in, and task runs on the subscription never get config.json's anthropicApiBase (L4-creds-16), so even a local stand-in in front of Claude Code is not reached by a task run. Chat's calls on the subscription do reach it.",
+   "evidence": "/tmp/frbench/live4/creds/steps/LC-C26.json; /tmp/frbench/live4/creds/c26-evidence/c26.json; /tmp/frbench/live4/creds/c26/home/bench/api-requests.jsonl; /tmp/frbench/live4/creds/c26-proxy/requests.jsonl; /tmp/frbench/live4/creds/c26/daemon.log; screenshots /tmp/frbench/live4/creds/c26/steps/04,06,10,11,12,13-*.png"
+  }
+ ],
+ "leftovers": [
+  {
+   "key": "C3:C3L-7",
+   "file": "/tmp/frbench/leftovers-C3.json",
+   "id": "C3L-7",
+   "severity": "words",
+   "from": "d1109-chat-depth",
+   "text": "Sibling of L3-left-11: every chat failure but the timeout still reads 'I could not answer (<error message>).', a raw state in brackets; some messages carry meaning (conversation.test.ts asserts 'month cap reached'), so it needs one sentence per error code (caps, credentials, provider errors)."
+  },
+  {
+   "key": "C4:C4L-1",
+   "file": "/tmp/frbench/leftovers-C4.json",
+   "id": "C4L-1",
+   "severity": "minor",
+   "from": "d1109-onerepo-join",
+   "text": "OJ-11 (cut line, not built): Work together for a project already here (the dialog's together form, moving into a together project keyed by the repository's id inside the join's transaction, closing the closing project's own status pull request as the one GitHub write, a two-home composed test with the fake host). project.join's moveWork and joinRefusal are written for reuse. Goes to wave 8 (wave8_amendments, (C4))."
+  },
+  {
+   "key": "C4:C4L-7",
+   "file": "/tmp/frbench/leftovers-C4.json",
+   "id": "C4L-7",
+   "severity": "minor, tests",
+   "from": "d1109-onerepo-join",
+   "text": "Validation rule 3: docs-routes.ts' DocView.notWrittenHere (C2-left-13) has no real-daemon.test.ts case and no fake-daemon change (only the composed HTTP case in onerepo-together.test.ts); the fake daemon's data import never answers a link refusal, so data/routes.ts' 409 (C2-left-12) is not mirrored there."
+  },
+  {
+   "key": "C4:C4L-11",
+   "file": "/tmp/frbench/leftovers-C4.json",
+   "id": "C4L-11",
+   "severity": "words",
+   "from": "d1109-onerepo-join",
+   "text": "The hands-off refusal ('A session of \"Kite club\" waits to start by itself. Make one project after it ran, or turn \"When work is ready\" back to Wait for my Start.') is about 140 characters: one sentence read at a glance (design section 5)."
+  },
+  {
+   "key": "C5:C5L-1",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-1",
+   "severity": "major",
+   "from": "d1109-cred-engine",
+   "text": "CE-6 (D5-5) not built: the subscription's share reached mid-run is still the hooks' plan-level budget pause (a budget card until the 1st), not a credential stop that waits or asks under the policy, and the allowance raise's change line is not built (both Wait lines of the share exist in askCardWords and are unit-tested). The share is held at every pick (CE-2), so a task's next pick waits and no money passes it. Needs the executor's budget-stop branch turned into a credential stop and a composed SDK test with a tiny allowance (ADR 0120's consequences name it)."
+  },
+  {
+   "key": "C5:C5L-2",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-2",
+   "severity": "minor",
+   "from": "d1109-cred-engine",
+   "text": "CE-10: background jobs are not marked 'not done for the period' after a held call, and nothing logs it in one line. A held batch pick waits and a grant never covers batch (credential-policy.test.ts), so nothing is spent; whether calibration and the model watch try again next tick is not verified."
+  },
+  {
+   "key": "C5:C5L-3",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-3",
+   "severity": "words",
+   "from": "d1109-cred-engine",
+   "text": "CE-1's one-time Update on homes with both credentials and nothing chosen ('Chat, planning and reviews now use your Claude subscription first, like your tasks ...'): not built (the spec allowed it)."
+  },
+  {
+   "key": "C5:C5L-4",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-4",
+   "severity": "tests",
+   "from": "d1109-cred-engine",
+   "text": "CE-5's composed repository case (the work-in-progress commit under the continuing run's commit on the task's branch) is not built: the composed world's scripted Claude Code writes no file through the SDK driver's tools. The brief is covered at the model-facing boundary. Live check 4's LC-C23 is now its only check (folded there)."
+  },
+  {
+   "key": "C5:C5L-5",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-5",
+   "severity": "minor",
+   "from": "d1109-cred-engine",
+   "text": "syncAskAnswers writes the grant, calls onGrant, then marks the card applied, not atomically: a crash in between could start a second continuation after a restart. One transaction, or onGrant idempotent per card, with a restart case."
+  },
+  {
+   "key": "C5:C5L-6",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-6",
+   "severity": "minor",
+   "from": "d1109-cred-engine",
+   "text": "onGrant readmits every ready task of a project with a running session, not only the tasks that waited for the stop."
+  },
+  {
+   "key": "C5:C5L-7",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-7",
+   "severity": "minor, money",
+   "from": "d1109-cred-engine",
+   "text": "compose's credentialHold reads human.timezone and monthly_cap_usd_micro as captured at compose time, not at each call: a monthly cap the person lowers, or a new zone, reaches the hold only after a restart. Check first whether the router's key_month stop reads the cap fresh at each pick; if it does not, this is major (a cap could be passed)."
+  },
+  {
+   "key": "C5:C5L-8",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-8",
+   "severity": "minor",
+   "from": "d1109-cred-engine",
+   "text": "The router falls back to Date.now() when RouteContext.nowMs is absent (AGENTS.md: time goes through a Clock). Today's callers pass nowMs; make it required."
+  },
+  {
+   "key": "C5:C5L-9",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-9",
+   "severity": "minor, tests",
+   "from": "d1109-cred-engine",
+   "text": "The concurrent-refusal test calls RouterTaskBilling.refuse twice; there is no case where a task run and a chat call meet the refusal at the same moment through the composed runtime (cred-world.ts can build it)."
+  },
+  {
+   "key": "C5:C5L-10",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-10",
+   "severity": "words",
+   "from": "d1109-cred-engine",
+   "text": "The intake card still says 'milestone(s)', 'task(s)' and 'doc(s)' (packages/runtime/src/intake.ts about :1476; C4b-left-2 fixed only 'a first-session plan of N tasks' beside it)."
+  },
+  {
+   "key": "C5:C5L-21",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-21",
+   "severity": "decision",
+   "from": "d1109-cred-engine and d1109-run-visible",
+   "text": "Bench BEFORE walks: d1109-cred-engine made none (the code was changed first; the before behaviour is shown by the tests that failed before, e.g. billing-order 'From the API.' with nothing chosen); d1109-run-visible's ran on the base exported with git archive, not on a worktree branch. Accepted."
+  },
+  {
+   "key": "C5:C5L-L3-left-14",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-L3-left-14",
+   "severity": "money",
+   "from": "d1109-cred-engine (carried, not built in C5: time)",
+   "text": "L3-left-14 (run L3's leftover, from l3-money-engine; read /tmp/frbench/runL3-l3-money-engine-fix.json and -fixup.json (not_done, new_problems, notes_for_other_areas)): Run L3 books a call that Stop now cuts off (loop.ts abort branch through afterModelCall). On a routed provider it is booked on the run's current billing source, which can differ from the source the cut-off call used: book it on the call's own source, as a finished call is."
+  },
+  {
+   "key": "C5:C5L-C3-left-4",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-C3-left-4",
+   "severity": "minor",
+   "from": "d1109-cred-engine (carried, not built in C5: time)",
+   "text": "C3-left-4 (run C step 3's leftover, from d1109-starts-engine; read /tmp/frbench/runC-C3-fix-d1109-starts-engine.json, -review- and -fixup- (not_done, new_problems, notes_for_other_areas)): Chat's session.start ('run it now', after its yes) while the credential rests is not kept for the reset the way the Start dialog's Start is (ADR 0118's known gap): chat's start meets the wait. Keep it as POST /sessions does ({result: 'kept'}, RuntimeApp.continuations.keepStart), with its own undo (dropping the kept start) and read-back sentence, under the policy this area builds."
+  },
+  {
+   "key": "C5:C5L-C3-left-5",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-C3-left-5",
+   "severity": "minor, tests",
+   "from": "d1109-cred-engine (carried, not built in C5: time)",
+   "text": "C3-left-5 (run C step 3's leftover, from d1109-starts-engine; read /tmp/frbench/runC-C3-fix-d1109-starts-engine.json, -review- and -fixup- (not_done, new_problems, notes_for_other_areas)): The continuation's test gaps (d1109-starts-engine's review): the handover-test continuation, Stop now (as opposed to Stop after this task), the project's removal dropping a continuation, a restart after an answered card (S-2), and a readmit case that fails without readmit (session-join.test.ts's S-7 readmit case is vacuous because B is already promised). This area calls readmit and personContinue: each case fails first where it can."
+  },
+  {
+   "key": "C5:C5L-C3-left-6",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-C3-left-6",
+   "severity": "minor",
+   "from": "d1109-cred-engine (carried, not built in C5: time)",
+   "text": "C3-left-6 (run C step 3's leftover, from d1109-chat-depth; read /tmp/frbench/runC-C3-fix-d1109-chat-depth.json, -review- and -fixup- (not_done, new_problems, notes_for_other_areas)): compose's chatRoom reads only the month cap and the project's budget: the subscription's plan share is not a cap level for chat, so the Claude-plan form of the footer and the ask line (askLine and handOverStep's plan form) is exercised only by words tests, and there is no composed chat case on a Claude subscription. Add the plan share to chatRoom with the policy, and a composed case on the subscription stand-in (the footer, the ask line and the booking)."
+  },
+  {
+   "key": "C5:C5L-C4b-left-1",
+   "file": "/tmp/frbench/leftovers-C5.json",
+   "id": "C5L-C4b-left-1",
+   "severity": "minor, tests",
+   "from": "d1109-cred-engine (carried, not built in C5: time)",
+   "text": "C4b-left-1 (run C sub-run C4b's leftover, from d1116-budget-all; read /tmp/frbench/runC-C4b-fix-d1116-budget-all.json and -review-d1116-budget-all.json (no fix-up: the review passed; not_done, new_problems, non_blocking, notes_for_other_areas) and runC-C4b-merge.json problems_left): BA-7's composed restart cases and BA-3's composed effort-max case are not built (review non_blocking 3; only model-level coverage: estimates.test.ts 'BA-7: one sample per task', the live-versus-fold case, wiring.test.ts and review-price.test.ts). Build them in packages/runtime/test/task-budget-all.test.ts (C4b's file; settleSessions(rt) before each close, removeHomes(homes)): (a) a task done, Redo, done again; (b) failed, Try again, done; (c) the merge watcher closing it about 20 minutes later; (d) cancelled in the Inbox. In each, the estimate model holds one sample for the task, and after a restart the fold equals what was learned live, with the same Start dialog figures. And BA-3's case at effort max: the review's cap and its refusal use the max-effort worst case (CriticPort.reviewCallUsdMicro's maxEffort). If a case shows a real gap, fix it test-first."
+  },
+  {
+   "key": "C6:C6L-1",
+   "file": "/tmp/frbench/leftovers-C6.json",
+   "id": "C6L-1",
+   "severity": "major, words",
+   "from": "d1109-cred-screens",
+   "text": "CS-5's 'needs' row form is not built, though CS-5 is on the never-cut list: a task that only the API key can run (it reads web pages) and that waits for the key shows no 'Waits for your API key: only it can read web pages here.' The wait entry does not carry the task's need, so the row cannot say it until the engine records it (credential-wait.ts' wait record). The chooser's runs-on line already says 'Runs on your API key: only it can read web pages here.' where it applies. Build: the wait records the need; the row, the status line and the bar say it."
+  },
+  {
+   "key": "C6:C6L-2",
+   "file": "/tmp/frbench/leftovers-C6.json",
+   "id": "C6L-2",
+   "severity": "minor",
+   "from": "d1109-cred-screens",
+   "text": "'Start on 1 Dec' for a share or key-month stop starts a session that stops to wait at once: keepStart keeps a start only for reason 'limit' (compose.ts about :4245), so the dialog then says 'Started: the session works until nothing more can run, ...' and the Sessions list gets a session with nothing done (/tmp/frbench/review-d1109-cred-screens bench steps 55-58). Keep the start for the month's reset as for a limit (d1109-starts-engine's keepStartAtReset), or word the button for what it does."
+  },
+  {
+   "key": "C6:C6L-3",
+   "file": "/tmp/frbench/leftovers-C6.json",
+   "id": "C6L-3",
+   "severity": "words",
+   "from": "d1109-cred-screens",
+   "text": "When the stop line replaces the plan sentence, the Start dialog no longer names the tasks that will run; and three figures exist for the same waiting work: the ask card 'about CHF 0.09', the dialog's Use API key 'about CHF 0.05' (runnable tasks only), the plan card about CHF 0.13 per task (review steps 14, 17, 40, 45). One figure per thing, and the dialog keeps the plan sentence."
+  },
+  {
+   "key": "C6:C6L-4",
+   "file": "/tmp/frbench/leftovers-C6.json",
+   "id": "C6L-4",
+   "severity": "words",
+   "from": "d1109-cred-screens",
+   "text": "The Use API key line passes 100 characters when the subscription was refused ('Runs now on your API key until a new sign-in is saved, about CHF 0.90; nothing passes this session's budget.'); under 'ask' before any card is filed, Settings' now line says '...; the work waits for it.' though the next work will file a card that asks (needs an asking mark in CredentialFacts)."
+  },
+  {
+   "key": "C6:C6L-5",
+   "file": "/tmp/frbench/leftovers-C6.json",
+   "id": "C6L-5",
+   "severity": "minor",
+   "from": "d1109-cred-screens",
+   "text": "The share wait on the status line and the session page offers Cancel only; 'Change the allowance' is only on the run bar, while CS-7 names it with the share form (project-status.ts is d1109-run-visible's)."
+  },
+  {
+   "key": "C6:C6L-6",
+   "file": "/tmp/frbench/leftovers-C6.json",
+   "id": "C6L-6",
+   "severity": "words",
+   "from": "d1109-cred-screens",
+   "text": "Chat's one-off press (Use API key for one held question) sends the question again as a new person line, so it shows twice in the conversation (review step 52; one model call on the key, so it is a display duplicate). Conversation.tsx."
+  },
+  {
+   "key": "C6:C6L-7",
+   "file": "/tmp/frbench/leftovers-C6.json",
+   "id": "C6L-7",
+   "severity": "minor, tests",
+   "from": "d1109-cred-screens",
+   "text": "The spec's Playwright cases for the Settings section and the Start dialog at phone and desktop widths are not added (the reviewer checked 390 px by hand: no sideways scroll; Playwright 38/38 passes)."
+  },
+  {
+   "key": "C6:C6L-8",
+   "file": "/tmp/frbench/leftovers-C6.json",
+   "id": "C6L-8",
+   "severity": "words",
+   "from": "d1109-cred-screens",
+   "text": "The project header under 'ask' with the API key able to run reads 'Ready: 2 tasks; nothing runs until 02:51 (your subscription's limit)' while the Start dialog offers Use API key now ('nothing runs by itself until 02:51'). The plan card's per-task wait line under 'then wait' still says 'Press Start and the work starts then.' on a card whose button is 'Approve and start' (credential-wait.ts waitThenStartSentence, W15-66). A session that ended to wait under 'ask' reads '... CHF 0.00.' (result.ts). After 'Start at 04:28' the reopened dialog says '...; then your session goes on.' with 'Cancel the wait' for a kept person start, which is not a continuation (d1109-starts-engine's kept-start sentence; /tmp/frbench/fixup-d1109-cred-screens/steps/06-fx-b1-03-start-dialog-again.txt)."
+  },
+  {
+   "key": "C6:C6L-9",
+   "file": "/tmp/frbench/leftovers-C6.json",
+   "id": "C6L-9",
+   "severity": "minor",
+   "from": "d1109-cred-screens",
+   "text": "A Settings read-back left unanswered (the person navigates away) stays in the Inbox as an approval card 'Set which Claude does the work to ...?' (the generic settings pattern). A POST /sessions refused for nothing to run answers HTTP 409 'conflict' though the daemon raises 'validation' (the UI shows the right sentence)."
+  }
+ ]
+}

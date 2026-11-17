@@ -1,0 +1,118 @@
+{
+ "group": "other",
+ "base": "4cf11fd",
+ "live_findings": [
+  {
+   "key": "live4:L4-l3-4",
+   "finding": {
+    "id": "L4-l3-4",
+    "severity": "minor",
+    "title": "New task gives the reviewer an outcome that needs a file it may not write, with no note",
+    "step": "LC-L3 / L3-research-3",
+    "what_the_person_sees": "No note at New task. The run ends with 'I am not allowed to write review.md' and the review grade is 10.",
+    "expected": "A note at New task, or a specialist that can write the file.",
+    "evidence": "/tmp/frbench/live4/l3/evidence/lr-run.json; the task-who note was null",
+    "repro": "Same as L4-l3-3.",
+    "suspected_cause": "The who-note does not check the outcome's files against what the specialist may write.",
+    "journey": "l3",
+    "pass": 2
+   },
+   "verdict": {
+    "id": "L4-l3-4",
+    "real": true,
+    "model_only": false,
+    "severity": "minor",
+    "root_cause": "ADR 0109 says a reviewer writes no file and its findings are its report. That rule exists only as prompt text: the reviewer's registry entry and the planner's delegation rule in project-manager.md. Nothing in code applies it when the person makes the task. (1) New task's who-note (NewTaskDialog.tsx:369-378) shows only two things: `runsOn` (where it runs on which credential) and `limitation`. The daemon (model-settings-view.ts:189-193) sets `limitation` only to NO_WEB_LIMITATION for specialists that need the web. So picking `reviewer` with the outcome 'review.md lists the gaps and risks found in notes/plan.md' shows nothing. The dialog already sends the typed words to the daemon (TR-11), but nothing compares them with the reviewer's write rule. (2) The app also builds a criterion the reviewer cannot meet. A task with no criteria gets outcomeCriterion() (verification.ts:65-70): 'The work itself shows this outcome (a file, a page or an output, not only the report): …'. The brief (executor.ts:1126-1128) and the critic (critic.ts:482-484) both use it, for every specialist, the reviewer included. The bench log shows the reviewer got exactly that criterion, while its own prompt says 'You write no file, not even a review file a brief names'. The reviewer did what it was told, and the critic graded against the app's criterion. So this is not the model's choice. One caveat on the evidence: in this run the 'could not do' and the grade of 10 come mostly from notes/plan.md being missing, which the check's repro set up on purpose. The missing write right is the second reason. Even with the plan present, this task could not pass its criterion.",
+    "where": "apps/ui/src/pages/project/NewTaskDialog.tsx:369-378; packages/runtime/src/daemon/model-settings-view.ts:189-193; packages/runtime/src/loop/verification.ts:65-70 (used at packages/runtime/src/session/executor.ts:1126-1128 and packages/runtime/src/loop/critic.ts:482-484); evals/registry/specialists/reviewer/specialist.md (the 'You write no file' paragraph)",
+    "fix_sketch": "Daemon side, on the TR-11 words path of GET /settings/models: when a specialist's registry tools include no write tool (no cc:Write or cc:Edit; today that means the reviewer) and the typed outcome or criteria ask for a file (a path with an extension, or 'write/create … file'), return a note in the daemon's words. For example: 'The reviewer writes no file: its findings are its report, in the task's drawer. To have review.md written, choose the writer or Let the agent choose.' New task and Edit show it as task-who-note, the way the limitation note is shown today, and creating the task is not refused. Brief and critic side (ADR 0109 decision 1): for a specialist whose output is its report, outcomeCriterion should read 'The report shows this outcome: …' instead of '… not only the report'. That way a reviewer task the person makes with no criteria can pass on its findings. Update ADR 0109 (or add a note) and the maintainer docs for New task and verification.",
+    "failing_test_idea": "apps/ui/test/tasks.test.tsx (the person's boundary): open New task, choose 'reviewer', type the outcome 'review.md lists the gaps and risks found in notes/plan.md'. Expect task-who-note to say the reviewer writes no file and its findings are its report. With the outcome 'lists the gaps and risks found in notes/plan.md', expect no note. Today the first case fails: task-who-note is null. Add a real-daemon case: GET /settings/models?project=…&outcome=review.md… returns the reviewer's note. Add a runtime executor-brief case: a reviewer task with no criteria gets no 'not only the report' criterion, and the critic's evidence carries the same criterion.",
+    "area_hint": "No run C area covers this. It needs a small fix area for ADR 0109 on tasks the person makes (New task and Edit who-note, plus outcomeCriterion). The nearest existing area is l3-small, which owned L3-research-3.",
+    "known_leftover": "",
+    "notes": "Evidence checked: lr-run.json and lr-look.json. In the bench database the task's specialist is 'reviewer', its outcome is 'review.md lists the gaps and risks found in notes/plan.md', and it has no criteria. In model-calls.jsonl the reviewer's brief has criterion 1 'The work itself shows this outcome (a file, a page or an output, not only the report): review.md …'. The reviewer's report says 'A review task that must produce review.md should go to a specialist allowed to write files.' The task check flagged the same thing but changed nothing. That is by design: the task was waiting for the person, and the task check's flagged lines are never shown to the person. The design doc §3.5 does not promise a who-note about write rights; ADR 0109 covered only the planner. So this is a gap in what the design covers, not a regression. I did not run the stand-in bench: the null note follows directly from the code, which has only the two note sources. Severity minor: it is cheap (CHF 0.04 here), the reviewer's report is honest about it, and the person was asked. The same thing would happen with a chat-made task or an Edit to reviewer."
+   }
+  }
+ ],
+ "live_steps": [
+  {
+   "key": "live4-step:session:LC-C18",
+   "journey": "session",
+   "pass": 1,
+   "id": "LC-C18",
+   "step": "A real session keeps its promise and takes a newcomer that fits (2 small tasks, CHF 1.00): Redo joins, a draft that does not fit waits for the next Start, the session ends, nothing starts for 2 minutes, never past CHF 1.00; C3 adds option explains and the Done line",
+   "result": "partial",
+   "usd": 0.321,
+   "observed": "Seed: chat 'run it now' + Yes ran README, welcome page and FAQ (USD 0.134). Main session: the Start dialog was prefilled 1.00 and read 'This session runs \"Add the club's phone number to contact.html\" (about CHF 0.03) and 1 more (about CHF 0.03).'; the log read 'You started the session with a budget of CHF 1.00.' / 'It promised 2 tasks, about CHF 0.07.'. While the first task ran, I pressed Redo on 'Write the FAQ': 'Reopened \"Write the FAQ\" to redo it. It joins the session that is running.', the log read 'Took \"Write the FAQ\", made ready while it ran (about CHF 0.03).', and the FAQ ran in the same session (pass). Make ready on a researcher draft (about CHF 1.10): '\"Research local garden suppliers\" is ready. It joins this session if budget is left after its own tasks, else your next Start.'. The draft never ran, and the session ended with 'Left for your next Start: \"Research local garden suppliers\" (about CHF 1.10).'. The phone task raised a real question card while the session ran. Send answers -> Done line 'Done: Answers sent: \"Add the club's phone number to contact.html\" goes on with them; it joins the session that is running.', and the task re-ran in that session (C3-left-3 pass). The session completed with 'Session over: 3 done. CHF 0.15.' (CHF 0.149 of 1.00). No new session started in the 2-minute watch. Costs total USD 0.324636 equals the model-call log. Partial for three reasons: the question card's options do not say what pressing them does as things stand; the draft's line holds out a join it can never get; and the Answered list names a running session after the session ended. I cancelled the researcher draft afterwards so a later step cannot run it.",
+   "evidence": "/tmp/frbench/live4/session/s1/steps/c18-run.json, c18-seed.json; screenshots 30-c18-20-start-dialog.png, 33-c18-30-redo-faq-after.png, 35-c18-32-make-ready-draft-after.png, 36-c18-40-card-1-inbox-card.png, 37-c18-40-card-1-answered.png, 41-c18-50-session-page.png, 44-c18-60-inbox-answered-open.png; /tmp/frbench/live4/session/steps/LC-C18.json"
+  },
+  {
+   "key": "live4-step:l3:LC-L3",
+   "journey": "l3",
+   "pass": 2,
+   "id": "LC-L3",
+   "step": "Run L3's check_in_the_app items that no other journey covered, with the real model, cheapest first, while the ledger stays under USD 6.30. No other journey's step file covered an L3 item; LC-C7's L4-pause-1 is only a sibling of L3-research-1.",
+   "result": "partial",
+   "observed": "Priority 1 results. L3-github-1 PASS, with its fixups #18 (squash) and #19 also PASS. L3-github-2 PASS: the cards close by themselves and stay closed after a restart; the step 5 words differ. L3-research-4 PASS. L3-research-1 PASS for the handoff fix; the review then waited for budget room under C4b's rule and ran after Continue. L3-run-1 FAIL: the card came on the first try in only 1 of 3 fresh projects. In the other two, Haiku asked for a yes in words with no card, the reply guard never fired, and a typed 'yes' got 'Yes to what?'. Priority 3 items mostly pass; the failures are words and small state lines. Not run: L3-github-10 (timing), L3-github-3 counter-check, the #18 rebase variant, voice. Not seen (they need the model to act in a certain way): L3-run-7, L3-run-8 step 3, the #3 and #4 nudges, the lower-case command quote.",
+   "evidence": "/tmp/frbench/live4/l3/steps/LC-L3.json (full), LC-L3.partial.json; /tmp/frbench/live4/l3/evidence/*.json; screenshots /tmp/frbench/live4/l3/l3b/steps and /tmp/frbench/live4/l3/l3a/steps; model-call logs <home>/bench/model-calls.jsonl; daemon logs /tmp/frbench/live4/l3/l3{a,b}/daemon.log",
+   "usd": 1.105977
+  },
+  {
+   "key": "live4-step:l3:LC-L3.L3-run-1",
+   "journey": "l3",
+   "pass": 2,
+   "id": "LC-L3.L3-run-1",
+   "step": "L3-run-1 (+L3-run-9, fixups #3 #5): 'research may read any public website again' on 3 fresh projects",
+   "result": "fail",
+   "observed": "Narrowing ('only read developer.mozilla.org for research') applied with no card in 3 of 3 projects. Widening on the first try: card in 1 of 3 (project B). A: 'This widens what research may read, so I need your yes first. Shall I set research for Reading rules to any public website again?' (no tool call); the typed 'yes' got 'Yes to what? Nothing is waiting for your yes.'; the card came on the 2nd try. C: text only twice; the card came on the 3rd line. The guard line appears 0 times in daemon.log. Card text matches exactly, with no 'except' (L3-run-9 PASS); Yes -> 'Research reads: any public website'. The request history and system rule are as specified. #5: one call each and the reply as said (PASS). Bubbles above cards never say 'Nothing changed'.",
+   "evidence": "l3b/steps/09-rr1-t3-reply.png, 10-rr1-t3b-reply.png, 25-reading-rules-c-t3-reply.png, 28-reading-rules-c-t3c-reply.png",
+   "usd": 0.007
+  },
+  {
+   "key": "live4-step:l3:LC-L3.L3-research-3",
+   "journey": "l3",
+   "pass": 2,
+   "id": "LC-L3.L3-research-3",
+   "step": "L3-research-3 (+fixups)",
+   "result": "partial",
+   "observed": "No 'blocker:'. Findings with no fix have no 'To fix' line. Neither the drawer nor chat says 'Resolve it and show the evidence'. But the card quotes 'The specialist said: \"The one commit is 'Workspace before 'Review the launch plan in notes/plan.md''.\"', which is not the reason. Also, the reviewer may not write review.md.",
+   "evidence": "/tmp/frbench/live4/l3/evidence/lr-look.json, l3b/steps/68-lr-inbox-card.png",
+   "usd": 0.047
+  },
+  {
+   "key": "live4-step:l3:LC-L3.L3-research-2",
+   "journey": "l3",
+   "pass": 2,
+   "id": "LC-L3.L3-research-2",
+   "step": "L3-research-2 (+fixup)",
+   "result": "partial",
+   "observed": "Card '... paused before its budget ran out' / 'It spent CHF 0.08 of its budget of CHF 0.15, ...' matches the log's 'CHF 0.08 in all'. The notification title is right. The session page row reads 'Paused before its budget of CHF 0.15 ran out', with no 'Paused at'. But a Left to do item is cut: '... plus a short introduction. Put…'.",
+   "evidence": "l3b/steps/117-rg-card.png, /tmp/frbench/live4/l3/evidence/rg-run2.json",
+   "usd": 0.106
+  }
+ ],
+ "leftovers": [
+  {
+   "key": "C6:C6L-20",
+   "file": "/tmp/frbench/leftovers-C6.json",
+   "id": "C6L-20",
+   "severity": "decision",
+   "from": "both",
+   "text": "Process: C6 ran four times; three container restarts (about 23:56, 00:58 and 01:54 UTC on 2026-11-17) stopped the first three runs. Every stage's work was kept (commits, saved reports, WIP patches) and reused, and run 4 went through with the areas one at a time and one heavy suite at a time under flock /tmp/frbench/heavy.lock. Keep both rules for the next runs on this machine."
+  },
+  {
+   "key": "L3:LL-11",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-11",
+   "severity": "minor",
+   "from": "l3-small",
+   "text": "Refs refs/forerunner/before|first/<task> show in `git log --all --decorate=full` and in git GUIs on the person's folder."
+  },
+  {
+   "key": "L3:LL-12",
+   "file": "/tmp/frbench/leftovers-L3.json",
+   "id": "LL-12",
+   "severity": "words",
+   "from": "l3-small",
+   "text": "A finding the critic named no fix for has no 'To fix' line now (L3-research-3); naming an action would be a critic prompt change (ask the critic for one)."
+  }
+ ]
+}
