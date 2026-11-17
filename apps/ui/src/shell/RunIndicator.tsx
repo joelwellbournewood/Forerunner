@@ -164,18 +164,24 @@ function RunEntry({
           {elapsed}
         </span>
       ) : null}
+      {/* d1109-cred-screens (CS-7): Answer (the open ask card), Change the allowance. Beside the
+          words they act on, apart from Cancel and its own line (CS-10's walk: "Answer" next to
+          "Nothing starts when Claude is back; ..." read as if Answer did that). */}
+      {(run.links ?? []).length > 0 ? (
+        <span className="flex items-center gap-2" data-testid="run-links">
+          {(run.links ?? []).map((l) => (
+            <Link
+              key={l.to}
+              to={l.to}
+              className="rounded border border-blue-300 px-2 py-0.5 text-xs font-medium text-blue-900 hover:bg-blue-100 dark:border-blue-700 dark:text-blue-100 dark:hover:bg-blue-900"
+              data-testid="run-link"
+            >
+              {l.label}
+            </Link>
+          ))}
+        </span>
+      ) : null}
       <span className="ml-auto flex items-center gap-2">
-        {/* d1109-cred-screens (CS-7): Answer (the open ask card), Change the allowance. */}
-        {(run.links ?? []).map((l) => (
-          <Link
-            key={l.to}
-            to={l.to}
-            className="rounded border border-blue-300 px-2 py-0.5 text-xs font-medium text-blue-900 hover:bg-blue-100 dark:border-blue-700 dark:text-blue-100 dark:hover:bg-blue-900"
-            data-testid="run-link"
-          >
-            {l.label}
-          </Link>
-        ))}
         {run.cancel && run.projectId ? (
           <CancelWait projectId={run.projectId} />
         ) : run.stop.length > 0 ? (

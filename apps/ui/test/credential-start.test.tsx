@@ -234,3 +234,41 @@ describe("d1109-cred-screens, run C: the plan card's foot line (CS-4)", () => {
     ).toBeTruthy();
   });
 });
+
+/**
+ * d1109-cred-screens (CS-10's walk; C3-left-9's class: the sentence names the button beside it):
+ * with the key refused under "ask" (no "Use API key" to offer) the one button is "Start at 15:40",
+ * kept for the reset; the line under it read "Start: works until ..." for a Start that is not
+ * there. It names the button the person presses.
+ */
+describe("d1109-cred-screens, run C: a kept start alone says its own label (CS-3, C3-left-9)", () => {
+  it("the explain line under 'Start at 15:40' begins with 'Start at 15:40', never a bare 'Start:'", async () => {
+    const harness = createHarness();
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Nothing can run until 15:40 (your subscription's limit). Press Start at 15:40 and the work starts then.",
+      save: null,
+      startable: true,
+    };
+    harness.daemon.state.startCredential.proj_atlas = { line: null, runOut: null };
+    const { dialog } = await openDialog(harness);
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("confirm-start-session")).toHaveTextContent(
+        "Start at 15:40",
+      ),
+    );
+    expect(within(dialog).getByTestId("start-session-explain")).toHaveTextContent(
+      /^Start at 15:40: works until nothing more can run, the budget is used, or you stop it\.$/,
+    );
+  });
+
+  it("a plain Start keeps its line", async () => {
+    const harness = createHarness();
+    const { dialog } = await openDialog(harness);
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("confirm-start-session")).toHaveTextContent(/^Start$/),
+    );
+    expect(within(dialog).getByTestId("start-session-explain")).toHaveTextContent(
+      /^Start: works until nothing more can run, the budget is used, or you stop it\.$/,
+    );
+  });
+});

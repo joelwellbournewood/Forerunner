@@ -640,7 +640,9 @@ export function StartSessionDialog({
               ? runningElsewhere
                 ? `Starts after the session on "${runningElsewhere}"; then works until nothing more can run, the budget is used, or you stop it.`
                 : "Starts after the current session; then works until nothing more can run, the budget is used, or you stop it."
-              : "Start: works until nothing more can run, the budget is used, or you stop it."}
+              : // The line names the button beside it: a Start kept for the reset reads
+                // "Start at 15:40: ..." (CS-10's walk, C3-left-9's class).
+                `${(blocked?.startable && blocked.startLabel) || "Start"}: works until nothing more can run, the budget is used, or you stop it.`}
           </p>
         )}
         {/* d1109-starts-engine S-7 (ADR 0118, option C): what the person makes ready while the

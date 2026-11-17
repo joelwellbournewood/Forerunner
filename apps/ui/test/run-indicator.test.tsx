@@ -771,6 +771,15 @@ describe("d1109-cred-screens, run C: the run indicator's credential forms (CS-7)
     );
     expect(within(entry).getByTestId("run-cancel")).toBeInTheDocument();
     expect(entry).not.toHaveTextContent("waiting for Claude");
+    // CS-10's walk: the link sits with the words it acts on, apart from Cancel's own line
+    // ("Nothing starts when Claude is back; ...") so that line never reads as the link's.
+    const links = within(entry).getByTestId("run-links");
+    expect(links).toContainElement(within(entry).getByTestId("run-link"));
+    expect(links).not.toContainElement(within(entry).getByTestId("run-cancel-explain"));
+    expect(
+      links.compareDocumentPosition(within(entry).getByTestId("run-cancel-explain")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("the session page's wait block: the stop's time with Answer opening the card, and Cancel", async () => {
