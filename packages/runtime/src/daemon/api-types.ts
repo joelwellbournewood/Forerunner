@@ -2064,6 +2064,12 @@ export const StartCheckView = z.object({
           later: z.object({ label: z.string(), explain: z.string() }).nullable(),
           lean: z.enum(["use", "later"]),
           goesOnLine: z.string().nullable(),
+          /**
+           * The one line above the two buttons ("Your subscription is at its limit until
+           * 15:40."), the dialog's sentence in place of "Nothing can run until 15:40 ...".
+           * Absent from an older daemon.
+           */
+          stoppedLine: z.string().optional(),
         })
         .nullable(),
     })

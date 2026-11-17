@@ -14,6 +14,7 @@ import {
   startLaterExplain,
   startLaterLabel,
   startRunOutLine,
+  startStoppedLine,
   useApiKeyExplain,
 } from "./credential-policy-view.ts";
 
@@ -36,6 +37,11 @@ export interface StartCredentialView {
     lean: "use" | "later";
     /** The project's own session already waits to go on: "Your session of 14:05 goes on by itself at 15:40." */
     goesOnLine: string | null;
+    /**
+     * The one line above the two buttons ("Your subscription is at its limit until 15:40."): with
+     * "Use API key" offered, "Nothing can run until 15:40" would not be true.
+     */
+    stoppedLine: string;
   } | null;
 }
 
@@ -138,6 +144,7 @@ export async function startCredential(
         later,
         lean: whenStopped === "ask" ? "use" : "later",
         goesOnLine,
+        stoppedLine: startStoppedLine(first.kind, stop, opts),
       },
     },
     offer: {

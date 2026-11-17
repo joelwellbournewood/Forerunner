@@ -632,7 +632,9 @@ export function StartSessionDialog({
             again from the start check the new session itself made busy). A refused start
             waits for nothing: another project's session makes nothing here runnable (later
             #38), so it never reads "Starts after the current session". */}
-        {notice ? null : (
+        {/* CS-3: beside "Use API key" and "Start at 15:40" each button says what it does; the
+            line about a plain Start is not shown (there is none). */}
+        {notice || runOut ? null : (
           <p className="text-xs text-neutral-500" data-testid="start-session-explain">
             {data?.busy && !blocked && !planning
               ? runningElsewhere

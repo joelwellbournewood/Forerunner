@@ -52,7 +52,13 @@ describe("d1109-cred-screens, run C: the Start dialog's credential line and butt
     };
     harness.daemon.state.startCredential.proj_atlas = {
       line: null,
-      runOut: { use: USE, later: LATER, lean: "use", goesOnLine: null },
+      runOut: {
+        use: USE,
+        later: LATER,
+        lean: "use",
+        goesOnLine: null,
+        stoppedLine: "Your subscription is at its limit until 15:40.",
+      },
     };
     const { user, dialog } = await openDialog(harness);
     const list = await within(dialog).findByTestId("start-session-run-out");
@@ -60,6 +66,12 @@ describe("d1109-cred-screens, run C: the Start dialog's credential line and butt
       .getAllByRole("button")
       .map((b) => b.textContent);
     expect(buttons).toEqual(["Use API key", "Start at 15:40"]);
+    // The line above the two buttons says the stop: "Nothing can run until 15:40" is not true
+    // when Use API key runs now; no "Start: works until ..." line for a Start that is not there.
+    expect(within(dialog).getByTestId("start-session-blocked")).toHaveTextContent(
+      /^Your subscription is at its limit until 15:40\.$/,
+    );
+    expect(within(dialog).queryByTestId("start-session-explain")).toBeNull();
     expect(list).toHaveTextContent(USE.explain);
     expect(list).toHaveTextContent(LATER.explain);
     // No third Start beside the two.
@@ -81,7 +93,13 @@ describe("d1109-cred-screens, run C: the Start dialog's credential line and butt
     };
     harness.daemon.state.startCredential.proj_atlas = {
       line: null,
-      runOut: { use: USE, later: LATER, lean: "later", goesOnLine: null },
+      runOut: {
+        use: USE,
+        later: LATER,
+        lean: "later",
+        goesOnLine: null,
+        stoppedLine: "Your subscription is at its limit until 15:40.",
+      },
     };
     const { user, dialog } = await openDialog(harness);
     const list = await within(dialog).findByTestId("start-session-run-out");
@@ -90,9 +108,10 @@ describe("d1109-cred-screens, run C: the Start dialog's credential line and butt
         .getAllByRole("button")
         .map((b) => b.textContent),
     ).toEqual(["Start at 15:40", "Use API key"]);
-    // C3-left-9: the sentence names the button beside it.
+    // C3-left-9 (intent kept: the sentence matches the buttons beside it): with two buttons, the
+    // stop alone; each button says what it does.
     expect(within(dialog).getByTestId("start-session-blocked")).toHaveTextContent(
-      "Nothing can run until 15:40 (your subscription's limit). Press Start at 15:40 and the work starts then.",
+      /^Your subscription is at its limit until 15:40\.$/,
     );
     await user.click(within(list).getByTestId("start-session-later"));
     expect(await within(dialog).findByTestId("start-session-notice")).toHaveTextContent(

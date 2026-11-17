@@ -1655,7 +1655,15 @@ export function createDaemonApp(
     // CS-3: the project's own session already waits to go on (one wait per project): the dialog
     // says when it goes on by itself, beside its "Use API key".
     const goesOn = credential.view?.runOut?.goesOnLine ?? null;
-    const blocked = found && goesOn ? { ...found, sentence: goesOn } : found;
+    // With "Use API key" and "Start at 15:40" offered, the sentence above them says the stop
+    // alone ("Nothing can run until 15:40" would not be true; each button says what it does).
+    const stoppedLine = credential.view?.runOut?.stoppedLine ?? null;
+    const blocked =
+      found && goesOn
+        ? { ...found, sentence: goesOn }
+        : found?.startable && stoppedLine
+          ? { ...found, sentence: stoppedLine }
+          : found;
     const view: StartCheckView = {
       projectId: r.projectId,
       sessionBudget: money(r.sessionBudgetUsdMicro, rate),

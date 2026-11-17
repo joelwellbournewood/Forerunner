@@ -78,6 +78,18 @@ export interface AskCardWords {
   closed: string;
 }
 
+/**
+ * d1109-cred-screens (CS-8; design §5 rule 7): the ask card's figure: "about CHF 0.40", "less than
+ * CHF 0.01" alone under a centime, and none when no figure is known ("CHF 0.00": the work's
+ * estimate was not known when the card was filed): the sentence then says the cost per use.
+ */
+function askFigure(estimateChf: string): { body: string; use: string } {
+  if (/^CHF 0\.00$/.test(estimateChf.trim()))
+    return { body: ", at a cost per use", use: ", at a cost per use" };
+  const est = /^less than /.test(estimateChf) ? estimateChf : `about ${estimateChf}`;
+  return { body: `: ${est}`, use: `: ${est} for what waits now` };
+}
+
 /** The Ask card's option labels, in their order (Use API key first). */
 export const ASK_OPTIONS = ["Use API key", "Wait"] as const;
 
@@ -90,14 +102,14 @@ export const ASK_OPTIONS = ["Use API key", "Wait"] as const;
 function refusedAskWords(input: AskCardInput): AskCardWords {
   const saved =
     input.wait.kind === "subscription" ? "a new sign-in is saved" : "a new key is saved";
-  const est = input.estimateChf;
+  const fig = askFigure(input.estimateChf);
   return {
     title: `Use your API key until ${saved}?`,
-    body: `${stoppedPhrase(input.wait, null)}. Your API key can do the waiting work now: about ${est}.`,
+    body: `${stoppedPhrase(input.wait, null)}. Your API key can do the waiting work now${fig.body}.`,
     options: [
       {
         label: "Use API key",
-        explain: `Your work and chat use your API key until ${saved}: about ${est} for what waits now.`,
+        explain: `Your work and chat use your API key until ${saved}${fig.use}.`,
       },
       {
         label: "Wait",
@@ -134,10 +146,11 @@ export function askCardWords(input: AskCardInput): AskCardWords {
   const title = share
     ? `Use your API key until ${w?.untilShort ?? "the month's end"}?`
     : `Use your API key until ${until}?`;
+  const fig = askFigure(input.estimateChf);
   const body = `${stoppedPhrase(input.wait, share ? null : until)}${
     share ? " this month" : ""
-  }. Your API key can do the waiting work now: about ${input.estimateChf}.`;
-  const useExplain = `Your work and chat use your API key until ${share ? (w?.untilShort ?? until) : until}: about ${input.estimateChf} for what waits now.`;
+  }. Your API key can do the waiting work now${fig.body}.`;
+  const useExplain = `Your work and chat use your API key until ${share ? (w?.untilShort ?? until) : until}${fig.use}.`;
   const waitExplain = share
     ? input.sessionWaits
       ? `Nothing moves until ${until}, or until you raise the allowance; then your session goes on.`

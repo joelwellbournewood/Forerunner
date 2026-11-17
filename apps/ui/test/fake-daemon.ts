@@ -3261,7 +3261,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // project's own session already waits, its line in place of the wait's sentence.
     view.credential = state.startCredential[id] ?? null;
     const goesOn = view.credential?.runOut?.goesOnLine ?? null;
+    const stoppedLine = view.credential?.runOut?.stoppedLine ?? null;
     if (goesOn && view.blocked) view.blocked = { ...view.blocked, sentence: goesOn };
+    else if (stoppedLine && view.blocked?.startable)
+      view.blocked = { ...view.blocked, sentence: stoppedLine };
     // C2-left-2, as the daemon: nothing is ready because a task waits on the person's card.
     if (view.blocked?.sentence === "Nothing can run: no task is ready.") {
       const held = state.tasks.find(

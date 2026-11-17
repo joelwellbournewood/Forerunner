@@ -31,7 +31,12 @@ import { eventAudience } from "../src/daemon/event-audience.ts";
 import { projectStatusLine } from "../src/daemon/project-status.ts";
 import { describeEvent } from "../src/daemon/views.ts";
 import { waitRowWords } from "../src/session/credential-wait.ts";
-import { backLogLine, chatOneOffExplain, switchRunLine } from "../src/session/credential-words.ts";
+import {
+  askCardWords,
+  backLogLine,
+  chatOneOffExplain,
+  switchRunLine,
+} from "../src/session/credential-words.ts";
 
 /**
  * d1109-cred-screens (run C, C6; ADR 0120 amended 2026-11-16): every screen sentence of "which
@@ -418,6 +423,72 @@ describe("d1109-cred-screens, run C (CS-8): chat's one-off line never says CHF 0
     );
     expect(chatOneOffExplain("api_key", "less than CHF 0.01")).toBe(
       "Answers this question on your API key: less than CHF 0.01.",
+    );
+  });
+});
+
+/**
+ * d1109-cred-screens (CS-8, CS-10's walk; design §5 rule 7: "CHF ... 'about' for estimates", and
+ * W15-74's rule, never "about CHF 0.00" for a cost): the ask card the person answers named "about
+ * CHF 0.00" on the bench, for work whose estimate was not known when the card was filed, and would
+ * say "about less than CHF 0.01" under a centime. Now: the figure when there is one, "less than
+ * CHF 0.01" alone under a centime, and no figure ("at a cost per use") when none is known.
+ */
+describe("d1109-cred-screens, run C: the ask card's figure (CS-8)", () => {
+  const base = {
+    wait: {
+      reason: "limit" as const,
+      kind: "subscription" as const,
+      until: "2026-11-16T14:40:00Z",
+    },
+    timezone: "Europe/Zurich",
+    nowMs: Date.parse("2026-11-16T13:00:00Z"),
+    sessionWaits: true,
+  };
+  it("a known figure reads 'about CHF 0.40'; under a centime 'less than CHF 0.01'; none known, no figure", () => {
+    const known = askCardWords({ ...base, estimateChf: "CHF 0.40" });
+    expect(known.body).toBe(
+      "Your Claude subscription is at its limit until 15:40. Your API key can do the waiting work now: about CHF 0.40.",
+    );
+    expect(known.options[0]?.explain).toBe(
+      "Your work and chat use your API key until 15:40: about CHF 0.40 for what waits now.",
+    );
+    const tiny = askCardWords({ ...base, estimateChf: "less than CHF 0.01" });
+    expect(tiny.body).toBe(
+      "Your Claude subscription is at its limit until 15:40. Your API key can do the waiting work now: less than CHF 0.01.",
+    );
+    expect(tiny.options[0]?.explain).toBe(
+      "Your work and chat use your API key until 15:40: less than CHF 0.01 for what waits now.",
+    );
+    const none = askCardWords({ ...base, estimateChf: "CHF 0.00" });
+    expect(none.body).toBe(
+      "Your Claude subscription is at its limit until 15:40. Your API key can do the waiting work now, at a cost per use.",
+    );
+    expect(none.options[0]?.explain).toBe(
+      "Your work and chat use your API key until 15:40, at a cost per use.",
+    );
+    for (const w of [known, tiny, none])
+      for (const s of [w.body, ...w.options.map((o) => o.explain)]) {
+        expect(s).not.toContain("about CHF 0.00");
+        expect(s).not.toContain("about less than");
+        expect(s.length).toBeLessThanOrEqual(140);
+      }
+    for (const w of [known, tiny, none])
+      for (const o of w.options) expect(o.explain.length).toBeLessThanOrEqual(100);
+  });
+
+  it("the refused form says the same", () => {
+    const refused = {
+      ...base,
+      wait: { reason: "refused" as const, kind: "subscription" as const, until: null },
+    };
+    expect(askCardWords({ ...refused, estimateChf: "CHF 0.00" }).body).toBe(
+      "Anthropic refused your Claude sign-in. Your API key can do the waiting work now, at a cost per use.",
+    );
+    expect(
+      askCardWords({ ...refused, estimateChf: "less than CHF 0.01" }).options[0]?.explain,
+    ).toBe(
+      "Your work and chat use your API key until a new sign-in is saved: less than CHF 0.01 for what waits now.",
     );
   });
 });

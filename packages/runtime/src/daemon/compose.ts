@@ -1790,9 +1790,25 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           projectId,
           cap,
         ).catch(() => null);
+        // d1109-cred-screens (CS-8): the task whose run met the stop is claimed while the card is
+        // filed, so the ready tasks alone left it out (the bench's card read "about CHF 0.00"):
+        // its own estimate counts too, at the start check's fallback pricing.
+        const inFlight = (
+          await store.task
+            .forProject(projectId, { status: ["claimed", "in_progress"] }, { limit: 50 })
+            .catch(() => [])
+        ).reduce(
+          (sum, t) =>
+            sum +
+            Math.max(
+              0,
+              (t.est_cost_usd_micro || t.budget_usd_micro || 500_000) - t.actual_cost_usd_micro,
+            ),
+          0,
+        );
         if (check)
           estimateUsdMicro += Math.min(
-            check.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0),
+            check.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0) + inFlight,
             check.workBudgetUsdMicro,
           );
       }

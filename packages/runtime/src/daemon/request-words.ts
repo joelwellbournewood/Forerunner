@@ -1387,9 +1387,13 @@ function askCard(
     },
     ...(ask?.timezone ? { timezone: ask.timezone } : {}),
     nowMs: ask?.nowMs ?? Date.now(),
-    estimateChf: chfText(
+    // d1109-cred-screens (CS-8): under a centime "less than CHF 0.01" (never "CHF 0.00").
+    estimateChf: moneyWords(
+      chfText(
+        typeof card.estimate_usd_micro === "number" ? card.estimate_usd_micro : 0,
+        typeof card.chf_per_usd === "number" ? card.chf_per_usd : undefined,
+      ),
       typeof card.estimate_usd_micro === "number" ? card.estimate_usd_micro : 0,
-      typeof card.chf_per_usd === "number" ? card.chf_per_usd : undefined,
     ),
     sessionWaits: r.status === "open" ? (ask?.sessionWaits ?? false) : answeredGoesOn,
     ...(ask?.goesOnAt ? { goesOnAt: ask.goesOnAt } : {}),

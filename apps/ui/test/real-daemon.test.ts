@@ -22257,9 +22257,12 @@ describe("d1109-cred-screens, run C", () => {
       await addReady(first.client, project.id, "Style the page");
       await restSubscription(first.rt, resetAt);
       const check = await first.client.startCheck(project.id);
-      // One sentence that names the button beside it (C3-left-9).
-      expect(check.blocked?.sentence).toBe(
-        "Nothing can run until 11:40 (your subscription's limit). Press Start at 11:40 and the work starts then.",
+      // One sentence that matches the buttons beside it (C3-left-9): with "Use API key" and
+      // "Start at 11:40" offered, the stop alone ("Nothing can run until 11:40" is not true when
+      // the key can run it now; each button says what it does).
+      expect(check.blocked?.sentence).toBe("Your subscription is at its limit until 11:40.");
+      expect(check.credential?.runOut?.stoppedLine).toBe(
+        "Your subscription is at its limit until 11:40.",
       );
       expect(check.credential?.line).toBeNull();
       const runOut = check.credential?.runOut;
