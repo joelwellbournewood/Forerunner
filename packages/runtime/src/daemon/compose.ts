@@ -157,6 +157,7 @@ import {
   scheduleModelWatch,
   scheduleModelWatchReminders,
 } from "../models/watch.ts";
+import { chfText } from "../money-words.ts";
 import {
   bindProducers,
   DesktopChannel,
@@ -222,9 +223,6 @@ import {
   codeCommandsOf,
   type TaskBillingPort,
 } from "../session/billing.ts";
-import { chfText } from "../money-words.ts";
-import { switchNotificationWords } from "../session/credential-words.ts";
-import { aboutWords } from "../session/money-words.ts";
 import {
   type BudgetStopSyncResult,
   syncBudgetStopAnswers,
@@ -252,8 +250,8 @@ import {
   waitSentence,
   waitThenStartSentence,
 } from "../session/credential-wait.ts";
+import { switchNotificationWords } from "../session/credential-words.ts";
 import { DependentBranches } from "../session/dependent-branches.ts";
-import { credentialWaitRow, monthStopOf } from "./task-display.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
   type BlockedSyncResult,
@@ -270,6 +268,7 @@ import {
 import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
 import { type LateApprovalSyncResult, syncLateApprovals } from "../session/late-approval.ts";
 import { LiveSessions } from "../session/live-sessions.ts";
+import { aboutWords } from "../session/money-words.ts";
 import {
   askPersonTool,
   type PersonQuestionsSyncResult,
@@ -427,6 +426,7 @@ import {
 import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
 import { busyHere, startBlocked as startBlockedReason } from "./start-blocked.ts";
+import { credentialWaitRow, monthStopOf } from "./task-display.ts";
 import { fileTools } from "./tools.ts";
 import { requestViews } from "./views.ts";
 
@@ -4621,8 +4621,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             : {}),
         };
       // CS-7: under 'ask' with the card open, the plain wait with its time and the card.
-      const askingId = (source?.limits as { asking?: { requestId?: unknown } } | undefined)
-        ?.asking?.requestId;
+      const askingId = (source?.limits as { asking?: { requestId?: unknown } } | undefined)?.asking
+        ?.requestId;
       const asking =
         wait.ask && wait.reason !== "refused" && typeof askingId === "string"
           ? {

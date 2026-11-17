@@ -247,9 +247,7 @@ export async function runViews(deps: RunIndicatorDeps): Promise<RunningView[]> {
     );
     const then = behind ? await nameOf(behind.projectId) : null;
     // CS-7: the question on the ask card that tasks of this session wait for, with Answer.
-    const asking = deps.askWaiting
-      ? await deps.askWaiting(row.project_id).catch(() => null)
-      : null;
+    const asking = deps.askWaiting ? await deps.askWaiting(row.project_id).catch(() => null) : null;
     const words: RunWords = {
       state,
       taskTitle: state === "between" || state === "planning" ? null : fold.taskTitle,
