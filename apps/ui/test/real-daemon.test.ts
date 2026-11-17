@@ -21870,9 +21870,8 @@ describe("d1109-selftasks-chat, run C", () => {
   const LINE =
     'fix the tasks: "Style the page" is two jobs, the layout and the colours; nothing checks that the links work.';
   const homes: string[] = [];
-  afterAll(() => {
-    for (const h of homes) rmSync(h, { recursive: true, force: true });
-  });
+  // removeHomes retries a home Windows still holds open (EBUSY, ba9874a).
+  afterAll(() => removeHomes(homes));
   async function open(home: string, later = false, env: Record<string, string> = {}) {
     const e = { FORERUNNER_HOME: home };
     return composeWithRolePlayer(env, {
@@ -22052,6 +22051,7 @@ describe("d1109-selftasks-chat, run C", () => {
       expect(undone.status).toBe("done");
       const [after] = (await b.client.sessionEvents(sessionId)).filter((e) => e.type === "change");
       expect([after?.undoable, after?.undone]).toEqual([false, true]);
+      await settleSessions(b.rt);
     } finally {
       await b.rt.close();
     }
