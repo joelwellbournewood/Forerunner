@@ -1,4 +1,9 @@
-import type { BillingSourceKind } from "@forerunner/billing";
+import {
+  type BillingSource,
+  type BillingSourceKind,
+  formatChf,
+  nextMonthStartIso,
+} from "@forerunner/billing";
 import { isAbsolute } from "@forerunner/platform";
 import type {
   EventRow,
@@ -19,8 +24,9 @@ import {
 } from "../session/credential-wait.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import { stopLimitWords, stopReasonOfHandoff } from "../session/stop-words.ts";
-import { waitingOf } from "../wiring/billing-pick.ts";
+import { planUsageOf, waitingOf } from "../wiring/billing-pick.ts";
 import type { TaskCheck, TaskDetailView, TaskReviewEvidence, TaskView } from "./api-types.ts";
+import { drawerRunLine } from "./credential-policy-view.ts";
 import { verdictWords } from "./event-lines.ts";
 import {
   findingAsk,
@@ -189,7 +195,11 @@ export async function credentialWaitRow(
         ? limits.restingUntil
         : null;
     const refused = typeof limits.refusedAt === "string";
-    if (!until && !refused) continue;
+    // d1109-cred-screens (CS-5): the subscription's share and a key's monthly cap are stops too
+    // (ADR 0120): until the month's start, read as the router reads them.
+    const monthStop =
+      !until && !refused ? await monthStopOf(store, row as never, now).catch(() => null) : null;
+    if (!until && !refused && !monthStop) continue;
     const human = await store.human.get(row.human_id).catch(() => undefined);
     // d1109-cred-engine CE-7: under 'ask' while the one card for this stop is open, the row says
     // the work waits for the person's answer.
@@ -208,10 +218,10 @@ export async function credentialWaitRow(
         : undefined;
     return waitRowWords(
       {
-        reason: refused ? "refused" : "limit",
+        reason: refused ? "refused" : (monthStop?.reason ?? "limit"),
         sourceId: row.id,
         kind: row.kind as BillingSourceKind,
-        until,
+        until: until ?? monthStop?.until ?? null,
         ...(askOpen ? { ask: true } : {}),
       },
       {
@@ -221,9 +231,32 @@ export async function credentialWaitRow(
         goesOn: !!entry.kept,
         ...(goesOnAt ? { goesOnAt } : {}),
         ...(entry.kept?.by === "person" ? { startKept: true } : {}),
+        // CS-5: the row's Answer opens the one ask card.
+        ...(askOpen && typeof asking?.requestId === "string"
+          ? { askCardId: asking.requestId }
+          : {}),
       },
     );
   }
+  return null;
+}
+
+/**
+ * d1109-cred-screens (CS-5): a month's stop of a source now, as the router reads it (`stopOf`):
+ * the subscription at the share Forerunner may use, or a key at a monthly cap it was given; until
+ * the next month's start (UTC). Null otherwise.
+ */
+export async function monthStopOf(
+  store: StateStore,
+  row: BillingSource,
+  nowMs: number,
+): Promise<{ reason: "share" | "key_month"; until: string } | null> {
+  const usage = await planUsageOf(store, store.clock, row);
+  if (row.kind === "subscription" && usage.share !== null && usage.share >= usage.cap)
+    return { reason: "share", until: nextMonthStartIso(nowMs) };
+  const cap = (row.limits as { monthlyUsdMicro?: unknown }).monthlyUsdMicro;
+  if (typeof cap === "number" && usage.monthUsdMicro >= cap)
+    return { reason: "key_month", until: nextMonthStartIso(nowMs) };
   return null;
 }
 
@@ -566,8 +599,22 @@ export async function taskDetail(
         r.id,
         (await store.billingSource.get(r.billing_source_id).catch(() => undefined))?.kind ?? null,
       );
+  // C5-left-1, CS-6 (d1109-cred-screens): a run the policy moved to another credential says so
+  // ('On your API key after your subscription's limit · CHF 0.43'), from its Run row's
+  // `switchedFrom` and the kind of the source it ran on.
+  const switchedRuns = runRows.filter((r) => switchedFromOf(r.artifacts) !== null);
+  const sourceKinds = new Map<string, string>();
+  if (switchedRuns.length)
+    for (const src of await store.billingSource.list({} as never, { limit: 100 }).catch(() => []))
+      sourceKinds.set(src.id, src.kind);
   const runs = runRows.map((r) => {
     const got = reports.get(r.id);
+    const from = switchedFromOf(r.artifacts);
+    const to = r.billing_source_id ? sourceKinds.get(r.billing_source_id) : undefined;
+    const switchLine =
+      from && to
+        ? drawerRunLine(to, from, formatChf(money(r.cost_usd_micro, chfPerUsd).chfMicro))
+        : null;
     const work = isWorkRun(r);
     const stoppedReview = !work && STOPPED_OUTCOMES.has(r.outcome);
     const web = runWebSources(r.artifacts);
@@ -588,6 +635,7 @@ export async function taskDetail(
       files: got?.files ?? [],
       sessionId: r.session_id,
       ...(web.length ? { webSources: web } : {}),
+      ...(switchLine ? { switchLine } : {}),
     };
   });
   const latest = await store.review.latestForTask(task.id);
@@ -612,4 +660,21 @@ export async function taskDetail(
     question: plainReason(r.why.split(/\r?\n/)[0] ?? r.why, 160),
   }));
   return { task: view, waitsOn, waitedOnBy, runs, review, cards };
+}
+
+/** C5-left-1 (CE-11): the stopped credential a Run row's `switchedFrom` artifact names. */
+export function switchedFromOf(
+  artifacts: unknown,
+): { kind: string; reason: "limit" | "refused" | "share" | "key_month" } | null {
+  for (const a of Array.isArray(artifacts) ? artifacts : []) {
+    const sw = (a as { switchedFrom?: { kind?: unknown; stop?: unknown } } | null)?.switchedFrom;
+    if (!sw || typeof sw.kind !== "string") continue;
+    const stop = sw.stop;
+    return {
+      kind: sw.kind,
+      reason:
+        stop === "refused" || stop === "share" || stop === "key_month" ? stop : ("limit" as const),
+    };
+  }
+  return null;
 }

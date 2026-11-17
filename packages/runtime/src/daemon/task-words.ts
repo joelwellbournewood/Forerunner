@@ -402,6 +402,9 @@ export function budgetPauseLabelOf(card: unknown): string {
 export function budgetPauseDetailOf(card: unknown): string {
   const c = (card ?? {}) as Record<string, unknown>;
   if (c.no_progress === true) return "Its card in the Inbox asks what to do differently.";
+  // C4b-left-6 (d1109-cred-screens): the work is done and only its review waits for room: the
+  // row and the drawer say so as its card does (before: only "Paused at its budget").
+  if (c.review_waits === true) return "The work is done; its review waits for room in the budget.";
   return budgetPauseDetail(c.source);
 }
 

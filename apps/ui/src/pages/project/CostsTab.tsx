@@ -148,6 +148,23 @@ export function CostsTab({ projectId }: { projectId: string }) {
           {periodWords(data.from, data.to)}
         </span>
       </div>
+      {/* CS-9 (d1109-cred-screens): which credential paid what, adding up to the total; the
+          subscription's row is an estimate with its share of the allowance (the daemon's words). */}
+      {data.byCredential?.length ? (
+        <div
+          className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+          data-testid="cost-by-credential"
+        >
+          <h3 className="text-sm font-semibold">By credential</h3>
+          <ul className="mt-1 space-y-0.5 text-sm">
+            {data.byCredential.map((c) => (
+              <li key={c.kind} data-testid="cost-credential">
+                {c.words}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {/* OJ-07 (d1109-onerepo-join): what each project joined into this one spent before. */}
       {(data.joinedSpend ?? []).map((j) => (
         <p key={j.projectId} className="text-sm" data-testid="cost-joined">

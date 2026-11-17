@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { formatClock, formatDateTime, formatTime } from "../src/lib/time.ts";
-import { usableNow } from "../src/pages/BillingOrderSection.tsx";
 import { shortQuestion } from "../src/pages/project/DecisionsSection.tsx";
 import { WebAccessInput } from "../src/pages/WebAccessInput.tsx";
 import { DECISIONS, money } from "./fixtures.ts";
@@ -202,18 +201,9 @@ describe("times on a screen: 24-hour HH:MM, in a browser set to en-US (later #66
       expect(formatClock(new Date(2026, 10, 4, 16, 5).toISOString(), now)).toBe("4 Nov, 16:05");
       expect(formatTime(at(16, 2, 5))).toBe("16:02");
       expect(formatDateTime(at(4, 36))).toBe("3 Nov 2026, 04:36");
-      const until = new Date(Date.now() + 60 * 60_000).toISOString();
-      const resting = {
-        blocked: "resting",
-        restingUntil: until,
-        kind: "api_key",
-      } as unknown as Parameters<typeof usableNow>[0];
-      // Before: "Resting until Nov 03, 2026, 04:36 AM (its usage limit)".
-      expect(usableNow(resting)).toBe(
-        `Resting until ${formatClock(until)} (its usage limit); your session that waits for it goes on then`,
-      );
-      expect(usableNow(resting)).toMatch(/until (\d+ \w{3}, )?\d\d:\d\d \(/);
-      expect(usableNow(resting)).not.toMatch(/AM|PM|2026/);
+      // d1109-cred-screens (CS-1, CS-2): the order list and its "Resting until" row are gone;
+      // Settings' "Which Claude does the work" says the state in the daemon's words, in the
+      // person's clock (credential-policy-view.test.ts, settings-billing-order.test.tsx).
     } finally {
       restore();
     }
@@ -502,9 +492,7 @@ describe("Settings says what is true (later #43, P7-32, W14-8)", () => {
     );
     expect(allowance).toHaveTextContent("the default is set low on purpose");
     await screen.findAllByTestId("model-settings-row");
-    await within(screen.getByTestId("billing-order-section")).findAllByTestId(
-      "billing-order-status",
-    );
+    await within(screen.getByTestId("credential-policy")).findAllByTestId("credential-row-state");
     const page = screen.getByRole("heading", { name: "Settings", level: 1 })
       .parentElement as HTMLElement;
     const usd = (page.textContent ?? "").match(/.{0,60}\bUSD\b.{0,40}/g) ?? [];
@@ -638,8 +626,11 @@ describe("links land where they point (P7-12)", () => {
     // Review of P7-12: it scrolled once, smoothly, as the rows came; the subscription allowance,
     // the credential order and the other sections above loaded afterwards and left "Other
     // settings" 400 to 1900 px down the page. The real geometry is in e2e/settings-links.spec.ts.
-    // The credential order's rows (or its empty line) are there once it has loaded.
-    const ORDER_LOADED = '[data-testid="billing-order-empty"], [data-testid^="billing-order-row-"]';
+    // The credential section's rows (or its one sentence) are there once it has loaded
+    // (d1109-cred-screens: "Which Claude does the work" in Basics, above the target, in place of
+    // the order list).
+    const ORDER_LOADED =
+      '[data-testid="credential-policy-single"], [data-testid^="credential-row-"]';
     const calls: { allowance: boolean; order: boolean; options: unknown }[] = [];
     const scrolled = vi.fn(function (this: Element, options?: unknown) {
       if (this.id !== "other-settings") return;
@@ -667,10 +658,10 @@ describe("links land where they point (P7-12)", () => {
       const orderGate = new Promise<void>((r) => {
         orderNow = r;
       });
-      const billingOrder = harness.client.billingOrder.bind(harness.client);
-      harness.client.billingOrder = async (signal) => {
+      const credentialPolicy = harness.client.credentialPolicy.bind(harness.client);
+      harness.client.credentialPolicy = async (signal) => {
         await orderGate;
-        return billingOrder(signal);
+        return credentialPolicy(signal);
       };
       renderApp("/settings#other-settings", harness);
       await screen.findAllByTestId("setting-row");

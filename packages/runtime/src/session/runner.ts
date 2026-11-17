@@ -64,7 +64,12 @@ import { isCodeChange } from "../loop/project-checks.ts";
 import { isSandboxNotReady } from "../sandbox/readiness.ts";
 import type { SchemaSyncPort } from "../update/sync.ts";
 import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
-import { BILLING_FALLBACK_EVENT } from "./billing.ts";
+import {
+  BILLING_BACK_EVENT,
+  BILLING_FALLBACK_EVENT,
+  BILLING_SWITCH_EVENT,
+  type RunSwitch,
+} from "./billing.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import {
   BUDGET_STOP_KEY,
@@ -91,6 +96,7 @@ import {
 } from "./budget-pause.ts";
 import { fileCannotRunCard, plainStopReason } from "./cannot-run-card.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
+import { type SessionSwitchRow, sessionSwitches } from "./credential-switch.ts";
 import {
   CREDENTIAL_WAIT_REASON,
   CREDENTIAL_WAIT_STOP,
@@ -101,6 +107,7 @@ import {
   stopReasonOf,
   waitSentence,
 } from "./credential-wait.ts";
+import { backLogLine, switchRunLine } from "./credential-words.ts";
 import {
   fileBlockedByFindingsRequest,
   fileFailedTaskCard,
@@ -532,7 +539,15 @@ export interface TaskExecutor {
      * session log's start line is written then; a task whose pick waits for a credential, so no
      * run starts, gets none.
      */
-    onStarted?: (info: { specialist: string }) => void;
+    onStarted?: (info: {
+      specialist: string;
+      /** C5-left-1 (CE-11): the kind of credential the run is on. */
+      sourceKind?: string;
+      /** C5-left-1 (CE-11): the pick went to another credential than the stopped first choice. */
+      switched?: RunSwitch;
+      /** The run goes on with work its credential stopped (`lastRunCredentialStopped`). */
+      continues?: boolean;
+    }) => void;
   }): Promise<TaskExecutionResult>;
   /**
    * A task the person cancelled while it ran or was reviewed (phase C, live walk 2 C1): what
@@ -735,6 +750,11 @@ export interface SessionResult {
   stopCapChfMicro?: number;
   /** What the human said during the session and the task each line reached (spec O.9). */
   heard: HeardDelivery[];
+  /**
+   * C5-left-1 (CE-11): the tasks this session moved to another credential than the stopped first
+   * choice, each with the USD the ledger booked to it on that credential. Absent when none moved.
+   */
+  switched?: SessionSwitchRow[];
 }
 
 export interface PromotionTally {
@@ -1300,6 +1320,75 @@ export class SessionRunner {
     let credentialWait: CredentialWait | null = null;
     /** A task of this session waits for a Claude credential: the session ends saying so. */
     let waitedForCredential = false;
+    /**
+     * C5-left-1 (CE-11, ADR 0120): the stops this session moved for (`billing.switch`) and those
+     * whose first choice served again (`billing.back`), read once from the session's own log, so
+     * each stop's line is written once per session, also by a runtime composed again.
+     */
+    let switchLog: { switched: Map<string, RunSwitch>; back: Set<string> } | null = null;
+    const switchLogOf = async () => {
+      if (switchLog) return switchLog;
+      const seen = { switched: new Map<string, RunSwitch>(), back: new Set<string>() };
+      const rows = await store.event
+        .ofTypes(session.id, [BILLING_SWITCH_EVENT, BILLING_BACK_EVENT], { limit: 500 })
+        .catch(() => []);
+      for (const e of [...rows].reverse()) {
+        const p = (e.payload ?? {}) as Record<string, unknown>;
+        const key = typeof p.stopKey === "string" ? p.stopKey : "";
+        if (!key) continue;
+        if (e.type === BILLING_BACK_EVENT) seen.back.add(key);
+        else if (!seen.switched.has(key)) seen.switched.set(key, p as unknown as RunSwitch);
+      }
+      switchLog = seen;
+      return seen;
+    };
+    let ownerZone: { tz?: string } | null = null;
+    /** The switch's line: once per stop and session; a later task's switch is a detail. */
+    const saySwitch = async (
+      task: { id: string; title: string },
+      sw: RunSwitch,
+      continues: boolean,
+      at: string,
+    ) => {
+      const seen = await switchLogOf();
+      const repeat = seen.switched.has(sw.stopKey);
+      if (!repeat) seen.switched.set(sw.stopKey, sw);
+      if (!ownerZone) {
+        const owner = await store.human.get(agent.owner_human_id).catch(() => undefined);
+        ownerZone = owner?.timezone ? { tz: owner.timezone } : {};
+      }
+      const until = sw.until ? clockTime(sw.until, ownerZone.tz, clock.now()) : null;
+      await emit(BILLING_SWITCH_EVENT, {
+        taskId: task.id,
+        title: task.title,
+        from: sw.from,
+        to: sw.to,
+        stop: sw.stop,
+        until: sw.until,
+        stopKey: sw.stopKey,
+        by: sw.by,
+        // The credential it went on with and when (the ledger's rows on it since are the
+        // switch's spend: the session page's line, `SessionResult.switched`).
+        toSourceId: sw.toSourceId,
+        at,
+        sentence: switchRunLine(task.title, sw, until, continues),
+        ...(repeat ? { repeat: true } : {}),
+      });
+    };
+    /** The first choice serves again after a switch of this session: once per stop. */
+    const sayBack = async (kind: string) => {
+      const seen = await switchLogOf();
+      for (const [key, sw] of seen.switched) {
+        if (seen.back.has(key) || sw.from !== kind) continue;
+        seen.back.add(key);
+        await emit(BILLING_BACK_EVENT, {
+          from: sw.to,
+          to: sw.from,
+          stopKey: key,
+          sentence: backLogLine(sw.from),
+        });
+      }
+    };
     let plan: SessionPlan | null = null;
     /**
      * d1109-starts-engine (S-6, S-7): what this session promised at its start (its own tasks,
@@ -2672,9 +2761,19 @@ export class SessionRunner {
                 heard: said.map(({ deliveredTo: _to, ...line }) => line),
                 ...(notes.length ? { notes } : {}),
                 ...(opts.note?.trim() ? { sessionNote: opts.note.trim() } : {}),
-                onStarted: ({ specialist }) => {
+                onStarted: ({ specialist, switched, continues, sourceKind }) => {
+                  const startedAt = clock.nowIso();
                   steps = steps
                     .then(() => sayStarted(specialist))
+                    // C5-left-1 (CE-11): the switch's line after the start line; the back line
+                    // when this run is on the first choice again.
+                    .then(() =>
+                      switched
+                        ? saySwitch(task, switched, continues === true, startedAt)
+                        : sourceKind
+                          ? sayBack(sourceKind)
+                          : undefined,
+                    )
                     .catch((e: unknown) =>
                       this.logger.warn("start not recorded", { error: errorMessage(e) }),
                     );
@@ -2850,15 +2949,19 @@ export class SessionRunner {
               !!result.credentialWait &&
               credentialWait.sourceId === result.credentialWait.sourceId &&
               credentialWait.reason === result.credentialWait.reason;
+            const tries = (movedOnCredential.get(task.id) ?? 0) + 1;
+            movedOnCredential.set(task.id, tries);
+            const waits = !!result.credentialWait || tries > MAX_CREDENTIAL_MOVES;
+            // C5-left-1 (CE-11): when another credential takes over now, the run that goes on
+            // writes the switch's line ('"X" goes on with your API key from where it stopped:
+            // ...'), once per stop and session; this stop's own line is then a detail. Before,
+            // the log said '...; "X" continues on your API key now.' and again for each task.
             await emit(BILLING_FALLBACK_EVENT, {
               taskId: task.id,
               title: task.title,
               sentence: result.summary,
-              ...(sameWait ? { repeat: true } : {}),
+              ...(sameWait || !waits ? { repeat: true } : {}),
             });
-            const tries = (movedOnCredential.get(task.id) ?? 0) + 1;
-            movedOnCredential.set(task.id, tries);
-            const waits = !!result.credentialWait || tries > MAX_CREDENTIAL_MOVES;
             await releaseIfHeld(
               task.id,
               waits ? CREDENTIAL_WAIT_REASON : "a Claude credential could not serve: back to ready",
@@ -4345,7 +4448,10 @@ export class SessionRunner {
       headroomSavedTokens: contextEnd?.headroomSavedTokens ?? 0,
       headroomUsed: contextEnd?.selection.headroomUsed ?? false,
     });
+    // C5-left-1 (CE-11): the tasks it moved, summed from the ledger.
+    const switchedTasks = (await sessionSwitches(store, session.id).catch(() => null))?.tasks ?? [];
     return {
+      ...(switchedTasks.length ? { switched: switchedTasks } : {}),
       sessionId: session.id,
       status: finalStatus,
       brief: brief as StateBrief,

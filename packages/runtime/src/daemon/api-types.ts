@@ -6,6 +6,7 @@ import { SECRET_STORE_ROUTES } from "../secrets/store-types.ts";
 import { PLAN_ALLOWANCE_ROUTES, SETUP_ROUTES } from "../setup/types.ts";
 import { VOICE_INSTALL_ROUTES } from "../voice/install-types.ts";
 import { BILLING_ORDER_ROUTES } from "./billing-order-types.ts";
+import { CREDENTIAL_POLICY_ROUTES } from "./credential-policy-types.ts";
 
 /** Settings -> Devices shapes (spec R.2): the daemon's `/devices` routes' bodies and answers. */
 export {
@@ -109,6 +110,14 @@ export {
   BillingOrderSourceView,
   BillingOrderView,
 } from "./billing-order-types.ts";
+/** d1109-cred-screens CS-1: Settings -> Basics -> "Which Claude does the work". */
+export {
+  CREDENTIAL_POLICY_ROUTES,
+  CredentialPolicyPresetId,
+  CredentialPolicyPresetView,
+  CredentialPolicyRowView,
+  CredentialPolicyView,
+} from "./credential-policy-types.ts";
 
 /**
  * Local daemon API contract (ADR 0011). The desktop and Android shells, the approvals web
@@ -601,6 +610,12 @@ export const TaskDetailView = z.object({
           }),
         )
         .optional(),
+      /**
+       * C5-left-1, CS-6 (d1109-cred-screens): a run the policy moved to another credential than
+       * the stopped first choice: 'On your API key after your subscription's limit · CHF 0.43'.
+       * Absent for any other run, and from an older daemon.
+       */
+      switchLine: z.string().optional(),
     }),
   ),
   /** The critic's last review in words, null when none. */
@@ -752,6 +767,14 @@ export const SessionView = z.object({
    * with `continues` and what is left of its budget). Null when it did not end so, or once a later
    * session of its project began. Absent from an older daemon.
    */
+  /**
+   * C5-left-1, CS-6 (d1109-cred-screens): a session that moved to another credential than the
+   * stopped first choice, from its log's first switch and the ledger: 'On your API key since
+   * 14:20 (your subscription's limit): CHF 0.42 so far.' while it works, 'Your API key took over
+   * at 14:20 (your subscription's limit): CHF 0.42 of CHF 0.62.' once it ended; null when it
+   * never moved. Absent from an older daemon.
+   */
+  switchLine: z.string().nullable().optional(),
   waitBlock: z
     .object({
       state: z.enum(["goes_on", "starts_again", "stopped"]),
@@ -760,6 +783,11 @@ export const SessionView = z.object({
       explain: z.string(),
       projectId: z.string(),
       budgetLeft: Money,
+      /**
+       * d1109-cred-screens (CS-7): while the one ask card of its stop is open, "Answer" opening
+       * it beside Cancel. Absent otherwise (and from an older daemon).
+       */
+      answer: z.object({ label: z.string(), to: z.string() }).optional(),
     })
     .nullable()
     .optional(),
@@ -1016,6 +1044,14 @@ export const HumanRequestView = z.object({
     )
     .nullable()
     .optional(),
+  /**
+   * d1109-cred-screens (CS-4): an open plan card's foot line of which Claude does the work,
+   * computed when shown ("If your subscription runs out, you are asked before your API key is
+   * used."; while the first choice is out "Your subscription is at its limit until 15:40: you
+   * are asked before your API key is used."); null with one credential saved. Absent on other
+   * cards and from an older daemon.
+   */
+  planCredentialLine: z.string().nullable().optional(),
 });
 export type HumanRequestView = z.infer<typeof HumanRequestView>;
 
@@ -1063,6 +1099,22 @@ export const CostView = z.object({
   joinedSpend: z
     .array(z.object({ projectId: z.string(), name: z.string(), spent: Money, words: z.string() }))
     .optional(),
+  /**
+   * CS-9 (d1109-cred-screens, CE-11's CostView.byCredential): the window's spend by the kind of
+   * credential that paid it, largest first, adding up to `totals`: 'Your API key: CHF 1.20',
+   * 'Your Claude subscription: CHF 2.10 (estimate, 12% of its allowance)'. Absent from an older
+   * daemon.
+   */
+  byCredential: z
+    .array(
+      z.object({
+        kind: z.string(),
+        cost: Money,
+        share: z.number().nullable(),
+        words: z.string(),
+      }),
+    )
+    .optional(),
 });
 export type CostView = z.infer<typeof CostView>;
 
@@ -1088,8 +1140,16 @@ export const ChatRequestBody = z.object({
    * turn id. It runs once on that answer's question; any other line drops the offer.
    */
   offer: z.string().optional(),
+  /**
+   * C5-left-3 (d1109-cred-screens, CE-9): the person's "Use API key" under a hold reply: this
+   * one question may go to the next credential at the stop (no grant, no card, never a job).
+   */
+  oneOff: z.boolean().optional(),
 });
 export type ChatRequestBody = z.infer<typeof ChatRequestBody>;
+
+/** C5-left-3: the one-off press under a hold reply, with its consequence line. */
+export const ChatOneOffView = z.object({ label: z.string(), explain: z.string() });
 
 /**
  * What the app offers under a chat answer (d1109-chat-depth): an ask line with Go ahead, a closer
@@ -1220,6 +1280,11 @@ export const ConversationTurnView = z.object({
       footer: z.string().nullable().optional(),
       /** What the app offers under the answer (the newest answer's only has an action). */
       offer: ChatOfferView.nullable().optional(),
+      /**
+       * C5-left-3: under the newest hold reply, "Use API key" with 'Answers this question on your
+       * API key: about CHF 0.02.'; null otherwise. Absent from an older daemon.
+       */
+      oneOff: ChatOneOffView.nullable().optional(),
     })
     .nullable(),
   /** d1109-chat-depth: Forerunner closed before answering this line (a restart cut it off). */
@@ -1273,6 +1338,8 @@ export const ChatReplyView = z.object({
   footer: z.string().nullable().optional(),
   /** What the app offers under the answer. */
   offer: ChatOfferView.nullable().optional(),
+  /** C5-left-3: the hold reply's one-off press; null otherwise. Absent from an older daemon. */
+  oneOff: ChatOneOffView.nullable().optional(),
 });
 export type ChatReplyView = z.infer<typeof ChatReplyView>;
 
@@ -1300,6 +1367,14 @@ export const StartSessionBody = z.object({
    * words when nothing is left). The budget sent, if any, is ignored for it.
    */
   continues: z.string().optional(),
+  /**
+   * d1109-cred-screens (CS-3): the Start dialog's "Use API key" while the first choice is out
+   * under "ask" or "wait": the person's yes for this stop (the ask card's grant, by "start"), an
+   * open ask card closed with its Done line, then the person's start (or the project's waiting
+   * session goes on now). Refused in words when the policy or the facts do not allow it. Never
+   * raises a budget.
+   */
+  useOtherCredential: z.boolean().optional(),
 });
 export type StartSessionBody = z.infer<typeof StartSessionBody>;
 
@@ -1972,6 +2047,43 @@ export const StartCheckView = z.object({
    * work that fits, with its warning; null when none (an older daemon sends none).
    */
   oversized: StartCheckOversizedView.nullable().default(null),
+  /**
+   * d1109-cred-screens (CS-3): which Claude does the work, in the dialog: `line` one sentence
+   * under the plan ("If your subscription runs out, you are asked before your API key is used.";
+   * the run-out form under "then API key"; a standing yes); `runOut` under "ask" and "wait" with
+   * the first choice out and the API key able to serve: "Use API key" and "Start at 15:40" with
+   * their lines, the one the preset leans to first, or the project's waiting session's line in
+   * place of the second. Null with one credential saved (an older daemon sends none).
+   */
+  credential: z
+    .object({
+      line: z.string().nullable(),
+      runOut: z
+        .object({
+          use: z.object({ label: z.string(), explain: z.string() }),
+          later: z.object({ label: z.string(), explain: z.string() }).nullable(),
+          lean: z.enum(["use", "later"]),
+          goesOnLine: z.string().nullable(),
+          /**
+           * The one line above the two buttons ("Your subscription is at its limit until
+           * 15:40."), the dialog's sentence in place of "Nothing can run until 15:40 ...".
+           * Absent from an older daemon.
+           */
+          stoppedLine: z.string().optional(),
+        })
+        .nullable(),
+    })
+    .nullable()
+    .default(null),
+  /**
+   * C4b-left-5 (d1109-cred-screens, BA-12): the tasks the session takes whose own budget may
+   * leave too little for their review, each with the dialog's line ('"X": its budget of CHF 0.10
+   * may leave too little for its review, which then waits for Continue.'), in run order; empty
+   * from an older daemon.
+   */
+  reviewMayWait: z
+    .array(z.object({ taskId: z.string(), title: z.string(), line: z.string() }))
+    .default([]),
 });
 export type StartCheckView = z.infer<typeof StartCheckView>;
 
@@ -3489,6 +3601,12 @@ export const RunningView = z.object({
   cancel: z.boolean(),
   nextProject: z.string().nullable(),
   explain: z.string().nullable(),
+  /**
+   * d1109-cred-screens (CS-7): links beside the entry, in the daemon's words: "Answer" (the open
+   * ask card a task of the session, or the waiting session, waits on) and "Change the allowance"
+   * (a session waiting on the subscription's share). Absent when none (and from an older daemon).
+   */
+  links: z.array(z.object({ label: z.string(), to: z.string() })).optional(),
 });
 export type RunningView = z.infer<typeof RunningView>;
 
@@ -3756,4 +3874,6 @@ export const DAEMON_ROUTES = {
     "GET /running (RunningView[]: d1109-run-visible V-1, the run indicator: the sessions that run now in the daemon's words (never the conversation or a plan being drafted), the critic's monthly check, and a person's session waiting to go on after its Claude credential wait, with what Stop or Cancel offers; [] when nothing runs or waits; the same list is the run.changed frame on GET /events, sent at most once a second when it changes)",
   sessionTasks:
     "GET /sessions/:id/tasks (SessionTasksView: the tasks a session worked on, in the order it first ran them, each with what happened to it there, what it is now when that differs and what the session spent on it (the ledger's rows for the session and the task, reviews included); none for a planning call; 404 for an unknown session; d1109-sessions)",
+  // d1109-cred-screens (run C, C6): Settings' "Which Claude does the work".
+  ...CREDENTIAL_POLICY_ROUTES,
 } as const;

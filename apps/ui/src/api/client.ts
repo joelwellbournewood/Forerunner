@@ -40,6 +40,8 @@ import {
   CostView as CostViewSchema,
   type CreateProjectBody as CreateProjectBodySchema,
   type CreateTaskBody as CreateTaskBodySchema,
+  type CredentialPolicyView,
+  CredentialPolicyView as CredentialPolicyViewSchema,
   DAEMON_ROUTES,
   type DaemonDeviceView,
   type DecisionView,
@@ -292,6 +294,7 @@ export type {
   ConversationTurnView,
   ConversationView,
   CostView,
+  CredentialPolicyView,
   DaemonDeviceView,
   DataAssetView,
   DecisionView,
@@ -961,6 +964,11 @@ export interface DaemonClient {
   billingOrder(signal?: AbortSignal): Promise<BillingOrderView>;
   setBillingOrder(order: BillingOrderKind[]): Promise<BillingOrderView>;
 
+  // d1109-cred-screens CS-1: Settings -> Basics -> "Which Claude does the work" (a choice goes
+  // through executeCommands settings.set credential_policy), and "Stop using it" on a standing yes.
+  credentialPolicy(signal?: AbortSignal): Promise<CredentialPolicyView>;
+  endCredentialGrant(): Promise<CredentialPolicyView>;
+
   // The mailbox passwords and cloud voice keys typed in the app (U-054): sent once to the
   // daemon's vault, never read back (the list says only whether each is stored).
   storedSecrets(name?: string, signal?: AbortSignal): Promise<StoredSecretsView>;
@@ -1473,6 +1481,9 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("billingOrder"), BillingOrderViewSchema, undefined, signal),
     setBillingOrder: (order) =>
       post(routePath("setBillingOrder"), BillingOrderViewSchema, { order }),
+    credentialPolicy: (signal) =>
+      get(routePath("credentialPolicy"), CredentialPolicyViewSchema, undefined, signal),
+    endCredentialGrant: () => post(routePath("endCredentialGrant"), CredentialPolicyViewSchema, {}),
     storedSecrets: (name, signal) =>
       get(routePath("storedSecrets"), StoredSecretsViewSchema, name ? { name } : undefined, signal),
     storeSecret: (name, value) =>

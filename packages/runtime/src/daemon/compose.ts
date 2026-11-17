@@ -7,7 +7,9 @@ import {
   CapChecker,
   type CapCheckOptions,
   CostLedger,
+  credentialPolicyOf,
   FixedRateSource,
+  grantOf,
   loadPricing,
   PRICING_FILE_NAME,
   type PricingTable,
@@ -156,6 +158,7 @@ import {
   scheduleModelWatch,
   scheduleModelWatchReminders,
 } from "../models/watch.ts";
+import { chfText } from "../money-words.ts";
 import {
   bindProducers,
   DesktopChannel,
@@ -215,14 +218,24 @@ import {
   StoreSharedSecretService,
   sharedSecretNamesFor,
 } from "../secrets/index.ts";
-import { CODE_COMMANDS_SETTING, codeCommandsOf, type TaskBillingPort } from "../session/billing.ts";
+import {
+  BILLING_SWITCH_EVENT,
+  CODE_COMMANDS_SETTING,
+  codeCommandsOf,
+  type TaskBillingPort,
+} from "../session/billing.ts";
 import {
   type BudgetStopSyncResult,
   syncBudgetStopAnswers,
   wakeBudgetWaits,
 } from "../session/budget-card.ts";
 import { type CannotRunSyncResult, syncCannotRunAnswers } from "../session/cannot-run-card.ts";
-import { ensureAskCard, settleAsks, syncAskAnswers } from "../session/credential-ask.ts";
+import {
+  ensureAskCard,
+  recordWait,
+  settleAsks,
+  syncAskAnswers,
+} from "../session/credential-ask.ts";
 import {
   type AbilityTable,
   abilityTable,
@@ -231,7 +244,9 @@ import {
   needsOf,
 } from "../session/credential-choice.ts";
 import {
+  askCardOpen,
   askShown,
+  CREDENTIAL_WAIT_REASON,
   type CredentialWait,
   clockTime,
   credentialWaitOf,
@@ -241,6 +256,7 @@ import {
   waitSentence,
   waitThenStartSentence,
 } from "../session/credential-wait.ts";
+import { switchNotificationWords } from "../session/credential-words.ts";
 import { DependentBranches } from "../session/dependent-branches.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
@@ -258,6 +274,7 @@ import {
 import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
 import { type LateApprovalSyncResult, syncLateApprovals } from "../session/late-approval.ts";
 import { LiveSessions } from "../session/live-sessions.ts";
+import { aboutWords } from "../session/money-words.ts";
 import {
   askPersonTool,
   type PersonQuestionsSyncResult,
@@ -415,6 +432,7 @@ import {
 import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
 import { busyHere, startBlocked as startBlockedReason } from "./start-blocked.ts";
+import { credentialWaitRow, monthStopOf } from "./task-display.ts";
 import { fileTools } from "./tools.ts";
 import { requestViews } from "./views.ts";
 
@@ -823,11 +841,18 @@ export interface RuntimeApp {
      * tasks): the web search marks, the saved credentials (the vault), the person's settings and
      * each project's dependencies are read once for the batch.
      */
-    batch(): (input: {
+    batch(): ((input: {
       specialist: string;
       projectId?: string | null;
       task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
-    }) => Promise<{ kind: string; line: string | null } | null>;
+    }) => Promise<{ kind: string; line: string | null } | null>) & {
+      /**
+       * d1109-cred-screens (CS-4, R-inboxperf): the billing view the batch reads the credentials
+       * through (the vault asked once per credential), for the plan card's foot line in the same
+       * request. Absent outside the daemon's composition.
+       */
+      billing?: RouterTaskBilling;
+    };
     table(): Promise<AbilityTable>;
   };
   tools: ToolRegistry;
@@ -956,6 +981,12 @@ export interface RuntimeApp {
         startLabel?: string;
         /** S-10: a kept person Start: "Starts at 15:40 (your subscription's limit)". */
         startsAt?: string;
+        /**
+         * d1109-cred-screens (CS-7): while the one ask card of the stop is open (`text` is then its
+         * "Waits for your answer: ..." form), the wait's own sentence with its time ("Waits until
+         * 15:40 (your subscription's limit); then your session goes on.") and the card to open.
+         */
+        asking?: { plain: string; to: string };
       } | null>;
     };
   };
@@ -1773,9 +1804,25 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           projectId,
           cap,
         ).catch(() => null);
+        // d1109-cred-screens (CS-8): the task whose run met the stop is claimed while the card is
+        // filed, so the ready tasks alone left it out (the bench's card read "about CHF 0.00"):
+        // its own estimate counts too, at the start check's fallback pricing.
+        const inFlight = (
+          await store.task
+            .forProject(projectId, { status: ["claimed", "in_progress"] }, { limit: 50 })
+            .catch(() => [])
+        ).reduce(
+          (sum, t) =>
+            sum +
+            Math.max(
+              0,
+              (t.est_cost_usd_micro || t.budget_usd_micro || 500_000) - t.actual_cost_usd_micro,
+            ),
+          0,
+        );
         if (check)
           estimateUsdMicro += Math.min(
-            check.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0),
+            check.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0) + inFlight,
             check.workBudgetUsdMicro,
           );
       }
@@ -3437,6 +3484,77 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     );
     await notifier.notify({ ...n, urgency: "normal" });
   };
+  // d1109-cred-screens (C5-left-2, CE-12; the owner's 7a: "in a transparent way"): when the
+  // person's choice moved work onto the API key by itself (`billing.switch` by the policy, the
+  // first line of its stop, to the key), they hear it once per stop, with what is left of the
+  // session's work at its cost. A move they said yes to (a grant) is no news; the stop's audit
+  // row keeps it once across sessions and restarts.
+  const SWITCH_NOTICE_AUDIT_TOOL = "billing.switch_notice";
+  const noticeSwitch = async (e: SessionBusEvent, p: Record<string, unknown>): Promise<void> => {
+    const stopKey = typeof p.stopKey === "string" ? p.stopKey : "";
+    const taskId = typeof p.taskId === "string" ? p.taskId : "";
+    if (!stopKey || !taskId) return;
+    const told = await store.auditLog.list(
+      { humanId: human.id, tool: SWITCH_NOTICE_AUDIT_TOOL },
+      { limit: 500 },
+    );
+    if (told.some((r) => r.input_summary === JSON.stringify({ stopKey }))) return;
+    const runs = await store.run.forTask(taskId);
+    const run = runs.find((r) => r.outcome === "running") ?? runs[runs.length - 1];
+    const session = run?.session_id ? await store.session.get(run.session_id) : undefined;
+    // What is left: the session's planned tasks not done yet, at their estimates, never more than
+    // what is left of its budget (the key cannot spend past it).
+    const items = ((session?.plan as { items?: unknown } | null)?.items ?? []) as {
+      taskId?: unknown;
+      estimateUsdMicro?: unknown;
+    }[];
+    let leftUsd = 0;
+    for (const i of items) {
+      if (typeof i.taskId !== "string" || typeof i.estimateUsdMicro !== "number") continue;
+      const t = await store.task.get(i.taskId).catch(() => undefined);
+      if (t && t.status !== "done" && t.status !== "cancelled") leftUsd += i.estimateUsdMicro;
+    }
+    if (session)
+      leftUsd = Math.min(
+        leftUsd,
+        Math.max(0, session.budget_cap_usd_micro - session.spent_usd_micro),
+      );
+    const projectId = e.projectId ?? session?.project_id ?? null;
+    const projectName = projectId
+      ? ((await store.project.get(projectId).catch(() => undefined))?.name ?? "Your project")
+      : "Your project";
+    const from = typeof p.from === "string" ? p.from : "subscription";
+    const reason =
+      p.stop === "refused" || p.stop === "share" || p.stop === "key_month" ? p.stop : "limit";
+    const until =
+      typeof p.until === "string" ? clockTime(p.until, human.timezone, clock.now()) : null;
+    await store.auditLog.append({
+      tool: SWITCH_NOTICE_AUDIT_TOOL,
+      allowed: true,
+      human_id: human.id,
+      session_id: session?.id ?? null,
+      input_summary: JSON.stringify({ stopKey }),
+      result_summary: "the person's choice moved work onto the API key; they are told once",
+      occurred_at: clock.nowIso(),
+    });
+    await notifications.credentialSwitch(human.id, {
+      words: switchNotificationWords({
+        projectName,
+        wait: { reason, kind: from as never },
+        until,
+        estimateChf: aboutWords(chfText(leftUsd, chfPerUsd()), leftUsd).replace(/^about /, ""),
+      }),
+      sessionId: session?.id ?? null,
+      projectId,
+      stopKey,
+    });
+  };
+  events.on("session", (e: SessionBusEvent) => {
+    if (e.type !== BILLING_SWITCH_EVENT) return;
+    const p = e.payload ?? {};
+    if (p.repeat === true || p.by !== "policy" || p.to !== "api_key") return;
+    notifyLater(noticeSwitch(e, p), `switch ${String(p.stopKey ?? "")}`);
+  });
   events.on("session", (e: SessionBusEvent) => {
     const p = e.payload;
     if (p?.escalation !== true || p.humanRequestId) return;
@@ -3937,10 +4055,41 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     let shared: Promise<{
       kinds: Awaited<ReturnType<typeof taskBilling.savedKinds>>;
       blocked: Awaited<ReturnType<typeof taskBilling.blockedKinds>>;
+      /** A stopped kind the person said yes for, for this stop: the kind that serves meanwhile. */
+      granted: Map<BillingSource["kind"], BillingSource["kind"]>;
       prefs: Record<string, unknown> | undefined;
     }> | null = null;
     const deps = new Map<string, Promise<boolean>>();
-    return async ({
+    // One view of the billing per batch: the vault is asked once per credential (R-inboxperf),
+    // also by the plan card's foot line that reads the same credentials in the same request.
+    const billing = taskBilling.withVaultMemo();
+    const load = () => {
+      shared ??= (async () => {
+        // 'web-search': a key saved since search was switched off for the old one ends the mark.
+        await webSearchMarks.refresh();
+        const blocked = await billing.blockedKinds();
+        // d1109-cred-screens (CS-4; the review of the fix-up): the person's yes for a stop (the
+        // ask card's or the Start dialog's Use API key: `limits.grant` for the stop it is at
+        // now) lets the next credential serve, as the pick honours it.
+        const granted = new Map<BillingSource["kind"], BillingSource["kind"]>();
+        for (const [kind, wait] of blocked) {
+          const row = await store.billingSource.get(wait.sourceId).catch(() => undefined);
+          const grant = grantOf((row?.limits as Record<string, unknown> | undefined)?.grant);
+          if (!grant) continue;
+          const stop = await billing.currentStopOf(wait.sourceId).catch(() => null);
+          if (stop && stop.stopKey === grant.stopKey)
+            granted.set(kind, grant.to as BillingSource["kind"]);
+        }
+        return {
+          kinds: await billing.savedKinds(),
+          blocked,
+          granted,
+          prefs: (await store.human.get(human.id).catch(() => undefined))?.notify_prefs,
+        };
+      })();
+      return shared;
+    };
+    const choose = async ({
       specialist,
       projectId,
       task,
@@ -3952,16 +4101,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const name = canonicalSpecialistName(specialist);
       const spec = specialists(name);
       if (!spec) return null;
-      shared ??= (async () => {
-        // 'web-search': a key saved since search was switched off for the old one ends the mark.
-        await webSearchMarks.refresh();
-        return {
-          kinds: await taskBilling.savedKinds(),
-          blocked: await taskBilling.blockedKinds(),
-          prefs: (await store.human.get(human.id).catch(() => undefined))?.notify_prefs,
-        };
-      })();
-      const { kinds, blocked, prefs } = await shared;
+      const { kinds, blocked, granted, prefs } = await load();
       let dependencies: Promise<boolean> = Promise.resolve(false);
       if (projectId) {
         const known = deps.get(projectId);
@@ -3987,6 +4127,32 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // R-runsonrefused: the credential it would run on is refused or rests now: the line says
       // the wait (the words a waiting task's session result uses), never "Runs on your API key".
       const wait = choice ? blocked.get(choice.kind as BillingSource["kind"]) : undefined;
+      // d1109-cred-screens (CS-10's walk): under a preset that goes on with the next credential
+      // when the first runs out ("Subscription first, then API key"), the task runs on the next
+      // one that can do it now, as the pick does; the card's foot line says why. With the
+      // person's yes standing for this stop, the credential they said yes to does (the review of
+      // the fix-up: before, the line said "Waits until 15:40" while the key ran it at once).
+      // Under "then wait" and "ask" without a yes the wait stays the line.
+      const yesTo = choice ? granted.get(choice.kind as BillingSource["kind"]) : undefined;
+      if (choice && wait && (yesTo || credentialPolicyOf(prefs).rule.whenStopped === "next")) {
+        const next = credentialChoiceFor({
+          kindsInOrder: kinds.filter(
+            (k) =>
+              k !== choice.kind &&
+              !blocked.has(k as BillingSource["kind"]) &&
+              (!yesTo || k === yesTo),
+          ),
+          needs: needsOf({
+            registryTools: spec.registryTools ?? spec.allowedTools,
+            task: task ?? null,
+            codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
+          }),
+          facts: chooserFacts(),
+          specialist: name,
+          dependencies: await dependencies,
+        });
+        if (next) return next;
+      }
       return choice && wait
         ? {
             ...choice,
@@ -3995,6 +4161,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           }
         : choice;
     };
+    return Object.assign(choose, { billing });
   };
   /**
    * Whether a task of the project would run now, as its own pick would decide (R-refusedstays,
@@ -4107,6 +4274,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       if (wait?.reason !== "limit") return null;
       if ((await keptContinuationOf(store, projectId)) || (await keptStartOf(store, projectId)))
         return null;
+      // d1109-cred-screens (CS-3; the review of the fix-up): under "ask before API key", "Start
+      // at 15:40" is the person's Wait for this stop, recorded before the wait is noted: the
+      // wait's own ask (CE-7, `noteWait`) then files no card, here, at the wake and after a
+      // restart, and a card of the stop already open is answered Wait (before, the card "Use
+      // your API key until 15:40?" followed their own choice).
+      if ((await policyOf(store, human.id)).rule.whenStopped === "ask") {
+        const stop = await taskBilling.currentStopOf(wait.sourceId).catch(() => null);
+        if (stop) {
+          const { closedCard } = await recordWait(
+            { store, clock, humanId: human.id },
+            { sourceId: wait.sourceId, stopKey: stop.stopKey },
+          ).catch(() => ({ closedCard: false }));
+          if (closedCard) events.emit("inbox", {});
+        }
+      }
       await taskBilling.noteWait(wait.sourceId, projectId, agentId);
       const kept = await keepStartAtReset(store, projectId, {
         at: clock.nowIso(),
@@ -4157,17 +4339,46 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               wait = ends
                 ? { kind: "quiet", at: clockTime(ends, human.timezone, nowMs) }
                 : { kind: "limit", at: clockTime(until, human.timezone, nowMs) };
+            } else {
+              // d1109-cred-screens (CS-7): the share and a key's monthly cap end at the month's
+              // start (UTC), said in the person's clock, or the end of their quiet hours if later.
+              const month = await monthStopOf(store, row as never, nowMs).catch(() => null);
+              if (month) {
+                const ends = quietHours.endsAt(Date.parse(month.until));
+                wait = {
+                  kind: month.reason,
+                  at: clockTime(ends ?? month.until, human.timezone, nowMs),
+                };
+              }
             }
           }
+          // CS-7: while the one ask card of its stop is open, the bar's Answer opens it.
+          const asking = (limits as { asking?: { requestId?: unknown } }).asking;
+          const answer =
+            typeof asking?.requestId === "string" &&
+            (await askCardOpen(store, row.id).catch(() => false))
+              ? `/inbox#card-${encodeURIComponent(asking.requestId)}`
+              : null;
           out.push({
             projectId: w.projectId,
             sessionId: w.kept.continues ?? w.sessionId ?? null,
             since: w.kept.at || w.since || null,
             wait,
+            ...(answer ? { answer } : {}),
           });
         }
       }
       return out;
+    },
+    // d1109-cred-screens (CS-7): the project's tasks that wait for the person's answer on the
+    // one ask card (their rows read "Waits for your answer: use your API key?"), with the card.
+    askWaiting: async (projectId) => {
+      const row = await credentialWaitRow(store, projectId);
+      if (!row?.ask) return null;
+      const count = (
+        await store.task.forProject(projectId, { status: "ready" }, { limit: 500 })
+      ).filter((t) => t.reason === CREDENTIAL_WAIT_REASON).length;
+      return count > 0 ? { count, to: row.save?.to ?? "/inbox" } : null;
     },
     calibration: async (sessionId) => {
       const h = await store.human.get(human.id).catch(() => undefined);
@@ -4466,10 +4677,24 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             ? { startLabel: `Start at ${clockTime(wait.until, words.timezone, words.nowMs)}` }
             : {}),
         };
+      // CS-7: under 'ask' with the card open, the plain wait with its time and the card.
+      const askingId = (source?.limits as { asking?: { requestId?: unknown } } | undefined)?.asking
+        ?.requestId;
+      const asking =
+        wait.ask && wait.reason !== "refused" && typeof askingId === "string"
+          ? {
+              plain: waitSentence(
+                { ...wait, ask: false },
+                { ...words, goesOn: !!kept, ...goesOnAtOf(wait, kept) },
+              ),
+              to: `/inbox#card-${encodeURIComponent(askingId)}`,
+            }
+          : null;
       return {
         text: waitSentence(wait, { ...words, goesOn: !!kept, ...goesOnAtOf(wait, kept) }),
         save: wait.reason === "refused" ? saveLink(wait.kind) : null,
         ...(kept ? { kept: true } : {}),
+        ...(asking ? { asking } : {}),
         // S-10: the person's kept Start, as the project's status says it.
         ...(kept?.by === "person" && keptStartLine(wait, words)
           ? { startsAt: keptStartLine(wait, words) as string }
@@ -5721,7 +5946,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         sessionCapFromSettings(project.settings, clock.now(), DEFAULT_SESSION_CAP_USD_MICRO)
           .usdMicro;
       return startCheck(
-        { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
+        {
+          store,
+          estimates,
+          defaultEstimateUsdMicro: 500_000,
+          sandbox: sandbox.gate,
+          // C4b-left-5: one critic call's worst case, as the runner keeps room for it.
+          reviewCallUsdMicro: (task, specialist) => critic.reviewCallUsdMicro(task, specialist),
+        },
         project.id,
         cap,
       );

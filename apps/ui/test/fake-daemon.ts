@@ -137,6 +137,12 @@ function fakeLinkOf(
   return null;
 }
 
+import {
+  type CredentialFacts,
+  credentialPolicyOf,
+  credentialPolicySection,
+  policyChangeWords,
+} from "@forerunner/runtime/daemon/credential-policy-view";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import {
@@ -144,6 +150,7 @@ import {
   leftOutSentence,
   oversizedAsk,
   oversizedSentence,
+  reviewMayWaitLine,
 } from "@forerunner/runtime/daemon/oversize-words";
 import { planTaskViews } from "@forerunner/runtime/daemon/plan-tasks";
 import type { StartsWait } from "@forerunner/runtime/daemon/project-status";
@@ -382,6 +389,16 @@ export interface FakeDaemonOptions {
     order?: BillingOrderKind[] | null;
   };
   /**
+   * d1109-cred-screens (CS-1): the person's stored credential policy at start (none: derived from
+   * `billingOrder.order` and `mid_session_limit`, else the default), and a standing yes to the
+   * API key for the subscription's stop now (`grant`).
+   */
+  credentialPolicy?: {
+    stored?: string | null;
+    midSessionLimit?: "wait" | "use_other";
+    grant?: boolean;
+  };
+  /**
    * The credential chooser (U-078): what this install offers each credential, over the defaults
    * (the page reader on unless `noWebAccess`, no search on the key, no pages on the subscription,
    * no host commands). `GET /settings/models` and `GET /inbox` compute where each task runs with
@@ -531,6 +548,8 @@ export interface FakeDaemonState {
     files?: string[];
     webSources?: { url: string; title: string | null; refused: string | null }[];
     stoppedBecause?: string;
+    /** C5-left-1, CS-6: a run the policy moved to another credential (the daemon's words). */
+    switchLine?: string;
   })[];
   /**
    * What the critic's last review of a task ran and tried (ADR 0104), by task id; a done task
@@ -554,6 +573,12 @@ export interface FakeDaemonState {
    * calls `emitRunning()`; `POST /projects/:id/continuation/cancel` drops a waiting one.
    */
   runningExtra: RunningView[];
+  /**
+   * d1109-cred-screens (CS-7), as the daemon's run fold and `askWaiting` read them for a running
+   * session: the credential kind its running task went on with (' on your API key') and the
+   * tasks that wait on the open ask card (' · 1 task waits for your answer' with Answer).
+   */
+  runCredential: Record<string, { on?: string; asking?: { count: number; to: string } }>;
   /**
    * d1109-run-visible (V-3): what waits to start for a project, as the daemon's `startsWaitOf`
    * reads it (the person's session going on, a kept Start, a held hands-off start, a person start
@@ -627,6 +652,17 @@ export interface FakeDaemonState {
    * (as `RuntimeApp.billing.waits.now`): the Start check says it in one sentence
    * (`nothingRunsYetSentence`), and the project's ready line names it (W15-67).
    */
+  /**
+   * d1109-cred-screens (CS-3): per project, what the Start dialog says of which Claude does the
+   * work (`StartCheckView.credential`, as `credential-start.ts` words it); a test sets it.
+   * `POST /sessions` with `useOtherCredential` is refused in words without its `runOut`, else it
+   * records the yes (`credentialGrants`), ends the project's wait and starts (or the waiting
+   * session goes on).
+   */
+  startCredential: Record<string, StartCheckView["credential"]>;
+  /** CS-4: the plan card's foot line (`HumanRequestView.planCredentialLine`); a test sets it. */
+  planCredentialLine: string | null;
+  credentialGrants: string[];
   credentialWaitNow: Record<
     string,
     {
@@ -735,7 +771,13 @@ export interface FakeDaemonState {
     depth?: string;
     footer?: string | null;
     offer?: ChatOfferViewT | null;
+    /** C5-left-3: the turn is a hold reply with "Use API key" (the daemon's words). */
+    oneOff?: { label: string; explain: string } | null;
+    /** C5-left-3: the reply text of this turn (a hold reply, or the answer the press gets). */
+    reply?: string;
   } | null;
+  /** C5-left-3: what the last chat posts asked for: the text and whether it was the one-off. */
+  chatPosts: { text: string; oneOff: boolean }[];
   /** d1109-chat-depth: the turn being answered now (the conversation's `answering`; Stop ends it). */
   answering: {
     turnId: string;
@@ -1000,6 +1042,12 @@ function fakePrice(t: TaskView): number {
 }
 
 /** d1116-budget-all (BA-10): a task's one figure, its work, reviews and fixes (as the ledger). */
+/**
+ * C4b-left-5: one critic call's worst case at a light review, as the daemon's critic prices it
+ * (`reviewCallUsdMicro`) for the stand-in model (USD 0.018).
+ */
+const FAKE_REVIEW_CALL_WORST_USD_MICRO = 18_000;
+
 function fakeTotal(t: Pick<TaskView, "actual" | "spent">): number {
   return Math.max(t.actual.usdMicro, t.spent?.usdMicro ?? 0);
 }
@@ -1225,6 +1273,17 @@ function fakeStartCheck(
     laterBeyond,
     blocked,
     oversized,
+    // d1109-cred-screens (CS-3): set per project by the route (`state.startCredential`).
+    credential: null,
+    // C4b-left-5, as the daemon: a task the session takes whose own budget may leave too little
+    // for its review (its figure plus one critic call's worst case against what is left).
+    reviewMayWait: [...runnable, ...later].flatMap((r) => {
+      const t = byId.get(r.taskId);
+      if (!t || !(t.budget.usdMicro > 0)) return [];
+      const left = Math.max(0, t.budget.usdMicro - fakeTotal(t));
+      if (r.estimate.usdMicro + FAKE_REVIEW_CALL_WORST_USD_MICRO <= left) return [];
+      return [{ taskId: t.id, title: t.title, line: reviewMayWaitLine(t.title, chf(t.budget)) }];
+    }),
     monthLeft: money(FAKE_MONTH_LEFT_USD_MICRO),
     busy: opts.busy ?? false,
     planning: false,
@@ -1316,6 +1375,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     runs: clone(RUNS),
     sessions: clone(SESSIONS),
     runningExtra: [],
+    runCredential: {},
     startsWait: {},
     waitBlockAfterCancel: {},
     projectSessions: clone(PROJECT_SESSIONS),
@@ -1333,6 +1393,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     joinRefusal: null,
     joinUndoBlocked: null,
     credentialWaitNow: {},
+    startCredential: {},
+    planCredentialLine: null,
+    credentialGrants: [],
     folders: clone(PROJECT_FOLDERS),
     files: clone(PROJECT_FILES),
     copies: {},
@@ -1352,6 +1415,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     nextChatReply: null,
     nextChatSources: null,
     nextChatTurn: null,
+    chatPosts: [],
     answering: null,
     conversations: new Map(),
     nextChatActions: null,
@@ -1385,7 +1449,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     fastMode: {},
     desktop: { revoked: false, revokedReason: null, control: { ...DESKTOP_OFF } },
     speedQuality: {},
-    settingValues: {},
+    settingValues: {
+      ...(options.credentialPolicy?.stored
+        ? { credential_policy: options.credentialPolicy.stored }
+        : {}),
+      ...(options.credentialPolicy?.midSessionLimit
+        ? { mid_session_limit: options.credentialPolicy.midSessionLimit }
+        : {}),
+    },
     desktopAllowlist: [{ app: "code" }],
     modelSettings: withWebAccess(clone(MODEL_SETTINGS), !options.noWebAccess),
     acceptsTemperature: options.acceptsTemperature ?? true,
@@ -1440,10 +1511,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const task = s.currentTask;
       const runState: RunningView["state"] =
         s.status === "paused" ? "stopping" : task ? "working" : "between";
+      // CS-7, as the daemon: the running task on the credential its choice puts second, and
+      // the tasks that wait for the person's answer on the ask card.
+      const credential = state.runCredential[s.id];
       const words = {
         state: runState,
         taskTitle: task?.title ?? null,
         specialist: task?.specialist ?? null,
+        ...(runState === "working" && credential?.on ? { on: credential.on } : {}),
+        ...(credential?.asking ? { asking: credential.asking.count } : {}),
       };
       const text = runText({ projectName: project.name, ...words });
       views.push({
@@ -1459,6 +1535,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         cancel: false,
         nextProject: null,
         explain: null,
+        ...(credential?.asking ? { links: [{ label: "Answer", to: credential.asking.to }] } : {}),
       });
     }
     for (const extra of state.runningExtra)
@@ -3180,6 +3257,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           ? { startLabel: `Start at ${fakeResetAt(credentialWait.text)}` }
           : {}),
       };
+    // d1109-cred-screens (CS-3), as the daemon: which Claude does the work, and when the
+    // project's own session already waits, its line in place of the wait's sentence. As the
+    // daemon (the review of the fix-up): a start that runs nothing (unless the project's own
+    // session waits) or that Stop all refuses says nothing of the stop and offers no Use API key.
+    view.credential = state.startCredential[id] ?? null;
+    if (
+      view.credential?.runOut &&
+      (state.killActive ||
+        (view.runnable.length === 0 && !view.oversized && !view.credential.runOut.goesOnLine))
+    )
+      view.credential = { line: null, runOut: null };
+    const goesOn = view.credential?.runOut?.goesOnLine ?? null;
+    const stoppedLine = view.credential?.runOut?.stoppedLine ?? null;
+    if (goesOn && view.blocked) view.blocked = { ...view.blocked, sentence: goesOn };
+    else if (stoppedLine && view.blocked?.startable)
+      view.blocked = { ...view.blocked, sentence: stoppedLine };
     // C2-left-2, as the daemon: nothing is ready because a task waits on the person's card.
     if (view.blocked?.sentence === "Nothing can run: no task is ready.") {
       const held = state.tasks.find(
@@ -3356,6 +3449,42 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const agent = AGENTS.find((a) => a.id === parsed.data.agentId);
     if (!agent) return errorBody(c, 404, "not_found", "no such agent");
+    // d1109-cred-screens (CS-3), as the daemon: the Start dialog's "Use API key" is the person's
+    // yes for this stop; refused in words when the dialog offered none. The project's wait ends
+    // (the key serves), and the start goes on as usual below.
+    if (parsed.data.useOtherCredential && parsed.data.projectId) {
+      const offered = state.startCredential[parsed.data.projectId]?.runOut;
+      // As the daemon: nothing to run is refused with the start's own sentence, before any yes.
+      const check = fakeStartCheck(
+        state.tasks,
+        parsed.data.projectId,
+        parsed.data.budgetUsdMicro ?? null,
+        state.sandbox,
+        {
+          killActive: false,
+          busy: (options.startOutcome ?? "started") === "queued",
+          busyHere: options.busyProjectId === parsed.data.projectId,
+          continuing: fakeContinuing(state.requests),
+        },
+      );
+      if (
+        check.blocked?.kind === "nothing_runnable" &&
+        check.runnable.length === 0 &&
+        !check.oversized &&
+        !offered?.goesOnLine
+      )
+        return errorBody(c, 400, "validation", check.blocked.sentence);
+      if (!offered)
+        return errorBody(
+          c,
+          400,
+          "validation",
+          "Use API key is not offered for this start now: open Start again to see what it does.",
+        );
+      state.credentialGrants.push(parsed.data.projectId);
+      delete state.credentialWaitNow[parsed.data.projectId];
+      state.startCredential[parsed.data.projectId] = null;
+    }
     // d1109-starts-engine (S-10), as the daemon: Continue goes on with the ended session, with the
     // rest of its budget (its cap less its spend), and is refused in words when none is left.
     if (parsed.data.continues) {
@@ -3685,6 +3814,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         },
       );
       if (planTasks) r.planTasks = planTasks;
+      // d1109-cred-screens (CS-4), as the daemon: the plan card's foot line, read when shown
+      // (`state.planCredentialLine`, as `planCredentialLine` words it).
+      if (planTasks) r.planCredentialLine = state.planCredentialLine;
     }
     return c.json({
       requests,
@@ -4441,6 +4573,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         depth: reply.depth ?? "quick",
         footer: reply.footer ?? null,
         offer: reply.offer ?? null,
+        oneOff: reply.oneOff ?? null,
       },
     });
     // A yes or a no answers the card read back before it.
@@ -4519,11 +4652,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
     const extra = state.nextChatTurn;
     state.nextChatTurn = null;
+    state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
+    const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
     const reply = keepTurn(parsed.data, {
-      ...chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab),
+      ...base,
+      ...(extra?.reply ? { reply: extra.reply } : {}),
       depth: extra?.depth ?? "quick",
       footer: extra?.footer ?? null,
       offer: extra?.offer ?? null,
+      oneOff: extra?.oneOff ?? null,
     });
     heardChat(reply, parsed.data.projectId);
     return c.json(reply);
@@ -4552,6 +4689,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
     const extra = state.nextChatTurn;
     state.nextChatTurn = null;
+    state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
     const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
     const key = parsed.data.projectId ?? "";
     const startedAt = new Date().toISOString();
@@ -4588,7 +4726,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       if (state.answering?.turnId === base.transcriptId) state.answering = null;
       const reply: ChatReplyView = {
         ...base,
+        ...(extra?.reply ? { reply: extra.reply } : {}),
         ...(stopped ? { reply: "" } : {}),
+        oneOff: stopped ? null : (extra?.oneOff ?? null),
         depth: extra?.depth ?? "quick",
         footer: stopped
           ? "You stopped this answer: under CHF 0.01 spent."
@@ -6572,6 +6712,50 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const risk = SETTING_RISK[key];
       if (!risk) return refuse(`unknown setting ${key}`);
       const project = projectByRef(projectRef);
+      // d1109-cred-screens (CS-1), as SETTING_SPECS.credential_policy: a change that moves less
+      // money acts at once, one that moves more asks the person's yes; the default stored as
+      // the person's choice is a change too; the same stored value is refused.
+      if (key === "credential_policy") {
+        const presets = [
+          "subscription_then_wait",
+          "subscription_then_ask",
+          "subscription_then_key",
+          "key_then_subscription",
+          "key_only",
+        ];
+        const value = String(params.value ?? "");
+        if (!presets.includes(value)) return refuse(`${value} is not a preset`);
+        const before = fakePolicy();
+        if (before.id === value && before.chosen === "stored")
+          return refuse(`Which Claude does the work is already ${value}.`);
+        const words = policyChangeWords(before.id, value as never);
+        const r: Risk = words.narrows ? "low" : "medium";
+        return {
+          name,
+          params,
+          risk: r,
+          card: card(
+            {
+              command: name,
+              what: "which Claude does the work",
+              oldValue: before.id,
+              newValue: value,
+              scope: "global",
+              sentence: words.sentence,
+              ask: words.ask,
+            },
+            r,
+          ),
+          apply: () => {
+            const previous = state.settingValues.credential_policy ?? null;
+            state.settingValues.credential_policy = value;
+            return {
+              before: { key, project_id: null, value: previous },
+              after: { key, project_id: null, value },
+            };
+          },
+        };
+      }
       if (key === "web_access" && project) {
         // As SETTING_SPECS.web_access ('sites'): the one clean-up, refused entries in words, a
         // yes only when the rule widens (judged against the rule in force), the same value refused.
@@ -8126,8 +8310,104 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       sentence: `Set which Claude credential is used first from ${orderWords(billingOrder)} to ${orderWords(next)}: every model call uses them in this order, and when one cannot be used the next one is. Undo.`,
       reversible: true,
     });
+    // d1109-cred-screens (CS-2, C5-left-4), as billing-order-routes.ts: the order is stored as the
+    // credential policy it maps onto (the rule kept), through settings.set credential_policy.
+    const before = fakePolicy();
+    const preset =
+      next[0] === "subscription"
+        ? before.rule.whenStopped === "ask"
+          ? "subscription_then_ask"
+          : before.rule.whenStopped === "next"
+            ? "subscription_then_key"
+            : "subscription_then_wait"
+        : before.rule.whenStopped === "next"
+          ? "key_then_subscription"
+          : "key_only";
+    if (preset !== before.id || before.chosen !== "stored") {
+      const words = policyChangeWords(before.id, preset);
+      pushChange({
+        commands: [{ name: "settings.set", params: { key: "credential_policy", value: preset } }],
+        before: {
+          key: "credential_policy",
+          project_id: null,
+          value: state.settingValues.credential_policy ?? null,
+        },
+        after: { key: "credential_policy", project_id: null, value: preset },
+        scope: "global",
+        projectId: null,
+        source: "ui",
+        wordsUsed: `Settings: Which Claude does the work to ${preset}`,
+        sentence: words.sentence,
+        reversible: true,
+      });
+      state.settingValues.credential_policy = preset;
+    }
     billingOrder = next;
     return c.json(billingOrderView());
+  });
+  // d1109-cred-screens CS-1, mirroring credential-policy-routes.ts with the runtime's own
+  // builder: the preset in force (stored, derived from the earlier order, or the default), the
+  // saved credentials' state from their rows, a standing yes and the open ask card.
+  const fakePolicy = () =>
+    credentialPolicyOf({
+      ...(state.settingValues.credential_policy
+        ? { credential_policy: state.settingValues.credential_policy }
+        : {}),
+      ...(billingOrder ? { billing_order: billingOrder } : {}),
+      ...(state.settingValues.mid_session_limit
+        ? { mid_session_limit: state.settingValues.mid_session_limit }
+        : {}),
+    });
+  let credentialGrant = options.credentialPolicy?.grant === true;
+  const nextMonthStart = () => {
+    const d = new Date();
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)).toISOString();
+  };
+  const credentialPolicyViewNow = () => {
+    const credentials: CredentialFacts[] = billingSources.map((s) => {
+      const stop =
+        s.blocked === "resting" && s.restingUntil
+          ? { reason: "limit" as const, until: s.restingUntil, stopKey: `limit:${s.restingUntil}` }
+          : s.blocked === "refused"
+            ? { reason: "refused" as const, until: null, stopKey: "refused:fake" }
+            : s.blocked === "allowance"
+              ? { reason: "share" as const, until: nextMonthStart(), stopKey: "share:fake" }
+              : s.blocked === "monthly_cap"
+                ? {
+                    reason: "key_month" as const,
+                    until: nextMonthStart(),
+                    stopKey: "key_month:fake",
+                  }
+                : null;
+      return {
+        kind: s.kind,
+        saved: s.blocked !== "no_credential",
+        enabled: s.blocked !== "disabled",
+        stop,
+        planShare: s.planShare,
+        monthChfMicro: s.monthSpent.chfMicro,
+        grant:
+          credentialGrant && stop && s.kind === "subscription"
+            ? { to: "api_key" as const, stopKey: stop.stopKey }
+            : null,
+      };
+    });
+    const ask = state.requests.find(
+      (r) =>
+        r.status === "open" && (r.changeCard as { key?: unknown } | null)?.key === "credential:ask",
+    );
+    return credentialPolicySection({
+      policy: fakePolicy(),
+      credentials,
+      openAskId: ask?.id ?? null,
+      startedWith: options.startedWith ?? null,
+      opts: { timezone: "UTC", nowMs: Date.now() },
+    });
+  };
+  app.get("/settings/credential-policy", (c) => c.json(credentialPolicyViewNow()));
+  app.post("/settings/credential-policy/grant/end", (c) => {
+    credentialGrant = false;
+    return c.json(credentialPolicyViewNow());
   });
   // The mailbox passwords and cloud voice keys typed in the app (U-054), mirroring
   // packages/runtime/src/secrets/store-routes.ts: an allowlist, the value kept here for the

@@ -354,7 +354,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
       `/projects/${project.id}/tasks`,
     );
     expect(rows.json.find((t) => t.id === task.id)?.display).toMatchObject({
-      label: "Waits until 17:00, after your quiet hours",
+      label: "Waits until 17:00 (after your quiet hours)",
       detail: "Then your session goes on.",
     });
     const log = (await w.rt.store.event.list(first.id))
@@ -372,9 +372,11 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     const check = await w.get<{ blocked: { sentence?: string } | null }>(
       `/projects/${project.id}/start-check`,
     );
-    expect(check.json.blocked?.sentence).toBe(
-      "Nothing can run until 17:00 (after your quiet hours); then your session goes on.",
-    );
+    // d1109-cred-screens (CS-3): with the API key able to serve, the Start dialog names the
+    // waiting session and when it goes on by itself (the quiet hours' end, 17:00), the same words
+    // a Start answers with (before: "Nothing can run until 17:00 (after your quiet hours); then
+    // your session goes on.").
+    expect(check.json.blocked?.sentence).toBe("Your session of 10:00 goes on by itself at 17:00.");
     expect(await w.rt.continuations.waiting(project.id)).toBe(
       "Your session of 10:00 goes on by itself at 17:00.",
     );
@@ -400,9 +402,11 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     const check = await w1.get<{ blocked: Record<string, unknown> | null }>(
       `/projects/${project.id}/start-check`,
     );
+    // d1109-cred-screens (CS-3, C3-left-9; intent kept): with the API key saved and serving, the
+    // dialog offers "Use API key" beside "Start at 15:00", so its sentence is the stop alone
+    // ("Nothing can run until 15:00" would not be true); the kept start is unchanged.
     expect(check.json.blocked).toMatchObject({
-      sentence:
-        "Nothing can run until 15:00 (your subscription's limit). Press Start and the work starts then.",
+      sentence: "Your subscription is at its limit until 15:00.",
       startable: true,
       startLabel: "Start at 15:00",
     });

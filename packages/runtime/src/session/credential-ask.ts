@@ -100,24 +100,153 @@ export async function ensureAskCard(
 }
 
 /**
- * The person chose Wait without a card (the Start dialog's "Start at 15:40" under 'ask',
- * d1109-cred-screens): the stop is marked asked, so no card follows their own choice.
+ * The person chose Wait in the Start dialog (its "Start at 15:40" under 'ask', d1109-cred-screens
+ * CS-3: "under ask it also records the person's Wait for this stop, so no card follows"): the
+ * stop is marked asked before the kept start's wait is noted, so no card follows their own
+ * choice; an ask card of this stop that is already open (another project's work met the stop
+ * first) is answered "Wait" and applied at once (outcome waited: the person's session goes on by
+ * itself at the stop's end), so one stop asks one question, also after a restart. Returns whether
+ * a card was closed.
  */
 export async function recordWait(
-  store: Pick<StateStore, "billingSource">,
-  clock: Clock,
-  sourceId: string,
-  stopKey: string,
-): Promise<boolean> {
-  let wrote = false;
-  await updateSourceLimits(store, sourceId, (limits) => {
+  deps: {
+    store: Pick<StateStore, "billingSource" | "humanRequest">;
+    clock: Clock;
+    humanId: string;
+  },
+  stop: { sourceId: string; stopKey: string },
+): Promise<{ closedCard: boolean }> {
+  await updateSourceLimits(deps.store, stop.sourceId, (limits) => {
     const asking = limits.asking as { stopKey?: unknown } | undefined;
-    wrote = asking?.stopKey !== stopKey;
-    return wrote
-      ? { ...limits, asking: { stopKey, requestId: null, at: clock.nowIso(), answer: "wait" } }
-      : null;
+    if (asking?.stopKey === stop.stopKey) return null;
+    return {
+      ...limits,
+      asking: { stopKey: stop.stopKey, requestId: null, at: deps.clock.nowIso(), answer: "wait" },
+    };
   });
-  return wrote;
+  let closedCard = false;
+  const open = (
+    await deps.store.humanRequest.open({ humanId: deps.humanId }, { limit: 500 })
+  ).filter((r) => {
+    const card = r.change_card as { key?: unknown; stop_key?: unknown } | null;
+    return card?.key === CREDENTIAL_ASK_KEY && card.stop_key === stop.stopKey;
+  });
+  for (const r of open) {
+    const answered = await deps.store.humanRequest
+      .answer(r.id, r.version, ASK_OPTIONS[1], deps.humanId, deps.clock.nowIso())
+      .catch(() => null);
+    if (!answered) continue;
+    await deps.store.humanRequest.patch(answered.id, {
+      change_card: {
+        ...((answered.change_card ?? {}) as JsonObject),
+        applied_at: deps.clock.nowIso(),
+        outcome: "waited",
+        session_goes_on: true,
+      },
+    });
+    closedCard = true;
+  }
+  return { closedCard };
+}
+
+/**
+ * d1109-cred-screens CS-3 (the Start dialog's "Use API key", the person's tap): the same grant
+ * the ask card's Use API key writes (`limits.grant {to, stopKey, by: "start"}`, version-checked,
+ * one billing.grant audit row), for this stop only. An open ask card of the stop is answered with
+ * "Use API key" and applied at once (outcome granted), so it shows its Done line and the sync
+ * never applies it twice. Returns whether a card was closed.
+ */
+export async function grantForStart(
+  deps: {
+    store: Pick<StateStore, "billingSource" | "humanRequest" | "auditLog">;
+    clock: Clock;
+    humanId: string;
+  },
+  stop: { sourceId: string; stopKey: string },
+  sessionGoesOn: boolean,
+): Promise<{ closedCard: boolean }> {
+  await updateSourceLimits(deps.store, stop.sourceId, (limits) => {
+    const g = limits.grant as { stopKey?: unknown } | undefined;
+    if (g?.stopKey === stop.stopKey) return null;
+    return {
+      ...limits,
+      grant: { to: "api_key", stopKey: stop.stopKey, by: "start", at: deps.clock.nowIso() },
+    };
+  });
+  await deps.store.auditLog
+    .append({
+      tool: BILLING_GRANT_AUDIT_TOOL,
+      allowed: true,
+      human_id: deps.humanId,
+      input_summary: JSON.stringify({ sourceId: stop.sourceId, to: "api_key", by: "start" }),
+      result_summary:
+        "the person's yes in the Start dialog: the API key serves until this stop ends",
+      occurred_at: deps.clock.nowIso(),
+    })
+    .catch(() => undefined);
+  let closedCard = false;
+  const open = (
+    await deps.store.humanRequest.open({ humanId: deps.humanId }, { limit: 500 })
+  ).filter((r) => {
+    const card = r.change_card as { key?: unknown; stop_key?: unknown } | null;
+    return card?.key === CREDENTIAL_ASK_KEY && card.stop_key === stop.stopKey;
+  });
+  for (const r of open) {
+    const answered = await deps.store.humanRequest
+      .answer(r.id, r.version, ASK_OPTIONS[0], deps.humanId, deps.clock.nowIso())
+      .catch(() => null);
+    if (!answered) continue;
+    await deps.store.humanRequest.patch(answered.id, {
+      change_card: {
+        ...((answered.change_card ?? {}) as JsonObject),
+        applied_at: deps.clock.nowIso(),
+        outcome: "granted",
+        session_goes_on: sessionGoesOn,
+      },
+    });
+    closedCard = true;
+  }
+  return { closedCard };
+}
+
+/** The audit row the end of a grant writes (d1109-cred-screens). */
+export const BILLING_GRANT_END_AUDIT_TOOL = "billing.grant_end";
+
+/**
+ * d1109-cred-screens CS-1 (Settings' "Stop using it"): the person ends their standing yes. The
+ * grant goes (version-checked); the asking mark stays, so no new card comes for this stop and
+ * the next pick waits for its end. A run already going on the other credential finishes (a run
+ * is never moved mid-way, ADR 0100 point 3). Returns the sources whose grant ended.
+ */
+export async function endGrant(
+  store: Pick<StateStore, "billingSource" | "auditLog">,
+  clock: Clock,
+  humanId: string,
+): Promise<string[]> {
+  const ended: string[] = [];
+  for (const row of await store.billingSource.list({ human_id: humanId }, { limit: 100 })) {
+    if (!(row.limits as { grant?: unknown }).grant) continue;
+    let mine = false;
+    await updateSourceLimits(store, row.id, (limits) => {
+      if (!limits.grant) return null;
+      mine = true;
+      const { grant: _g, ...rest } = limits;
+      return rest;
+    });
+    if (!mine) continue;
+    ended.push(row.id);
+    await store.auditLog
+      .append({
+        tool: BILLING_GRANT_END_AUDIT_TOOL,
+        allowed: true,
+        human_id: humanId,
+        input_summary: JSON.stringify({ sourceId: row.id }),
+        result_summary: "the person ended their yes: the next pick waits for the stop's end",
+        occurred_at: clock.nowIso(),
+      })
+      .catch(() => undefined);
+  }
+  return ended;
 }
 
 /** The person's answer of an ask card: Use API key or Wait (the option labels), else null. */

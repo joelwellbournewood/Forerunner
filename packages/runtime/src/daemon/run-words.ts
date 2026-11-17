@@ -31,7 +31,15 @@ export type RunWait =
   | { kind: "quiet"; at: string }
   /** Anthropic refused the credential: what is saved to go on ("a new API key"). */
   | { kind: "refused"; what: string }
-  /** Any other wait (the share, a key's monthly cap: d1109-cred-engine; worded in C6). */
+  /**
+   * d1109-cred-screens (CS-7): the share of the subscription Forerunner may use is used, until
+   * the month's start in the person's time zone ("Tue 1 Dec, 01:00"), or the end of their quiet
+   * hours when later.
+   */
+  | { kind: "share"; at: string }
+  /** d1109-cred-screens (CS-7): an API key at the monthly cap the person gave it, until `at`. */
+  | { kind: "key_month"; at: string }
+  /** Any other wait. */
   | { kind: "other" };
 
 export interface RunWords {
@@ -40,6 +48,20 @@ export interface RunWords {
   /** The specialist that works on the task, as the registry names it ("coder"). */
   specialist?: string | null;
   wait?: RunWait;
+  /**
+   * d1109-cred-screens (CS-7): the credential kind the running task's run went on with when the
+   * person's first choice stopped (the session log's `billing.switch`): ' on your API key'.
+   */
+  on?: string | null;
+  /** d1109-cred-screens (CS-7): tasks of the session that wait for the person's answer on the ask card. */
+  asking?: number;
+}
+
+/** "your API key", "your subscription": a credential kind as the indicator names it. */
+function credentialName(kind: string): string {
+  if (kind === "subscription") return "your subscription";
+  if (kind === "plan_credits") return "your plan credits";
+  return "your API key";
 }
 
 /**
@@ -53,12 +75,26 @@ function specialistWords(specialist: string | null | undefined): string {
 
 /** What the session does now, after the project's name, with the title as given. */
 export function runWhat(w: RunWords, titleMax = 200): string {
+  // CS-7: a task of the session waits for the person's answer on the one ask card.
+  const n = w.asking ?? 0;
+  const asking =
+    n > 0 && w.state !== "waiting" && w.state !== "calibrating"
+      ? ` · ${n} ${n === 1 ? "task waits" : "tasks wait"} for your answer`
+      : "";
+  return `${runDoes(w, titleMax)}${asking}`;
+}
+
+function runDoes(w: RunWords, titleMax: number): string {
   const title = w.taskTitle ? `"${shortTitle(w.taskTitle, titleMax)}"` : null;
+  // CS-7: the running task went on with the credential the person's choice puts second.
+  const on = w.on ? ` on ${credentialName(w.on)}` : "";
   switch (w.state) {
     case "planning":
       return "plans the session";
     case "working":
-      return title ? `${specialistWords(w.specialist)} works on ${title}` : "picks the next task";
+      return title
+        ? `${specialistWords(w.specialist)} works on ${title}${on}`
+        : "picks the next task";
     case "reviewing":
       return title ? `the critic checks ${title}` : "the critic checks the work";
     case "between":
@@ -78,6 +114,11 @@ export function runWhat(w: RunWords, titleMax = 200): string {
           return `waiting until ${wait.at} (after your quiet hours), then it goes on`;
         case "refused":
           return `waiting for ${wait.what}, then it goes on`;
+        // CS-7: the share's time alone (Change the allowance beside it); a key's cap named.
+        case "share":
+          return `waiting until ${wait.at}, then it goes on`;
+        case "key_month":
+          return `waiting until ${wait.at} (your API key's monthly cap), then it goes on`;
         default:
           return "waiting for Claude, then it goes on";
       }
@@ -90,17 +131,27 @@ export function runFit(w: RunWords & { projectName: string; nextProject?: string
   what: string;
   text: string;
 } {
-  const build = (titleMax: number, nameMax: number) => {
-    const what = runWhat(w, titleMax);
+  const build = (v: RunWords, titleMax: number, nameMax: number) => {
+    const what = runWhat(v, titleMax);
     const then = w.nextProject ? ` · then ${shortTitle(w.nextProject, nameMax)}` : "";
     return { what, text: `${shortTitle(w.projectName, nameMax)} · ${what}${then}` };
   };
-  for (const nameMax of [60, 40, 30, 24, 18])
-    for (const titleMax of [60, 40, 30, 22, 16, 12]) {
-      const out = build(titleMax, nameMax);
+  // CS-7: with both the credential fragment and the question, the question (it needs the
+  // person, design §5 rule 2) keeps its place; ' on your API key' goes before the title is cut
+  // short (the switch is still on the session page and in its log).
+  if (w.on && (w.asking ?? 0) > 0) {
+    for (const titleMax of [60, 40, 30, 22]) {
+      const out = build(w, titleMax, 60);
       if (out.text.length <= RUN_TEXT_MAX) return out;
     }
-  return build(10, 12);
+    w = { ...w, on: null };
+  }
+  for (const nameMax of [60, 40, 30, 24, 18])
+    for (const titleMax of [60, 40, 30, 22, 16, 12]) {
+      const out = build(w, titleMax, nameMax);
+      if (out.text.length <= RUN_TEXT_MAX) return out;
+    }
+  return build(w, 10, 12);
 }
 
 /** The indicator's sentence: '<project> · <what>', with ' · then <project>' for a waiting start. */
@@ -152,6 +203,11 @@ export interface RunFold {
   specialist: string | null;
   /** Titles of the tasks the session began, by task id (a review names its task by id). */
   titles: Record<string, string>;
+  /**
+   * d1109-cred-screens (CS-7): the credential kind the running task's run went on with after the
+   * person's first choice stopped (`billing.switch` of that task), null on the first choice.
+   */
+  on: string | null;
   /** The last event folded (`event.seq`): the next read starts after it. */
   afterSeq: number;
 }
@@ -163,6 +219,7 @@ export function emptyRunFold(): RunFold {
     taskTitle: null,
     specialist: null,
     titles: {},
+    on: null,
     afterSeq: 0,
   };
 }
@@ -204,9 +261,23 @@ export function foldRunEvents(
       case "task.started": {
         const title = str(p.title);
         if (taskId && title) f.titles[taskId] = title;
-        f = { ...f, phase: "working", taskId, taskTitle: title, specialist: str(p.specialist) };
+        f = {
+          ...f,
+          phase: "working",
+          taskId,
+          taskTitle: title,
+          specialist: str(p.specialist),
+          on: null,
+        };
         break;
       }
+      // CS-7: the running task's run went on with another credential; the back line ends it.
+      case "billing.switch":
+        if (taskId && taskId === f.taskId) f = { ...f, on: str(p.to) };
+        break;
+      case "billing.back":
+        f = { ...f, on: null };
+        break;
       case "task.step":
         if (typeof p.text === "string" && WRAP_UP_LINE.test(p.text) && f.phase === "working")
           f = { ...f, phase: "wrapping" };
@@ -243,6 +314,8 @@ export const RUN_EVENT_TYPES = [
   "critic.verdict",
   "critic.review_failed",
   "critic.review_paused",
+  "billing.switch",
+  "billing.back",
 ] as const;
 
 // Cancel's sentence lives in a file the browser build can read (no imports).

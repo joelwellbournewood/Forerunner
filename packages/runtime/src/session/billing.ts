@@ -16,6 +16,33 @@ export const BILLING_PICK_AUDIT_TOOL = "billing.pick";
  */
 export const BILLING_FALLBACK_EVENT = "billing.fallback";
 
+/**
+ * C5-left-1 (d1109-cred-screens, CE-11, ADR 0120): a task's run went to another credential than
+ * the person's first choice because that one is stopped (its limit, a refusal, the share, a key's
+ * monthly cap). Its `sentence` is the session log's line, once per stop and session ('"Style the
+ * page" goes on with your API key from where it stopped: your subscription is at its limit until
+ * 15:40.'); a later task's switch for the same stop is a detail (`repeat`).
+ */
+export const BILLING_SWITCH_EVENT = "billing.switch";
+/** The first choice serves again in a session that moved: once per stop. */
+export const BILLING_BACK_EVENT = "billing.back";
+
+/** What a switched run moved from and to (`TaskBillingPort.switchOf`, the Run row's artifact). */
+export interface RunSwitch {
+  /** The stopped first choice. */
+  from: BillingSource["kind"];
+  fromSourceId: string;
+  /** The credential the run goes on with. */
+  to: BillingSource["kind"];
+  toSourceId: string;
+  stop: "limit" | "refused" | "share" | "key_month";
+  /** ISO; null for a refusal. */
+  until: string | null;
+  stopKey: string;
+  /** "grant": the person said yes for this stop (the ask card, the Start dialog's Use API key). */
+  by: "policy" | "grant";
+}
+
 export interface TaskBillingRequest {
   agentId: string;
   /** The agent's owner: a subscription is only ever used for its owner's agent (spec, Security). */
@@ -99,6 +126,12 @@ export interface TaskBillingPort {
     agentId: string,
     sessionId?: string,
   ): Promise<void>;
+  /**
+   * C5-left-1 (CE-11): the switch this pick makes, when it goes to another credential than the
+   * person's first choice because that one is stopped now; null when the pick is the first
+   * choice (or the first choice serves and the pick is only another kind for a need). Optional.
+   */
+  switchOf?(pick: TaskBillingPick): Promise<RunSwitch | null>;
 }
 
 /** The person's setting "When my first choice runs out mid-session" (U-078). */

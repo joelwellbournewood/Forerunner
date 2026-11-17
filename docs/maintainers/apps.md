@@ -984,6 +984,36 @@ answer (`credential:ask`: Use API key granted, Wait waited) as the daemon's `syn
 so the card's Done line reads the same; the UI's real-daemon describe "d1109-cred-engine, run C"
 answers the card with the option it shows.
 
+### The policy's screens (d1109-cred-screens, [ADR 0120](../decisions/0120-which-claude-does-the-work.md))
+
+- **Settings**: `pages/CredentialPolicySection.tsx` ("Which Claude does the work", after Accounts
+  and keys) reads `GET /settings/credential-policy`; a pick goes through `executeCommands`
+  (`settings.set credential_policy`), a pending one shows the read-back with **Change** (the tap)
+  and **Cancel**; **Stop using it** ends a grant, with its line `credential-policy-end-grant-explain`
+  (`CredentialPolicyView.grantEndLine`). Advanced keeps only the ability table
+  (`credential-abilities`); the mid-session setting is gone.
+- **Start dialog**: `start-session-credential` (the line) and, while the first choice is out,
+  `start-session-run-out` with **Use API key** (`useOtherCredential: true`) and **Start at 15:40**
+  in the lean's order; the plain Start and its `start-session-explain` line are hidden then, and
+  `start-session-blocked` is the stop alone. A kept start alone ("Start at 15:40") has its explain
+  line begin with that label. `start-session-review-may-wait` lists a task whose budget may leave
+  too little for its review (C4b-left-5). The daemon sends no `runOut` for a start that runs
+  nothing or that Stop all refuses (the fake daemon mirrors it), so the dialog then shows only the
+  start's own sentence.
+- **Run bar** (`shell/RunIndicator.tsx`, CS-7): the run's links (Answer, Change the allowance) sit
+  in `run-links` right after the words, apart from Cancel and its own line.
+- **Inbox**: the plan card's `intake-credential-line`; the ask card through the generic card.
+- **Session page**: `session-switch-line` under the spend; **drawer**: `drawer-run-switch`.
+- **Chat and Talk** (`components/Conversation.tsx`): a hold reply's `<ids>-one-off` press and
+  `<ids>-one-off-explain`; the press sends the same line with `oneOff: true`, disabled while an
+  answer comes.
+- **Costs**: `cost-by-credential` from `CostView.byCredential` (the fake's fixture carries it).
+
+The fake daemon mirrors each route (`credentialPolicy` option, `startCredential`,
+`credentialGrants`, `planCredentialLine`, `nextChatTurn.oneOff`/`reply`, `chatPosts`, runs'
+`switchLine`, sessions' `switchLine`, costs' `byCredential`) with the daemon's words; the
+real-daemon describe "d1109-cred-screens, run C" keeps it honest.
+
 ## How to change it
 
 - **Add a page**: create `src/pages/XPage.tsx`, add a `<Route>` in `src/routes.tsx`, a nav entry

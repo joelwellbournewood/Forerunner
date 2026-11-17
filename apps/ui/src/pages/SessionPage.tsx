@@ -512,6 +512,16 @@ export function SessionPage() {
               label="Spent of this session's budget"
               testId="session-spend"
             />
+            {/* C5-left-1, CS-6: the session moved to another credential: since when, why and
+                what it spent on it (the daemon's words, from the ledger). */}
+            {session.switchLine ? (
+              <p
+                className="text-xs text-neutral-600 dark:text-neutral-400"
+                data-testid="session-switch-line"
+              >
+                {session.switchLine}
+              </p>
+            ) : null}
           </div>
         </div>
         {pullRequests.length > 0 ? (
@@ -765,6 +775,16 @@ function WaitBlock({
       <span className="flex-1" data-testid="session-wait-text">
         {notice ?? block.text}
       </span>
+      {/* d1109-cred-screens (CS-7): while its ask card is open, Answer opens the card. */}
+      {notice || !block.answer ? null : (
+        <Link
+          to={block.answer.to}
+          className="rounded border border-amber-400 px-2 py-1 text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-100 dark:hover:bg-amber-900"
+          data-testid="session-wait-answer"
+        >
+          {block.answer.label}
+        </Link>
+      )}
       {notice ? null : block.action === "cancel" ? (
         <Button
           onClick={() => void cancel()}

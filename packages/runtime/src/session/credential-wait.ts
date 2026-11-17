@@ -1,6 +1,6 @@
 import type { BillingSourceKind } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
-import type { HumanRequestRow, HumanRow, StateStore } from "@forerunner/state";
+import type { HumanRequestRow, HumanRow, JsonObject, StateStore } from "@forerunner/state";
 import { quietHoursEndAt, resolvePrefs } from "../notifications/prefs.ts";
 
 /**
@@ -161,7 +161,9 @@ function limitOf(kind: BillingSourceKind | string): string {
  */
 function stopWordsOf(wait: Pick<CredentialWait, "reason" | "kind" | "stop">): string {
   const r = wait.reason === "needs" ? wait.stop : wait.reason;
-  if (r === "share") return "your subscription's allowance";
+  // d1109-cred-screens (CS-5): the share Forerunner may use of the subscription, as Settings and
+  // the rows name it (before: "your subscription's allowance", which is the plan's whole).
+  if (r === "share") return "your subscription's share";
   if (r === "key_month") return `${yourCredential(wait.kind)}'s monthly cap`;
   return limitOf(wait.kind);
 }
@@ -308,7 +310,11 @@ export function startKeepsWaitSentence(
   opts: { timezone?: string; nowMs: number },
 ): string {
   const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
-  return `Nothing can run until ${at} (${stopWordsOf(wait)}). ${PRESS_START_THEN}`;
+  // C3-left-9 (d1109-cred-screens): the sentence names the button beside it ("Start at 15:40"),
+  // whose start is kept for the reset (before: "Press Start and the work starts then.").
+  return wait.until
+    ? `Nothing can run until ${at} (${stopWordsOf(wait)}). Press Start at ${at} and the work starts then.`
+    : `Nothing can run until ${at} (${stopWordsOf(wait)}). ${PRESS_START_THEN}`;
 }
 
 const PRESS_START_THEN = "Press Start and the work starts then.";
@@ -401,16 +407,24 @@ export function waitRowWords(
     goesOnAt?: string;
     /** S-10: a Start the person pressed is kept for the reset: the status says it starts then. */
     startKept?: boolean;
+    /** d1109-cred-screens (CS-5): the open ask card the row's Answer opens. */
+    askCardId?: string;
   },
 ): CredentialWaitWords {
   const wait = asStopWait(given);
-  // CE-7: under 'ask' the row says the work waits for the person's answer on the one card.
+  // CE-7: under 'ask' the row says the work waits for the person's answer on the one card;
+  // d1109-cred-screens (CS-5): Answer opens it, and the project's status says it first
+  // ("Waiting for you: use your API key?", rule 1).
   if (wait.ask && wait.reason !== "refused")
     return {
       label: `Waits for your answer: use ${otherCredentialOf(wait.kind)}?`,
       detail: "Answer the card in the Inbox.",
-      line: "Waiting for your answer",
-      save: null,
+      line: `Waiting for you: use ${otherCredentialOf(wait.kind)}?`,
+      save: {
+        label: "Answer",
+        to: opts.askCardId ? `/inbox#card-${encodeURIComponent(opts.askCardId)}` : "/inbox",
+      },
+      ask: true,
     };
   if (wait.reason === "needs")
     return {
@@ -432,21 +446,29 @@ export function waitRowWords(
   if (opts.goesOn && opts.goesOnAt) {
     const later = clockTime(opts.goesOnAt, opts.timezone, opts.nowMs);
     return {
-      label: `Waits until ${later}, after your quiet hours`,
+      label: `Waits until ${later} (after your quiet hours)`,
       detail: "Then your session goes on.",
       line: `Waiting until ${later} (after your quiet hours)`,
       save: null,
     };
   }
-  const at = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
+  const full = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
+  // d1109-cred-screens (CS-5): a month's stop (the share, a key's monthly cap) ends at the
+  // month's start: the day alone ("Tue 1 Dec"); the share links where the allowance is raised.
+  const month = wait.reason === "share" || wait.reason === "key_month";
+  const at = month ? full.replace(/, \d\d:\d\d$/, "") : full;
   return {
-    label: `Waits until ${at}, ${stopWordsOf(wait)}`,
+    // CS-5, design section 2: "Waits until 15:40 (your subscription's limit)" (before: a comma).
+    label: `Waits until ${at} (${stopWordsOf(wait)})`,
     detail: opts.goesOn ? "Then your session goes on." : "Then it runs at your next Start.",
     // S-10: "Starts at 15:40 (your subscription's limit)" while the person's Start is kept.
     line:
       (opts.startKept ? keptStartLine(wait, opts) : null) ??
       `Waiting until ${at} (${stopWordsOf(wait)})`,
-    save: null,
+    save:
+      wait.reason === "share"
+        ? { label: "Change the allowance", to: "/settings#plan-allowance" }
+        : null,
   };
 }
 
@@ -458,6 +480,8 @@ export interface CredentialWaitWords {
   line: string;
   /** Where a refused credential's replacement is saved (null at a limit: nothing to do). */
   save: { label: string; to: string } | null;
+  /** d1109-cred-screens (CS-5): the work waits for the person's answer on the ask card. */
+  ask?: boolean;
 }
 
 /** The refused card's link and the status sentence's: where a new key or sign-in is saved. */
@@ -659,12 +683,29 @@ export async function closeRefusedCards(
   store: Pick<StateStore, "humanRequest">,
   humanId: string,
   sourceId?: string,
+  /**
+   * C5-left-5 (d1109-cred-screens): why it closes, for its closed line: a new credential was
+   * saved (`saved`) or another credential took all the work that waited on it while it stays
+   * refused (`taken`, TR-10); and whether any work waited. Absent: as a save with work waiting.
+   */
+  close?: { why: "saved" | "taken"; workWaited: boolean },
 ): Promise<number> {
   let closed = 0;
   for (const r of await openRefusedCards(store, humanId)) {
     const card = r.change_card as { source_id?: unknown };
     if (sourceId && card.source_id !== sourceId) continue;
-    await store.humanRequest.withdraw(r.id, r.version).catch(() => undefined);
+    let row = r;
+    if (close)
+      row = await store.humanRequest
+        .update(r.id, r.version, {
+          change_card: {
+            ...(r.change_card as JsonObject),
+            closed_why: close.why,
+            work_waited: close.workWaited,
+          },
+        })
+        .catch(() => r);
+    await store.humanRequest.withdraw(row.id, row.version).catch(() => undefined);
     closed++;
   }
   return closed;

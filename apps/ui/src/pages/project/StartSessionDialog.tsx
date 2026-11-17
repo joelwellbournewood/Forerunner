@@ -392,9 +392,19 @@ export function StartSessionDialog({
     !planBlocks &&
     blocked.action?.to !== "/inbox";
 
+  // d1109-cred-screens (CS-3): which Claude does the work, in the daemon's words: one line under
+  // the plan, or with the first choice out under "ask" and "wait" the two buttons.
+  const credential = data?.credential ?? null;
+  const runOut = notice ? null : (credential?.runOut ?? null);
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy || notice || !identity || stops || problem) return;
+    await start(false);
+  };
+
+  /** Start, or with `useOther` the dialog's "Use API key" (the person's yes for this stop). */
+  const start = async (useOther: boolean) => {
+    if (busy || notice || !identity || (stops && !useOther) || problem) return;
     const chf = budget.trim() ? chfToMicro(budget.replace(",", ".")) : null;
     setBusy(true);
     setError(null);
@@ -410,6 +420,8 @@ export function StartSessionDialog({
         note: note.trim() || undefined,
         // C3-left-7: Continue goes on with the session that waited (its promise and its budget).
         ...(continues ? { continues: continues.sessionId } : {}),
+        // CS-3: "Use API key": the daemon writes the yes for this stop, then starts.
+        ...(useOther ? { useOtherCredential: true } : {}),
       });
       setNote("");
       // The person stays where they were (design §3.6); the session can be opened from here.
@@ -448,6 +460,11 @@ export function StartSessionDialog({
             {plan ? (
               <p className="text-sm" data-testid="start-session-plan">
                 {plan}
+              </p>
+            ) : null}
+            {credential?.line ? (
+              <p className="text-sm" data-testid="start-session-credential">
+                {credential.line}
               </p>
             ) : null}
             {cancelled ? (
@@ -529,6 +546,22 @@ export function StartSessionDialog({
             ) : data && plan ? (
               <BlockerLines check={data} />
             ) : null}
+            {/* C4b-left-5 (BA-12): a task whose own budget may leave too little for its review
+                (a task's budget counts its work, the critic's reviews and the fixes: the owner,
+                2026-11-16); its review then waits for Continue. At most three named. */}
+            {!blocked && plan && (data?.reviewMayWait?.length ?? 0) > 0 ? (
+              <ul
+                className="list-disc pl-5 text-sm text-amber-900 dark:text-amber-100"
+                data-testid="start-session-review-may-wait"
+              >
+                {(data?.reviewMayWait ?? []).slice(0, 3).map((t) => (
+                  <li key={t.taskId}>{t.line}</li>
+                ))}
+                {(data?.reviewMayWait?.length ?? 0) > 3 ? (
+                  <li>and {(data?.reviewMayWait?.length ?? 0) - 3} more</li>
+                ) : null}
+              </ul>
+            ) : null}
             <Field
               label="Session budget (CHF)"
               hint={`${
@@ -599,13 +632,17 @@ export function StartSessionDialog({
             again from the start check the new session itself made busy). A refused start
             waits for nothing: another project's session makes nothing here runnable (later
             #38), so it never reads "Starts after the current session". */}
-        {notice ? null : (
+        {/* CS-3: beside "Use API key" and "Start at 15:40" each button says what it does; the
+            line about a plain Start is not shown (there is none). */}
+        {notice || runOut ? null : (
           <p className="text-xs text-neutral-500" data-testid="start-session-explain">
             {data?.busy && !blocked && !planning
               ? runningElsewhere
                 ? `Starts after the session on "${runningElsewhere}"; then works until nothing more can run, the budget is used, or you stop it.`
                 : "Starts after the current session; then works until nothing more can run, the budget is used, or you stop it."
-              : "Start: works until nothing more can run, the budget is used, or you stop it."}
+              : // The line names the button beside it: a Start kept for the reset reads
+                // "Start at 15:40: ..." (CS-10's walk, C3-left-9's class).
+                `${(blocked?.startable && blocked.startLabel) || "Start"}: works until nothing more can run, the budget is used, or you stop it.`}
           </p>
         )}
         {/* d1109-starts-engine S-7 (ADR 0118, option C): what the person makes ready while the
@@ -615,12 +652,41 @@ export function StartSessionDialog({
             Work you make ready while it runs joins it if its budget has room.
           </p>
         )}
+        {runOut ? (
+          // CS-3: the first choice is out and the preset waits or asks: the person chooses here.
+          // The one the preset leans to comes first; each says what it does.
+          <ul className="space-y-2" data-testid="start-session-run-out">
+            {(runOut.lean === "use"
+              ? [
+                  { kind: "use" as const, b: runOut.use },
+                  ...(runOut.later ? [{ kind: "later" as const, b: runOut.later }] : []),
+                ]
+              : [
+                  ...(runOut.later ? [{ kind: "later" as const, b: runOut.later }] : []),
+                  { kind: "use" as const, b: runOut.use },
+                ]
+            ).map(({ kind, b }, i) => (
+              <li key={kind} className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant={i === 0 ? "primary" : "secondary"}
+                  onClick={() => void start(kind === "use")}
+                  disabled={busy || !identity || !!problem}
+                  data-testid={kind === "use" ? "start-session-use-key" : "start-session-later"}
+                >
+                  {busy ? "Starting…" : b.label}
+                </Button>
+                <span className="text-xs text-neutral-600 dark:text-neutral-400">{b.explain}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>{notice ? "Close" : "Cancel"}</Button>
           {/* After a start the dialog says what happened, with Open the session and Close: no
               second Start beside "Started: …" (P7-16; a second start is a new opening of the
-              dialog, which then says "Starts after the current session"). */}
-          {notice ? null : (
+              dialog, which then says "Starts after the current session"). With the two buttons
+              of CS-3 there is no third. */}
+          {notice || runOut ? null : (
             <Button
               variant="primary"
               type="submit"

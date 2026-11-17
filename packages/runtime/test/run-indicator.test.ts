@@ -581,3 +581,257 @@ describe("the Done line's Start (V-6)", () => {
     expect(startOfferOf(null, "answered", "p1")).toBe(false);
   });
 });
+
+/**
+ * CS-7 (d1109-cred-screens, run C; D8, the owner: "it should at least be very clear to a user when
+ * a run is ongoing", and 7a: "allow the task to be completed by the API, but in a transparent
+ * way"): the indicator says when the running task is on the credential the person's choice puts
+ * second (' on your API key'), when a task of the running session waits for the person's answer
+ * on the one ask card (' · 1 task waits for your answer' with Answer), and a waiting session's
+ * share and key-month stops in their own forms (never the generic 'waiting for Claude'), with
+ * Change the allowance for the share and Answer while the ask card is open. Before, none of it.
+ */
+describe("d1109-cred-screens, run C: the indicator's credential words (CS-7)", () => {
+  it("the fragment, the question and the month's stops, each within 80 characters", () => {
+    expect(
+      runText({
+        projectName: "Quote page",
+        state: "working",
+        taskTitle: "Style the page",
+        specialist: "coder",
+        on: "api_key",
+      }),
+    ).toBe('Quote page · the coder works on "Style the page" on your API key');
+    expect(
+      runText({
+        projectName: "Quote page",
+        state: "working",
+        taskTitle: "Style the page",
+        specialist: "coder",
+        on: "subscription",
+      }),
+    ).toBe('Quote page · the coder works on "Style the page" on your subscription');
+    expect(
+      runText({
+        projectName: "Quote page",
+        state: "working",
+        taskTitle: "B",
+        specialist: "coder",
+        asking: 1,
+      }),
+    ).toBe('Quote page · the coder works on "B" · 1 task waits for your answer');
+    expect(runText({ projectName: "Quote page", state: "between", asking: 2 })).toBe(
+      "Quote page · picks the next task · 2 tasks wait for your answer",
+    );
+    expect(
+      runText({
+        projectName: "Quote page",
+        state: "waiting",
+        wait: { kind: "share", at: "Tue 1 Dec, 01:00" },
+      }),
+    ).toBe("Quote page · waiting until Tue 1 Dec, 01:00, then it goes on");
+    expect(
+      runText({
+        projectName: "Quote page",
+        state: "waiting",
+        wait: { kind: "key_month", at: "Tue 1 Dec, 01:00" },
+      }),
+    ).toBe(
+      "Quote page · waiting until Tue 1 Dec, 01:00 (your API key's monthly cap), then it goes on",
+    );
+    // A long title is shortened at a word so the sentence keeps within 80 characters.
+    const long = runText({
+      projectName: "Quote page",
+      state: "working",
+      taskTitle: "Style the page so every quote reads well on a phone and on a desktop screen",
+      specialist: "coder",
+      on: "api_key",
+      asking: 1,
+    });
+    expect(long.length).toBeLessThanOrEqual(RUN_TEXT_MAX);
+    // With the question too, the question keeps its place and the fragment goes first.
+    expect(long).toMatch(
+      /^Quote page · the coder works on "Style the page.*" · 1 task waits for your answer$/,
+    );
+    expect(long).not.toContain("on your API key");
+  });
+
+  it("the fold reads the switch of the running task and drops it at the next task or the back line", () => {
+    const at = (seq: number, type: string, payload: Record<string, unknown> = {}) => ({
+      seq,
+      type,
+      payload,
+    });
+    let f = foldRunEvents(emptyRunFold(), [
+      at(1, "session.started"),
+      at(2, "task.started", { taskId: "a", title: "Style the page", specialist: "coder" }),
+      at(3, "billing.switch", { taskId: "a", to: "api_key", from: "subscription" }),
+    ]);
+    expect(f.on).toBe("api_key");
+    f = foldRunEvents(f, [
+      at(4, "task.finished", { taskId: "a" }),
+      at(5, "task.started", { taskId: "b", title: "Write the copy", specialist: "writer" }),
+    ]);
+    expect(f.on).toBeNull();
+    f = foldRunEvents(f, [at(6, "billing.switch", { taskId: "b", to: "api_key", repeat: true })]);
+    expect(f.on).toBe("api_key");
+    f = foldRunEvents(f, [at(7, "billing.back", { from: "api_key", to: "subscription" })]);
+    expect(f.on).toBeNull();
+    // Another task's switch line does not move the running task.
+    f = foldRunEvents(f, [at(8, "billing.switch", { taskId: "a", to: "api_key" })]);
+    expect(f.on).toBeNull();
+  });
+
+  describe("runViews", () => {
+    let store: StateStore;
+    let agent = "";
+    let quote = "";
+    const clock = new SimulatedClock("2026-11-16T09:00:00Z");
+    beforeEach(async () => {
+      store = await openStore({ url: "sqlite::memory:", clock });
+      const human = (
+        await store.human.insert({
+          name: "Robin",
+          email: "robin@example.test",
+          timezone: "Europe/Zurich",
+          notify_prefs: {},
+          default_autonomy: 2,
+          monthly_cap_usd_micro: 150_000_000,
+          locale: "en",
+        })
+      ).id;
+      agent = (
+        await store.agent.insert({
+          name: "Alice",
+          owner_human_id: human,
+          model_config: {},
+          memory_location: "local",
+          status: "active",
+          kind: "principal",
+        } as never)
+      ).id;
+      quote = (
+        await store.project.insert({
+          name: "Quote page",
+          goal: "Quote page",
+          repos: [],
+          stage: "planning",
+          status: "active",
+          budget_usd_micro: 0,
+          autonomy_level: 2,
+          summary_cache: {},
+          data_assets: [],
+          settings: {},
+        } as never)
+      ).id;
+    });
+    afterEach(async () => {
+      await store.close();
+    });
+    const deps = (over: Partial<Parameters<typeof runViews>[0]> = {}) => ({
+      store,
+      criticAgentId: null,
+      folds: new Map(),
+      pendingPersonStarts: () => [],
+      waitingContinuations: async () => [],
+      calibration: async () => ({ budgetChfMicro: 8_000_000, onPlan: false }),
+      ...over,
+    });
+    const running = async () => {
+      const s = await store.session.insert({
+        agent_id: agent,
+        project_id: quote,
+        trigger: "manual",
+        plan: { items: [] },
+        reason: "a test session",
+        budget_cap_usd_micro: 5_000_000,
+        step_cap: 200,
+        spent_usd_micro: 0,
+        steps: 0,
+        status: "running",
+        summary: "",
+        handoff: {},
+        runner: "pc",
+        started_at: clock.nowIso(),
+        author_agent: agent,
+      } as never);
+      await store.event.append(s.id, "session.started", {} as never, 0);
+      await store.event.append(
+        s.id,
+        "task.started",
+        { taskId: "t1", title: "Style the page", specialist: "coder" } as never,
+        0,
+      );
+      return s;
+    };
+
+    it("a running task on the API key says so; a task waiting on the ask card adds the question with Answer", async () => {
+      const s = await running();
+      await store.event.append(
+        s.id,
+        "billing.switch",
+        { taskId: "t1", from: "subscription", to: "api_key", stopKey: "limit:x" } as never,
+        0,
+      );
+      const [v] = await runViews(deps());
+      expect(v?.text).toBe('Quote page · the coder works on "Style the page" on your API key');
+      expect(v?.links).toBeUndefined();
+      const asking = async (projectId: string) =>
+        projectId === quote ? { count: 1, to: "/inbox#card-ask1" } : null;
+      const [w] = await runViews(deps({ askWaiting: asking }));
+      // Both would be 95 characters: the question keeps its place, the fragment goes.
+      expect(w?.text).toBe(
+        'Quote page · the coder works on "Style the page" · 1 task waits for your answer',
+      );
+      expect(w?.text.length).toBeLessThanOrEqual(RUN_TEXT_MAX);
+      expect(w?.links).toEqual([{ label: "Answer", to: "/inbox#card-ask1" }]);
+      expect(w?.stop).toEqual(["after", "now", "all"]);
+    });
+
+    it("a waiting session on the share reads its time with Change the allowance; on a key's monthly cap its own form; with the ask card open, Answer", async () => {
+      const waiting =
+        (wait: RunningWaitArg, extra: Record<string, unknown> = {}) =>
+        async () => [
+          {
+            projectId: quote,
+            sessionId: "s-earlier",
+            since: "2026-11-16T08:30:00.000Z",
+            wait,
+            ...extra,
+          },
+        ];
+      const [share] = await runViews(
+        deps({ waitingContinuations: waiting({ kind: "share", at: "Tue 1 Dec, 01:00" }) }),
+      );
+      expect(share).toMatchObject({
+        state: "waiting",
+        text: "Quote page · waiting until Tue 1 Dec, 01:00, then it goes on",
+        cancel: true,
+        stop: [],
+        links: [{ label: "Change the allowance", to: "/settings#plan-allowance" }],
+      });
+      const [month] = await runViews(
+        deps({ waitingContinuations: waiting({ kind: "key_month", at: "Tue 1 Dec, 01:00" }) }),
+      );
+      expect(month?.text).toBe(
+        "Quote page · waiting until Tue 1 Dec, 01:00 (your API key's monthly cap), then it goes on",
+      );
+      expect(month?.links).toBeUndefined();
+      const [ask] = await runViews(
+        deps({
+          waitingContinuations: waiting(
+            { kind: "limit", at: "15:40" },
+            { answer: "/inbox#card-ask1" },
+          ),
+        }),
+      );
+      expect(ask).toMatchObject({
+        text: "Quote page · waiting until 15:40, then it goes on",
+        cancel: true,
+        links: [{ label: "Answer", to: "/inbox#card-ask1" }],
+      });
+    });
+  });
+});
+
+type RunningWaitArg = Parameters<typeof runText>[0]["wait"] & object;

@@ -91,3 +91,66 @@ work waits.
 - Keep two settings and widen 'wait' to every call: still two things to explain, and no way to
   ask first.
 - Ask on every call: one card per call would flood the Inbox; one card per stop is enough.
+
+## Amendment 2026-11-16: the policy where the person reads it (d1109-cred-screens)
+
+The owner's words this builds on (2026-11-09, point 7): a) "allow the task to be completed by the
+API, but in a transparent way. It should also be possible to give a framework for what to use when
+,and then the system just does it."; b) "It should definitely not automatically do something even
+when told to wait or showing that it is waiting."; c) "If a credential is refused, follow the
+frameowrk for a) or b) as if it has run out, but also give the user some kind of notification or
+information."
+
+1. **One place**: Settings → "Which Claude does the work" lists the five presets with their lines;
+   until the person picks, the default is shown as used ("Used until you choose: ..."). A pick that
+   moves more money reads back and needs a tap; one that moves less acts at once. Each saved
+   credential has its role under the preset and its state now. Advanced keeps only what each
+   credential can do here; the older order and mid-session settings are gone from the screens.
+2. **The Start dialog and the plan card** say what happens if the first choice runs out. While it
+   is out under 'ask' or 'wait' the dialog offers "Use API key" (a grant for this stop, by the
+   person's start; no budget is raised) and "Start at 15:40" (nothing moves before), the preset's
+   lean first; when the project's own session waits to go on, its line replaces "Start at" and Use
+   API key lets it go on now.
+3. **Every wait in words** on the rows and the project's status line: the limit, the share (with
+   Change the allowance), a key's monthly cap, and the open question (Answer).
+4. **The switch as data** (CE-11): the Run row's `switchedFrom`, `billing.switch` once per stop and
+   session ('"Style the page" goes on with your API key from where it stopped: ...', with ', and
+   you said yes.' after a grant) and `billing.back`, `SessionResult.switched`, the session page's
+   line, the drawer's run line and Costs by credential, all read from the log and the ledger.
+5. **Chat's one-off** "Use API key" reaches the screen through POST /chat; a held reply offers no
+   Think it through.
+
+Open owner question built as its default (one constant): a one-off "Use API key" is offered under
+"then wait" too (`ONE_OFF_UNDER_WAIT = true` in `credential-policy-view.ts`): 'wait' means the app
+does nothing by itself, not that the person cannot choose.
+
+Built later in the same round (C6, resumed): the switch notification (CE-12: once per stop when
+the policy, not a yes, moved work onto the API key), the run indicator's credential forms (CS-7:
+" on your API key", "1 task waits for your answer" with Answer, the share and key-month waits),
+the Start dialog's review-may-wait line (C4b-left-5), the line above the two buttons that says
+the stop alone ("Your subscription is at its limit until 15:40."), and the runs-on line of a task
+under a preset that goes on with the next credential (it names that credential, never the first
+one's wait). Not built: the "needs" row form ("Waits for your API key: only it can read web pages
+here."), for want of the need in the wait entry.
+
+## Amendment 2026-11-17: the review of the policy's screens (d1109-cred-screens fix-up)
+
+The review of the screens found three places where a screen promised what the app did not do:
+
+1. **"Start at 15:40" under 'ask' is the person's Wait for the stop.** The kept start's own wait
+   filed "Use your API key until 15:40?" right after the person chose to wait. The person's Wait is
+   now recorded before the wait is noted, and an ask card of the same stop that was already open
+   (another project's work met the stop first) is answered Wait: one stop asks one question (point
+   2 of the 2026-11-16 amendment: "under ask it also records the person's Wait for this stop, so no
+   card follows"), also after a restart.
+2. **A yes for the stop names the key on the plan card.** With the person's yes standing, each
+   task's line said "Waits until 15:40" while the key ran the work at once. The runs-on line now
+   follows the yes as the pick does, as it follows "then API key".
+3. **"Use API key" only for a start that runs something.** With nothing ready or under Stop all
+   the dialog offered it ("about CHF 0.00") and its yes was written before the start was refused,
+   so every project's work and chat moved onto the key for a start that never ran (the owner's 7b:
+   "It should definitely not automatically do something even when told to wait"). The offer now
+   needs a start that runs, and the yes is written only after every refusal.
+
+Settings' "Stop using it" also says what it does ("Stop using it: what already runs on your API
+key finishes; new work waits for your subscription.").

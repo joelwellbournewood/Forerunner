@@ -1068,54 +1068,80 @@ save a new one; Forerunner never sends it another request meanwhile. Under **Sub
 then ask me** a refused sign-in also gets one card asking whether your API key does the work until
 you save a new one. Changing the rule to one that can spend more asks your yes first.
 
-### Which Claude credential is used first
+### Which Claude does the work (Settings)
 
-With both a Claude subscription and an API key saved, Settings → **Claude: which to use first**
-lists them in the order Forerunner uses them for tasks, Chat, project setup, reviews and the
-model watch. **Move up** and **Move down** change the order; the change is in Changes, where
-you can undo it. A task goes to the other credential only when the first cannot do it properly
-(see "Where a task runs" below). Each row says:
+Settings → **Which Claude does the work** is the one place for this rule. It lists the five
+choices, each with what it does when your first choice runs out:
 
-- how it is used: the subscription always runs **through Claude Code**; an API key always goes
-  **straight to the API**, which is where promotional API credits apply (they do not apply to
-  use through Claude Code, so Forerunner never sends an API key there);
-- whether it can be used now, and why not: this month's allowance is reached, its monthly cap
-  is reached, it rests after a usage limit (until the time shown; your session that waits for it
-  goes on then), Anthropic refused it (**Refused**: save a new one under Accounts and keys), or no key
-  is saved;
-- what it has spent this month: the subscription as a share of its allowance, an API key in CHF.
+- **Subscription first, then wait** (used until you choose): your subscription does everything it
+  can here; when it runs out, nothing moves to your API key and the work waits for it.
+- **Subscription first, ask before API key**: when your subscription runs out, one card asks: go
+  on with your API key at its cost, or wait.
+- **Subscription first, then API key**: your API key takes over at once, and you are told the cost.
+- **API key first, then subscription** and **API key only**: your API key does the work, at a cost
+  per use; when it runs out, your subscription takes over, or the work waits.
 
-When the first one cannot be used, the next one is, for Chat, project setup and reviews. If
-Claude says a credential's usage limit is reached, it rests until the time Claude gives (an
-hour when it gives none), and the session log says so in one sentence. For tasks, the setting
-**When my first choice runs out mid-session** (Settings → Advanced, Other settings) decides:
+Under the choices each saved credential has its row: what it does under your choice ("Does the
+work", "Takes over when your subscription runs out") and its state now ("Works now", "At its limit
+until 15:40", "Share used until Tue 1 Dec" with **Change the allowance**, "Refused: save a new
+sign-in" with its link). A choice that can spend more reads back what it does and asks you to tap
+**Change** first; one that spends less is set at once. Both are in Changes with an Undo. While you
+said yes to your API key for a stop, the section says so ("Your work and chat use your API key
+until 15:40: you said yes.") with **Stop using it**. What each credential can do here (read web
+pages, search, run commands) is under Advanced.
 
-- **Wait** (the default): nothing moves onto your other credential. The task goes back to
-  Ready without counting as a failed attempt, and so does every other task whose first choice
-  is that credential; the session goes on with the tasks whose first choice can serve (a
-  research task on your API key, say) and ends with "Waits until 15:40 (your subscription's
-  limit); then your session goes on.". Each waiting task's row reads "Waits until 15:40, your
-  subscription's limit", and at that time your session goes on by itself, once, with the rest of
-  its budget (its first line: "Goes on with your session of 14:05."), also after Forerunner was
-  closed and opened again. Your quiet hours hold it until they end, and then every line names
-  their end instead of the reset ("Waits until 17:00 (after your quiet hours); then your session
-  goes on."); **Cancel** on the Start dialog
-  or Stop all drops it, and then its tasks run at your next Start. A session you stopped does not
-  go on, and work you did not start a session for waits for your next Start ("; then it runs at
-  your next Start."). The session log names a task as started only
-  once its run really starts, with the specialist that runs it.
-- **Use the other one**: the task goes on at once, in the same session, on your other
-  credential ("continues on your API key now"). This moves work from your plan's limits onto
-  money, so Forerunner asks you to confirm the change.
+### When Claude runs out
+
+The Start dialog says what happens if your first choice runs out while the session works. When it
+is already out and your choice waits or asks, it offers **Use API key** (the session runs on the
+key until the stop ends, about the cost it names; no session budget is raised) and **Start at
+15:40** (nothing moves before; the session starts then), the one your choice leans to first.
+**Start at 15:40** is your answer for this stop: the Inbox does not ask you about your API key
+again until then. **Use API key** is offered only when the start would run something; with
+nothing ready, or with Stop all on, the dialog says why and offers neither. When
+your own session already waits to go on, the dialog says "Your session of 14:05 goes on by itself
+at 15:40." and **Use API key** lets it go on now. The plan card in the Inbox says the same once at
+its foot. Under "Subscription first, then API key", or once you said yes to your API key for this
+stop, each task's line on the card names the key that does it meanwhile, never a wait. In
+Settings, **Stop using it** ends your yes: what already runs on your API key finishes, and new
+work waits for your subscription. If a task's own budget may leave too little for its review, the
+dialog names that task before you start; its review then waits for Continue.
+
+With your subscription at its limit and your choice "ask before API key", the work waits for your
+answer on one card in the Inbox ("Use your API key until 15:40?"); the bar at the top of every
+page says so with **Answer**, and the card names what the waiting work costs on the key ("about
+CHF 0.40"). If your choice moves work onto the key by itself, you get one notification for that
+stop with its cost.
+
+A waiting task's row says why and until when: "Waits until 15:40 (your subscription's limit)",
+"Waits until Tue 1 Dec (your subscription's share)" with **Change the allowance**, "Waits for your
+answer: use your API key?" with **Answer**. The project's status line says it once ("Waiting for
+you: use your API key?").
+
+When work moves onto your API key (your choice, or your yes), the session log says it once:
+'"Style the page" goes on with your API key from where it stopped: your subscription is at its
+limit until 15:40.' (after your yes: '..., and you said yes.'); later tasks of the same stop are
+in Details, and "Your Claude subscription can work again; the next tasks use it." when it serves
+again. Under the session's spend: "On your API key since 14:20 (your subscription's limit): CHF
+0.42 so far."; once it ended: "Your API key took over at 14:20 (your subscription's limit): CHF
+0.42 of CHF 0.62.". The task's drawer reads "On your API key after your subscription's limit · CHF
+0.43" on that run, and Costs has **By credential** ("Your API key: CHF 1.20", "Your Claude
+subscription: CHF 2.10 (estimate, 12% of its allowance)").
+
+While chat waits for your subscription it says so and offers **Use API key** for that one question
+("Answers this question on your API key: about CHF 0.02."); the press asks it again once, on the
+key, and the answer's note says so. It gives no standing yes: the next question waits again.
 
 If Anthropic refuses your API key or your Claude sign-in (a revoked key, an expired sign-in),
 one card says so in the Inbox ("Anthropic refused your API key. Save a new one in Settings."),
 Settings shows the credential as **Refused** (Accounts and keys says "Anthropic refused your
 API key." with **Save a new key**, never "connected" through it), and Forerunner stops using it.
-With **Wait** (the default) your tasks wait for a new one ("Waits for a new Claude sign-in"):
-nothing moves onto your other credential, so a refused subscription never turns into API
-spend. With **Use the other one** your tasks go on with the other credential, and the card
-says so ("Until then your tasks go on with your API key, which costs money."). Chat, project
+Under **Subscription first, then wait** (used until you choose) your tasks wait for a new one
+("Waits for a new Claude sign-in"): nothing moves onto your other credential, so a refused
+subscription never turns into API spend. Under **Subscription first, then API key** your tasks go
+on with the other credential, and the card says so. When a new one is saved the card closes with
+what became of the waiting work ("A new one is saved; the work that waited for it goes on.", or
+"A new key is saved." when nothing waited). Chat, project
 setup and reviews use your other credential either way. No task fails because of
 it, and neither does the plan of a new project: its page says "Planning waits for a new API
 key: save one in Settings." instead of "Planning failed", with no Try again. Save a new key
@@ -1147,22 +1173,22 @@ subscription sign-in") in its drawer. If
 you add a Claude subscription instead of a new key, your session that waited goes on by itself on
 the subscription when your order lets it go there (with no order chosen, tasks use the
 subscription first), with no restart, and once no work waits on the refused key its card closes
-("Closed: it no longer needs you."; it comes back if work needs that key again); under **Wait** a first choice that rests or was refused still holds its
-work. A session you start while a new project's plan is being drafted waits for the planning to
+("Closed: the work that waited for it goes on with your Claude subscription."; it comes back if
+work needs that key again); under **Subscription first, then wait** a first choice that rests or
+was refused still holds its work. A session you start while a new project's plan is being drafted waits for the planning to
 finish ("queued") and then runs. A review waits the same way: when the critic's review of a finished
 task meets a limit or a refusal and no other credential can do it, the task goes back to Ready
 without counting as a failed try, its row reads "Waits until 15:40, ...", no card is filed
 beside the credential's own, and at that time its session has the critic review the work
 without running the specialist again (unless the files it wrote changed meanwhile).
 
-Until you choose an order, tasks use the subscription first and Chat, project setup
-and reviews use the API key first.
+Until you choose, everything (tasks, Chat, project setup and reviews) uses the subscription first.
 
 ### Where a task runs
 
 Your order decides, and a task goes to another credential only when the first cannot do it
-properly. The two do not do the same things here; Settings → **Claude: which to use first**
-ends with a small table, **What each can do here**:
+properly. The two do not do the same things here; Settings → Advanced has a small table,
+**What each can do here**:
 
 | | API key | Claude subscription |
 |---|---|---|

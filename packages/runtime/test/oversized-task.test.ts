@@ -479,3 +479,54 @@ describe("d1109-oversize-pause: the next Start continues it", () => {
     );
   }, 300_000);
 });
+
+/**
+ * C4b-left-5 (d1109-cred-screens, BA-12; the owner's answer of 2026-11-16: a task's budget counts
+ * "critics reviews, and fixes"): the Start dialog warns when a task's own budget may leave too
+ * little for its review (its estimate plus one critic call's worst case against what is left of
+ * it), so the person reads before Start that its review then waits for Continue. Before, the start
+ * check said nothing of it: the work ran, and the review waited with one card (BA-3).
+ */
+describe("d1109-cred-screens, run C: the Start check says when a task's budget may leave too little for its review (C4b-left-5)", () => {
+  const clock = new SimulatedClock("2026-11-09T09:00:00Z");
+  const opened: RuntimeApp[] = [];
+  afterAll(async () => {
+    for (const rt of opened) await rt.close().catch(() => undefined);
+  });
+
+  it("one line per task whose own budget cannot hold its estimate and its review's worst call; none for a roomy budget or a task without one", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-review-may-wait-"));
+    const w = await compose(home, clock);
+    opened.push(w.rt);
+    const projectId = await newProject(w, "Club page");
+    const tight = await addTask(
+      w,
+      projectId,
+      "Add a footer line with the club's name to index.html",
+      "index.html",
+      0.05,
+      "high",
+    );
+    // Its estimate (USD 0.05 of work and its review part) and one review call's worst case are
+    // more than its USD 0.09: after the work, too little is left for the review.
+    await w.rt.store.task.patch(tight, { budget_usd_micro: 90_000 });
+    const roomy = await addTask(w, projectId, "Write the about page", "about.html", 0.05);
+    await w.rt.store.task.patch(roomy, { budget_usd_micro: 20_000_000 });
+    await addTask(w, projectId, "Write the contact page", "contact.html", 0.05, "low");
+    const check = (await w.json(`/projects/${projectId}/start-check`)) as Json;
+    const lines = (check.reviewMayWait as Json[]).map((t) => [t.taskId, t.line]);
+    expect(lines).toEqual([
+      [
+        tight,
+        expect.stringMatching(
+          /^"Add a footer line with the club's name to index\.html": its budget of CHF \d+\.\d\d may leave too little for its review, which then waits for Continue\.$/,
+        ),
+      ],
+    ]);
+    // The figure is the task's own budget in CHF at the daemon's rate, as every money line.
+    const budget = check.sessionBudget as Json;
+    const rate = Number(budget.chfMicro) / Number(budget.usdMicro);
+    const chf = (Math.round((90_000 * rate) / 10_000) / 100).toFixed(2);
+    expect(String(lines[0]?.[1])).toContain(`its budget of CHF ${chf} may`);
+  }, 60_000);
+});

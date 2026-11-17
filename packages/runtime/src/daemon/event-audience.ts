@@ -78,6 +78,8 @@ export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "pr.merge_failed",
   "budget.warning",
   "billing.fallback",
+  "billing.switch",
+  "billing.back",
   "peer.overlap",
   "change",
   "chat.human",
@@ -102,6 +104,8 @@ export function eventAudience(type: string, p: Record<string, unknown> = {}): Ev
   // A second task waiting for the same credential (the leftovers of wave 7): the first one's
   // line and the session's end say the wait; the rest are details.
   if (type === "billing.fallback" && p.repeat === true) return "detail";
+  // C5-left-1 (CE-11): a stop's switch is told once per session; a later task's is a detail.
+  if (type === "billing.switch" && p.repeat === true) return "detail";
   // A retry in the same session is told by what came of it (design §3.7: about eight lines per
   // task; the walk's failing task had twelve): the same specialist starting again is a detail,
   // another one taking over is not.

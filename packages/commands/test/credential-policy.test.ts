@@ -56,7 +56,8 @@ describe("d1109-cred-engine, run C: credential_policy (CE-13)", () => {
       limit: 10,
     });
     expect(rows.map((c) => c.sentence)).toContain(
-      "Set which Claude does the work from Subscription first, then the API key to Subscription first, then ask me: when your subscription runs out, you are asked first before your API key does any work. Undo.",
+      // d1109-cred-screens (CS-1): the labels show the order, as Settings' options menu reads them.
+      "Set which Claude does the work from Subscription first, then API key to Subscription first, ask before API key: when your subscription runs out, you are asked first before your API key does any work. Undo.",
     );
     // The Undo puts 'then the API key' back: it moves more money, so it asks the person's yes.
     const risk = await settingsSet.undoRisk?.(

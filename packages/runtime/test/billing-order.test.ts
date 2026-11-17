@@ -245,12 +245,13 @@ describe("which Claude credential is used first (U-078)", () => {
     expect(v.chosen).toBe(true);
     expect(v.order).toEqual(["api_key", "subscription"]);
     expect(v.sources.map((s) => s.kind)).toEqual(["api_key", "subscription"]);
-    // Recorded in Changes, with the order in words.
+    // Recorded in Changes. d1109-cred-screens (CS-2, C5-left-4): the order is stored as the
+    // credential policy it maps onto, the rule kept ('wait' under the default: API key only).
     const changes = await rt.store.changeLog.list({ human_id: rt.human.id } as never, {
       limit: 50,
     });
     expect(changes.map((c) => c.sentence)).toContain(
-      "Set which Claude credential is used first from not chosen (the defaults) to the API key, then the Claude subscription: every model call uses them in this order, and when one cannot be used the next one is. Undo.",
+      "Set which Claude does the work from Subscription first, then wait to API key only: only your API key does the work, at a cost per use; when it stops, the work waits. Undo.",
     );
     const apiBefore = apiCalls.length;
     const sdkBefore = sdkCalls.length;
@@ -306,9 +307,11 @@ describe("which Claude credential is used first (U-078)", () => {
     expect(body.reply).toBe(HOLD_12);
     expect(body.reply).not.toContain("I could not answer (");
     expect(body.oneOff?.label).toBe("Use API key");
+    // d1109-cred-screens: never "about CHF 0.00" for a cost above zero.
     expect(body.oneOff?.explain).toMatch(
-      /^Answers this question on your API key: about CHF \d+\.\d\d\.$/,
+      /^Answers this question on your API key: (about CHF \d+\.\d\d|less than CHF 0\.01)\.$/,
     );
+    expect(body.oneOff?.explain).not.toContain("CHF 0.00");
     expect(sdkCalls).toHaveLength(sdkBefore + 1);
     expect(apiCalls.length).toBe(apiBefore);
     expect(await ledgerSince(before)).toEqual([]);
@@ -341,6 +344,21 @@ describe("which Claude credential is used first (U-078)", () => {
 
     await rt.close();
     await start();
+    // C5-left-4 (d1109-cred-screens): what Settings reads survives the restart, from the policy
+    // in force: the chosen preset, its order, and the subscription's rest.
+    const policy = (await (await call("/settings/credential-policy")).json()) as {
+      selected: string;
+      chosen: string;
+      rows: { kind: string; state: string }[];
+    };
+    expect(policy.selected).toBe("subscription_then_key");
+    expect(policy.chosen).toBe("stored");
+    expect(policy.rows.map((r) => r.kind)).toEqual(["subscription", "api_key"]);
+    expect(policy.rows[0]?.state).toBe("At its limit until 12:00");
+    const order = await view();
+    expect(order.chosen).toBe(true);
+    expect(order.order).toEqual(["subscription", "api_key"]);
+    expect(order.sources.find((s) => s.kind === "subscription")?.blocked).toBe("resting");
     expect(await chat("after the restart")).toBe("From the API.");
     expect(sdkCalls.length).toBe(sdkBefore);
 

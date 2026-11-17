@@ -20,7 +20,9 @@ import { elapsedWords, useNow } from "./ShellBars.tsx";
  * Each entry: a pulsing dot while work runs, the words (they open the session), how long it has
  * run, and Stop ▾ with Stop after this task, Stop now and Stop all (each Stop now and Stop all
  * asks once); a person's session that waits to go on after its credential wait shows its words
- * with Cancel instead, no dot. Nothing renders when nothing runs or waits.
+ * with Cancel instead, no dot. The daemon's `links` sit beside them (d1109-cred-screens CS-7:
+ * Answer while the ask card is open, Change the allowance for the share). Nothing renders when
+ * nothing runs or waits.
  */
 
 export type RunIndicatorForm = "bar" | "block" | "compact";
@@ -160,6 +162,23 @@ function RunEntry({
       {elapsed ? (
         <span className="text-xs text-blue-800 dark:text-blue-200" data-testid="run-elapsed">
           {elapsed}
+        </span>
+      ) : null}
+      {/* d1109-cred-screens (CS-7): Answer (the open ask card), Change the allowance. Beside the
+          words they act on, apart from Cancel and its own line (CS-10's walk: "Answer" next to
+          "Nothing starts when Claude is back; ..." read as if Answer did that). */}
+      {(run.links ?? []).length > 0 ? (
+        <span className="flex items-center gap-2" data-testid="run-links">
+          {(run.links ?? []).map((l) => (
+            <Link
+              key={l.to}
+              to={l.to}
+              className="rounded border border-blue-300 px-2 py-0.5 text-xs font-medium text-blue-900 hover:bg-blue-100 dark:border-blue-700 dark:text-blue-100 dark:hover:bg-blue-900"
+              data-testid="run-link"
+            >
+              {l.label}
+            </Link>
+          ))}
         </span>
       ) : null}
       <span className="ml-auto flex items-center gap-2">

@@ -281,8 +281,8 @@ describe("under 'Wait' only the tasks whose first choice rests wait (U-078)", ()
     // Only the waiting tasks' rows say they wait.
     const rows = await req<TaskView[]>(`/projects/${project.id}/tasks`);
     const label = (id: string) => rows.find((t) => t.id === id)?.display?.label;
-    expect(label(code.id)).toBe("Waits until 15:00, your subscription's limit");
-    expect(label(notes.id)).toBe("Waits until 15:00, your subscription's limit");
+    expect(label(code.id)).toBe("Waits until 15:00 (your subscription's limit)");
+    expect(label(notes.id)).toBe("Waits until 15:00 (your subscription's limit)");
     expect(label(research.id)).toBe("Done");
     // The session says what it did and what waits; the person's log names the wait once and
     // starts nothing that did not run.
@@ -364,7 +364,7 @@ describe("a review that meets a credential's usage limit waits for it (U-078)", 
     // The Tasks tab says what it waits for.
     const rows = await json<TaskView[]>(first.req(`/projects/${project.id}/tasks`));
     expect(rows.map((t) => [t.display?.label, t.display?.detail])).toEqual([
-      ["Waits until 16:40, your API key's limit", "Then your session goes on."],
+      ["Waits until 16:40 (your API key's limit)", "Then your session goes on."],
     ]);
 
     // Quit and start again: the wait is kept. Before the reset nothing runs.

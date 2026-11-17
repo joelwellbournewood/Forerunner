@@ -9,6 +9,7 @@ import {
   type CredentialPolicy,
   credentialPolicyOf,
   DEFAULT_ROUTING_POLICY,
+  grantOf,
   monthWindow,
   type RouteSkip,
   type RoutingPolicy,
@@ -24,6 +25,7 @@ import { restUntil } from "../provider/usage-limit.ts";
 import {
   type CredentialAbilities,
   type PlanUsage,
+  type RunSwitch,
   TASK_NEEDS,
   type TaskBillingPick,
   type TaskBillingPort,
@@ -557,6 +559,32 @@ export class RouterTaskBilling implements TaskBillingPort {
     this.sources = stateSources(opts.store as StateStore);
   }
 
+  /**
+   * R-inboxperf (d1109-cred-screens, CS-4): this billing for one request that reads the saved
+   * credentials several times (GET /inbox: the plan tasks' runs-on lines and the card's foot
+   * line): the vault is asked at most once per credential for the view's life. Not for picks.
+   */
+  withVaultMemo(): RouterTaskBilling {
+    const vault = this.opts.vault;
+    const seen = new Map<string, Promise<boolean>>();
+    const has = (name: string): Promise<boolean> => {
+      let known = seen.get(name);
+      if (!known) {
+        known = vault.has(name);
+        seen.set(name, known);
+      }
+      return known;
+    };
+    return new RouterTaskBilling({
+      ...this.opts,
+      vault: { has, ...(vault.get ? { get: (name: string) => vault.get?.(name) } : {}) } as Pick<
+        Vault,
+        "has"
+      > &
+        Partial<Pick<Vault, "get">>,
+    });
+  }
+
   async pick(req: TaskBillingRequest): Promise<TaskBillingPick> {
     const all = await this.sources(this.opts.humanId);
     const withheld: RouteSkip[] = [];
@@ -739,6 +767,32 @@ export class RouterTaskBilling implements TaskBillingPort {
     const status = await this.probe.status(source);
     if (!status.available) return null;
     return stopOf(source, status, this.opts.clock.now(), this.policy.planShareCap);
+  }
+
+  /**
+   * C5-left-1 (CE-11): the switch `pick` makes: the person's first choice is stopped now and the
+   * pick went to another kind (by the policy's 'next', or the person's yes for this stop: a
+   * grant on the stopped source). Null when the pick is the first choice or the first serves.
+   */
+  async switchOf(pick: TaskBillingPick): Promise<RunSwitch | null> {
+    const first = await this.firstChoiceStop();
+    if (!first || first.kind === pick.source.kind || !first.stopKey) return null;
+    const row = await this.opts.store.billingSource.get(first.sourceId).catch(() => null);
+    const grant = grantOf((row?.limits as JsonObject | undefined)?.grant);
+    const reason = first.reason === "needs" ? (first.stop ?? "limit") : first.reason;
+    return {
+      from: first.kind,
+      fromSourceId: first.sourceId,
+      to: pick.source.kind,
+      toSourceId: pick.source.id,
+      stop: reason === "refused" || reason === "share" || reason === "key_month" ? reason : "limit",
+      until: first.until ?? null,
+      stopKey: first.stopKey,
+      by:
+        grant && grant.stopKey === first.stopKey && grant.to === pick.source.kind
+          ? "grant"
+          : "policy",
+    };
   }
 
   /**
@@ -1104,6 +1158,8 @@ export class RouterTaskBilling implements TaskBillingPort {
           this.opts.store as Pick<StateStore, "humanRequest">,
           this.opts.humanId,
           row.id,
+          // C5-left-5: its closed line says what became of the work only when work waited.
+          { why: stale ? "saved" : "taken", workWaited: taken.length > 0 },
         ).catch(() => undefined);
       for (const w of taken) out.push({ ...w, sourceId: row.id });
     }
@@ -1121,6 +1177,7 @@ export class RouterTaskBilling implements TaskBillingPort {
     );
     for (const row of rows) {
       if (row.kind !== kind || typeof row.limits.refusedAt !== "string") continue;
+      const workWaited = waitingOf(row.limits).length > 0;
       await updateSourceLimits(this.opts.store, row.id, (limits) => {
         if (typeof limits.refusedAt !== "string") return null;
         const {
@@ -1138,6 +1195,7 @@ export class RouterTaskBilling implements TaskBillingPort {
           this.opts.store as Pick<StateStore, "humanRequest">,
           this.opts.humanId,
           row.id,
+          { why: "saved", workWaited },
         ).catch(() => undefined);
     }
   }

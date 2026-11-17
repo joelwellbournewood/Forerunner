@@ -539,6 +539,22 @@ export const COSTS: Record<string, CostView> = {
   proj_atlas: {
     totals: money(31_250_000),
     planUsageShare: null,
+    // CS-9, as the daemon's costView: the spend by the credential that paid it, adding up to the
+    // total (a subscription's row is an estimate with its share of the allowance).
+    byCredential: [
+      {
+        kind: "api_key",
+        cost: money(28_000_000),
+        share: null,
+        words: "Your API key: CHF 22.40",
+      },
+      {
+        kind: "subscription",
+        cost: money(3_250_000),
+        share: 0.12,
+        words: "Your Claude subscription: CHF 2.60 (estimate, 12% of its allowance)",
+      },
+    ],
     byModel: [
       { key: "sonnet-5.5", label: "Sonnet 5.5", cost: money(28_000_000), runs: 9, accepted: 7 },
       { key: "haiku-5.5", label: "Haiku 5.5", cost: money(3_250_000), runs: 21, accepted: null },
@@ -579,6 +595,7 @@ export const COSTS: Record<string, CostView> = {
   proj_beacon: {
     totals: money(0),
     planUsageShare: null,
+    byCredential: [],
     byModel: [],
     bySpecialist: [],
     byTask: [],
@@ -640,17 +657,8 @@ export const SETTINGS: SettingView[] = [
     description: "The channel your notifications use first (desktop when unset)",
     risk: "low",
   },
-  {
-    // U-078, as settings-view.ts: wait (the default) or use the other one; task runs only.
-    key: "human.mid_session_limit",
-    label: "When my first choice runs out mid-session",
-    scope: "human",
-    scopeId: "human_alice",
-    value: "wait",
-    description:
-      "Tasks only: wait for its reset, then your session goes on, or go on at once on your other Claude credential (which may cost money). Chat, planning and reviews always use the next one",
-    risk: "medium",
-  },
+  // d1109-cred-screens (CS-2), as settings-view.ts: no "When my first choice runs out mid-session"
+  // row; the one choice is Settings -> Basics -> "Which Claude does the work".
   {
     // U-078, as settings-view.ts: the credential chooser's setting (default my first choice).
     key: "human.code_commands",

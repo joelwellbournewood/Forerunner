@@ -75,6 +75,8 @@ export interface ProjectStatusInput {
     label: string;
     line?: string;
     save?: { label: string; to: string } | null;
+    /** d1109-cred-screens (CS-5): the tasks wait for the person's answer on the ask card. */
+    ask?: boolean;
   } | null;
   /**
    * W15-67: no ready task can run now because its credential rests or was refused, kept or not
@@ -305,6 +307,23 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
       },
     };
   }
+
+  // d1109-cred-screens (CS-5): the tasks wait for the person's answer on the one ask card ("Use
+  // your API key until 15:40?"): what needs the person comes first, with Answer opening it.
+  const asked = input.credentialWait?.ask
+    ? input.tasks.filter(
+        (t) =>
+          keyOf(t) === "waiting" && input.displays.get(t.id)?.label === input.credentialWait?.label,
+      )
+    : [];
+  if (asked.length > 0 && input.credentialWait?.line)
+    return {
+      kind: "waiting",
+      text: input.credentialWait.line,
+      action: input.credentialWait.save
+        ? { kind: "link", label: input.credentialWait.save.label, to: input.credentialWait.save.to }
+        : { kind: "link", label: "Answer", to: "/inbox" },
+    };
 
   // 2. A session works on it now.
   if (input.working) {

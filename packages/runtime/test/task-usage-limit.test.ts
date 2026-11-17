@@ -189,7 +189,7 @@ describe("a task run that meets the subscription's usage limit, under 'Wait' (U-
     );
     // The row says the same.
     const rows = await req<TaskView[]>(`/projects/${project.id}/tasks`);
-    expect(rows[0]?.display?.label).toBe("Waits until 15:00, your subscription's limit");
+    expect(rows[0]?.display?.label).toBe("Waits until 15:00 (your subscription's limit)");
     // The subscription rests until the reset Claude Code reported, on its row and in the audit.
     const sub = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
       (s) => s.kind === "subscription",
@@ -259,10 +259,15 @@ describe("a task run that meets the subscription's usage limit, under 'Use the o
     expect(done.status).toBe("done");
     expect(done.attempt).toBe(0);
     expect(provider.calls.length).toBeGreaterThan(0);
+    // C5-left-1 (d1109-cred-screens, CE-11): the run that goes on writes the switch's line,
+    // once; the stop's own line is a detail. Before: 'Your Claude subscription reached its usage
+    // limit; "Write the changelog" continues on your API key now.'
     const fallback = events.find((e) => e.type === "billing.fallback");
-    expect(describeEvent("billing.fallback", fallback?.payload ?? {})).toBe(
-      'Your Claude subscription reached its usage limit; "Write the changelog" continues on your API key now.',
-    );
+    expect(fallback?.payload.repeat).toBe(true);
+    const switched = events.filter((e) => e.type === "billing.switch");
+    expect(switched.map((e) => describeEvent("billing.switch", e.payload))).toEqual([
+      '"Write the changelog" goes on with your API key from where it stopped: your subscription is at its limit until 15:00.',
+    ]);
   }, 60_000);
 });
 

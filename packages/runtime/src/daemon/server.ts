@@ -42,7 +42,9 @@ import { createRunnerUnlockRoutes } from "../secrets/runner-unlock-routes.ts";
 import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
 import { createSecretStoreRoutes } from "../secrets/store-routes.ts";
 import { CODE_COMMANDS_DEFAULT } from "../session/billing.ts";
+import { grantForStart } from "../session/credential-ask.ts";
 import { needsOf } from "../session/credential-choice.ts";
+import { sessionSwitches, switchSpend } from "../session/credential-switch.ts";
 import { CREDENTIAL_WAIT_STOP } from "../session/credential-wait.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { isPersonTask } from "../session/person-questions.ts";
@@ -85,7 +87,12 @@ import {
   voiceStatusView,
   voiceTurnView,
 } from "../voice/views.ts";
-import { keptContinuationOf, keptStartOf } from "../wiring/billing-pick.ts";
+import {
+  dropKeptStart,
+  keptContinuationOf,
+  keptStartOf,
+  RouterTaskBilling,
+} from "../wiring/billing-pick.ts";
 import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
 import { assertAnswerAccepted, isChatOnlyCard, NOT_AN_OPTION } from "../wiring/request-answers.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
@@ -168,11 +175,15 @@ import { changeRowViews } from "./change-rows.ts";
 import type { RuntimeApp } from "./compose.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
+import { createCredentialPolicyRoutes } from "./credential-policy-routes.ts";
+import { resultSwitchLine, sessionSwitchLine } from "./credential-policy-view.ts";
+import { planCredentialLine, startCredential } from "./credential-start.ts";
 import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
 import { joinPreview, sharesRepositoryWith } from "./join-preview.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
 import { overBudgetView, oversizedView } from "./oversize-view.ts";
+import { reviewMayWaitLine } from "./oversize-words.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
 import { planTaskViews } from "./plan-tasks.ts";
 import type { StartsWait } from "./project-status.ts";
@@ -195,7 +206,7 @@ import {
 } from "./session-list.ts";
 import { settingsView } from "./settings-view.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
-import { busyHere, startBlocked as startBlockedReason } from "./start-blocked.ts";
+import { busyHere, runsWork, startBlocked as startBlockedReason } from "./start-blocked.ts";
 import {
   ACTION_FROM,
   ACTION_WORDS,
@@ -357,6 +368,8 @@ export function createDaemonApp(
     offer: r.offer
       ? { line: r.offer.line, action: r.offer.action, explain: r.offer.explain ?? null }
       : null,
+    // C5-left-3 (CE-9): the hold reply's "Use API key" for this one question.
+    oneOff: r.oneOff ?? null,
   });
 
   // Every open SSE stream registers how to end it: `server.close()` waits for in-flight
@@ -1525,6 +1538,41 @@ export function createDaemonApp(
     ).usd_micro;
     return Math.max(0, cap - spent);
   };
+  /** A session budget above what is left this month is refused in words (design §3.6). */
+  const refuseOverMonth = async (budgetUsdMicro: number | undefined) => {
+    if (budgetUsdMicro === undefined) return;
+    const left = await monthLeftUsdMicro();
+    if (left !== null && budgetUsdMicro > left)
+      throw new ForerunnerError(
+        "validation",
+        `That is more than what is left of your monthly cap (${formatChf(usdToChfMicro(left, chf()))}). Give the session less, or raise the cap in Settings.`,
+        { details: { cause: "budget_over_month", leftUsdMicro: left } },
+      );
+  };
+  /**
+   * d1109-cred-screens (CS-3): which Claude does the work, as the Start dialog says it, and the
+   * stop its "Use API key" acts on (`credential-start.ts`). The figure is the runnable work's
+   * estimate, never above the session's work budget.
+   */
+  const credentialAtStart = (r: Awaited<ReturnType<RuntimeApp["startCheck"]>>, projectId: string) =>
+    startCredential(
+      {
+        store: rt.store,
+        clock: rt.clock,
+        humanId: rt.human.id,
+        billing: rt.billing.pick instanceof RouterTaskBilling ? rt.billing.pick : null,
+        chfPerUsd: chf,
+        monthLeftUsdMicro,
+      },
+      projectId,
+      Math.min(
+        r.workBudgetUsdMicro,
+        r.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0) +
+          (r.oversized ? r.workBudgetUsdMicro : 0),
+      ),
+      // "Use API key" only for a start that runs something and that Stop all does not refuse.
+      { runsWork: runsWork(r), stopped: rt.kill.isFrozen({ agentId: rt.agent.id }) },
+    ).catch(() => ({ view: null, offer: null }));
   /**
    * Why a Start now would do nothing (design §3.6; `start-blocked.ts`, the chat says the same).
    * `agentId`'s running session makes a start wait rather than refuse only when it can make
@@ -1604,7 +1652,20 @@ export function createDaemonApp(
     const sessionRuns = rt.scheduler.isActive(rt.agent.id);
     const planning = !sessionRuns && rt.scheduler.isHeld(rt.agent.id);
     const busy = sessionRuns || planning;
-    const blocked = await startBlocked(r, projectId, rt.agent.id, { credentialWait: true });
+    const found = await startBlocked(r, projectId, rt.agent.id, { credentialWait: true });
+    const credential = await credentialAtStart(r, projectId);
+    // CS-3: the project's own session already waits to go on (one wait per project): the dialog
+    // says when it goes on by itself, beside its "Use API key".
+    const goesOn = credential.view?.runOut?.goesOnLine ?? null;
+    // With "Use API key" and "Start at 15:40" offered, the sentence above them says the stop
+    // alone ("Nothing can run until 15:40" would not be true; each button says what it does).
+    const stoppedLine = credential.view?.runOut?.stoppedLine ?? null;
+    const blocked =
+      found && goesOn
+        ? { ...found, sentence: goesOn }
+        : found?.startable && stoppedLine
+          ? { ...found, sentence: stoppedLine }
+          : found;
     const view: StartCheckView = {
       projectId: r.projectId,
       sessionBudget: money(r.sessionBudgetUsdMicro, rate),
@@ -1637,6 +1698,16 @@ export function createDaemonApp(
       // D4 (d1109-oversize-start): the task larger than the work budget the session takes after
       // the work that fits, with the warning the Start dialog shows; Start is not refused for it.
       oversized: oversizedView(r, rate),
+      credential: credential.view,
+      // C4b-left-5: a task whose own budget may leave too little for its review.
+      reviewMayWait: (r.reviewMayWait ?? []).map((t) => ({
+        taskId: t.taskId,
+        title: t.title,
+        line: reviewMayWaitLine(t.title, {
+          chfMicro: usdToChfMicro(t.budgetUsdMicro, rate),
+          text: formatChf(usdToChfMicro(t.budgetUsdMicro, rate)),
+        }),
+      })),
     };
     return c.json(view);
   });
@@ -1766,6 +1837,75 @@ export function createDaemonApp(
       body.projectId ??= earlier.project_id ?? undefined;
       body.budgetUsdMicro = left;
     }
+    // W15B-02: a removed project (its creation undone) starts nothing: refused at once in one
+    // sentence, before the scheduler is asked, so no session row is made (`startSession`
+    // refuses any other start of it too), and before any yes for "Use API key" is written.
+    if (body.projectId) {
+      const project = await rt.store.project.get(body.projectId);
+      const removed = project ? removedProjectRefusal(project) : null;
+      if (removed)
+        throw new ForerunnerError("validation", removed, {
+          details: { cause: "project_removed", projectId: body.projectId },
+        });
+    }
+    // d1109-cred-screens (CS-3): the Start dialog's "Use API key" under "ask" or "wait" with the
+    // first choice out: the person's yes for this stop (the ask card's grant, by "start"; an open
+    // card closed with its Done line), then their start, or their waiting session goes on now.
+    // Refused in words when the facts do not allow it; it never raises a budget. The yes is
+    // written only after every refusal (the review of the fix-up: a start refused for nothing to
+    // run or for Stop all wrote it first, and the key then served every project's next pick).
+    let yesForStop: { sourceId: string; stopKey: string } | null = null;
+    const writeYes = async (stop: { sourceId: string; stopKey: string }) => {
+      await grantForStart({ store: rt.store, clock: rt.clock, humanId: rt.human.id }, stop, true);
+      rt.events.emit("inbox", {});
+    };
+    if (body.useOtherCredential && body.projectId) {
+      const check = await rt.startCheck(body.projectId, body.budgetUsdMicro);
+      const { offer } = await credentialAtStart(check, body.projectId);
+      if (!offer) {
+        // Why the dialog offers none: Stop all, nothing to run (its own sentence), or the facts
+        // changed since it was opened.
+        if (rt.kill.isFrozen({ agentId: rt.agent.id }))
+          throw new ForerunnerError("killed", KILL_ACTIVE_START_MESSAGE, {
+            details: { cause: "use_other_not_offered" },
+          });
+        const blocked = await startBlocked(check, body.projectId, body.agentId);
+        if (blocked?.kind === "nothing_runnable" && !runsWork(check))
+          throw new ForerunnerError("validation", blocked.sentence, { details: { blocked } });
+        throw new ForerunnerError(
+          "validation",
+          "Use API key is not offered for this start now: open Start again to see what it does.",
+          { details: { cause: "use_other_not_offered" } },
+        );
+      }
+      // The money checks come before the yes: a start refused for its budget writes no yes for
+      // the stop (before, the yes stood and the key served the next pick, although nothing ran).
+      await refuseOverMonth(body.budgetUsdMicro);
+      const kept =
+        (await keptContinuationOf(rt.store, body.projectId)) ??
+        (await keptStartOf(rt.store, body.projectId));
+      yesForStop = { sourceId: offer.sourceId, stopKey: offer.stopKey };
+      if (kept) {
+        await writeYes(yesForStop);
+        // The project's own session that waited (or a Start kept for the reset) goes on now, on
+        // the key, as the person's start; nothing new is kept.
+        const entry = await rt.scheduler.requestStart({
+          agentId: kept.entry.agentId,
+          projectId: body.projectId,
+          trigger: "manual",
+          by: "person",
+          ...(kept.kept.continues ? { continues: kept.kept.continues } : {}),
+          ...(kept.kept.budgetUsdMicro ? { budgetUsdMicro: kept.kept.budgetUsdMicro } : {}),
+          ...(kept.kept.note ? { note: kept.kept.note } : {}),
+          reason: "your yes in the Start dialog: your API key does the work until the stop ends",
+        } as StartRequest);
+        if (entry.result === "started" || entry.result === "queued")
+          await dropKeptStart(rt.store, body.projectId);
+        rt.events.emit("project", { id: body.projectId });
+        const view: StartSessionView = { result: entry.result, startId: entry.id, session: null };
+        return c.json(view, 202);
+      }
+    }
     // S-10: one wait per project: while the person's session waits to go on (or a Start was kept
     // for the reset), a Start keeps nothing new and starts nothing; it says when it goes on. The
     // wake runs first, so a stop that has ended goes on now.
@@ -1777,28 +1917,9 @@ export function createDaemonApp(
           details: { cause: "continuation_waits", projectId: body.projectId },
         });
     }
-    // W15B-02: a removed project (its creation undone) starts nothing: refused at once in one
-    // sentence, before the scheduler is asked, so no session row is made (`startSession`
-    // refuses any other start of it too).
-    if (body.projectId) {
-      const project = await rt.store.project.get(body.projectId);
-      const removed = project ? removedProjectRefusal(project) : null;
-      if (removed)
-        throw new ForerunnerError("validation", removed, {
-          details: { cause: "project_removed", projectId: body.projectId },
-        });
-    }
     // A budget above what is left this month is refused in words (design §3.6); 0 and negative
     // amounts never pass the body's schema.
-    if (body.budgetUsdMicro !== undefined) {
-      const left = await monthLeftUsdMicro();
-      if (left !== null && body.budgetUsdMicro > left)
-        throw new ForerunnerError(
-          "validation",
-          `That is more than what is left of your monthly cap (${formatChf(usdToChfMicro(left, chf()))}). Give the session less, or raise the cap in Settings.`,
-          { details: { cause: "budget_over_month", leftUsdMicro: left } },
-        );
-    }
+    await refuseOverMonth(body.budgetUsdMicro);
     // Nothing a session could run (design §3.6, §4.8: nothing runnable means no session):
     // refused with the Start dialog's sentence, as the chat's session.start is. The dialog
     // disables Start then, but Continue where it stopped, the phone and the API did not ask
@@ -1813,17 +1934,18 @@ export function createDaemonApp(
       // S-10 (ADR 0118), "Start at 15:40": the Claude credential the work needs is out (its usage
       // limit) and nothing is kept for the project, so the person's Start is kept for the reset:
       // no session runs now (it would only meet the wait), and at the reset it starts once, by the
-      // person (quiet hours do not hold it: they chose that time), also after a restart.
-      if (
-        (check.runnable.length > 0 || check.oversized) &&
-        !rt.kill.isFrozen({ agentId: rt.agent.id })
-      ) {
+      // person (quiet hours do not hold it: they chose that time), also after a restart. Not for
+      // "Use API key": the person chose the key now.
+      if (!yesForStop && runsWork(check) && !rt.kill.isFrozen({ agentId: rt.agent.id })) {
         const kept = await rt.continuations.keepStart(body.projectId, body.agentId, {
           ...(body.budgetUsdMicro ? { budgetUsdMicro: body.budgetUsdMicro } : {}),
           ...(body.continues ? { continues: body.continues } : {}),
           ...(body.note?.trim() ? { note: body.note.trim() } : {}),
         });
         if (kept) {
+          // d1109-cred-screens (CS-3): under "ask before API key", "Start at 15:40" is the
+          // person's Wait for this stop: `keepStart` records it before the wait is noted, so no
+          // ask card follows their own choice.
           const view: StartSessionView = {
             result: "kept",
             startId: "",
@@ -1834,6 +1956,8 @@ export function createDaemonApp(
         }
       }
     }
+    // "Use API key": every refusal has passed; the yes for this stop, then the start.
+    if (yesForStop) await writeYes(yesForStop);
     let begun: () => void = () => undefined;
     const sessionBegun = new Promise<"begun">((resolve) => {
       begun = () => resolve("begun");
@@ -1920,7 +2044,9 @@ export function createDaemonApp(
       : null;
     const budgetLeft = money(Math.max(0, s.budget_cap_usd_micro - s.spent_usd_micro), chf());
     const wait = await rt.billing.waits.now(projectId).catch(() => null);
-    const text = wait?.text ?? "";
+    // d1109-cred-screens (CS-7): under 'ask' with its card open, the wait's own time and stop
+    // (before: "Waiting for Claude, then it goes on with ..."), and Answer opening the card.
+    const text = wait?.asking?.plain ?? wait?.text ?? "";
     const until = /until (.+?) \((.+?)\)/.exec(text);
     const continuation = await keptContinuationOf(rt.store, projectId);
     if (continuation?.kept.continues === s.id && names) {
@@ -1932,6 +2058,7 @@ export function createDaemonApp(
         explain: CANCEL_WAIT_EXPLAIN,
         projectId,
         budgetLeft,
+        ...(wait?.asking ? { answer: { label: "Answer", to: wait.asking.to } } : {}),
       };
     }
     if ((await keptStartOf(rt.store, projectId)) && names) {
@@ -1957,6 +2084,31 @@ export function createDaemonApp(
       projectId,
       budgetLeft,
     };
+  };
+  /**
+   * C5-left-1, CS-6 (d1109-cred-screens): the session page's line of a session that moved to
+   * another credential, from its log's first switch and the ledger: under the spend while it
+   * works ('On your API key since 14:20 (your subscription's limit): CHF 0.42 so far.'), its
+   * result line once it ended ('Your API key took over at 14:20 (...): CHF 0.42 of CHF 0.62.');
+   * null for a session that never moved.
+   */
+  const switchLineOf = async (s: SessionRow, spentChfMicro: number): Promise<string | null> => {
+    const { first } = await sessionSwitches(rt.store, s.id);
+    if (!first) return null;
+    const onIt = await switchSpend(rt.store, s.id, first);
+    const tz = (await rt.store.human.get(rt.human.id).catch(() => undefined))?.timezone;
+    const opts = { ...(tz ? { timezone: tz } : {}), nowMs: rt.clock.now() };
+    const from = { kind: first.from, reason: first.stop };
+    return s.ended_at
+      ? resultSwitchLine(
+          first.to,
+          from,
+          first.at,
+          formatChf(onIt.chfMicro),
+          formatChf(spentChfMicro),
+          opts,
+        )
+      : sessionSwitchLine(first.to, from, first.at, formatChf(onIt.chfMicro), opts);
   };
   const liveSessionView = async (s: SessionRow) => {
     const name = (await rt.store.agent.get(s.agent_id))?.name ?? s.agent_id;
@@ -1990,7 +2142,8 @@ export function createDaemonApp(
       s.ended_at ?? s.created_at,
       view.summary,
     ).catch(() => view.summary);
-    return { ...view, summary, waitBlock };
+    const switchLine = await switchLineOf(s, view.spent.chfMicro).catch(() => null);
+    return { ...view, summary, waitBlock, switchLine };
   };
 
   app.get("/sessions/:id/events", async (c) => {
@@ -2273,6 +2426,19 @@ export function createDaemonApp(
       });
       const view = reqViews[i];
       if (planTasks && view) view.planTasks = planTasks;
+      // d1109-cred-screens (CS-4): the plan card's foot line, computed when shown.
+      if (planTasks && view) {
+        // R-inboxperf: through this request's chooser batch, so the vault is asked once.
+        batch ??= rt.chooser.batch();
+        view.planCredentialLine = await planCredentialLine({
+          store: rt.store,
+          clock: rt.clock,
+          humanId: rt.human.id,
+          billing:
+            batch.billing ??
+            (rt.billing.pick instanceof RouterTaskBilling ? rt.billing.pick : null),
+        }).catch(() => null);
+      }
     }
     const msgViews = [];
     for (const m of messages) {
@@ -2491,6 +2657,7 @@ export function createDaemonApp(
       source: body.source,
       ...(body.depth ? { depth: body.depth } : {}),
       ...(body.offer ? { offer: body.offer } : {}),
+      ...(body.oneOff ? { oneOffSwitch: true } : {}),
     });
     await heardChat(r);
     return c.json(chatReplyView(r));
@@ -2519,6 +2686,7 @@ export function createDaemonApp(
           source: body.source,
           ...(body.depth ? { depth: body.depth } : {}),
           ...(body.offer ? { offer: body.offer } : {}),
+          ...(body.oneOff ? { oneOffSwitch: true } : {}),
           // The turn's id first (for Stop), then what it is doing at each step, then the tokens.
           onTurn: (t) => send("turn", t satisfies ChatTurnFrame),
           onStep: (text, o) =>
@@ -2676,6 +2844,9 @@ export function createDaemonApp(
                 depth: r.depth ?? "quick",
                 footer: r.footer ?? null,
                 ...(offer && (offer.line || offer.action) ? { offer } : { offer: null }),
+                // C5-left-3: the newest hold reply's "Use API key" (an older one's question
+                // has moved on: a press would answer it out of turn).
+                oneOff: newest && r.oneOff ? r.oneOff : null,
               }
             : null,
           // A line with no reply that is not being answered: Forerunner closed before answering
@@ -2861,34 +3032,46 @@ export function createDaemonApp(
     };
   };
 
-  // Settings -> Claude: which to use first (U-078, ADR 0100): the order goes through the
-  // registry's `settings.set billing_order` (low risk, so it runs at once and Changes lists it
-  // with Undo); the router reads it at every pick.
+  // Settings -> Claude: which to use first (U-078, ADR 0100). d1109-cred-screens (CS-2,
+  // C5-left-4): the route keeps answering, and an order is stored as the credential policy it
+  // maps onto (`settings.set credential_policy`, the person's own tap: Changes lists it with
+  // Undo); the router reads the policy at every pick.
+  const billingOrderDeps = {
+    store: rt.store,
+    vault: rt.vault,
+    clock: rt.clock,
+    humanId: rt.human.id,
+    chfPerUsd: chf,
+    startedWith: rt.startedWith,
+    setPolicy: async (preset: string) => {
+      const turn = await turnFor({
+        source: "ui",
+        wordsUsed: `Settings: Which Claude does the work to ${preset}`,
+      });
+      const r = await rt.commands.execute(
+        { name: "settings.set", params: { key: "credential_policy", value: preset } },
+        turn,
+        { confirmation: { kind: "tap", by: { kind: "human", id: rt.human.id } } },
+      );
+      if (r.status !== "done" && r.status !== "partial")
+        throw new ForerunnerError(
+          (r.code ?? "validation") as ErrorCode,
+          r.reason ?? `the choice was not saved (${r.status})`,
+        );
+    },
+  };
+  app.route("/", createBillingOrderRoutes(billingOrderDeps));
+  // d1109-cred-screens CS-1: Settings -> Basics -> "Which Claude does the work" (GET), and the end
+  // of a standing yes ("Stop using it"); a choice goes through POST /commands/execute.
   app.route(
     "/",
-    createBillingOrderRoutes({
-      store: rt.store,
-      vault: rt.vault,
-      clock: rt.clock,
-      humanId: rt.human.id,
-      chfPerUsd: chf,
-      startedWith: rt.startedWith,
-      setOrder: async (order) => {
-        const turn = await turnFor({
-          source: "ui",
-          wordsUsed: `Settings: use ${order.join(", then ")} first`,
-        });
-        const r = await rt.commands.execute(
-          { name: "settings.set", params: { key: "billing_order", value: order } },
-          turn,
-          { confirmation: { kind: "tap", by: { kind: "human", id: rt.human.id } } },
-        );
-        if (r.status !== "done" && r.status !== "partial")
-          throw new ForerunnerError(
-            (r.code ?? "validation") as ErrorCode,
-            r.reason ?? `the order was not saved (${r.status})`,
-          );
-      },
+    createCredentialPolicyRoutes({
+      ...billingOrderDeps,
+      currentStopOf: (sourceId) =>
+        rt.billing.pick instanceof RouterTaskBilling
+          ? rt.billing.pick.currentStopOf(sourceId)
+          : Promise.resolve(null),
+      changed: () => rt.events.emit("inbox", {}),
     }),
   );
 

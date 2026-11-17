@@ -1,6 +1,11 @@
 import type { HumanRequestRow, JsonObject } from "@forerunner/state";
 import { chfText } from "../money-words.ts";
-import { askCardWords, askClosedLine, refusedBody } from "../session/credential-words.ts";
+import {
+  askCardWords,
+  askClosedLine,
+  refusedBody,
+  refusedClosedLine,
+} from "../session/credential-words.ts";
 import { moneyWords } from "../session/money-words.ts";
 import {
   isPreparedOutcome,
@@ -799,12 +804,18 @@ function budgetCard(
           ? more
             ? `Starts a session of ${more}; your note goes into its next brief.`
             : "Starts a session that goes on from where it stopped; your note goes into its next brief."
-          : !more
-            ? "Gives it more and starts a session that goes on from where it stopped."
-            : session
-              ? // d1109-oversize-pause (OP-0): the next Start takes it in its turn without Continue.
-                `Starts a session now with ${more}; without it, your next Start takes it in its turn.`
-              : `Adds ${more} to its budget and starts a session that goes on from where it stopped.`,
+          : // C4b-left-6 (d1109-cred-screens): the work is done and only its review waits: the
+            // next session runs only the review (before: "goes on from where it stopped").
+            card.review_waits === true && !session
+            ? more
+              ? `Adds ${more} to its budget and starts a session that runs only its review.`
+              : "Gives it more and starts a session that runs only its review."
+            : !more
+              ? "Gives it more and starts a session that goes on from where it stopped."
+              : session
+                ? // d1109-oversize-pause (OP-0): the next Start takes it in its turn without Continue.
+                  `Starts a session now with ${more}; without it, your next Start takes it in its turn.`
+                : `Adds ${more} to its budget and starts a session that goes on from where it stopped.`,
         tone: "primary",
         confirm: null,
         // OP-4: after a pause that got no further, Continue asks what to do differently.
@@ -1376,9 +1387,13 @@ function askCard(
     },
     ...(ask?.timezone ? { timezone: ask.timezone } : {}),
     nowMs: ask?.nowMs ?? Date.now(),
-    estimateChf: chfText(
+    // d1109-cred-screens (CS-8): under a centime "less than CHF 0.01" (never "CHF 0.00").
+    estimateChf: moneyWords(
+      chfText(
+        typeof card.estimate_usd_micro === "number" ? card.estimate_usd_micro : 0,
+        typeof card.chf_per_usd === "number" ? card.chf_per_usd : undefined,
+      ),
       typeof card.estimate_usd_micro === "number" ? card.estimate_usd_micro : 0,
-      typeof card.chf_per_usd === "number" ? card.chf_per_usd : undefined,
     ),
     sessionWaits: r.status === "open" ? (ask?.sessionWaits ?? false) : answeredGoesOn,
     ...(ask?.goesOnAt ? { goesOnAt: ask.goesOnAt } : {}),
@@ -1816,7 +1831,12 @@ export function requestWords(
     words = refusedCredentialCard(card, ctx);
     // Closed when a new credential was saved (`closeRefusedCards`).
     if (r.status === "withdrawn") {
-      words.outcome = "A new one is saved; the work that waited for it goes on.";
+      // C5-left-5: what became of waiting work only when work waited.
+      words.outcome = refusedClosedLine(
+        str(card.credential_kind) ?? "api_key",
+        card.closed_why === "taken" ? "taken" : "saved",
+        card.work_waited !== false,
+      );
       return words;
     }
   } else if (key === CREDENTIAL_ASK_KEY) {

@@ -63,8 +63,8 @@ describe("d1109-cred-engine, run C: the ask form only while its card is open", (
     ]);
     const rows = (await req<TaskView[]>(`/projects/${project.id}/tasks`)).body;
     expect(rows.map((r) => r.display?.label)).toEqual([
-      "Waits until 15:00, your API key's limit",
-      "Waits until 15:00, your API key's limit",
+      "Waits until 15:00 (your API key's limit)",
+      "Waits until 15:00 (your API key's limit)",
     ]);
     await settleSessions(rt);
     await rt.close();
@@ -104,15 +104,20 @@ describe("d1109-cred-engine, run C: the ask form only while its card is open", (
     expect(lines.filter((l) => l.includes("your answer"))).toEqual([]);
     const rows = (await req<TaskView[]>(`/projects/${project.id}/tasks`)).body;
     expect(rows.map((r) => r.display?.label)).toEqual([
-      "Waits until 15:00, your subscription's limit",
-      "Waits until 15:00, your subscription's limit",
+      "Waits until 15:00 (your subscription's limit)",
+      "Waits until 15:00 (your subscription's limit)",
     ]);
     expect(world.keyCalls()).toHaveLength(0);
     await settleSessions(rt);
     await rt.close();
   }, 90_000);
 
-  it("a Start kept for the stop's end goes on at once after Use API key, and the Done line says so", async () => {
+  // d1109-cred-screens fix-up (CS-3: "under ask it also records the person's Wait for this
+  // stop, so no card follows"): the kept Start is the person's Wait; before, its own wait filed
+  // the card. The kept Start still goes on at once when the person says Use API key, now in the
+  // Start dialog (the card's Use API key for a kept start is d1109-cred-engine's FX-CE B3 path,
+  // kept for a card filed by other work before the keep).
+  it("a Start kept for the stop's end files no ask card (the person's Wait) and goes on at once after the Start dialog's Use API key", async () => {
     const clock = new SimulatedClock("2026-10-31T09:00:00Z");
     const world = credWorld({ clock, prefix: "fr-ask-keptstart-" });
     homes.push(world.home);
@@ -131,23 +136,17 @@ describe("d1109-cred-engine, run C: the ask form only while its card is open", (
     // The person presses Start during the stop: it is kept for the reset ("Start at 15:00").
     const kept = await rt.continuations.keepStart(project.id, rt.agent.id, {});
     expect(kept).toBe("A session of Quote page starts at 15:00.");
-    const [card] = await askCards(rt);
-    expect(card, "the kept Start's wait asks the person once").toBeDefined();
-    const inbox = (await req<InboxView>("/inbox")).body;
-    const shown = inbox.requests.find((r) => r.id === card?.id);
-    expect(shown?.choices?.[1]?.explain).toBe(
-      "Nothing moves until 15:00; then your session goes on with your subscription.",
-    );
-    const answered = (
-      await req<HumanRequestView>(`/requests/${card?.id}/answer`, {
-        answer: shown?.choices?.[0]?.label,
-        version: card?.version,
-      })
-    ).body;
-    expect(answered.outcome).toBe(
-      "Your API key does the work until 15:00; your session goes on now.",
-    );
-    // The kept Start went on now, as the person's own start, on the key.
+    expect(await askCards(rt), "the person's own Wait asks nothing").toHaveLength(0);
+    await rt.billing.waits.wake();
+    expect(await askCards(rt)).toHaveLength(0);
+    // "Use API key" in the Start dialog: the kept Start goes on now, as the person's own start,
+    // on the key.
+    const goes = await req<{ result: string }>("/sessions", {
+      agentId: rt.agent.id,
+      projectId: project.id,
+      useOtherCredential: true,
+    });
+    expect(goes.status, JSON.stringify(goes.body)).toBeLessThan(300);
     await until("the kept Start's session to run both tasks", async () => {
       const s = await Promise.all(tasks.map((t) => rt.store.task.mustGet(t.id)));
       return s.every((t) => t.status === "done") ? null : s.map((t) => t.status).join(",");
@@ -159,6 +158,38 @@ describe("d1109-cred-engine, run C: the ask form only while its card is open", (
     expect(sessions).toHaveLength(1);
     expect(world.keyCalls().length).toBeGreaterThan(0);
     expect(world.sdkCalls.filter((c) => !c.provider)).toHaveLength(0);
+    await settleSessions(rt);
+    await rt.close();
+  }, 90_000);
+
+  it("an ask card another project's work filed for the stop is answered Wait by a Start kept for it, with its Done line; no second card follows", async () => {
+    const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+    const world = credWorld({ clock, prefix: "fr-ask-keptwait-" });
+    homes.push(world.home);
+    world.limitSubscription(Date.parse("2026-10-31T14:00:00Z"));
+    let { rt, req } = await world.compose();
+    await setPolicy(rt, "subscription_then_ask");
+    const { project: first } = await seedProject(rt, "Quote page", ["Style the page"]);
+    await startSession(rt, first.id);
+    await settleSessions(rt);
+    const [card] = await askCards(rt);
+    expect(card).toBeDefined();
+    const { project: other } = await seedProject(rt, "Recipes", ["Write a recipe"]);
+    expect(await rt.continuations.keepStart(other.id, rt.agent.id, {})).toBe(
+      "A session of Recipes starts at 15:00.",
+    );
+    expect(await askCards(rt)).toHaveLength(0);
+    const { row, shown } = await askCardNow(rt, req, card?.id ?? "");
+    expect(row.status).toBe("answered");
+    expect(shown?.outcome).toBe("Nothing moves until 15:00; then your session goes on.");
+    expect(world.keyCalls()).toHaveLength(0);
+    // After a restart the wake asks nothing again for this stop.
+    await settleSessions(rt);
+    await rt.close();
+    ({ rt, req } = await world.compose());
+    await rt.billing.waits.wake();
+    expect(await askCards(rt)).toHaveLength(0);
+    expect(world.keyCalls()).toHaveLength(0);
     await settleSessions(rt);
     await rt.close();
   }, 90_000);

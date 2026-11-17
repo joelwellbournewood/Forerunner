@@ -127,6 +127,7 @@ import {
   CODE_COMMANDS_SETTING,
   codeCommandsOf,
   planShareAfter,
+  type RunSwitch,
   type TaskBillingPick,
   type TaskBillingPort,
   type TaskBillingRequest,
@@ -147,11 +148,13 @@ import { needsOf } from "./credential-choice.ts";
 import {
   askShown,
   type CredentialWait,
+  clockTime,
   credentialWaitOf,
   goesOnAtWords,
   stoppedRunSentence,
   waitSentence,
 } from "./credential-wait.ts";
+import { switchLogLine } from "./credential-words.ts";
 import { screenLessons } from "./lessons.ts";
 import { renderHeardLines } from "./live-chat.ts";
 import { moneyWords } from "./money-words.ts";
@@ -172,7 +175,7 @@ import {
   type TaskExecutionResult,
   type TaskExecutor,
 } from "./runner.ts";
-import { failureWords, taskContextBlock } from "./task-context.ts";
+import { failureWords, lastRunCredentialStopped, taskContextBlock } from "./task-context.ts";
 import { agentWrittenOf, parseTaskListNotes, type TaskListLine } from "./task-list-notes.ts";
 import {
   reviewSourcesArtifact,
@@ -785,6 +788,15 @@ interface RunBillingChoice {
   pick: TaskBillingPick | null;
   /** What the hooks get: the ledger kind and, on a subscription, the live plan share. */
   billing: RunBilling | undefined;
+  /** C5-left-1 (CE-11): the pick went to another credential than the stopped first choice. */
+  switched?: RunSwitch | null;
+}
+
+/** C5-left-1 (CE-11): the Run row's artifact of a switched run (the drawer's run line reads it). */
+function switchArtifact(sw: RunSwitch): JsonValue {
+  return {
+    switchedFrom: { kind: sw.from, stop: sw.stop, until: sw.until, by: sw.by },
+  } as JsonValue;
 }
 
 /**
@@ -1312,7 +1324,17 @@ export class LoopTaskExecutor implements TaskExecutor {
     const startedMono = clock.monotonic();
     // The run starts now, with this specialist, on the credential picked (the log's start line,
     // the leftovers of wave 7): after the pick, which may have waited, and any hand-over.
-    ctx.onStarted?.({ specialist: spec.name });
+    // C5-left-1 (CE-11): with the switch this pick made (the session log's line) and the kind
+    // it runs on (the line when the first choice serves again).
+    const switched = choice.switched ?? null;
+    const continues = switched
+      ? await lastRunCredentialStopped(store, task.id, runId).catch(() => false)
+      : false;
+    ctx.onStarted?.({
+      specialist: spec.name,
+      ...(choice.pick ? { sourceKind: choice.pick.source.kind } : {}),
+      ...(switched ? { switched, continues } : {}),
+    });
     // R-lateusage: usage a killed SDK run reports after it returned, added to its Run row once
     // the row's own figures are written (held until then, so they never overwrite it).
     const lateCost = lateRunCost(store, runId, this.logger);
@@ -1335,7 +1357,7 @@ export class LoopTaskExecutor implements TaskExecutor {
       ttft_ms: null,
       duration_ms: null,
       outcome: "running",
-      artifacts: [],
+      artifacts: switched ? [switchArtifact(switched)] : [],
       depth: child.claims.depth,
       parent_run_id: null,
       timed_out: false,
@@ -1767,6 +1789,7 @@ export class LoopTaskExecutor implements TaskExecutor {
         // What the next attempt's brief reads (design §4.6): the report, or the error in words.
         // A paused run keeps its report, the stop's words beside it, and its handoff (ADR 0112).
         artifacts: [
+          ...(switched ? [switchArtifact(switched)] : []),
           ...result.artifacts,
           ...(handoff
             ? [...reportArtifact, ...errorArtifact, handoffArtifact(handoff)]
@@ -1821,12 +1844,25 @@ export class LoopTaskExecutor implements TaskExecutor {
       // S-10: the person's own session goes on after the wait (at the end of their quiet hours
       // when those hold it past the reset); other work waits for a Start.
       const words = await this.waitWords(ctx, next.wait);
-      const summary = stoppedRunSentence(
-        { reason: credentialStop, kind: source?.kind ?? "api_key" },
-        task.title,
-        next.wait ? { wait: next.wait } : { continuesOn: next.continuesOn ?? "api_key" },
-        words,
-      );
+      // C5-left-1 (CE-11): another credential takes over now: the run says so as the session
+      // log's switch line will ('"X" goes on with your API key from where it stopped: your
+      // subscription is at its limit until 15:40.'); before: '...; "X" continues on your API
+      // key now.'. The runner writes the line once, when the run that goes on starts.
+      const summary = next.wait
+        ? stoppedRunSentence(
+            { reason: credentialStop, kind: source?.kind ?? "api_key" },
+            task.title,
+            { wait: next.wait },
+            words,
+          )
+        : switchLogLine(
+            task.title,
+            next.continuesOn ?? "api_key",
+            { reason: credentialStop, kind: source?.kind ?? "api_key" },
+            until && credentialStop === "limit"
+              ? clockTime(until, words.timezone, words.nowMs)
+              : null,
+          );
       onEvent({ type: "warning", message: summary });
       return {
         outcome: "usage_limit",
@@ -2116,7 +2152,12 @@ export class LoopTaskExecutor implements TaskExecutor {
             planUsageShare: () => planShareAfter(plan, budget.spentByRunId(runId)),
           }
         : { kind: pick.source.kind === "plan_credits" ? "plan_credits" : "api" };
-    return { sourceId: pick.source.id, driver: pick.driver, pick, billing };
+    // C5-left-1 (CE-11): a pick that goes to another credential because the first choice is
+    // stopped is a switch: the Run row carries it and the session log says so once per stop.
+    const switched = this.deps.billing.switchOf
+      ? await this.deps.billing.switchOf(pick).catch(() => null)
+      : null;
+    return { sourceId: pick.source.id, driver: pick.driver, pick, billing, switched };
   }
 
   /**

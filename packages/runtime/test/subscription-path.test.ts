@@ -635,8 +635,10 @@ describe("the subscription path (ADR 0044)", () => {
       const res = await execute(w);
       expect(res.outcome).toBe("usage_limit");
       expect(res.credentialWait).toBeUndefined();
+      // C5-left-1 (d1109-cred-screens): the run says what the switch's log line says (before:
+      // '...; "Refused sign-in, use the other one" continues on your API key now.').
       expect(res.summary).toBe(
-        'Anthropic refused your Claude sign-in; "Refused sign-in, use the other one" continues on your API key now.',
+        '"Refused sign-in, use the other one" goes on with your API key from where it stopped: Anthropic refused your Claude sign-in.',
       );
       const cards = (await rt.store.humanRequest.open({ humanId: rt.human.id })).filter(
         (r) => (r.change_card as { key?: string } | null)?.key === "credential:refused",

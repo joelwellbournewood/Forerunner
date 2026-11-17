@@ -1,19 +1,16 @@
 import {
   type BillingSource,
-  DEFAULT_ROUTING_POLICY,
+  type CredentialPolicyId,
+  credentialPolicyOf,
   ORDERABLE_KINDS,
   usdToChfMicro,
+  type WhenStopped,
 } from "@forerunner/billing";
 import type { Clock } from "@forerunner/platform";
 import type { StateStore } from "@forerunner/state";
 import type { Vault } from "@forerunner/vault";
 import { Hono } from "hono";
-import {
-  personOrderOf,
-  planUsageOf,
-  refusedSince,
-  restingUntilOf,
-} from "../wiring/billing-pick.ts";
+import { planUsageOf, refusedSince, restingUntilOf } from "../wiring/billing-pick.ts";
 import { stateSources } from "../wiring/billing-ports.ts";
 import {
   BillingOrderBody,
@@ -42,8 +39,12 @@ export interface BillingOrderRoutesDeps {
   clock: Clock;
   humanId: string;
   chfPerUsd: () => number;
-  /** Stores the order through `settings.set billing_order` (the change log's row). */
-  setOrder: (order: BillingOrderKind[]) => Promise<void>;
+  /**
+   * d1109-cred-screens (CS-2, C5-left-4): stores the preset an order maps onto through
+   * `settings.set credential_policy` (the change log's row): the order changed, the person's
+   * rule at a stop kept (`presetForOrder`).
+   */
+  setPolicy: (preset: CredentialPolicyId) => Promise<void>;
   /** The provider the install was started with outside the saved credentials (`RuntimeApp.startedWith`). */
   startedWith?: string | null;
 }
@@ -57,15 +58,43 @@ const NAMES: Record<BillingOrderKind, string> = {
   plan_credits: "Plan credits",
 };
 
-/** The order task runs use without a chosen one: the session policy's, real kinds only. */
-const DEFAULT_ORDER: BillingOrderKind[] = DEFAULT_ROUTING_POLICY.preference.session.filter(
-  (k): k is BillingOrderKind => ORDERABLE_KINDS.includes(k),
-);
+/**
+ * The preset an order maps onto (CS-2, C5-left-4: POST /settings/billing-order keeps answering
+ * and stores the policy): the order changed, the person's rule at a stop kept. A key-first order
+ * has no "ask" preset: it maps onto "API key only", which never moves by itself either.
+ */
+export function presetForOrder(
+  order: readonly BillingOrderKind[],
+  whenStopped: WhenStopped,
+): CredentialPolicyId {
+  if (order[0] === "subscription")
+    return whenStopped === "ask"
+      ? "subscription_then_ask"
+      : whenStopped === "next"
+        ? "subscription_then_key"
+        : "subscription_then_wait";
+  return whenStopped === "next" ? "key_then_subscription" : "key_only";
+}
 
 export async function billingOrderView(deps: BillingOrderRoutesDeps): Promise<BillingOrderView> {
-  const chosen = await personOrderOf(deps.store, deps.humanId);
-  const order = (chosen ?? DEFAULT_ORDER) as BillingOrderKind[];
+  // C5-left-4: the order in force is the credential policy's (stored, derived from the earlier
+  // order, or the default), never `billing_order` alone, so this view shows what every pick does.
+  const human = await deps.store.human.get(deps.humanId);
+  const policy = credentialPolicyOf((human?.notify_prefs ?? {}) as Record<string, unknown>);
+  const chosen = policy.chosen !== "default";
   const rows = await deps.store.billingSource.list({ human_id: deps.humanId }, { limit: 100 });
+  // The kinds this person has a row of, in the policy's order; a kind the preset leaves out
+  // ("API key only" leaves the subscription out) comes last.
+  const present = new Set(rows.map((r) => r.kind));
+  const inOrder = policy.rule.order.filter(
+    (k): k is BillingOrderKind => ORDERABLE_KINDS.includes(k) && present.has(k),
+  );
+  const order: BillingOrderKind[] = [
+    ...inOrder,
+    ...ORDERABLE_KINDS.filter(
+      (k): k is BillingOrderKind => present.has(k) && !inOrder.includes(k as BillingOrderKind),
+    ),
+  ];
   const enabled = new Set(
     (await stateSources(deps.store as StateStore)(deps.humanId)).map((s) => s.id),
   );
@@ -73,7 +102,7 @@ export async function billingOrderView(deps: BillingOrderRoutesDeps): Promise<Bi
   const money = (usd: number) => ({ usdMicro: usd, chfMicro: usdToChfMicro(usd, rate) });
   const rank = (k: BillingOrderKind) => {
     const i = order.indexOf(k);
-    return i >= 0 ? i : order.length + DEFAULT_ORDER.indexOf(k);
+    return i >= 0 ? i : order.length;
   };
   const sources: BillingOrderSourceView[] = [];
   for (const r of rows) {
@@ -130,7 +159,7 @@ export async function billingOrderView(deps: BillingOrderRoutesDeps): Promise<Bi
       (rows.find((r) => r.id === a.id)?.priority ?? 0) -
         (rows.find((r) => r.id === b.id)?.priority ?? 0),
   );
-  return { chosen: chosen !== null, order, sources, startedWith: deps.startedWith ?? null };
+  return { chosen, order, sources, startedWith: deps.startedWith ?? null };
 }
 
 export function createBillingOrderRoutes(deps: BillingOrderRoutesDeps): Hono {
@@ -152,15 +181,17 @@ export function createBillingOrderRoutes(deps: BillingOrderRoutesDeps): Hono {
         400,
       );
     }
-    const before = await personOrderOf(deps.store, deps.humanId);
-    await deps.setOrder(order);
+    const human = await deps.store.human.get(deps.humanId);
+    const before = credentialPolicyOf((human?.notify_prefs ?? {}) as Record<string, unknown>);
+    const preset = presetForOrder(order, before.rule.whenStopped);
+    if (preset !== before.id || before.chosen !== "stored") await deps.setPolicy(preset);
     await deps.store.auditLog
       .append({
         tool: BILLING_ORDER_AUDIT_TOOL,
         allowed: true,
         human_id: deps.humanId,
         input_summary: JSON.stringify({ order }),
-        result_summary: `order ${before ? before.join(", ") : "not chosen"} -> ${order.join(", ")}`,
+        result_summary: `policy ${before.id} (${before.chosen}) -> ${preset}`,
         occurred_at: deps.clock.nowIso(),
       })
       .catch(() => undefined);

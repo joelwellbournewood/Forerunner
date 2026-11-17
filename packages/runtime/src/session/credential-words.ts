@@ -78,6 +78,18 @@ export interface AskCardWords {
   closed: string;
 }
 
+/**
+ * d1109-cred-screens (CS-8; design §5 rule 7): the ask card's figure: "about CHF 0.40", "less than
+ * CHF 0.01" alone under a centime, and none when no figure is known ("CHF 0.00": the work's
+ * estimate was not known when the card was filed): the sentence then says the cost per use.
+ */
+function askFigure(estimateChf: string): { body: string; use: string } {
+  if (/^CHF 0\.00$/.test(estimateChf.trim()))
+    return { body: ", at a cost per use", use: ", at a cost per use" };
+  const est = /^less than /.test(estimateChf) ? estimateChf : `about ${estimateChf}`;
+  return { body: `: ${est}`, use: `: ${est} for what waits now` };
+}
+
 /** The Ask card's option labels, in their order (Use API key first). */
 export const ASK_OPTIONS = ["Use API key", "Wait"] as const;
 
@@ -90,14 +102,14 @@ export const ASK_OPTIONS = ["Use API key", "Wait"] as const;
 function refusedAskWords(input: AskCardInput): AskCardWords {
   const saved =
     input.wait.kind === "subscription" ? "a new sign-in is saved" : "a new key is saved";
-  const est = input.estimateChf;
+  const fig = askFigure(input.estimateChf);
   return {
     title: `Use your API key until ${saved}?`,
-    body: `${stoppedPhrase(input.wait, null)}. Your API key can do the waiting work now: about ${est}.`,
+    body: `${stoppedPhrase(input.wait, null)}. Your API key can do the waiting work now${fig.body}.`,
     options: [
       {
         label: "Use API key",
-        explain: `Your work and chat use your API key until ${saved}: about ${est} for what waits now.`,
+        explain: `Your work and chat use your API key until ${saved}${fig.use}.`,
       },
       {
         label: "Wait",
@@ -134,10 +146,11 @@ export function askCardWords(input: AskCardInput): AskCardWords {
   const title = share
     ? `Use your API key until ${w?.untilShort ?? "the month's end"}?`
     : `Use your API key until ${until}?`;
+  const fig = askFigure(input.estimateChf);
   const body = `${stoppedPhrase(input.wait, share ? null : until)}${
     share ? " this month" : ""
-  }. Your API key can do the waiting work now: about ${input.estimateChf}.`;
-  const useExplain = `Your work and chat use your API key until ${share ? (w?.untilShort ?? until) : until}: about ${input.estimateChf} for what waits now.`;
+  }. Your API key can do the waiting work now${fig.body}.`;
+  const useExplain = `Your work and chat use your API key until ${share ? (w?.untilShort ?? until) : until}${fig.use}.`;
   const waitExplain = share
     ? input.sessionWaits
       ? `Nothing moves until ${until}, or until you raise the allowance; then your session goes on.`
@@ -247,6 +260,24 @@ export function refusedBody(input: {
   return `${why} Save a new one in Settings; until then the work waits.`;
 }
 
+/**
+ * C5-left-5 (d1109-cred-screens): the refused card's closed line says what became of waiting
+ * work only when work waited: 'A new one is saved; the work that waited for it goes on.' after
+ * a save with work waiting, 'A new key is saved.' (or sign-in) with none, and 'Closed: the work
+ * that waited for it goes on with your Claude subscription.' when another credential took it
+ * all while this one stays refused (TR-10; before, that card read 'A new one is saved; ...').
+ */
+export function refusedClosedLine(
+  kind: BillingSourceKind | string,
+  why: "saved" | "taken",
+  workWaited: boolean,
+): string {
+  if (why === "taken")
+    return `Closed: the work that waited for it goes on with ${kind === "subscription" ? "your API key" : "your Claude subscription"}.`;
+  if (workWaited) return "A new one is saved; the work that waited for it goes on.";
+  return kind === "subscription" ? "A new sign-in is saved." : "A new key is saved.";
+}
+
 // ── CE-11: the session log ───────────────────────────────────────────────────────────────────
 
 /** '"Style the page" goes on with your API key from where it stopped: your subscription ...'. */
@@ -257,6 +288,31 @@ export function switchLogLine(
   until: string | null,
 ): string {
   return `"${title}" goes on with ${yourCredential(to)} from where it stopped: ${shortStopped(wait, until)}.`;
+}
+
+/**
+ * C5-left-1 (CE-11): the session log's line of a run that went to another credential: the run
+ * that goes on with a task its credential stopped reads `switchLogLine`; a task that starts on
+ * it reads '"B" runs on your API key: your subscription is at its limit until 15:40.'. After the
+ * person's yes for this stop (the ask card, the Start dialog's Use API key) the line says so:
+ * '..., and you said yes.' (C5's review: before, the log never said why the work ran on the key).
+ */
+export function switchRunLine(
+  title: string,
+  sw: {
+    to: BillingSourceKind | string;
+    from: BillingSourceKind;
+    stop: "limit" | "refused" | "share" | "key_month";
+    by: "policy" | "grant";
+  },
+  until: string | null,
+  continues: boolean,
+): string {
+  const wait = { reason: sw.stop, kind: sw.from } as const;
+  const line = continues
+    ? switchLogLine(title, sw.to, wait, until)
+    : `"${title}" runs on ${yourCredential(sw.to)}: ${shortStopped(wait, until)}.`;
+  return sw.by === "grant" ? `${line.slice(0, -1)}, and you said yes.` : line;
 }
 
 /** The line when the first choice serves again in a session that moved (once per stop). */
@@ -273,9 +329,13 @@ export function switchNotificationWords(input: {
   until: string | null;
   estimateChf: string;
 }): { title: string; body: string } {
+  // d1109-cred-screens (C5-left-2): "less than CHF 0.01" stands alone, as in chat's one-off line.
+  const est = /^less than /.test(input.estimateChf)
+    ? input.estimateChf
+    : `about ${input.estimateChf}`;
   return {
     title: `${input.projectName}: work goes on with your API key`,
-    body: `${stoppedPhrase(input.wait, input.until)}. Your API key costs money: about ${input.estimateChf} for what is left.`,
+    body: `${stoppedPhrase(input.wait, input.until)}. Your API key costs money: ${est} for what is left.`,
   };
 }
 
@@ -291,7 +351,9 @@ export function chatHoldReply(
 
 /** The one-off press's consequence line: "Answers this question on your API key: about CHF 0.02." */
 export function chatOneOffExplain(to: BillingSourceKind | string, estimateChf: string): string {
-  return `Answers this question on ${yourCredential(to)}: about ${estimateChf}.`;
+  // d1109-cred-screens: "less than CHF 0.01" stands alone ("about less than" says nothing more).
+  const est = /^less than /.test(estimateChf) ? estimateChf : `about ${estimateChf}`;
+  return `Answers this question on ${yourCredential(to)}: ${est}.`;
 }
 
 /** The note under an answer another credential gave: once per stop per conversation. */

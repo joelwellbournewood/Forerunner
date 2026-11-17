@@ -705,3 +705,104 @@ describe("d1109-run-visible: the Inbox's Done line offers Start (V-6)", () => {
     expect(within(done).queryByTestId("done-line-start")).toBeNull();
   });
 });
+
+/**
+ * CS-7 (d1109-cred-screens, run C; D8: "it should at least be very clear to a user when a run is
+ * ongoing"; 7a: "in a transparent way"): the bar says the running task is on the API key, that a
+ * task waits for the person's answer with Answer opening the card, and a session waiting on the
+ * share with Change the allowance beside Cancel; the session page's wait block offers Answer while
+ * its ask card is open. Before, none of these links or words.
+ */
+describe("d1109-cred-screens, run C: the run indicator's credential forms (CS-7)", () => {
+  it("a running task on the API key and a task waiting for the answer: the words and Answer opening the card", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const s = running(harness);
+    harness.daemon.state.runCredential[s.id] = {
+      on: "api_key",
+      asking: { count: 1, to: "/inbox#card-req_ask" },
+    };
+    renderApp("/settings", harness);
+    const bar = await screen.findByTestId("run-indicator-bar");
+    const entry = within(bar).getByTestId("run-entry");
+    // Both would be longer than a status line: the question keeps its place.
+    expect(within(entry).getByTestId("run-text")).toHaveTextContent(
+      'Atlas · the coder works on "Add the search box" · 1 task waits for your answer',
+    );
+    const answer = within(entry).getByTestId("run-link");
+    expect(answer).toHaveTextContent("Answer");
+    expect(answer).toHaveAttribute("href", "/inbox#card-req_ask");
+    expect(within(entry).getByTestId("run-stop")).toBeInTheDocument();
+    await user.click(answer);
+    expect(await screen.findByTestId("needs-you-heading")).toBeInTheDocument();
+  });
+
+  it("the running task on the API key alone says ' on your API key', with no link", async () => {
+    const harness = createHarness();
+    const s = running(harness);
+    harness.daemon.state.runCredential[s.id] = { on: "api_key" };
+    renderApp("/", harness);
+    const bar = await screen.findByTestId("run-indicator-bar");
+    expect(within(bar).getByTestId("run-text")).toHaveTextContent(
+      'Atlas · the coder works on "Add the search box" on your API key',
+    );
+    expect(within(bar).queryByTestId("run-link")).toBeNull();
+  });
+
+  it("a session waiting on the share: its time with Change the allowance and Cancel", async () => {
+    const harness = createHarness();
+    harness.daemon.state.runningExtra = [
+      {
+        ...WAITING,
+        what: "waiting until Tue 1 Dec, 01:00, then it goes on",
+        text: "Beacon · waiting until Tue 1 Dec, 01:00, then it goes on",
+        links: [{ label: "Change the allowance", to: "/settings#plan-allowance" }],
+      },
+    ];
+    renderApp("/", harness);
+    const bar = await screen.findByTestId("run-indicator-bar");
+    const entry = within(bar).getByTestId("run-entry");
+    expect(within(entry).getByTestId("run-text")).toHaveTextContent(
+      "Beacon · waiting until Tue 1 Dec, 01:00, then it goes on",
+    );
+    expect(within(entry).getByTestId("run-link")).toHaveAttribute(
+      "href",
+      "/settings#plan-allowance",
+    );
+    expect(within(entry).getByTestId("run-cancel")).toBeInTheDocument();
+    expect(entry).not.toHaveTextContent("waiting for Claude");
+    // CS-10's walk: the link sits with the words it acts on, apart from Cancel's own line
+    // ("Nothing starts when Claude is back; ...") so that line never reads as the link's.
+    const links = within(entry).getByTestId("run-links");
+    expect(links).toContainElement(within(entry).getByTestId("run-link"));
+    expect(links).not.toContainElement(within(entry).getByTestId("run-cancel-explain"));
+    expect(
+      links.compareDocumentPosition(within(entry).getByTestId("run-cancel-explain")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("the session page's wait block: the stop's time with Answer opening the card, and Cancel", async () => {
+    const harness = createHarness();
+    const s = harness.daemon.state.sessions[0] as SessionView;
+    s.status = "completed";
+    s.stopReason = "credential_wait";
+    s.projectId = "proj_atlas";
+    s.waitBlock = {
+      state: "goes_on",
+      text: 'Waiting until 16:00 (your subscription\'s limit), then it goes on with "B".',
+      action: "cancel",
+      explain: "Nothing starts when Claude is back; its tasks wait for your Start.",
+      projectId: "proj_atlas",
+      budgetLeft: { usdMicro: 1_500_000, chfMicro: 1_200_000 },
+      answer: { label: "Answer", to: "/inbox#card-req_ask" },
+    };
+    renderApp(`/sessions/${s.id}`, harness);
+    const block = await screen.findByTestId("session-wait");
+    expect(within(block).getByTestId("session-wait-answer")).toHaveAttribute(
+      "href",
+      "/inbox#card-req_ask",
+    );
+    expect(within(block).getByTestId("session-wait-cancel")).toBeInTheDocument();
+  });
+});
