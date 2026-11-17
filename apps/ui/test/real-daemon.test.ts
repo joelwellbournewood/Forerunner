@@ -20513,6 +20513,9 @@ describe("d1109-selftasks-run, run C", () => {
         reply: "none",
         outcome: null,
       });
+      // d1109-selftasks-chat (SC-9): GET /inbox says the card's changes show open, not under a
+      // collapsed Details (review: the field had no real-daemon assertion).
+      expect(card?.openDetails).toBe(true);
       // The session's log says what the check did; the tasks are as they were.
       expect((await a.client.sessionEvents(sessionId)).map((e) => e.text)).toContain(
         'Checked the task list after "Create the page in index.html": suggested 2 changes in the Inbox (less than CHF 0.01).',

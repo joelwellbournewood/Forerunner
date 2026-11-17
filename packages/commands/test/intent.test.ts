@@ -733,3 +733,21 @@ describe("d1109-selftasks-chat, run C: 'fix the tasks' (SC-1)", () => {
       expect(fixTasksAskOf(line), line).toBeNull();
   });
 });
+
+describe("d1109-selftasks-chat, run C: 'review' and 'go through' the tasks are not the paid check (review)", () => {
+  // The review: "review the tasks" and "can you go through the tasks?" ran a paid check that at
+  // Standard changes tasks at once, though a person often means "show me" or "walk me through"
+  // them. They are beyond the spec's verbs (fix, tidy up, clean up, check, correct): such lines go
+  // to the chat model, which calls fix_tasks only when the person asks for the list to be fixed.
+  it("reads neither as 'fix the tasks'", () => {
+    for (const line of [
+      "review the tasks",
+      "can you go through the tasks?",
+      "go through my tasks",
+      "please review the task list",
+    ])
+      expect(fixTasksAskOf(line), line).toBeNull();
+    for (const line of ["correct the tasks", "check over the task list", "sort out the tasks"])
+      expect(fixTasksAskOf(line), line).toEqual({});
+  });
+});

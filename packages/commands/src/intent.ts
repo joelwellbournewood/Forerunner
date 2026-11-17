@@ -160,8 +160,11 @@ export interface FixTasksAsk {
   project?: string;
 }
 
+// No "review" or "go through": a person often means "show me" or "walk me through" the tasks,
+// and this line runs a paid check that changes tasks at once from Standard; such a line goes to
+// the chat model, which calls fix_tasks when the person asks for a fix (review of the area).
 const FIX_VERB =
-  /(?:fix|repair|correct|tidy(?:\s+up)?|clean\s+up|sort\s+out|check(?:\s+over)?|review|go\s+through|straighten\s+out)/;
+  /(?:fix|repair|correct|tidy(?:\s+up)?|clean\s+up|sort\s+out|check(?:\s+over)?|straighten\s+out)/;
 const FIX_LIST = /(?:(?:the|my|your|our|its)\s+)?(?:tasks|task\s+list|list\s+of\s+tasks|to-?dos?)/;
 const FIX_EN = new RegExp(
   String.raw`^(?:(?:please|can\s+you|could\s+you|would\s+you|pls)\s+)?${FIX_VERB.source}\s+${FIX_LIST.source}(?:\s+(?:of|in|for|on)\s+(.+?))?(?:\s+(?:please|now|for\s+me))?$`,
