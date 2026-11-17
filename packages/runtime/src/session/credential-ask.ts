@@ -100,24 +100,53 @@ export async function ensureAskCard(
 }
 
 /**
- * The person chose Wait without a card (the Start dialog's "Start at 15:40" under 'ask',
- * d1109-cred-screens): the stop is marked asked, so no card follows their own choice.
+ * The person chose Wait in the Start dialog (its "Start at 15:40" under 'ask', d1109-cred-screens
+ * CS-3: "under ask it also records the person's Wait for this stop, so no card follows"): the
+ * stop is marked asked before the kept start's wait is noted, so no card follows their own
+ * choice; an ask card of this stop that is already open (another project's work met the stop
+ * first) is answered "Wait" and applied at once (outcome waited: the person's session goes on by
+ * itself at the stop's end), so one stop asks one question, also after a restart. Returns whether
+ * a card was closed.
  */
 export async function recordWait(
-  store: Pick<StateStore, "billingSource">,
-  clock: Clock,
-  sourceId: string,
-  stopKey: string,
-): Promise<boolean> {
-  let wrote = false;
-  await updateSourceLimits(store, sourceId, (limits) => {
+  deps: {
+    store: Pick<StateStore, "billingSource" | "humanRequest">;
+    clock: Clock;
+    humanId: string;
+  },
+  stop: { sourceId: string; stopKey: string },
+): Promise<{ closedCard: boolean }> {
+  await updateSourceLimits(deps.store, stop.sourceId, (limits) => {
     const asking = limits.asking as { stopKey?: unknown } | undefined;
-    wrote = asking?.stopKey !== stopKey;
-    return wrote
-      ? { ...limits, asking: { stopKey, requestId: null, at: clock.nowIso(), answer: "wait" } }
-      : null;
+    if (asking?.stopKey === stop.stopKey) return null;
+    return {
+      ...limits,
+      asking: { stopKey: stop.stopKey, requestId: null, at: deps.clock.nowIso(), answer: "wait" },
+    };
   });
-  return wrote;
+  let closedCard = false;
+  const open = (
+    await deps.store.humanRequest.open({ humanId: deps.humanId }, { limit: 500 })
+  ).filter((r) => {
+    const card = r.change_card as { key?: unknown; stop_key?: unknown } | null;
+    return card?.key === CREDENTIAL_ASK_KEY && card.stop_key === stop.stopKey;
+  });
+  for (const r of open) {
+    const answered = await deps.store.humanRequest
+      .answer(r.id, r.version, ASK_OPTIONS[1], deps.humanId, deps.clock.nowIso())
+      .catch(() => null);
+    if (!answered) continue;
+    await deps.store.humanRequest.patch(answered.id, {
+      change_card: {
+        ...((answered.change_card ?? {}) as JsonObject),
+        applied_at: deps.clock.nowIso(),
+        outcome: "waited",
+        session_goes_on: true,
+      },
+    });
+    closedCard = true;
+  }
+  return { closedCard };
 }
 
 /**

@@ -22781,4 +22781,181 @@ describe("d1109-cred-screens, run C", () => {
       await share.rt.close();
     }
   }, 120_000);
+
+  // fixup-d1109-cred-screens (review blocking 1): under "ask", "Start at 11:40" kept the start
+  // but the kept start's own wait filed "Use your API key until 11:40?" (keepStart's noteWait
+  // asked before the person's Wait was recorded), with an urgent notification, and the reopened
+  // dialog said "Waits for your answer". The person's choice is the answer for this stop.
+  it("CS-3 (fix-up): under 'ask', 'Start at 11:40' is the person's Wait for this stop: one start kept and no ask card, also after a restart", async () => {
+    const first = await composeCs();
+    const keyCalls = () =>
+      first.standIn.requests.filter((r) => r.method === "POST" && r.path === "/v1/messages");
+    const asks = async (client: DaemonClient) => {
+      const me = await client.me();
+      return (await client.inbox(me.id)).requests
+        .filter((r) => r.status === "open" && (r.title ?? "").startsWith("Use your API key"))
+        .map((r) => r.title);
+    };
+    let projectId = "";
+    try {
+      await setPolicyCs(first.client, "subscription_then_ask");
+      const project = await first.client.createProject({ name: "Quote page", goal: "A quote" });
+      projectId = project.id;
+      await addReady(first.client, project.id, "Style the page");
+      await restSubscription(first.rt, resetAt);
+      const check = await first.client.startCheck(project.id);
+      expect(check.credential?.runOut?.lean).toBe("use");
+      expect(check.credential?.runOut?.later?.label).toBe("Start at 11:40");
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      // "Start at 11:40", as the dialog sends it: a plain start.
+      const kept = await first.client.startSession({ agentId, projectId: project.id });
+      expect(kept.result).toBe("kept");
+      expect(keyCalls()).toHaveLength(0);
+      expect(await asks(first.client)).toEqual([]);
+      // No urgent notification of a card either.
+      expect(
+        first.rt.notifier
+          .recent({ humanId: first.rt.human.id, limit: 200 })
+          .filter((r) => r.notification.kind === "request_blocking"),
+      ).toEqual([]);
+      const again = await first.client.startCheck(project.id);
+      expect(again.blocked?.sentence ?? "").not.toMatch(/answer/);
+      expect(again.credential?.runOut?.later ?? null).toBeNull();
+      const card = JSON.stringify((await first.client.projects()).find((p) => p.id === projectId));
+      expect(card).toContain("Starts at 11:40 (your subscription's limit)");
+      expect(card).not.toContain("Waiting for you");
+      // The wake (as every minute) asks nothing either.
+      await first.rt.billing.waits.wake();
+      expect(await asks(first.client)).toEqual([]);
+    } finally {
+      await settleSessions(first.rt);
+      await first.rt.close();
+    }
+    const second = await composeCs({ home: first.home, vault: first.vault, clock: first.clock });
+    try {
+      await second.rt.billing.waits.wake();
+      expect(await asks(second.client)).toEqual([]);
+      const card = JSON.stringify((await second.client.projects()).find((p) => p.id === projectId));
+      expect(card).toContain("Starts at 11:40 (your subscription's limit)");
+    } finally {
+      await settleSessions(second.rt);
+      await second.rt.close();
+    }
+  }, 60_000);
+
+  // fixup-d1109-cred-screens (review blocking 2): with the person's yes standing for the stop,
+  // each task's line on the plan card said "Waits until 11:40 ... Press Start and the work
+  // starts then." under a foot line that said the API key does the work meanwhile, and Approve
+  // and start ran the tasks on the key at once. The lines follow the pick, as under "then API key".
+  it("CS-4 (fix-up): with a yes standing for the stop, no task line of the plan card says it waits; the foot line says the yes", async () => {
+    const both = await composeWithRolePlayer(
+      {},
+      {
+        vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      },
+    );
+    const { rt, client } = both;
+    try {
+      await setPolicyCs(client, "subscription_then_ask");
+      const brief = "A small web page that shows a quote of the day.";
+      const project = await client.createProject({
+        name: "Quote page",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const me = await client.me();
+      const card = async () =>
+        (await client.inbox(me.id)).requests.find(
+          (r) => r.projectId === project.id && r.status === "open" && r.planTasks,
+        );
+      const until = new Date(rt.clock.now() + 40 * 60_000).toISOString();
+      await restSubscription(rt, until);
+      const at = clockTime(until, rt.human.timezone, rt.clock.now());
+      // Before the yes, under "ask", the tasks wait for the person's answer or the reset.
+      const before = (await card())?.planTasks ?? [];
+      expect(before.some((t) => (t.runsOn?.line ?? "").startsWith(`Waits until ${at}`))).toBe(true);
+      // The yes, from the Start dialog's "Use API key" on another project.
+      const other = await client.createProject({ name: "Recipes", goal: "Recipes" });
+      await addReady(client, other.id, "Write a recipe");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const goes = await client.startSession({
+        agentId,
+        projectId: other.id,
+        useOtherCredential: true,
+      });
+      expect(["started", "queued"]).toContain(goes.result);
+      const after = await card();
+      expect(after?.planCredentialLine).toBe(
+        `Your subscription is at its limit until ${at}: you said yes, so your API key does the work meanwhile.`,
+      );
+      const lines = (after?.planTasks ?? []).map((t) => t.runsOn?.line ?? "");
+      expect(lines.length).toBeGreaterThan(0);
+      // Each task runs on the key the person said yes to, with no line of its own (the foot
+      // line says why), as under "then API key".
+      for (const t of after?.planTasks ?? [])
+        expect(t.runsOn).toEqual({ kind: "api_key", line: null });
+      for (const line of lines) expect(line).not.toMatch(/Waits until|Press Start/);
+      // New task's runs-on line reads the same chooser: no wait either.
+      const models = await client.modelSettings(undefined, project.id);
+      const runsOn = models.specialists.map((x) => x.runsOn?.line ?? "");
+      expect(runsOn.length).toBeGreaterThan(0);
+      for (const line of runsOn) expect(line).not.toMatch(/Waits until|Press Start/);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  // fixup-d1109-cred-screens (review blocking 3): with nothing to run, start-check still offered
+  // "Use API key" ("about CHF 0.00"), and pressing it wrote the person's standing yes for the
+  // stop before the start was refused: every other project's work and chat then moved onto the
+  // key. The offer needs a start that runs something, and the yes is written after every refusal.
+  it("CS-3 (fix-up): Use API key is offered only for a start that runs something; a start refused for nothing to run or for Stop all writes no yes", async () => {
+    const { rt, client } = await composeCs();
+    try {
+      await setPolicyCs(client, "subscription_then_ask");
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await client.createTask(project.id, {
+        title: "Style the page",
+        outcome: "Style the page is done",
+        acceptanceCriteria: ["it is done"],
+        priority: "medium",
+        status: "draft",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 0,
+      });
+      const subscription = await restSubscription(rt, resetAt);
+      const grantOfRow = async () =>
+        ((await rt.store.billingSource.mustGet(subscription)).limits as { grant?: unknown }).grant;
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const nothing = await client.startCheck(project.id);
+      expect(nothing.blocked?.sentence).toBe("Nothing can run: no task is ready.");
+      expect(nothing.credential?.runOut ?? null).toBeNull();
+      expect(JSON.stringify(nothing.credential ?? {})).not.toContain("CHF 0.00");
+      await expect(
+        client.startSession({ agentId, projectId: project.id, useOtherCredential: true }),
+      ).rejects.toThrow("Nothing can run: no task is ready.");
+      expect(await grantOfRow()).toBeUndefined();
+      // A ready task: offered. Stop all: not offered, and the start writes no yes.
+      await addReady(client, project.id, "Write the copy");
+      expect((await client.startCheck(project.id)).credential?.runOut?.use.label).toBe(
+        "Use API key",
+      );
+      await client.kill({ scope: "all", reason: "stop all from the UI" });
+      expect((await client.startCheck(project.id)).credential?.runOut ?? null).toBeNull();
+      await expect(
+        client.startSession({ agentId, projectId: project.id, useOtherCredential: true }),
+      ).rejects.toThrow(/Stop all is on/);
+      expect(await grantOfRow()).toBeUndefined();
+      await client.resume();
+      expect(await rt.store.session.forProject(project.id, { limit: 5 })).toHaveLength(0);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
 });

@@ -65,11 +65,24 @@ export interface StartCredentialDeps {
   monthLeftUsdMicro: () => Promise<number | null>;
 }
 
+/**
+ * What the start would do (the review of the fix-up): whether it runs work (something runnable,
+ * or a task larger than the work budget) and whether Stop all holds every start. A start that
+ * runs nothing, or that Stop all refuses, gets no stopped-first-choice line and no "Use API
+ * key": before, the dialog offered it with "about CHF 0.00" and its yes moved every other
+ * project's work and chat onto the key for a start that never ran.
+ */
+export interface StartRunsFacts {
+  runsWork: boolean;
+  stopped: boolean;
+}
+
 export async function startCredential(
   deps: StartCredentialDeps,
   projectId: string,
   /** What the session would spend: the runnable work's estimate, capped by its work budget. */
   estimateUsdMicro: number,
+  facts: StartRunsFacts = { runsWork: true, stopped: false },
 ): Promise<{ view: StartCredentialView | null; offer: StartCredentialOffer | null }> {
   if (!deps.billing) return { view: null, offer: null };
   const human = await deps.store.human.get(deps.humanId);
@@ -84,6 +97,16 @@ export async function startCredential(
   const first = await deps.billing.firstChoiceStop().catch(() => null);
   if (!first || first.reason === "needs" || !first.stopKey)
     return { view: { line: ifRunsOutLine(policy.rule, saved), runOut: null }, offer: null };
+  // S-10's one wait per project: the project's own session already waits to go on by itself
+  // (or a Start was kept for the reset); "Use API key" makes it go on now.
+  const continuation = await keptContinuationOf(deps.store, projectId).catch(() => null);
+  const keptStart = continuation
+    ? null
+    : await keptStartOf(deps.store, projectId).catch(() => null);
+  // Every line below is about a start that runs: none when it would run nothing or Stop all
+  // refuses it (the dialog's own sentence says why), and nothing to press.
+  if (facts.stopped || !(facts.runsWork || continuation || keptStart))
+    return { view: { line: null, runOut: null }, offer: null };
   const stop = { reason: first.reason, until: first.until };
   const about = aboutWords(
     chfText(Math.max(0, estimateUsdMicro), deps.chfPerUsd()),
@@ -118,11 +141,6 @@ export async function startCredential(
   const whenStopped = policy.rule.whenStopped;
   if ((whenStopped === "wait" && !ONE_OFF_UNDER_WAIT) || !(await serves()))
     return { view: { line: null, runOut: null }, offer: null };
-  // S-10's one wait per project: the project's own session already waits to go on by itself.
-  const continuation = await keptContinuationOf(deps.store, projectId).catch(() => null);
-  const keptStart = continuation
-    ? null
-    : await keptStartOf(deps.store, projectId).catch(() => null);
   let goesOnLine: string | null = null;
   if (continuation && first.until) {
     const session = continuation.kept.continues

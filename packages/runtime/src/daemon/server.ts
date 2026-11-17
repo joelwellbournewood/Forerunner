@@ -42,7 +42,7 @@ import { createRunnerUnlockRoutes } from "../secrets/runner-unlock-routes.ts";
 import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
 import { createSecretStoreRoutes } from "../secrets/store-routes.ts";
 import { CODE_COMMANDS_DEFAULT } from "../session/billing.ts";
-import { grantForStart, recordWait } from "../session/credential-ask.ts";
+import { grantForStart } from "../session/credential-ask.ts";
 import { needsOf } from "../session/credential-choice.ts";
 import { sessionSwitches, switchSpend } from "../session/credential-switch.ts";
 import { CREDENTIAL_WAIT_STOP } from "../session/credential-wait.ts";
@@ -206,7 +206,7 @@ import {
 } from "./session-list.ts";
 import { settingsView } from "./settings-view.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
-import { busyHere, startBlocked as startBlockedReason } from "./start-blocked.ts";
+import { busyHere, runsWork, startBlocked as startBlockedReason } from "./start-blocked.ts";
 import {
   ACTION_FROM,
   ACTION_WORDS,
@@ -1570,6 +1570,8 @@ export function createDaemonApp(
         r.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0) +
           (r.oversized ? r.workBudgetUsdMicro : 0),
       ),
+      // "Use API key" only for a start that runs something and that Stop all does not refuse.
+      { runsWork: runsWork(r), stopped: rt.kill.isFrozen({ agentId: rt.agent.id }) },
     ).catch(() => ({ view: null, offer: null }));
   /**
    * Why a Start now would do nothing (design §3.6; `start-blocked.ts`, the chat says the same).
@@ -1835,32 +1837,56 @@ export function createDaemonApp(
       body.projectId ??= earlier.project_id ?? undefined;
       body.budgetUsdMicro = left;
     }
+    // W15B-02: a removed project (its creation undone) starts nothing: refused at once in one
+    // sentence, before the scheduler is asked, so no session row is made (`startSession`
+    // refuses any other start of it too), and before any yes for "Use API key" is written.
+    if (body.projectId) {
+      const project = await rt.store.project.get(body.projectId);
+      const removed = project ? removedProjectRefusal(project) : null;
+      if (removed)
+        throw new ForerunnerError("validation", removed, {
+          details: { cause: "project_removed", projectId: body.projectId },
+        });
+    }
     // d1109-cred-screens (CS-3): the Start dialog's "Use API key" under "ask" or "wait" with the
     // first choice out: the person's yes for this stop (the ask card's grant, by "start"; an open
     // card closed with its Done line), then their start, or their waiting session goes on now.
-    // Refused in words when the facts do not allow it; it never raises a budget.
+    // Refused in words when the facts do not allow it; it never raises a budget. The yes is
+    // written only after every refusal (the review of the fix-up: a start refused for nothing to
+    // run or for Stop all wrote it first, and the key then served every project's next pick).
+    let yesForStop: { sourceId: string; stopKey: string } | null = null;
+    const writeYes = async (stop: { sourceId: string; stopKey: string }) => {
+      await grantForStart({ store: rt.store, clock: rt.clock, humanId: rt.human.id }, stop, true);
+      rt.events.emit("inbox", {});
+    };
     if (body.useOtherCredential && body.projectId) {
       const check = await rt.startCheck(body.projectId, body.budgetUsdMicro);
       const { offer } = await credentialAtStart(check, body.projectId);
-      if (!offer)
+      if (!offer) {
+        // Why the dialog offers none: Stop all, nothing to run (its own sentence), or the facts
+        // changed since it was opened.
+        if (rt.kill.isFrozen({ agentId: rt.agent.id }))
+          throw new ForerunnerError("killed", KILL_ACTIVE_START_MESSAGE, {
+            details: { cause: "use_other_not_offered" },
+          });
+        const blocked = await startBlocked(check, body.projectId, body.agentId);
+        if (blocked?.kind === "nothing_runnable" && !runsWork(check))
+          throw new ForerunnerError("validation", blocked.sentence, { details: { blocked } });
         throw new ForerunnerError(
           "validation",
           "Use API key is not offered for this start now: open Start again to see what it does.",
           { details: { cause: "use_other_not_offered" } },
         );
+      }
       // The money checks come before the yes: a start refused for its budget writes no yes for
       // the stop (before, the yes stood and the key served the next pick, although nothing ran).
       await refuseOverMonth(body.budgetUsdMicro);
       const kept =
         (await keptContinuationOf(rt.store, body.projectId)) ??
         (await keptStartOf(rt.store, body.projectId));
-      await grantForStart(
-        { store: rt.store, clock: rt.clock, humanId: rt.human.id },
-        { sourceId: offer.sourceId, stopKey: offer.stopKey },
-        true,
-      );
-      rt.events.emit("inbox", {});
+      yesForStop = { sourceId: offer.sourceId, stopKey: offer.stopKey };
       if (kept) {
+        await writeYes(yesForStop);
         // The project's own session that waited (or a Start kept for the reset) goes on now, on
         // the key, as the person's start; nothing new is kept.
         const entry = await rt.scheduler.requestStart({
@@ -1891,17 +1917,6 @@ export function createDaemonApp(
           details: { cause: "continuation_waits", projectId: body.projectId },
         });
     }
-    // W15B-02: a removed project (its creation undone) starts nothing: refused at once in one
-    // sentence, before the scheduler is asked, so no session row is made (`startSession`
-    // refuses any other start of it too).
-    if (body.projectId) {
-      const project = await rt.store.project.get(body.projectId);
-      const removed = project ? removedProjectRefusal(project) : null;
-      if (removed)
-        throw new ForerunnerError("validation", removed, {
-          details: { cause: "project_removed", projectId: body.projectId },
-        });
-    }
     // A budget above what is left this month is refused in words (design §3.6); 0 and negative
     // amounts never pass the body's schema.
     await refuseOverMonth(body.budgetUsdMicro);
@@ -1919,11 +1934,9 @@ export function createDaemonApp(
       // S-10 (ADR 0118), "Start at 15:40": the Claude credential the work needs is out (its usage
       // limit) and nothing is kept for the project, so the person's Start is kept for the reset:
       // no session runs now (it would only meet the wait), and at the reset it starts once, by the
-      // person (quiet hours do not hold it: they chose that time), also after a restart.
-      if (
-        (check.runnable.length > 0 || check.oversized) &&
-        !rt.kill.isFrozen({ agentId: rt.agent.id })
-      ) {
+      // person (quiet hours do not hold it: they chose that time), also after a restart. Not for
+      // "Use API key": the person chose the key now.
+      if (!yesForStop && runsWork(check) && !rt.kill.isFrozen({ agentId: rt.agent.id })) {
         const kept = await rt.continuations.keepStart(body.projectId, body.agentId, {
           ...(body.budgetUsdMicro ? { budgetUsdMicro: body.budgetUsdMicro } : {}),
           ...(body.continues ? { continues: body.continues } : {}),
@@ -1931,10 +1944,8 @@ export function createDaemonApp(
         });
         if (kept) {
           // d1109-cred-screens (CS-3): under "ask before API key", "Start at 15:40" is the
-          // person's Wait for this stop: no ask card follows their own choice.
-          const { offer } = await credentialAtStart(check, body.projectId);
-          if (offer?.whenStopped === "ask")
-            await recordWait(rt.store, rt.clock, offer.sourceId, offer.stopKey).catch(() => false);
+          // person's Wait for this stop: `keepStart` records it before the wait is noted, so no
+          // ask card follows their own choice.
           const view: StartSessionView = {
             result: "kept",
             startId: "",
@@ -1945,6 +1956,8 @@ export function createDaemonApp(
         }
       }
     }
+    // "Use API key": every refusal has passed; the yes for this stop, then the start.
+    if (yesForStop) await writeYes(yesForStop);
     let begun: () => void = () => undefined;
     const sessionBegun = new Promise<"begun">((resolve) => {
       begun = () => resolve("begun");

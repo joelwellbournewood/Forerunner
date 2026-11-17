@@ -9,6 +9,7 @@ import {
   CostLedger,
   credentialPolicyOf,
   FixedRateSource,
+  grantOf,
   loadPricing,
   PRICING_FILE_NAME,
   type PricingTable,
@@ -229,7 +230,12 @@ import {
   wakeBudgetWaits,
 } from "../session/budget-card.ts";
 import { type CannotRunSyncResult, syncCannotRunAnswers } from "../session/cannot-run-card.ts";
-import { ensureAskCard, settleAsks, syncAskAnswers } from "../session/credential-ask.ts";
+import {
+  ensureAskCard,
+  recordWait,
+  settleAsks,
+  syncAskAnswers,
+} from "../session/credential-ask.ts";
 import {
   type AbilityTable,
   abilityTable,
@@ -4049,6 +4055,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     let shared: Promise<{
       kinds: Awaited<ReturnType<typeof taskBilling.savedKinds>>;
       blocked: Awaited<ReturnType<typeof taskBilling.blockedKinds>>;
+      /** A stopped kind the person said yes for, for this stop: the kind that serves meanwhile. */
+      granted: Map<BillingSource["kind"], BillingSource["kind"]>;
       prefs: Record<string, unknown> | undefined;
     }> | null = null;
     const deps = new Map<string, Promise<boolean>>();
@@ -4059,9 +4067,23 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       shared ??= (async () => {
         // 'web-search': a key saved since search was switched off for the old one ends the mark.
         await webSearchMarks.refresh();
+        const blocked = await billing.blockedKinds();
+        // d1109-cred-screens (CS-4; the review of the fix-up): the person's yes for a stop (the
+        // ask card's or the Start dialog's Use API key: `limits.grant` for the stop it is at
+        // now) lets the next credential serve, as the pick honours it.
+        const granted = new Map<BillingSource["kind"], BillingSource["kind"]>();
+        for (const [kind, wait] of blocked) {
+          const row = await store.billingSource.get(wait.sourceId).catch(() => undefined);
+          const grant = grantOf((row?.limits as Record<string, unknown> | undefined)?.grant);
+          if (!grant) continue;
+          const stop = await billing.currentStopOf(wait.sourceId).catch(() => null);
+          if (stop && stop.stopKey === grant.stopKey)
+            granted.set(kind, grant.to as BillingSource["kind"]);
+        }
         return {
           kinds: await billing.savedKinds(),
-          blocked: await billing.blockedKinds(),
+          blocked,
+          granted,
           prefs: (await store.human.get(human.id).catch(() => undefined))?.notify_prefs,
         };
       })();
@@ -4079,7 +4101,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const name = canonicalSpecialistName(specialist);
       const spec = specialists(name);
       if (!spec) return null;
-      const { kinds, blocked, prefs } = await load();
+      const { kinds, blocked, granted, prefs } = await load();
       let dependencies: Promise<boolean> = Promise.resolve(false);
       if (projectId) {
         const known = deps.get(projectId);
@@ -4107,12 +4129,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const wait = choice ? blocked.get(choice.kind as BillingSource["kind"]) : undefined;
       // d1109-cred-screens (CS-10's walk): under a preset that goes on with the next credential
       // when the first runs out ("Subscription first, then API key"), the task runs on the next
-      // one that can do it now, as the pick does; the card's foot line says why. Under "then
-      // wait" and "ask" the wait stays the line.
-      if (choice && wait && credentialPolicyOf(prefs).rule.whenStopped === "next") {
+      // one that can do it now, as the pick does; the card's foot line says why. With the
+      // person's yes standing for this stop, the credential they said yes to does (the review of
+      // the fix-up: before, the line said "Waits until 15:40" while the key ran it at once).
+      // Under "then wait" and "ask" without a yes the wait stays the line.
+      const yesTo = choice ? granted.get(choice.kind as BillingSource["kind"]) : undefined;
+      if (choice && wait && (yesTo || credentialPolicyOf(prefs).rule.whenStopped === "next")) {
         const next = credentialChoiceFor({
           kindsInOrder: kinds.filter(
-            (k) => k !== choice.kind && !blocked.has(k as BillingSource["kind"]),
+            (k) =>
+              k !== choice.kind &&
+              !blocked.has(k as BillingSource["kind"]) &&
+              (!yesTo || k === yesTo),
           ),
           needs: needsOf({
             registryTools: spec.registryTools ?? spec.allowedTools,
@@ -4246,6 +4274,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       if (wait?.reason !== "limit") return null;
       if ((await keptContinuationOf(store, projectId)) || (await keptStartOf(store, projectId)))
         return null;
+      // d1109-cred-screens (CS-3; the review of the fix-up): under "ask before API key", "Start
+      // at 15:40" is the person's Wait for this stop, recorded before the wait is noted: the
+      // wait's own ask (CE-7, `noteWait`) then files no card, here, at the wake and after a
+      // restart, and a card of the stop already open is answered Wait (before, the card "Use
+      // your API key until 15:40?" followed their own choice).
+      if ((await policyOf(store, human.id)).rule.whenStopped === "ask") {
+        const stop = await taskBilling.currentStopOf(wait.sourceId).catch(() => null);
+        if (stop) {
+          const { closedCard } = await recordWait(
+            { store, clock, humanId: human.id },
+            { sourceId: wait.sourceId, stopKey: stop.stopKey },
+          ).catch(() => ({ closedCard: false }));
+          if (closedCard) events.emit("inbox", {});
+        }
+      }
       await taskBilling.noteWait(wait.sourceId, projectId, agentId);
       const kept = await keepStartAtReset(store, projectId, {
         at: clock.nowIso(),
