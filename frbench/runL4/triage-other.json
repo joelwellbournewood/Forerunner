@@ -1,0 +1,209 @@
+{
+ "group": "other",
+ "base": "4cf11fd",
+ "items": [
+  {
+   "id": "L4-other-1",
+   "sources": [
+    "live4:L4-l3-4",
+    "live4-step:l3:LC-L3.L3-research-3"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A reviewer task the person makes can ask for a file the reviewer may not write: New task and Edit say nothing, and the app's own criterion then asks the reviewer for a file",
+   "what_the_person_sees": "New task, Who does it: reviewer, What done looks like 'review.md lists the gaps and risks found in notes/plan.md', no criteria: no line under Who does it (task-who-note null). After Start the drawer reads 'notes/plan.md does not exist, and I am not allowed to write review.md, so I could not produce the deliverable.' and Reviews shows grade 10 with 'The required deliverable was not produced.' and 'Acceptance criterion not met: review.md lists the gaps and risks found in notes/plan.md'. Edit in the drawer offers 'reviewer' with no line at all.",
+   "evidence": "/tmp/frbench/live4/l3/evidence/lr-run.json (log '09:29:30 task.finished: The reviewer could not do \"Review the launch plan in notes/plan.md\": \"notes/plan.md does not exist, and I am not allowed to write review.md, so I could not produce the...\"', then 'Critic review of the work (a light review): needs you, grade 10, 3 findings, CHF 0.02.'); /tmp/frbench/live4/l3/evidence/lr-look.json (Reviews: 'The required deliverable was not produced.', 'Acceptance criterion not met: review.md lists ...'; drawer: 'I am not allowed to write review.md'); /tmp/frbench/live4/l3/l3b/steps/68-lr-inbox-card.png; the bench's model-calls.jsonl (the verdict: the reviewer's brief has criterion 1 'The work itself shows this outcome (a file, a page or an output, not only the report): review.md ...'); LC-L3.L3-research-3's observed text: 'the reviewer may not write review.md (the outcome named a file the reviewer may not write; New task gave no note)'.",
+   "root_cause_at_head": "Confirmed at 4cf11fd. (1) apps/ui/src/pages/project/NewTaskDialog.tsx:176-178 and :369-378: the who line has two sources only, the chooser's runsOn and the specialist's limitation (one or the other). (2) packages/runtime/src/daemon/model-settings-view.ts:185-193: limitation is set only to NO_WEB_LIMITATION; nothing compares the specialist's tools with what the task asks, although GET /settings/models already receives the typed words (server.ts:3300-3341, TR-11). (3) apps/ui/src/pages/project/TaskDrawer.tsx:623 and :753-765: Edit calls useWhoChoices(true) with no project and no words and shows no who line at all. (4) packages/runtime/src/loop/verification.ts:65-70: outcomeCriterion says 'The work itself shows this outcome (a file, a page or an output, not only the report)' for every specialist; it is the brief's criterion (packages/runtime/src/session/executor.ts:1126-1128) and the critic's (packages/runtime/src/loop/critic.ts:482-484) for any task with no criteria. (5) The reviewer is the only registry specialist with no write tool (evals/registry/specialists/reviewer/specialist.md allowed_tools: cc:Read, cc:Bash, cc:Grep, cc:Glob), and ADR 0109's rule exists only as prompt text: reviewer/specialist.md:29-31 ('You write no file, not even a review file a brief names'), evals/registry/principals/project-manager.md:52 (the planner) and docs/decisions/0109-a-reviewers-findings-are-its-report.md. So the app tells the reviewer two opposite things and the critic grades against the app's text: not the model's choice.",
+   "fix_sketch": "(a) One helper from the registry, not a name: writesNoFile(profile) is true when no allowed tool maps to write_file (packages/runtime/src/registry/tools.ts' mapping; today only the reviewer). (b) outcomeCriterion gains the specialist's writesNoFile: for such a specialist it says the report stands for any file the outcome names (proposed: 'The report shows this outcome (this specialist writes no file, so a file named here is met by its report): <outcome>'), the same text in the brief and in the critic's evidence; every other specialist keeps today's text byte for byte. (c) GET /settings/models adds an append-only field per specialist (for example writesNoFile: string | null) with the daemon's words: 'The reviewer writes no file: its findings are its report, which you read in the task's drawer.' New task shows it as its own line under Who does it when that specialist is chosen (beside, never instead of, the runs-on or limitation line); Edit asks with the project and the edited words and shows the same line under edit-who. Creating or saving the task is never refused. (d) Cut line: when the typed outcome or criteria name a file to write ('review.md lists ...', 'write/create ... review.md'), the line names it ('..., so review.md is not written: ...'); an input file ('found in notes/plan.md') never triggers it (golden set of phrasings). (e) Cut line, sibling: chat's task.create / task.edit read-back for a reviewer adds the same clause. ADR 0109 gets a dated amendment: decision 1 covers the tasks the person makes (New task, Edit, chat) and the criterion of a task with no criteria.",
+   "test_boundary": "UI: apps/ui/test/tasks.test.tsx clicks New task, chooses 'reviewer', types the outcome, asserts the line's exact words (testid of its own), chooses 'coder' and asserts no such line, presses Add task and asserts the request body is unchanged; the same in the drawer's Edit (edit-who). Route: a case in apps/ui/test/real-daemon.test.ts through client.modelSettings (GET /settings/models?project=...&outcome=...) returns the reviewer's line and null for the coder; apps/ui/test/fake-daemon.ts returns the same field in the same commit; contracts.test.ts parses it from both. Engine: a composed runtime test (composeRuntime with the stand-in provider) runs a reviewer task with no criteria and asserts, exact text, the criterion in the reviewer's first request and in the critic's review request, and that a coder task with no criteria keeps today's criterion exactly.",
+   "area": "l4-reviewer-report",
+   "notes": "Not model_only: the app's own criterion asked the reviewer for a file its prompt forbids, and the critic graded against the app's criterion. Severity minor (the verdict's): cheap (CHF 0.04 here), the reviewer's report said so honestly, the person was asked. Caveat from the verdict: in this run the 'could not do' and the grade of 10 come mostly from notes/plan.md missing, which the repro planted on purpose; the write rule is the second reason, but with the plan present the task still could not meet its criterion. The same step's card quote ('The specialist said: \"The one commit is ...\"', a scope-check line instead of the reason) is the money group's live4:L4-l3-3, a different root (the quote picker), not merged here. Deliberate change from the verdict's failing-test idea: the line shows whenever a writes-no-file specialist is chosen, whatever the words, because it is always true and a pattern over typed words cannot reliably tell an output file ('review.md lists') from an input ('found in notes/plan.md'); the file-naming clause is the cut-line part (d). Explicit criteria the person types that name a file still fail at review; the line told them at creation. Sibling search (validation rule 8, 'work routed to an actor that cannot do it'): chat's task.create/task.edit (part e); the planner keeps ADR 0109's prompt rule, and validation.md's 'Gaps today' line (no check that the planner only plans work the specialist can do, U-022) stays open: for the session lead, not this area. Cross-group: the selftasks group's l4-selftasks-check owns reviewTask's evidence in loop/critic.ts and changes critic.md this round (L4-selftasks-106); l4-cred-engine owns executor.ts' regions: this item changes only the outcomeCriterion call's arguments in each (shared_files rule in the area). No other group decided this root."
+  },
+  {
+   "id": "L4-other-2",
+   "sources": [
+    "L3:LL-11"
+   ],
+   "severity": "minor",
+   "decision": "not_a_problem",
+   "title": "Forerunner's snapshot refs (refs/forerunner/before|first/<task id>) in a folder project's git",
+   "what_the_person_sees": "Nothing with plain git: `git log` in the project's folder shows 'Workspace before \"<title>\"' with no id (live check 4, LC-L3.L3-run-11 PASS: 'no UUID, no ISO instant (0 matches)'). Only git older than 2.39, `git log --clear-decorations`, `log.initialDecorationSet=all` or a GUI that draws every ref (gitk --all) shows labels like 'refs/forerunner/before/01a1...' on those commits.",
+   "evidence": "/tmp/frbench/leftovers-L3.json LL-11; /tmp/frbench/runL3-l3-small-review.json (non_blocking: 'same class as the existing wip and set-aside refs; git 2.43 here hides them') and runL3-l3-small-fixup.json; at 4cf11fd packages/capabilities/src/githost/pr-executor.ts:716-731 (snapshotRef, firstSnapshotRef) set at :2651-2655, read at packages/runtime/src/loop/critic.ts:309 and packages/runtime/src/loop/project-checks.ts:206. Checked here with git 2.43 on a scratch repository under /tmp/frbench: `git log --oneline --decorate` and `git log --all --oneline --decorate=full` print only 'HEAD -> main'; only `--clear-decorations` or `-c log.initialDecorationSet=all` print the refs/forerunner label.",
+   "root_cause_at_head": "By design of run L3's L3-run-11 fix: the snapshot is found by a ref of Forerunner's own instead of an id in the commit message.",
+   "fix_sketch": "",
+   "test_boundary": "",
+   "area": null,
+   "notes": "Why not a problem: a ref name is an internal lookup key, not a sentence the system writes for the person (design section 5 lists what it covers); the commits a person reads carry no id; current git (2.39 and later, as current Git for Windows ships) does not decorate refs outside heads, remotes, tags and stash by default; the same family (wip, set-aside, failed, deps, rebuilt) has existed since earlier waves and no live check found a person meeting it; and the snapshot commits are on the folder's own branch, so the refs add no commits to `git log --all`. A key built from the title would collide between same-titled tasks and move with an Edit. If a later round tidies refs, before/ and first/ can be deleted once a task is done or cancelled (they serve its runs' review and project checks), keeping first/ while a Redo is possible."
+  },
+  {
+   "id": "L4-other-3",
+   "sources": [
+    "L3:LL-12"
+   ],
+   "severity": "words",
+   "decision": "not_a_problem",
+   "title": "A finding the critic named no fix for has no 'To fix' line; asking the critic for an action would be a critic prompt change",
+   "what_the_person_sees": "Reviews and the drawer show such a finding (what is wrong, where, how to see it) with no 'To fix' line; a finding with an action keeps 'To fix: ...'. Live check 4 (LC-L3.L3-research-3): 'Findings with no fix have no To fix line ... Neither the drawer nor chat says Resolve it and show the evidence': this part passed.",
+   "evidence": "/tmp/frbench/leftovers-L3.json LL-12; /tmp/frbench/runL3-l3-small-fix.json not_done ('The critic gave no action; Forerunner cannot write one without inventing it'); at 4cf11fd packages/runtime/src/daemon/views.ts:1527-1532 (NO_ACTION_GIVEN left out at every severity), packages/critic/src/critic.ts:862 and :1322 (the filler kept for the retry brief), packages/critic/src/schema.ts:74 (required_action optional), evals/registry/critic/critic.md:97-99 and :117-121 (the findings bullet and the JSON example name no action).",
+   "root_cause_at_head": "No defect: the live check 3 problem (the filler 'Resolve it and show the evidence' shown to the person as 'To fix') is fixed at views.ts:1527-1532 and passed live check 4. What remains is that the critic's prompt does not ask for an action, so most findings have none.",
+   "fix_sketch": "",
+   "test_boundary": "",
+   "area": null,
+   "notes": "Not a broken promise: design 3.5 asks for 'the review in plain words', which a finding's what, where and how-to-see give; no screen promises a fix line. Asking the critic for an action is a model-facing change to critic.md and the submit_review description that moves the monthly calibration's baseline (H.7, ADR 0060). If the session lead wants it anyway, it belongs to the selftasks group's l4-selftasks-check, which already edits critic.md and bumps its version this round (L4-selftasks-106): one clause ('what to do') in the findings bullet and the JSON example, with an exact-text assertion. The retry brief keeps NO_ACTION_GIVEN for the worker (executor.ts retryConstraints), which is harmless."
+  },
+  {
+   "id": "L4-other-4",
+   "sources": [
+    "C6:C6L-20"
+   ],
+   "severity": "minor",
+   "decision": "not_a_problem",
+   "title": "Process: keep the machine rules for run L4 (one heavy command at a time under flock; work saved so a restart loses little)",
+   "what_the_person_sees": "Nothing in the app: a rule for the runs on this machine.",
+   "evidence": "/tmp/frbench/leftovers-C6.json C6L-20; /tmp/frbench/status-notes.md (container restarts at about 23:56, 00:58, 01:54 and 05:16 UTC on 2026-11-17; C6 run 4 went through one area at a time; live check 4 then ran two journeys at once under the flock rule for about 8.5 hours with no restart); /tmp/frbench/runC-C6r3-args.json (the machine rule's wording); /tmp/frbench/live4/BRIEF.md 'The machine (binding)'.",
+   "root_cause_at_head": "Not code: the machine has 16 GB of memory and no swap, and restarted roughly hourly that night.",
+   "fix_sketch": "",
+   "test_boundary": "",
+   "area": null,
+   "notes": "Not an app problem; for the session lead's run L4 setup. Put the flock rule in every run L4 fixer, reviewer, fix-up and merge prompt (it is in this group's area fix_scope): one heavy command at a time as `flock /tmp/frbench/heavy.lock <command>` (pnpm check, pnpm test, the UI suite, Playwright, test:integration, test:e2e, test:injection, the live harness, tsc over a package, cargo checks), stop the bench before full suites, commit and branch -f after each piece, keep the resumable workflow (existingReviews, existingFixups). The run L4 plan's two areas at a time can stand while every heavy command takes the lock (live check 4 ran two journeys that way with no restart); if a restart comes with two areas running, fall back to C6L-20's one area at a time."
+  },
+  {
+   "id": "L4-other-5",
+   "sources": [
+    "live4-step:session:LC-C18"
+   ],
+   "severity": "minor",
+   "decision": "not_a_problem",
+   "title": "LC-C18 (a session keeps its promise and takes a newcomer): every problem it shows has its own finding in another group; nothing new",
+   "what_the_person_sees": "Passes: Redo joined the running session, the newcomer ran, the session kept its promise (CHF 0.15 of CHF 1.00), nothing started for 2 minutes, Costs equal the model-call log (USD 0.324636). Partial for three reasons, each a finding elsewhere.",
+   "evidence": "/tmp/frbench/live4/session/steps/LC-C18.json; /tmp/frbench/live4/session/s1/steps/c18-run.json; screenshots 30-c18-20-start-dialog.png to 44-c18-60-inbox-answered-open.png.",
+   "root_cause_at_head": "See the covering findings.",
+   "fix_sketch": "",
+   "test_boundary": "",
+   "area": null,
+   "notes": "Covered: the question card's options do not say what pressing does as things stand -> live4:L4-session-4; Make ready on a draft larger than the whole session budget holds out a join -> live4:L4-session-5; the Answered line names a running session after it ended -> live4:L4-session-6 (all three in the money group's bundle); card quote, header count, critic column and suggestion card words -> live4:L4-session-7 (selftasks group); the seed's 'up to CHF 1' read-back -> live4:L4-session-1 (chat group). Read for problems with no finding: none. 'about CHF 0.03' twice in the Start dialog against 'It promised 2 tasks, about CHF 0.07' in the log reads as rounding of two figures of about CHF 0.034; if the session lead finds it is not, it is the class of the selftasks group's L4-selftasks-107 (one plan figure)."
+  },
+  {
+   "id": "L4-other-6",
+   "sources": [
+    "live4-step:l3:LC-L3"
+   ],
+   "severity": "minor",
+   "decision": "not_a_problem",
+   "title": "LC-L3 (run L3's fixes on the real model): the step's summary; every failure it names has its own finding",
+   "what_the_person_sees": "Priority 1: L3-github-1 (and #18, #19), L3-github-2 (cards close by themselves through a restart), L3-research-4 and L3-research-1 passed; L3-run-1 failed (Haiku asked for a yes in words with no card in 2 of 3 projects). Priority 3 mostly passed; the failures are words and small state lines.",
+   "evidence": "/tmp/frbench/live4/l3/steps/LC-L3.json (19 sub-steps), LC-L3.partial.json; /tmp/frbench/live4/l3/evidence/*.json; screenshots under /tmp/frbench/live4/l3/l3a/steps and l3b/steps.",
+   "root_cause_at_head": "See the covering findings.",
+   "fix_sketch": "",
+   "test_boundary": "",
+   "area": null,
+   "notes": "Covered: L3-run-1 -> live4:L4-l3-1 and L4-l3-2 (chat group), L4-l3-9 (selftasks group); L3-github-2 step 5 -> L4-l3-13 (github); L3-github-3 -> L4-l3-11 (creds) and L4-l3-12 (github); L3-github-6 -> L4-l3-10 (github); L3-research-1 -> L4-l3-16 (money); L3-research-2 -> L4-l3-14 and L4-l3-15 (money); L3-research-3 -> L4-l3-3 (money) and L4-l3-4 (this group, L4-other-1); L3-run-10 -> L4-l3-5 and L4-l3-6 (money); L3-run-2 and L3-run-8 sibling -> L4-l3-7, L3-run-4 -> L4-l3-8 (money); L3-run-13 -> L4-l3-17 (selftasks); L3-run-6 -> L4-l3-18 (money); L3-run-3's done row -> L4-session-8 (money). The not-run and not-seen parts (L3-github-10, the counter-check, the rebase variant, L3-run-7, L3-run-8 step 3, the nudges, voice) are the github group's live4-step:l3:LC-L3.not-run. Read for problems with no finding: none. L3-run-5's 'Left this month 149.99 -> 149.96' beside the project's total 0.02 -> 0.03 is not a mismatch: 'Left this month' is the person's monthly cap less the whole ledger this month, every project included (server.ts:1531-1539), so it can fall faster than one project's total."
+  },
+  {
+   "id": "L4-other-7",
+   "sources": [
+    "live4-step:l3:LC-L3.L3-run-1"
+   ],
+   "severity": "minor",
+   "decision": "not_a_problem",
+   "title": "LC-L3.L3-run-1 ('research may read any public website again' on 3 projects): its failure is the chat group's finding; nothing new",
+   "what_the_person_sees": "The widening card came on the first try in 1 of 3 projects; in the other two Haiku asked for a yes in words with no card and a typed 'yes' got 'Yes to what? Nothing is waiting for your yes.'; the reply guard never fired.",
+   "evidence": "/tmp/frbench/live4/l3/l3b/steps/09-rr1-t3-reply.png, 10-rr1-t3b-reply.png, 25-reading-rules-c-t3-reply.png, 28-reading-rules-c-t3c-reply.png; /tmp/frbench/live4/l3/evidence/rr1-t3.json, reading-rules-c-t3*.json.",
+   "root_cause_at_head": "See the covering findings.",
+   "fix_sketch": "",
+   "test_boundary": "",
+   "area": null,
+   "notes": "Covered: live4:L4-l3-1 (major; merged by the chat group into L4-chat-102 with L4-chat-2 and L4-session-2: the bare-yes guard and a claim guard that cannot see a yes asked in words), live4:L4-l3-2 (chat group: replies describe tool calls and copy 'The app did:'), live4:L4-l3-9 (selftasks group: the Inbox posts the person's own chat changes as Updates). The narrowing applied with no card in 3 of 3 is as designed (only a widening needs a yes); L3-run-9 (card text with no 'except') and fixup #5 passed. Read for problems with no finding: none."
+  },
+  {
+   "id": "L4-other-8",
+   "sources": [
+    "live4-step:l3:LC-L3.L3-research-2"
+   ],
+   "severity": "words",
+   "decision": "not_a_problem",
+   "title": "LC-L3.L3-research-2 (a research run paused at its budget): its only miss is the money group's finding; nothing new",
+   "what_the_person_sees": "Card, notification title and session row are right ('It spent CHF 0.08 of its budget of CHF 0.15', 'Paused before its budget of CHF 0.15 ran out'); a Left to do item is cut: '... plus a short introduction. Put...'.",
+   "evidence": "/tmp/frbench/live4/l3/l3b/steps/117-rg-card.png; /tmp/frbench/live4/l3/evidence/rg-run2.json.",
+   "root_cause_at_head": "See the covering findings.",
+   "fix_sketch": "",
+   "test_boundary": "",
+   "area": null,
+   "notes": "Covered: the cut item -> live4:L4-l3-14 (money group, words); the step cut off at max_tokens that was paid for and lost with no log line -> live4:L4-l3-15 (money group). Read for problems with no finding: none."
+  }
+ ],
+ "proposed_areas": [
+  {
+   "key": "l4-reviewer-report",
+   "title": "A reviewer's findings are its report, also on the tasks the person makes: New task and Edit say that the reviewer writes no file, and a reviewer task with no criteria is checked against its report, never against a file (ADR 0109 on the person's tasks; live check 4, L4-l3-4)",
+   "problems": [
+    "[minor] L4-other-1: New task with Who does it 'reviewer' and What done looks like 'review.md lists the gaps and risks found in notes/plan.md' shows no line under Who does it; the run ends 'notes/plan.md does not exist, and I am not allowed to write review.md, so I could not produce the deliverable.' and the critic grades 10 with 'The required deliverable was not produced.' and 'Acceptance criterion not met: review.md lists ...'; Edit offers 'reviewer' with no line either. Evidence: live4:L4-l3-4, live4-step:l3:LC-L3.L3-research-3; /tmp/frbench/live4/l3/evidence/lr-run.json, lr-look.json, /tmp/frbench/live4/l3/l3b/steps/68-lr-inbox-card.png, the bench's model-calls.jsonl (the reviewer's criterion 1 'The work itself shows this outcome (a file, a page or an output, not only the report): review.md ...'). Root cause: apps/ui/src/pages/project/NewTaskDialog.tsx:176-178 and :369-378 (runsOn or limitation only); packages/runtime/src/daemon/model-settings-view.ts:185-193 (limitation only NO_WEB_LIMITATION); apps/ui/src/pages/project/TaskDrawer.tsx:623 and :753-765 (Edit: useWhoChoices(true), no line); packages/runtime/src/loop/verification.ts:65-70 (outcomeCriterion 'not only the report' for every specialist) used at packages/runtime/src/session/executor.ts:1126-1128 and packages/runtime/src/loop/critic.ts:482-484; the rule only in prompts (evals/registry/specialists/reviewer/specialist.md:29-31, evals/registry/principals/project-manager.md:52, ADR 0109)."
+   ],
+   "decisions": [
+    "D-1 Which specialists write no file comes from the registry, not from a name: writesNoFile(profile) is true when none of the entry's allowed_tools maps to write_file (packages/runtime/src/registry/tools.ts' mapping :48-63; today only the reviewer). One helper, used by the daemon view and by both criterion callers.",
+    "D-2 New task and Edit: when such a specialist is chosen, one line in the daemon's words under Who does it, shown beside (never instead of) the runs-on or limitation line: 'The reviewer writes no file: its findings are its report, which you read in the task's drawer.' (section 5: one sentence, plain words, the specialist named as specialistName names it). It is always shown for that choice, whatever the typed words: it is always true, and a pattern over typed words cannot reliably tell an output file ('review.md lists') from an input ('found in notes/plan.md'). Creating or saving the task is never refused and no specialist is changed for the person.",
+    "D-3 The line comes from GET /settings/models (append-only field per specialist, for example writesNoFile: string | null), which New task already asks with the typed words (TR-11); Edit asks with its project and the edited words too. The fake daemon returns the same field in the same commit.",
+    "D-4 A task with no criteria whose specialist writes no file is held to its report: outcomeCriterion says the report stands for any file the outcome names (proposed text: 'The report shows this outcome (this specialist writes no file, so a file named here is met by its report): <outcome>'), the same text in the brief (executor.ts) and in the critic's evidence (loop/critic.ts). Every other specialist keeps today's text byte for byte. No change to the reviewer's, the planner's or the critic's prompts.",
+    "D-5 Cut line: when the typed outcome or criteria name a file to write ('review.md lists ...', 'write ... to review.md', 'create review.md'), the line names it: 'The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.' An input file never triggers it; a golden set of phrasings, English only, is the test.",
+    "D-6 Cut line, sibling (validation rule 8, work routed to an actor that cannot do it): chat's task.create and task.edit read-back for a writes-no-file specialist adds the same clause, if commands/task.ts' read-back sentence is not owned by another area of the same sub-run; else logged for the session lead.",
+    "D-7 ADR 0109 gets a dated amendment: decision 1 covers the tasks the person makes (New task, Edit, chat) and the criterion of a task with no criteria. validation.md's 'Gaps today' line (no check that the planner only plans work the specialist can do, U-022) is not closed by this area and is left as it is."
+   ],
+   "u_entries": [
+    "New U-entry (the session lead numbers it): 'A reviewer task asking for a file: New task said nothing and the review failed for a file the reviewer may not write.' Check in the app: 1. A project's Tasks, New task, Who does it: reviewer. Under it: 'The reviewer writes no file: its findings are its report, which you read in the task's drawer.' Choose coder: the line goes. 2. Back to reviewer, What done looks like 'review.md lists the gaps and risks found in README.md'. Add task: it is added (nothing refused). If D-5 is built, the line read '..., so review.md is not written: ...' before Add task. 3. Open the task, Edit, Who does it: coder, then reviewer: the same line under it. 4. Start. The drawer shows the reviewer's report with its findings; the review does not fail it for a missing review.md (no 'The required deliverable was not produced.').",
+    "docs/user-guide.md (this area writes it), beside the 'Who does it' paragraph (around :1236): 'The reviewer reads and runs checks but writes no file: its findings are its report, which you read in the task's drawer. New task and Edit say so when you pick it; to have a file written, pick another specialist or let the agent choose.'"
+   ],
+   "root_causes": [
+    "The who line has two sources only, the chooser's runsOn and the web limitation: apps/ui/src/pages/project/NewTaskDialog.tsx:176-178, :369-378; packages/runtime/src/daemon/model-settings-view.ts:185-193 (limitation only NO_WEB_LIMITATION). GET /settings/models already receives the typed words (packages/runtime/src/daemon/server.ts:3300-3341, TR-11) but nothing compares the specialist's tools with them.",
+    "Edit shows no who line at all: apps/ui/src/pages/project/TaskDrawer.tsx:623 (useWhoChoices(true): no project, no words) and :753-765 (edit-who with nothing under it).",
+    "The app's own criterion for a task with no criteria asks every specialist for a file: packages/runtime/src/loop/verification.ts:65-70 ('The work itself shows this outcome (a file, a page or an output, not only the report)'), used for the brief at packages/runtime/src/session/executor.ts:1126-1128 and for the critic at packages/runtime/src/loop/critic.ts:482-484, while the reviewer's prompt says 'You write no file, not even a review file a brief names' (evals/registry/specialists/reviewer/specialist.md:29-31).",
+    "ADR 0109's rule lives only in prompt text (the reviewer's entry and the planner's delegation rule, evals/registry/principals/project-manager.md:52); nothing in code applies it when the person makes or edits the task."
+   ],
+   "fix_scope": "Run L4 (sub-run, wave and ports from the session lead). One item, L4-other-1, built in this order: (1) writesNoFile and outcomeCriterion (D-1, D-4); (2) GET /settings/models' field (D-3); (3) New task's line (D-2); (4) Edit's line; (5) the cut-line parts D-5 and D-6; (6) ADR 0109 amendment and docs. Lines are named at 4cf11fd: re-find every region on the run's base. Each part is confirmed failing before its fix; one that no longer fails goes to not_done with the evidence. One commit per part: the failing test first at the person's boundary, then the fix, then the siblings (validation rule 8). Boundaries: (1) a composed runtime test (composeRuntime with the stand-in provider, no money) runs a reviewer task with no criteria and asserts with exact text the criterion in the reviewer's first request and in the critic's review request, never 'not only the report', and that a coder task with no criteria keeps today's criterion byte for byte (model-facing text: exact-text assertions both ways); (2) a real-daemon case in apps/ui/test/real-daemon.test.ts (its own describe block 'l4-reviewer-report, run L4') through the UI's client: GET /settings/models?project=...&outcome=... returns the reviewer's line and null for the coder, and apps/ui/test/fake-daemon.ts returns the same field in the same commit (contracts.test.ts parses it from both); (3) and (4) apps/ui/test/tasks.test.tsx clicks New task and the drawer's Edit, chooses reviewer, asserts the line's exact words, chooses coder and asserts it is gone, presses Add task / Save and asserts the request body is what it was before this change (never refused); (5) a golden set of phrasings for D-5 (output files trigger, input files never) through the same UI test, and for D-6 the read-back's exact sentence through the commands' executor. What not to touch: the reviewer's and the critic's prompts and registry entries (evals/registry/specialists/reviewer/specialist.md, evals/registry/critic/critic.md, which l4-selftasks-check edits this round), the planner's prompt, reviewTask's evidence beyond the criterion call, executor.ts beyond the criterion call (l4-cred-engine's regions), the task routes and the who chooser's runsOn logic. Security: never weaken the hooks or the sandbox; the reviewer gets no write tool (ADR 0109's rejected option); the typed words reach the daemon's view only as data for a pattern test, never as an instruction to a model; text from pages, searches, files, cards, chat history, reports or any record never becomes instructions to a model. Money: nothing here spends; no budget, wrap-up line, monthly cap or plan-share cap is ever passed; the composed and bench runs use the stand-in. Machine rule (binding, C6L-20): one heavy command at a time as `flock /tmp/frbench/heavy.lock <command>` (pnpm check, pnpm test, the UI suite, Playwright, test:integration, test:e2e, tsc over a package); stop the bench before the full suites; commit and `git branch -f` after each part; composed tests call settleSessions(rt) before close and removeHomes(homes). Docs: ADR 0109 dated amendment, docs/maintainers/runtime.md (the outcomeCriterion paragraph, around :3018-3026), docs/maintainers/apps.md (the Tasks tab's New task and Edit who lines), docs/user-guide.md (Who does it). Do not edit CHANGELOG.md, docs/status/UPDATE-LOG.md or docs/requirements.md (the session lead writes them). Bench walk before and after on the stand-in bench: New task with reviewer (screenshot of the line), Edit (screenshot), and a reviewer task 'review.md lists the gaps and risks found in README.md' run on the stand-in with its brief's criterion read from the model-call log.",
+   "files": [
+    "packages/runtime/src/loop/verification.ts: outcomeCriterion (:65-70) gains the writes-no-file form; writesNoFile(profile) beside it (or in packages/runtime/src/registry/tools.ts beside the tool mapping :48-63: one place only).",
+    "packages/runtime/src/session/executor.ts: only the acceptanceCriteria fallback at :1126-1128 (the outcomeCriterion call's arguments). Everything else is l4-cred-engine's.",
+    "packages/runtime/src/loop/critic.ts: only the acceptanceCriteria fallback in reviewTask's evidence at :482-484 (the outcomeCriterion call's arguments). The rest of reviewTask's evidence is l4-selftasks-check's.",
+    "packages/runtime/src/daemon/model-settings-view.ts: the specialists[] map (:185-200), the append-only line field.",
+    "packages/runtime/src/daemon/server.ts: GET /settings/models (:3300-3341) only, and only to pass the typed words to the view for D-5.",
+    "packages/runtime/src/daemon/api-types.ts, apps/ui/src/api/contracts.ts, apps/ui/src/api/client.ts: append-only (the field on the specialists' view; modelSettings' parameters unchanged unless Edit needs the words, which it sends the way New task does).",
+    "apps/ui/src/pages/project/NewTaskDialog.tsx: useWhoChoices (:75-109) returns the field; the note block (:369-385) gets the new line with its own testid.",
+    "apps/ui/src/pages/project/TaskDrawer.tsx: EditTaskForm only (:609-765): useWhoChoices with the project and the edited words, and the line under edit-who.",
+    "packages/commands/src/commands/task.ts: cut line D-6 only: the create read-back's specialist clause (:876-877) and the edit read-back's (:1780).",
+    "apps/ui/test/tasks.test.tsx (its own describe block), apps/ui/test/real-daemon.test.ts (its own describe block), apps/ui/test/fake-daemon.ts (same commit as the route), apps/ui/test/contracts.test.ts.",
+    "packages/runtime/test/reviewer-report.test.ts (new composed case).",
+    "docs/decisions/0109-a-reviewers-findings-are-its-report.md (dated amendment), docs/maintainers/runtime.md, docs/maintainers/apps.md, docs/user-guide.md."
+   ],
+   "acceptance": [
+    "L4-other-1 (a) engine (packages/runtime/test/reviewer-report.test.ts, composed, stand-in provider): a reviewer task with no criteria and the outcome 'review.md lists the gaps and risks found in README.md': the reviewer's first request and the critic's review request each hold the writes-no-file criterion with exact text and never 'not only the report'; a coder task with no criteria holds exactly 'The work itself shows this outcome (a file, a page or an output, not only the report): <outcome>'.",
+    "L4-other-1 (b) route (apps/ui/test/real-daemon.test.ts 'l4-reviewer-report, run L4'): client.modelSettings for a project with outcome 'review.md lists ...' returns, for the reviewer, exactly 'The reviewer writes no file: its findings are its report, which you read in the task's drawer.' (or D-5's form), and null for the coder and every specialist with a write tool; the fake daemon returns the same (contracts.test.ts parses both).",
+    "L4-other-1 (c) New task (apps/ui/test/tasks.test.tsx): choosing reviewer shows that line under Who does it, together with the runs-on line when there is one; choosing coder removes it; Add task sends the same body as before and the task is added.",
+    "L4-other-1 (d) Edit (apps/ui/test/tasks.test.tsx): in the drawer's Edit, choosing reviewer in edit-who shows the same line; Save sends the same body as before.",
+    "L4-other-1 (e) cut line D-5: 'review.md lists ...' and 'Write the findings to review.md' name review.md in the line; 'lists the gaps and risks found in notes/plan.md' does not name a file.",
+    "L4-other-1 (f) cut line D-6: chat's 'add a task for the reviewer: review.md lists ...' read-back holds the same clause (exact sentence through the commands' executor).",
+    "L4-other-1 (g) docs: ADR 0109 has the dated amendment; runtime.md, apps.md and the user guide say what the line says; the bench walk's screenshots before and after are in the report."
+   ],
+   "depends_on": [
+    "Run C merged at 4cf11fd: TR-11 (New task sends the typed words to GET /settings/models), U-078's runsOn line, l3-small's specialistReason and findingView (unchanged here).",
+    "No other run L4 area must merge first. Shared files: packages/runtime/src/loop/critic.ts with l4-selftasks-check, packages/runtime/src/session/executor.ts with l4-cred-engine (and any area that edits the brief), NewTaskDialog.tsx and TaskDrawer.tsx with whichever area takes the money group's L4-session-8 (the Tasks row and drawer): see handoff_items for the rule."
+   ],
+   "handoff_items": [
+    "L4-other-1",
+    "shared_files rule (for the session lead's run L4 shared_files): packages/runtime/src/loop/critic.ts: l4-selftasks-check owns reviewTask's evidence; l4-reviewer-report changes only the argument list of the outcomeCriterion call in the acceptanceCriteria fallback (one line). packages/runtime/src/session/executor.ts: l4-cred-engine (and any brief-owning area) owns its regions; l4-reviewer-report changes only the outcomeCriterion call at the acceptanceCriteria fallback (one line). packages/runtime/src/loop/verification.ts: l4-reviewer-report owns outcomeCriterion. apps/ui/src/pages/project/NewTaskDialog.tsx: l4-reviewer-report owns useWhoChoices and the who note block; TaskDrawer.tsx: l4-reviewer-report owns EditTaskForm's who select and the lines under it only. model-settings-view.ts' specialists[] map: l4-reviewer-report. real-daemon.test.ts, fake-daemon.ts, api-types.ts, contracts.ts: append-only, one describe block per area.",
+    "Session lead: the U-entry with its Check in the app steps (u_entries), ADR 0109's amendment confirmed in the merge, CHANGELOG and UPDATE-LOG lines ('New task and Edit say that the reviewer writes no file: its findings are its report. A reviewer task with no criteria is checked against its report.'), and validation.md's 'Gaps today' line on the planner (U-022) left open.",
+    "Next live check: a reviewer task made in New task with a file-naming outcome and a README.md present, on the real model (about CHF 0.05): the line shows before Add task, the brief's criterion has the report form, the critic accepts or revises on the findings, never 'The required deliverable was not produced.'.",
+    "Folding: this is one small item. The session lead may fold it into the area that owns NewTaskDialog.tsx and TaskDrawer.tsx this round (if a money-group area takes L4-session-8 there), or pair it in a sub-run with any area that shares none of its files; it should not run in the same sub-run as l4-selftasks-check or l4-cred-engine unless the one-line rule above is in both specs."
+   ],
+   "owner_questions": [],
+   "size": "small: 1 item (L4-other-1) in five parts, about half of one fixer's run: (a) the helper and the criterion with a composed case, (b) the route field with the real-daemon case and the fake, (c) New task, (d) Edit, each with a UI test; docs and the ADR amendment. Cut line, may end in not_done with the evidence: D-5 (the clause that names the file from the typed words) and D-6 (chat's read-back clause). Never in not_done: D-1 (the rule from the registry), D-4 (the report-form criterion in both the brief and the critic's evidence, exact text, every other specialist unchanged), D-2/D-3 (the line in New task and in Edit from the daemon, with the real-daemon case and the fake in the same commit), and never a refusal of the person's task."
+  }
+ ],
+ "shared_files": [
+  "packages/runtime/src/loop/critic.ts (l4-selftasks-check, l4-reviewer-report): l4-selftasks-check owns reviewTask's evidence and everything else this round; l4-reviewer-report changes only the outcomeCriterion call's arguments in the acceptanceCriteria fallback (around :482-484 at 4cf11fd).",
+  "packages/runtime/src/session/executor.ts (l4-cred-engine and any brief-owning area, l4-reviewer-report): l4-reviewer-report changes only the outcomeCriterion call's arguments in the acceptanceCriteria fallback (around :1126-1128 at 4cf11fd); every other region belongs to its own area.",
+  "apps/ui/src/pages/project/TaskDrawer.tsx and NewTaskDialog.tsx (l4-reviewer-report, and whichever area takes the money group's L4-session-8): l4-reviewer-report owns useWhoChoices, New task's who note block and EditTaskForm's who select with the lines under it; the drawer's header, runs and TaskCap words are the other area's."
+ ],
+ "owner_questions": [],
+ "owner_checklist": [
+  "After run L4 (the U-entry's Check in the app, on the Windows build, no subscription needed): Tasks, New task, Who does it: reviewer shows 'The reviewer writes no file: its findings are its report, which you read in the task's drawer.'; Edit shows the same; a reviewer task asked for review.md is reviewed on its report, never failed for a missing review.md."
+ ]
+}

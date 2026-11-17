@@ -1,0 +1,709 @@
+{
+ "group": "github",
+ "base": "4cf11fd",
+ "note_on_ids": "Item ids L4-github-101 to L4-github-132 are this triage's own numbers. Source keys of the form 'live4:L4-github-N' name live check 4's findings, whose numbers are different (item L4-github-102, for example, holds live finding live4:L4-github-1).",
+ "items": [
+  {
+   "id": "L4-github-101",
+   "sources": [
+    "live4:L4-github-2"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "After Undo of a project made with Take it over, the next New project on that repository gets no offer and takes nothing over",
+   "what_the_person_sees": "New project on a repository whose main names \"Kite club\" > Take it over, then Undo on Changes. A second New project on the same repository is made at once with no offer (no Work together, no Take it over), although main still names \"Kite club\". Its Overview has no line about the other project and its docs keep Kite club's marker, so another Forerunner is still offered \"Kite club\". From then on this computer treats the repository as free for any New project, even if someone works on Kite club again (the 14-day rule is skipped).",
+   "evidence": "live4:L4-github-2. /tmp/frbench/live4/github/evidence/a01-takeover.json, a03-undo.json, a04-takeover-brief.json (createStatus 201, noOffer true), a04-db-projects-after-undo-and-second-create.jsonl (the removed row 01a1e7fd keeps took_over [01a1be66]; the new row 01a1e7ff has none), a05.json (repositoryElsewhere null), c1-a-before-approve.json (main's marker names Kite club); screenshot /tmp/frbench/live4/github/evidence/a-home1/steps/16-a04-takeover-brief-no-offer.png; module repro /tmp/frbench/verify-L4-github-2/repro.mts.",
+   "root_cause_at_head": "packages/runtime/src/sources/repository-use.ts:353-361 RepositoryIndex.knows(id) loops over every row, removed ones included, and returns true when any row's settings.took_over.projects names the id (:358). verdictOf then skips that id (:571 `if (index.knows(id)) continue;`) and answers {kind:\"free\"} (:574); overviewOf returns null on it (:988). project.create's Undo (packages/commands/src/commands/project.ts:398-411) archives the row with removed_name and keeps settings.took_over.",
+   "fix_sketch": "In RepositoryIndex.knows keep `row(id)` for any status, and inside the loop skip a removed project (`if (isRemovedProject(p)) continue;`, already imported) before the projectIdsOf and tookOverOf checks: a removed project uses nothing (ADR 0117 point 2), so neither its take-over nor its joined ids make an id \"known\". A joined project (archived with joined_into) still counts through its keeper. The \"removed\" verdict (the marker names the person's own removed project; run C session lead decision 14, took_over with removed true) is unchanged: verdictOf finds it through index.row before knows is asked. project.ts's Undo is not changed: the index fix also covers rows stored this way already. ADR 0117 point 2 reads \"an id a project here (not a removed one) took over\"; docs/maintainers/runtime.md \"One repository, one project\".",
+   "test_boundary": "Real-daemon case in apps/ui/test/real-daemon.test.ts, describe \"l4-github-link, run L4\", MemoryGitHost: o/kite's main carries the marker {project: KITE, name: \"Kite club\"}. client.createProject on o/kite answers 409 repository_used_elsewhere with canTakeOver true; with takeOver {projects:[KITE]} it answers 201; Undo that change through the Changes undo route; createProject with a brief on o/kite again must answer 409 naming \"Kite club\" with canWorkTogether and canTakeOver true (today 201); a project on o/kite whose copy's marker names KITE gets a non-null repositoryElsewhere from GET /projects/:id (today null); the same after composing twice. Unit twin in packages/runtime/test/repository-use.test.ts: verdictOf/check with a removed row whose took_over names KITE answers \"elsewhere\", never \"free\".",
+   "area": "l4-github-link",
+   "notes": "Placed first in its area: it breaks the owner's D1 and D9 (one repository, one project; Work together first; a take-over only for a project nobody uses) after an ordinary Undo. The model plays no part. knows() came in with 9f4b2b8 (d1109-onerepo-link). Session lead decision 14 (\"a project removed by Undo of its creation frees its repository\") covers the marker that names the removed project itself, not a third project's marker the removed one had taken over: this fix keeps that default."
+  },
+  {
+   "id": "L4-github-102",
+   "sources": [
+    "live4:L4-github-1",
+    "C4:C4L-2"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "Take it over opens no docs pull request when an old fr/docs-scaffold branch is on GitHub, or adds no take-over line to this project's own open scaffold pull request, and no screen says so",
+   "what_the_person_sees": "Take it over on forerunner-sandbox: the project opens normally, but no pull request appears on GitHub and the repository keeps naming \"Kite club\". The Overview has no line, Docs says \"8 of 8 present\", and the line under Take it over (\"The repository then names this project\") did not come true. When this project's own scaffold pull request is already open at the take-over (C4L-2), that pull request gets no take-over line and its marker conflicts with main's when it is merged.",
+   "evidence": "live4:L4-github-1: /tmp/frbench/live4/github/evidence/a-home1/daemon.log 05:31:39 \"install marker of another project kept\" (markedFor 01a19979) then \"standard docs scaffolded {created: 0, prUrl: null}\"; c1-a-before-press.json (branch fr/docs-scaffold@129324c, not in main), c1-a-after-press.json (no new branch or PR); c1-00-marks.json (PR #1 on fr/docs-scaffold, closed unmerged 2026-11-09); screenshot /tmp/frbench/live4/github/evidence/a-home1/steps/10-a02-overview.png; composed repro /tmp/frbench/verify-L4-github-1/repro.mts. C4:C4L-2 (leftovers-C4.json; C2-left-11 part 2; runC-C4-fix-d1109-onerepo-join.json not_done).",
+   "root_cause_at_head": "packages/runtime/src/loop/docs.ts:875 scaffoldInCopy calls this.checkout(project, target, \"fr/docs-scaffold\", { ours }) with no `fresh`, so checkout (:1249-1254) starts the copy from origin/fr/docs-scaffold whenever that ref exists, here a closed pull request's branch carrying a third project's marker. mark() (:1427-1440) keeps that marker (status other_project, only a WARN log), scaffoldDocs finds every doc present, so nothing is written: no commit, no push (:921, never forced), no pull request. The outcome (prUrl null, marker other_project) is only recorded: create-project.ts:192 -> scaffoldProjectDocs (:204-216) ignores it; compose.ts:4916-4924 repositoryTakeOver.writeMarker sets failed only when the scaffold throws; no screen reads marker.status. writeSessionStatus already passes `fresh: async (open) => !open` (:983) and pushes with `force: !existingPr` (:998). C4L-2: with this project's own scaffold pull request open, the run comments only the missing docs (:922-928) and commits the replaced marker on top of the old branch instead of rebuilding it on the default branch.",
+   "fix_sketch": "1) scaffoldInCopy passes `fresh: async (open) => !open` and pushes with `force: !existingPr`, as writeSessionStatus: with no open scaffold pull request the branch starts from origin/<default branch>. Data rule: force only over a branch whose head is the head of a closed or merged pull request (GitHub keeps it under refs/pull/N/head) or that carries this install's own mark; any other fr/docs-scaffold on GitHub (someone's own branch) is never overwritten, and the outcome says why no pull request opened. Another project's open pull request stays `foreign` (W15-01: never written to or commented on). 2) C4L-2: a take-over while this project's own scaffold pull request is open rebuilds that branch on the default branch under the copy's lock, writes the replaced marker, force-pushes this project's own branch and comments tookOverLine on the pull request (ADR 0117's amendment). 3) Said where the person reads the take-over: compose.ts writeMarker returns failed (or a new notOpened) when prUrl is null and nothing was written, so repo.take_over answers tookOverNoPullRequestSentence; POST /projects with takeOver records the same on the row and the Overview's take-over line reads that GitHub still names \"Kite club\" because the docs pull request could not be opened; Docs does not read \"8 of 8 present\" as if the take-over had landed. 4) Sibling (validation rule 8): packages/runtime/src/session/intake.ts:2521-2533 writeDocsToRepository starts fr/intake-<id>-docs from the default branch when no pull request is open but pushes without force (`force: !!existingPr`), so an old branch of the same name refuses the push: same rule. 5) docs/maintainers/runtime.md (the scaffold branch's start rule), ADR 0117 dated amendment.",
+   "test_boundary": "Composed daemon test in packages/runtime/test/docs-scaffold.test.ts (MemoryGitHost and a bare repository, app.request), in the OR-06/OR-15 describe: o/kite's main has the doc set and Kite club's marker, and an fr/docs-scaffold branch not in main carries a third project's marker with its pull request closed. POST /projects without takeOver answers 409; with takeOver {projects:[KITE]} 201. Expect exactly one open pull request on fr/docs-scaffold whose body has the take-over line, its marker names the new project, main is an ancestor of the branch and the diff to main is only .forerunner/project.json (today: no pull request). Second case (C4L-2): this project's own scaffold pull request open, then repo.take_over through POST /commands: the branch is rebuilt on main with the replaced marker and the pull request gets the take-over line. Third: a host refusal at the push: repo.take_over's sentence reads 'Took over o/kite from \"Kite club\" here, but the docs pull request that names this project could not be opened, so GitHub still names \"Kite club\".' and the Overview line says so (real-daemon case through client.project, describe \"l4-github-link, run L4\"). A remote branch that is no pull request's head is not overwritten.",
+   "area": "l4-github-link",
+   "notes": "Same root cause from two sources: the scaffold branch is not started from the default branch (L4-github-1 with no open pull request; C4L-2 with this project's own open one), so they are one item. Severity major, not blocker: the project works in the app, but the take-over's promise silently does not happen on GitHub, and an old head branch of a closed pull request is GitHub's default. Wider effect (reasoned from the code, not run): any new project on a repository with an old fr/docs-scaffold branch that lacks some docs would add them on top of the old commit and open a pull request carrying another project's marker. The brief path (PR #50) was not affected: the intake writes its own fr/intake-<id>-docs branch."
+  },
+  {
+   "id": "L4-github-103",
+   "sources": [
+    "live4:L4-l3-10",
+    "live4-step:l3:LC-L3.L3-github-6"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Settings lets a Work-together project turn on the status pull request and promises one, but none ever opens",
+   "what_the_person_sees": "On a project made with Work together, Settings offers \"Status pull request\" with Change; turning it on reads back \"each session's status goes to the repository as one pull request, docs: project status, which you merge when you like\". After a session the log says \"Created the project status in docs/status.md, kept in the app.\" and Docs says \"Kept in the app: you work on \"Kite flyers\" together, so GitHub's copy is left as it is.\"; no pull request ever opens.",
+   "evidence": "live4:L4-l3-10 (l3 journey screenshots 08-kt-new-offer, 11-kt-statuspr-after; l3a home app-status/docs/status.md; the sandbox had no open pull request after the session); live4-step:l3:LC-L3.L3-github-6 (observed: the status words are right, no status pull request because the project is shared, although Settings said it would go to GitHub).",
+   "root_cause_at_head": "packages/runtime/src/daemon/settings-view.ts:315-325 shows the \"Status pull request\" row with Change whenever onHostRepository(p), never asking isTogether; packages/commands/src/commands/settings.ts:403-418 status_pull_request's effect ignores the project and settings.set has no together refusal, so Settings, chat and voice get the same false read-back. The behaviour it contradicts is right: packages/runtime/src/loop/docs.ts:968 keeps a together project's status in the app whatever the setting (D9).",
+   "fix_sketch": "(a) At the command, so chat and voice get it too: settings.set status_pull_request=true on a together project (isTogether from @forerunner/runtime/sources/repository-words) is refused in one sentence with nothing written: 'You work on \"Kite flyers\" together with another Forerunner, so its status stays in the app (Docs, Status); no status pull request is opened.' (details {key, cause: \"together\"}); turning it off still acts. (b) settings-view.ts shows the row only when onHostRepository(p) && !isTogether(p), as C-57 hides it for a linked folder. (c) apps/ui/test/fake-daemon.ts mirrors both. (d) The user guide's \"Working with someone on one repository\" section and docs/maintainers (settings, docs).",
+   "test_boundary": "Real-daemon case (describe \"l4-github-link, run L4\", or extend packages/runtime/test/onerepo-together.test.ts's two-home case): after Work together on o/kite, GET /settings has no project.status_pull_request row for the project; POST /commands settings.set {key:\"status_pull_request\", value:true, project} answers refused with the exact sentence, the change log gains no row and the setting is unchanged; the same through chat's settings_set tool (commands unit with the executor). UI test: SettingsPage on the fake daemon's together project shows no Change for Status pull request.",
+   "area": "l4-github-link",
+   "notes": "The step LC-L3.L3-github-6 has no problem other than this finding, so it is one item. The owner's D9 (\"a together project writes nothing to the repository\") decides the behaviour; only Settings' promise is wrong (design section 5 rule 9). Model not involved."
+  },
+  {
+   "id": "L4-github-104",
+   "sources": [
+    "C2:CL-6"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A first plan whose reply leaves out the docs is taken without asking again, so the plan card has no decision line",
+   "what_the_person_sees": "A new project's plan card normally shows \"Decision: ...\" (the drafted docs/decisions/0001) before Approve and start. If the model's first-plan reply leaves out \"docs\" entirely, the card shows no decision, the project gets only template docs and no decision record, and nothing asks the model again.",
+   "evidence": "C2:CL-6 (leftovers-C2.json, d1109-onerepo-link's review). Code at 4cf11fd only.",
+   "root_cause_at_head": "packages/runtime/src/session/intake.ts:237-242 IntakeProposalBody has `docs: IntakeDocs.default({})` for both forms (OR-08 made it optional for the plan-only form); parse at :821 then accepts a first-plan reply without docs, although the first-plan rules (:1996-2013) ask for docs/decisions/0001-<slug>.md whose \"Decision:\" line the card shows. The cut-off retry advice (:811) tells the model to \"leave docs out\".",
+   "fix_sketch": "The parse knows the form: in the first-plan form a reply without docs/decisions/0001-<slug>.md is refused with one problem line for the one retry, e.g. 'docs: the decision record is missing: write docs/decisions/0001-<slug>.md with the choice the brief points to; any standard doc you leave out is written from the template.'; the plan-only form keeps the default {}. The cut-off advice keeps the record and drops the rest: 'Write each doc in a few lines, or leave out the standard docs (Forerunner writes them from its templates), but keep docs/decisions/0001 short.' Both are model-facing text: assert them exactly. If the retry also lacks it, the card is filed without a decision line as today (no third call).",
+   "test_boundary": "packages/runtime/test/intake.test.ts through the intake route with the stand-in model: a first-plan reply without docs makes the one retry, whose request carries the exact problem line; the second reply with the record lands a card whose decision line the Inbox shows (real-daemon client.inbox, describe \"l4-github-link, run L4\"); a plan-only (Add to) reply without docs is still taken at once; the cut-off advice's exact text.",
+   "area": "l4-github-link",
+   "notes": "A prompt the app sends (the cut-off advice \"leave docs out\") makes the missing record likely, so this is a fix in the app, not model-only. intake.ts is shared: this area owns IntakeProposalBody, the parse and the retry/cut-off problem lines only."
+  },
+  {
+   "id": "L4-github-105",
+   "sources": [
+    "C2:CL-7"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Work together's \"since\" time is read from the computer's clock directly, and the folder scan reads a marker outside its injected file access",
+   "what_the_person_sees": "Nothing on a normal computer today. Under the simulated clock (the tests, the bench's clock) a Work-together project's settings.together.at is the real time, and a folder candidate's marker is read straight from disk where discovery's own file access says otherwise; a test of either cannot be trusted.",
+   "evidence": "C2:CL-7 (leftovers-C2.json). AGENTS.md Conventions: \"Time goes through a Clock. Nothing calls Date.now() directly outside platform.\"",
+   "root_cause_at_head": "packages/runtime/src/daemon/create-project.ts:113 and :153 `at: new Date().toISOString()`; packages/runtime/src/sources/discovery.ts:1 imports node:fs readFileSync and :720 reads the marker with it instead of the discovery's injected fs.",
+   "fix_sketch": "createProject's deps carry the daemon's Clock (deps.clock.nowIso()) for settings.together.at; discovery reads the candidate's marker through the same injected reader the rest of the scan uses. No behaviour change on a normal computer.",
+   "test_boundary": "Composed test with the simulated clock: Work together through POST /projects at a set clock time gives settings.together.at equal to it, also after composing twice; discovery unit with an injected fs whose marker exists only in the fake: the folder candidate names the marker's project.",
+   "area": "l4-github-link",
+   "notes": "Convention breaks with no person-visible effect today; kept because they make the together and discovery tests untrustworthy."
+  },
+  {
+   "id": "L4-github-106",
+   "sources": [
+    "C2:CL-5"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Add to it waits about 10 seconds on \"Adding...\" with no \"Drafting the plan...\" state",
+   "what_the_person_sees": "New project on a repository a project here uses > Add to it: the button reads \"Adding...\" for the whole planning call (10.5 s on the real model in live check 4) and the dialog stays open; the project page never says \"Drafting the plan...\" as a new project's does (design section 3.3).",
+   "evidence": "C2:CL-5; /tmp/frbench/live4/session/steps/LC-C2.json observed: \"the button read 'Adding...' from 40 ms until it landed on Site at 10,476 ms, no drafting state\".",
+   "root_cause_at_head": "packages/runtime/src/daemon/server.ts:1123 POST /projects/:id/intake answers only after the planning call; apps/ui/src/pages/NewProjectDialog.tsx:198 shows \"Adding...\" while it waits; IntakeBanner's drafting state is reached only for a new project's background intake.",
+   "fix_sketch": "POST /projects/:id/intake answers at once with the intake in \"drafting\" and plans in the background, as the create path does; the dialog lands on the project and the page shows \"Drafting the plan...\", then the plan wait once (L4-github-110's one-place rule), or \"Planning failed: <reason in words>. [Try again]\". The plan-only form and its \"Already in the project\" block are unchanged. The route's answer shape changes: the real-daemon case for client.proposeIntake (fixup-d1109-onerepo-link B4) and the fake daemon change in the same commit.",
+   "test_boundary": "UI test in apps/ui/test/onerepo-link.test.tsx: click Add to it; the dialog closes at once and the project page shows \"Drafting the plan...\" before the plan card; the body sent is unchanged. Real-daemon case: client.proposeIntake answers with state drafting before the stand-in model replies, then GET /projects/:id/intake reaches pending; a planning failure reads the failed state's words.",
+   "area": "l4-github-link",
+   "notes": "Not words only: a state the design names (section 3.3) is missing, so a fix of severity minor. Cut-line item."
+  },
+  {
+   "id": "L4-github-107",
+   "sources": [
+    "C2:CL-9"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "The comment Forerunner adds to an open plan-docs pull request when the brief's docs are written again has no test",
+   "what_the_person_sees": "Rarely, when a project's first-plan docs pull request is still open and its docs are written from a brief again, Forerunner comments \"Updated by Forerunner from the project's brief: ...\" on that pull request. No test checks the words, that no id is in them, or that no second pull request opens.",
+   "evidence": "C2:CL-9 (leftovers-C2.json, W15B-13's words test replaced in OR-08).",
+   "root_cause_at_head": "packages/runtime/src/session/intake.ts:2534-2540, the existingPr branch of writeDocsToRepository; packages/runtime/test/intake.test.ts:1658-1675 now tests the plan-only path (no comment), so this branch has no case.",
+   "fix_sketch": "Find whether a first-plan intake can run while the intake docs pull request is open (the candidate: a project whose tasks were all cancelled gets a new first plan); if it can, a composed case pins the comment's words and the single pull request; if it cannot, remove the branch and say why in docs/maintainers/runtime.md.",
+   "test_boundary": "Composed test in packages/runtime/test/intake.test.ts with MemoryGitHost: first plan approved (its docs pull request open), the path that writes docs again, approved: exactly one comment on the same pull request reading \"Updated by Forerunner from the project's brief: <n> docs drafted ...\", no UUID in it, no second pull request.",
+   "area": "l4-github-link",
+   "notes": "Test gap (validation rule 9) on a nearly unreachable path. Cut-line item."
+  },
+  {
+   "id": "L4-github-108",
+   "sources": [
+    "live4:L4-github-3"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The take-over's docs pull request says 'it is now \"Kite flyers\"'s.', and three other lines put a possessive after a quoted name",
+   "what_the_person_sees": "On GitHub, docs pull request #50: 'This repository was the Forerunner project \"Kite club\"; it is now \"Kite flyers\"'s.' The same pattern is in the Docs note 'Kept in the app while \"Kite club\"'s status pull request is open on GitHub.', the join dialog's 'Who merges: \"Kite club\"'s setting applies to the moved work: ...' and the task check's refusal 'the first part keeps \"<title>\"'s specialist'.",
+   "evidence": "live4:L4-github-3: /tmp/frbench/live4/github/evidence/c1-a-prs-50-51.json (body of #50). runtime.md:6192-6195 (L3-github-8: a description never makes the project's name a possessive).",
+   "root_cause_at_head": "packages/runtime/src/sources/repository-use.ts:443-451 tookOverLine (both branches), pasted into the PR body at packages/runtime/src/session/intake.ts:2550 and packages/runtime/src/loop/docs.ts:917; siblings: packages/runtime/src/sources/repository-words.ts:219 heldStatusNote; packages/runtime/src/daemon/join-words.ts:183 settingAppliesLine; packages/runtime/src/session/task-check.ts:854.",
+   "fix_sketch": "tookOverLine: 'This repository was the Forerunner project \"Kite club\"; it is now the project \"Kite flyers\".' and 'This repository was another Forerunner project; it is now the project \"Kite flyers\".' (markerNameOf unchanged; projectIdsNamedBy's L-16 regex does not read this line). heldStatusNote: 'Kept in the app while the status pull request of \"Kite club\" is open on GitHub.'. settingAppliesLine is l4-github-merge's (it rewrites that function in L4-github-113): 'Who merges: the setting of \"Kite flyers\" applies to the moved work: ...'. task-check.ts:854 is l4-selftasks-check's file: handed over ('the first part keeps the specialist of \"<title>\"'). Update the quotes in ADR 0058's amendment point 1 and ADR 0117 point 7 with a dated note, runtime.md, docs-scaffold.test.ts:594 and the fixture body in apps/ui/test/real-daemon.test.ts (~:18338).",
+   "test_boundary": "The body the GitHost receives: packages/runtime/test/docs-scaffold.test.ts's take-over case (scaffold pull request) and the intake path's fr/intake-<id>-docs pull request: toContain the new line, not.toMatch(/\"'s/); repository-use.test.ts unit for both branches; a writing-rules sweep (packages/runtime/test/writing-rules.test.ts) that no person-facing line built from a quoted name contains `\"'s`.",
+   "area": "l4-github-link",
+   "notes": "The wording was chosen on purpose in run C (ADR 0058 amendment, ADR 0117 point 7, OR-06) but breaks a rule the repository already has (L3-github-8); the owner's decisions say nothing on these words, so no owner question."
+  },
+  {
+   "id": "L4-github-109",
+   "sources": [
+    "C2:CL-8"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The other-host refusal always names github.com, and the line under Take it over can pass 100 characters",
+   "what_the_person_sees": "On an install set up for a GitHub Enterprise host, linking a repository elsewhere answers \"Forerunner works with repositories on github.com, not <host>.\", which is untrue there. With a 60-character project name in the marker, the line under Take it over (\"The repository then names this project: choose it only if no Forerunner uses \"<name>\" now.\") runs to about 125 characters (design section 5 rule 1: a consequence line is at most 100).",
+   "evidence": "C2:CL-8 (leftovers-C2.json). AGENTS.md: nothing hardcoded to one host.",
+   "root_cause_at_head": "packages/runtime/src/sources/repository-words.ts:190-192 otherHostSentence hardcodes \"github.com\"; :180-182 takeOverLine quotes the marker's whole name.",
+   "fix_sketch": "otherHostSentence takes the configured web host (from config.githubApiBase, \"github.com\" by default) from its callers. takeOverLine cuts the quoted name at a word (balancedCut with cutWords, about 30 characters) so the line stays at most 100 characters, or reads 'The repository then names this project. Choose it only if nobody uses \"<name>\" now.'.",
+   "test_boundary": "UI test (apps/ui/test/onerepo-link.test.tsx) with a 60-character marker name: the line under Take it over is at most 100 characters and the name is whole or cut at a word; real-daemon or route case: an install whose API base is a GitHub Enterprise host refuses a github.com repository naming that host.",
+   "area": "l4-github-link",
+   "notes": "Words items on d1109-onerepo-link's lines."
+  },
+  {
+   "id": "L4-github-110",
+   "sources": [
+    "live4:L4-session-9"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The first session's log says \"Plan: 1 task\" and then \"It promised 3 tasks\", calls the brief a note \"for the next session\", and after Add to the Overview says \"Waiting for you: approve the plan\" twice",
+   "what_the_person_sees": "Session log Details: 'Plan: 1 task, about CHF 0.09. The first session you approved with the project plan: 1 task in its order.', then 'It promised 3 tasks, about CHF 0.34.', then 'Gave 1 note for the next session to \"Build the chess club page in index.html\".' at the start of the session that runs it. After Add to, the Overview shows \"Waiting for you: approve the plan [Open]\" in the header and again as a banner.",
+   "evidence": "live4:L4-session-9: GET /sessions/01a1e80e-d73a-77d6-ab8b-26461a15cecb/events on s2 (session.planned, session.promised, task.notes; the s2 state.sqlite plan row holds 3 items with summary \"1 task\"); screenshot /tmp/frbench/live4/session/s2/steps/05-c2-12-add-to-landed.png; stand-in capture /tmp/frbench/d1109-selftasks-run-walk/15-standard-session-details-499f.txt:60-64.",
+   "root_cause_at_head": "Log: packages/runtime/src/session/runner.ts:1793-1800 session.planned counts the ready cut (StaticPlanner, :5480-5510, from firstSessionPlan), and :5509's summary words that cut as what the person approved; packages/runtime/src/daemon/views.ts:773-789 words it beside event-lines.ts:628-633's promise line; views.ts:816-817 always reads \"Gave N note(s) for the next session to ...\". Overview: apps/ui/src/pages/ProjectPage.tsx:129-137 hides the header sentence only when progress.total is 0, while IntakeBanner.tsx:110-121 (rendered at ProjectPage.tsx:225) and project-status.ts:286-291 both say the pending plan whatever the task count.",
+   "fix_sketch": "Log: the session's size is said once, as the promise: when session.promised follows, the Plan line gives no competing count (folded into one line, or 'Ready now: 1 task ...'), and StaticPlanner's first-session summary counts what the person approved, not the ready cut. task.notes: 'Gave your note to \"X\".' in the session that uses it, never \"for the next session\". Overview: one place for the pending plan: planBanner = !closed && (intake === \"pending\" || (total === 0 && intake in drafting/failed/waiting/rejected)), so the banner (with Open) says it and the header's own sentence is hidden for pending; the Needs you card stays (design section 3.4). Mirror in apps/ui/test/fake-daemon.ts if it builds the status line.",
+   "test_boundary": "UI test (apps/ui/test/project.test.tsx): a project with 3 done tasks and intake \"pending\" renders /projects/:id/summary with exactly one \"Waiting for you: approve the plan\" and one Open to /inbox (today two: project-status and intake-banner). Composed runtime test: approve an intake whose first session holds 3 tasks (2 and 3 wait on 1), start, read GET /sessions/:id/events with details: no \"Plan: 1 task\" beside \"It promised 3 tasks\"; the first-session summary does not say \"1 task\" when 3 were approved; no \"note for the next session\" for a note this session used.",
+   "area": "l4-github-link",
+   "notes": "Not this group's subsystem (the session engine's Details lines and the Overview), but in this bundle; placed here because the duplicated banner is the Add to path's (d1109-onerepo-link) and goes with L4-github-106's drafting state on the same banner. runner.ts and views.ts are shared: this area owns runner.ts's session.planned emit and StaticPlanner's summary, and views.ts's eventLine cases session.planned and task.notes only. The log lines are Details lines (not in PERSON_EVENT_TYPES)."
+  },
+  {
+   "id": "L4-github-111",
+   "sources": [
+    "C2:CL-3"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The plan's docs pull request branch carries the project's full id (fr/intake-<uuid>-docs)",
+   "what_the_person_sees": "On GitHub the plan's docs pull request reads \"wants to merge ... from fr/intake-01a1e80e-6201-70a1-9dc1-4bfa2093ef6e-docs\"; task branches read \"fr/1a2b3c4d-write-the-guide\" since R-branch.",
+   "evidence": "C2:CL-3 (L3-left-8 carried); ADR 0117 Consequences (\"The intake's docs branch is still named by the project id\").",
+   "root_cause_at_head": "packages/runtime/src/session/intake.ts:158-160 intakeDocsBranch and packages/runtime/src/sources/repository-use.ts:618 build `fr/intake-${id}-docs`; detection (projectIdsNamedBy, isProjectDocsPr at packages/runtime/src/loop/docs.ts:191-192, the take-over and undo checks) reads the project id from that name because the intake pull request's body (intake.ts:2541-2552) carries no hidden mark.",
+   "fix_sketch": "1) The intake pull request's body gets docsPrMarker(project), as the scaffold and status pull requests, so detection reads the mark. 2) New branches are named in R-branch's form (fr/intake-<8 characters>-<project name slug>-docs). 3) Detection keeps reading the long form for pull requests an earlier version opened. A together project writes none.",
+   "test_boundary": "Composed intake test (packages/runtime/test/intake.test.ts): the docs pull request's head branch has no full UUID and its body carries the mark; isProjectDocsPr and projectIdsNamedBy accept both forms (unit); the take-over Undo check reads the new form.",
+   "area": "l4-github-link",
+   "notes": "Cut-line item: the change needs detection to read both names, so it is last in the area."
+  },
+  {
+   "id": "L4-github-112",
+   "sources": [
+    "L3:LL-4"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "A pull request merged on GitHub that still held a closed task's work: that task still reads \"closed without merging\", and nothing offers to take its change out of main",
+   "what_the_person_sees": "Task B builds on task A. A's pull request is closed on GitHub, then B's is merged on GitHub's website before Forerunner looks. A's change is now on main through B, but A's Tasks row and record say \"#A was closed without merging.\", no card says its change reached main, and the only way out is Take this work out on B, which removes both.",
+   "evidence": "L3:LL-4 (leftovers-L3.json); /tmp/frbench/runL3-l3-merge-fix.json not_done[0] (L3-github-1 part 3, with the fixer's fix idea); ADR 0111 amendment of 2026-11-15 point 4 (\"left for later\").",
+   "root_cause_at_head": "packages/runtime/src/session/dependent-branches.ts:208-232 mergedOnHost moves only the merged task's record and rebuilds what built on it; :234-243 closedOnHost moves A's record to left_to_you/\"closed\" without asking whether A's reviewed change reached the default branch through a merged dependent.",
+   "fix_sketch": "When the watcher sees a pull request merged on GitHub (mergedOnHost) or a dependency closed (closedOnHost), each dependency of the merged one whose record is not merged is checked: if its reviewed head is an ancestor of the merge commit (git merge-base --is-ancestor in the copy under the copy's lock, or GitHub's compare), its record moves to merged with last_outcome \"merged_through\" and method null, sentence '#46 was closed, but its change reached main through #48.' (no migration: last_outcome is free text). Its row reads \"Accepted · merged through #48\"; one card says it with Take this work out (merged-actions' take-out of A's commits) and Keep it. Order-independent (whichever event the watcher reads first), idempotent across a restart; nothing is written to GitHub before the person presses. ADR 0111 point 4 replaced by a dated amendment; runtime.md.",
+   "test_boundary": "Composed test in packages/runtime/test/dependent-branches-merge.test.ts (chainWorld): A, then B depending on A; close A on the fake host, merge B on the host, one poll; the reverse order; and a restart between. A's record reads merged/merged_through, its Tasks row (GET /projects/:id/tasks) reads \"merged through #2\", one card whose requestView(row).options are the two buttons; answering Take this work out (with the option string) opens one take-out pull request that removes A's change and keeps B's. Real-daemon case for the card through client.inbox (describe \"l4-github-merge, run L4\").",
+   "area": "l4-github-merge",
+   "notes": "Major from its leftover (a wrong state the app states as fact). Rare (the person merges B on GitHub's website before a poll) but run L3's own amendment names it as what remains. Cut line inside the item: the Take this work out for A alone may end not_done if the take-out cannot revert a commit range (the card then offers Take this work out on #48 and says it removes both); the record's and the row's true words never."
+  },
+  {
+   "id": "L4-github-113",
+   "sources": [
+    "live4:L4-github-7",
+    "C4:C4L-5"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "After Make one project, the closed project's open status pull request is listed nowhere, and the dialog never said so",
+   "what_the_person_sees": "Make one project keeping \"Kite flyers\" (Status pull request off) with \"Site\" (on; open fr/status pull request #55): the dialog has no status line. After the join, Kite flyers' Overview lists only #53 and #54, its Docs says the status is kept in the app, and Site's page has no pull request list. #55 stays open on GitHub with nothing in the app pointing to it, although the dialog said the pull requests move.",
+   "evidence": "live4:L4-github-7: /tmp/frbench/live4/github/evidence/c4a-walk.json (previewApi.ifKept.settings = []), c4c-walk.json (kitePrsApi [53, 54], statusPrListed false), c4d-walk.json (after Undo #55 is listed under Site again); screenshots /tmp/frbench/live4/github/gh4a/steps/32-c4c-01-kite-overview-after-join.png, 40-c4c-07-kite-docs.png; probe /tmp/frbench/verify-L4-github-7/probe.ts. C4:C4L-5 (runC-C4-fixup-d1109-onerepo-join.json not_done[0]).",
+   "root_cause_at_head": "packages/runtime/src/loop/docs.ts:189-190 isProjectDocsPr accepts a fr/status pull request only with statusPullRequestOn(kept); packages/runtime/src/daemon/pull-requests.ts:468 lists docs rows through it; packages/runtime/src/daemon/join-preview.ts:294-303 builds the dialog's setting lines from four labels only (Budget per session, Project budget, Who merges, Research reads); packages/runtime/src/daemon/join-words.ts:169-171 joinMovesLine says the pull requests move.",
+   "fix_sketch": "(1) Dialog: join-preview.ts adds \"Status pull request\" (statusPullRequestOn, worded as Settings words it) to a repository project's own settings, so the differs loop gives its line; when a closing project's is on and the kept one's off, one line: 'The status pull request of \"Site\" stays open on GitHub; \"Kite flyers\" keeps its status in the app. Turn on Status pull request in Settings, or close it on GitHub.'. (2) After the join: pull-requests.ts lists an open fr/status pull request whose hidden mark names a joined_from id as a docs row with Open and Merge, through a listing predicate of its own in pull-requests.ts (marked, the mark in projectIdsOf and not the project's own id), built on docs.ts's exported isProjectStatusPr; the status writer in docs.ts is unchanged (it writes there only once the setting is on). (3) settingAppliesLine without the possessive: 'Status pull request: the setting of \"Kite flyers\" applies to the moved work: off.' (L4-github-108's sibling). ADR 0117 point 3 and the user guide's \"When two projects use one repository\".",
+   "test_boundary": "Real-daemon case in apps/ui/test/real-daemon.test.ts (describe \"l4-github-merge, run L4\", beside OJ-05): fake host o/site; Kite club with status_pull_request true and an open fr/status pull request marked with its id; Site off. client.joinPreview(site.id, [kite.id]).ifKept[site.id].settings holds the Status pull request line (today []); project.join through POST /commands keeping Site; client.pullRequests(site.id) has the docs row with Open (today task rows only); the same after composing twice. UI test in apps/ui/test/onerepo-join.test.tsx: the dialog shows the line.",
+   "area": "l4-github-merge",
+   "notes": "Same root cause from both sources (C4L-5 is the leftover LC-C4 was asked to read; the live check confirmed it). First of the area's minors: it breaks ADR 0117 point 3's \"one status pull request again\" for the owner's D1 join. docs.ts stays l4-github-link's: this area adds no code there."
+  },
+  {
+   "id": "L4-github-114",
+   "sources": [
+    "live4:L4-github-8"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "The Make one project dialog counts a pull request closed on GitHub as open",
+   "what_the_person_sees": "Under Keep \"Kite flyers\": \"2 open pull requests\". GitHub has only #53 open; #51 was closed, and the app's own task row for it says \"Accepted · pull request closed\" and the Overview says \"1 pull request waits for you to merge\".",
+   "evidence": "live4:L4-github-8: /tmp/frbench/live4/github/evidence/c4a-walk.json (previewApi.projects[0].lines \"2 open pull requests\"), c4-00-before.json (#51 closed, not merged), c4-01-kite-session.json (#51 \"Accepted · pull request closed\", prs.waiting [#53]); screenshot /tmp/frbench/live4/github/gh4a/steps/30-c4a-04-dialog-keep-kite.png.",
+   "root_cause_at_head": "packages/runtime/src/daemon/join-preview.ts:256-266 openPullRequests counts every non-cancelled task with a pr_url whose merge record is not \"merged\" (:263); its comment says the store cannot tell a closed one, but the watcher moves it to left_to_you with last_outcome \"closed\" (packages/runtime/src/session/dependent-branches.ts:236-242; packages/runtime/src/loop/merge.ts:1178-1182), which task-words.ts:639 shows as \"Accepted · pull request closed\".",
+   "fix_sketch": "openPullRequests skips a merged record and a left_to_you record whose last_outcome is \"closed\"; every other left_to_you outcome (checks_failed, head_moved, conflict, blocked_by_rules) stays counted. One predicate (isClosedRecord, beside the merge record helpers, not in task-words.ts, which l4-cred-screens edits) serves the dialog; the task row and the Overview's Done line can adopt it later. Fix the comment; the module doc. Side note to check: an open take-out pull request on a merged record is also an open pull request the join moves.",
+   "test_boundary": "Real-daemon case beside OJ-05 (describe \"l4-github-merge, run L4\"): Kite club with two done tasks, each with its pull request and a record pinned through the real accept path; close one on the host without merging and let one watcher poll run; its row reads \"Accepted · pull request closed\"; client.joinPreview(site.id, [kite.id]) gives Kite club's lines \"2 tasks done\", \"1 open pull request\" (today 2), also after the daemon starts again.",
+   "area": "l4-github-merge",
+   "notes": "A fact the person reads to choose which project to keep disagrees with GitHub, the task row and the Overview."
+  },
+  {
+   "id": "L4-github-115",
+   "sources": [
+    "live4:L4-github-10"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A joined project's page: the header names the other project, and Your files shows an internal folder path with the project's id",
+   "what_the_person_sees": "On \"Site\" after it joined \"Kite flyers\", the header picker reads \"Kite flyers\" while the page is Site's, and Your files reads \"/tmp/frbench/live4/github/gh4a/home/worktrees/docs/01a1e89b-1910-7707-a7b6-21e1ba8a4752\" with Copy path. Before the join it read \"On GitHub: joelwellbournewood/forerunner-sandbox\".",
+   "evidence": "live4:L4-github-10: screenshot /tmp/frbench/live4/github/gh4a/steps/34-c4c-03-site-joined-overview.png (and its .txt), 28-c4a-02-site-overview.txt (before); /tmp/frbench/live4/github/evidence/c4c-walk.json siteOverview; UI repro /tmp/frbench/l4g10/header-joined.test.tsx (fails: the header reads \"Atlas▾\").",
+   "root_cause_at_head": "Header: apps/ui/src/shell/Shell.tsx:45-47 finds the viewed project only in state.projects, which GET /projects fills with active projects only (packages/runtime/src/daemon/server.ts:1007-1009), so an archived (joined or removed) project falls back to activeProject. Files: packages/commands/src/commands/project-join.ts:346 clears the closed project's repos; packages/runtime/src/daemon/views.ts:250-251 then asks the folder fact, server.ts:992 docsDirsFor (packages/runtime/src/loop/docs.ts:499-507) gives the old docs clone <home>/worktrees/docs/<project id>, and apps/ui/src/pages/project/SummaryTab.tsx:221-231 shows it.",
+   "fix_sketch": "Header: when the route's project is not in state.projects, Shell names the card ProjectPage already reads (client.project(id), published to the UI store or ShellContext), so active-project reads \"Site\" on every page of a joined or removed project; the switcher list stays active-only with nothing shown as current. Files: projectCard gives a joined project no folder from the docs clone (null, or its was_linked[0] when that is the person's own folder); SummaryTab's files section reads 'Its files are in \"Kite flyers\".' with Open it (or the kept project's \"On GitHub: o/r\" line); no repository actions (ADR 0117 point 6). The fake daemon's projectCardOf mirrors it. docs/maintainers/apps.md and runtime.md.",
+   "test_boundary": "UI test in apps/ui/test/onerepo-join.test.tsx: join Beacon into Atlas with Atlas active, render /projects/proj_beacon/summary: getByTestId(\"active-project\") has \"Beacon\" (fails today with \"Atlas\"). Real-daemon case: two repository projects on one repository with the docs clone made, project.join keeping A, GET /projects/<B>: folder is null or the person's own folder, never under worktrees/docs and never containing B's id; the rendered section reads 'Its files are in \"A\".'; the same after composing twice.",
+   "area": "l4-github-merge",
+   "notes": "This area changes views.ts's projectCard folder line only (not server.ts's folder fact), so it needs no server.ts region."
+  },
+  {
+   "id": "L4-github-116",
+   "sources": [
+    "live4:L4-github-9"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Costs > By task: a task moved by Make one project reads \"6 runs, 0 / 6 (0%)\" accepted although it ran once and was accepted and merged",
+   "what_the_person_sees": "Kite flyers > More > Costs after the join: 'Write the opening hours in hours.md  6  0 / 6 (0%)  CHF 0.01'. The task had one coder run and one review, was accepted and merged (#54). The kept project's own task reads \"1  1 / 1 (100%)\".",
+   "evidence": "live4:L4-github-9: /tmp/frbench/live4/github/evidence/c4c-kite-costs-api.json (byTask runs 6, accepted 0; cost 18013 µUSD = the sum of its 6 ledger rows, so the money is right); screenshot /tmp/frbench/live4/github/gh4a/steps/39-c4c-06-kite-costs.png; repro /tmp/frbench/l4gh9/repro.mts on a copy of the bench DB.",
+   "root_cause_at_head": "packages/runtime/src/daemon/views.ts:1255-1268: for a task now in the project, costView takes its rows from costLedger.byTaskOf (any project) with `runs: b.entries` (one per model call, :1229), but costFacts (:1385-1420) reads only rows booked to the kept project (`where.project_id`, :1395), so facts.runsByTask and acceptedRunsByTask have no entry for a moved task: runs stays the ledger-row count (:1264) and accepted is 0 (:1265). A task with rows on both projects can read \"2 / 1 (200%)\".",
+   "fix_sketch": "Under a project filter, a task's runs and accepted runs come from the task itself: a helper (taskRunFacts(store, taskIds, {from, to})) with costFacts' own rules (work runs are store.run.forTask without the critic's, in the period; an accepted run is the last work run before each accepting review), used for every byTask key; never the ledger-row count as \"runs\" for a known task. Money, totals, By model, By specialist and By project stay the project's own ledger (BA-9, OJ-07). The fake daemon's costs fixture follows (validation rule 3); runtime.md under BA-9.",
+   "test_boundary": "Real-daemon case (describe \"l4-github-merge, run L4\", beside BA-9's): Kite with a task that has a coder Run row and a critic Run row, three ledger rows each carrying the run_id, booked to Kite, and an accepting review; project.join keeping Site; client.costs({projectId: site.id}).byTask for the task reads runs 1, accepted 1 (today 6 and 0), also after the daemon starts again; a Redo after the join (a coder run and an accepting review on Site) reads 2 and 2, not 2 / 1. UI: the Costs tab row reads \"1 · 1 / 1 (100%)\".",
+   "area": "l4-github-merge",
+   "notes": "Area hint was d1116-budget-all, but the cause is the join moving tasks (OJ-07): kept with the join items. No money figure changes. views.ts is shared: this area owns costView's byTask `if (t)` branch and the new helper; l4-selftasks-check owns the \"(none)\" bucket line and costFacts' bySpecialist label."
+  },
+  {
+   "id": "L4-github-117",
+   "sources": [
+    "L3:LL-1"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A merge card (\"changed after the review\" with I merged it, a rebuild card) stays open after its pull request is closed on GitHub without a merge",
+   "what_the_person_sees": "The card still offers \"I merged it\" and \"Leave it open\" (or the rebuild card's Merge) for a pull request that is closed on GitHub; \"I merged it\" is then untrue. Only a merge closes these cards today.",
+   "evidence": "L3:LL-1 (leftovers-L3.json; runL3-l3-merge-fix.json new_problems[0]).",
+   "root_cause_at_head": "packages/runtime/src/session/dependent-branches.ts:234-243 closedOnHost moves the record and rebuilds dependents but never calls closeMergeCards, which only dependencyMerged (:249-252) calls; the Answered line exists only for a merge (packages/runtime/src/daemon/request-words.ts:1814 \"Closed: #33 was merged.\").",
+   "fix_sketch": "closedOnHost closes the task's merge cards with a reason, Answered \"Closed: #33 was closed on GitHub.\"; the sweep closes ones an earlier version left open; \"I merged it\" is never offered for a closed pull request. A card about a task whose change reached main through a dependent (L4-github-112) is that item's card, not withdrawn as closed.",
+   "test_boundary": "Composed case in packages/runtime/test/dependent-branches-merge.test.ts: a head-moved card open, the pull request closed on the fake host, one poll: the card is withdrawn and its Answered line reads \"Closed: #1 was closed on GitHub.\"; the same after composing twice; real-daemon client.inbox shows it under Answered.",
+   "area": "l4-github-merge",
+   "notes": "Sibling of run L3's L3-github-2 (cards close on a merge). U-028's rule: every option does what it says."
+  },
+  {
+   "id": "L4-github-118",
+   "sources": [
+    "L3:LL-2"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Merge pressed on a pull request whose check failed, or that stopped merging cleanly, after Forerunner's last look answers \"Merging #N.\" first and refuses seconds later",
+   "what_the_person_sees": "The press answers \"Merging #N.\", then a few seconds later the Overview says \"#N is not merged yet: the row below says why.\". Run L3 made a head move say so at once (L3-github-3); a failed check or a conflict still does not.",
+   "evidence": "L3:LL-2 (leftovers-L3.json; runL3-l3-merge-fix.json new_problems[1]).",
+   "root_cause_at_head": "packages/runtime/src/daemon/pull-requests.ts:711-770: the press checks the chain's branch (buildsOnGone, checkBranchNow) and the head (headMovedNow, :747-757) but reads neither the pull request's checks nor its mergeable state before it answers \"Merging #N.\" (:762-770); the merge step finds out afterwards.",
+   "fix_sketch": "Before it answers, the press reads each pull request of the chain once (GitHost getPullRequest: mergeable state and the combined check state); a failed check or a conflict is refused at once in the merge step's own sentence and the record and card are settled as the merge step settles them (nothing merges); pending checks keep today's \"waits for its checks\" path. The same read serves L4-creds-22's head check (live4:L4-l3-11: read the branch, not a lagging listing); one area should own the press-time check whole (see shared_files).",
+   "test_boundary": "Composed case in packages/runtime/test/dependent-branches-merge.test.ts or l3-merge.test.ts through the pull requests route: a check fails on the fake host after the last poll, press Merge: refused at once with the sentence, nothing merged, one card; the same for a conflict; real-daemon client.mergePullRequest answers the refusal.",
+   "area": "l4-github-merge",
+   "notes": "Sibling of live4:L4-l3-11, which the creds group placed in l4-cred-screens as L4-creds-22 (pull-requests.ts:751-760 and loop/merge.ts headMovedNow). Both change the same block of the press; the session lead should put L4-creds-22 in this area, or run the two areas in different sub-runs with the region rule in shared_files."
+  },
+  {
+   "id": "L4-github-119",
+   "sources": [
+    "L3:LL-3"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "The press's \"could not check\" refusal has no test at the boundary the person meets it",
+   "what_the_person_sees": "When the branch check cannot run at the press (the task's folder busy, GitHub silent), the press answers \"#48 is not merged yet: Forerunner first checks what it holds of the work it builds on. Press Merge again in a minute.\" No test reaches this answer, so a change could break it unseen.",
+   "evidence": "L3:LL-3 (leftovers-L3.json; runL3-l3-merge-fixup.json not_done[0]).",
+   "root_cause_at_head": "packages/runtime/src/daemon/pull-requests.ts:196-198 notCheckedSentence, returned at :738 when checkBranchNow owes the rebuild and no folder wait is known; no test names it (packages/runtime/test, apps/ui/test).",
+   "fix_sketch": "Add the boundary test (validation rule 9). The words keep design section 5 rule 8's shape (what happened, then what to do); optionally 'Forerunner is still checking the work it builds on. Press Merge again in a minute.' after \"#48 is not merged yet:\".",
+   "test_boundary": "Composed case through the pull requests route (packages/runtime/test/dependent-branches-merge.test.ts): the copy's lock held, or the fake host silent, at the press of a chain that builds on a closed pull request: the route answers refused with the exact sentence, nothing merges, the Overview row keeps Merge.",
+   "area": "l4-github-merge",
+   "notes": "The leftover said \"words\"; the two sentences are what rule 8 asks for, so the work is the missing refusal test: minor."
+  },
+  {
+   "id": "L4-github-120",
+   "sources": [
+    "C4:C4L-10"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A GitHub answer whose body comes slowly fails as a plain abort, not as \"GitHub ... did not answer in time\"",
+   "what_the_person_sees": "When GitHub sends its headers and then stalls the body past the request timeout, the call fails with a plain AbortError instead of the retryable \"GitHub API at <host> did not answer in time\", so the screens that show GitHub's state get an unworded error.",
+   "evidence": "C4:C4L-10 (leftovers-C4.json; runC-C4-fixup-d1109-onerepo-join.json not_done[3]; C2-left-10's edge).",
+   "root_cause_at_head": "packages/capabilities/src/githost/github.ts:274-292 send() guards only the fetch; the same AbortSignal.timeout also aborts the body reads (res.json() at :231, :250, :786, :803), which throw outside that guard.",
+   "fix_sketch": "Read the body inside the same guard: a helper that reads the JSON with the request's signal and maps an abort to the same retryable provider_error sentence; the token never appears in the error.",
+   "test_boundary": "packages/capabilities/test/github.test.ts: a fetch stub that answers headers then stalls the body past requestTimeoutMs gives ForerunnerError provider_error, retryable, with the \"did not answer in time\" sentence, for a REST and a GraphQL call.",
+   "area": "l4-github-merge",
+   "notes": "Capabilities change of its own; small. The fixer checks the Overview's pull request list shows the worded error (one composed case if that route words it)."
+  },
+  {
+   "id": "L4-github-121",
+   "sources": [
+    "C4:C4L-6"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Make one project has no Postgres case in the integration suite",
+   "what_the_person_sees": "Nothing directly: the join moves rows of eight tables in one transaction on SQLite (tested) and Postgres (not tested). A person whose install uses the shared Postgres store is the first to run it there.",
+   "evidence": "C4:C4L-6 (leftovers-C4.json; runC-C4-fixup-d1109-onerepo-join.json not_done[1]); run C session lead decision \"(C4) The join's Postgres case waits for a run with FORERUNNER_TEST_PG\".",
+   "root_cause_at_head": "No integration case runs packages/commands/src/commands/project-join.ts's moves and Undo on the Postgres adapter; OJ-02's case is SQLite only (packages/commands/test/project-join.test.ts).",
+   "fix_sketch": "An integration case (*.integration.test.ts, skipped with its visible reason without FORERUNNER_TEST_PG) runs project.join and its Undo on the Postgres adapter, counting every table's rows of both projects before and after, as OJ-02's SQLite case. CI provides Postgres (AGENTS.md), so it runs there; locally scripts/dev-postgres.sh if a server or Docker is reachable.",
+   "test_boundary": "pnpm test:integration with FORERUNNER_TEST_PG (CI): the join and its Undo leave the same row counts as on SQLite.",
+   "area": "l4-github-merge",
+   "notes": "A coverage case for existing code: it need not fail first. Cut-line item if CI has no Postgres slot for it."
+  },
+  {
+   "id": "L4-github-122",
+   "sources": [
+    "live4:L4-l3-13",
+    "live4-step:l3:LC-L3.L3-github-2"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "A rebuild card's Merge pressed just after the pull request was merged on GitHub says \"Merged #59.\" instead of \"#59 was merged on GitHub already.\"",
+   "what_the_person_sees": "Merge #59 on GitHub, then press the card's Merge at once: \"Done: Merged #59.\" and Answered \"Merged #59.\", as if Forerunner had merged it. ADR 0111 point 3 promises \"#59 was merged on GitHub already.\".",
+   "evidence": "live4:L4-l3-13: /tmp/frbench/live4/l3/evidence/g2-step5-card-merge.json; daemon log 09:54:54 \"merge record ... merged\" then \"pull request merged on the host\"; repro /tmp/frbench/v-L4-l3-13/repro.test.ts. live4-step:l3:LC-L3.L3-github-2 (the rest of the step passed: both cards closed within 55 s with \"Closed: #62 was merged.\" and stayed closed after a restart).",
+   "root_cause_at_head": "packages/runtime/src/loop/merge.ts:1818-1846 ReviewedPrMerge.finish folds a.alreadyMerged into status \"merged\" with last_outcome \"merged\" and method null; packages/runtime/src/session/pr-answers.ts:327-329 maps that to merge_result \"merged\"; packages/runtime/src/daemon/request-words.ts:1352-1353 words it \"Merged #59.\".",
+   "fix_sketch": "finish writes last_outcome \"merged_on_host\" when alreadyMerged (as dependent-branches' mergedOnHost) and the outcome carries the fact (MergeOutcome.alreadyMerged in packages/runtime/src/ports.ts, append-only); applyRebuildMerge reads it, so the card's line is \"#59 was merged on GitHub already.\" and only Forerunner's own merge reads \"Merged #59.\". Optionally mergedOnHost re-reads the record after mergeMethodOf (merge.merged was heard twice for #59).",
+   "test_boundary": "packages/runtime/test/dependent-branches-merge.test.ts next to the L3-github-2 case (~:2794): rebuild card open, answer its Merge, merge B on the fake host with NO poll, syncPrAnswers: the Answered line is \"#2 was merged on GitHub already.\" and the record's last_outcome is merged_on_host (today \"Merged #2.\" and \"merged\"); real-daemon client.inbox shows the Done line.",
+   "area": "l4-github-merge",
+   "notes": "loop/merge.ts is shared: this area owns ReviewedPrMerge.finish's already-merged branch only; headMovedNow is l4-cred-screens' (L4-creds-22) unless the session lead moves it here."
+  },
+  {
+   "id": "L4-github-123",
+   "sources": [
+    "live4:L4-l3-12",
+    "live4-step:l3:LC-L3.L3-github-3"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "The head-moved card cuts a 55-character title before its quoted part",
+   "what_the_person_sees": "Card title '\"Write kite/ferry.txt about the ferry trip to...\" changed after the review' (the task is 'Write kite/ferry.txt about the ferry trip to \"Seal Bay\"'), in the card heading and in Answered. A 51- or 53-character title with a quote is kept whole.",
+   "evidence": "live4:L4-l3-12: /tmp/frbench/live4/l3/evidence/g3-inbox.json and inboxwatch-*.json; repro /tmp/frbench/v-L4-l3-12/repro.mts. live4-step:l3:LC-L3.L3-github-3: its other failure (\"Merging #62.\" answered first, the refusal 4 s later) is live4:L4-l3-11, decided by the creds group as L4-creds-22; the row, the card and \"Accepted · changed after the review\" were right.",
+   "root_cause_at_head": "packages/runtime/src/daemon/quoted-title.ts:21: balancedCut returns early when the kept part has an even number of quotes, which is also the case when the word cut (request-words.ts:242-248 cutWords) dropped the whole quoted part, so the slack rule at :22 never fires; called through q() at request-words.ts:251 from leftOpenCardTitle (:1296-1303).",
+   "fix_sketch": "Before the early return, balancedCut also asks whether the cut dropped a quote of the title's own (the rest after the kept part holds a quote): then the whole title when it is at most `slack` longer than `max`, else today's cut. Callers with slack 0 (notifications, consequences) are unchanged. Card titles are computed when read, so open cards read right after the fix.",
+   "test_boundary": "Composed case in packages/runtime/test/dependent-branches-merge.test.ts (the L3-github-3 flow): task 'Write kite/ferry.txt about the ferry trip to \"Seal Bay\"', a commit pushed on the fake host, Merge pressed: GET /requests gives the card title with the whole title; unit beside L3-github-9's in packages/runtime/test/l3-merge.test.ts: the 55- and 53-character titles whole, a 70-character one still cut before its quote.",
+   "area": "l4-github-merge",
+   "notes": "quoted-title.ts is this area's alone; request-words.ts is not edited for this item."
+  },
+  {
+   "id": "L4-github-124",
+   "sources": [
+    "L3:LL-6"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "After a press-time check the closed dependency's row still reads \"waiting for you to merge\", the cancelled block speaks of several pull requests for one, and a rebuilt-without pull request is listed under \"Reviewed by the critic\"",
+   "what_the_person_sees": "(a) After a Merge press found A closed, A's Tasks row reads \"Accepted · waiting for you to merge\" until the next poll. (b) \"Cancelled, still open on GitHub\" with one row says \"Their tasks were cancelled and Forerunner leaves them as they are: close them on GitHub ...\". (c) A pull request rebuilt without its closed dependency, whose review is void, still sits under \"Reviewed by the critic\". (d) The press-time rebuild costs a listing call and a git fetch per waiting dependent per retry (not seen by the person).",
+   "evidence": "L3:LL-6 (leftovers-L3.json; runL3-l3-merge-fixup.json not_done[0]).",
+   "root_cause_at_head": "(a) packages/runtime/src/daemon/pull-requests.ts:711-743 rebuilds the dependent but leaves A's record to the watcher's next closedOnHost (packages/runtime/src/session/dependent-branches.ts:234-243). (b) apps/ui/src/pages/project/SummaryTab.tsx:786-790 plural words for any count. (c) SummaryTab.tsx:497-503 groupOf files a pull request under \"critic\" from pr.review alone, although a rebuild without its dependency voided that review (ADR 0111 2026-11-15 point 1).",
+   "fix_sketch": "(a) When buildsOnGone finds a dependency's pull request not listed open, the press reads it once and settles its record as closedOnHost (or mergedOnHost) does, so its row is true at once. (b) One row: 'Its task was cancelled; Forerunner leaves it as it is: close it on GitHub, or reopen the task in Tasks.'. (c) A pull request whose record waits after a rebuild without its dependency is listed under its own group (e.g. \"Rebuilt since the review: look at it before you merge\"), not under the critic. (d) No change; a note in runtime.md.",
+   "test_boundary": "UI test (SummaryTab on the fake daemon): one cancelled pull request reads the singular words; a rebuilt-without pull request is not under \"Reviewed by the critic\". Composed case in dependent-branches-merge.test.ts: close A on the host, press Merge on B: A's row (GET /projects/:id/tasks) reads closed at once, no poll.",
+   "area": "l4-github-merge",
+   "notes": "Part (a) shares the press block with L4-github-118 and L4-creds-22."
+  },
+  {
+   "id": "L4-github-125",
+   "sources": [
+    "C4:C4L-9"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "A joined project's Last result still says '\"Write the rules in rules.md\" is ready to continue' about a task that moved to the kept project",
+   "what_the_person_sees": "On the closed project's Overview after Make one project, Last result offers a task as ready to continue, though that task now belongs to the kept project and nothing runs on this page.",
+   "evidence": "C4:C4L-9 (leftovers-C4.json; runC-C4-fixup-d1109-onerepo-join.json not_done[2]).",
+   "root_cause_at_head": "packages/runtime/src/daemon/views.ts:403-470 projectSummary shows the stored last_session.summary (written at that session's end by packages/runtime/src/session/result.ts:475) and its since lines read only the project's own tasks, which are none after the join.",
+   "fix_sketch": "For a joined project (joinedIntoOf), projectSummary adds one since line 'Its tasks went on in \"Kite flyers\".' (the kept project's current name, linking to it) in place of the stored \"ready to continue\" clause; Read aloud the same (spokenProjectSummary). design section 5 rule 4.",
+   "test_boundary": "Real-daemon case: a project whose last session ended '\"X\" is ready to continue', joined into another; GET /projects/:id/summary for the closed one reads the since line and does not offer X as ready; UI SummaryTab test shows it.",
+   "area": "l4-github-merge",
+   "notes": "views.ts is shared: this area owns projectSummary's since lines for a joined project only."
+  },
+  {
+   "id": "L4-github-126",
+   "sources": [
+    "C2:CL-1"
+   ],
+   "severity": "minor",
+   "decision": "not_a_problem",
+   "title": "GitHub's repository id is not stored, so a renamed or transferred repository is a new link",
+   "what_the_person_sees": "Nothing in practice: after a rename or a transfer, New project on the new name is still offered the project that uses the repository.",
+   "evidence": "C2:CL-1 (OR-12's cut line); ADR 0117 Consequences.",
+   "root_cause_at_head": "packages/runtime/src/sources/repository-use.ts keys links by owner/name only (RepoInfo.id is read and not stored).",
+   "fix_sketch": "None needed now.",
+   "test_boundary": "None.",
+   "notes": "Why not a problem: the one-repository rule does not rest on the link's name alone. verdictOf (repository-use.ts:555-575) reads the project ids named by the repository itself (the marker on the default branch and the hidden marks of its pull requests) and index.row(id) finds the project whatever link it stored, so the new name gets 'already the project \"X\". Open it, or add this to it as new work.'; the project's own calls keep working while GitHub redirects the old name. Only a renamed repository with no marker and no Forerunner pull request yet looks new, which ADR 0117 already records. Revisit with wave 8 (GitHub as the meeting place)."
+  },
+  {
+   "id": "L4-github-127",
+   "sources": [
+    "C4:C4L-3"
+   ],
+   "severity": "words",
+   "decision": "not_a_problem",
+   "title": "Home's row of the kept project has no 'Includes the work of \"Kite club\"' line",
+   "what_the_person_sees": "Home lists only the kept project after Make one project, with its usual row.",
+   "evidence": "C4:C4L-3; runC-C4-fix-d1109-onerepo-join.json not_done (OJ-06's Home line).",
+   "root_cause_at_head": "apps/ui/src/pages/HomePage.tsx shows name, status sentence, done count and one action per project.",
+   "fix_sketch": "None.",
+   "test_boundary": "None.",
+   "notes": "Why not a problem: run C's OJ-06 decision is \"Home lists only the kept project\" (built); design section 3.2 gives a Home row name, status sentence, \"5 of 6 done\" and one action; the \"Includes the work of\" line is on the kept project's Overview (SummaryTab.tsx:394-400), Sessions and Costs, and design section 5 rule 10 keeps one place per fact."
+  },
+  {
+   "id": "L4-github-128",
+   "sources": [
+    "C4:C4L-8"
+   ],
+   "severity": "minor",
+   "decision": "already_fixed",
+   "title": "Undo of Make one project made a project paused before the join active again",
+   "what_the_person_sees": "Fixed: after Undo the reopened project is paused and off Home as before.",
+   "evidence": "packages/commands/src/commands/project-join.ts:470-481 (undo writes `active: c.active` and the stored status from before.closed); test packages/commands/test/project-join.test.ts:621 \"Undo of the join gives Kite club back as it was: a paused project left off comes back paused and off, and takes work again\" (runC-C4-fixup-d1109-onerepo-join.json fixed[1]); live check 4 LC-C4 read it (owner-checklist-live4.json notes the pause was set in the database).",
+   "root_cause_at_head": "None at 4cf11fd.",
+   "fix_sketch": "None.",
+   "test_boundary": "Existing: packages/commands/test/project-join.test.ts:621.",
+   "notes": "Listed as a leftover before the C4 fix-up built it."
+  },
+  {
+   "id": "L4-github-129",
+   "sources": [
+    "C4:C4L-12"
+   ],
+   "severity": "words",
+   "decision": "already_fixed",
+   "title": "A joined project's Overview offered Research reads Change and the Note for the next session",
+   "what_the_person_sees": "Fixed: a joined (or removed) project's Overview shows neither.",
+   "evidence": "apps/ui/src/pages/project/SummaryTab.tsx:53-65 (`closed ? null : <ResearchReads/>`, `closed ? null : <QueueSection/>`), built by the C4 fix-up (runC-C4-fixup-d1109-onerepo-join.json fixed[0], OJ-06). The leftover's second part (an Undo answers a card whose undoHint reads \"This cannot be undone.\") is not seen by the person: Changes shows only the undo's sentence (apps/ui/src/pages/ChangesPage.tsx:109-113), and an undo is itself not undoable (packages/commands/src/executor.ts:1250-1262 builds its card with reversible false), so the hint is true wherever a client renders it.",
+   "root_cause_at_head": "None at 4cf11fd.",
+   "fix_sketch": "None.",
+   "test_boundary": "Existing: the C4 fix-up's OJ-06 UI and real-daemon cases.",
+   "notes": ""
+  },
+  {
+   "id": "L4-github-130",
+   "sources": [
+    "L3:LL-5"
+   ],
+   "severity": "minor",
+   "decision": "not_a_problem",
+   "title": "No Close button for a cancelled task's pull request that is still open on GitHub",
+   "what_the_person_sees": "The Overview lists it under \"Cancelled, still open on GitHub\" with Open and says to close it on GitHub; the cancel's read-back names its number.",
+   "evidence": "L3:LL-5; docs/decisions/0105-cancel-takes-a-running-tasks-work-out.md amendment of 2026-11-15 points 1-4.",
+   "root_cause_at_head": "By design: ADR 0105 point 4 (Forerunner never merges or closes it by itself; closing stays the person's on GitHub).",
+   "fix_sketch": "None.",
+   "test_boundary": "None.",
+   "notes": "Why not a problem: nothing is broken or hidden; the app names the pull request and says what to do (amendment points 1-3). A Close button is a new action the amendment left as an option for later; adding one is a choice about what a button does, which AGENTS.md leaves to the owner, and nothing in the owner's decisions asks for it."
+  },
+  {
+   "id": "L4-github-131",
+   "sources": [
+    "live4-step:github:LC-C1"
+   ],
+   "severity": "minor",
+   "decision": "live_only",
+   "title": "LC-C1's second-GitHub-account part: another login is offered Work together and Cancel only",
+   "what_the_person_sees": "Not seen: on a second GitHub login, linking forerunner-sandbox should read \"... another GitHub account worked on it on <day>. ...\" with only Work together and Cancel, and Work together writes nothing to GitHub.",
+   "evidence": "live4-step:github:LC-C1 observed (\"The second-GitHub-account parts are not possible here (one token)\"). Everything else of LC-C1 passed or is a finding of its own: live4:L4-github-1 (L4-github-102), live4:L4-github-2 (L4-github-101), live4:L4-github-3 (L4-github-108). The stand-in host covers the rule: packages/runtime/test/repository-use.test.ts, onerepo-together.test.ts, apps/ui/test/onerepo-link.test.tsx, packages/commands/test/repo-take-over.test.ts.",
+   "root_cause_at_head": "None found.",
+   "fix_sketch": "None; the owner's checklist.",
+   "test_boundary": "Owner's checklist (two real GitHub logins).",
+   "notes": "Only a second real GitHub account can show it; the bench has one token."
+  },
+  {
+   "id": "L4-github-132",
+   "sources": [
+    "live4-step:l3:LC-L3.not-run"
+   ],
+   "severity": "minor",
+   "decision": "not_a_problem",
+   "title": "Run L3 steps live check 4 did not reach (model behaviour that did not happen, timing, voice, spend)",
+   "what_the_person_sees": "Nothing failed: L3-github-10, L3-run-7, L3-run-8 step 3, L3-research-3's lower-case quote, the #3 and #4 nudges, voice, the #18 rebase variant and the L3-github-3 counter-check were not seen.",
+   "evidence": "live4-step:l3:LC-L3.not-run observed. Each is tested at its boundary by run L3: L3-github-10 (packages/runtime/test/l3-merge.test.ts \"L3-github-10: a cancelled task's pull request ...\"), L3-github-3 and its fix-up siblings (packages/runtime/test/dependent-branches-merge.test.ts \"l3-merge, run L3\"), L3-run-7 (packages/runtime/test/executor-brief.test.ts \"l3-small, run L3: a refused step says what was refused\"), L3-run-8 (packages/runtime/test/event-lines.test.ts and apps/ui/test/real-daemon.test.ts \"l3-money-engine, run L3\"), L3-research-3 (packages/runtime/test/person-questions.test.ts \"the quoted reason keeps a command's own case\").",
+   "root_cause_at_head": "None found.",
+   "fix_sketch": "None.",
+   "test_boundary": "Existing tests named in evidence; the owner's checklist already carries L3-github-10 at person speed, L3-github-3 with the Update-branch counter-check and L3-run-5's voice step (owner-checklist-live4.json).",
+   "notes": "Not seen is not a failure; nothing to fix. The voice and timing parts are on the owner's checklist already (live check 4's own list)."
+  }
+ ],
+ "proposed_areas": [
+  {
+   "key": "l4-github-link",
+   "title": "One repository, one project, said truly on GitHub and in the app: a removed project's take-over no longer counts, so the offer comes again; a take-over's docs pull request opens from the default branch, or the take-over says it did not; a Work-together project's Settings never promise a status pull request; a first plan keeps its decision record; Add to shows its drafting state and the plan wait once; the take-over and host lines read well",
+   "problems": [
+    "[major] L4-github-101: after Undo of a project made with Take it over, New project on the same repository is made with no offer and takes nothing over, although main still names \"Kite club\"; from then on the 14-day rule is skipped. Evidence: live4:L4-github-2; /tmp/frbench/live4/github/evidence/a04-takeover-brief.json, a04-db-projects-after-undo-and-second-create.jsonl; /tmp/frbench/verify-L4-github-2/repro.mts. Root cause: packages/runtime/src/sources/repository-use.ts:358 (knows counts a removed row's took_over), used at :571 and :988.",
+    "[major] L4-github-102: Take it over opens no docs pull request when an old fr/docs-scaffold branch is on GitHub, adds no take-over line to this project's own open scaffold pull request, and no screen says so. Evidence: live4:L4-github-1, C4:C4L-2; /tmp/frbench/live4/github/evidence/a-home1/daemon.log 05:31:39, c1-a-before-press.json; /tmp/frbench/verify-L4-github-1/repro.mts. Root cause: packages/runtime/src/loop/docs.ts:875 (checkout without fresh), :1249-1254, :921, :1434; packages/runtime/src/daemon/compose.ts:4916-4924; packages/runtime/src/daemon/create-project.ts:192.",
+    "[minor] L4-github-103: a Work-together project's Settings offers Status pull request and promises one; none ever opens. Evidence: live4:L4-l3-10, live4-step:l3:LC-L3.L3-github-6. Root cause: packages/runtime/src/daemon/settings-view.ts:315-325; packages/commands/src/commands/settings.ts:403-418 (contradicts packages/runtime/src/loop/docs.ts:968).",
+    "[minor] L4-github-104: a first-plan reply without docs is taken without asking again, so the card has no decision line. Evidence: C2:CL-6. Root cause: packages/runtime/src/session/intake.ts:241 (docs default) and :811 (the cut-off advice \"leave docs out\").",
+    "[minor] L4-github-105: Work together's time from new Date(); discovery reads a marker with node:fs. Evidence: C2:CL-7. Root cause: packages/runtime/src/daemon/create-project.ts:113, :153; packages/runtime/src/sources/discovery.ts:720.",
+    "[minor] L4-github-106: Add to it shows \"Adding...\" for about 10 s and no \"Drafting the plan...\" state. Evidence: C2:CL-5; /tmp/frbench/live4/session/steps/LC-C2.json. Root cause: packages/runtime/src/daemon/server.ts:1123 (synchronous intake), apps/ui/src/pages/NewProjectDialog.tsx:198.",
+    "[minor] L4-github-107: the comment on an open plan-docs pull request when docs are written again has no test. Evidence: C2:CL-9. Root cause: packages/runtime/src/session/intake.ts:2534-2540.",
+    "[words] L4-github-108: 'it is now \"Kite flyers\"'s.' in the take-over's docs pull request, and siblings. Evidence: live4:L4-github-3; /tmp/frbench/live4/github/evidence/c1-a-prs-50-51.json. Root cause: packages/runtime/src/sources/repository-use.ts:449-450; packages/runtime/src/sources/repository-words.ts:219.",
+    "[words] L4-github-109: the other-host refusal names github.com on an Enterprise install; the line under Take it over can pass 100 characters. Evidence: C2:CL-8. Root cause: packages/runtime/src/sources/repository-words.ts:180-192.",
+    "[words] L4-github-110: the log says \"Plan: 1 task\" then \"It promised 3 tasks\" and \"note for the next session\"; the Overview says the plan wait twice after Add to. Evidence: live4:L4-session-9; /tmp/frbench/live4/session/s2/steps/05-c2-12-add-to-landed.png. Root cause: packages/runtime/src/session/runner.ts:1796, :5509; packages/runtime/src/daemon/views.ts:773-789, :816-817; apps/ui/src/pages/ProjectPage.tsx:129-137; apps/ui/src/pages/project/IntakeBanner.tsx:110-121.",
+    "[words] L4-github-111: the plan's docs branch carries the project's full id. Evidence: C2:CL-3. Root cause: packages/runtime/src/session/intake.ts:158-160; packages/runtime/src/sources/repository-use.ts:618; intake.ts:2541-2552 (no hidden mark in the body)."
+   ],
+   "decisions": [
+    "A removed project uses nothing (ADR 0117 point 2): its take-over and joined ids no longer make an id known, so New project on its repository gets the offer again; a joined project's take-over still counts through its keeper; run C session lead decision 14 (a removed project frees its repository; the marker that names the removed project itself is replaced by the next project's first docs pull request) is kept. Why: the owner's D1 and D9.",
+    "The scaffold branch starts from the default branch whenever no scaffold pull request is open, as the status branch does; it is force-pushed only over a closed or merged pull request's branch or this install's own marked branch, never over anything else; another project's open pull request is never touched (W15-01). A take-over while this project's own scaffold pull request is open rebuilds that branch on the default branch before the replaced marker is written (ADR 0117's amendment). Why: GitHub keeps closed pull requests' head branches by default.",
+    "A take-over whose docs pull request did not open says so where the person reads the take-over (repo.take_over's sentence, the Overview's line, Docs), never \"Took over ...\" alone. Why: design section 5 rule 9.",
+    "A together project cannot turn on the status pull request: settings.set refuses in one sentence at the command (Settings, chat and voice alike) and Settings shows no switch for it. Why: D9 (a together project writes nothing to the repository).",
+    "The first-plan form needs the decision record; the cut-off advice keeps it short instead of dropping it; the plan-only form (Add to) writes no docs. Why: the plan card shows the decision before approval (design section 3.3).",
+    "Add to answers at once and plans in the background, as a new project's plan does; the Overview says the pending plan in one place (the banner with Open). Why: design sections 3.3 and 5 rule 10.",
+    "No possessive after a quoted name; a consequence line at most 100 characters; the configured host, never a hardcoded one. Why: design section 5 rules 1 and 6, run L3's L3-github-8, AGENTS.md."
+   ],
+   "u_entries": [
+    "U-091 (one repository, one project): Check in the app gains: 'Take it over on a repository with an old fr/docs-scaffold branch of a closed pull request: one docs pull request from main replaces only the marker (or the Overview says GitHub still names the other project and why)'; 'Undo of a project made with Take it over, then New project on the same repository: the same offer comes again'; 'Add to it: the page says Drafting the plan..., then the plan wait once'.",
+    "U-087 (the status pull request): 'on a project made with Work together, Settings has no Status pull request switch, and \"turn on the status pull request\" in chat is refused in one sentence'."
+   ],
+   "root_causes": [
+    "packages/runtime/src/sources/repository-use.ts:353-361 RepositoryIndex.knows counts removed rows' took_over.",
+    "packages/runtime/src/loop/docs.ts:875 scaffoldInCopy's checkout has no `fresh`, and its outcome (prUrl null, marker other_project) is never surfaced (compose.ts:4916-4924, create-project.ts:192).",
+    "packages/runtime/src/daemon/settings-view.ts:315 and packages/commands/src/commands/settings.ts:403-418 do not know D9's together rule.",
+    "packages/runtime/src/session/intake.ts:241 docs default for both forms; :2533 push not forced over an old branch.",
+    "packages/runtime/src/daemon/server.ts:1123 synchronous Add to; apps/ui/src/pages/ProjectPage.tsx:129-137 and IntakeBanner.tsx:110-121 both say the pending plan.",
+    "packages/runtime/src/session/runner.ts:1796/:5509 and packages/runtime/src/daemon/views.ts:773-789, :816 word the session's size twice and the brief as a later note.",
+    "packages/runtime/src/sources/repository-use.ts:443-451 and repository-words.ts:180-219 words (possessive, host, length)."
+   ],
+   "fix_scope": "Run L4 (base 4cf11fd; line numbers may move: re-find them). One commit per item, in this order: L4-github-101, L4-github-102, L4-github-103, L4-github-104, L4-github-105, L4-github-106, L4-github-107, L4-github-108, L4-github-109, L4-github-110, L4-github-111. For each item the failing test first at the person's boundary, then the fix, then the siblings (validation rule 8, the search named in the commit): L4-github-101 a real-daemon case (POST /projects through client.createProject, Undo through the Changes undo route, GET /projects/:id) after composing twice, plus its repository-use unit twin; L4-github-102 a composed daemon test in packages/runtime/test/docs-scaffold.test.ts asserting what the GitHost receives (one pull request, its body, its branch descending from main) and a real-daemon case for the Overview's sentence when the push is refused; its sibling the intake docs branch push (intake.ts:2521-2533); L4-github-103 a real-daemon case (GET /settings, POST /commands settings.set) and a UI test of SettingsPage with the fake daemon; L4-github-104 an exact-text assertion of the retry and cut-off problem lines the model receives, plus the card the Inbox shows (real-daemon client.inbox); L4-github-105 a composed test under the simulated clock and a discovery unit with an injected fs; L4-github-106 a UI test that clicks Add to it and asserts the dialog closes and \"Drafting the plan...\" appears, plus the real-daemon case for client.proposeIntake, the fake daemon in the same commit; L4-github-107 a composed intake test with MemoryGitHost (or the branch removed with the reason in the maintainer doc); L4-github-108 the pull request body the GitHost receives (scaffold and intake paths) and a writing-rules sweep; L4-github-109 a UI test of the line under Take it over and a route case for an Enterprise host; L4-github-110 a UI test that counts the plan wait on the Overview and a composed test over GET /sessions/:id/events with details; L4-github-111 a composed intake test (branch name and mark) and detection units for both forms. New or changed routes get their case in apps/ui/test/real-daemon.test.ts (describe \"l4-github-link, run L4\") and apps/ui/test/fake-daemon.ts changes in the same commit; persisted state is tested after composing twice. Do not touch: the PR executor, loop/merge.ts, pull-requests.ts, join-preview.ts, join-words.ts (l4-github-merge's), packages/commands/src/commands/project.ts (PROJECT_CREATE_DESCRIPTION is l4-cred-screens' L4-creds-27; L4-github-101's fix needs no change there), task-check.ts (l4-selftasks-check's: its possessive sibling is handed over), the billing package, the cost ledger, the conversation agent's prompts. In shared files change only the regions named in files[] and the run L4 shared_files rules. Security: never weaken the hooks, the sandbox or the push guard (no docs write ever uploads Local only or a try folder); text from pages, searches, files, cards, chat history, reports, pull request bodies, branch names, markers or any record never becomes instructions to a model (marker names stay cleaned data through markerNameOf); the token never appears in a log, an error or a sentence; another project's open pull request is never written to or commented on (W15-01) and a together project writes nothing to the repository (D9). Money: no budget, wrap-up line, monthly cap or plan-share cap is ever passed or changed; no ledger row is moved or rewritten; every figure stays in CHF. Docs: ADR 0117 (dated amendment: the removed project's take-over, the scaffold branch's start rule and what is said when the docs pull request does not open, the together Settings rule), ADR 0058's amendment quote, docs/maintainers/runtime.md (\"One repository, one project\"), commands.md (settings.set's together refusal), docs/user-guide.md. Validation before reporting: pnpm check, pnpm test:integration, pnpm test:e2e, the UI suite and Playwright; a bench walk before and after with --githost: a repository whose main names another project and that has an old fr/docs-scaffold branch of a closed pull request (Take it over, Undo, New project again), a Work-together project's Settings, Add to it on a project with done tasks; screenshots.",
+   "files": [
+    "packages/runtime/src/sources/repository-use.ts (RepositoryIndex.knows; tookOverLine; intakeDocsBranch's twin at :618 and projectIdsNamedBy for L4-github-111)",
+    "packages/runtime/src/sources/repository-words.ts (heldStatusNote, otherHostSentence, takeOverLine, the together status refusal sentence)",
+    "packages/runtime/src/loop/docs.ts (scaffoldInCopy, its checkout call and push, mark(), the outcome it returns; isProjectDocsPr's intake branch for L4-github-111; writeSessionStatus and the status listing gate unchanged)",
+    "packages/runtime/src/daemon/compose.ts (repositoryTakeOver.writeMarker only)",
+    "packages/runtime/src/daemon/create-project.ts (scaffoldProjectDocs' outcome; the Clock for settings.together.at)",
+    "packages/runtime/src/sources/discovery.ts (the marker read through the injected fs)",
+    "packages/runtime/src/daemon/settings-view.ts (the Status pull request row's together case) and packages/commands/src/commands/settings.ts (the status_pull_request key: its effect and the together refusal only)",
+    "packages/runtime/src/session/intake.ts (IntakeProposalBody and its parse, the retry and cut-off problem lines, writeDocsToRepository: branch, push, body mark, the existingPr comment path; not the prompt lines l4-selftasks-check and l4-cred-screens own)",
+    "packages/runtime/src/daemon/server.ts (POST /projects/:id/intake only) and apps/ui/src/pages/NewProjectDialog.tsx (Add to's landing)",
+    "apps/ui/src/pages/ProjectPage.tsx (planBanner only) and apps/ui/src/pages/project/IntakeBanner.tsx",
+    "packages/runtime/src/session/runner.ts (the session.planned emit at :1793-1800 and StaticPlanner's first-session summary at :5480-5510 only)",
+    "packages/runtime/src/daemon/views.ts (the event line cases session.planned and task.notes only)",
+    "packages/runtime/src/daemon/api-types.ts, apps/ui/src/api/client.ts and contracts.ts (append-only, if the take-over outcome or the intake answer needs a field)",
+    "tests: packages/runtime/test/repository-use.test.ts, docs-scaffold.test.ts, onerepo-together.test.ts, intake.test.ts, writing-rules.test.ts, event-lines.test.ts or a composed session test; packages/commands/test (settings.set together refusal); apps/ui/test/real-daemon.test.ts (\"l4-github-link, run L4\"), fake-daemon.ts, onerepo-link.test.tsx, project.test.tsx, a SettingsPage test",
+    "docs: docs/decisions/0117-one-repository-one-project.md and 0058 (dated amendments), docs/maintainers/runtime.md, commands.md, docs/user-guide.md"
+   ],
+   "acceptance": [
+    "L4-github-101 (real-daemon, restart): after Take it over and its Undo, POST /projects on the same repository answers 409 repository_used_elsewhere naming \"Kite club\" with Work together and Take it over; GET /projects/:id of a project whose copy's marker names Kite club has repositoryElsewhere; a marker naming the person's own removed project still frees the repository.",
+    "L4-github-102 (composed with the GitHost, real-daemon): with an old fr/docs-scaffold branch of a closed pull request, Take it over opens one docs pull request from main whose only change is the marker and whose body has the take-over line; with this project's own scaffold pull request open, repo.take_over rebuilds it on main and comments the line; when the push is refused, repo.take_over and the Overview say GitHub still names \"Kite club\"; a branch that is no pull request's head is never overwritten; the intake docs push follows the same rule.",
+    "L4-github-103 (real-daemon, UI): a Work-together project has no Status pull request row in GET /settings and no Change in Settings; settings.set status_pull_request=true on it answers the one refusal sentence and writes nothing (Settings, chat).",
+    "L4-github-104 (exact text, real-daemon): a first-plan reply without the decision record gets one retry whose problem line is the exact text; the card lands with its \"Decision: ...\" line; a plan-only reply without docs is taken at once.",
+    "L4-github-105 (composed, unit): settings.together.at equals the simulated clock's time after composing twice; discovery reads the marker through the injected fs.",
+    "L4-github-106 (UI, real-daemon): Add to it lands on the project at once with \"Drafting the plan...\", then the plan card; client.proposeIntake answers before the model does; the fake daemon matches.",
+    "L4-github-107 (composed): the comment path is pinned with its exact words, no id, one pull request; or removed with the reason documented.",
+    "L4-github-108 (GitHost body, sweep): the take-over line reads 'it is now the project \"Kite flyers\".' in both docs pull requests; heldStatusNote has no possessive; no person-facing line built from a quoted name contains `\"'s` (task-check.ts and join-words.ts handed to their areas).",
+    "L4-github-109 (UI, route): the line under Take it over is at most 100 characters with a 60-character name; the other-host refusal names the configured host.",
+    "L4-github-110 (UI, composed): the Overview of a project with tasks and a pending plan says \"Waiting for you: approve the plan\" once with one Open; the session's Details state its size once and never call the brief a note \"for the next session\".",
+    "L4-github-111 (composed, unit): new plan-docs branches carry no full id, their pull request bodies carry the mark, and both branch forms are read."
+   ],
+   "depends_on": [
+    "4cf11fd (run C, run L3 and C4b merged): the base.",
+    "No other run L4 area must merge first. Shared files (regions only, see shared_files): packages/runtime/src/daemon/views.ts (l4-github-merge: projectCard's folder line, projectSummary's joined line, costView's byTask runs; l4-selftasks-check, l4-cred-screens and l4-cred-engine: their named regions), packages/runtime/src/session/runner.ts (l4-selftasks-check and l4-cred-engine regions), packages/runtime/src/session/intake.ts (l4-selftasks-check's prompt line, l4-cred-screens' counted nouns), packages/runtime/src/daemon/server.ts and compose.ts (each area its routes and closures), packages/commands/src/commands/settings.ts (l4-cred-screens only if its read-back listing changes), apps/ui/test/real-daemon.test.ts and fake-daemon.ts (own describe, append-only)."
+   ],
+   "handoff_items": [
+    "live4:L4-github-2 (L4-github-101), live4:L4-github-1 and C4:C4L-2 (L4-github-102), live4:L4-l3-10 with live4-step:l3:LC-L3.L3-github-6 (L4-github-103), C2:CL-6 (L4-github-104), C2:CL-7 (L4-github-105), C2:CL-5 (L4-github-106), C2:CL-9 (L4-github-107), live4:L4-github-3 (L4-github-108), C2:CL-8 (L4-github-109), live4:L4-session-9 (L4-github-110), C2:CL-3 (L4-github-111).",
+    "To l4-selftasks-check: packages/runtime/src/session/task-check.ts:854 'the first part keeps \"<title>\"'s specialist' -> 'the first part keeps the specialist of \"<title>\"' (L4-github-108's sibling, its file).",
+    "To l4-github-merge: join-words.ts settingAppliesLine without the possessive (done with L4-github-113).",
+    "Session lead: U-091 and U-087 Check in the app steps; ADR 0117 amendment; design section 3.3 (Add to's drafting state) as built."
+   ],
+   "owner_questions": [],
+   "size": "medium: 11 items (2 major, 5 minor, 4 words). Larger: L4-github-102 (the branch start rule with its force rule, the C4L-2 rebuild and the outcome said on three screens) and L4-github-106 (Add to in the background, the route's answer and the fake). Cut line: L4-github-106 (CL-5), L4-github-107 (CL-9) and L4-github-111 (CL-3) may end in not_done with the evidence; never L4-github-101, L4-github-102 or L4-github-103 (the owner's D1 and D9, and a promise the code breaks), never a force-push over a branch that is not a closed or merged pull request's or this install's own, never a write to another project's open pull request."
+  },
+  {
+   "key": "l4-github-merge",
+   "title": "Merges and joined projects say what is true now: a pull request merged on GitHub that held a closed task's work says that work reached main and offers to take it out; merge cards close when their pull request is closed; the press says a failed check at once; a merge found made on GitHub reads so; the join's dialog, the status pull request, Costs, the header, Your files and Last result agree with GitHub and with where the work went; GitHub's slow answers read as such",
+   "problems": [
+    "[major] L4-github-112: B merged on GitHub while it held closed A's work: A still reads \"#A was closed without merging.\" and nothing offers to take A's change out. Evidence: L3:LL-4; /tmp/frbench/runL3-l3-merge-fix.json not_done[0]; ADR 0111 amendment 2026-11-15 point 4. Root cause: packages/runtime/src/session/dependent-branches.ts:208-243 (mergedOnHost, closedOnHost).",
+    "[minor] L4-github-113: after Make one project the closed project's open status pull request is listed nowhere and the dialog never said so. Evidence: live4:L4-github-7, C4:C4L-5; /tmp/frbench/live4/github/evidence/c4a-walk.json, c4c-walk.json. Root cause: packages/runtime/src/loop/docs.ts:189-190; packages/runtime/src/daemon/pull-requests.ts:468; packages/runtime/src/daemon/join-preview.ts:294-303; join-words.ts:169-171.",
+    "[minor] L4-github-114: the dialog counts a closed pull request as open. Evidence: live4:L4-github-8; /tmp/frbench/live4/github/evidence/c4a-walk.json, c4-01-kite-session.json. Root cause: packages/runtime/src/daemon/join-preview.ts:263.",
+    "[minor] L4-github-115: a joined project's header names the other project, and Your files shows the docs clone's path with an id. Evidence: live4:L4-github-10; /tmp/frbench/live4/github/gh4a/steps/34-c4c-03-site-joined-overview.png; /tmp/frbench/l4g10/header-joined.test.tsx. Root cause: apps/ui/src/shell/Shell.tsx:46; packages/runtime/src/daemon/views.ts:251; packages/runtime/src/daemon/server.ts:992, :1008.",
+    "[minor] L4-github-116: Costs > By task reads \"6 · 0 / 6 (0%)\" for a moved task that ran once and was accepted. Evidence: live4:L4-github-9; /tmp/frbench/live4/github/evidence/c4c-kite-costs-api.json; /tmp/frbench/l4gh9/repro.mts. Root cause: packages/runtime/src/daemon/views.ts:1264-1265 with costFacts at :1395.",
+    "[minor] L4-github-117: merge cards stay open after their pull request is closed on GitHub. Evidence: L3:LL-1. Root cause: packages/runtime/src/session/dependent-branches.ts:234-243 (no closeMergeCards).",
+    "[minor] L4-github-118: a press on a pull request whose check failed or that stopped merging cleanly answers \"Merging #N.\" first. Evidence: L3:LL-2. Root cause: packages/runtime/src/daemon/pull-requests.ts:711-770.",
+    "[minor] L4-github-119: the press's \"could not check\" refusal has no boundary test. Evidence: L3:LL-3. Root cause: packages/runtime/src/daemon/pull-requests.ts:196-198, :738.",
+    "[minor] L4-github-120: a slow GitHub body fails as a plain abort. Evidence: C4:C4L-10. Root cause: packages/capabilities/src/githost/github.ts:274-292 (body reads :231, :250, :786, :803 outside the guard).",
+    "[minor] L4-github-121: Make one project has no Postgres case. Evidence: C4:C4L-6. Root cause: no integration case for packages/commands/src/commands/project-join.ts on the Postgres adapter.",
+    "[words] L4-github-122: a rebuild card's Merge just after a merge on GitHub says \"Merged #59.\". Evidence: live4:L4-l3-13, live4-step:l3:LC-L3.L3-github-2; /tmp/frbench/live4/l3/evidence/g2-step5-card-merge.json. Root cause: packages/runtime/src/loop/merge.ts:1818-1846; packages/runtime/src/session/pr-answers.ts:327-329.",
+    "[words] L4-github-123: the head-moved card cuts a 55-character title before its quoted part. Evidence: live4:L4-l3-12, live4-step:l3:LC-L3.L3-github-3; /tmp/frbench/live4/l3/evidence/g3-inbox.json. Root cause: packages/runtime/src/daemon/quoted-title.ts:21.",
+    "[words] L4-github-124: the closed dependency's row after a press-time check, the cancelled block's plural, a rebuilt-without pull request under \"Reviewed by the critic\". Evidence: L3:LL-6. Root cause: packages/runtime/src/daemon/pull-requests.ts:711-743; apps/ui/src/pages/project/SummaryTab.tsx:497-503, :786-790.",
+    "[words] L4-github-125: a joined project's Last result offers a moved task as ready to continue. Evidence: C4:C4L-9. Root cause: packages/runtime/src/daemon/views.ts:403-470 (projectSummary)."
+   ],
+   "decisions": [
+    "A dependency whose reviewed change reached main through a pull request merged on GitHub is recorded as merged through it (state merged, last_outcome merged_through, no migration), in whatever order the watcher reads the two events and across a restart; one card says it with Take this work out and Keep it; nothing is written to GitHub before the person presses. Why: design section 5 rule 4; ADR 0111 point 4 left it for later.",
+    "Every merge card of a task closes when its pull request is closed on GitHub, as on a merge (ADR 0111 2026-11-15 point 3), Answered \"Closed: #33 was closed on GitHub.\". Why: U-028 (every option does what it says).",
+    "The press reads each pull request of the chain once before it answers (checks, mergeable state; the head for L4-creds-22) and refuses at once in the merge step's own words; nothing merges a pull request whose check failed. Why: run L3's L3-github-3 rule for every reason the merge step would refuse.",
+    "After a join the kept project lists the closing project's open status pull request (Open, Merge) whatever its own setting; the status writer still writes there only once the setting is on; the dialog names the status setting. Why: ADR 0117 point 3 (\"one status pull request again\") and the dialog's own promise that the pull requests move.",
+    "The dialog's open pull request count reads one predicate with the task row: a record closed on GitHub is not open.",
+    "Costs' runs and accepted runs of a task are the task's own, wherever its ledger rows are booked; money, totals and the other groupings stay the project's own ledger (BA-9, OJ-07).",
+    "A joined or removed project's page names itself in the header, never shows an internal folder, and its Last result says where its tasks went. Why: design sections 3.1 and 5 rules 3 and 4.",
+    "A merge the press found already made on GitHub reads \"#59 was merged on GitHub already.\"; only Forerunner's own reads \"Merged #59.\". Why: ADR 0111 point 3."
+   ],
+   "u_entries": [
+    "U-091 (one repository, one project), Make one project: Check in the app gains 'the closing project's open status pull request is listed on the kept project's Overview with Open and Merge, and the dialog has a Status pull request line'; 'the dialog's open pull request count matches GitHub'; 'Costs > By task of a moved task reads 1 · 1 / 1'; 'the closed project's header names it and Your files says where its files are; its Last result says where its tasks went'.",
+    "U-028 (merge cards): 'close a pull request on GitHub while its \"changed after the review\" card is open: the card closes with \"Closed: #N was closed on GitHub.\"'.",
+    "The merge-in-app entry (ADR 0111; the session lead names its U-id): 'merge B on GitHub while it holds closed A: A reads merged through #B, with Take this work out'; 'press Merge on a pull request whose check just failed: refused at once'; 'merge on GitHub, then press the card's Merge: \"#N was merged on GitHub already.\"'."
+   ],
+   "root_causes": [
+    "packages/runtime/src/session/dependent-branches.ts:208-243: the watcher's merged and closed paths never ask what reached main through a merged dependent, and the closed path never closes the task's merge cards.",
+    "packages/runtime/src/daemon/pull-requests.ts:711-770: the press checks branch and head only; the closed dependency's record waits for the next poll; notCheckedSentence untested.",
+    "packages/runtime/src/loop/merge.ts:1818-1846: an already-merged pull request is recorded as Forerunner's own merge.",
+    "packages/runtime/src/daemon/quoted-title.ts:21: the early return misses a dropped quoted part.",
+    "packages/runtime/src/daemon/join-preview.ts:256-303: four settings only; closed pull requests counted as open. packages/runtime/src/loop/docs.ts:189-190 status listing gate on the kept project's setting.",
+    "packages/runtime/src/daemon/views.ts:251, :403-470, :1255-1268: a joined project's folder from the docs clone, its stored Last result, a moved task's runs from the kept project's facts. apps/ui/src/shell/Shell.tsx:45-47: the header knows active projects only.",
+    "packages/capabilities/src/githost/github.ts:274-292: body reads outside the timeout's guard."
+   ],
+   "fix_scope": "Run L4 (base 4cf11fd; line numbers may move: re-find them). One commit per item, in this order: L4-github-112, L4-github-113, L4-github-114, L4-github-115, L4-github-116, L4-github-117, L4-github-118, L4-github-119, L4-github-120, L4-github-121, L4-github-122, L4-github-123, L4-github-124, L4-github-125. For each item the failing test first at the person's boundary, then the fix, then the siblings (validation rule 8, the search named in the commit): L4-github-112 a composed runtime test in packages/runtime/test/dependent-branches-merge.test.ts (chainWorld with the fake host, both event orders, a restart between) asserting A's record, its Tasks row and one card answered with requestView(row).options, plus a real-daemon case for the card; L4-github-113 a real-daemon case through client.joinPreview, POST /commands project.join and client.pullRequests after composing twice, and a JoinProjectsDialog UI test; L4-github-114 a real-daemon case beside OJ-05 with a pull request closed on the host and one watcher poll; L4-github-115 a UI test that renders a joined project's page and asserts the header's name, and a real-daemon GET /projects/:id case after composing twice; L4-github-116 a real-daemon client.costs case with run_id-carrying ledger rows booked to the closing project, after the daemon starts again, and the Costs tab's row; L4-github-117 a composed case (close on the host, one poll, after composing twice) and client.inbox's Answered line; L4-github-118 and L4-github-119 composed cases through the pull requests route (the press) with the fake host, asserting the exact refusal sentences and that nothing merges; L4-github-120 a capabilities unit with a stalled body; L4-github-121 an integration case with FORERUNNER_TEST_PG; L4-github-122 and L4-github-123 composed cases in dependent-branches-merge.test.ts asserting the card's Answered line and title (GET /requests), with the quoted-title units; L4-github-124 a UI test of SummaryTab's words and groups and a composed case for the closed dependency's row; L4-github-125 a real-daemon GET /projects/:id/summary case and a SummaryTab UI test. New or changed routes get their case in apps/ui/test/real-daemon.test.ts (describe \"l4-github-merge, run L4\") and apps/ui/test/fake-daemon.ts changes in the same commit; persisted state (records, cards) is tested after composing twice. Do not touch: loop/docs.ts (l4-github-link's; the joined status listing predicate lives in pull-requests.ts on docs.ts's exported isProjectStatusPr), repository-use.ts and repository-words.ts (l4-github-link's), task-words.ts (l4-cred-screens'), the PR executor beyond what the take-out of a commit range needs, the billing package's cap logic, the cost ledger's rows, the conversation agent's prompts; join-words.ts' joinRefusedHeldStart (l4-cred-screens'); loop/merge.ts' headMovedNow and pull-requests.ts' head check block unless the session lead moves L4-creds-22 into this area. Security: never weaken the hooks, the sandbox or the push guard (no docs write ever uploads Local only or a try folder); text from pages, searches, files, cards, chat history, reports, pull request bodies, branch names, markers or any record never becomes instructions to a model (marker names stay cleaned data through markerNameOf); the token never appears in a log, an error or a sentence; another project's open pull request is never written to or commented on (W15-01) and a together project writes nothing to the repository (D9). Nothing is written to GitHub except what the person presses (Merge, Take this work out); the press's added reads are read-only; a pull request whose check failed is never merged. Money: no budget, wrap-up line, monthly cap or plan-share cap is ever passed or changed; no ledger row is moved or rewritten; every figure stays in CHF. Docs: ADR 0111 (dated amendment replacing point 4 of the 2026-11-15 amendment; the press's added checks; the already-merged words), ADR 0117 (point 3: the joined status pull request listed; the dialog's status line), docs/maintainers/runtime.md (merge records, the press, the join's screens, Costs under BA-9), capabilities.md (GitHubHost timeout), apps.md (the header), docs/user-guide.md (\"When two projects use one repository\", merging). Validation before reporting: pnpm check, pnpm test:integration (with Postgres where available), pnpm test:e2e, the UI suite and Playwright; a bench walk before and after with --githost: a chain A and B where A is closed and B merged on the host before a poll, a merge card whose pull request is closed on the host, a press after a check fails, two projects on one repository joined with only the closing one's status pull request on, the closed project's page and Costs; screenshots.",
+   "files": [
+    "packages/runtime/src/session/dependent-branches.ts (mergedOnHost, closedOnHost, closeMergeCards' reason)",
+    "packages/runtime/src/loop/take-out.ts and, only if needed for a commit range, the take-out path in packages/capabilities/src/githost/pr-executor.ts (Take this work out for a task merged through another)",
+    "packages/runtime/src/loop/merge.ts (ReviewedPrMerge.finish's already-merged branch only) and packages/runtime/src/ports.ts (MergeOutcome.alreadyMerged, append-only)",
+    "packages/runtime/src/session/pr-answers.ts (applyRebuildMerge)",
+    "packages/runtime/src/daemon/request-words.ts (the merged-through card's words as a new branch; the merge cards' \"closed on GitHub\" Answered line; not askCard, not the plan-approval or task-proposal branches)",
+    "packages/runtime/src/daemon/quoted-title.ts (balancedCut)",
+    "packages/runtime/src/daemon/pull-requests.ts (the press's checks and mergeable read, the closed dependency's record settled at the press, notCheckedSentence; the joined status pull request's docs row and its predicate; the head check block only if L4-creds-22 moves here)",
+    "packages/runtime/src/daemon/join-preview.ts (openPullRequests, the Status pull request setting and its line) and packages/runtime/src/daemon/join-words.ts (settingAppliesLine, joinMovesLine, the status line; not joinRefusedHeldStart)",
+    "packages/runtime/src/daemon/views.ts (projectCard's folder line, projectSummary's since line for a joined project, costView's byTask runs and accepted with a task-run helper only)",
+    "apps/ui/src/shell/Shell.tsx (the viewed project's name), apps/ui/src/pages/project/SummaryTab.tsx (the files section of a joined project, the cancelled block's words, the pull request groups), apps/ui/src/pages/project/JoinProjectsDialog.tsx (the status line, if it needs its own render)",
+    "packages/capabilities/src/githost/github.ts (send and the body reads)",
+    "packages/runtime/src/daemon/api-types.ts, apps/ui/src/api/client.ts and contracts.ts (append-only)",
+    "tests: packages/runtime/test/dependent-branches-merge.test.ts, l3-merge.test.ts, project-join.test.ts (a case of its own), views.test.ts; packages/capabilities/test/github.test.ts; a Postgres integration case for project.join; apps/ui/test/real-daemon.test.ts (\"l4-github-merge, run L4\"), fake-daemon.ts, onerepo-join.test.tsx, a SummaryTab/CostsTab test",
+    "docs: docs/decisions/0111 and 0117 (dated amendments), docs/maintainers/runtime.md, capabilities.md, apps.md, docs/user-guide.md"
+   ],
+   "acceptance": [
+    "L4-github-112 (composed with the fake host, restart; real-daemon card): B merged on the host while holding closed A, in either order and across a restart: A's record is merged/merged_through, its row reads \"merged through #B\", one card offers Take this work out and Keep it, and Take this work out opens one take-out pull request removing A's change only (or, past the cut line, the card says #B's take-out removes both); nothing is written to GitHub before the press.",
+    "L4-github-113 (real-daemon, UI; restart): the dialog has a Status pull request line; after the join the kept project lists the closing project's open status pull request with Open and Merge, also with its own setting off; the status writer does not write there until the setting is on.",
+    "L4-github-114 (real-daemon; restart): with one pull request closed on GitHub, the dialog reads \"1 open pull request\", matching the Overview and the task row.",
+    "L4-github-115 (UI, real-daemon; restart): on a joined project's page the header names it; its card has no docs-clone folder and its files section reads 'Its files are in \"<kept>\".'.",
+    "L4-github-116 (real-daemon; restart): a moved task reads runs 1, accepted 1 (and 2, 2 after a Redo on the kept project); the CHF figures are unchanged.",
+    "L4-github-117 (composed; restart): a merge card closes with \"Closed: #N was closed on GitHub.\" when its pull request is closed there.",
+    "L4-github-118 (composed through the press): a failed check or a conflict after the last look is refused at once in the merge step's words and nothing merges.",
+    "L4-github-119 (composed through the press): the \"could not check\" refusal's exact sentence is asserted; nothing merges.",
+    "L4-github-120 (unit): a stalled body gives the retryable \"did not answer in time\" error, never a plain abort, and no token.",
+    "L4-github-121 (integration, Postgres): the join and its Undo leave the same row counts as on SQLite.",
+    "L4-github-122 (composed; real-daemon): a rebuild card's Merge after a merge on GitHub with no poll reads \"#N was merged on GitHub already.\" and the record's last_outcome is merged_on_host.",
+    "L4-github-123 (composed, unit): the 55-character title with its quote is whole on the head-moved card; a 70-character one is still cut before its quote.",
+    "L4-github-124 (UI, composed): one cancelled pull request reads the singular sentence; a rebuilt-without pull request is not under \"Reviewed by the critic\"; the closed dependency's row is true right after the press.",
+    "L4-github-125 (real-daemon, UI): a joined project's Last result says 'Its tasks went on in \"<kept>\".' and offers no moved task as ready."
+   ],
+   "depends_on": [
+    "4cf11fd (run C, run L3 and C4b merged): the base.",
+    "No other run L4 area must merge first. Shared with l4-github-link: packages/runtime/src/daemon/views.ts only (different functions) and the common test and doc files. Shared with l4-cred-screens: packages/runtime/src/daemon/pull-requests.ts and packages/runtime/src/loop/merge.ts (its L4-creds-22, the press's head check), packages/runtime/src/daemon/join-words.ts (its joinRefusedHeldStart), dependent-branches-merge.test.ts and project-join.test.ts: different sub-runs, or L4-creds-22 and L4-creds-28 moved into this area (recommended). Shared with l4-selftasks-check: views.ts (its costFacts label and \"(none)\" bucket) and request-words.ts (its plan-approval and task-proposal branches); with l4-cred-engine: request-words.ts (askCard) and views.ts (its exports)."
+   ],
+   "handoff_items": [
+    "L3:LL-4 (L4-github-112), live4:L4-github-7 and C4:C4L-5 (L4-github-113), live4:L4-github-8 (L4-github-114), live4:L4-github-10 (L4-github-115), live4:L4-github-9 (L4-github-116), L3:LL-1 (L4-github-117), L3:LL-2 (L4-github-118), L3:LL-3 (L4-github-119), C4:C4L-10 (L4-github-120), C4:C4L-6 (L4-github-121), live4:L4-l3-13 with live4-step:l3:LC-L3.L3-github-2 (L4-github-122), live4:L4-l3-12 with live4-step:l3:LC-L3.L3-github-3 (L4-github-123), L3:LL-6 (L4-github-124), C4:C4L-9 (L4-github-125).",
+    "Session lead: place L4-creds-22 (live4:L4-l3-11, the press's head check) in this area beside L4-github-118 and L4-github-124 (a), so one area owns the press-time check in pull-requests.ts and headMovedNow; likewise L4-creds-28 (join-words.ts joinRefusedHeldStart's length) beside L4-github-113's join-words lines. If they stay in l4-cred-screens, run the two areas in different sub-runs with the region rules in shared_files.",
+    "Session lead: U-091, U-028 and the merge-in-app entry's Check in the app steps; ADR 0111's point 4 replaced."
+   ],
+   "owner_questions": [],
+   "size": "medium-large: 14 items (1 major, 9 minor, 4 words). Larger: L4-github-112 (both event orders, the record state, a card and a take-out of a commit range), L4-github-113 (the dialog line and the listing after a join) and L4-github-118 (a read per pull request at the press). Cut line: inside L4-github-112 the Take this work out for A alone (the card then offers #B's take-out and says it removes both), L4-github-121 (only if CI has no Postgres for it), L4-github-124 (b) and (c), and L4-github-125 may end in not_done with the evidence; never L4-github-112's true record and row, L4-github-113, L4-github-114, L4-github-116, L4-github-117, L4-github-118 or L4-github-122, never a merge of a pull request whose check failed, never a write to GitHub the person did not press."
+  }
+ ],
+ "shared_files": [
+  "Rule for every file below (run L4): each area changes only the functions or regions its files[] name, re-found on the merged head; a sentence another area wrote is changed only where its spec names it, with old and new text in notes_for_other_areas; append-only files keep every area's additions in merge order.",
+  "packages/runtime/src/loop/docs.ts: l4-github-link owns scaffoldInCopy, its checkout call, mark() and isProjectDocsPr's intake branch; l4-github-merge does not edit it (its joined status listing predicate lives in pull-requests.ts on the exported isProjectStatusPr); writeSessionStatus and the status gate unchanged by both.",
+  "packages/runtime/src/daemon/pull-requests.ts: l4-github-merge owns the press's added reads (checks, mergeable), the closed dependency's settle, notCheckedSentence and the joined status pull request's docs row; the head check block (`if (!waits && merge.headMovedNow)`) is l4-cred-screens' L4-creds-22 unless the session lead moves it to l4-github-merge (recommended: one area owns the press-time check).",
+  "packages/runtime/src/loop/merge.ts: l4-github-merge owns ReviewedPrMerge.finish's already-merged branch; headMovedNow is l4-cred-screens' (L4-creds-22) unless moved.",
+  "packages/runtime/src/daemon/join-words.ts: l4-github-merge owns settingAppliesLine, joinMovesLine and the new status line; l4-cred-screens owns joinRefusedHeldStart (L4-creds-28) unless moved.",
+  "packages/runtime/src/daemon/views.ts: l4-github-link owns the event line cases session.planned and task.notes; l4-github-merge owns projectCard's folder line, projectSummary's since line for a joined project and costView's byTask `if (t)` branch with its helper; l4-selftasks-check owns costFacts' bySpecialist label and the \"(none)\" bucket; l4-cred-screens owns byCredential's words; l4-cred-engine exports credentialAskFor and credentialRefusedFor.",
+  "packages/runtime/src/daemon/request-words.ts: l4-github-merge adds the merged-through card's branch and the merge cards' closed Answered line; l4-cred-engine owns askCard; l4-selftasks-check owns the plan-approval and task-proposal branches. quoted-title.ts is l4-github-merge's alone.",
+  "packages/runtime/src/session/intake.ts: l4-github-link owns IntakeProposalBody and its parse, the retry and cut-off problem lines and writeDocsToRepository; l4-selftasks-check owns its one prompt line about a task's budget; l4-cred-screens the counted nouns.",
+  "packages/runtime/src/session/runner.ts: l4-github-link owns the session.planned emit and StaticPlanner's first-session summary; l4-selftasks-check and l4-cred-engine their named regions.",
+  "packages/runtime/src/daemon/server.ts and compose.ts: l4-github-link owns POST /projects/:id/intake and repositoryTakeOver.writeMarker; the other areas their named routes and closures.",
+  "packages/commands/src/commands/settings.ts: l4-github-link owns the status_pull_request key; l4-cred-screens only if its read-back listing changes.",
+  "packages/runtime/src/session/task-check.ts: l4-selftasks-check's alone; it takes L4-github-108's possessive sibling at :854.",
+  "apps/ui/test/real-daemon.test.ts and apps/ui/test/fake-daemon.ts: append-only, one describe per area (\"l4-github-link, run L4\", \"l4-github-merge, run L4\"); a route's real-daemon case and the fake's route in the same commit.",
+  "docs/maintainers/runtime.md, docs/user-guide.md, ADR 0117: each area its own dated paragraph."
+ ],
+ "owner_questions": [],
+ "owner_checklist": [
+  "L4-github-131 (LC-C1, a second GitHub login): on another GitHub account, link joelwellbournewood/forerunner-sandbox in a fresh Forerunner. Expect \"... another GitHub account worked on it on <day>. ...\" with only Work together and Cancel, and nothing new on GitHub (branch, pull request, comment) after Work together. The bench has one token, so only a second real login shows it."
+ ]
+}

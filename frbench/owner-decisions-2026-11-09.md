@@ -220,3 +220,9 @@ Owner, verbatim: "yes it should count critics reviews, and fixes."
   clean pause), its estimate includes the reviews and fixes, and the Tasks row, the drawer and
   Costs show one figure against the budget. The default built by run L3 (work only, with the
   screens saying which figure each line counts) is replaced.
+
+## 2026-11-17: the owner's answers to run L4's questions (asked 15:50 UTC, answered the same day)
+
+1. Chat confirmations ("Make these 2 changes? Yes / No"): **wait until I answer.** Every chat read-back stays open in chat and the Inbox until the person presses Yes or No (design section 3.9); none lapses after 10 minutes.
+2. While a failed task's card is open in chat (text from a specialist or a web page): **keep asking first.** Every change in that project is read back for the person's Yes, even when the scanner flagged nothing.
+3. Chat's own fixed lines when the person writes in German: **stay English**, like every other screen.

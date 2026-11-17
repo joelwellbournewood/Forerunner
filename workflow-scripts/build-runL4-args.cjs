@@ -1,0 +1,38 @@
+// Usage: node build-runL4-args.cjs <sub-run name L4a..L4h> <base sha> [base note]
+// Writes /tmp/frbench/runL4-<name>-args.json and the workflow copy with the args built in:
+// /home/user/Forerunner/.claude/worktrees/_wf-scripts/forerunner-phase-e6-<name>.js (launch it with Workflow scriptPath).
+const fs = require("fs");
+const p = JSON.parse(fs.readFileSync("/tmp/frbench/runL4-plan.json", "utf8"));
+const [name, base, baseNote = ""] = process.argv.slice(2);
+const i = p.sub_runs.findIndex((s) => s.name === name);
+if (i < 0 || !base) throw new Error("usage: node build-runL4-args.cjs <L4a..L4h> <base sha> [base note]");
+const s = p.sub_runs[i];
+const done = p.sub_runs.slice(0, i).map((x) => x.name);
+const note = [
+  `This is run L4, sub-run ${s.name} of ${p.sub_runs.length} (${p.sub_runs.map((x) => x.name).join(", ")}): the fixes of live check 4 (2026-11-17, the real model and real GitHub at 4cf11fd, after run C) and of the leftovers of run C and run L3. Base ${base}${i === 0 ? " (run C merged, CI 315 and the Desktop app workflow 80 green on Windows and Linux)" : ` (sub-run ${p.sub_runs[i - 1].name} merged)`}.${baseNote ? " Base note: " + baseNote : ""}`,
+  `Read first, whole: /tmp/frbench/owner-decisions-2026-11-09.md (the owner's words; later sections overrule earlier ones; its last sections are the answer of 2026-11-16, a task's budget counts its work, the critic's reviews and the fixes, and the answers of 2026-11-17: every chat read-back waits until the person answers it; while a failed task's card is open chat reads back every change first; chat's fixed lines stay English). Your area spec is in /tmp/frbench/phaseE.json areas by key (copied from /tmp/frbench/runL4-plan.json areas; the plan also has items with each finding's evidence, sub_runs with their notes, shared_files, decisions D-L4-*, owner_questions, owner_checklist and final_check). The run L4 items of your area are in /tmp/frbench/phaseE.json triage (area = your key); each names its sources: live check 4's finding and its skeptical verdict are in /tmp/frbench/live4/result.json (verified[]; the evidence under /tmp/frbench/live4/<journey>/), a leftover's text is in /tmp/frbench/leftovers-<tag>.json, and the run C / run L3 reports it names are in /tmp/frbench (runC-<sub-run>-{fix,review,fixup}-<key>.json, runL3-*).`,
+  `shared_files: the rules marked '(run L4)' decide over every older rule for the files they name; your sub-run's note: ${s.note || ""}`,
+  ...(done.length ? [`Earlier run L4 sub-runs merged before yours: ${done.join(", ")}; their results are /tmp/frbench/runL4-<sub-run>-{fix,review,fixup}-<key>.json and runL4-<sub-run>-merge.json: read the notes_for_other_areas of every area whose files you touch first, then its not_done. Keep their fixes and tests: a change to one of their sentences updates its assertion and keeps its intent.`] : []),
+  `Open owner questions (runL4-plan.json owner_questions and owner_questions_carried) are not decided: build the default each names, so that the answer can change it in one place, and name it in notes_for_other_areas.`,
+  `The common rule holds even where a spec's files list names them: do not edit docs/status/UPDATE-LOG.md, CHANGELOG.md, docs/requirements.md or docs/design/core-experience.md (the session lead writes them from your report: put suggested lines in it). Maintainer docs, ADR amendments (dated, appended at the end; a new ADR takes the next free number in docs/decisions and follows its README's template) and your user-guide paragraphs: yes. The next state migration number is the next free one in packages/state/src/migrations (0011 at 4cf11fd).`,
+  `Security in every area: never weaken the hooks or the sandbox; text from pages, searches, files, cards, chat history, reports or any record never becomes instructions to a model (quoted as data; the injection suite pnpm test:injection covers each new channel); the page reader never reaches this PC or the home network. Money and the person's control: no budget, wrap-up line, monthly cap or plan-share cap is ever passed; spend is booked and shown in CHF; when the app says it waits, nothing moves; no session starts unless the person said so (or the hands-off setting, off by default, or the decided continuation of the person's own session). Model-facing prompts and tool definitions are code: change them in the repository and assert the exact text the model receives. Tests use the stand-ins; no real API calls and no GitHub calls; what only the real model shows goes to runL4-plan.json final_check: write your check_in_the_app steps so the session lead can run them there. A composed test of yours that runs a session waits with settleSessions(rt) before each close and removes its homes with removeHomes(homes) (packages/runtime/test/helpers.ts; CI runs on Windows and Linux); a composed test of a credential path uses packages/runtime/test/cred-world.ts and never injects a provider.`,
+  `Words the person sees follow design section 5: one sentence read at a glance, CHF only, no ids, no markdown, no raw states, a sentence promises only what the app does.`,
+  `Machine rule (binding): this machine has 16 GB of memory and no swap, and it restarted several times on 16-17 November while heavy suites ran at once. Run one heavy command at a time, each wrapped as \`flock /tmp/frbench/heavy.lock <command>\` (pnpm check, pnpm test, the UI suite, Playwright, pnpm test:integration, pnpm test:e2e, pnpm test:injection, the live harness tests, tsc over a whole package, the cargo checks). Stop your bench before the full suites. Commit (and run \`git branch -f\` as your prompt says) at least every 15 minutes and after each passing suite, so a restart loses little.`,
+  `Merge order: ${s.keys.join(", ")}. In a conflict, keep each area's owned part as shared_files says and both areas' intent; in the append-only test files keep every area's describe block ('<key>, run L4'); a later area that rewords a sentence updates the earlier area's assertion.`,
+  `Reviewers: besides the acceptance lines, check every new or changed person-facing sentence against design section 5, the siblings of each fix (validation rule 8), a restart case wherever a state must survive (validation rule 4), and the owner's words for the decision the area builds (quote them): no less and no more.`,
+].join(" ");
+const args = { wave: s.wave, keys: s.keys, noMerge: false, note, fixNotes: {}, sequential: true };
+for (const k of s.keys) {
+  const a = p.areas.find((x) => x.key === k);
+  args.fixNotes[k] = `Your area builds ${a.title}. Its size and cut line: ${typeof a.size === "string" ? a.size : JSON.stringify(a.size)}`;
+}
+fs.writeFileSync(`/tmp/frbench/runL4-${name}-args.json`, JSON.stringify(args, null, 2));
+const src = fs.readFileSync("/home/user/Forerunner/.claude/worktrees/_wf-scripts/forerunner-phase-e6.js", "utf8");
+const end = src.indexOf("\n}\n", src.indexOf("export const meta")) + 3;
+const head = src.slice(0, end).replace("name: 'forerunner-phase-e6'", `name: 'forerunner-phase-e6-${name}'`);
+const body = src.slice(end).replace(/\bargs\b/g, "ARGS");
+const out = `${head}\n// Generated by scratchpad/build-runL4-args.cjs for run L4 sub-run ${name}: settings built in.\nconst ARGS = ${JSON.stringify(args)}\n${body}`;
+new (Object.getPrototypeOf(async function () {}).constructor)("args", "agent", "pipeline", "parallel", "log", "phase", out.replace(/^export const meta = /m, "const meta = "));
+const path = `/home/user/Forerunner/.claude/worktrees/_wf-scripts/forerunner-phase-e6-${name}.js`;
+fs.writeFileSync(path, out);
+console.log(path, "note chars", note.length, "keys", s.keys.join(","));

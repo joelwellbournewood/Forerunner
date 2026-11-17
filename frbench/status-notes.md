@@ -101,3 +101,9 @@
 - forerunner-sandbox: PRs #50-#64 opened by the check, all closed or merged; 0 open now. No bench running.
 - Next: the triage of the live check 4 findings with leftovers-L3/C2/C3/C4/C4b-design/C4b/C5/C6 into one fix run.
 - 13:10 UTC: run L4 triage launched: wf_9df91932-254, task wu7fejn78 (script saved under /root/.claude/projects/.../workflows/scripts/run-l4-triage-wf_9df91932-254.js). Inputs /tmp/frbench/runL4/sources-<group>.json (scratchpad/l4-sources.cjs: selftasks, creds, chat, github, money, other; 103 findings, 30 non-pass steps, 121 leftovers). Outputs runL4/triage-<group>.json and /tmp/frbench/runL4-plan.json (areas, sub_runs, shared_files, owner_questions, owner_checklist, final_check).
+- 15:52 UTC: the owner answered run L4's 3 questions (owner-decisions-2026-11-09.md, section 2026-11-17; /tmp/frbench/runL4-owner-answers.json): every chat read-back waits until answered; keep asking first while a failed card is open; fixed chat lines stay English. Apply them to runL4-plan.json once the triage's check/revise is done.
+
+## 2026-11-17 ~16:55 UTC: paused at the weekly limit (82%); run L4 planned
+- Triage wf_9df91932-254 done (9 agents): runL4-plan.json revised after the check: 190 items (102 fix, 34 words), 11 areas, 8 sub-runs L4a..L4h (waves 25..32). Owner answers applied (scratchpad/l4-prepare.cjs): L4-chat-309/310 not_a_problem, L4-selftasks-117 extended to every read-back; open: L4-github-130 (Close button). Areas + 136 triage items + 54 '(run L4)' shared_files rules copied into phaseE.json (backup phaseE.before-L4.json).
+- L4a args built on 4cf11fd: runL4-L4a-args.json and .claude/worktrees/_wf-scripts/forerunner-phase-e6-L4a.js (scratchpad/build-runL4-args.cjs <name> <base>).
+- NEXT-SESSION.md status section committed and pushed at 84aaf90. Continuation scheduled for Sun 2026-11-22 05:30 UTC.

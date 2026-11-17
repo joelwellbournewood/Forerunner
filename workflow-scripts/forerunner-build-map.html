@@ -1,0 +1,396 @@
+<title>Forerunner Build Map</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Layout: a project summary read top to bottom; a status band, then the product, the plan, the evidence, the road ahead. State shows as colour and a word. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #17202b;
+  --muted: #5a6574;
+  --line: #d9dee5;
+  --accent: #1f6f8b;
+  --accent-soft: #e3f0f5;
+  --done: #2f7d4f;
+  --done-soft: #e4f2e9;
+  --now: #b5650d;
+  --now-soft: #fbeedd;
+  --left: #6b7584;
+  --left-soft: #eceff3;
+  --warn: #a3382d;
+  --warn-soft: #f8e6e3;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11161c; --surface: #18202a; --fg: #e6ebf0; --muted: #9aa6b4; --line: #2b3643;
+    --accent: #5fb3cf; --accent-soft: #16303a; --done: #6cc28e; --done-soft: #17301f;
+    --now: #f0a54f; --now-soft: #38270f; --left: #8e99a8; --left-soft: #222b36; --warn: #ef8a7e; --warn-soft: #3a1d1a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11161c; --surface: #18202a; --fg: #e6ebf0; --muted: #9aa6b4; --line: #2b3643;
+  --accent: #5fb3cf; --accent-soft: #16303a; --done: #6cc28e; --done-soft: #17301f;
+  --now: #f0a54f; --now-soft: #38270f; --left: #8e99a8; --left-soft: #222b36; --warn: #ef8a7e; --warn-soft: #3a1d1a;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-block: 28px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; line-height: 1.2; }
+h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 21px; font-weight: 600; }
+h3 { font-size: 15px; font-weight: 600; }
+p { margin: 0; max-width: 70ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.lede { color: var(--muted); font-size: 16px; }
+section { display: grid; gap: 14px; }
+.sechead { display: grid; gap: 4px; }
+.sechead .eyebrow { color: var(--accent); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+header { display: grid; gap: 12px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.chip.done { color: var(--done); background: var(--done-soft); }
+.chip.now { color: var(--now); background: var(--now-soft); }
+.chip.left { color: var(--left); background: var(--left-soft); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+
+/* Status band */
+.status { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 16px; }
+.status-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; }
+.status-top p { font-size: 15px; }
+.bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--left-soft); }
+.bar span { display: block; height: 100%; }
+.bar .b-done { background: var(--done); }
+.bar .b-now { background: var(--now); }
+.bar-labels { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; font-size: 13px; color: var(--muted); }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.fact { display: grid; gap: 2px; padding-top: 10px; border-top: 1px solid var(--line); align-content: start; }
+.fact .k { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.fact b { font-family: var(--font-mono); font-size: 17px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.fact span { font-size: 13px; color: var(--muted); }
+.meter { height: 6px; border-radius: 3px; background: var(--left-soft); position: relative; margin-top: 6px; }
+.meter i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; }
+.meter em { position: absolute; top: -4px; width: 2px; height: 14px; background: var(--warn); }
+
+/* Cards and panels */
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.panel p, .panel li { font-size: 14px; color: var(--muted); }
+.panel ul { margin: 0; padding-left: 18px; display: grid; gap: 5px; }
+.panel.stop { border-left: 4px solid var(--warn); }
+.tag { font-family: var(--font-mono); font-size: 11.5px; color: var(--accent); }
+
+/* Decisions list */
+.decisions { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px 16px; margin: 0; padding: 0; list-style: none; }
+.decisions li { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.decisions li .id { font-family: var(--font-mono); font-size: 13px; color: var(--accent); }
+
+/* Diagrams */
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.diagram svg { display: block; min-width: 860px; width: 100%; height: auto; }
+svg .box { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; }
+svg .box.key { fill: var(--accent-soft); stroke: var(--accent); }
+svg .box.ci { fill: var(--done-soft); stroke: var(--done); }
+svg .box.live { fill: var(--now-soft); stroke: var(--now); }
+svg .t { fill: var(--fg); font-family: var(--font-display); font-size: 14px; font-weight: 600; }
+svg .s { fill: var(--muted); font-family: var(--font-body); font-size: 11.5px; }
+svg .lbl { fill: var(--muted); font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; }
+svg .arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#ah); }
+svg .arrow.loop { stroke: var(--now); stroke-dasharray: 5 4; marker-end: url(#ahn); }
+svg .frame { fill: none; stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 4 4; }
+svg #ah path { fill: var(--muted); }
+svg #ahn path { fill: var(--now); }
+
+/* Timeline */
+.timeline { display: grid; grid-template-columns: repeat(7, minmax(148px, 1fr)); gap: 10px; min-width: 1060px; }
+.phase { background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--left); border-radius: 8px; padding: 12px; display: grid; gap: 8px; align-content: start; }
+.phase.done { border-top-color: var(--done); }
+.phase.now { border-top-color: var(--now); box-shadow: 0 0 0 2px var(--now-soft); }
+.phase .when { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.phase ul { margin: 0; padding-left: 16px; font-size: 13px; color: var(--muted); display: grid; gap: 3px; }
+.phase .out { font-size: 12.5px; border-top: 1px dashed var(--line); padding-top: 8px; }
+
+/* Tables */
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 620px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+td:first-child { font-weight: 600; }
+td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; counter-reset: s; margin: 0; padding: 0; list-style: none; }
+.steps li { counter-increment: s; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.steps li::before { content: counter(s); font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.steps li b { color: var(--fg); font-size: 14px; font-weight: 600; }
+footer { font-size: 12.5px; color: var(--muted); display: grid; gap: 4px; }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Project overview · status on Tue 17 Nov 2026, 14:30 UTC</div>
+  <h1>Forerunner Build Map</h1>
+  <p class="lede">Forerunner is a desktop app that works as a persistent AI project manager. You describe a project; it drafts a plan, hands each task to a specialist AI agent, has a critic agent review the work, and keeps you in charge of the money and the decisions. This engagement started on 24 October 2026 with one goal from the owner: make the app actually work for a person, and make it easy to understand.</p>
+</header>
+
+<!-- 1. Status -->
+<section aria-labelledby="h-status">
+  <div class="sechead"><span class="eyebrow">1 · Status</span><h2 id="h-status">Where the project stands</h2></div>
+  <div class="status">
+    <div class="status-top">
+      <p><b>On track.</b> Every product decision the owner made is built and merged; the latest test with the real AI model found 98 problems, which are now being sorted into the next fix run.</p>
+      <span class="chip now">Phase: sorting live check 4's findings</span>
+    </div>
+    <div class="bar" role="img" aria-label="Desktop round: about 70 percent done, 5 percent in progress, 25 percent left">
+      <span class="b-done" style="width:70%"></span><span class="b-now" style="width:5%"></span>
+    </div>
+    <div class="bar-labels"><span>Desktop version: about <b class="mono">70%</b> done (estimate)</span><span>Phone version: after the desktop</span></div>
+    <div class="facts">
+      <div class="fact"><span class="k">Owner decisions</span><b>9 of 9 built</b><span>plus the 16 Nov budget answer</span></div>
+      <div class="fact"><span class="k">Code</span><b>1,047 commits</b><span>all signed, on one working branch</span></div>
+      <div class="fact"><span class="k">Automated tests</span><b>7,500+ green</b><span>on Windows and Linux, every merge</span></div>
+      <div class="fact"><span class="k">Open problems</span><b>98 + 121</b><span>from live check 4 + leftovers of earlier runs</span></div>
+      <div class="fact"><span class="k">Real-model budget</span><b>USD 16.50 / 40</b><span>spent on live checks so far</span>
+        <div class="meter" aria-hidden="true"><i style="width:41%;background:var(--accent)"></i></div></div>
+      <div class="fact"><span class="k">Weekly usage</span><b>79% / 90% line</b><span>resets Sun 22 Nov, 05:00 UTC</span>
+        <div class="meter" aria-hidden="true"><i style="width:79%;background:var(--now)"></i><em style="left:90%"></em></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. The product -->
+<section aria-labelledby="h-product">
+  <div class="sechead"><span class="eyebrow">2 · The product</span><h2 id="h-product">What Forerunner is made of</h2></div>
+  <p class="lede">Everything runs on the person's own computer. The app talks to Claude (through the person's Claude subscription or an API key) and, if they want, to their GitHub repositories.</p>
+  <div class="grid3">
+    <div class="panel"><span class="tag">apps/desktop · apps/ui</span><h3>The desktop app</h3><p>The window, the tray and every screen: Home, a project's Overview and Tasks, the Inbox for questions and approvals, Talk (chat), Sessions, Costs and Settings.</p></div>
+    <div class="panel"><span class="tag">packages/runtime</span><h3>The engine</h3><p>A local service that plans projects, runs work sessions, picks the next task, keeps budgets, and waits or goes on when a credential runs out.</p></div>
+    <div class="panel"><span class="tag">specialists · critic</span><h3>The AI agents</h3><p>Specialists (coder, writer, researcher, tester and more) do the tasks; a separate critic reviews each one before it counts as done.</p></div>
+    <div class="panel"><span class="tag">packages/billing</span><h3>Money and credentials</h3><p>Which Claude does the work, what each task and session may spend, what has been spent, always shown in CHF.</p></div>
+    <div class="panel"><span class="tag">GitHub</span><h3>Repositories</h3><p>One repository is one project. Work arrives as pull requests the person can review and merge; two people can work on one repository together.</p></div>
+    <div class="panel"><span class="tag">chat</span><h3>Talk</h3><p>Ask what happened, what is left or why something failed; give instructions in plain words. Chat remembers the project's history and thinks longer when a question needs it.</p></div>
+  </div>
+</section>
+
+<!-- 3. The owner's decisions -->
+<section aria-labelledby="h-decisions">
+  <div class="sechead"><span class="eyebrow">3 · Scope</span><h2 id="h-decisions">The owner's decisions, and what was built</h2></div>
+  <p class="lede">On 9 November the owner answered the open design questions (D1 to D9); on 16 November they added one answer about budgets. Run C built all of them.</p>
+  <ul class="decisions">
+    <li><span class="id">D1</span><span>One GitHub repository is one project, never two</span><span class="chip done">Built</span></li>
+    <li><span class="id">D2</span><span>A list of every work session and what it did</span><span class="chip done">Built</span></li>
+    <li><span class="id">D3</span><span>Chat remembers the past and thinks longer when needed</span><span class="chip done">Built</span></li>
+    <li><span class="id">D4</span><span>A task too big for one session pauses safely and goes on later</span><span class="chip done">Built</span></li>
+    <li><span class="id">D5</span><span>One clear choice of which Claude does the work</span><span class="chip done">Built</span></li>
+    <li><span class="id">D6</span><span>Only the person starts a session; ready work joins one that runs</span><span class="chip done">Built</span></li>
+    <li><span class="id">D7</span><span>The agent keeps its own task list right (split, add, drop)</span><span class="chip done">Built</span></li>
+    <li><span class="id">D8</span><span>A running session is visible everywhere: bar, tray, window title</span><span class="chip done">Built</span></li>
+    <li><span class="id">D9</span><span>Working together needs no shared database, only GitHub</span><span class="chip left">Wave 8</span></li>
+    <li><span class="id">16 Nov</span><span>A task's budget counts its work, the critic's reviews and fixes</span><span class="chip done">Built</span></li>
+  </ul>
+</section>
+
+<!-- 4. Milestones -->
+<section aria-labelledby="h-milestones">
+  <div class="sechead"><span class="eyebrow">4 · Milestones</span><h2 id="h-milestones">Delivered so far, and ahead</h2></div>
+  <div class="legend" style="display:flex;gap:8px 14px;flex-wrap:wrap"><span class="chip done">Done</span><span class="chip now">Now</span><span class="chip left">To do</span></div>
+  <div class="scroll" tabindex="0" aria-label="Milestone timeline; scroll sideways on a phone">
+    <div class="timeline">
+      <article class="phase done"><span class="chip done">Done</span><h3>Find what is broken</h3><span class="when">24 Oct – 2 Nov</span>
+        <ul><li>A test bench: the real app with a stand-in AI</li><li>Every screen walked by hand</li><li>Fix waves 1–3</li></ul>
+        <div class="out">A full list of what trips a person up</div></article>
+      <article class="phase done"><span class="chip done">Done</span><h3>Fix waves and live checks</h3><span class="when">2 – 15 Nov</span>
+        <ul><li>Fix waves 5–7 and 13–15</li><li>Live checks 2 and 3 on the real AI</li><li>Run L3: live check 3's fixes</li></ul>
+        <div class="out">The main journey works end to end</div></article>
+      <article class="phase done"><span class="chip done">Done</span><h3>Run C</h3><span class="when">9 – 17 Nov</span>
+        <ul><li>Sub-runs C1–C6 and C4b</li><li>15 areas, each reviewed independently</li></ul>
+        <div class="out">D1–D8 and the budget answer built</div></article>
+      <article class="phase done"><span class="chip done">Done</span><h3>Live check 4</h3><span class="when">17 Nov</span>
+        <ul><li>32 steps on the real AI and real GitHub</li><li>USD 4.47 of a USD 7 cap</li></ul>
+        <div class="out">98 real problems, 24 of them major</div></article>
+      <article class="phase now"><span class="chip now">Now</span><h3>Run L4</h3><span class="when">17 Nov → after reset</span>
+        <ul><li>Sorting: 2 of 6 groups done</li><li>Fixing: after the weekly reset</li></ul>
+        <div class="out">Live check 4's problems fixed</div></article>
+      <article class="phase left"><span class="chip left">Next</span><h3>Wave 8</h3><span class="when">after run L4</span>
+        <ul><li>Two people's Forerunners on one repository (D9)</li></ul>
+        <div class="out">Collaboration that works</div></article>
+      <article class="phase left"><span class="chip left">Last</span><h3>Finish and hand over</h3><span class="when">at the end</span>
+        <ul><li>F: independent final check</li><li>G: docs, installer, owner checklist</li><li>G2: fix what the owner finds</li><li>H: the phone version</li></ul>
+        <div class="out">The owner runs it on their own PC</div></article>
+    </div>
+  </div>
+</section>
+
+<!-- 5. How the work is done -->
+<section aria-labelledby="h-how">
+  <div class="sechead"><span class="eyebrow">5 · Method</span><h2 id="h-how">How the work is organised</h2></div>
+  <p class="lede">The owner sets the goal and decides the product questions. Claude, as session lead, turns them into fix runs and reports back in plain words. A run is a set of areas; AI agents work on two areas at a time, each in its own copy of the code. Nothing reaches the main branch without its tests, an independent review and a green build on Windows and Linux.</p>
+  <div class="diagram scroll" tabindex="0" aria-label="Diagram of the work pipeline">
+    <svg viewBox="0 0 980 470" role="img" aria-labelledby="dg-title">
+      <title id="dg-title">The owner's decisions go to the session lead, who runs fix areas through fix, review, fix-up and merge, then CI. Live checks with the real model feed findings back through verification and triage into the next fix run.</title>
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z"/></marker>
+        <marker id="ahn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z"/></marker>
+      </defs>
+      <rect class="box key" x="20" y="30" width="170" height="74" rx="8"/>
+      <text class="t" x="36" y="58">The owner</text>
+      <text class="s" x="36" y="78">goal, decisions D1–D9,</text>
+      <text class="s" x="36" y="93">budgets, final say</text>
+      <rect class="box key" x="20" y="190" width="170" height="90" rx="8"/>
+      <text class="t" x="36" y="218">Session lead</text>
+      <text class="s" x="36" y="238">plans each run, writes</text>
+      <text class="s" x="36" y="253">area specs, merges results,</text>
+      <text class="s" x="36" y="268">reports in plain words</text>
+      <path class="arrow" d="M105 104 V186"/>
+      <text class="lbl" x="112" y="150">DECISIONS</text>
+      <rect class="frame" x="230" y="14" width="530" height="300" rx="10"/>
+      <text class="lbl" x="246" y="34">ONE FIX RUN · TWO AREAS AT A TIME, EACH IN ITS OWN COPY</text>
+      <path class="arrow" d="M190 235 H248"/>
+      <rect class="box" x="252" y="64" width="112" height="84" rx="8"/>
+      <text class="t" x="266" y="90">Fix</text>
+      <text class="s" x="266" y="110">failing test first,</text>
+      <text class="s" x="266" y="125">then the change,</text>
+      <text class="s" x="266" y="140">bench walk</text>
+      <rect class="box" x="384" y="64" width="112" height="84" rx="8"/>
+      <text class="t" x="398" y="90">Review</text>
+      <text class="s" x="398" y="110">a second agent</text>
+      <text class="s" x="398" y="125">who did not write it</text>
+      <text class="s" x="398" y="140">tries to break it</text>
+      <rect class="box" x="516" y="64" width="112" height="84" rx="8"/>
+      <text class="t" x="530" y="90">Fix-up</text>
+      <text class="s" x="530" y="110">every blocking</text>
+      <text class="s" x="530" y="125">finding fixed,</text>
+      <text class="s" x="530" y="140">tests first</text>
+      <path class="arrow" d="M364 106 H380"/>
+      <path class="arrow" d="M496 106 H512"/>
+      <rect class="box" x="252" y="180" width="112" height="84" rx="8"/>
+      <text class="t" x="266" y="206">Fix</text>
+      <text class="s" x="266" y="226">the second area,</text>
+      <text class="s" x="266" y="241">beside the first</text>
+      <rect class="box" x="384" y="180" width="112" height="84" rx="8"/>
+      <text class="t" x="398" y="206">Review</text>
+      <rect class="box" x="516" y="180" width="112" height="84" rx="8"/>
+      <text class="t" x="530" y="206">Fix-up</text>
+      <path class="arrow" d="M364 222 H380"/>
+      <path class="arrow" d="M496 222 H512"/>
+      <rect class="box key" x="648" y="110" width="98" height="110" rx="8"/>
+      <text class="t" x="660" y="138">Merge</text>
+      <text class="s" x="660" y="158">full test suite,</text>
+      <text class="s" x="660" y="173">smoke journey,</text>
+      <text class="s" x="660" y="188">signed, pushed</text>
+      <path class="arrow" d="M628 106 C640 106 640 140 644 140"/>
+      <path class="arrow" d="M628 222 C640 222 640 190 644 190"/>
+      <rect class="box ci" x="790" y="110" width="170" height="110" rx="8"/>
+      <text class="t" x="806" y="138">CI on GitHub</text>
+      <text class="s" x="806" y="158">Windows and Linux,</text>
+      <text class="s" x="806" y="173">the installed desktop app</text>
+      <text class="s" x="806" y="188">driven in a real window</text>
+      <path class="arrow" d="M746 165 H786"/>
+      <path class="arrow" d="M875 220 V300 Q875 330 845 330 H190 Q160 330 160 300 V284"/>
+      <text class="lbl" x="420" y="322">LEFTOVERS AND NOTES GO INTO THE NEXT RUN'S PLAN</text>
+      <rect class="box live" x="252" y="370" width="170" height="80" rx="8"/>
+      <text class="t" x="268" y="396">Live check</text>
+      <text class="s" x="268" y="416">the real Claude model and</text>
+      <text class="s" x="268" y="431">real GitHub, capped spend</text>
+      <rect class="box live" x="472" y="370" width="150" height="80" rx="8"/>
+      <text class="t" x="488" y="396">Verify</text>
+      <text class="s" x="488" y="416">each finding checked</text>
+      <text class="s" x="488" y="431">against the code</text>
+      <rect class="box live" x="672" y="370" width="150" height="80" rx="8"/>
+      <text class="t" x="688" y="396">Triage</text>
+      <text class="s" x="688" y="416">fix, wording, owner</text>
+      <text class="s" x="688" y="431">question, or drop</text>
+      <path class="arrow loop" d="M920 220 V410 H826"/>
+      <path class="arrow loop" d="M672 410 H626"/>
+      <path class="arrow loop" d="M472 410 H426"/>
+      <path class="arrow loop" d="M252 410 H105 V284"/>
+      <text class="lbl" x="128" y="400">FINDINGS</text>
+      <text class="lbl" x="928" y="300">AFTER</text>
+      <text class="lbl" x="928" y="314">A RUN</text>
+    </svg>
+  </div>
+  <ol class="steps" aria-label="How one change gets in">
+    <li><b>A failing test</b>It shows the problem where the person meets it: a click, a screen, a reply.</li>
+    <li><b>The change</b>Made in its own copy of the code. A test is never weakened to pass.</li>
+    <li><b>A bench walk</b>The real app on a stand-in AI, with screenshots before and after.</li>
+    <li><b>Independent review</b>Another agent tries to break it and lists what blocks.</li>
+    <li><b>Fix-up and merge</b>Blockers fixed, the full suite green, one merge at a time.</li>
+    <li><b>CI green</b>Windows and Linux, plus the installed app in a real window.</li>
+  </ol>
+</section>
+
+<!-- 6. Evidence -->
+<section aria-labelledby="h-evidence">
+  <div class="sechead"><span class="eyebrow">6 · Evidence</span><h2 id="h-evidence">Tests with the real AI model</h2></div>
+  <p class="lede">Most testing uses a stand-in AI, which is free and repeatable. Live checks use the real Claude model and real GitHub, with a spending cap, to find what only the real thing shows. Every finding is then checked against the code by a separate agent.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Check</th><th>When</th><th>On which version</th><th>Spent</th><th>Real problems found</th><th>What happened to them</th></tr></thead>
+      <tbody>
+        <tr><td>Live check 2</td><td class="num">9 Nov</td><td>after fix wave 13</td><td class="num">USD 4.03</td><td class="num">27</td><td>Fixed in wave 15</td></tr>
+        <tr><td>Live check 3</td><td class="num">15 Nov</td><td>after wave 15</td><td class="num">USD 2.04</td><td class="num">14</td><td>Fixed in run L3</td></tr>
+        <tr><td>Live check 4</td><td class="num">17 Nov</td><td>after run C</td><td class="num">USD 4.47</td><td class="num">98 (24 major)</td><td>Being sorted into run L4</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="lede">Live check 4 confirmed with the real AI: continuing a task that paused at its budget, adding new work to a plan, the sessions list, the hands-off setting, a refused API key, chat on the API key, stopping a chat answer, and working together on GitHub. It failed or partly failed on: chat recalling past events, chat telling when a question needs depth, the "ask before using the API key" card, and some of the agent's own task-list fixes.</p>
+</section>
+
+<!-- 7. Next steps -->
+<section aria-labelledby="h-next">
+  <div class="sechead"><span class="eyebrow">7 · Plan</span><h2 id="h-next">What is left</h2></div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Step</th><th>What it is</th><th>Size</th><th>State</th></tr></thead>
+      <tbody>
+        <tr><td>Run L4: sorting</td><td>Sort live check 4's 98 problems and 121 leftovers into fix areas; a sceptical agent checks the plan</td><td>2–3 hours</td><td><span class="chip now">Now</span></td></tr>
+        <tr><td>Run L4: fixing</td><td>Fix the sorted problems, two areas at a time, with the same pipeline</td><td>Largest step left</td><td><span class="chip left">After the reset</span></td></tr>
+        <tr><td>Wave 8</td><td>Two people's Forerunners on one GitHub repository, with no shared database (D9)</td><td>Medium</td><td><span class="chip left">Next</span></td></tr>
+        <tr><td>F. Final check</td><td>Fresh agents walk every journey on the real AI</td><td>Small, about USD 5</td><td><span class="chip left">Later</span></td></tr>
+        <tr><td>G. Hand-over</td><td>Status docs, the installer, a five-step checklist for the owner's PC</td><td>Small</td><td><span class="chip left">Later</span></td></tr>
+        <tr><td>G2. Owner checklist</td><td>Fix what the owner's own install finds, until all five steps pass</td><td>Depends</td><td><span class="chip left">Later</span></td></tr>
+        <tr><td>H. Phone</td><td>Map what carries over to the phone, then test it as rigorously</td><td>Medium</td><td><span class="chip left">Last</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 8. Risks and owner actions -->
+<section aria-labelledby="h-risks">
+  <div class="sechead"><span class="eyebrow">8 · Risks and actions</span><h2 id="h-risks">What could slow it down, and what the owner can do</h2></div>
+  <div class="grid2">
+    <div class="panel stop">
+      <h3>Risks</h3>
+      <ul>
+        <li><b>Weekly usage limit.</b> At 79% of the week, with the owner's stop line at 90%. The sorting finishes if it stays under the line; the big fix run waits for the reset on Sunday 22 November, 05:00 UTC.</li>
+        <li><b>Machine restarts.</b> The work machine restarted four times on 16–17 November. The pipeline now saves every stage and resumes, so a restart costs minutes, not hours.</li>
+        <li><b>What only the owner's PC can show.</b> The owner's own Claude subscription and the real Windows desktop (tray, notifications) cannot be fully tested here; they go to the owner's checklist.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Owner actions</h3>
+      <ul>
+        <li>Nothing needed right now.</li>
+        <li>After the sorting: answer the few questions only you can decide, in one short set.</li>
+        <li>When convenient: delete the six merged backup branches on GitHub (keep plan-files) and create the forerunner-registry repository.</li>
+        <li>At the end: install the build on your PC and walk the five-step checklist.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span>Working branch claude/nifty-knuth-f9udt0 at 4cf11fd. The plan files and every result are backed up on GitHub (claude/nifty-knuth-f9udt0-backup/plan-files).</span>
+  <span>The 70% figure is the session lead's estimate for the desktop version, weighted by the effort left.</span>
+</footer>
+
+</div>

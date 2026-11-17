@@ -1,0 +1,537 @@
+{
+ "groups": [
+  {
+   "group": "selftasks",
+   "source_keys_total": 47,
+   "by_decision": {
+    "fix": 20,
+    "words": 10,
+    "not_a_problem": 1,
+    "accepted": 1,
+    "already_fixed": 0,
+    "model_only": 0,
+    "owner_question": 0,
+    "live_only": 0,
+    "later": 0,
+    "items_total": 32,
+    "sources_merged_into_items": "47 keys into 32 items"
+   },
+   "items_file": "/tmp/frbench/runL4/triage-selftasks.json",
+   "proposed_areas": [
+    {
+     "key": "l4-selftasks-check",
+     "title": "The agent's task check runs only on real evidence, keeps every step and every detail the person gave, quotes what it left out where the person reads it, never asks for a Yes that changes nothing; and a small task's review fits its own budget",
+     "items": 15,
+     "majors": 6
+    },
+    {
+     "key": "l4-selftasks-chat",
+     "title": "Chat changes stay the person's and stay until answered; the chat model can never ask for a change in prose or claim one it did not make; 'add a task to <project>' adds there; plus the chat area's carried run C items",
+     "items": 15,
+     "majors": 4
+    }
+   ],
+   "owner_questions": [
+    "Should every change chat reads back wait for your Yes until you answer it (as design section 3.9 says and as 'fix the tasks' will after run L4), instead of lapsing after 10 minutes? Default kept until you answer: only 'fix the tasks' read-backs wait while their Inbox card is open; every other read-back keeps its 10 minutes, and its lapse is now shown (the open chat drops Yes, the counts follow, one Update says nothing changed)."
+   ],
+   "notes": "All 47 source keys are decided, each in exactly one of 32 items; the build script checked this. I confirmed every fix and words item by reading the code at 4cf11fd, and none was already fixed. Item ids are L4-selftasks-101 to -132, so they do not clash with the live finding ids L4-selftasks-1 to -20.\n\nTen major items:\n- 101 (money): a small task's review is refused at the 8,192-token floor (runner.ts:4863, critic.ts:134/:469), and project-plan.ts:574 writes the intake model's budget without checking it. Changing C4b's per-call floor needs the session lead's yes.\n- 102 (money): isCriticNote at task-list-notes.ts:134 counts every info note as evidence, so a paid task check runs after nearly every reviewed task. This also covers L4-selftasks-19, -5 and step LC-C30.\n- 103 (security): flagged lines are dropped when the check makes no change (task-check.ts:988, task-fix-tool.ts:214). This covers L4-selftasks-9, -15 and step LC-C29.\n- 104: the fence cannot resolve an add named earlier in the same reply (task-check.ts:734), and refused changes are never shown (event-lines.ts:577).\n- 105: an edit that changes nothing sinks the whole composed set (task-check.ts:806).\n- 106: the task check's add and the critic never get the person's details or words (task-check.ts:119-205 and :1062; loop/critic.ts:485). This merges L4-selftasks-3 and -11.\n- 116: changes the person names in chat are booked to the agent and echoed in the Inbox (loop/commands.ts:324; executor.ts:965 and :829). Built per session_lead_decisions[52]; merges -17, C6L-10, L4-l3-9 and C6L-18.\n- 117: read-backs expire after 10 minutes without telling anyone (PENDING_TTL_MS; expirePending). Built per session_lead_decisions[53].\n- 118: the chat model writes a read-back in prose or a fake 'The app did:' line, and the claim guard misses both (claims.ts first-person patterns; transcript.ts replyInHistory).\n- 119: matchAddTask (intent.ts:718) has no slot for a target project.\n\nOther decisions:\n- L4-chat-11 is decided 'fix' (severity words): the prompt rule 'say so in a few words' leads the model to restate a change the card already shows.\n- C4L-15 is answered by ADR 0119 point 9, so it is a fix, not an owner question.\n- L4-selftasks-4 is not a problem: the coder did both jobs because the person's brief asked for them in one task. LC-C27 (A)'s scenario should change in live check 5.\n- C6L-17 is accepted under session_lead_decisions[54].\n- C6L-19 (about ten carried items) is one item, 123. Four of its sub-items are fixed inside other items: C4-left-2 in 104, C4-left-4 and C3-left-10 in 121, C4-left-8 in 120, and C4-left-5's registry name in 111.\n\nSequencing and cross-group duplicates:\n- l4-selftasks-chat should run in a later sub-run than l4-selftasks-check. Both touch task-proposal.ts, result.ts, session-review.ts and the agent.ts confirm path; shared_files rules for these are in handoff_items.\n- 118 has the same root cause as the chat group's L4-l3-1, L4-l3-2 and L4-session-2; 124 is the same as the chat group's L4-chat-10; 126 shares the prompt file with the chat group's prompt items. 119 is next to the github group's L4-github-5.\n- 101 and 107 sit in the money group's regions (L4-l3-16, L4-pause-2, L4-pause-3; also the github group's L4-session-9). 112 (a) shares questionsReason with the money group's L4-l3-3.\n- Moving those items takes the areas to 13 and 12 items.\n\nThe owner checklist has three Check-in-the-app lines for U-095, U-084 and U-042, for the owner's walk-through before release. None of my items is live_only. The repository was not edited."
+  },
+  {
+   "group": "creds",
+   "source_keys_total": 53,
+   "by_decision": {
+    "fix": 25,
+    "words": 4,
+    "live_only": 1,
+    "not_a_problem": 3,
+    "later": 1,
+    "accepted": 1,
+    "already_fixed": 0,
+    "model_only": 0,
+    "owner_question": 0
+   },
+   "items_file": "/tmp/frbench/runL4/triage-creds.json",
+   "proposed_areas": [
+    {
+     "key": "l4-cred-engine",
+     "title": "Every credential stop is read as what it is and said once, in the person's time zone. This covers: Claude Code's refusal, usage limit and budget end (whether the Agent SDK ends the stream or throws); the subscription's share reached mid-run, as a stop under the policy; chat failures (no 'Answered with ...' note, one sentence per error); notifications about credential cards (one each, saying what the card says); chat's hold reply and start (they follow the Start dialog); a call cut off by Stop now (booked on its own credential); subscription task runs (they use the configured API address); and a waiting session queued behind another project (shown as next).",
+     "items": 14,
+     "majors": 4
+    },
+    {
+     "key": "l4-cred-screens",
+     "title": "The money consent and the credential screens agree with what runs: one figure for the waiting work, which counts what the yes runs, and the yes runs only that work. Also: a task only the key can run says why it waits; the Start dialog under 'API key first' names the stop; the share and key-month stops, the one-off press and the UI's clocks say what is true now, in the person's zone; credential words follow design section 5. Plus 5 small items from other subsystems that may move: the merge press's head check, the onerepo fake daemon, project.create's tool description, the join refusal and the intake card's plurals.",
+     "items": 15,
+     "majors": 2
+    }
+   ],
+   "owner_questions": [],
+   "notes": "The \"creds\" group's triage is written to /tmp/frbench/runL4/triage-creds.json. All 53 source keys are in exactly one item each, and the check found no key missing, extra or duplicated. There are 35 items; their ids L4-creds-1 to -35 are this triage's own numbers, not live check 4's finding numbers.\n\nEach fix and words item was checked against the code at 4cf11fd, and every root cause still holds at the lines named. Nothing is already fixed except half of C4L-7: the real-daemon case for notWrittenHere landed in 48ff824 (real-daemon.test.ts:20335). Its fake-daemon half is still open and is item L4-creds-23.\n\n**Merges (same root cause or same family)**\n- live4:L4-creds-9, live4:L4-creds-10, live4:L4-creds-17, the LC-C22 step and C5L-9 are item L4-creds-2. Agent SDK 0.3.304 throws after its error result, and the catch blocks in sdk.ts and claude-code.ts drop what they had already read. A refused sign-in therefore becomes a Failed task, and the synthetic error message is booked as a model named '<synthetic>'.\n- live4:L4-creds-5, live4:L4-creds-2, live4:L4-creds-7, C5L-7 and C5L-8 are item L4-creds-3. Notification text is built without the Inbox's context (reset time in UTC, \"Answer it in the Inbox\" on a card with nothing to answer, said twice). The person's zone and the cap are read when the daemon starts, and two places fall back to Date.now().\n- live4:L4-creds-13 and C3L-7 are item L4-creds-4.\n- live4:L4-creds-4, C6L-3, the LC-C24 step and C5L-6 are item L4-creds-15: one figure for the waiting work, and the yes runs only that work.\n- live4:L4-creds-3 and C3-left-4 are item L4-creds-8; live4:L4-creds-11 and C6L-6 are item L4-creds-19; C6L-2 and C6L-5 are item L4-creds-18; live4:L4-creds-12 and C6L-4 are item L4-creds-25; C5L-5 and C3-left-5 are item L4-creds-11; the LC-C23 step and C5L-4 are item L4-creds-13.\n\n**The four majors in l4-cred-engine, in order**\n1. L4-creds-1, CE-6 not built: when the subscription's share runs out mid-run, the task gets a budget pause until the 1st, whatever policy the person chose. This goes against the owner's D5. Session lead decision 48 sent it to this triage.\n2. L4-creds-2: a refused subscription sign-in is not read as a refusal (owner's D5c).\n3. L4-creds-3: the urgent \"Use your API key until 07:26?\" notification gives the reset in UTC while every screen says 08:26.\n4. L4-creds-4: chat shows \"Answered with your Claude subscription\" and a paid \"Think it through\" under a reply that says it could not answer.\n\n**The two majors in l4-cred-screens**\n1. L4-creds-15: the money-consent figure is too low. The ask card said about CHF 0.10; the two tasks that waited then cost CHF 0.24. The card leaves out the review part (the owner's 2026-11-16 answer) and the follower tasks, and the yes lets in every ready task, not only the work that waited.\n2. L4-creds-16: C6L-1, the 'needs' row form (CS-5 was never-cut in run C), as major per session lead decision 55.\n\n**One problem with no finding.** Item L4-creds-9 comes from LC-C31's notes. pendingPersonStarts (compose.ts:4339) counts only starts by 'person'. So a waiting session queued behind another project's session at the reset is not named as next on the bar, and its line keeps a time that has already passed.\n\n**Decisions other than fix**\n- LC-C26 is live_only: it needs a real spend limit, and it is already on the owner's checklist.\n- The LC-C13 and LC-C4 steps are not_a_problem. Each failure in them is a finding other groups triage (L4-chat-1, -2, -4, -7, -8 and -11; L4-github-7 to -10). The join refusal that LC-C4 did not walk has a composed test (project-join.test.ts:164-166).\n- C4L-1 is later: wave 8, session lead decision 37.\n- C5L-21 is accepted: the session lead's own \"Accepted.\" recorded at the C5 merge.\n- C5L-3 is not_a_problem: the Settings line \"Used until you choose\" and the changelog line already state the fact, and another Update would repeat it.\n- C5L-7 is minor, not major: the hooks read the month cap fresh before every model call, so no cap is passed.\n- L4-github-6 is 'fix' with words severity, not 'model_only': the app's own tool description made the wording likely.\n\n**Areas and how they fit together**\n- l4-cred-screens depends on l4-cred-engine; the two must not run as parallel siblings. Both edit compose.ts, conversation/agent.ts, credential-wait.ts and result.ts. Each area's fix_scope gives region-level shared-files rules for these.\n- Five items from other subsystems sit at the tail of l4-cred-screens so they have a home: L4-creds-22 (merge press), -23 (onerepo fake daemon), -27 (project.create's tool description), -28 (join refusal) and -29 (intake card plurals). They should move:\n  - L4-creds-22 to the github group's merge area, beside L4-l3-12 and L4-l3-13.\n  - L4-creds-23 and -28 to the github group's onerepo area.\n  - L4-creds-27 to the chat group's area that holds L4-github-5, which is the same project.create and project.switch path.\n- The session lead also needs shared-files rules with other groups for:\n  - agent.ts, transcript.ts and the resultAfterWait path: the chat group (L4-creds-8 and C5L-15 route chat facts through resultAfterWait);\n  - budget-card.ts, budget-pause.ts and producers.ts: the money group (the d1116-budget-all follow-ups, and the card cuts in L4-l3-14);\n  - runner.ts: the selftasks group.\n- The cut lines and never-cut items are in each area's size field.\n\n**Owner.** There are no new owner questions: the owner's answers 3 and 7 and D7 already settle what the yes covers. owner_checklist has 9 entries:\n- LC-C22 after the fix of L4-creds-2;\n- a real usage limit mid-run (the same SDK throw likely hides CE-5);\n- LC-C23, LC-C24 and LC-C31 on the real subscription;\n- the subscription's share mid-run, after L4-creds-1;\n- LC-C26's real spend limit;\n- the optional gateway check (L4-creds-10);\n- L3-github-3 at person speed."
+  },
+  {
+   "group": "chat",
+   "source_keys_total": 47,
+   "by_decision": {
+    "fix": 22,
+    "words": 3,
+    "not_a_problem": 6,
+    "already_fixed": 1,
+    "later": 1,
+    "owner_question": 2,
+    "model_only": 0,
+    "live_only": 0,
+    "accepted": 0
+   },
+   "items_file": "/tmp/frbench/runL4/triage-chat.json",
+   "proposed_areas": [
+    {
+     "key": "l4-chat-answers",
+     "title": "Chat answers from what was recorded and hears its own questions. It looks a record up before saying it is missing. A yes to a question chat asked reaches the model. The guard catches a change asked for in words. Recall lines say what the screens say: a session's failures, a card's question, a PR closed on GitHub, a joined project's lessons. The From line follows the records the reply rests on. A cancelled wait is never promised to go on. 'open <project>' opens it. No reply carries the app's marker, a tool name or glued paragraphs.",
+     "items": 13,
+     "majors": 2
+    },
+    {
+     "key": "l4-chat-depth",
+     "title": "Thinking longer works on the real model and every line about it is true. Go ahead runs the answer it offered. The fast model's hand-over is never left to words: the app attaches its own ask, which spends nothing. The paid closer look is told what it is. Answer now never earns a new offer. The history is read from the prompt cache. A closed project takes no new work. The start, dependency, setting and old offer lines use the design's words.",
+     "items": 12,
+     "majors": 3
+    }
+   ],
+   "owner_questions": [
+    "L4-chat-309 (C3L-14): Chat reads back every change in a project whose failed task's card it sees in full, even 'add a task', which elsewhere acts at once with Undo. The reason is that the card's words come from a specialist or a web page. Should a card in which nothing is flagged as instructions keep that rule? Default until you answer: yes, every change in that project is read back first.",
+    "L4-chat-310 (LL-10): When you write to chat in German, should the app's own fixed chat lines ('Yes to what? ...', 'Nothing changed ...') be German too, or stay English like every other screen? Default until you answer: English, like the rest of the app."
+   ],
+   "notes": "Every one of the 47 source keys is in exactly one of 35 items (the build script asserts this). Each 'fix' and 'words' item was checked against the code at 4cf11fd, and every cause still holds. One leftover is already fixed: CL-10. Commit 793e3fe drops the merge date at recall.ts:509-514 once a take-out exists.\n\nDuplicates merged:\n- L4-chat-101 = L4-chat-1 + L4-chat-4 + LC-C10. The verdict called L4-chat-4 model_only, but the prompt at conversation-agent.md:68 and :14 makes that choice likely, so it is a fix.\n- L4-chat-102 = L4-chat-2 + L4-l3-1 + L4-session-2 + LC-C17. Root cause: the bare-yes guard at agent.ts:1215 and claims.ts, which has no claim kind for a yes asked in words.\n- L4-chat-103 = L4-creds-8 + C5L-15.\n- L4-chat-106 = L4-chat-15 + L4-chat-13.\n- L4-chat-210 = L4-session-1 + C3L-5.\n\nNot a problem:\n- L4-chat-6 is a seed artefact; the bench seed must write cards in the shape the app writes.\n- C3L-2, C3L-9 and C3L-11 are not problems. LC-C12 measured first text at 462-1393 ms.\n- C3L-13 and CL-12 were measured by LC-C10.\n\nLater: CL-2 is collaboration between people (Work together, wave 8).\n\nCross-group (session lead):\n- L4-selftasks-118 has the same root as L4-chat-102 and L4-chat-112 (claims.ts and replyInHistory).\n- L4-selftasks-124 is L4-chat-111 (plain-words.ts:27).\n- Proposal: one owner, l4-chat-answers, for claims.ts, replyInHistory and plain-words.ts.\n- L4-selftasks-126 stays in l4-selftasks-chat.\n- The two chat areas and l4-selftasks-chat share agent.ts, conversation-agent.md, transcript.ts and Conversation.tsx. So no two of them can share a sub-run. The handoff_items say which area owns which function, and set one prompt version bump per sub-run.\n\nItems from other groups' subsystems, kept here so they have an owner (the session lead may move them):\n- L4-chat-103: run-visible.\n- L4-chat-104, -105 and -204: onerepo link and join.\n- L4-chat-110: depends on the L3:LL-1 item in the github bundle.\n- L4-chat-207 and -210: starts-engine.\n\nDecision needed from the session lead: L4-chat-202's ask-only backstop changes ADR 0114's 'no keyword routing' rule and needs a dated amendment. It only attaches the app's ask line, and nothing is spent without the person's yes.\n\nRecommended for the next live check, on bench-live: re-run LC-C10, LC-C13, LC-C14, LC-C15, LC-C16 and LC-L3. Live-check seeds must write the project's lastSession and app-shaped cards.\n\nThe owner checklist holds 4 U-entry run-through lines. There are no live_only items."
+  },
+  {
+   "group": "github",
+   "source_keys_total": 37,
+   "by_decision": {
+    "fix": 17,
+    "words": 8,
+    "not_a_problem": 4,
+    "already_fixed": 2,
+    "live_only": 1,
+    "model_only": 0,
+    "owner_question": 0,
+    "accepted": 0,
+    "later": 0
+   },
+   "items_file": "/tmp/frbench/runL4/triage-github.json",
+   "proposed_areas": [
+    {
+     "key": "l4-github-link",
+     "title": "One repository, one project, said truly on GitHub and in the app. A removed project's take-over no longer counts, so the offer comes again. A take-over's docs pull request opens from the default branch, or the take-over says it did not. A Work-together project's Settings never promise a status pull request. A first plan keeps its decision record. Add to shows its drafting state, and the plan wait appears once. The take-over and host lines read well.",
+     "items": 11,
+     "majors": 2
+    },
+    {
+     "key": "l4-github-merge",
+     "title": "Merges and joined projects say what is true now. A pull request merged on GitHub that held a closed task's work says that work reached main. Merge cards close when their pull request closes. The Merge button reports a failed check at once. A merge already made on GitHub reads so. The join dialog, the status pull request, Costs, the header, Your files and Last result agree with GitHub. GitHub's slow answers are worded as such.",
+     "items": 14,
+     "majors": 1
+    }
+   ],
+   "owner_questions": [],
+   "notes": "I checked every source key against the code at 4cf11fd. All 37 keys are in exactly one item: L4-github-101 to L4-github-132. Item ids are this triage's own numbers; source keys like live4:L4-github-1 keep live check 4's numbers.\n\nThree merges of the same root cause:\n- live4:L4-github-1 and C4:C4L-2: the scaffold branch is not started from the default branch.\n- live4:L4-github-7 and C4:C4L-5: the joined project's status pull request.\n- The live step keys LC-L3.L3-github-2, -3 and -6 are folded into L4-l3-13, L4-l3-12 and L4-l3-10.\n\nMajors:\n- L4-github-101 (live4:L4-github-2): repository-use.ts:358 counts a removed project's take-over. After an Undo, the owner's D1/D9 offer is skipped. Ordered first.\n- L4-github-102 (L4-github-1 + C4L-2): docs.ts:875 checkout has no `fresh`. Take it over silently opens no pull request. The fix adds a force-push rule: only over a closed or merged pull request's branch or this install's own.\n- L4-github-112 (L3:LL-4): dependent-branches.ts:208-243. Closed work that reached main through B is still recorded as 'closed without merging'.\n\nNot fixed:\n- Already fixed: C4L-8 (project-join.ts:480, with its test at commands/test/project-join.test.ts:621). C4L-12 (SummaryTab.tsx:53-65 hides both controls; the undoHint is never shown on Changes).\n- Not a problem: CL-1 (the repository's marks find the project after a rename), C4L-3 (design 3.2 and the OJ-06 decision), LL-5 (ADR 0105 point 4: the person closes it on GitHub), and the LC-L3 steps that were not run (each is tested by run L3).\n- Live only: LC-C1's second GitHub login, added to owner_checklist.\n- Owner questions: none.\n\nL4-session-9 sits in l4-github-link even though it is not this group's subsystem. The doubled 'approve the plan' banner is on the Add to path, so it goes with CL-5's drafting state.\n\nFor the session lead:\n1. Two creds-group items (L4-creds-22 and L4-creds-28) touch the same functions as l4-github-merge. L4-creds-22 is the Merge button's head check in pull-requests.ts and merge.ts headMovedNow. L4-creds-28 is joinRefusedHeldStart in join-words.ts. Moving both into l4-github-merge lets one area own the merge-press check and the join dialog's words. Otherwise l4-cred-screens and l4-github-merge must run in different sub-runs.\n2. The two github areas share only views.ts in code, in different functions, plus the common test and doc files. The region rules are in triage-github.json shared_files. views.ts also has regions owned by l4-selftasks-check, l4-cred-screens and l4-cred-engine.\n3. Handed to l4-selftasks-check: the possessive at task-check.ts:854, a sibling of L4-github-108.\n\nBuild script: /tmp/frbench/runL4/.build-triage-github.py. The repository was not changed."
+  },
+  {
+   "group": "money",
+   "source_keys_total": 61,
+   "by_decision": {
+    "fix": 23,
+    "words": 9,
+    "not_a_problem": 17,
+    "already_fixed": 3,
+    "accepted": 1,
+    "live_only": 1,
+    "owner_question": 0,
+    "model_only": 0,
+    "later": 0,
+    "items_total": 54,
+    "fix_by_area": {
+     "l4-money-pause": 8,
+     "l4-starts-sessions": 12,
+     "l4-github-merge": 1,
+     "l4-selftasks-check": 2
+    },
+    "words_by_area": {
+     "l4-money-pause": 5,
+     "l4-starts-sessions": 4
+    }
+   },
+   "items_file": "/tmp/frbench/runL4/triage-money.json",
+   "proposed_areas": [
+    {
+     "key": "l4-money-pause",
+     "title": "A paused or capped run is read right and its money said truly: a 'nothing left' report goes to review, a larger task's wrap-up leaves the rest of the session to the tasks after it, a run under the project's budget or the month's cap hears its wrap-up inside it, and the plan, session review, cards and log give one count and one figure",
+     "items": 13,
+     "majors": 3
+    },
+    {
+     "key": "l4-starts-sessions",
+     "title": "Starting, answering and ending a session are said truly as things stand: each Inbox option says what pressing it does, a too-large task is never told it may join, a raised limit wakes paused work at once, Answered lines stay true, every session the person started is listed and says why it started, a crash Update offers Continue, and a running or waiting session is said once beside the bar",
+     "items": 16,
+     "majors": 0
+    }
+   ],
+   "owner_questions": [],
+   "notes": "I wrote /tmp/frbench/runL4/triage-money.json. All 61 source keys are decided in 54 items, and each key appears in exactly one item. The build script that checks this is /tmp/frbench/runL4/.build-triage-money.py.\n\nI confirmed every fix and words item in the code at 4cf11fd. Three items are already fixed there:\n- C3L-6: runner.ts:4730-4750.\n- C5L-19: runtime.md:7703-7710.\n- LL-13: built by C4b; runner.ts:4883 and task-budget-all.test.ts:326.\n\n**Severity changes.** I raised two items from minor to major:\n- L4-pause-2: a larger task's clean wrap-up ends the session at 58% of its budget, the task after it never runs, and three screens say \"the budget is used\". This breaks the owner's option C and the Start dialog's promise.\n- L4-l3-6: a run's cap and its wrap-up line ignore the project's budget and the month's cap. The run gets a hard stop, so D4's clean wrap-up never happens, and the start line shows the wrong amount.\n\nL4-pause-1 stays major. \"Left to do: nothing the criteria require.\" is read as one item left, so finished research asks for CHF 0.40 more. It is not model-only: the app's own wrap-up wording invites that phrasing.\n\n**Merged duplicates:**\n- L4-session-4 and L4-session-10 (one item).\n- L4-session-6 and L4-session-13 (one item).\n- L4-l3-5 and C3L-3 (one item).\n- C5L-11, C5L-12 and C5L-13 (one item).\n- L4-pause-1 and LC-C7 (one item).\n- L4-session-8 and LC-C32 (one item, not_a_problem: done rows hide the budget line by design, core-experience §3.5).\n\n**Proposed areas.** Each has every run C area field, plus a top-level shared_files list in the file.\n- l4-money-pause: 13 items, 3 major (101 to 103).\n- l4-starts-sessions: 16 items, all small to medium.\n\nThe two areas share runner.ts, request-words.ts, result.ts and commands/settings.ts, in different functions, so they must go in different sub-runs.\n\n**Items I placed in other groups' areas** (same function as their item):\n- L4-pause-4 goes to l4-github-merge, next to L4-github-116 (the same task-run helper in Costs > By task).\n- L4-l3-3 goes to l4-selftasks-check, next to L4-selftasks-112(a) (questionsReason).\n- C4bD-1 goes to l4-selftasks-check, next to L4-selftasks-101 (the review's floor).\n\n**Moves for you to decide** (same root causes, but they are other groups' items):\n- Move L4-selftasks-107 into l4-money-pause. It and L4-pause-3 share one root cause: the session review should measure the session's promise.\n- Move the L3-left-16 sub-item of L4-selftasks-123 into l4-money-pause. It is the same bug as L4-l3-7 (\"sent back for changes\" on a session review).\n\n**For you to confirm:** L4-money-208's default, under your decision 50. The project's status line keeps the wait but drops its own Cancel while the bar shows it. LC-C31 saw one wait three times, with three Cancels, at both widths.\n\n**Owner:** no new owner questions. One owner's-checklist item: C5L-24, the tray, its tooltip and the native window title on Windows (U-096).\n\n**Not fixed:**\n- 17 items are not_a_problem, each with its reason.\n- C4bL-1 is accepted under decision 43.\n- LC-C32's step text needs correcting for the next live check: done task rows correctly show no budget line."
+  },
+  {
+   "group": "other",
+   "source_keys_total": 9,
+   "by_decision": {
+    "fix": 1,
+    "not_a_problem": 7,
+    "words": 0,
+    "already_fixed": 0,
+    "model_only": 0,
+    "owner_question": 0,
+    "live_only": 0,
+    "accepted": 0,
+    "later": 0
+   },
+   "items_file": "/tmp/frbench/runL4/triage-other.json",
+   "proposed_areas": [
+    {
+     "key": "l4-reviewer-report",
+     "title": "A reviewer's findings are its report on the tasks the person makes too: New task and Edit say the reviewer writes no file, and a reviewer task with no criteria is checked against its report, never against a file (ADR 0109; live check 4 L4-l3-4)",
+     "items": 1,
+     "majors": 0
+    }
+   ],
+   "owner_questions": [],
+   "notes": "The 9 source keys of the \"other\" bundle went into 8 items. Every key appears in exactly one item; a script checked this against sources-other.json.\n\nThe one fix is L4-other-1 (minor). Sources: live4:L4-l3-4 and live4-step:l3:LC-L3.L3-research-3. I confirmed it at 4cf11fd:\n- New task's who line has only two sources, runsOn and the web limitation (NewTaskDialog.tsx:176-178 and :369-378; model-settings-view.ts:185-193).\n- Edit shows no who line at all (TaskDrawer.tsx:623 and :753-765).\n- outcomeCriterion (verification.ts:65-70) gives every specialist the criterion \"The work itself shows this outcome (a file, a page or an output, not only the report)\". The brief (executor.ts:1126-1128) and the critic (loop/critic.ts:482-484) both use it.\n- The reviewer's prompt says \"You write no file\". The reviewer is the only registry specialist with no write tool.\n- So the app's own criterion contradicts the prompt. That makes it a fix, not model_only.\n\nHow the fix differs from the verdict's sketch: the line shows whenever a specialist that writes no file is chosen. A pattern over the typed words cannot reliably tell an output file (\"review.md lists\") from an input file (\"found in notes/plan.md\"). Naming the file from the typed words is on the cut line, and so is chat's read-back clause.\n\nProposed area l4-reviewer-report is small: 1 item in five parts. I suggest folding it into whichever area owns NewTaskDialog.tsx and TaskDrawer.tsx this round, or pairing it with an area that shares none of its files. Shared_files rules are in the file:\n- loop/critic.ts belongs to l4-selftasks-check, and executor.ts to l4-cred-engine. This area changes only the outcomeCriterion call's arguments, one line in each.\n- This area owns verification.ts' outcomeCriterion, New task's who note block and Edit's who select.\n\nThe other 7 items are not_a_problem, each with its reason:\n- L3:LL-11. The snapshot refs refs/forerunner/before|first/<id> are internal lookup keys. Plain git log shows no id (L3-run-11 passed live). I checked with git 2.43: `git log --decorate` and `git log --all --decorate=full` do not show the refs; only `--clear-decorations` or `-c log.initialDecorationSet=all` do.\n- L3:LL-12. The person-facing part, the filler \"To fix\" line, is fixed at views.ts:1527-1532 and passed live check 4. Asking the critic for an action would change critic.md and move the calibration baseline. If wanted, it belongs to l4-selftasks-check, which already edits critic.md this round.\n- C6:C6L-20 is a process rule, not an app problem. The flock rule (one heavy command at a time under /tmp/frbench/heavy.lock) goes into every run L4 prompt; it is in this area's fix_scope. Two areas at a time can stand while every heavy command takes the lock: live check 4 ran two journeys that way for about 8.5 hours with no restart. If a restart comes again, fall back to one area at a time.\n- Four live steps (LC-C18, LC-L3, LC-L3.L3-run-1, LC-L3.L3-research-2) have no problem without a finding. Each of their problems is a finding in another group (money: L4-session-4/5/6, L4-l3-3/5-8/14-16/18, L4-session-8; selftasks: L4-session-7, L4-l3-9, L4-l3-17; chat: L4-l3-1/2, L4-session-1; creds: L4-l3-11; github: L4-l3-10/12/13 and LC-L3.not-run).\n\nThere are no owner questions. One owner checklist line covers the new U-entry's Check in the app step on the Windows build; no subscription is needed.\n\nThe repository was not touched. The only shell work outside reading was a scratch git repo in /tmp/frbench/runL4/.reftest-other, now removed, and the generator script in the scratchpad: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/triage_other.py."
+  }
+ ],
+ "plan": {
+  "plan_file": "/tmp/frbench/runL4-plan.json",
+  "items_total": 196,
+  "by_decision": {
+   "fix": 102,
+   "words": 34,
+   "merged": 6,
+   "not_a_problem": 38,
+   "already_fixed": 6,
+   "accepted": 3,
+   "live_only": 3,
+   "later": 2,
+   "owner_question": 2,
+   "fix_and_words_in_areas": 136,
+   "source_keys_total": 254
+  },
+  "areas": [
+   {
+    "key": "l4-cred-engine",
+    "title": "Every credential stop is read as what it is and said once, in the person's time zone (Agent SDK refusals, limits and budget ends read even when the SDK throws; the subscription's share mid-run follows the policy; chat failures, notifications, hold reply and start say what is true; cut-off calls booked on their own credential)",
+    "items": 14,
+    "majors": 4,
+    "sub_run": "L4a"
+   },
+   {
+    "key": "l4-selftasks-check",
+    "title": "The agent's task check runs only on real evidence, keeps every step and detail the person gave, quotes what it left out, never asks for a Yes that changes nothing; a small task's review fits its own budget; a questions card quotes why the specialist asks",
+    "items": 15,
+    "majors": 6,
+    "sub_run": "L4b"
+   },
+   {
+    "key": "l4-chat-depth",
+    "title": "Thinking longer works on the real model and every line about it is true (Go ahead runs once, the app attaches its own ask, the paid pass knows what it is, Answer now earns no offer, the history is cached, a closed project takes no work)",
+    "items": 12,
+    "majors": 3,
+    "sub_run": "L4b"
+   },
+   {
+    "key": "l4-money-pause",
+    "title": "A paused or capped run is read right and its money said truly; the tasks after a larger task get its leftover room; outer limits give the wrap-up; the plan, review, cards, log and Overview give one count and one figure",
+    "items": 15,
+    "majors": 3,
+    "sub_run": "L4c"
+   },
+   {
+    "key": "l4-chat-answers",
+    "title": "Chat answers from what was recorded and hears its own questions; the guard catches asks and forged change lines; 'add a task to <project>' and 'open <project>' do what they say; recall lines, From lines and Last result after Cancel are true",
+    "items": 13,
+    "majors": 3,
+    "sub_run": "L4c"
+   },
+   {
+    "key": "l4-cred-screens",
+    "title": "The money consent and the credential screens agree with what runs: one figure for the waiting work and the yes runs only that work; the needs row; the clocks in the person's zone; credential words and intake plurals",
+    "items": 11,
+    "majors": 2,
+    "sub_run": "L4d"
+   },
+   {
+    "key": "l4-github-link",
+    "title": "One repository, one project, said truly on GitHub and in the app (the offer after Undo, the docs PR from the default branch, together projects and the status PR, the decision record, Add to's drafting state, the onerepo fake daemon)",
+    "items": 11,
+    "majors": 2,
+    "sub_run": "L4e"
+   },
+   {
+    "key": "l4-github-merge",
+    "title": "Merges and joined projects say what is true now (merged-through work, cards and cancelled PRs closed on GitHub, the press reads checks, mergeable state and head first, the join dialog, Costs runs and tries, header, Your files, Last result)",
+    "items": 16,
+    "majors": 1,
+    "sub_run": "L4e"
+   },
+   {
+    "key": "l4-selftasks-chat",
+    "title": "Chat changes stay the person's and stay until answered; a refused set says what was not made; a note is the person's only when they wrote it; a reviewer task is checked against its report and New task and Edit say so; the chat area's carried items",
+    "items": 13,
+    "majors": 2,
+    "sub_run": "L4f"
+   },
+   {
+    "key": "l4-starts-sessions",
+    "title": "Starting, answering and ending a session are said truly (Inbox options say what pressing does, too-large tasks never told they join, a raised limit wakes work at once, true Answered lines, every started session listed, crash Continue, one place per fact beside the bar)",
+    "items": 16,
+    "majors": 0,
+    "sub_run": "L4g"
+   }
+  ],
+  "sub_runs": [
+   {
+    "name": "L4a",
+    "keys": [
+     "l4-cred-engine"
+    ]
+   },
+   {
+    "name": "L4b",
+    "keys": [
+     "l4-selftasks-check",
+     "l4-chat-depth"
+    ]
+   },
+   {
+    "name": "L4c",
+    "keys": [
+     "l4-money-pause",
+     "l4-chat-answers"
+    ]
+   },
+   {
+    "name": "L4d",
+    "keys": [
+     "l4-cred-screens"
+    ]
+   },
+   {
+    "name": "L4e",
+    "keys": [
+     "l4-github-link",
+     "l4-github-merge"
+    ]
+   },
+   {
+    "name": "L4f",
+    "keys": [
+     "l4-selftasks-chat"
+    ]
+   },
+   {
+    "name": "L4g",
+    "keys": [
+     "l4-starts-sessions"
+    ]
+   }
+  ],
+  "owner_questions": [
+   "Should every change chat reads back wait for your Yes until you answer it, instead of lapsing after 10 minutes? Default kept: only 'fix the tasks' read-backs wait while their Inbox card is open; every other read-back keeps its 10 minutes, and its lapse is now shown (the open chat drops Yes, the counts follow, one Update says nothing changed).",
+   "L4-chat-309: when chat sees a failed task's card in full, it reads back every change first, even 'add a task'. Should a card in which nothing is flagged as instructions keep that rule? Default kept: yes, every change in that project is read back first.",
+   "L4-chat-310: in a German conversation, should the app's own fixed chat lines ('Yes to what? ...', 'Nothing changed ...') be German? Default kept: English, like the rest of the app."
+  ],
+  "notes": "I wrote the plan to /tmp/frbench/runL4-plan.json (about 960 KB). The repository is untouched: I only read files, and the builder scripts are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/l4/build/. The builder checks three things: every one of the 196 items appears exactly once, every fix and words item is in exactly one area (136 in total), and all 254 source keys survive.\n\nDecisions you should confirm or override (the plan lists 22 decisions, D-L4-1 to D-L4-22, each citing the owner's words or a recorded decision):\n- **Sub-runs share no source file, as the task requires.** That gives 7 sub-runs instead of 5: three pairs and four areas that run alone. l4-cred-engine, l4-cred-screens, l4-selftasks-chat and l4-starts-sessions each share compose.ts, agent.ts, runner.ts, result.ts, request-words.ts, views.ts or server.ts with every possible partner. The only files a pair both touches are the append-only test harness (real-daemon.test.ts, fake-daemon.ts, the api types), their own test blocks and docs. The pairs only hold with the region rules written into each area's fix_scope (for example, l4-selftasks-check stays out of agent.ts, server.ts and role-player.ts). If a restart comes again, the fallback is one area at a time (D-L4-19).\n- **Severities I applied that someone needs to OK:** D-L4-8 approves changing C4b's per-call review floor (the selftasks triager asked for your yes). D-L4-9 approves the ADR 0114 amendment for L4-chat-202's ask-only backstop. D-L4-10 confirms L4-money-208's default: one Cancel beside the bar.\n\nOrder: l4-cred-engine runs first (the owner's D5; four later areas read its credential stops). Then l4-selftasks-check with l4-chat-depth, then l4-money-pause with l4-chat-answers, then l4-cred-screens, then the two github areas, then l4-selftasks-chat, and l4-starts-sessions last (it has no major and reads the wait words of earlier areas).\n\nSix merges, one item per root cause:\n- L4-selftasks-118 into L4-chat-102 and -112\n- L4-selftasks-124 into L4-chat-111\n- L4-creds-27 into L4-chat-104\n- L4-creds-22 into L4-github-118\n- L4-chat-110 into L4-github-117\n- L4-money-303 into L4-selftasks-101\n\nMoves:\n- L4-selftasks-107 and L4-github-110 go to l4-money-pause. They share one rule (a session's size is its promise), and moving 110 is what lets the two github areas pair without sharing a file.\n- L4-selftasks-119 goes to l4-chat-answers, so one area owns how chat picks the target project.\n- L4-creds-23 goes to l4-github-link. L4-creds-28 and L4-money-301 go to l4-github-merge.\n- L4-money-302 stays in l4-selftasks-check and also covers L4-selftasks-112 (a), the same function.\n- L4-other-1 is folded into l4-selftasks-chat, because a one-item area is not a fixer's run.\n- The L3-left-16 sub-item of L4-selftasks-123 is built inside L4-money-112.\n- L4-selftasks-105 (b), the chat reply when a confirmed set of changes is refused, goes to l4-selftasks-chat.\n\nI did not make a separate words area: most words items sit in the same function as a logic fix of their area, and a words area could never be paired.\n\nOther parts of the plan:\n- **shared_files:** 51 rules, one per file that two areas of the run change.\n- **Owner questions:** 3 new ones (above, each with the default kept), plus run C's 9 still-open questions under owner_questions_carried.\n- **Owner checklist:** 44 deduplicated entries. They cover the 3 live-only items, all 20 lines of owner-checklist-live4.json, all 38 of runC-plan's owner_checklist_additions, the leftovers' C5L-24 and C5L-18, and every triager's checklist line.\n- **New U-entries:** U-097 (a run under an outer limit gets its wrap-up) and U-098 (a reviewer task that asks for a file).\n- **Final check (phase F):** 15 steps on bench-live and forerunner-sandbox, estimated USD 4.10 in total, under a USD 5.00 cap."
+ },
+ "check": {
+  "verdict": "needs-changes",
+  "missing_items": [
+   "Calibration after the critic prompt change. l4-selftasks-check changes evals/registry/critic/critic.md and bumps its version: L4-selftasks-106 gives the critic the person's words, and L4-selftasks-102 may add a for_task_list flag. docs/maintainers/critic.md:548-550 says such a change must 'bump version ... and re-run the live calibration'. Neither the area's fix_scope and acceptance nor final_check has that run. The plan also contradicts itself: L4-other-3 was ruled not_a_problem because a critic.md change 'moves the monthly calibration's baseline (H.7, ADR 0060)'.",
+   "final_check has no real-model step for L4-selftasks-120. The real chat model made up a note on a pause. The fix is model-facing text (noteParam.describe plus a CHAT_TASK_RULES line), and only the real model can show that the model now leaves the note out. F-7 or F-2 could cover it with a 'put X on hold' line.",
+   "final_check has no step for L4-money-106. The real researcher's reply was cut at max_tokens, paid for and lost. The fix adds a new model-facing cutOffNote and a person line, and the source is live (live4:L4-l3-15). The intake retry line of L4-github-104 is also model-facing and has no real-model step.",
+   "LC-C9's kept-work checks clause was never seen on the real model. L4-money-402 is not_a_problem because 'the coder finished early'. No F step and no owner_checklist entry tries it again, so the OP-2/OP-3 clause is still unproven live (F-9 expects a clean finish, not a wrap-up with kept work).",
+   "packages/runtime/src/session/stop-words.ts has no shared_files rule. Two areas change it: l4-money-pause (L4c, 'a stop sentence after a pause with room left') and l4-starts-sessions (L4g, the 'still needs you' words beside endedStatusText). The plan says there is one rule per file that two areas change."
+  ],
+  "wrong_decisions": [
+   "L4-chat-302 (C3L-2) is not_a_problem on a false root cause. The plan says 'intent.ts's start phrases (S-11) are English'. At 4cf11fd, packages/commands/src/intent.ts:1021-1024 and :1032-1033 already parse German starts ('starte eine Sitzung', 'Sitzung starten', 'starte es', 'jetzt ausführen'). The German half is already_fixed (cite those lines). Only 'go ahead and run it' reaching the model is by design (comment at :1027-1030).",
+   "L4-money-413 (C5L-16) is not_a_problem, but its reason ('a CLI one-shot runs in another process') states the cause, not why the behaviour is acceptable. The UI learns about runs only from run.changed (apps/ui/src/api/sse.ts:160; it polls /running only when the event stream is not available). So a calibration or session that the CLI starts beside the daemon stays off the bar until a reload. That is against D8 ('very visually clear no matter where the person is'). Make it a minor fix (the daemon also notices running rows it did not start) or 'later' with a stated reason.",
+   "L4-chat-102 part (b) forwards a bare 'yes' to the model when chat's last reply ended in a question. That reverses design section 3.9 ('\"yes\" with no card (\"Yes to what?\")') and the guard at agent.ts:1215-1219 ('A \"yes\" with nothing waiting ... is never handed to the model as a bare word'). No D-L4 decision records the reversal; only a handoff line asks the session lead to edit the design text. Either add a decision (with the ADR 0114 amendment) or drop (b): parts (a) and (d) already remove the cause, because the model no longer asks for a yes in prose and the claim guard nudges it when it does.",
+   "L4-github-102 adds a new destructive GitHub write with no recorded decision: a force-push of fr/docs-scaffold over the branch of a closed pull request, which can be another project's or another person's branch. No D-L4 decision and no ADR clause records it. The repository's own rules avoid force-pushes ('No replay ... never force-pushes' in ADR 0111), and live checks forbid destructive branch operations on the sandbox. Record the rule as a session lead decision, or use a per-project branch name that never needs force.",
+   "L4-github-130 is labelled not_a_problem, but its own note says adding a Close button 'is a choice ... AGENTS.md leaves to the owner', and LL-5 calls it 'an option for later'. Label it 'later' (or owner_question), not not_a_problem."
+  ],
+  "file_conflicts": [
+   "The pairs share more than the rule 'share no file' allows. D-L4-6 narrows the rule to 'no source file', which the session lead has to accept explicitly. Shared files: L4b shares apps/ui/test/real-daemon.test.ts, apps/ui/test/fake-daemon.ts, apps/ui/test/tasks.test.tsx, docs/maintainers/runtime.md and docs/user-guide.md. L4c shares real-daemon.test.ts, fake-daemon.ts, apps/ui/test/project.test.tsx, scripts/bench/README.md, runtime.md and user-guide.md. L4e shares real-daemon.test.ts, fake-daemon.ts, packages/runtime/src/daemon/api-types.ts, apps/ui/src/api/client.ts and contracts.ts, project.test.tsx, runtime.md and user-guide.md. Not all of this is append-only: L4-chat-102 changes the fake daemon's existing chat branch (:4428), and l4-chat-depth changes pinned strings in existing real-daemon cases (:4327, :15555).",
+   "Item texts contradict the area specs and shared_files rules. A fixer who reads the item could edit the partner's file. (1) L4-selftasks-105 notes say 'Part 3 touches agent.ts's confirm-reply branch ... this area owns that branch only', and its fix_sketch still has part 3 (the refused-set reply). The agent.ts rule says 'l4-selftasks-check does not edit it', and D-L4-3 moved 105 (b) to l4-selftasks-chat. (2) L4-money-106 fix_sketch says 'testenv/src/bench/role-player.ts ... play a max_tokens reply'. l4-money-pause's files say role-player.ts is not changed in L4c, and in L4c it is l4-chat-answers' file. (3) L4-selftasks-123 fix_sketch still lists L3-left-16 in its build order, but the session-review.ts rule and D-L4-3 give it to l4-money-pause (L4-money-112). Correct the item texts to match the area specs.",
+   "L4-money-113 (c) makes emptyChangeSummary in packages/capabilities/src/githost/pr-executor.ts use balancedCut, which lives in packages/runtime/src/daemon/quoted-title.ts. That would be an import from capabilities into runtime. quoted-title.ts is also l4-github-merge's file, and L4e changes balancedCut later (L4-github-123). Either name a local helper in pr-executor.ts or add a rule for quoted-title.ts.",
+   "stop-words.ts: l4-money-pause and l4-starts-sessions both change it, and no shared_files rule says which function belongs to which area."
+  ],
+  "spec_problems": [
+   "l4-selftasks-chat (L4f) is larger than one run. It has 13 items plus L4-selftasks-105 (b). L4-selftasks-123 alone holds nine carried run C items, and L4-other-1 has five parts (D-1 to D-6). That gives 20 acceptance lines, roughly 27 pieces of work, against 'about 8 to 16 items, fewer if large'. C6 failed three times on this machine (C6L-20). Move L4-selftasks-123, or L4-other-1, to its own run or to L4g.",
+   "l4-github-merge's size line says '16 items (1 major, 11 minor, 4 words)', but its counts say 10 minor and 5 words.",
+   "Merges: the target items L4-chat-104 and L4-github-117 do not name the merged L4-creds-27 and L4-chat-110 or their source keys (live4:L4-github-6, C2:CL-4) in their own sources, text or acceptance. The area problems do cite them, so the fixer sees them. Still, items[] does not meet the rule that one item cites every source key: each merged key sits only on its stub."
+  ],
+  "owner_question_problems": [
+   "The first new question (does every chat read-back wait for the Yes; from L4-selftasks-117 and run C decision 53) is already decided by the design target. Design section 3.9 says 'It survives reloads and restarts, Yes/No cards included' and, under States, 'a card waiting (stays until answered or dismissed; another line does not drop it)'. The question itself says 'as design section 3.9 says'. The owner's words point the same way (second follow-up of 2026-11-09: 'it might run sessions when I'm in the middle of giving it instructions ... and maybe I will also tell it things in between sessions'). The default it keeps, a 10-minute lapse for every other read-back, contradicts the design. Drop the question. L4-selftasks-117 should make every chat read-back wait while unanswered, including across a restart, with decision 53's check that the state has not changed, plus a dated amendment to ADR 0030 point 6. The plan's counts also disagree: 2 owner_question items but 3 questions, because this one comes from a fix item.",
+   "The other two new questions are real owner questions, not decided by the owner's words of 2026-11-09 or 2026-11-16: L4-chat-309 (C3L-14 was set aside for the owner, and the default keeps the safety read-back) and L4-chat-310 (the language of the app's own lines). The nine carried run C questions are all still open. No fix answers one: L4-creds-1 and L4-creds-18 build the kept quiet-hours default, L4-creds-17 keeps the one-off 'Use API key' under wait, and L4-creds-6 keeps chat counted against the project budget and the month."
+  ],
+  "notes": "Plan checked: /tmp/frbench/runL4-plan.json, against the repository at 4cf11fd (read only, nothing edited).\n\n(1) Source keys: 254 in total (selftasks 47, creds 53, chat 47, github 37, money 61, other 9). Each is in exactly one plan item: none missing, none doubled, none unknown. All 136 fix and words items are in exactly one area, and items run in severity order inside every area.\n\n(2) Decisions checked against the code at 4cf11fd. The root cause holds for these majors:\n- L4-selftasks-101: runner.ts:4863 against critic.ts:134 and :469.\n- L4-selftasks-102: task-list-notes.ts:134.\n- L4-selftasks-103: task-check.ts:988 returns askFirst only when there are changes.\n- L4-selftasks-104: byTitle at task-check.ts:734 is never updated with an accepted add.\n- L4-selftasks-105: the edit case at :806-826 has no field comparison.\n- L4-selftasks-106: loop/critic.ts:485 gives the critic only the title and outcome.\n- L4-selftasks-116: loop/commands.ts:324 runs every chat tool call as the agent.\n- L4-selftasks-117: PENDING_TTL_MS is 10 minutes.\n- L4-selftasks-119: intent.ts:718-735 matchAddTask.\n- L4-creds-1: executor.ts:1880-1891 turns a share stop into a 'plan' pause.\n- L4-creds-2: the sdk.ts catch at :606-626 overwrites the error set at :583-605.\n- L4-creds-3: producers.ts:186-200 builds the notification without the card's context.\n- L4-creds-4: the agent.ts:2247 fallback 'I could not answer (...)'.\n- L4-creds-15: the price at compose.ts:1820 has no review part, and onGrant (:5084-5087) readmits every ready task.\n- L4-creds-16: CredentialWait has no field for the need.\n- L4-chat-102: agent.ts:1215-1219.\n- L4-chat-201: depth.ts atMostOf and agent.ts:1872.\n- L4-github-101: RepositoryIndex.knows counts removed rows.\n- L4-github-102: docs.ts:875 passes no fresh, and checkout (:1249-1254) starts from the old branch.\n- L4-github-112: closedOnHost at dependent-branches.ts:234-243.\n- L4-money-101: the NOTHING regex returns false for 'nothing the criteria require.' (I ran it).\n- L4-money-102: runner.ts:3544-3558 with stopEndsSession.\n- L4-money-103: executor.ts:1071-1081.\n\nMinor items checked, all holding: L4-money-201 (session.ts listedWhere), L4-chat-205 (transcript.ts:379), L4-github-114 (join-preview.ts:256-266), L4-creds-6 (chatRoom).\n\nThe already_fixed claims hold: L4-money-406 (runner.ts:4730-4750), L4-money-414 (runtime.md:7703-7710), L4-chat-307 (recall.ts:510-514), L4-github-128 (project-join.ts:478 restores the earlier status), L4-github-129 (SummaryTab.tsx:53-65). L4-money-422 is built.\n\nThe accepted items name real decisions: L4-selftasks-132 (decision 54), L4-money-408 (decision 43), L4-creds-34 (C5L-21 'Accepted.').\n\nThe not_a_problem items I checked are right: L4-money-401 (TasksTab.tsx:562-564 and design 3.5), L4-money-415 (run-words.ts:93, real-daemon.test.ts:21455), L4-money-416 (browser-imports.test.ts exists), L4-money-419 (RunIndicator.tsx:139 and :163), L4-money-409, L4-money-412, L4-github-126, L4-github-127, L4-selftasks-131 (TASK_LIST_BRIEF_LINE at executor.ts:211). The exceptions, L4-chat-302 and L4-money-413, are listed above. Severities look right, and D-L4-15's raises follow the owner's option C and D4.\n\n(4) The shared_files rules I compared do not contradict one another: runner.ts, executor.ts, agent.ts, compose.ts, views.ts, request-words.ts, task.ts, result.ts and the commands executor. Inside each pair, the source files are disjoint under the region rules (selftasks-check stays out of agent.ts, server.ts and role-player.ts; money-pause stays out of compose.ts, plain-words.ts and role-player.ts; github-link stays out of views.ts and runner.ts).\n\n(5) Every fix and words item has a test boundary and an acceptance line. The weakest are L4-money-211 ('green 10 times') and L4-chat-209 (typecheck). All ten fix_scopes carry the hooks and sandbox rule, the rule that text never becomes instructions, and the budget, wrap-up line, monthly cap and plan-share rule. Cross-area handoffs that do exist: L4-chat-106's sentence is built through L4-chat-203's CHAT_THOROUGH_RULES change (in acceptance), and the task-check.ts:854 possessive is received by l4-selftasks-check.\n\n(6) The 15 final_check steps add up to USD 4.10 under the USD 5.00 cap. They cover the chat, depth, task-check, pause and GitHub majors. The gaps are listed above. The subscription paths (L4-creds-1, L4-creds-2) are on the owner checklist, which cites all 20 lines of owner-checklist-live4.json and all 38 run C additions."
+ },
+ "revised": {
+  "plan_file": "/tmp/frbench/runL4-plan.json",
+  "items_total": 190,
+  "by_decision": {
+   "fix": 102,
+   "words": 34,
+   "not_a_problem": 36,
+   "already_fixed": 7,
+   "accepted": 3,
+   "live_only": 3,
+   "owner_question": 3,
+   "later": 2,
+   "merged_items_folded_into_targets": 6
+  },
+  "areas": [
+   {
+    "key": "l4-cred-engine",
+    "title": "Every credential stop is read as what it is and said once, in the person's time zone",
+    "items": 14,
+    "majors": 4,
+    "sub_run": "L4a"
+   },
+   {
+    "key": "l4-selftasks-check",
+    "title": "The agent's task check runs only on real evidence; a small task's review fits its budget; critic.md bumped to 1.4.0 and re-calibrated live in F-16",
+    "items": 15,
+    "majors": 6,
+    "sub_run": "L4b"
+   },
+   {
+    "key": "l4-chat-depth",
+    "title": "Thinking longer works on the real model and every line about it is true",
+    "items": 12,
+    "majors": 3,
+    "sub_run": "L4b"
+   },
+   {
+    "key": "l4-money-pause",
+    "title": "A paused or capped run is read right and its money said truly",
+    "items": 15,
+    "majors": 3,
+    "sub_run": "L4c"
+   },
+   {
+    "key": "l4-chat-answers",
+    "title": "Chat answers from what was recorded and hears its own questions; a bare yes stays 'Yes to what?' with a next step (design 3.9 kept)",
+    "items": 13,
+    "majors": 3,
+    "sub_run": "L4c"
+   },
+   {
+    "key": "l4-cred-screens",
+    "title": "The money consent and the credential screens agree with what runs",
+    "items": 11,
+    "majors": 2,
+    "sub_run": "L4d"
+   },
+   {
+    "key": "l4-github-link",
+    "title": "One repository, one project, said truly on GitHub and in the app; no force-push over a branch that is not this project's own",
+    "items": 11,
+    "majors": 2,
+    "sub_run": "L4e"
+   },
+   {
+    "key": "l4-github-merge",
+    "title": "Merges and joined projects say what is true now",
+    "items": 16,
+    "majors": 1,
+    "sub_run": "L4e"
+   },
+   {
+    "key": "l4-selftasks-chat",
+    "title": "Chat changes stay the person's and every chat read-back waits until answered, checked against what it named at the Yes",
+    "items": 12,
+    "majors": 2,
+    "sub_run": "L4f"
+   },
+   {
+    "key": "l4-starts-sessions",
+    "title": "Starting, answering and ending a session are said truly as things stand",
+    "items": 16,
+    "majors": 0,
+    "sub_run": "L4g"
+   },
+   {
+    "key": "l4-chat-carried",
+    "title": "Run C's nine carried chat items (L4-selftasks-123, C6L-19): restart and data cases, Undo and change sentences, the Stop during the nudge, and the tests run C left",
+    "items": 1,
+    "majors": 0,
+    "sub_run": "L4h"
+   }
+  ],
+  "sub_runs": [
+   {
+    "name": "L4a",
+    "keys": [
+     "l4-cred-engine"
+    ]
+   },
+   {
+    "name": "L4b",
+    "keys": [
+     "l4-selftasks-check",
+     "l4-chat-depth"
+    ]
+   },
+   {
+    "name": "L4c",
+    "keys": [
+     "l4-money-pause",
+     "l4-chat-answers"
+    ]
+   },
+   {
+    "name": "L4d",
+    "keys": [
+     "l4-cred-screens"
+    ]
+   },
+   {
+    "name": "L4e",
+    "keys": [
+     "l4-github-link",
+     "l4-github-merge"
+    ]
+   },
+   {
+    "name": "L4f",
+    "keys": [
+     "l4-selftasks-chat"
+    ]
+   },
+   {
+    "name": "L4g",
+    "keys": [
+     "l4-starts-sessions"
+    ]
+   },
+   {
+    "name": "L4h",
+    "keys": [
+     "l4-chat-carried"
+    ]
+   }
+  ],
+  "owner_questions": [
+   "L4-chat-309 (C3L-14): when chat sees a failed task's card in full, should a card in which nothing is flagged as instructions keep the rule that every change is read back first, even 'add a task'? Default kept: yes, every change in that project is read back first.",
+   "L4-chat-310 (LL-10): when you write to chat in German, should the app's own fixed chat lines ('Yes to what? ...', 'Nothing changed ...') be German too? Default kept: English, like the rest of the app.",
+   "L4-github-130 (LL-5, new in the plan check): should a cancelled task's pull request that is still open on GitHub get a Close button in the app? Default kept: no button; the Overview lists it under 'Cancelled, still open on GitHub' with Open and says to close it on GitHub (ADR 0105 point 4).",
+   "Nine run C questions are carried unchanged in owner_questions_carried (all still open; no fix answers one)."
+  ],
+  "notes": "I checked every point against the plan, the sources and the code at 4cf11fd. I accepted all but one and changed the plan. I did not touch the repository: git status is clean at 4cf11fd. The old plan is backed up at /tmp/frbench/runL4-plan.before-check.json. Each change is listed in the plan's new plan_check record and in decisions D-L4-23 to D-L4-30. D-L4-1, -4, -6, -7 and -12 were amended. The scripts that made the changes are /tmp/frbench/l4check/revise.py and revise2.py, and /tmp/frbench/l4check/verify.py checks the result.\n\nFinal checks pass: all 254 source keys sit in exactly one item, with none missing or doubled. All 136 fix and words items sit in exactly one area, in severity order. There are 3 owner_question items and 3 new owner questions. Inside each pair, the areas share no source file; they share only the harness test files and the docs.\n\n**Missing items**\n1. Critic calibration. l4-selftasks-check now bumps critic.md from 1.3.0 to 1.4.0, asserts the whole prompt, and must keep packages/critic/test/calibration.test.ts and packages/runtime/test/calibration-job.test.ts green unchanged. New step F-16 re-runs the live calibration subset (tests/live live-3-phase3, about USD 0.50). It runs last; if the cap stops it, the release's live-model gate runs it before any release (D-L4-27). I removed L4-other-3's contradicting argument. Its not_a_problem stays on its own reason: no screen promises a fix line.\n2. L4-selftasks-120: F-2 adds a 'put \"Write the README\" on hold' line, then Yes.\n3. L4-money-106: new F-18 replays L3-research-2's cut reply (USD 0.10, not_seen if no reply is cut). F-5 now also checks L4-github-104's Decision line on the real model's first plan, and its retry line if a retry happens.\n4. LC-C9: new F-17 repeats the coder task under a CHF 0.03 session, so its wrap-up comes before it finishes and the kept-work checks clause shows (USD 0.05).\n5. stop-words.ts now has a shared_files rule: l4-money-pause owns sessionStatusText and stopLimitWords (~:91-164); l4-starts-sessions only adds a new function beside endedStatusText (~:198-224).\n\nPhase F is now about USD 4.76 under the unchanged USD 5.00 cap. New rule: no step starts if its estimate would take the ledger past USD 5.00, and no new step once the ledger reaches USD 4.80. F-15 is exempt because it spends nothing.\n\n**Wrong decisions**\n- L4-chat-302: now already_fixed. intent.ts:1021-1025 and :1032-1033 parse German starts. 'go ahead and run it' reaching the model is by design (comment at :1027-1030).\n- L4-money-413: REJECTED, kept not_a_problem, with the reason now written in the item. The only runs started outside the daemon are `fr jobs calibrate` and `fr jobs handover` (jobs/cli.ts:1-6). They are maintainer commands; neither user-guide.md nor setup-guide.md offers them. Every run the person starts, and the daemon's own monthly calibration (compose.ts:3676-3720), sends run.changed. 'later' does not fit either: it is not collaboration or the phone round.\n- L4-chat-102: part (b), the forwarded yes, is dropped (D-L4-23). Design section 3.9 and agent.ts:1215-1219 stay as they are. Parts (a), (c) and (d), with L4-chat-101's lookup guard and L4-chat-202's ask line, remove the cause. I updated the area's decision, acceptance, fix_scope, cut line, the design handoff, owner_checklist[31] and F-2 to match.\n- L4-github-102: the force rule is now D-L4-24. The safer form: never force-push over a branch Forerunner did not write for this project. When fr/docs-scaffold belongs to someone else, the scaffold opens on fr/docs-scaffold-<slug> without force. A force-push with a lease replaces only this project's own branch, as writeSessionStatus already does for fr/status (docs.ts:983, :998). The session lead must confirm this before L4e.\n- L4-github-130: now owner_question, with its default.\n\n**File conflicts**\n- D-L4-6 now says the session lead must accept 'no source file' explicitly before L4b, or run each pair's areas one after the other. A new harness rule names the existing lines each pair edits: l4-chat-depth at real-daemon.test.ts ~:4327 and ~:15555; l4-chat-answers at the fake daemon's yes reply ~:4428.\n- Item texts now match their area specs (L4-selftasks-105 part 3, L4-money-106's bench play, L4-selftasks-123's L3-left-16).\n- L4-money-113 now uses a cut helper local to pr-executor.ts. A new rule makes quoted-title.ts l4-github-merge's only.\n\n**Spec problems**\n- L4-selftasks-123 moved into a new area, l4-chat-carried: sub-run L4h, wave 32, alone and last, with every field of a run C area spec (D-L4-25). Phase F now runs after L4h. l4-selftasks-chat has 12 items plus 105 (b).\n- l4-github-merge's size line now reads 10 minor and 5 words.\n- The six merge stubs moved to merged_items[]. Their source keys and texts now sit on the items that are built (sources and merged_from), including L4-chat-104 and L4-github-117 (D-L4-29).\n\n**Owner questions**\n- The read-back question is dropped (owner_questions_dropped): design section 3.9 already decides it. D-L4-12 is rewritten. L4-selftasks-117 now makes every chat read-back wait until answered, across a restart. At the Yes it applies only if what it named is unchanged; otherwise it says what changed and asks again. A dated amendment covers ADR 0030's ten-minute expiry. Small correction to the checker: that expiry is ADR 0030 point 3, not point 6.\n- The other two new questions stand, plus L4-github-130. The nine carried run C questions are all still open; no fix answers one.\n\nTwo calls are for the session lead before the runs start: accept the narrowed file rule (D-L4-6) before L4b, and confirm the branch rule (D-L4-24) before L4e."
+ }
+}

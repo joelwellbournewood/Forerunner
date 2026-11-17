@@ -1,0 +1,767 @@
+{
+ "group": "chat",
+ "base": "4cf11fd",
+ "items": [
+  {
+   "id": "L4-chat-101",
+   "sources": [
+    "live4:L4-chat-1",
+    "live4:L4-chat-4",
+    "live4-step:chat:LC-C10"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "On the real fast model chat says a recorded thing does not exist, or offers to look, instead of looking it up",
+   "what_the_person_sees": "'There is no README task in Quote Page's task list ... I can search the records for it.' / 'I can't see a licence choice ... I haven't searched the records yet. Should I look through the earlier notes and decisions for it?' / 'I haven't set any budget in this conversation' / 'There was no card about the first page in this project' / 'The pizza oven is probably in the Bakery project ... Should I look?'. LC-C10: 3 of 12 past questions named the right record with its date (pass needs 10), 5 said a recorded thing is missing; in Quote Page 1 of 11 past questions called recall.",
+   "evidence": "/tmp/frbench/live4/chat/c1/steps/c10-quote.json, c10-follow.json, c10-bakery.json; /tmp/frbench/live4/chat/c1/home/bench/model-calls.jsonl (recall and recall_open offered on every call; Quote Page seq 7 the only recall; seq 17/18 the controls: one call, toolCalls []); /tmp/frbench/live4/chat/steps/LC-C10.json; recall itself works: recall-rank.test.ts passes at 4cf11fd and 'search the records: when was the README merged?' found 'merged on Tue 10 Nov'.",
+   "root_cause_at_head": "evals/registry/principals/conversation-agent.md:14 ('You answer fast and short from what you are given'), :38-39 (the lookup tools listed without recall), :68 ('If nothing you were given or looked up holds the answer, say what you looked through': a sanctioned way out with no lookup); packages/runtime/src/conversation/agent.ts:616-617 CHAT_RECALL_RULES ('The first message holds what is true now ... Answer questions about now from the first message without a lookup') reads to a low-effort model as if task-list questions are 'now'; agent.ts:2029-2095 the claim guard checks only change and ask claims (claims.ts:139 claimOf), nothing compares an absence or 'Should I look?' reply with the turn's recall calls; packages/runtime/src/conversation/project-facts.ts tasksBlock (called at agent.ts:2912) names tasks by current title only, so a renamed task ('Write the README', now 'Write the guide') is invisible without recall; the 12-turn history (transcript.ts:267) then replays the model's own offers, and later misses copy them.",
+   "fix_sketch": "(1) Code guard beside the claim guard (agent.ts ~2029-2095, built like claimOf/claimNudge): absenceOf(text) in claims.ts matches English and German absence or offer-to-look wording ('there is no', 'I can't see/find', 'I found no record', 'nothing ... mentions', 'I haven't searched', 'Should I look/search', 'I can search', 'keine ... gefunden', 'nicht gefunden', 'soll ich nachsehen'); when recall is in the turn's tools and the turn called neither recall nor recall_open, one nudge step inside CHAT_MAX_MODEL_CALLS and the turn's budget, its text not streamed (CHECKING_STEP reset, step line 'Looking through everything recorded…'): 'You said it is not there without looking it up. Call recall now with the person's words and other words for it (an earlier name, another language), then answer from what it returns. Never ask whether to look.' With no call left the reply stays; log the guard on the chat.reply row. Optional (cut line): when the model still makes no lookup, code runs recall with the line's words and hands the hits to one more step. (2) Prompt (conversation-agent.md next version, CHAT_RECALL_RULES; both asserted verbatim on the request): :14 '... from what you are given and what you look up'; :38 list recall and recall_open among the lookup tools; :68 'When what you were given does not hold the answer, look it up with recall in this turn; if recall finds nothing, say what it looked through.'; CHAT_RECALL_RULES adds 'A lookup reads only and needs no yes: never offer to look something up or ask whether to, look it up in this turn. A question about a task, decision, card, document or something said that the first message does not answer needs a lookup. Never say where something probably is (another project) without looking; recall with project all.' (3) Deterministic: a task line in the facts names its earlier title from the change log ('\"Write the guide\" (earlier \"Write the README\"): Done, merged'), within the facts' token budget.",
+   "test_boundary": "Composed chat test (packages/runtime/test/chat-recall.test.ts style: ConversationAgent with the real LoopAgentDriver, EnforcementHooks and a scripted FakeProvider over the recall-home fixture) asserting the requests the model receives and the reply the person gets; a real-daemon twin through POST /chat/stream on the bench stand-in in a new 'answers without looking' mode; exact-text assertions on the system part (prompt and CHAT_RECALL_RULES) and on the facts' task line.",
+   "area": "l4-chat-answers",
+   "notes": "L4-chat-4 (the controls) has verdict model_only true, but its own notes name the app's text that made the choice likely (conversation-agent.md:68 and :14, the history replaying the model's offers), so it is a fix and the same root as L4-chat-1: one item. LC-C10's step key is here (its other misses: no From line -> L4-chat-108; 'yes' to 'Should I look?' -> L4-chat-102). Part of the score came from the fixture (the seeded 'I set the budget to CHF 2.00.' has actions []), noted for the next live check. The yes after the model's offer is L4-chat-102; once this guard stops the offers, that path is rarely hit. Retrieval itself is right (golden set green), so no ranking change is needed for this item (ranking is L4-chat-109). After run L4 the next live check re-runs LC-C10 on bench-live (10 of 12 with date, no 'not there' for a recorded thing)."
+  },
+  {
+   "id": "L4-chat-102",
+   "sources": [
+    "live4:L4-chat-2",
+    "live4:L4-l3-1",
+    "live4:L4-session-2",
+    "live4-step:session:LC-C17"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "Chat asks a yes/no question in its own words ('Should I look?', 'Shall I set ...?', 'Do you want me to start a session?') and the person's 'yes' gets 'Yes to what? Nothing is waiting for your yes.'",
+   "what_the_person_sees": "'I haven't searched the earlier conversation and decisions yet. Should I look for it?' -> 'yes' -> 'Yes to what? Nothing is waiting for your yes.' (0 model calls, 219 ms). 'This widens what research may read, so I need your yes first. Shall I set research for Reading rules to any public website again?' with no buttons -> 'yes' -> 'Yes to what?'; the rule stays (card on the first try in 1 of 3 fresh projects). 'Do you want me to start a session on Garden club (up to CHF 1)?' with no card -> 'ok'/'yes' -> 'Yes to what?', which also does not say how to start.",
+   "evidence": "/tmp/frbench/live4/chat/c1/steps/c10-follow.json f1, c13b.json e2, 48-c13b-03-e3-go-ahead.png; /tmp/frbench/live4/l3/l3b/home/bench/model-calls.jsonl seq 3, 14, 15 (toolCalls [], one call per turn, no nudge), /tmp/frbench/live4/l3/l3b/daemon.log (0 'chat reply claimed what no command did'), screenshots l3b/steps/09-rr1-t3-reply.png, 10-rr1-t3b-reply.png, 25-reading-rules-c-t3-reply.png; /tmp/frbench/live4/session/s1/steps/c17-chat.json, c17-chat-b.json; repro /tmp/frbench/l4chat2/yes.test.ts (passes at 4cf11fd, provider.calls = 1), /tmp/frbench/v-L4-l3-1/claim.mts (claimOf null on the three live replies).",
+   "root_cause_at_head": "packages/runtime/src/conversation/agent.ts:1215-1219 answers every bare yes before any model call unless a card waits or liveOffer (agent.ts:893-896) finds the app's own go_ahead offer, so a question the model wrote in prose is invisible and the yes gets YES_TO_WHAT_REPLY (agent.ts:527, via nothingWaitingReply :2592-2605); packages/runtime/src/conversation/claims.ts:69-106 ASKED and :108-119 CHANGED match only past-tense first-person claims, so claimOf (:139) returns null for 'Shall I set ...?' / 'it needs your yes first' and the guard (agent.ts:2045-2074) never nudges the model to call the command; evals/registry/principals/conversation-agent.md:20-21 promises the model that '\"yes\" ... refer[s] to' its earlier replies; YES_TO_WHAT_REPLY names no next step.",
+   "fix_sketch": "(a) Guard (claims.ts, agent.ts claim-guard region): a third claim kind 'asks': a sentence that asks the person for a yes in words to make a change ('Shall I / Should I / Do you want me to / Want me to / Soll ich' + a change verb: set, change, widen, allow, start, run, add, cancel, pause, raise ...; or '(I|it|this) need(s) your yes|confirmation|approval' next to such a question); clarifying questions without a change verb stay free ('Which project?'); EARLIER and NEGATION filters kept. Counted false when no command of the turn read a change back; claimNudge's lead for it: 'Your reply asks the person for a yes in words, but no command in this turn read a change back, and a typed yes reaches no one. If the person asked for a change, call its command now; the runtime reads it back with Yes and No. Otherwise answer again without asking for a yes.' Still standing after the nudge -> trueLine's NOTHING_CHANGED_REPLY as today. (b) Backstop at agent.ts:1215: when the newest turn is a model answer (no notice, no pendingId, no actions, no go_ahead offer) whose text without its read-back ends in a question, a bare yes or ok goes to the model with the history instead of 'Yes to what?'; that forwarded turn inherits the previous turn's recordsRead, so every change it leads to is read back first; a lookup offer then runs recall, a hand-over offer calls answer_thoroughly (the app's ask line with figures and Go ahead), a start offer calls session_start (the D6 read-back, nothing starts before its Yes). 'Yes to what?' stays for a yes after a statement, a notice, an answered card or nothing. (c) Words: YES_TO_WHAT_REPLY gains a next step: 'Yes to what? Nothing is waiting for your yes. Say what you want done, for example \"run it now\" to start a session.' (d) Prompt: 'Never ask for a yes in words (\"Shall I ...?\"): call the command and the runtime asks with Yes and No; to offer a start, say \"say run it now or press Start\".'; rewrite :20-21 so it no longer says a bare yes reaches the model. Mirror (b) and (c) in apps/ui/test/fake-daemon.ts (:4428); design §3.9's '\"yes\" with no card' line and user-guide.md:400 change (session lead / this area).",
+   "test_boundary": "Composed chat in packages/runtime/test/conversation-memory.test.ts (scripted provider, the l3-chat-claims setup) asserting the nudge request, the read-back card and the second model call that holds the question and the 'yes'; claims unit cases (claimOf non-null for the three live replies and 'Do you want me to start a session on Garden club?', null for 'Which project do you mean?'); real-daemon cases in apps/ui/test/real-daemon.test.ts (describe 'l4-chat-answers, run L4') through POST /projects/:id/chat on the stand-in; a UI case in apps/ui/test/chat.test.tsx typing 'yes' under a model question.",
+   "area": "l4-chat-answers",
+   "notes": "Three findings, one root (the bare-yes guard plus a claim guard that cannot see a yes asked in words); LC-C17's step key is here (its other two partial reasons are L4-chat-210 decimals and L4-chat-207 the dependency line; the model's prose restating a read-back, 'Starting a session ... needs your yes ... Confirm to start it.', is the selftasks group's L4-selftasks-126). Cross-group duplicate: L4-selftasks-118 (the selftasks group) is the same claims.ts/transcript.ts root (an imitated read-back question and a forged 'The app did:' line): the session lead keeps ONE owner for claims.ts and replyInHistory; this triage proposes that L4-selftasks-118 moves into l4-chat-answers (its asked-claim part joins (a) here, its marker part joins L4-chat-112). Security: a forwarded yes cannot change anything by itself; it inherits recordsRead so a change after a record is read back; no record text becomes an instruction. The hand-over trigger of the same dead end ('Should I go ahead?') is also closed in L4-chat-202 (the model stops writing its own ask); both together are safe in either merge order."
+  },
+  {
+   "id": "L4-chat-103",
+   "sources": [
+    "live4:L4-creds-8",
+    "C5:C5L-15"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "After Cancel on a waiting session, chat's 'summary' and the Overview's Last result (until reloaded) still say the session goes on",
+   "what_the_person_sees": "Chat 'summary': 'Last session: Waits until 09:05 (your subscription's limit); then your session goes on. ...'; the Overview's Last result keeps '... then your session goes on.' until the page is reloaded, while the session page, the row and the Update say '... then it runs at your next Start.'",
+   "evidence": "/tmp/frbench/live4/creds/c31-evidence/c31f.json (chatSummary, afterCancel vs afterReset); /tmp/frbench/live4/creds/c31/steps/32-c31-run2-overview-after-cancel.png, 37-c31-run2-chat-summary.png.",
+   "root_cause_at_head": "packages/commands/src/commands/summary.ts:79 (chatProjectSummary) and :46 (textOf/spokenProjectSummary) read summary_cache.last_session.summary as written, never through resultAfterWait (packages/runtime/src/daemon/run-indicator.ts:60, daemon-only, no port into commands); packages/runtime/src/conversation/project-facts.ts lastSessionBlock (:173-177) gives the chat model the stored text too; apps/ui/src/pages/project/SummaryTab.tsx:141 reloads the summary only when [statusLine, progress] change, and with an open failed-task card the status line ('Waiting for you: ...') does not change on Cancel.",
+   "fix_sketch": "A CommandPorts port resultNow(projectId, since, text) (append-only in packages/commands/src/types.ts), wired in compose to run-indicator's resultAfterWait; chatProjectSummary and textOf/spokenProjectSummary pass last_session.ended_at as since; project-facts' lastSessionBlock applies resultAfterWait before the text goes into the chat facts. SummaryCard's reload key adds this project's run-indicator keys (useRunning(projectId).map(r => r.key)) or reloads on project.changed for this id, which Cancel already emits; the Cancel handlers need no reload of their own. Mirror in apps/ui/test/fake-daemon.ts (its Cancel already rewrites the words at :3429).",
+   "test_boundary": "Real-daemon case in apps/ui/test/real-daemon.test.ts after client.cancelContinuation (the 'd1109-run-visible, run C' setup, ~:21813): chat 'summary' through the chat route the UI uses, and the chat model's facts on the stand-in, both read '...; then it runs at your next Start.', also after the restart compose; UI test apps/ui/test/project.test.tsx: a project whose status line stays 'Waiting for you' and whose session waits to go on, press Cancel on the bar, no remount, data-testid=last-result reads the new words.",
+   "area": "l4-chat-answers",
+   "notes": "d1109-run-visible's subsystem (the creds group's journey); kept in this area because both halves are chat's words and the Overview reload is three lines; the session lead may move it to the creds group's run-visible area. C5L-15 names only the chat half; the Overview half is new. The owner's decision: 'when the app says it waits, nothing moves' (D5) and a cancelled wait must not promise a continuation (C3-left-8, built for the other screens in FXRV B3)."
+  },
+  {
+   "id": "L4-chat-104",
+   "sources": [
+    "live4:L4-github-5",
+    "live4-step:github:LC-C3"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "'open it' in a project's Chat tab says 'Switched the active project to Site.' but nothing opens; 'it' matched Site only because 'site' contains 'it'",
+   "what_the_person_sees": "'Switched the active project to Site.' with Undo, while the page, the header ('Notes') and the chat stay on Notes; the refusal before it said 'You can open Site with a project switch' (naming the command).",
+   "evidence": "/tmp/frbench/live4/github/evidence/d01-make-shop.json, d02-open-it.json (calls [], usd 0; urlAfterReply /projects/<Notes>/chat, activeProjectId Site); /tmp/frbench/live4/github/gh4d/steps/01-d01-make-shop-reply.png, 02-d02-open-it-reply.png; /tmp/frbench/live4/github/steps/LC-C3.json; /tmp/frbench/l4gh5/open-it.mts (parser at 4cf11fd).",
+   "root_cause_at_head": "apps/ui/src/components/Conversation.tsx:202-204 only dispatches activeProject and navigates nowhere; packages/commands/src/commands/project.ts:169 switchSentence has no link and no 'this chat stays' clause; project.ts:275 project.create's definition tells the model to 'open it with project.switch', which opens nothing in a project's Chat tab; packages/commands/src/intent.ts:638 maps 'open <X>' to project.switch; packages/commands/src/commands/shared.ts:38-41 matchProjects' contains-step matches the pronoun 'it' inside 'site'.",
+   "fix_sketch": "(1) 'open <project>' opens it, as the New project dialog's 'Open it' does (NewProjectDialog.tsx:115-121; D1: lead the person to the existing project from every entry point): when a reply to a project-tab turn carries a project.switch done to another project and the person's words were 'open ...', Conversation.tsx navigates to /projects/<target> (its Chat tab when the line came from a Chat tab). 'switch to <project>' keeps U-056 (the tab stays on its project): the reply says 'Switched the active project to Site. This chat stays about Notes.' with an Open Site link. (2) project.create's definition and the refusal offer promise only what happens ('offer that project instead: the person can open it or add the new work to it'), never a command name. (3) matchProjects never matches a pronoun or deictic word ('it', 'that', 'this', 'there', 'es', 'das', 'dort') and its contains-step needs whole words; 'open it' then resolves to the project the newest reply named (the refusal's details.projectId) or asks 'Which project?'. Update apps/ui/test/active-project.test.tsx's 'header names Atlas' case for 'open', keep it for 'switch'; docs/maintainers/apps.md:582 ('The header always shows the active project') corrected.",
+   "test_boundary": "UI test apps/ui/test/active-project.test.tsx with the fake daemon: in /projects/proj_atlas/chat type 'open Beacon' -> location becomes /projects/proj_beacon/chat; 'switch to Beacon' -> the line 'This chat stays about Atlas' and a link 'Open Beacon' (href /projects/proj_beacon); commands unit packages/commands/test/intent.test.ts: parse('open it', {projects: Notes, Site}) is not project.switch {project: site} by substring; exact-text assertion of project.create's definition; a real-daemon chat-stream case for the refusal then 'open it'.",
+   "area": "l4-chat-answers",
+   "notes": "Not the model: d02 made no model call. The other part of LC-C3 (turn 3, 'add a task there' added to Notes) is L4-github-4, decided by the selftasks group as L4-selftasks-119 (l4-selftasks-chat), which also builds a pronoun target from the conversation; shared_files rule: this area owns matchSwitch/'open' and matchProjects' pronoun rule, l4-selftasks-chat owns matchAddTask and IntentContext's conversation project (this area reads it when it exists, else the refusal's projectId). Default chosen without an owner question: 'open' opens (the dialog's precedent and D1), 'switch' keeps U-056."
+  },
+  {
+   "id": "L4-chat-105",
+   "sources": [
+    "C4:C4L-4"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "After Make one project, the closed project's lessons never reach the kept project's sessions",
+   "what_the_person_sees": "Lessons learned in the project that was joined into another ('use the club's dark blue') are read by chat recall but no specialist of the kept project hears them: the next session repeats a mistake the closed project had learned from.",
+   "evidence": "/tmp/frbench/leftovers-C4.json C4L-4; runC-plan.json session_lead_decisions[35] (sent to this triage).",
+   "root_cause_at_head": "packages/memory/src/retrieval.ts:180 and :214 keep a lesson only when r.project_id equals the request's projectId (no joined projects); chat recall reads lessons through withJoined (packages/runtime/src/conversation/scope.ts) but the session's memory request passes the kept project's id alone.",
+   "fix_sketch": "Retrieval takes a set of project ids: the request's project plus the projects joined into it (the same withJoined scope chat uses, read from projects.joined_into or joined_from); the session's brief builder passes that set; lessons stay canonical on their own project (ADR 0117's amendment kept: nothing is moved or copied). A lesson of a closed project is ranked like the kept project's own. Undo of the join drops it again (the scope is read at each call).",
+   "test_boundary": "Composed runtime test: two projects with a lesson each, Make one project (the project.join command), then the kept project's next specialist request (the stand-in provider's captured brief or the memory block of the request) carries the closed project's lesson; after Undo of the join it does not; a memory unit case for the project-id set.",
+   "area": "l4-chat-answers",
+   "notes": "d1109-onerepo-join's subsystem (the github group's journey); sent to this triage by session lead decision 35, kept here beside recall's withJoined; the session lead may move it to the github group's join area. Cut line: may end not_done with the failing test."
+  },
+  {
+   "id": "L4-chat-106",
+   "sources": [
+    "live4:L4-chat-15",
+    "live4:L4-chat-13"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Recall's session line leaves out a task that failed when the same session finished another, so the thorough pass 'corrects' true earlier answers",
+   "what_the_person_sees": "Recall hands the model 'The session of Fri 13 Nov: Did 1 task: \"Make the events calendar\". How it ended: Done.' for a session in which 'Write the welcome page' also failed; chat then says 'I need to correct my earlier answers ... The records I just read don't show that, so I can't confirm it.' about statements that were true. A failed-only session reads 'failed. How it ended: Done.' (seed shape).",
+   "evidence": "/tmp/frbench/live4/chat/c1/home/bench/model-calls.jsonl seq 9 (08:47:57, the tool result), lines 60, 64, 67, 68; /tmp/frbench/live4/chat/c1/steps/c15.json k3, c14d-goahead.json, c16b.json; repro /tmp/frbench/verify-L4-chat-15/repro.mts (runner shape: 'Did 1 task: ... How it ended: Ended: 1 task needs you.').",
+   "root_cause_at_head": "packages/runtime/src/conversation/recall.ts:428 builds a session hit's detail as `${view.gist}${ended} It cost ...` without view.countsWords, and the hit line prints detail (recall.ts:1528); packages/runtime/src/daemon/session-list.ts:213-218 sessionGist names only the done tasks when any were done; recall calls sessionRowView without blockedNow, so 'How it ended: Ended: 1 task needs you' is stale after the card is answered and says 'ended' twice; packages/runtime/test/chat-recall.test.ts:231-262 (fixture without blocked) and :740 lock in the unrealistic line. The C14d half of L4-chat-13 is the model's own choice, made easier by CHAT_THOROUGH_RULES (depth.ts:359-360) having no rule to look an earlier statement up before calling it unconfirmed.",
+   "fix_sketch": "In recall.ts sessionHits (not in sessionGist, so the Sessions list's 100-character sentence stays): append the failed titles after the done list ('Did 1 task: \"Make the events calendar\"; \"Write the welcome page\" failed.'), or 'Tasks: 1 done, 1 failed.' when names do not fit, matching recall_open's sessionText (recall.ts:461-462); pass blockedNow (stillBlocked, as server.ts:1796 does) into sessionRowView; use the plain endedWords after 'How it ended:'. Fix the chat-recall.test.ts fixture to the runner's handoff shape (blocked: [...failed], runner.ts:4072) and update :740. The CHAT_THOROUGH_RULES sentence for the C14d half ('Your earlier replies rest on lookups not shown again here: before you call one wrong or unconfirmed, look it up in this turn; when a hit leaves something out, open it.') is built with L4-chat-203's change to the same constant (l4-chat-depth owns depth.ts).",
+   "test_boundary": "Composed packages/runtime/test/chat-recall.test.ts (real ConversationAgent, LoopAgentDriver, FakeProvider): the tool_result the model receives on its second request for recall {kinds:['sessions']} names '\"Write the welcome page\" failed' on the 13 Nov hit and agrees with recall_open; a failed-only session never reads 'failed. How it ended: Done.'.",
+   "area": "l4-chat-answers",
+   "notes": "L4-chat-13's code cause is this one (the verdict: fold it in); its title overstates the C15 case (the model did look; the records misled it). 'session_last: has had no session yet' in the same evidence is a seed artefact (the seeds write no project lastSession): tell the live-check lead. The prompt sentence lives in l4-chat-depth's L4-chat-203 (one verbatim assertion of CHAT_THOROUGH_RULES)."
+  },
+  {
+   "id": "L4-chat-107",
+   "sources": [
+    "live4:L4-chat-5",
+    "live4-step:chat:LC-C11"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Recall's card hit leaves out what a questions card asked, so chat says the records do not say what the writer asked",
+   "what_the_person_sees": "'It is not clearly about a first page, and it is no longer open. No card about the first page was found, and nothing in the records says what the writer asked there.' The card asked 'Which recipes go on the first page?'. Only 'open that card ... word for word' (recall then recall_open) quoted it.",
+   "evidence": "/tmp/frbench/live4/chat/c1/home/bench/model-calls.jsonl seq 7 (r6 weak: '\"Write the index page\" needs your answers: ... Answer: The three soups.'), seq 9-10 (recall_open: 'It asked: The writer asks: Which recipes go on the first page?'); /tmp/frbench/live4/chat/c1/steps/c11.json, c11b.json, c11c.json; /tmp/frbench/live4/chat/steps/LC-C11.json.",
+   "root_cause_at_head": "packages/runtime/src/conversation/recall.ts:700-720 cardHits sets detail to the Answered outcome and the answer only, and the search line prints detail (recall.ts:1528), so the body with r.why and r.steps (the words the hit matched on) is never shown; a questions card's title is '\"X\" needs your answers' / '\"X\": the specialist asks you' (request-words.ts:559); cardAnswerWords drops the question for a one-question card (recall.ts:347); only recall_open says 'It asked: ...' (recall.ts:736).",
+   "fix_sketch": "In cardHits, for a card whose title does not carry its question (person_questions), start detail with 'It asked: <questions joined by | , one line>' cut to about 120 characters, then the outcome and 'Answer: ...'; a one-question card may print 'Q -> A'; the generic card keeps its line (its title is the question). snippetOf then centres on the matched words. Recheck the 1,500-token search budget with 8 card hits; the result stays inside the injection scan and the data envelope (the question can carry planted words, as in LC-C11). Update chat-recall.test.ts:963 (Bakery: holds 'What are the opening hours?') and runtime.md's recall paragraph.",
+   "test_boundary": "Composed packages/runtime/test/chat-recall.test.ts at the model boundary: an answered person_questions card with steps ['Which recipes go on the first page?'] and answer 'The three soups'; recall {words:'card first page', kinds:['cards']} -> the r1 line in the tool_result contains the question and 'Answer: The three soups.'; the injection case: a planted line in the question still arrives inside the envelope, flagged.",
+   "area": "l4-chat-answers",
+   "notes": "LC-C11's step key is here; its other miss ('There was no card about the first page' without a lookup) is L4-chat-101. The LC-C11 injection checks passed (nothing acted on, state identical). 'You answered \"your answers\"' in the same hit is the seed (L4-chat-301)."
+  },
+  {
+   "id": "L4-chat-108",
+   "sources": [
+    "live4:L4-chat-3"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A reply that rests on recall's hit lines has no From line: only records opened with recall_open become sources",
+   "what_the_person_sees": "'Last week there were two sessions on Quote Page: Monday 9 Nov ...', 'The Bakery work cost CHF 0.21 last week', 'On Sun 1 Nov you answered ... Mon to Fri 9 to 18' show no From line; 9 of 11 recall turns in the live store have no sources.",
+   "evidence": "/tmp/frbench/live4/chat/c1/home/data/state.sqlite chat.reply rows (2 of 11 recall turns with sources.records) against /tmp/frbench/live4/chat/c1/home/bench/model-calls.jsonl (seq 29-30: CR-12's own acceptance line gets no source).",
+   "root_cause_at_head": "packages/runtime/src/conversation/agent.ts:2322 namedSources(reply, recallScope.opened, ...); recall.ts:1616-1643 namedSources loops over opened only; opened is filled only by recall_open (recall.ts:1597); recall's hits go into scope.refs, replaced on each call (recall.ts:1524); ADR 0114 'Sources' says 'among those it opened'; the bench stand-in always opens the first strong hit (testenv/src/bench/role-player.ts:1657), so no test met this path.",
+   "fix_sketch": "RecallScope keeps seen: {record, strong}[] across the turn's recall calls (beside the refs assignment); namedSources takes the scope: opened records first as today, then seen hits not opened that the reply names by title or earlier title, by date alone only when strong; cap three, no duplicates. Update ChatSources' doc comment (agent.ts:349), ADR 0114 'Sources' (dated amendment: a record the reply names among this turn's hits, opened or not) and runtime.md. Give the bench stand-in a path that answers from the hit line without recall_open (a strong hit whose snippet holds 'Answer:' or a CHF figure).",
+   "test_boundary": "Real-daemon case in apps/ui/test/real-daemon.test.ts (describe 'd1109-chat-recall, run C' neighbour, or this area's describe): the stand-in plays recall then answers from the hit line; POST /chat/stream 'what did I answer about the opening hours?' returns reply.sources.records [{kind:'card', date:'1 Nov', ...}] and GET /projects/:id/conversation keeps it after a restart; composed twin in chat-recall.test.ts; a weak date-only hit is not named; UI: 'From: ...' under that reply (recordLink's rules unchanged).",
+   "area": "l4-chat-answers",
+   "notes": "A design gap of C2's spec, not a coding slip; no model-facing text changes. With this, more From lines name cards and decisions without a link (C3L-9's rule stays: a page that cannot open the record gets no link)."
+  },
+  {
+   "id": "L4-chat-109",
+   "sources": [
+    "C2:CL-11"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Recall ranks the person's own earlier question lines above the record asked about, cuts a multi-question card's later answers and centres the snippet on the first query word",
+   "what_the_person_sees": "After a restart, recall {words: 'the FAQ'} ranked 'what happened to the FAQ task? (you)' ahead of the task 'Write the FAQ'; in LC-C11 the right card was a weak r6 below the person's own lines, so the model judged it unrelated.",
+   "evidence": "/tmp/frbench/leftovers-C2.json CL-11; live check 4: L4-chat-5's verdict (the card hit r6 weak, below the person's question lines).",
+   "root_cause_at_head": "packages/runtime/src/conversation/recall.ts:1245-1300 rankRecords fuses BM25 and n-gram ranks with only an exact-title boost and the project boost: no weight for the person's own conversation lines; recall.ts:1394-1407 snippetOf centres on the earliest-occurring term, not the rarest; card answers cut at 160 characters before later answers.",
+   "fix_sketch": "Down-weight conversation hits that are the person's own question lines (a line ending in '?' by the person, or a line that repeats the query), e.g. score *= 0.5, measured against the golden set (recall-rank.test.ts thresholds hold or rise); snippetOf centres on the rarest query term present (by the BM25 idf already computed); a card with several questions keeps each answer short (per-answer cut) instead of one 160-character cut.",
+   "test_boundary": "packages/runtime/test/recall-rank.test.ts golden set on the recall-home fixture: 'the FAQ' ranks the task above the person's own question; a 3-question card's hit carries all three answers; the snippet for 'licence MIT' centres on 'licence'; the golden set's overall threshold stays green.",
+   "area": "l4-chat-answers",
+   "notes": "Cut line: may end not_done if the golden set does not hold, with the measurement."
+  },
+  {
+   "id": "L4-chat-110",
+   "sources": [
+    "C2:CL-4"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A cancelled task's pull request closed on GitHub still reads 'Left open on GitHub when their task was cancelled' in chat's facts",
+   "what_the_person_sees": "Chat keeps telling the person a pull request is left open for them to close, after they closed it on GitHub.",
+   "evidence": "/tmp/frbench/leftovers-C2.json CL-4 (L3-left-5 carried); code at 4cf11fd.",
+   "root_cause_at_head": "packages/runtime/src/conversation/project-facts.ts:541-548 moves a cancelled task's pull request to 'Closed without merging' only when its merge record says last_outcome closed, and nothing records a close made on GitHub for a cancelled task's pull request (no merge record is kept for it); filesBlock prints the rest at :650-652.",
+   "fix_sketch": "When the watcher that L3:LL-1's item builds (merge cards closed when their pull request is closed on GitHub) sees a close, it also records it for a cancelled task's pull request (a merge record or the task's pr_state), and repositoryFacts reads that; no GitHub call on the chat's first-word path (d1109-chat-guard's rule kept).",
+   "test_boundary": "Real-daemon case on the fake GitHub host: cancel a task with an open pull request, close the pull request on the fake host, let the watcher poll; the chat facts in the request the stand-in model receives say 'Closed without merging: \"...\"' and no longer 'Left open on GitHub'; packages/runtime/test/l3-merge.test.ts updated.",
+   "area": "l4-chat-answers",
+   "notes": "Same root as L3:LL-1 (the github group's bundle: nothing observes a close on GitHub). Depends on that item; if the area that takes LL-1 records closes for cancelled tasks too, this item is one assertion on '# Your files'. Cut line: not_done if LL-1's area has not merged first."
+  },
+  {
+   "id": "L4-chat-111",
+   "sources": [
+    "live4:L4-chat-10"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A settled chat reply glues a paragraph onto the next list and a heading onto the previous bullet; an intro before a list shows a raw '- '",
+   "what_the_person_sees": "'... Nothing has changed. Session 1:' on one line; '- In the same session, run ... Session 2:' with 'Session 2:' inside the bullet; 'The two most recent sessions: - Sun 15 Nov ...' with a raw '- '. The streaming bubble looks right and reflows when the turn settles.",
+   "evidence": "/tmp/frbench/live4/chat/c1/steps/48-c13b-03-e3-go-ahead.png and .txt; model-call log line 54 and the stored chat.reply keep '\\n\\n'; repro /tmp/frbench/l4chat10/collapse.mjs, render.ts.",
+   "root_cause_at_head": "apps/ui/src/lib/plain-words.ts:27 inAppText ends with .replace(/\\s{2,}/g, ' '), collapsing every blank line; applied to settled replies at apps/ui/src/components/Conversation.tsx:560 (the live bubble at :342 skips it). RichText is right.",
+   "fix_sketch": "inAppText keeps line structure: collapse only runs of spaces and tabs (/[^\\S\\n]{2,}/g), trim line ends, cap blank runs at one blank line, trim; one-line callers are unaffected; the live and settled bubbles use the same helper so nothing reflows.",
+   "test_boundary": "apps/ui/test/rich-text.test.tsx through the Chat tab with the fake daemon (nextChatReply with an intro, a blank line, items, a blank line and a closing line): type, Send, wait for data-streaming=false; the lists' items exactly, the intro and closing outside any <li>, no 'sessions: -'; a plain-words unit case inAppText('a\\n\\nb') === 'a\\n\\nb'.",
+   "area": "l4-chat-answers",
+   "notes": "Cross-group duplicate: L4-selftasks-124 (live4:L4-chat-17, selftasks group) is the same root (plain-words.ts:27); ONE item at the session lead, proposed here in l4-chat-answers (which owns plain-words.ts and the settled bubble's text)."
+  },
+  {
+   "id": "L4-chat-112",
+   "sources": [
+    "live4:L4-l3-2"
+   ],
+   "severity": "words",
+   "decision": "fix",
+   "title": "Chat replies copy the app's 'The app did:' marker and narrate their own tool calls and refusals",
+   "what_the_person_sees": "'The app did: research for Reading rules C now reads only developer.mozilla.org ...' (written by the model); 'The second call was refused only because the setting already matched.'",
+   "evidence": "/tmp/frbench/live4/l3/evidence/reading-rules-b-t2.json, reading-rules-c-t2.json; /tmp/frbench/live4/l3/l3b/home/bench/model-calls.jsonl seq 12-14 (C's turn had no history: the marker came from the system prompt; seq 14's history then carries two markers for one change).",
+   "root_cause_at_head": "evals/registry/principals/conversation-agent.md:21-22 and packages/runtime/src/conversation/agent.ts CHAT_RETRIEVAL_RULES (~:603-605) present 'The app did: …' in words that read like a reply format; packages/runtime/src/conversation/transcript.ts:354-366 replyInHistory keeps the model's own marker beside the app's actionLines (HISTORY_ACTION_LEAD :280); packages/commands/src/registry.ts:215-218 returns a no-op set (settings.ts:1079-1084 refuseNoChange, details.unchanged) as an is_error 'Refused: ...', which the prompt tells the model to read and retry.",
+   "fix_sketch": "(1) Prompt: only the app writes 'The app did:'; never start or end a reply with it; under 'How you answer': 'Say what is true now for the person; never describe your tool calls, their order or their refusals.' (2) Code: before a reply is shown and stored, remove a model-written HISTORY_ACTION_LEAD line from its text; replyInHistory strips it from the prose so the app's actionLines are the only marker lines (a forged marker can no longer pose as a change in history). (3) A no-op set (details.unchanged) goes back as a plain result 'Nothing to change: <what> is already <value>.' (not is_error), also for a second identical call in the same turn.",
+   "test_boundary": "Composed chat in packages/runtime/test/conversation-memory.test.ts (scripted provider): a reply 'The app did: ...' after a real settings_set shows no marker in ChatReplyView.text and the next turn's history holds exactly one marker line (the app's); two settings_set calls for the same value: the second tool_result is not is_error and does not start 'Refused:'; the system text with the new rule asserted exactly.",
+   "area": "l4-chat-answers",
+   "notes": "Cross-group: the marker half is L4-selftasks-118's (c) and (a) too (the forged 'The app did: Updated ...' line); one owner of replyInHistory and the prompt line, proposed here. registry.ts is also l4-selftasks-chat's (the chat tool result's suffix): shared_files rule: this area owns the default branch's unchanged case only."
+  },
+  {
+   "id": "L4-chat-113",
+   "sources": [
+    "live4:L4-chat-19"
+   ],
+   "severity": "words",
+   "decision": "fix",
+   "title": "A chat reply names an internal tool: 'The session_last lookup also reported no session'",
+   "what_the_person_sees": "'... The session_last lookup also reported no session for Photo club, which conflicts with these records.'",
+   "evidence": "/tmp/frbench/live4/chat/c1/steps/c16b.json (the wrap-up call), 76-c16c-after-restart.png and .txt line 72.",
+   "root_cause_at_head": "evals/registry/principals/conversation-agent.md:38-39 names the read tools as bare identifiers and 'How you answer' (:58-70) forbids ids and raw states but not tool names; packages/runtime/src/conversation/agent.ts:659-661 '# How to write' covers only markdown; depth.ts:359/:363 (thorough rules and wrap-up) ask it to say what it rests on and could not check; nothing scrubs tool names from a reply.",
+   "fix_sketch": "One sentence in '# How to write' (CHAT_PLAN_RULES, in both the quick and the thorough system parts): 'Never name a tool or a lookup (recall, recall_open, session_last, task_get, tasks_list, files_list, answer_thoroughly or any name with an underscore): say what you read in the person's words (\"the last session\", \"the runs of \\\"X\\\"\", \"the records of 15 Nov\").'; the same line in 'How you answer'. Optional (cut line): a reply check against the turn's tool registry names that maps the read tools to person words. The 'in plain words' addition to CHAT_WRAP_UP and CHAT_THOROUGH_RULES is made by l4-chat-depth (depth.ts).",
+   "test_boundary": "Exact-text assertion of the quick and the thorough request's system part (packages/runtime/test/chat-depth.test.ts or conversation-memory.test.ts, prompts are asserted verbatim there); if the code check is built, a composed chat case whose wrap-up call answers 'The session_last lookup ...' gives a reply with no /\\b[a-z]+_[a-z_]+\\b/ token on the chat route.",
+   "area": "l4-chat-answers",
+   "notes": "The 'no session' conflict that triggered it is a seed artefact (no project lastSession seeded); rare with real data, but nothing prevents it. A prompt made the choice likely, so it is a fix, not model_only."
+  },
+  {
+   "id": "L4-chat-201",
+   "sources": [
+    "live4:L4-chat-12",
+    "live4-step:chat:LC-C14"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "Go ahead under 'This needs a stronger model' only asks again: after one cheap stronger answer, the stronger and best rungs never run anywhere on the install",
+   "what_the_person_sees": "'use a stronger model: why did \"Build the contact form\" fail ...' -> 'This needs a stronger model: about CHF 0.04 (at most CHF 0.17) and 10 seconds. Go ahead?'; each Go ahead (and a typed 'yes') adds 'Go ahead.' and the identical line with a new Go ahead button; nothing runs (0 model calls, 95-376 ms).",
+   "evidence": "/tmp/frbench/live4/chat/c1/steps/c14.json, c14b-goahead1.json, c14b-goahead2.json, c14c.json, 60-c14c-01-y2yes.png (four identical ask lines); offers' atMostUsdMicro 205,890 -> 206,334 -> 208,455 -> 208,905 -> 209,205 -> 209,505 (copied store /tmp/frbench/v-l4chat12/state.sqlite); repro /tmp/frbench/v-l4chat12/t/repro.test.ts (seeded pass of 1,000: three Go aheads, zero calls).",
+   "root_cause_at_head": "packages/runtime/src/conversation/depth.ts:166-173 atMostOf returns max(twice the estimate rounded to the centime, floor) and the floor unrounded when it is larger; agent.ts:1666-1674 measures the floor (PASS_FLOOR_CALLS x the first call's worst case) on a context the offered turn has grown; agent.ts:1872 re-asks when yes.atMostUsdMicro < f.floorUsdMicro, always true on the accept turn; the same comparison at agent.ts:1889; the estimate is the median of recentPasses across the one conversation session every project shares (agent.ts:1667-1669, event.ts:88-101), so one cheap pass makes every later stronger Go ahead loop.",
+   "fix_sketch": "(1) atMostOf rounds its max up to the centime (the stored 'at most' is the CHF on the line). (2) personsPass judges a yes against what was shown: re-ask only when the model changed or centimesUp(floor) > centimesUp(yes.atMostUsdMicro) (the shown figure would change); the pass then runs with budget = yes.atMostUsdMicro capped by the room as today; the same at agent.ts:1889. (3) Optional: an accepted offer's floor is measured without the offered turn's own ask line. A re-ask after a real price or model change (the restart case) stays, with the new figures shown.",
+   "test_boundary": "Composed packages/runtime/test/chat-depth.test.ts (fake-haiku fast pass, fake-sonnet stronger, flatPricing): seed one chat.reply row with a stronger pass of 1,000 micro-USD in another project; 'use a stronger model: <Q>' -> the ask line and no model call; 'Go ahead.' with offer -> exactly one fake-sonnet request, footer /^Thought it through with Sonnet · \\d+ s · /, cost within the line's 'at most', no second ask row; the same through the daemon's chat route on the stand-in (real-daemon) and the UI's Go ahead button (one answer under Go ahead).",
+   "area": "l4-chat-depth",
+   "notes": "The owner's D3 and answer 2 ('if it will switch models ... it should warn/ask first'): the ask works, the yes never does. No money passes anything (nothing runs), so major, not blocker. LC-C14's step key is here (X and Z passed). The best rung loops the same way after one cheap Opus pass. C3L-10's 'ask repeated with new figures when the price changed' case is the sibling control and is written here."
+  },
+  {
+   "id": "L4-chat-202",
+   "sources": [
+    "live4:L4-chat-7"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "On the real fast model chat never hands a depth question over: it answers alone or announces the hand-over in words with no cost, no time and no Go ahead",
+   "what_the_person_sees": "'make a plan for the next two sessions' -> 'This is a plan question across several sessions, so I can hand it to the stronger model. It asks you first, since it costs more. Should I go ahead?' with no button (a 'yes' gets 'Yes to what?'); 'review the decisions for conflicts' -> 'That is the only conflict I found' (missed 'No photos of members' vs the gallery 'Yes, with their names'); the failure question with a failed-task card never gets 'This needs a stronger model: ... Go ahead?'. answer_thoroughly called 0 of 4 depth lines and 0 of 3 failure questions.",
+   "evidence": "/tmp/frbench/live4/chat/c1/steps/c13.json, c13b.json, c13c.json; /tmp/frbench/live4/chat/c1/home/bench/model-calls.jsonl rows 40-58 (every turn's facts carry 'thinking_longer: asks the person first'; 76 chat calls, none calls answer_thoroughly); /tmp/frbench/live4/creds/c25-proxy/bodies/4-req.json (the real request carries the tool and its enum schema).",
+   "root_cause_at_head": "packages/runtime/src/conversation/agent.ts:1711-1722 writes '- thinking_longer: asks the person first' into # Now on every turn with recordsRead (a card listed in full), and depth.ts:376 has no subject, so it reads as an instruction to ask in words; depth.ts:331-332 ANSWER_THOROUGHLY_DESCRIPTION ends 'The facts' thinking_longer line says whether it is available now'; the only trigger is the fast model's tool choice at effort low, thinking off (agent.ts:1813, :1907-1950), by ADR 0114 'Who decides' (no keyword routing beyond the person's phrases); the stand-in calls answer_thoroughly from a regex on exactly these lines (testenv/src/bench/role-player.ts:1673-1716) and chat-depth.test.ts scripts it, so every acceptance test passed against behaviour the real model does not show; no conversation-agent eval exists.",
+   "fix_sketch": "(1) Words (never cut): thinking_longer's 'asks' value says who acts: 'available: call answer_thoroughly; the app asks the person with the cost (never ask in your own words)'; the definition drops 'says whether it is available now' and adds 'Never offer a stronger model or ask \"Should I go ahead?\" yourself: call this tool; the app writes the ask.'; the same line in conversation-agent.md's 'Thinking longer'; verbatim assertions updated. (2) Ask-only backstop in code (ADR 0114 'Who decides' amendment, dated, for the session lead's review): depth.ts needOfLine(text) -> why | null (why ... fail(ed)/keep(s) failing, a plan for/the next, compare, review ... for, the last two/three sessions, and the German siblings: the stand-in's patterns moved into the app); when a typed quick pass ends without answer_thoroughly and needOfLine finds a need, run the tool's gate in code (spoken, quick, injection, room, rung, the ask rule; a lookup by the quick pass does not refuse here, since an offer spends nothing); if the rung asks first, attach the stored go_ahead offer with the app's ask line under the quick answer, so Go ahead or a typed yes runs it; if it would go ahead, attach only Think it through: a pattern never spends on its own. (3) A words-only-offer check beside it in depth.ts (not claims.ts, which l4-chat-answers owns): a quick reply that offers a hand-over in words ('stronger model', 'hand it', 'Should I go ahead?') with no stored offer gets the real offer, or the sentence is replaced. (4) A stand-in mode where the fast model answers alone on depth lines, so the backstop is tested at the bench boundary; a conversation-agent eval of LC-C13's 4 depth and 4 quick lines for the next live check.",
+   "test_boundary": "Composed packages/runtime/test/chat-depth.test.ts (ConversationAgent with the LoopAgentDriver, the hooks and a FakeProvider scripted with the recorded live reply and no tool call), seeded failed task with its card in full: r.offer.action 'go_ahead', r.offer.line matches /^This needs a stronger model: about CHF \\d+\\.\\d{2} \\(at most CHF \\d+\\.\\d{2}\\) and \\d+ seconds\\. Go ahead\\?$/, no thorough request before the yes, then 'yes' runs exactly one chat_thorough pass; the same for U-094's failure question; exact-text assertions of the thinking_longer fact and the definition; the real-daemon twin in the stand-in's answer-alone mode; next live check LC-C13 (answer_thoroughly or the backstop on at least 3 of 4).",
+   "area": "l4-chat-depth",
+   "notes": "The owner's D3 ('escalates effort or model selectively ... when the question needs it') fails on the default path. The backstop changes ADR 0114's 'no keyword routing' line, which was a run C design choice, not the owner's: kept ask-only (nothing is spent without the person's yes), so it stays inside the owner's 'warn/ask first'. Interplay with L4-chat-102 (a yes to the model's own 'Should I go ahead?' reaches the model): safe in either order. How much of the 0 of 7 the wording alone explains is not measured: both parts are never-cut."
+  },
+  {
+   "id": "L4-chat-203",
+   "sources": [
+    "live4:L4-chat-8"
+   ],
+   "severity": "major",
+   "decision": "fix",
+   "title": "The stronger model's paid answer says 'I couldn't hand it to the stronger model' under the footer 'Thought it through with Sonnet'",
+   "what_the_person_sees": "After 'This needs a stronger model: about CHF 0.29 (at most CHF 0.57) and 30 seconds. Go ahead?' and Go ahead: 'Here's a plan from the tasks as they stand. I couldn't hand it to the stronger model, so this comes from what I have. Nothing has changed. ...' with 'Thought it through with Sonnet · 6 s · CHF 0.04'.",
+   "evidence": "/tmp/frbench/live4/chat/c1/steps/48-c13b-03-e3-go-ahead.png; /tmp/frbench/live4/chat/c1/home/bench/model-calls.jsonl line 54 (06:20:25.572Z, claude-sonnet-5-5 medium, USD 0.048816, 36 tools without answer_thoroughly; system with '## Thinking longer'; last message the question plus '- thinking_longer: asks the person first'; 'Go ahead.' never in the request).",
+   "root_cause_at_head": "packages/runtime/src/conversation/agent.ts:1722 builds volatile with the quick pass's thinking_longer line and :1829 thoroughRequest(volatile) reuses it, so the stronger pass is told 'asks the person first' after the person said yes (design §5 rule 4 for status texts given to the model); agent.ts:1412 replaces 'Go ahead.' with the offer's question, so the yes is never visible; the system part keeps the role prompt's '## Thinking longer' (conversation-agent.md:49-57, 'when it answers \"Not now\" ... answer briefly from what you have') while CHAT_THOROUGH_RULES (depth.ts:359) never says it is the closer look the person chose.",
+   "fix_sketch": "(a) thoroughPass builds its own volatile: the thinking_longer line replaced by a pass line from depth.ts (thoroughFact): '- this_answer: the closer look on Sonnet the person said yes to (at most CHF 0.57)' / 'the longer look on this model' / '... the person pressed Go ahead'; never 'asks the person first' to a running pass; asserted verbatim. (b) CHAT_THOROUGH_RULES (system part, cache-stable) adds: 'You are that closer look: the stronger model or longer effort the app chose or the person said yes to. answer_thoroughly and the \"Thinking longer\" section are the quick pass's, not yours. Never say you could not hand it over or that a stronger model was not used.' and L4-chat-106's sentence ('Your earlier replies rest on lookups not shown again here: before you call one wrong or unconfirmed, look it up in this turn; when a hit leaves something out, open it.'), and 'say in plain words what you could not check' (with CHAT_WRAP_UP, for L4-chat-113). (c) Optional: scope the role prompt's '## Thinking longer' to 'on the quick pass, when the tool is offered'. The fast request stays byte-identical (R-chatcache tests).",
+   "test_boundary": "Composed packages/runtime/test/chat-depth.test.ts at the model-request boundary: 'use a stronger model: make a plan ...' then w.chat('Go ahead.', {offer}); the one fake-sonnet thorough request's last message has no '- thinking_longer: asks the person first' and has the pass line; its system ends with the extended CHAT_THOROUGH_RULES verbatim; siblings for a quick-pass hand-over that went ahead and for Think it through ('on this model'); the fast request byte-identical.",
+   "area": "l4-chat-depth",
+   "notes": "The footer and the money were right; only the paid answer's words were false (§5 rule 9). The earlier Haiku words-only offers in that history are L4-chat-202 and the 'Yes to what?' L4-chat-102; this item's cause is enough on its own."
+  },
+  {
+   "id": "L4-chat-204",
+   "sources": [
+    "C4:C4L-13"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A project closed by Make one project still takes new work through the plan route, the Data tab and a Yes answered after the join",
+   "what_the_person_sees": "Data added in the closed project's Data tab, or a chat change read back before the join and answered Yes after it, is written on the closed project, where no session runs it and the kept project never sees it.",
+   "evidence": "/tmp/frbench/leftovers-C4.json C4L-13; code at 4cf11fd.",
+   "root_cause_at_head": "packages/commands/src/executor.ts:323 refuseClosedProject runs only in prepare (:320-345), not in confirm (:900, :969, :983), so a card prepared before the join is performed after it; packages/runtime/src/daemon/server.ts:1434 POST /projects/:id/plan calls applyProjectPlan with no closed-project check; the Data tab's add and import routes take data on a closed project.",
+   "fix_sketch": "confirm (all three entry points) re-runs refuseClosedProject on the stored card before perform and answers the joined sentence ('\"Kite club\" joined \"Site\", so its work runs there.'), closing the card; POST /projects/:id/plan and the Data tab's add and import routes refuse a removed or joined project with the same sentence (removedProjectRefusal), 409 with cause project_joined; the UI shows the sentence (the joined page already reads as kept to read).",
+   "test_boundary": "Real-daemon cases: POST /projects/:closed/plan -> 409 with the sentence and nothing written; the Data tab's Add on a closed project refused (route + UI test with the fake daemon in the same commit); composed commands: a chat change read back, project.join, then Yes -> refused in words, the closed project unchanged, also after a restart (restorePending).",
+   "area": "l4-chat-depth",
+   "notes": "d1109-onerepo-join's subsystem (the github group's journey), data integrity; sent to this triage with the C4 leftovers; kept here so it has an owner, the session lead may move it to the github group's join area. executor.ts is also l4-selftasks-chat's (confirm performs as the confirming human): shared_files rule: this area adds only the closed-project check before perform."
+  },
+  {
+   "id": "L4-chat-205",
+   "sources": [
+    "live4:L4-chat-16",
+    "live4-step:chat:LC-C15"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Once a conversation passes 12 turns, every chat turn writes its whole history to the prompt cache again",
+   "what_the_person_sees": "Nothing on screen; each quick turn pays the cache-write price on about 1,900-2,000 history tokens (about 40% of a quick Haiku turn's bill), more on Sonnet thorough passes.",
+   "evidence": "/tmp/frbench/live4/chat/c1/steps/c15.json (k2 read 16,128 wrote 1,915; k4 read 16,128 wrote 2,028; 25 messages each, 0 identical leading messages between k1 and k2); /tmp/frbench/live4/chat/steps/LC-C15.json; repro /tmp/frbench/verify-L4-chat-16/repro.mts (PromptCacheSim: 4->5 turns read 2,720/write 59; 13->14 read 2,462/write 741).",
+   "root_cause_at_head": "packages/runtime/src/conversation/transcript.ts:379 const recent = turns.slice(-HISTORY_TURNS) (HISTORY_TURNS 12, :267) and the token-cap loop dropping the oldest turn one at a time, so the first message changes on every turn and the prefix cache matches only tools and system; called from agent.ts:1605-1607 (quick) and :1630 (thorough, THOROUGH_HISTORY_TOKENS 8,000).",
+   "fix_sketch": "A stepped window, a pure function of the stored rows: start = max(0, floor((n - HISTORY_TURNS) / K) * K) with K = 6 by the turn's index from the conversation's start (seq, not the position in the 100-turn read), so the window holds 12 to 17 turns and moves every 6 turns; the token cap drops turns in blocks anchored to the same start (or keeps the start until the budget plus a margin is passed), never one per call; the same for the thorough pass; the same after a restart. Update runtime.md ('History').",
+   "test_boundary": "Composed (packages/runtime/test/chat-depth.test.ts 'caching' or beside conversation.test.ts's history-cache case) with FakeProvider({promptCache: {minTokens: 1}}): 13 seeded turns, two quick lines within 5 simulated minutes: the second request's messages[0] equals the first's and its cache_read_input_tokens covers the first request's history; a second case under 12 turns whose long replies trip the token cap; a restart case (compose twice) gives the same window.",
+   "area": "l4-chat-depth",
+   "notes": "Money (small, every turn). LC-C15's step key is here; its thorough part passed; its retraction of true statements is L4-chat-106. A breakpoint before the newest turns would not help (the change is at message 0)."
+  },
+  {
+   "id": "L4-chat-206",
+   "sources": [
+    "live4:L4-chat-18"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "After the person presses Answer now, the answer offers 'This needs a stronger model ... Go ahead?'",
+   "what_the_person_sees": "'... which conflicts with these records.' then 'This needs a stronger model: about CHF 0.04 (at most CHF 0.17) and 10 seconds. Go ahead?' with Go ahead, under 'Thought it through more carefully · 5 s · under CHF 0.01', although they chose to have it answer now (and that Go ahead loops, L4-chat-201).",
+   "evidence": "/tmp/frbench/live4/chat/c1/steps/c16b.json (POST /chat/turns/.../answer-now at 08:52:46.445; first call USD 0.001046 of a USD 0.125 budget), 76-c16c-after-restart.png; probe /tmp/frbench/l4c18/pkg/test/l4c18.test.ts (fails at 4cf11fd with the offer).",
+   "root_cause_at_head": "packages/runtime/src/conversation/agent.ts:1776 entry.answerNow = () => budget.wrapUpNow(o.runId); packages/runtime/src/enforcement/budget.ts:266-270 merges a wrap-up by spend and by wrapUpNow (:283) into one decision; the loop sets wrapUpSent either way; agent.ts:2253 adds the next rung's offer on deep && !stopped && result?.wrapUpSent && !offer.",
+   "fix_sketch": "Record why the wrap-up came: SessionBudget.precheck stores line.wrappedBy = spend over the line ? 'line' : 'now' and exposes wrapReasonOf(runId) (append-only); agent.ts:2253 also requires wrapReasonOf(runId) === 'line'. (Smaller alternative: answerNow sets a flag when wrapUpNow returns true; a press after the budget already wrapped returns false and keeps the offer.) The Answer-now reply carries and stores no offer. Update runtime.md's rung paragraph and ADR 0114's amendment ('reached its wrap-up' means its budget line, never Answer now).",
+   "test_boundary": "Composed chat-depth.test.ts, the existing 'Answer now during a longer pass' case gains expect(r.offer).toBeNull() and the row's offer null; control: a longer pass whose second call crosses its budget line (no press) still gets the stronger ask line; real-daemon: client.answerNow(turnId) during 'think it through' leaves no offer and no Go ahead in the conversation view.",
+   "area": "l4-chat-depth",
+   "notes": "The person's choice is overridden; nothing is spent without a yes, so minor. C3L-10's 'Answer now has no test that fails without it' is closed by this test."
+  },
+  {
+   "id": "L4-chat-207",
+   "sources": [
+    "live4:L4-session-3"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "A dependency change says nothing about when the task runs, and removing the last dependency prepares no work",
+   "what_the_person_sees": "'make the FAQ wait for the README', Yes -> '\"Write the FAQ\" now waits for \"Write the README\".' [Undo], while 'add a task' said 'It runs at your next Start.'; 'let the FAQ run on its own' -> '\"Write the FAQ\" waits for no other task now.', and the now-runnable task does not join a running session.",
+   "evidence": "/tmp/frbench/live4/session/s1/steps/c17-chat.json line 7 (afterAnswer), 19-c17-23-answered-yes.png; chat-steering.test.ts:103 and real-daemon.test.ts:4327 pin the sentence (re-run passes at 4cf11fd).",
+   "root_cause_at_head": "packages/commands/src/commands/task.ts:2010 taskDependencies.run builds its sentence from dependenciesSentence (:1913) and a note clause only; withNextLine (called at :991, :1318, :1474, :1547) and prepareWork are never called, against ADR 0118 point 3 (docs/decisions/0118-who-starts-a-session.md:57-65: a chat change prepares work and says a line).",
+   "fix_sketch": "After setDependencies re-read the task: ready with every dependency done (the last one removed) -> withNextLine(ctx, outcome, task) (prepareWork: joins a running session if it fits, else 'It runs at your next Start.' / the join and no_room lines); still waiting -> a clause from ctx.ports.previewWork (read-only) naming only the undone dependencies: 'It runs after \"Write the README\" is done, at your next Start.' (with a session running: '..., in this session if budget is left, else your next Start.'), under 100 characters. Update chat-steering.test.ts:103, real-daemon.test.ts:4327, tasks.test.tsx:1022 and fake-daemon.ts:3188; design §3.9 and ADR 0118 point 3 say a dependency change states when the task runs.",
+   "test_boundary": "packages/runtime/test/chat-steering.test.ts through the daemon's chat route with no model (ScriptedProvider([])): 'make the FAQ task depend on the README task', 'yes' -> the sentence with 'It runs after it is done, at your next Start.'; 'let the FAQ run on its own', 'yes' -> '... It runs at your next Start.'; with a live session handle the join wording and the task admitted; the real-daemon twin through client.chat and the Tasks drawer's 'Change what it waits for' (apps/ui/test/tasks.test.tsx).",
+   "area": "l4-chat-depth",
+   "notes": "d1109-starts-engine's subsystem (D6), kept with L4-chat-210 (the start read-back words) in this area. task.ts is l4-selftasks-chat's file otherwise: shared_files rule: this area owns taskDependencies.run and dependenciesSentence only. The removal case (a task becomes runnable and should join the running session) makes it more than words."
+  },
+  {
+   "id": "L4-chat-208",
+   "sources": [
+    "C3:C3L-10"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "Chat depth's acceptance cases that no test covers",
+   "what_the_person_sees": "Nothing yet: promises with no test that fails without them (live check 4 found two of the uncovered paths broken: Answer now's offer and a Go ahead that re-asks).",
+   "evidence": "/tmp/frbench/leftovers-C3.json C3L-10; L4-chat-201 and L4-chat-206 (the uncovered paths that broke).",
+   "root_cause_at_head": "packages/runtime/test/chat-depth.test.ts and apps/ui/test/real-daemon.test.ts 'd1109-chat-depth, run C' lack: Stop leaves a task the turn added with its Undo; chat_ask_above at CHF 1.00 (a CHF 0.40 longer pass goes ahead, a stronger one still asks); the project-budget cap line composed; at least three lookups before the wrap-up on a 10,000-token context; Costs' 'Planning and chat' growing by a thorough answer.",
+   "fix_sketch": "Write each as a composed or real-daemon case that fails when its guard is removed (check by reverting the guard locally): the five listed; Answer now and 'the ask repeated with new figures after a price change' are written by L4-chat-206 and L4-chat-201.",
+   "test_boundary": "Composed chat-depth.test.ts (flatPricing, FakeProvider) and a real-daemon case for Costs' 'Planning and chat' row via GET /costs.",
+   "area": "l4-chat-depth",
+   "notes": "Cut line: the 10,000-token lookups case and the Costs row may end not_done with the reason."
+  },
+  {
+   "id": "L4-chat-209",
+   "sources": [
+    "C3:C3L-12"
+   ],
+   "severity": "minor",
+   "decision": "fix",
+   "title": "depth.ts still exports the dead askAboveWords, a second copy of the setting's words",
+   "what_the_person_sees": "Nothing; a second wording of 'asks first above CHF 0.10' that can drift from the one Settings shows.",
+   "evidence": "/tmp/frbench/leftovers-C3.json C3L-12; packages/runtime/src/conversation/depth.ts:390 used only by packages/runtime/test/chat-depth-words.test.ts:3, :186-187.",
+   "root_cause_at_head": "packages/runtime/src/conversation/depth.ts:389-392 askAboveWords; the settings words come from commands' chatAskAboveWords (settings.ts:757).",
+   "fix_sketch": "Remove the export and its words test lines; any caller uses chatAskAboveWords (after L4-chat-211's split of value and meaning).",
+   "test_boundary": "Unit: chat-depth-words.test.ts without askAboveWords; pnpm typecheck and lint green (no unused export).",
+   "area": "l4-chat-depth",
+   "notes": "Cut line: may end not_done."
+  },
+  {
+   "id": "L4-chat-210",
+   "sources": [
+    "live4:L4-session-1",
+    "C3:C3L-5"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Chat's start read-back and its done sentence drop the decimals: 'up to CHF 1', not 'up to CHF 1.00'",
+   "what_the_person_sees": "'Start a session on Garden club (up to CHF 1)? [Yes] [No]', 'Started a session on Garden club (up to CHF 1).', right after budget.set's 'from CHF 5.00 to CHF 1.00'; the D4 card mixes 'up to CHF 5' and 'CHF 4.00' in one line.",
+   "evidence": "/tmp/frbench/live4/session/s1/steps/c17-chat.json (six read-backs), c17-prep.json; packages/commands/test/oversize-start.test.ts pins 'up to CHF 5)? ... CHF 4.00'.",
+   "root_cause_at_head": "packages/commands/src/commands/session.ts:83 (startSentence), :133 (startAsk), :182 (newValue) use chf() = formatChfShort (packages/commands/src/commands/shared.ts:127-129), on purpose per the JSDoc at shared.ts:131-135 (W15-44), copying design §5's 'Chat read-back' After example ('up to CHF 5', docs/design/core-experience.md:379), which contradicts §5 rule 7 ('two decimals').",
+   "fix_sketch": "session.ts uses chfExact for startSentence, startAsk and newValue; shared.ts's JSDoc and executor.ts:184's comment no longer name the session start as an exception; the session lead's design_doc_changes: §5's 'Chat read-back' After example reads '(up to CHF 5.00)' so a later review cannot undo the fix by citing it; update the pinned strings (commands.test.ts:205/215/217/246, oversize-start.test.ts:33/45/62/72/81/89, scenario.test.ts:45, conversation.test.ts:621, conversation-memory.test.ts:505/573, real-daemon.test.ts:15555, apps/ui/test/fake-daemon.ts:4417, chat.test.tsx:134, e2e/chat.spec.ts:30). Conversation.tsx's /CHF\\s?\\d/ check still matches.",
+   "test_boundary": "Real-daemon case: budget.set to CHF 1.00, POST /chat 'run it now' -> pendingConfirmation.readback === 'Start a session on Garden club (up to CHF 1.00)?', yes -> 'Started a session on Garden club (up to CHF 1.00).', the Changes row 'CHF 1.00'; the D4 oversize card 'up to CHF 5.00'; UI chat.test.tsx types 'run it now' and sees 'up to CHF 1.00'.",
+   "area": "l4-chat-depth",
+   "notes": "Known leftover C3L-5 is the same item. The amount was right; only the format. LC-C17 cites it."
+  },
+  {
+   "id": "L4-chat-211",
+   "sources": [
+    "live4:L4-chat-14"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Changes row reads 'Set the amount above which chat asks first from CHF 0.00, so chat asks before every longer answer to CHF 0.10.'",
+   "what_the_person_sees": "On Changes and in the command's reply: 'Set the amount above which chat asks first from CHF 0.00, so chat asks before every longer answer to CHF 0.10.'",
+   "evidence": "/tmp/frbench/live4/chat/c1/steps/63-c14-changes.txt:28 (the opposite change reads right at :35).",
+   "root_cause_at_head": "packages/commands/src/commands/settings.ts:1042 sentenceOf's 'from' slot uses showFor -> the key's display, and chatAskAboveWords (settings.ts:757-761) returns the value plus its meaning at 0 ('CHF 0.00, so chat asks before every longer answer'); the card's oldValue carries it too; apps/ui/test/fake-daemon.ts (~6929-6948) builds the same sentence.",
+   "fix_sketch": "chatAskAboveWords returns only 'CHF 0.00'; the chat_ask_above spec gets an effect clause for 0 ('chat asks before every longer answer'), so the row reads 'Set ... from CHF 0.10 to CHF 0.00: chat asks before every longer answer.' and '... from CHF 0.00 to CHF 0.10.'; card values are plain amounts; mirror in the fake daemon; commands.md.",
+   "test_boundary": "packages/commands/test/commands.test.ts (~:1739): set 0, then 0.1 with its yes -> the result sentence and the change-log row exactly 'Set the amount above which chat asks first from CHF 0.00 to CHF 0.10. Undo.'; a real-daemon GET /changes row; a UI Changes page test on the fake daemon.",
+   "area": "l4-chat-depth",
+   "notes": "Deterministic command words, no model."
+  },
+  {
+   "id": "L4-chat-212",
+   "sources": [
+    "C3:C3L-8"
+   ],
+   "severity": "words",
+   "decision": "words",
+   "title": "Once another line follows, an old ask line still ends 'Go ahead?' with no button: a question the person can no longer answer",
+   "what_the_person_sees": "An older 'This needs a stronger model: about CHF 0.29 (at most CHF 0.57) and 30 seconds. Go ahead?' stays as text with no button above newer lines; a typed yes then answers nothing.",
+   "evidence": "/tmp/frbench/leftovers-C3.json C3L-8; code at 4cf11fd.",
+   "root_cause_at_head": "apps/ui/src/components/Conversation.tsx:681-686 renders offer.line for every turn and the Go ahead button only for the newest (offer?.action === 'go_ahead' && newest); liveOffer (agent.ts:893-896) takes only the newest turn's offer.",
+   "fix_sketch": "An offer line that is no longer the newest turn's is drawn muted and in the past ('Offered: a stronger model, about CHF 0.29 (at most CHF 0.57). Not taken.'), built from the stored offer's figures in the UI (no daemon change), or dropped; the newest keeps its question and Go ahead. The same in Talk (one component).",
+   "test_boundary": "UI test apps/ui/test/chat-depth.test.tsx with the fake daemon: an ask line, then another line and its reply; the older turn shows no text ending 'Go ahead?' and no button; the newest ask keeps its button.",
+   "area": "l4-chat-depth",
+   "notes": "With L4-chat-102 a typed yes after an old ask line still gets 'Yes to what?' (the newest reply asks nothing); the muted past line makes that true on screen."
+  },
+  {
+   "id": "L4-chat-301",
+   "sources": [
+    "live4:L4-chat-6"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Inbox Answered entries read 'You answered \"your answers\".'",
+   "what_the_person_sees": "On the live bench: '\"Write the index page\" needs your answers · Recipe site / You answered \"your answers\".'",
+   "evidence": "/tmp/frbench/live4/chat/c1/steps/35-c11-inbox-answered.txt; read-only copy /tmp/frbench/l4c6 (all three seeded person_questions rows: outcome 'unrecognized_answer', no task_id); /tmp/frbench/l4c6/words.mts.",
+   "root_cause_at_head": "A test artefact: /tmp/frbench/live4/chat/scripts/seed-c11-c13.mts:261-275 inserts a card without task_id or applied_at and keyed by the question text, so the app's own sync (person-questions.ts:454, :1046-1047) marks it unrecognized and request-words.ts:392's placeholder is quoted at :1862. Cards the app files carry task_id and key person_questions:<taskId> (person-questions.ts:527-528), and POST /requests/:id/answer syncs before it returns (server.ts:2515), giving 'Answers sent: \"Write the index page\" goes on with them.' (real-daemon.test.ts:3524/3608).",
+   "fix_sketch": "None in the app this round. For the live-check lead: the seed must write the card the app writes (key person_questions:<taskId>, task_id, task_title, questions, source 'specialist', on_answer 'ready'). The only remaining path to the placeholder is an answer written to shared state from another device before the approvals poll, which the phone round covers.",
+   "test_boundary": "None (the reported repro passes today).",
+   "notes": "Verdict real: false. The latent not-yet-applied window (another device's answer before the poll; InboxPage.tsx:889's answerText has the same placeholder) belongs to the phone round's list, not to this round."
+  },
+  {
+   "id": "L4-chat-302",
+   "sources": [
+    "C3:C3L-2"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "'go ahead and run it' and German start phrases are not parsed as a start",
+   "what_the_person_sees": "Nothing wrong: such a line goes to the chat model, which calls session_start, read back once; nothing starts before Yes.",
+   "evidence": "/tmp/frbench/live4/session/s1/steps/c17-chat.json: 'go ahead and start it' and 'ok, let's run this' each gave one read-back via the model's session_start and no session before Yes (GET /sessions 0).",
+   "root_cause_at_head": "By design: packages/commands/src/intent.ts's start phrases (S-11) are English; every other phrasing reaches the model, whose session_start is read back by the D6 rule.",
+   "fix_sketch": "None.",
+   "test_boundary": "None.",
+   "notes": "Costs one Haiku call per such line; a German start without Claude cannot start anything anyway (sessions need Claude)."
+  },
+  {
+   "id": "L4-chat-303",
+   "sources": [
+    "C3:C3L-9"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "The From line names Inbox, Overview and Changes records without a link",
+   "what_the_person_sees": "'From: the card of 1 Nov' as text, with no link, where the page cannot open that record.",
+   "evidence": "apps/ui/src/components/Conversation.tsx:45-56 recordLink keeps only links whose page shows the record (Tasks ?task=, Files ?path=, a session page) and returns null otherwise.",
+   "root_cause_at_head": "C2-left-7's rule as built: the From line opens the record it names or draws no link; nothing leads to a page that does not show the record.",
+   "fix_sketch": "None this round; making Inbox, Overview and Changes open a record by parameter is new page work, not a broken promise.",
+   "test_boundary": "None.",
+   "notes": "Revisit if a person asks for one-click From lines to cards and decisions (L4-chat-108 makes such named records more frequent)."
+  },
+  {
+   "id": "L4-chat-304",
+   "sources": [
+    "C3:C3L-11"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "figuresOf on every typed quick turn: unmeasured first-token latency",
+   "what_the_person_sees": "Nothing: the first word comes well under the target.",
+   "evidence": "/tmp/frbench/live4/github/steps/LC-C12.json: 15 'what is left?' turns, first text 462-1393 ms (all under 1.5 s; the cold first 1393), Performance p50/p90 445/593 ms 'met'; /tmp/frbench/live4/chat/steps/LC-C10.json NOW questions on the recall-home (120 conversation lines): 951 (cold), 502, 482, 547 ms.",
+   "root_cause_at_head": "Measured by LC-C12 and LC-C10 as the leftover asked; the time before the first model call is 55-110 ms on these homes.",
+   "fix_sketch": "None.",
+   "test_boundary": "None.",
+   "notes": "LC-C12 notes that Performance's figure leaves out that pre-call time; small, information only."
+  },
+  {
+   "id": "L4-chat-305",
+   "sources": [
+    "C3:C3L-13"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Chat requests about 3% larger: the turn floor on flatPricing",
+   "what_the_person_sees": "Nothing: no lookup-heavy turn answered 'I could not answer (run budget would be exceeded).' on the real model.",
+   "evidence": "/tmp/frbench/live4/chat/steps/LC-C10.json: 'C3L-13: the run budget would be exceeded reply never appeared.'",
+   "root_cause_at_head": "Only the flatPricing test world is tight (the merge gave one test the ceiling); the real chat model's prices leave the USD 0.05 floor ample.",
+   "fix_sketch": "None.",
+   "test_boundary": "None.",
+   "notes": ""
+  },
+  {
+   "id": "L4-chat-306",
+   "sources": [
+    "C2:CL-12"
+   ],
+   "severity": "none",
+   "decision": "not_a_problem",
+   "title": "Recall reads the store once per record: latency on a large home",
+   "what_the_person_sees": "Nothing: recall turns end in 1.6-2.0 s.",
+   "evidence": "/tmp/frbench/live4/chat/steps/LC-C10.json ('CL-12: recall turns end in 1.6-2.0 s' on the recall-home: 2 projects, 24+ tasks, 6 sessions, 14 cards, 5 decisions, 5 lessons, 120 conversation lines).",
+   "root_cause_at_head": "Measured as the leftover asked; no batching needed at this size.",
+   "fix_sketch": "None.",
+   "test_boundary": "None.",
+   "notes": "Re-measure when a person's home is much larger."
+  },
+  {
+   "id": "L4-chat-307",
+   "sources": [
+    "C2:CL-10"
+   ],
+   "severity": "none",
+   "decision": "already_fixed",
+   "title": "Recall's merge date from merge_record.updated_at; a taken-out merge reads 'merged on ...'",
+   "what_the_person_sees": "At 4cf11fd a merge whose work was taken out reads 'Its pull request was merged.' with no date; other merges give the record's date.",
+   "evidence": "packages/runtime/src/conversation/recall.ts:509-514 (m.take_out_pr_number ? 'Its pull request was merged.' : '... merged on <date>.'), commit 793e3fe (fixup-d1109-chat-recall, an ancestor of C2's merge b5fb66f); the only patches after a merge are take-out.ts:277, :295, :330.",
+   "root_cause_at_head": "The leftover was written from the fix's line (:487) before the fix-up landed the take-out guard.",
+   "fix_sketch": "None.",
+   "test_boundary": "None.",
+   "notes": ""
+  },
+  {
+   "id": "L4-chat-308",
+   "sources": [
+    "C2:CL-2"
+   ],
+   "severity": "minor",
+   "decision": "later",
+   "title": "Chat cannot start Work together for a repository whose project is on another computer",
+   "what_the_person_sees": "project.create's refusal ends 'Open New project to work on it together.' (CHAT_TOGETHER_HINT) instead of a together flag in chat.",
+   "evidence": "/tmp/frbench/leftovers-C2.json CL-2 (OR-15's chat path, cut line); packages/runtime/src/sources/repository-words.ts:281.",
+   "root_cause_at_head": "project.create has no together flag; the dialog has Work together.",
+   "fix_sketch": "Wave 8 (collaboration between people, re-planned around GitHub as the meeting place).",
+   "test_boundary": "None this round.",
+   "notes": "Collaboration between people (D9): outside this round. The sentence the chat says is true and names where to do it."
+  },
+  {
+   "id": "L4-chat-309",
+   "sources": [
+    "C3:C3L-14"
+   ],
+   "severity": "minor",
+   "decision": "owner_question",
+   "title": "In a project whose failed task's card chat sees in full, every chat change waits for a Yes, even 'add a task'",
+   "what_the_person_sees": "'Add \"Write the FAQ page\" to Quote Page? [Yes] [No]' where elsewhere 'add a task: ...' acts at once with Undo; the same project's thinking_longer line is 'asks the person first'.",
+   "evidence": "/tmp/frbench/leftovers-C3.json C3L-14; /tmp/frbench/live4/chat/steps/LC-C13.json (q2 'put the FAQ on hold' read back in Garden club; no judgement recorded).",
+   "root_cause_at_head": "d1109-chat-guard's read-back after records: a turn whose facts list a card's words in full (written by a specialist or a page) has recordsRead, and every change it makes is read back (agent.ts region of the recordsRead flag; ADR 0114).",
+   "fix_sketch": "Keep the rule until the owner answers.",
+   "test_boundary": "None.",
+   "owner_question": "Question: when chat sees a failed task's card in full (its words come from a specialist or a web page), it reads back every change before making it, even 'add a task', which elsewhere acts at once with Undo; should a card in which nothing is flagged as instructions keep that rule? Default kept until you answer: yes, every change in that project is read back first.",
+   "notes": "A safety rule against planted instructions; relaxing it would rest on the scanner alone, so the default keeps it."
+  },
+  {
+   "id": "L4-chat-310",
+   "sources": [
+    "L3:LL-10"
+   ],
+   "severity": "words",
+   "decision": "owner_question",
+   "title": "The app's own chat lines ('Yes to what? ...', 'Nothing changed ...') are English in a German conversation",
+   "what_the_person_sees": "A German conversation gets an English correction line from the app, while the model answers in German.",
+   "evidence": "/tmp/frbench/leftovers-L3.json LL-10; packages/runtime/src/conversation/claims.ts:196-203 (NOTHING_CHANGED_REPLY ...), agent.ts:527 (YES_TO_WHAT_REPLY).",
+   "root_cause_at_head": "Every screen and every app-written line is English; only the model follows the person's language.",
+   "fix_sketch": "Keep English until the owner answers.",
+   "test_boundary": "None.",
+   "owner_question": "Question: when you write to chat in German, should the app's own fixed chat lines ('Yes to what? ...', 'Nothing changed ...') be German too, or stay English like every other screen? Default kept until you answer: English, like the rest of the app.",
+   "notes": "A yes means the half-dozen fixed chat lines get a German form chosen from the line's language; the rest of the app stays English."
+  }
+ ],
+ "proposed_areas": [
+  {
+   "key": "l4-chat-answers",
+   "title": "Chat answers from what was recorded and hears its own questions: it looks a record up before it says it is missing, a yes to a question it asked reaches it, the guard catches a change asked for in words, recall's lines say what the screens say (a session's failures, a card's question, a pull request closed on GitHub, a joined project's lessons), the From line follows the records the reply rests on, a cancelled wait is never promised to go on, 'open <project>' opens it, and no reply carries the app's marker, a tool name or glued paragraphs",
+   "problems": [
+    "[major] L4-chat-101: 'There is no README task ...', 'I haven't searched the records yet. Should I look ...?', 'There was no card about the first page' for recorded things; LC-C10 3 of 12 with date (needs 10); Evidence: live4:L4-chat-1, live4:L4-chat-4, live4-step:chat:LC-C10; /tmp/frbench/live4/chat/c1/steps/c10-quote.json, c10-follow.json, model-calls.jsonl; Root cause: evals/registry/principals/conversation-agent.md:14, :38-39, :68; packages/runtime/src/conversation/agent.ts:616-617 (CHAT_RECALL_RULES), :2029-2095 (no absence check); project-facts.ts tasksBlock (current titles only).",
+    "[major] L4-chat-102: 'Should I look for it?' / 'Shall I set research ... again?' / 'Do you want me to start a session ...?' with no card, then 'yes' -> 'Yes to what? Nothing is waiting for your yes.'; Evidence: live4:L4-chat-2, live4:L4-l3-1, live4:L4-session-2, live4-step:session:LC-C17; /tmp/frbench/live4/chat/c1/steps/c10-follow.json, /tmp/frbench/live4/l3/l3b/home/bench/model-calls.jsonl seq 3/14/15, /tmp/frbench/live4/session/s1/steps/c17-chat-b.json; Root cause: packages/runtime/src/conversation/agent.ts:1215 (bare yes answered before the model), :893 (liveOffer knows only go_ahead), :527; claims.ts:69-119 (first-person past claims only); conversation-agent.md:20-21.",
+    "[minor] L4-chat-103: after Cancel, chat 'summary' and the Overview's Last result say '... then your session goes on.'; Evidence: live4:L4-creds-8, C5:C5L-15; /tmp/frbench/live4/creds/c31-evidence/c31f.json; Root cause: packages/commands/src/commands/summary.ts:79, :46; packages/runtime/src/conversation/project-facts.ts lastSessionBlock; apps/ui/src/pages/project/SummaryTab.tsx:141.",
+    "[minor] L4-chat-104: 'open it' -> 'Switched the active project to Site.' while the page stays on Notes; 'it' matched 'site'; Evidence: live4:L4-github-5, live4-step:github:LC-C3; /tmp/frbench/live4/github/evidence/d02-open-it.json; Root cause: apps/ui/src/components/Conversation.tsx:202-204; packages/commands/src/commands/project.ts:169, :275; intent.ts:638; commands/shared.ts:38-41.",
+    "[minor] L4-chat-105: a joined project's lessons never reach the kept project's sessions; Evidence: C4:C4L-4; Root cause: packages/memory/src/retrieval.ts:180, :214.",
+    "[minor] L4-chat-106: recall's session line drops a failed task; the thorough pass 'corrects' true answers; Evidence: live4:L4-chat-15, live4:L4-chat-13; model-calls.jsonl seq 9 (08:47:57); Root cause: packages/runtime/src/conversation/recall.ts:428, :1528; daemon/session-list.ts:213-218.",
+    "[minor] L4-chat-107: recall's card hit leaves out the card's question; Evidence: live4:L4-chat-5, live4-step:chat:LC-C11; model-calls.jsonl seq 7, 9-10; Root cause: packages/runtime/src/conversation/recall.ts:700-720, :1528, :347.",
+    "[minor] L4-chat-108: no From line when the reply rests on recall's hit lines (9 of 11 recall turns); Evidence: live4:L4-chat-3; /tmp/frbench/live4/chat/c1/home/data/state.sqlite chat.reply rows; Root cause: packages/runtime/src/conversation/agent.ts:2322, recall.ts:1597, :1616-1643.",
+    "[minor] L4-chat-109: the person's own question lines outrank the record; snippet on the first term; multi-question answers cut; Evidence: C2:CL-11; Root cause: packages/runtime/src/conversation/recall.ts:1245-1300, :1394-1407.",
+    "[minor] L4-chat-110: a cancelled task's pull request closed on GitHub still 'Left open on GitHub'; Evidence: C2:CL-4; Root cause: packages/runtime/src/conversation/project-facts.ts:541-548, :650-652 (no close recorded; with L3:LL-1).",
+    "[minor] L4-chat-111: settled replies glue paragraphs and show a raw '- '; Evidence: live4:L4-chat-10; /tmp/frbench/live4/chat/c1/steps/48-c13b-03-e3-go-ahead.png; Root cause: apps/ui/src/lib/plain-words.ts:27, Conversation.tsx:560.",
+    "[words] L4-chat-112: replies copy 'The app did:' and narrate tool calls and refusals; Evidence: live4:L4-l3-2; /tmp/frbench/live4/l3/evidence/reading-rules-b-t2.json, -c-t2.json; Root cause: conversation-agent.md:21-22, agent.ts CHAT_RETRIEVAL_RULES ~:603-605, transcript.ts:354-366, packages/commands/src/registry.ts:215-218 with settings.ts:1079-1084.",
+    "[words] L4-chat-113: 'The session_last lookup also reported no session'; Evidence: live4:L4-chat-19; /tmp/frbench/live4/chat/c1/steps/c16b.json; Root cause: conversation-agent.md:38-39, :58-70; agent.ts:659-661."
+   ],
+   "decisions": [
+    "A yes after a reply of chat's own that asks something (its text, without a read-back, ends with a question; no card, notice, action or app offer) goes to the model with the history, never 'Yes to what?'; the forwarded turn inherits the previous turn's recordsRead, so every change it leads to is read back first. 'Yes to what?' stays for a yes after a statement, a notice, an answered card or nothing, with a next step in its words. Design §3.9's '\"yes\" with no card' line and user-guide.md:400 change accordingly (the session lead edits the design document from this area's notes).",
+    "The claim guard gains two kinds: 'asks' (a yes asked for in words to make a change) and 'absent' (a 'not there / can't find / Should I look?' reply in a turn that offered recall and called neither recall tool); one nudge each, inside the turn's model calls and its budget; a claim still standing gives the true line as today. Clarifying questions stay free.",
+    "Prompt (conversation-agent.md, this area's sections, and CHAT_RECALL_RULES): look it up in this turn instead of offering to; never ask for a yes in words; only the app writes 'The app did:'; never describe tool calls, their order or refusals; never name a tool; all asserted verbatim on the request.",
+    "Recall's lines are worded as the screens word them: a session line names its failed tasks; a questions card's line carries its question; the From line names the records the reply rests on among the turn's hits, opened or strong and named by title (ADR 0114 'Sources', dated amendment).",
+    "After Cancel the stored session result is read through run-indicator's resultAfterWait wherever chat (facts, 'summary', Read aloud from chat) and the Overview read it; one rule, reached from commands through a port.",
+    "'open <project>' in a project's Chat tab opens that project's page, as the New project dialog's Open it does (D1: lead the person to the project that already uses the repository); 'switch to <project>' keeps U-056 and says 'This chat stays about <tab's project>.' with an Open link; a pronoun never matches a project by substring.",
+    "A joined project's lessons reach the kept project's sessions through the same withJoined scope chat uses; nothing is moved or copied (ADR 0117's amendment kept).",
+    "Kept until the owner answers: the app's own chat lines stay English (L4-chat-310); a project whose card chat sees in full keeps reading back every change (L4-chat-309)."
+   ],
+   "u_entries": [
+    "U-092 (chat looks up anything recorded): L4-chat-101, -106, -107, -108, -109, -110 Check in the app: ask 'which licence did we choose?' and 'what happened to the README task?' in a project where both are recorded: the reply names the record with its date and a From line; never 'Should I look?'.",
+    "U-084 (Project Chat sees and unblocks the tasks): L4-chat-102: chat never ends a change it did not make with 'Shall I ...?'; a 'yes' to a question chat asked is answered by what it offered.",
+    "U-096 (a running session is visible everywhere): L4-chat-103: after Cancel on a waiting session, chat 'summary' and the Overview say '... then it runs at your next Start.' without a reload.",
+    "U-091 (one repository, one project): L4-chat-104 ('open Site' opens Site) and L4-chat-105 (a joined project's lessons).",
+    "U-074 (plain words): L4-chat-111, -112, -113.",
+    "docs/user-guide.md: Chat ('yes' after chat's own question; chat looks things up; From line), Overview (Last result after Cancel)."
+   ],
+   "root_causes": [
+    "packages/runtime/src/conversation/agent.ts:1215-1219 and :893-896 (a bare yes is answered before the model unless the app's own offer waits), :527.",
+    "packages/runtime/src/conversation/claims.ts:69-119, :139 (only first-person past claims) and agent.ts:2029-2095 (no 'asks' or 'absent' check).",
+    "evals/registry/principals/conversation-agent.md:14, :20-22, :38-39, :58-70 and agent.ts:603-617, :659-661 (an answer from what is given, the marker as a format, no rule against tool names or narrating calls).",
+    "packages/runtime/src/conversation/recall.ts:428, :700-720, :1245-1300, :1394-1407, :1524, :1597, :1616-1643 (session and card hit lines, ranking and snippet, sources from opened records only).",
+    "packages/runtime/src/conversation/project-facts.ts (tasksBlock's current titles, lastSessionBlock's stored text, repositoryFacts' cancelled classification :541-548).",
+    "packages/commands/src/commands/summary.ts:46, :79 and apps/ui/src/pages/project/SummaryTab.tsx:141.",
+    "apps/ui/src/components/Conversation.tsx:202-204, :560; apps/ui/src/lib/plain-words.ts:27.",
+    "packages/commands/src/commands/project.ts:169, :275; packages/commands/src/intent.ts:638; packages/commands/src/commands/shared.ts:38-41.",
+    "packages/runtime/src/conversation/transcript.ts:354-366; packages/commands/src/registry.ts:215-218; packages/memory/src/retrieval.ts:180, :214."
+   ],
+   "fix_scope": "Run L4 area l4-chat-answers (re-find every line: numbers are at 4cf11fd; if it shares a sub-run's head with l4-chat-depth or l4-selftasks-chat, the shared_files rules in handoff_items decide; it cannot share a sub-run with either). One commit per item, its failing test first at the person's boundary, then the fix, then the siblings (validation rule 8). Order: (1) L4-chat-101 (the owner's D3: recall anything recorded): composed chat test over the recall-home fixture with the real LoopAgentDriver, hooks and a scripted FakeProvider that answers 'There is no README task ...' with no tool call: the nudge request, then recall, then the answer naming the record; 'what is left?' still one call with no lookup; exact-text assertions of the prompt and CHAT_RECALL_RULES; the facts' earlier-title line; a real-daemon twin on the stand-in's new 'answers without looking' mode. (2) L4-chat-102: composed conversation-memory.test.ts (the asks nudge and its read-back; a forwarded yes after 'Should I look for it?' reaching the model with the question and the yes; 'Yes to what?' kept with its next step after a statement and with nothing before it; a yes under a waiting card still answers the card), claimOf unit cases on the three live replies and the start question, a real-daemon POST /projects/:id/chat case, a chat.test.tsx case; absorb L4-selftasks-118's asked-claim cases if the session lead moves it here. (3) L4-chat-103: real-daemon after cancelContinuation (chat 'summary' and the chat facts, across the restart compose) and project.test.tsx (Overview without remount). (4) L4-chat-104: active-project.test.tsx ('open Beacon' navigates; 'switch to Beacon' keeps the tab and links), intent.test.ts (no pronoun by substring), exact-text project.create definition. (5) L4-chat-105: composed join then the kept project's next specialist request carries the lesson; after Undo it does not. (6) L4-chat-106, (7) -107, (8) -108, (9) -109 at the model boundary (the tool_result text the model receives) in chat-recall.test.ts and recall-rank.test.ts, -108 also real-daemon (sources on the reply and after a restart) and the UI From line. (10) L4-chat-110 after the LL-1 item's watcher: real-daemon on the fake GitHub host. (11) L4-chat-111: rich-text.test.tsx through the Chat tab. (12) L4-chat-112, (13) -113: exact-text system assertions and composed replies. Every new or changed route gets its real-daemon case and apps/ui/test/fake-daemon.ts changes in the same commit. Model-facing text (conversation-agent.md's sections named in shared_files, CHAT_RECALL_RULES, CHAT_RETRIEVAL_RULES' marker line, '# How to write', the nudges, YES_TO_WHAT_REPLY, project.create's definition) is code: assert the exact text the model receives; one prompt version bump in this area. Not to touch: depth.ts, the thorough path, the ask rule and its figures (l4-chat-depth's), the read-back backstop and wordsUsed (l4-selftasks-chat's), the parser's other commands, recordsRead's rule (owner question L4-chat-309), the hooks and the sandbox, the stream path's byte-identical tests (re-baseline only where the prompt text changes). Security: never weaken the hooks or the sandbox; a forwarded yes never changes anything by itself and inherits recordsRead; recall's results stay inside the untrusted envelope and the injection scan (a card's question can carry planted words: L4-chat-107's injection case); text from pages, searches, files, cards, chat history, reports or any record never becomes instructions to a model; a forged 'The app did:' line can no longer pose as a change in history; pnpm test:injection green with no case or judge weakened. Money: every nudge is a model call inside CHAT_MAX_MODEL_CALLS and the turn's budget; no budget, wrap-up line, monthly cap or plan-share cap is ever passed. Docs: docs/maintainers/runtime.md (chat: the guard's kinds, the forwarded yes, recall lines, sources), commands.md (the summary port, project switch, matchProjects), apps.md (Conversation's switch navigation; :582's header line corrected), memory.md (the project-id set), docs/user-guide.md (Chat, Overview), ADR 0114 dated amendments (the yes rule, Sources), ADR 0117 (lessons of a joined project); CHANGELOG.md, UPDATE-LOG.md, requirements.md and docs/design/core-experience.md are the session lead's. Validation before reporting: pnpm check, pnpm test:integration, pnpm test:e2e, pnpm test:injection, the UI suite (cd apps/ui && pnpm vitest run --config vitest.config.ts) and Playwright, each heavy command under flock /tmp/frbench/heavy.lock, and a bench walk before/after on the stand-in (a past question in the new 'answers without looking' mode; 'yes' after a question chat asked; 'summary' after Cancel; 'open Site' from Notes' Chat) with screenshots; no real model in this area (the next live check re-runs LC-C10 and LC-L3 on bench-live).",
+   "files": [
+    "packages/runtime/src/conversation/agent.ts (the regions shared_files gives this area: the bare-yes branch :1215 and nothingWaitingReply :2592-2605, YES_TO_WHAT_REPLY :527, the claim-guard region :2029-2095, CHAT_RETRIEVAL_RULES' marker line, CHAT_RECALL_RULES :616, '# How to write' :659, the marker strip and the namedSources call :2322).",
+    "packages/runtime/src/conversation/claims.ts (the asks and absent claims, their nudge leads).",
+    "packages/runtime/src/conversation/transcript.ts (replyInHistory only).",
+    "packages/runtime/src/conversation/recall.ts (sessionHits, cardHits, cardAnswerWords, RecallScope.seen, namedSources, rankRecords' own-line weight, snippetOf).",
+    "packages/runtime/src/conversation/project-facts.ts (tasksBlock's earlier title, lastSessionBlock through resultAfterWait, repositoryFacts' cancelled classification).",
+    "packages/commands/src/commands/summary.ts (chatProjectSummary, textOf/spokenProjectSummary through the port), packages/commands/src/types.ts (append-only: CommandPorts.resultNow), packages/runtime/src/daemon/compose.ts (the port's wiring line only), packages/runtime/src/daemon/run-indicator.ts (read only: resultAfterWait).",
+    "apps/ui/src/pages/project/SummaryTab.tsx (SummaryCard's reload key only).",
+    "packages/commands/src/commands/project.ts (switchSentence for a project tab, project.create's description), packages/commands/src/intent.ts (matchSwitch / 'open <X>' only), packages/commands/src/commands/shared.ts (matchProjects' pronoun rule).",
+    "apps/ui/src/components/Conversation.tsx (the reply's project switch :202-204 and the settled bubble's text :560 only), apps/ui/src/lib/plain-words.ts (inAppText).",
+    "packages/commands/src/registry.ts (the default branch's unchanged no-op result only).",
+    "packages/memory/src/retrieval.ts (a set of project ids) and the session brief's memory request in packages/runtime (the caller only).",
+    "evals/registry/principals/conversation-agent.md (this area's sections, one version bump).",
+    "testenv/src/bench/role-player.ts (an 'answers without looking' chat mode; answering from a hit line without recall_open) and scripts/bench/README.md.",
+    "Tests: packages/runtime/test/conversation-memory.test.ts, chat-recall.test.ts, recall-rank.test.ts, l3-merge.test.ts, chat-steering.test.ts only if a pinned history line moves; packages/commands/test (intent, summary, project); packages/memory/test (retrieval); apps/ui/test/real-daemon.test.ts (describe 'l4-chat-answers, run L4', append-only), fake-daemon.ts, active-project.test.tsx, project.test.tsx, rich-text.test.tsx, plain-words.test.tsx, chat.test.tsx; evals/test/injection.test.ts (the card-question case).",
+    "Docs: docs/maintainers/runtime.md, commands.md, apps.md, memory.md; docs/user-guide.md; ADR 0114 and 0117 (dated amendments)."
+   ],
+   "acceptance": [
+    "L4-chat-101 (composed chat over recall-home, scripted model answering without a lookup): the turn makes a recall call after one nudge, the reply names 'Write the guide' (earlier 'Write the README') with its merge date and contains no 'There is no README', 'Should I look' or 'I haven't searched'; 'which licence did we choose?' names MIT and the card of 2 Nov; 'what is left?' answers in one call with no lookup; the prompt and CHAT_RECALL_RULES asserted verbatim; the facts' task line names the earlier title.",
+    "L4-chat-102 (composed and real-daemon POST /projects/:id/chat): a scripted 'Shall I set research for Reading rules to any public website again?' with no tool call is nudged and the scripted settings_set then reads back with Yes/No; a 'yes' after 'Should I look through the earlier notes and decisions for it?' reaches the model (a second call holding the question and the yes) and gets the recall answer, never 'Yes to what?'; a 'yes' after a plain statement gets 'Yes to what? Nothing is waiting for your yes. Say what you want done, for example \"run it now\" to start a session.' with 0 calls; claimOf is non-null for the three live replies and 'Do you want me to start a session on Garden club?' and null for 'Which project do you mean?'.",
+    "L4-chat-103 (real-daemon after cancelContinuation, also after the restart compose; project.test.tsx): chat 'summary' and the chat facts read '...; then it runs at your next Start.' and never 'then your session goes on'; the Overview's last-result shows the new words after Cancel with no remount.",
+    "L4-chat-104 (active-project.test.tsx, intent.test.ts): 'open Beacon' in Atlas's Chat tab lands on /projects/proj_beacon/chat; 'switch to Beacon' keeps Atlas's tab with 'This chat stays about Atlas.' and an 'Open Beacon' link; parse('open it') with Notes and Site never returns Site by substring; project.create's definition asserted exactly with no command name in it.",
+    "L4-chat-105 (composed): after Make one project the kept project's next specialist request carries the closed project's lesson; after Undo of the join it does not.",
+    "L4-chat-106 (composed chat-recall.test.ts, model boundary): the 13 Nov session hit names '\"Write the welcome page\" failed' and agrees with recall_open; a failed-only session never reads 'failed. How it ended: Done.'; the fixture has the runner's handoff shape.",
+    "L4-chat-107 (composed chat-recall.test.ts): recall {words:'card first page', kinds:['cards']} -> the hit line holds 'Which recipes go on the first page?' and 'Answer: The three soups.'; the Bakery case holds 'What are the opening hours?'; a planted line in the question stays inside the envelope, flagged.",
+    "L4-chat-108 (real-daemon POST /chat/stream on the stand-in answering from the hit line): reply.sources.records holds the card of 1 Nov, kept after a restart by GET /projects/:id/conversation; the UI shows 'From: ...'; a weak date-only hit is not named.",
+    "L4-chat-109 (recall-rank.test.ts golden set): 'the FAQ' ranks the task above the person's own question line; a 3-question card's hit holds all three answers; the snippet centres on the rarest term; the golden set's threshold stays green.",
+    "L4-chat-110 (real-daemon on the fake GitHub host, after LL-1's watcher): a cancelled task's pull request closed on the host reads 'Closed without merging' in the facts the stand-in receives, not 'Left open on GitHub'.",
+    "L4-chat-111 (rich-text.test.tsx through the Chat tab): an intro, a blank line, items, a blank line and a closing line render as one list with exactly the items and the intro and closing outside any <li>, the same after re-rendering the route; inAppText('a\\n\\nb') === 'a\\n\\nb'.",
+    "L4-chat-112 (composed conversation-memory.test.ts): a model 'The app did: ...' line is absent from the reply the person gets and from the next turn's history, which holds exactly one marker (the app's); a second identical settings_set gets a non-error 'Nothing to change: ...'; the new prompt lines asserted exactly.",
+    "L4-chat-113 (exact text): the quick and the thorough system parts carry the no-tool-name sentence verbatim; if the reply check is built, a reply naming session_last reaches the person with person words instead."
+   ],
+   "depends_on": [
+    "Nothing of run L4 for items 101-109 and 111-113; L4-chat-110 needs the item that takes L3:LL-1 (the github group's: the watcher sees a close on GitHub) merged first, else it ends not_done.",
+    "Cross-group: l4-selftasks-chat (selftasks group) owns other regions of agent.ts, claims.ts' neighbours, transcript.ts, Conversation.tsx, plain-words.ts, conversation-agent.md, intent.ts and registry.ts: this area never shares a sub-run with it or with l4-chat-depth; the shared_files rules in handoff_items decide every shared file.",
+    "If the session lead moves L4-selftasks-118 here (the selftasks group's proposal), its asked/changed claims join L4-chat-102's (a) and its history leads join L4-chat-112; L4-selftasks-124 is L4-chat-111."
+   ],
+   "handoff_items": [
+    "shared_files (run L4). packages/runtime/src/conversation/agent.ts: l4-chat-answers owns the bare-yes branch (:1215) and nothingWaitingReply (:2592-2605), YES_TO_WHAT_REPLY (:527), the claim-guard region (:2029-2095: the asks and absent claims and their nudges), CHAT_RETRIEVAL_RULES' marker line (~:603-605), CHAT_RECALL_RULES (:616), CHAT_PLAN_RULES' '# How to write' (:659), the reply's marker strip and the namedSources call (:2322), the facts' task lines (:2912); l4-chat-depth owns liveOffer/acceptedOffer (:893-940), figuresOf, offerOf and the thinking_longer fact (:1660-1722), runOf's answerNow (:1776), thoroughPass and personsPass (:1820-1950) and the next-rung offer (:2253); l4-selftasks-chat owns wordsUsed (:1118), the read-back backstop (:2204-2206), the stop during the nudge, DEFAULT_PROMPT, the pronoun project (:1057-1060) and the expired reply. evals/registry/principals/conversation-agent.md: l4-chat-answers owns 'What you are given', the lookup tools line, 'What you look up' and 'How you answer'; l4-chat-depth 'Thinking longer'; l4-selftasks-chat 'When the person asks for an action' rule 2; one version bump per sub-run (the first to merge makes 1.5.0, a later one 1.5.1). transcript.ts: replyInHistory is l4-chat-answers'; historyMessages and HISTORY_TURNS l4-chat-depth's. Conversation.tsx: the reply's project switch (:202-204) and the settled bubble's text (:560) l4-chat-answers'; the offer lines (:681-716) l4-chat-depth's; isOwnRequest and the Yes block l4-selftasks-chat's. claims.ts and recall.ts: l4-chat-answers only; depth.ts: l4-chat-depth only. intent.ts: matchSwitch/'open' l4-chat-answers', matchAddTask and IntentContext's conversation project l4-selftasks-chat's; commands/shared.ts matchProjects' pronoun rule l4-chat-answers'. registry.ts: the unchanged no-op result l4-chat-answers', the chat tool result's suffix l4-selftasks-chat's. Tests: each area appends its own describe in apps/ui/test/real-daemon.test.ts and its own cases in fake-daemon.ts.",
+    "Cross-group duplicates for the session lead: L4-selftasks-118 = L4-chat-102 (asked claim) + L4-chat-112 (the marker): one owner of claims.ts and replyInHistory, proposed here; L4-selftasks-124 = L4-chat-111 (plain-words.ts:27): one item, proposed here; L4-selftasks-126 (a read-back restated) stays with l4-selftasks-chat (rule 2 and agent.ts:2204-2206), one prompt bump per sub-run; L4-selftasks-119 (add a task there) neighbours L4-chat-104 (the pronoun rule here, the conversation project there).",
+    "Words for the session lead's list: 'Yes to what? Nothing is waiting for your yes. Say what you want done, for example \"run it now\" to start a session.'; 'Switched the active project to Site. This chat stays about Notes.' with 'Open Site'; the session hit 'Did 1 task: \"Make the events calendar\"; \"Write the welcome page\" failed.'; the card hit 'It asked: Which recipes go on the first page? Answer: The three soups.'; 'Nothing to change: <what> is already <value>.' (the tool result the model gets).",
+    "design/core-experience.md (the session lead edits): §3.9 States: '\"yes\" with no card and no question from chat (\"Yes to what?\")'; §3.9 What it can do: 'open <project>' opens it; Last result after Cancel never promises a continuation.",
+    "For the live-check lead (next live check): re-run LC-C10 (10 of 12 with date) and LC-L3 (a card on the first try for a widening said in words) on bench-live; the seeds must write a project's lastSession and app-shaped cards (L4-chat-301, L4-chat-106's notes).",
+    "Items that belong to other groups' subsystems, kept here so they have an owner (the session lead may move them): L4-chat-103 (run-visible, creds group), L4-chat-104 and -105 (onerepo link/join, github group), L4-chat-110 (with L3:LL-1, github group)."
+   ],
+   "owner_questions": [
+    "L4-chat-309: should a card in which nothing is flagged as instructions still make chat read back every change in that project? Default kept: yes.",
+    "L4-chat-310: should the app's own fixed chat lines be German in a German conversation? Default kept: English."
+   ],
+   "size": "large: 13 items (2 major: 101 the absence guard and the prompt, 102 the yes and the asks claim, both medium-large; 103-111 small to medium; 112-113 small) plus docs and the bench walk; 14-15 if the session lead moves L4-selftasks-118 here (it merges into 102 and 112). Cut line: may end not_done with the reason or the failing test: L4-chat-109 (if the golden set does not hold), L4-chat-110 (without LL-1's watcher), L4-chat-105, L4-chat-101's code-run recall fallback, L4-chat-113's code check (never its prompt sentence), L4-chat-104's 'switch' link (never 'open' opening and the pronoun rule). Never in not_done: L4-chat-101's nudge and prompt lines, L4-chat-102 (the forwarded yes with recordsRead inherited, the asks claim, the words), L4-chat-103 (a promise that a cancelled wait goes on), L4-chat-106, -107, -108, -111, -112 (the marker strip is a security rule), and every security and money rule above."
+  },
+  {
+   "key": "l4-chat-depth",
+   "title": "Thinking longer works on the real model and every line about it is true: a Go ahead runs the answer it offered, the fast model's hand-over is never left to words (the app attaches its own ask, which spends nothing), the paid closer look is told what it is, Answer now never earns a new offer, the history is read from the prompt cache, a closed project takes no new work, and the start, dependency, setting and old offer lines say what happens in the design's words",
+   "problems": [
+    "[major] L4-chat-201: Go ahead under 'This needs a stronger model ...' only shows the same ask again (0 calls), install-wide after one cheap stronger answer; Evidence: live4:L4-chat-12, live4-step:chat:LC-C14; /tmp/frbench/live4/chat/c1/steps/c14b-goahead1.json, 60-c14c-01-y2yes.png; /tmp/frbench/v-l4chat12/t/repro.test.ts; Root cause: packages/runtime/src/conversation/depth.ts:166-173 (atMostOf unrounded floor), agent.ts:1666-1674, :1872, :1889.",
+    "[major] L4-chat-202: answer_thoroughly called 0 of 4 depth lines and 0 of 3 failure questions; 'Should I go ahead?' in words with no button; Evidence: live4:L4-chat-7; /tmp/frbench/live4/chat/c1/steps/c13.json, c13b.json, c13c.json, model-calls.jsonl rows 40-58; Root cause: packages/runtime/src/conversation/agent.ts:1711-1722, depth.ts:331-332, :376, agent.ts:1813, testenv/src/bench/role-player.ts:1673-1716.",
+    "[major] L4-chat-203: the paid Sonnet answer says 'I couldn't hand it to the stronger model' under 'Thought it through with Sonnet'; Evidence: live4:L4-chat-8; /tmp/frbench/live4/chat/c1/steps/48-c13b-03-e3-go-ahead.png, model-calls.jsonl line 54; Root cause: packages/runtime/src/conversation/agent.ts:1722, :1829, :1412; depth.ts:359; conversation-agent.md:49-57.",
+    "[minor] L4-chat-204: a closed (joined) project still takes new work from the plan route, the Data tab and a Yes answered after the join; Evidence: C4:C4L-13; Root cause: packages/commands/src/executor.ts:320-345 (guard in prepare only; confirm :900, :969, :983), packages/runtime/src/daemon/server.ts:1434.",
+    "[minor] L4-chat-205: past 12 turns each turn writes its history to the cache again; Evidence: live4:L4-chat-16, live4-step:chat:LC-C15; /tmp/frbench/live4/chat/c1/steps/c15.json; Root cause: packages/runtime/src/conversation/transcript.ts:379, :267.",
+    "[minor] L4-chat-206: after Answer now the answer offers the stronger model; Evidence: live4:L4-chat-18; /tmp/frbench/live4/chat/c1/steps/c16b.json; Root cause: packages/runtime/src/conversation/agent.ts:2253, :1776; enforcement/budget.ts:266-283.",
+    "[minor] L4-chat-207: a dependency change does not say when the task runs; removing the last one prepares no work; Evidence: live4:L4-session-3; /tmp/frbench/live4/session/s1/steps/c17-chat.json; Root cause: packages/commands/src/commands/task.ts:2010, :1913.",
+    "[minor] L4-chat-208: chat depth's missing acceptance cases; Evidence: C3:C3L-10; Root cause: packages/runtime/test/chat-depth.test.ts and real-daemon 'd1109-chat-depth, run C' (cases absent).",
+    "[minor] L4-chat-209: dead export askAboveWords; Evidence: C3:C3L-12; Root cause: packages/runtime/src/conversation/depth.ts:389-392.",
+    "[words] L4-chat-210: 'Start a session on Garden club (up to CHF 1)?'; Evidence: live4:L4-session-1, C3:C3L-5; /tmp/frbench/live4/session/s1/steps/c17-chat.json; Root cause: packages/commands/src/commands/session.ts:83, :133, :182; shared.ts:127-135; docs/design/core-experience.md:379.",
+    "[words] L4-chat-211: 'from CHF 0.00, so chat asks before every longer answer to CHF 0.10'; Evidence: live4:L4-chat-14; /tmp/frbench/live4/chat/c1/steps/63-c14-changes.txt:28; Root cause: packages/commands/src/commands/settings.ts:757-761, :1042.",
+    "[words] L4-chat-212: an old ask line keeps 'Go ahead?' with no button; Evidence: C3:C3L-8; Root cause: apps/ui/src/components/Conversation.tsx:681-686."
+   ],
+   "decisions": [
+    "A yes is judged against what the person was shown: the stored 'at most' is the CHF on the line (rounded up to the centime); a Go ahead re-asks only when the model changed or the shown figure would change; the pass's budget is the yes's 'at most', capped by the room.",
+    "The fast model never asks in words: the thinking_longer fact and answer_thoroughly's definition say who acts. An ask-only backstop in code (a dated amendment to ADR 0114's 'Who decides', for the session lead's review): a typed quick answer that ended without answer_thoroughly on a line whose words show a failure, plan, comparison or review need gets the app's own ask line with Go ahead when the rung asks first, or Think it through when it would go ahead; a pattern never spends, nothing runs before the person's yes (the owner's answer 2: 'warn/ask first').",
+    "The thorough pass is told what it is: its own facts line ('this_answer: the closer look on Sonnet the person said yes to ...') in place of the quick pass's thinking_longer line, and CHAT_THOROUGH_RULES saying it is the closer look; the fast request stays byte-identical.",
+    "Answer now never earns a next-rung offer; only a pass whose budget line wrapped it up does.",
+    "The history window moves in steps of 6 turns, a pure function of the stored rows (the same after a restart), so quick turns read the history from the prompt cache.",
+    "A project closed by Make one project takes no new work from any route: the plan route, the Data tab's add and import, and a Yes answered after the join (the joined sentence).",
+    "task.dependencies says when the task runs; removing its last undone dependency prepares work (joins a running session if it fits, ADR 0118 point 3).",
+    "Money in chat's start read-back and its done sentence has two decimals (§5 rule 7); design §5's 'Chat read-back' After example becomes '(up to CHF 5.00)' (the session lead's design_doc_changes).",
+    "chat_ask_above keeps its value and its meaning apart in every sentence; an offer line that is no longer the newest reads in the past with no question."
+   ],
+   "u_entries": [
+    "U-094 (chat thinks longer): L4-chat-201, -202, -203, -205, -206, -208, -209, -211, -212 Check in the app: 'why does \"<a failed task>\" keep failing and what should I change?' gets 'This needs a stronger model: about CHF … (at most CHF …) and … seconds. Go ahead?' under a short answer; Go ahead runs Sonnet once and its answer never says it could not; a second stronger question later works too; Answer now ends with no new ask.",
+    "U-093 (who starts a session): L4-chat-207 (a dependency change says when the task runs) and L4-chat-210 ('up to CHF 1.00').",
+    "U-091 (one repository, one project): L4-chat-204 (a closed project takes no new work).",
+    "docs/user-guide.md: Chat ('Short and longer answers': Go ahead runs the answer once; Answer now), Tasks (Change what it waits for: when it runs), Settings (Chat asks first)."
+   ],
+   "root_causes": [
+    "packages/runtime/src/conversation/depth.ts:166-173 and agent.ts:1666-1674, :1872, :1889 (an unrounded 'at most' against a floor the offered turn has grown).",
+    "packages/runtime/src/conversation/agent.ts:1711-1722 and depth.ts:331-332, :376 (a subject-less 'asks the person first' fact and a definition that defers to it); agent.ts:1813, :1907-1950 (the fast model's tool choice is the only trigger).",
+    "packages/runtime/src/conversation/agent.ts:1722, :1829, :1412 and depth.ts:359 (the thorough pass reuses the quick facts and is never told what it is).",
+    "packages/runtime/src/conversation/agent.ts:1776, :2253 and enforcement/budget.ts:266-283 (Answer now and the budget's wrap-up merged).",
+    "packages/runtime/src/conversation/transcript.ts:267, :379 (a window that slides by one turn).",
+    "packages/commands/src/executor.ts:320-345 (closed-project guard in prepare only) and packages/runtime/src/daemon/server.ts:1434.",
+    "packages/commands/src/commands/task.ts:2010 (no next line), session.ts:83/:133/:182 with shared.ts:127-135 (short CHF), settings.ts:757-761/:1042 (a meaning in the value), apps/ui/src/components/Conversation.tsx:681-686 (an old offer line as a live question)."
+   ],
+   "fix_scope": "Run L4 area l4-chat-depth (re-find every line: numbers are at 4cf11fd; it never shares a sub-run with l4-chat-answers or l4-selftasks-chat; the shared_files rules in handoff_items decide every shared file). One commit per item, its failing test first at the person's boundary, then the fix, then the siblings (validation rule 8). Order: (1) L4-chat-201 (money and the owner's D3): composed chat-depth.test.ts with a seeded cheap stronger pass in another project: Go ahead runs exactly one fake-sonnet request within the line's 'at most', no second ask row; the price-change re-ask control (C3L-10's case); the real-daemon chat route and the UI Go ahead button. (2) L4-chat-202: composed with the fast model scripted to answer alone (the recorded live replies): the stored offer and the exact ask line, then a typed yes or Go ahead runs one pass; a words-only hand-over gets the real offer; exact-text of the thinking_longer fact, the definition and the 'Thinking longer' section; the stand-in's answer-alone mode and its real-daemon twin; write the conversation-agent eval for the next live check. (3) L4-chat-203: the thorough request's last message and system part asserted verbatim (no 'asks the person first'; the pass line; CHAT_THOROUGH_RULES with this item's sentences, L4-chat-106's look-it-up sentence and the 'in plain words' clause, also in CHAT_WRAP_UP); the fast request byte-identical. (4) L4-chat-204 (data): real-daemon refusals for the plan route and the Data tab's add/import, a composed confirm after a join (and after a restart), fake-daemon in the same commit. (5) L4-chat-205 (money): composed PromptCacheSim across 13+ turns and a restart. (6) L4-chat-206: the Answer now case gains offer null (and the row's), with the budget-wrap control; real-daemon client.answerNow. (7) L4-chat-207: chat-steering.test.ts through the daemon's chat route, the live-session join case, the real-daemon twin and the drawer test. (8) L4-chat-208's cases, each shown to fail without its guard. (9) L4-chat-209. (10) L4-chat-210, (11) -211, (12) -212 with exact-text assertions at their boundaries (real-daemon readback and Changes row, chat.test.tsx, commands.test.ts, chat-depth.test.tsx). Every new or changed route gets its real-daemon case and apps/ui/test/fake-daemon.ts changes in the same commit. Model-facing text (the thinking_longer and this_answer facts, ANSWER_THOROUGHLY_DESCRIPTION, CHAT_THOROUGH_RULES, CHAT_WRAP_UP, the 'Thinking longer' section) is code: assert the exact text the model receives; one prompt version bump in this area. Not to touch: the ask rule's thresholds and the person's chat_ask_above amount, the rungs and the models (only how a yes is judged), the gate's checks (spoken, quick, injection, room, rung), recordsRead (owner question L4-chat-309), claims.ts and recall.ts (l4-chat-answers'), the read-back backstop (l4-selftasks-chat's), the credential router and policy, the hooks and the sandbox. Security: the backstop only attaches an offer the gate allows; a record's words never start a spend (the gate's injection and recordsRead checks stay first); text from pages, searches, files, cards, chat history, reports or any record never becomes instructions to a model; a closed project's guard holds on every path including a Yes after the join. Money: no budget, wrap-up line, monthly cap or plan-share cap is ever passed; a yes covers at most the CHF on its line; nothing is spent before the person's yes on a stronger rung or above their amount; the stepped window never sends more than the history token budget. Docs: docs/maintainers/runtime.md (depth: how a yes is judged, the backstop, the pass's facts, the history window), commands.md (task.dependencies' line, session start words, chat_ask_above), apps.md (old offer lines), docs/user-guide.md (Chat, Tasks, Settings), ADR 0114 dated amendments (Who decides: the ask-only backstop; the thorough pass's facts; Answer now), ADR 0118 point 3 (a dependency change says when the task runs), ADR 0117 (a closed project takes no new work on any path); CHANGELOG.md, UPDATE-LOG.md, requirements.md and docs/design/core-experience.md are the session lead's (design_doc_changes: §5's read-back example '(up to CHF 5.00)', §3.9's dependency line). Validation before reporting: pnpm check, pnpm test:integration, pnpm test:e2e, pnpm test:injection, the UI suite (cd apps/ui && pnpm vitest run --config vitest.config.ts) and Playwright, each heavy command under flock /tmp/frbench/heavy.lock, and a bench walk before/after on the stand-in (the answer-alone mode on 'make a plan for the next two sessions'; Go ahead twice in a row on 'use a stronger model:'; Answer now; 'make the FAQ wait for the README'; 'run it now') with screenshots; no real model in this area (the next live check re-runs LC-C13, LC-C14 and LC-C15 on bench-live).",
+   "files": [
+    "packages/runtime/src/conversation/depth.ts (atMostOf, thinkingLongerFact and the new thoroughFact, ANSWER_THOROUGHLY_DESCRIPTION, CHAT_THOROUGH_RULES, CHAT_WRAP_UP, needOfLine and the words-only offer check, askAboveWords removed).",
+    "packages/runtime/src/conversation/agent.ts (the regions shared_files gives this area: liveOffer/acceptedOffer :893-940, figuresOf/offerOf/the thinking_longer fact :1660-1722, runOf's answerNow :1776, thoroughPass and personsPass :1820-1950, the next-rung offer :2253, and the backstop's hook after the quick pass).",
+    "packages/runtime/src/enforcement/budget.ts (append-only: the wrap-up's reason and wrapReasonOf).",
+    "packages/runtime/src/conversation/transcript.ts (historyMessages and the window only).",
+    "evals/registry/principals/conversation-agent.md ('Thinking longer' only, one version bump); evals/ (a conversation-agent eval of LC-C13's lines, run by the live check).",
+    "packages/commands/src/commands/settings.ts (the chat_ask_above spec and chatAskAboveWords only), packages/commands/src/commands/session.ts (startSentence, startAsk, newValue), packages/commands/src/commands/shared.ts (chf/chfExact JSDoc only), packages/commands/src/executor.ts (the closed-project check before perform on confirm, and the :184 comment), packages/commands/src/commands/task.ts (taskDependencies.run and dependenciesSentence only).",
+    "packages/runtime/src/daemon/server.ts (POST /projects/:id/plan and the Data tab's add and import routes: the closed-project refusal only).",
+    "apps/ui/src/components/Conversation.tsx (the offer lines :681-716 only); apps/ui/src/pages/project/DataTab.tsx (or its component) for the refusal sentence if it is not already shown.",
+    "testenv/src/bench/role-player.ts (a chat mode where the fast model answers alone on depth lines) and scripts/bench/README.md.",
+    "Tests: packages/runtime/test/chat-depth.test.ts, chat-depth-words.test.ts, chat-steering.test.ts, conversation.test.ts (the cache case), conversation-memory.test.ts and scenario.test.ts (pinned start strings only); packages/commands/test (commands.test.ts, oversize-start.test.ts, executor); apps/ui/test/real-daemon.test.ts (describe 'l4-chat-depth, run L4', append-only, plus the pinned strings at :4327 and :15555), fake-daemon.ts, chat-depth.test.tsx, chat.test.tsx, tasks.test.tsx, the Data tab test, apps/ui/e2e/chat.spec.ts (the start string).",
+    "Docs: docs/maintainers/runtime.md, commands.md, apps.md; docs/user-guide.md; ADR 0114, 0117 and 0118 (dated amendments)."
+   ],
+   "acceptance": [
+    "L4-chat-201 (composed chat-depth.test.ts, real-daemon chat route, UI Go ahead): with a seeded 1,000 micro-USD stronger pass in another project, 'use a stronger model: <Q>' shows the ask line with no model call, Go ahead makes exactly one fake-sonnet request whose cost is within the line's 'at most' and whose footer matches /^Thought it through with Sonnet · \\d+ s · /, and no second ask row is written; a real price change between ask and Go ahead re-asks with the new figures.",
+    "L4-chat-202 (composed, the fast model scripted to answer alone with the recorded live reply): 'make a plan for the next two sessions' and U-094's failure question each leave r.offer.action 'go_ahead' with a line matching /^This needs a stronger model: about CHF \\d+\\.\\d{2} \\(at most CHF \\d+\\.\\d{2}\\) and \\d+ seconds\\. Go ahead\\?$/ and no thorough request; the next 'yes' runs exactly one chat_thorough pass; 'what is left?' gets no offer; the thinking_longer fact and the definition are asserted exactly and no longer tell the model to ask itself; the real-daemon twin on the stand-in's answer-alone mode shows the same.",
+    "L4-chat-203 (composed, request boundary): after Go ahead the one fake-sonnet request's last message has no '- thinking_longer: asks the person first' and has the this_answer line; its system ends with the extended CHAT_THOROUGH_RULES verbatim (who it is, look an earlier reply up before calling it wrong, plain words); the fast request is byte-identical to before.",
+    "L4-chat-204 (real-daemon and composed): POST /projects/:closed/plan answers 409 with the joined sentence and writes nothing; the Data tab's Add on a closed project is refused in words (route and UI); a chat change read back before project.join and answered Yes after it is refused in words and changes nothing, also after a restart.",
+    "L4-chat-205 (composed PromptCacheSim): with 13 earlier turns, two quick lines within 5 minutes: the second request's messages[0] equals the first's and its cache read covers the first request's history; the window is the same after composing twice.",
+    "L4-chat-206 (composed and real-daemon): Answer now during a longer pass leaves r.offer null and the row's offer null; a pass whose budget line wrapped it up still offers the stronger rung.",
+    "L4-chat-207 (chat-steering.test.ts on the daemon's chat route; real-daemon; tasks.test.tsx): 'make the FAQ task depend on the README task', yes -> '\"Write the FAQ\" now waits for \"Write the README\". It runs after it is done, at your next Start.'; 'let the FAQ run on its own', yes -> '\"Write the FAQ\" waits for no other task now. It runs at your next Start.'; with a session running the task is admitted and the line says it joins; every line under 100 characters.",
+    "L4-chat-208: the five listed cases exist and each fails when its guard is reverted.",
+    "L4-chat-209: askAboveWords is gone; typecheck and lint green.",
+    "L4-chat-210 (real-daemon, chat.test.tsx): 'run it now' with a CHF 1.00 budget reads back 'Start a session on Garden club (up to CHF 1.00)?', Yes says 'Started a session on Garden club (up to CHF 1.00).', the Changes row says 'CHF 1.00'; the D4 card says 'up to CHF 5.00'.",
+    "L4-chat-211 (commands.test.ts, real-daemon GET /changes, UI Changes): setting 0 then 0.10 reads exactly 'Set the amount above which chat asks first from CHF 0.00 to CHF 0.10. Undo.'.",
+    "L4-chat-212 (chat-depth.test.tsx): once another line follows an ask line, no older line ends 'Go ahead?' and no older line has a button; the newest ask keeps its Go ahead."
+   ],
+   "depends_on": [
+    "Nothing of run L4 is required first. Cross-group: never in one sub-run with l4-chat-answers (agent.ts, conversation-agent.md, transcript.ts, Conversation.tsx and the test files are shared) or l4-selftasks-chat (agent.ts, executor.ts, task.ts, Conversation.tsx, conversation-agent.md); it may share a sub-run with an area of another group that touches none of those files.",
+    "L4-chat-202 and l4-chat-answers' L4-chat-102 meet at a 'Should I go ahead?' reply: safe in either merge order (with 202 first the model stops asking in words and the app's offer answers a yes; with 102 first a yes reaches the model, which calls answer_thoroughly)."
+   ],
+   "handoff_items": [
+    "shared_files (run L4). packages/runtime/src/conversation/agent.ts: l4-chat-answers owns the bare-yes branch (:1215) and nothingWaitingReply (:2592-2605), YES_TO_WHAT_REPLY (:527), the claim-guard region (:2029-2095: the asks and absent claims and their nudges), CHAT_RETRIEVAL_RULES' marker line (~:603-605), CHAT_RECALL_RULES (:616), CHAT_PLAN_RULES' '# How to write' (:659), the reply's marker strip and the namedSources call (:2322), the facts' task lines (:2912); l4-chat-depth owns liveOffer/acceptedOffer (:893-940), figuresOf, offerOf and the thinking_longer fact (:1660-1722), runOf's answerNow (:1776), thoroughPass and personsPass (:1820-1950) and the next-rung offer (:2253); l4-selftasks-chat owns wordsUsed (:1118), the read-back backstop (:2204-2206), the stop during the nudge, DEFAULT_PROMPT, the pronoun project (:1057-1060) and the expired reply. evals/registry/principals/conversation-agent.md: l4-chat-answers owns 'What you are given', the lookup tools line, 'What you look up' and 'How you answer'; l4-chat-depth 'Thinking longer'; l4-selftasks-chat 'When the person asks for an action' rule 2; one version bump per sub-run (the first to merge makes 1.5.0, a later one 1.5.1). transcript.ts: replyInHistory is l4-chat-answers'; historyMessages and HISTORY_TURNS l4-chat-depth's. Conversation.tsx: the reply's project switch (:202-204) and the settled bubble's text (:560) l4-chat-answers'; the offer lines (:681-716) l4-chat-depth's; isOwnRequest and the Yes block l4-selftasks-chat's. claims.ts and recall.ts: l4-chat-answers only; depth.ts: l4-chat-depth only. intent.ts: matchSwitch/'open' l4-chat-answers', matchAddTask and IntentContext's conversation project l4-selftasks-chat's; commands/shared.ts matchProjects' pronoun rule l4-chat-answers'. registry.ts: the unchanged no-op result l4-chat-answers', the chat tool result's suffix l4-selftasks-chat's. Tests: each area appends its own describe in apps/ui/test/real-daemon.test.ts and its own cases in fake-daemon.ts. Also for this area: executor.ts's closed-project check before perform is l4-chat-depth's, the rest of confirm l4-selftasks-chat's; task.ts' taskDependencies.run and dependenciesSentence l4-chat-depth's, the rest l4-selftasks-chat's; session.ts' start words l4-chat-depth's.",
+    "For the session lead: ADR 0114's 'Who decides' says no keyword routing beyond the person's phrases; L4-chat-202's ask-only backstop needs your yes to the dated amendment (nothing spends without the person's yes, so the owner's 'warn/ask first' holds).",
+    "design_doc_changes for the session lead: §5 'Chat read-back' After example '(up to CHF 5.00)'; §3.9 'a dependency change says when the task runs'; §3.9 'While it answers': Answer now ends with no new offer.",
+    "Words for the session lead's list: 'This needs a stronger model: about CHF … (at most CHF …) and … seconds. Go ahead?' (now attached by the app when the fast model answers alone); 'It runs after \"Write the README\" is done, at your next Start.'; 'Start a session on <project> (up to CHF 1.00)?'; 'Set the amount above which chat asks first from CHF 0.10 to CHF 0.00: chat asks before every longer answer.'; 'Offered: a stronger model, about CHF 0.29 (at most CHF 0.57). Not taken.'.",
+    "For the live-check lead (next live check): LC-C13 (the hand-over or the app's ask on at least 3 of 4 depth lines on the default setting), LC-C14 (Go ahead twice in a row after a cheap stronger answer), LC-C15 (the history read from the cache on quick turns 2 and 4), LC-C16 (Answer now with no new offer) on bench-live.",
+    "Items that belong to other groups' subsystems, kept here so they have an owner (the session lead may move them): L4-chat-204 (onerepo-join, github group), L4-chat-207 and -210 (starts-engine)."
+   ],
+   "owner_questions": [],
+   "size": "large: 12 items (3 major: 201 medium, 202 large (words, the backstop, the stand-in mode, the eval), 203 medium; 204-207 small to medium; 208-212 small) plus docs and the bench walk. Cut line: may end not_done with the reason or the failing test: L4-chat-208's 10,000-token lookups case and Costs row, L4-chat-209, L4-chat-212, L4-chat-202's eval file and the words-only offer check (never the words and the backstop), L4-chat-201's optional floor-without-the-ask-line. Never in not_done: L4-chat-201 (a yes that runs), L4-chat-202's words and ask-only backstop, L4-chat-203, L4-chat-204 (data), L4-chat-205 (money), L4-chat-206, L4-chat-207, L4-chat-210, L4-chat-211, and every security and money rule above."
+  }
+ ],
+ "owner_questions": [
+  "L4-chat-309 (C3L-14): When chat sees a failed task's card in full (its words come from a specialist or a web page), it reads back every change before making it, even 'add a task', which elsewhere acts at once with Undo; should a card in which nothing is flagged as instructions keep that rule? Default kept until you answer: yes, every change in that project is read back first.",
+  "L4-chat-310 (LL-10): When you write to chat in German, should the app's own fixed chat lines ('Yes to what? ...', 'Nothing changed ...') be German too, or stay English like every other screen? Default kept until you answer: English, like the rest of the app."
+ ],
+ "owner_checklist": [
+  "U-092, after run L4, on your install with your own Claude (the release run-through, not live_only): in a project with some history ask 'which licence did we choose?' and 'what happened to <a renamed task's old title>?': each answer names the record with its date and a From line, and no reply says it has not looked or asks 'Should I look?'.",
+  "U-094 / U-084: ask 'make a plan for the next two sessions' in a project with a failed task: under a short answer 'This needs a stronger model: about CHF … (at most CHF …) and … seconds. Go ahead?' with a button; press Go ahead: one Sonnet answer that never says it could not use the stronger model; ask a second stronger question later: its Go ahead runs too.",
+  "U-084: whenever chat asks you something ('Should I …?'), type 'yes': you get what it offered (a lookup's answer, or a Yes/No card for a change), never 'Yes to what?'.",
+  "U-096: under 'Subscription first, then wait', let a session wait at the subscription's limit, press Cancel on the bar, then type 'summary' in chat and look at the Overview without reloading: both say '... then it runs at your next Start.'."
+ ]
+}

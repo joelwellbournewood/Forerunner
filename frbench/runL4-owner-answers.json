@@ -1,0 +1,8 @@
+{
+ "answered_at": "2026-11-17T15:52:00Z",
+ "answers": [
+  {"question_from": "L4-selftasks-117 (run C decision 53)", "answer": "Every chat read-back waits until the person answers (no 10-minute lapse), as design section 3.9 says.", "effect": "fix: extend the 'wait while its Inbox card is open' rule from 'fix the tasks' to every chat read-back (PENDING_TTL_MS no longer lapses a read-back); the area that owns l4-selftasks-chat builds it."},
+  {"question_from": "L4-chat-309 (C3L-14)", "answer": "Keep asking first while a failed task's card is open, even when nothing is flagged.", "effect": "no change: today's rule stays; decide the item 'not_a_problem (owner kept the rule, 2026-11-17)'."},
+  {"question_from": "L4-chat-310 (LL-10)", "answer": "Chat's fixed lines stay English.", "effect": "no change: decide the item 'not_a_problem (owner, 2026-11-17)'."}
+ ]
+}
