@@ -559,6 +559,32 @@ export class RouterTaskBilling implements TaskBillingPort {
     this.sources = stateSources(opts.store as StateStore);
   }
 
+  /**
+   * R-inboxperf (d1109-cred-screens, CS-4): this billing for one request that reads the saved
+   * credentials several times (GET /inbox: the plan tasks' runs-on lines and the card's foot
+   * line): the vault is asked at most once per credential for the view's life. Not for picks.
+   */
+  withVaultMemo(): RouterTaskBilling {
+    const vault = this.opts.vault;
+    const seen = new Map<string, Promise<boolean>>();
+    const has = (name: string): Promise<boolean> => {
+      let known = seen.get(name);
+      if (!known) {
+        known = vault.has(name);
+        seen.set(name, known);
+      }
+      return known;
+    };
+    return new RouterTaskBilling({
+      ...this.opts,
+      vault: { has, ...(vault.get ? { get: (name: string) => vault.get?.(name) } : {}) } as Pick<
+        Vault,
+        "has"
+      > &
+        Partial<Pick<Vault, "get">>,
+    });
+  }
+
   async pick(req: TaskBillingRequest): Promise<TaskBillingPick> {
     const all = await this.sources(this.opts.humanId);
     const withheld: RouteSkip[] = [];

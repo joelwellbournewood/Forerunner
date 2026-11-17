@@ -2414,13 +2414,18 @@ export function createDaemonApp(
       const view = reqViews[i];
       if (planTasks && view) view.planTasks = planTasks;
       // d1109-cred-screens (CS-4): the plan card's foot line, computed when shown.
-      if (planTasks && view)
+      if (planTasks && view) {
+        // R-inboxperf: through this request's chooser batch, so the vault is asked once.
+        batch ??= rt.chooser.batch();
         view.planCredentialLine = await planCredentialLine({
           store: rt.store,
           clock: rt.clock,
           humanId: rt.human.id,
-          billing: rt.billing.pick instanceof RouterTaskBilling ? rt.billing.pick : null,
+          billing:
+            batch.billing ??
+            (rt.billing.pick instanceof RouterTaskBilling ? rt.billing.pick : null),
         }).catch(() => null);
+      }
     }
     const msgViews = [];
     for (const m of messages) {

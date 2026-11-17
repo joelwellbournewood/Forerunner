@@ -835,11 +835,18 @@ export interface RuntimeApp {
      * tasks): the web search marks, the saved credentials (the vault), the person's settings and
      * each project's dependencies are read once for the batch.
      */
-    batch(): (input: {
+    batch(): ((input: {
       specialist: string;
       projectId?: string | null;
       task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
-    }) => Promise<{ kind: string; line: string | null } | null>;
+    }) => Promise<{ kind: string; line: string | null } | null>) & {
+      /**
+       * d1109-cred-screens (CS-4, R-inboxperf): the billing view the batch reads the credentials
+       * through (the vault asked once per credential), for the plan card's foot line in the same
+       * request. Absent outside the daemon's composition.
+       */
+      billing?: RouterTaskBilling;
+    };
     table(): Promise<AbilityTable>;
   };
   tools: ToolRegistry;
@@ -4045,7 +4052,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       prefs: Record<string, unknown> | undefined;
     }> | null = null;
     const deps = new Map<string, Promise<boolean>>();
-    return async ({
+    // One view of the billing per batch: the vault is asked once per credential (R-inboxperf),
+    // also by the plan card's foot line that reads the same credentials in the same request.
+    const billing = taskBilling.withVaultMemo();
+    const load = () => {
+      shared ??= (async () => {
+        // 'web-search': a key saved since search was switched off for the old one ends the mark.
+        await webSearchMarks.refresh();
+        return {
+          kinds: await billing.savedKinds(),
+          blocked: await billing.blockedKinds(),
+          prefs: (await store.human.get(human.id).catch(() => undefined))?.notify_prefs,
+        };
+      })();
+      return shared;
+    };
+    const choose = async ({
       specialist,
       projectId,
       task,
@@ -4057,16 +4079,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const name = canonicalSpecialistName(specialist);
       const spec = specialists(name);
       if (!spec) return null;
-      shared ??= (async () => {
-        // 'web-search': a key saved since search was switched off for the old one ends the mark.
-        await webSearchMarks.refresh();
-        return {
-          kinds: await taskBilling.savedKinds(),
-          blocked: await taskBilling.blockedKinds(),
-          prefs: (await store.human.get(human.id).catch(() => undefined))?.notify_prefs,
-        };
-      })();
-      const { kinds, blocked, prefs } = await shared;
+      const { kinds, blocked, prefs } = await load();
       let dependencies: Promise<boolean> = Promise.resolve(false);
       if (projectId) {
         const known = deps.get(projectId);
@@ -4120,6 +4133,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           }
         : choice;
     };
+    return Object.assign(choose, { billing });
   };
   /**
    * Whether a task of the project would run now, as its own pick would decide (R-refusedstays,
