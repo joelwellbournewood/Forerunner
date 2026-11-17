@@ -66,3 +66,8 @@
 - CI 312 and Desktop app 77 green on d133246 (Windows and Linux). The window job read the bar and title live during the session: bar 'Window check 21:56:35 · picks the next task just started Stop ▾', title '● Window check 21:56:35 · Forerunner' (LC-C20 first part; C5L-25 asks whether the bar text is a run-on; only one page checked). 'the app exited (code 1)' at the end also appears on run 76: the check closes it.
 - runC-plan.json C5 merged.ci set (place-c5-leftovers.cjs, now 30 triage items incl. C5L-25).
 - C6 (wave 22, d1109-cred-screens + d1109-selftasks-chat, base d133246): run wf_2ce6c7a0-0e2, task wt0k9zuah. The last sub-run of run C; then live check 4.
+
+## 2026-11-17 ~00:05 UTC: container restart; C6 restarted
+- The container restarted at about 23:56 UTC and stopped C6 (wf_2ce6c7a0-0e2, task wt0k9zuah). Saved state: d1109-selftasks-chat's fixer had finished (report saved to runC-C6-fix-d1109-selftasks-chat.json; branch fix/d1109-selftasks-chat at d03d7f6); its review was 30 minutes in (lost). d1109-cred-screens' fixer had 10 commits on fix/d1109-cred-screens (e1188ae; also branch worktree-wf_2ce6c7a0-0e2-1) and was in its final validation (UI suite) when stopped.
+- Stale worktrees wf_2ce6c7a0-0e2-1..3 removed (all clean; branches kept).
+- C6 relaunched fresh (not resumed: resume caches only a prefix of calls): run wf_77c66af8-06c, task wg0o1bilj, args /tmp/frbench/runC-C6r-args.json (scratchpad/c6r-args.cjs): existingFixes reuses the chat fixer's report; the cred-screens fixer resumes from fix/d1109-cred-screens (told not to branch -f it) and reports on the whole area.
