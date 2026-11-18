@@ -81,10 +81,10 @@ The icon today is Tauri's stock logo (yellow and blue rings), never replaced.
   black but rather a dark creme", then: "cream fading outward to tan near the edges, rounded
   square feathered / blended to fit the overall icon shape"; after seeing it, "try no icon
   feathered", then "make it fade to tan only near the edges, with a 'square' shape. now its
-  like a radial fade." The master is `docs/design/icon/forerunner-icon.svg` (1024 x 1024): a
-  crisp rounded square, flat cream, turning tan only in a narrow band along its edges (a
-  blurred cream rounded square over tan, clipped to the tile). `forerunner-icon-wider-edge.svg`
-  has a slightly wider tan band. Use the master unless the owner says otherwise. The icon tools
+  like a radial fade." and finally "ok go back to the circle fade version". The master is
+  `docs/design/icon/forerunner-icon.svg` (1024 x 1024): a crisp rounded square (no feathering)
+  with a radial fade from cream at the centre to tan at the edges. `forerunner-icon-square-fade.svg`
+  is the square-edged fade the owner tried and set aside. Use the master. The icon tools
   may not draw SVG blurs: render the master to a 1024 x 1024 PNG with the pre-installed
   Chromium (Playwright, transparent background) and feed that PNG to `tauri icon`, then look at
   the 16 px and 32 px results.
