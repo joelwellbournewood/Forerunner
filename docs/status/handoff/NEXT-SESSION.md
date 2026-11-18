@@ -76,12 +76,13 @@ The icon today is Tauri's stock logo (yellow and blue rings), never replaced.
 - **Design:** after seeing a first set of drafts, the owner asked the same day: "make the diamond
   more of a kite shape ... add some ... extra elements to the design ... give it some more form
   ... more like mahogany than like this bright red." So: a kite (short top, long bottom) in
-  mahogany tones, with facets, a lit edge and a glint, on a black rounded square with a faint
-  vignette. Three 1024 x 1024 masters are in `docs/design/icon/`: `k1-faceted.svg` (four
-  facets), `k2-bevel.svg` (a bevelled rim around a flat face), `k3-cut.svg` (eight facets
-  around a table, like a cut stone). Build the one the owner picks, `k3-cut.svg` if they have
-  not said, and show the owner the 16 px and 32 px renderings first: dark mahogany on black
-  has less contrast at small sizes, so lighten the facets there if the shape gets lost.
+  mahogany tones, with facets and a lit edge. **Chosen by the owner (2026-11-18):** the cut
+  stone (eight facets around a table), "no sparkle, slightly redder hue, background is not pure
+  black but rather a dark creme". The master is `docs/design/icon/forerunner-icon.svg`
+  (1024 x 1024, a tan cream background); if the owner wants the cream lighter or darker,
+  `forerunner-icon-lighter.svg` and `forerunner-icon-dark.svg` are the same stone on the other
+  two backgrounds the owner was shown. Use the master unless the owner says otherwise. It reads
+  clearly at 16 px on light and dark taskbars.
 - **Where:** every file in `apps/desktop/src-tauri/icons` and `apps/mobile/src-tauri/icons`
   (PNGs, `icon.ico`, `icon.icns`, the `Square*Logo` and `StoreLogo` files), generated from the
   master with the Tauri CLI's `tauri icon` (in `apps/desktop`); the browser tab of `apps/ui`
