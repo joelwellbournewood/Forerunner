@@ -107,3 +107,4 @@
 - Triage wf_9df91932-254 done (9 agents): runL4-plan.json revised after the check: 190 items (102 fix, 34 words), 11 areas, 8 sub-runs L4a..L4h (waves 25..32). Owner answers applied (scratchpad/l4-prepare.cjs): L4-chat-309/310 not_a_problem, L4-selftasks-117 extended to every read-back; open: L4-github-130 (Close button). Areas + 136 triage items + 54 '(run L4)' shared_files rules copied into phaseE.json (backup phaseE.before-L4.json).
 - L4a args built on 4cf11fd: runL4-L4a-args.json and .claude/worktrees/_wf-scripts/forerunner-phase-e6-L4a.js (scratchpad/build-runL4-args.cjs <name> <base>).
 - NEXT-SESSION.md status section committed and pushed at 84aaf90. Continuation scheduled for Sun 2026-11-22 05:30 UTC.
+- 2026-11-18: the owner answered L4-github-130: add a Close button (fix in l4-github-merge, minor). No owner question open. l4-prepare.cjs rerun; phaseE.json and runL4-plan.json updated.

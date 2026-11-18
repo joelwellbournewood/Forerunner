@@ -34,7 +34,23 @@ if (a117) {
   a117.acceptance = (a117.acceptance || []).filter((d) => !String(d).startsWith(tag));
   a117.acceptance.push(`${tag} a chat read-back (a plain task change, not only 'fix the tasks') left unanswered for more than 10 minutes, and across a daemon restart, is still open in chat and the Inbox, and Yes then makes the change (composed test with a clock moved past 10 minutes, and a real-daemon case).`);
 }
-p.owner_questions = (p.owner_questions || []).filter((q) => !/L4-chat-309|L4-chat-310/.test(JSON.stringify(q)));
+set("L4-github-130", (it) => {
+  it.final_decision = "fix";
+  it.final_area = "l4-github-merge";
+  it.severity = "minor";
+  it.owner_answer = "2026-11-18: add a Close button; one press closes the cancelled task's pull request on GitHub (it can be reopened there).";
+});
+const gm = p.areas.find((a) => a.key === "l4-github-merge");
+{
+  const tag = "OWNER 2026-11-18 (L4-github-130):";
+  gm.problems = gm.problems.filter((x) => !String(x).includes(tag));
+  gm.problems.push(`[minor] L4-github-130: ${tag} a cancelled task whose pull request is still open on GitHub is listed on the Overview under 'Cancelled, still open on GitHub' with Open only, and the person must go to GitHub to close it. The owner answered: add a Close button. Evidence: the plan check's item L4-github-130 (LL-5); ADR 0105 point 4 (amended 2026-11-15). Root cause: no close route or button for that row.`);
+  gm.decisions = (gm.decisions || []).filter((d) => !String(d).startsWith(tag));
+  gm.decisions.push(`${tag} Close beside Open on the 'Cancelled, still open on GitHub' row, with its one-line consequence ('Closes this pull request on GitHub; you can reopen it there.'); it closes only that pull request, on GitHub with the project's own token, never deletes its branch, and the row goes once GitHub answers; amend ADR 0105 point 4 (dated).`);
+  gm.acceptance = (gm.acceptance || []).filter((d) => !String(d).startsWith(tag));
+  gm.acceptance.push(`${tag} pressing Close on a cancelled task's open pull request closes it on the stand-in GitHub (real-daemon case for the new route, the fake daemon in step, a UI test that clicks and asserts what is sent and what the row then says); the branch is kept. May end in not_done only with the reason (cut line: minor).`);
+}
+p.owner_questions = (p.owner_questions || []).filter((q) => !/L4-chat-309|L4-chat-310|L4-github-130/.test(JSON.stringify(q)));
 p.owner_answers_2026_11_17 = JSON.parse(fs.readFileSync("/tmp/frbench/runL4-owner-answers.json", "utf8"));
 
 // 2. Areas, triage items and shared_files into phaseE.json.

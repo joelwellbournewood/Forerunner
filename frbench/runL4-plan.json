@@ -2838,9 +2838,10 @@
    "test_boundary": "None.",
    "notes": "Plan check (D-L4-26): an owner question, not not_a_problem: a new button is a choice about what a person sees and does, which AGENTS.md leaves to the owner, and ADR 0105's amendment of 2026-11-15 records it as an option for later. Nothing is broken meanwhile: the app names the pull request and says what to do (amendment points 1-3).",
    "triage_area": null,
-   "final_decision": "owner_question",
-   "final_area": null,
-   "owner_question": "Question: should a cancelled task's pull request that is still open on GitHub get a Close button in the app (Forerunner closes it on GitHub when you press it)? Default kept until you answer: no button; the Overview lists it under 'Cancelled, still open on GitHub' with Open and says to close it on GitHub (ADR 0105 point 4)."
+   "final_decision": "fix",
+   "final_area": "l4-github-merge",
+   "owner_question": "Question: should a cancelled task's pull request that is still open on GitHub get a Close button in the app (Forerunner closes it on GitHub when you press it)? Default kept until you answer: no button; the Overview lists it under 'Cancelled, still open on GitHub' with Open and says to close it on GitHub (ADR 0105 point 4).",
+   "owner_answer": "2026-11-18: add a Close button; one press closes the cancelled task's pull request on GitHub (it can be reopened there)."
   },
   {
    "id": "L4-github-131",
@@ -5016,7 +5017,8 @@
     "[words] L4-github-123: the head-moved card cuts a 55-character title before its quoted part. Evidence: live4:L4-l3-12, live4-step:l3:LC-L3.L3-github-3; /tmp/frbench/live4/l3/evidence/g3-inbox.json. Root cause: packages/runtime/src/daemon/quoted-title.ts:21.",
     "[words] L4-github-124: the closed dependency's row after a press-time check, the cancelled block's plural, a rebuilt-without pull request under \"Reviewed by the critic\". Evidence: L3:LL-6. Root cause: packages/runtime/src/daemon/pull-requests.ts:711-743; apps/ui/src/pages/project/SummaryTab.tsx:497-503, :786-790.",
     "[words] L4-github-125: a joined project's Last result offers a moved task as ready to continue. Evidence: C4:C4L-9. Root cause: packages/runtime/src/daemon/views.ts:403-470 (projectSummary).",
-    "[words] L4-creds-28: The held hands-off join refusal is about 130 characters; Evidence: C4:C4L-11; Root cause: packages/runtime/src/daemon/join-words.ts:224"
+    "[words] L4-creds-28: The held hands-off join refusal is about 130 characters; Evidence: C4:C4L-11; Root cause: packages/runtime/src/daemon/join-words.ts:224",
+    "[minor] L4-github-130: OWNER 2026-11-18 (L4-github-130): a cancelled task whose pull request is still open on GitHub is listed on the Overview under 'Cancelled, still open on GitHub' with Open only, and the person must go to GitHub to close it. The owner answered: add a Close button. Evidence: the plan check's item L4-github-130 (LL-5); ADR 0105 point 4 (amended 2026-11-15). Root cause: no close route or button for that row."
    ],
    "decisions": [
     "A dependency whose reviewed change reached main through a pull request merged on GitHub is recorded as merged through it (state merged, last_outcome merged_through, no migration), in whatever order the watcher reads the two events and across a restart; one card says it with Take this work out and Keep it; nothing is written to GitHub before the person presses. Why: design section 5 rule 4; ADR 0111 point 4 left it for later.",
@@ -5027,7 +5029,8 @@
     "Costs' runs and accepted runs of a task are the task's own, wherever its ledger rows are booked; money, totals and the other groupings stay the project's own ledger (BA-9, OJ-07). Accepted counts tries (L4-money-301, moved here: the same task-run helper): a run that paused and that a later run of the same task continued is one try with it, for By task, the specialist and the model alike; no money figure changes.",
     "A joined or removed project's page names itself in the header, never shows an internal folder, and its Last result says where its tasks went. Why: design sections 3.1 and 5 rules 3 and 4.",
     "A merge the press found already made on GitHub reads \"#59 was merged on GitHub already.\"; only Forerunner's own reads \"Merged #59.\". Why: ADR 0111 point 3.",
-    "The held hands-off join refusal is one sentence of at most 100 characters (L4-creds-28, moved here beside L4-github-113's join-words lines)."
+    "The held hands-off join refusal is one sentence of at most 100 characters (L4-creds-28, moved here beside L4-github-113's join-words lines).",
+    "OWNER 2026-11-18 (L4-github-130): Close beside Open on the 'Cancelled, still open on GitHub' row, with its one-line consequence ('Closes this pull request on GitHub; you can reopen it there.'); it closes only that pull request, on GitHub with the project's own token, never deletes its branch, and the row goes once GitHub answers; amend ADR 0105 point 4 (dated)."
    ],
    "u_entries": [
     "U-091 (one repository, one project), Make one project: Check in the app gains 'the closing project's open status pull request is listed on the kept project's Overview with Open and Merge, and the dialog has a Status pull request line'; 'the dialog's open pull request count matches GitHub'; 'Costs > By task of a moved task reads 1 · 1 / 1'; 'the closed project's header names it and Your files says where its files are; its Last result says where its tasks went'.",
@@ -5081,7 +5084,8 @@
     "L4-github-123 (composed, unit): the 55-character title with its quote is whole on the head-moved card; a 70-character one is still cut before its quote.",
     "L4-github-124 (UI, composed): one cancelled pull request reads the singular sentence; a rebuilt-without pull request is not under \"Reviewed by the critic\"; the closed dependency's row is true right after the press.",
     "L4-github-125 (real-daemon, UI): a joined project's Last result says 'Its tasks went on in \"<kept>\".' and offers no moved task as ready.",
-    "L4-creds-28 (unit): joinRefusedHeldStart is one sentence of at most 100 characters, pinned exactly. Or not_done."
+    "L4-creds-28 (unit): joinRefusedHeldStart is one sentence of at most 100 characters, pinned exactly. Or not_done.",
+    "OWNER 2026-11-18 (L4-github-130): pressing Close on a cancelled task's open pull request closes it on the stand-in GitHub (real-daemon case for the new route, the fake daemon in step, a UI test that clicks and asserts what is sent and what the row then says); the branch is kept. May end in not_done only with the reason (cut line: minor)."
    ],
    "depends_on": [
     "Base: the merge of sub-run L4d (on L4c, L4b, L4a, 4cf11fd). Built beside l4-github-link in L4e; they meet only at L4e's merge (key order: l4-github-link first, then this area).",
@@ -5629,14 +5633,7 @@
   "packages/runtime/src/daemon/quoted-title.ts: l4-github-merge (L4e) only (balancedCut's dropped-quote case, L4-github-123). No other area changes it, and nothing outside packages/runtime imports it (L4-money-113's cut in pr-executor.ts uses its own helper).",
   "apps/ui/test/real-daemon.test.ts and apps/ui/test/fake-daemon.ts with its fixtures (run L4, every sub-run; run C's rule kept): append-only, one describe block or route branch per area '<key>, run L4'; an existing case or branch is edited only where it asserts or answers a text or shape that area changes, that assertion or reply only. The existing lines a pair edits: L4b: l4-chat-depth edits real-daemon.test.ts ~:4327 (the dependency sentence, L4-chat-207) and ~:15555 (the start read-back's figure, L4-chat-210); l4-selftasks-check edits existing assertions only in the run C describes of its own topic ('d1109-selftasks-run, run C' for L4-selftasks-108, and any 'd1116-budget-all, run C' assertion the review floor moves), none of l4-chat-depth's lines. L4c: l4-chat-answers edits fake-daemon.ts' chat branch for a 'yes' with nothing waiting (~:4428, L4-chat-102 (c), the reply only); l4-money-pause edits no line of the chat branch. L4e: each github area edits only its own describe and route branches. Any other existing line one area of a pair must edit is named in its notes_for_other_areas, and the sub-run's merge keeps both in key order. This narrows the workflow's 'share no file' to 'share no source file' (D-L4-6): the session lead accepts it before L4b, or each pair runs one area after the other on the same base (D-L4-19's fallback)."
  ],
- "owner_questions": [
-  {
-   "question": "L4-github-130 (LL-5): should a cancelled task's pull request that is still open on GitHub get a Close button in the app (Forerunner closes it on GitHub when you press it)?",
-   "default_kept": "No button: the Overview lists it under 'Cancelled, still open on GitHub' with Open and says to close it on GitHub (ADR 0105 point 4).",
-   "from": "plan check (item L4-github-130; ADR 0105's amendment of 2026-11-15)",
-   "status": "new"
-  }
- ],
+ "owner_questions": [],
  "owner_questions_carried": [
   {
    "question": "Owner (D5, after your answer 4): until you pick in Settings, 'Subscription first, then wait' is used for every call, chat included, so at your subscription's limit chat waits too (it still offers a one-off 'Use API key'). Should the default be 'Subscription first, ask before API key' instead?",
@@ -6350,6 +6347,12 @@
     "question_from": "L4-chat-310 (LL-10)",
     "answer": "Chat's fixed lines stay English.",
     "effect": "no change: decide the item 'not_a_problem (owner, 2026-11-17)'."
+   },
+   {
+    "question_from": "L4-github-130 (LL-5, plan check)",
+    "answered_at": "2026-11-18",
+    "answer": "Add a Close button: one press closes the cancelled task's pull request on GitHub (it can be reopened there).",
+    "effect": "fix in l4-github-merge (minor): the Overview's Cancelled, still open on GitHub row gets Close beside Open, with its one-line consequence; a real-daemon case for the route, the fake daemon in step, a UI test; ADR 0105 point 4 amended."
    }
   ]
  }
