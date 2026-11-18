@@ -78,11 +78,16 @@ The icon today is Tauri's stock logo (yellow and blue rings), never replaced.
   ... more like mahogany than like this bright red." So: a kite (short top, long bottom) in
   mahogany tones, with facets and a lit edge. **Chosen by the owner (2026-11-18):** the cut
   stone (eight facets around a table), "no sparkle, slightly redder hue, background is not pure
-  black but rather a dark creme". The master is `docs/design/icon/forerunner-icon.svg`
-  (1024 x 1024, a tan cream background); if the owner wants the cream lighter or darker,
-  `forerunner-icon-lighter.svg` and `forerunner-icon-dark.svg` are the same stone on the other
-  two backgrounds the owner was shown. Use the master unless the owner says otherwise. It reads
-  clearly at 16 px on light and dark taskbars.
+  black but rather a dark creme", then: "cream fading outward to tan near the edges, rounded
+  square feathered / blended to fit the overall icon shape". The master is
+  `docs/design/icon/forerunner-icon.svg` (1024 x 1024): a radial fade from cream at the centre
+  to tan at the edges, on a rounded square whose edge is feathered to transparent (an SVG mask
+  with a blur). Two other feather strengths the owner was shown sit beside it:
+  `forerunner-icon-soft-edge.svg` (a lighter feather that keeps the tile) and
+  `forerunner-icon-glow.svg` (a soft oval glow that hugs the kite). Use the master unless the
+  owner says otherwise. The icon tools may not draw SVG masks and blurs: render the master to a
+  1024 x 1024 PNG with the pre-installed Chromium (Playwright, transparent background) and feed
+  that PNG to `tauri icon`, then look at the 16 px and 32 px results.
 - **Where:** every file in `apps/desktop/src-tauri/icons` and `apps/mobile/src-tauri/icons`
   (PNGs, `icon.ico`, `icon.icns`, the `Square*Logo` and `StoreLogo` files), generated from the
   master with the Tauri CLI's `tauri icon` (in `apps/desktop`); the browser tab of `apps/ui`
