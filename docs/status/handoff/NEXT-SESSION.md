@@ -68,6 +68,29 @@ Owner items (not blocking): delete the merged backup branches under
 `claude/nifty-knuth-f9udt0-backup/` (all but `plan-files`); create the forerunner-registry
 repository.
 
+**Owner's to-do of 2026-11-18: a new app icon.** The owner's words: "make the icon better. The
+icon sucks. It's like a little weird yellow and blue half boob against some strange background
+... I want to have a very cool, graphically simple red diamond against a black background."
+The icon today is Tauri's stock logo (yellow and blue rings), never replaced.
+
+- **Design:** a red diamond on a black rounded square. Default: the faceted diamond below, four
+  shades of red, reading clearly at 16 px. The owner was shown three drafts on 2026-11-18 (flat,
+  faceted, cut gem); build the one the owner picks, the faceted one if they have not said.
+  Master, 1024 x 1024:
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="190" fill="#0a0a0a"/><path d="M512 150 512 512 150 512Z" fill="#ff3a3a"/><path d="M512 150 874 512 512 512Z" fill="#e8141c"/><path d="M150 512 512 512 512 874Z" fill="#b30d14"/><path d="M512 512 874 512 512 874Z" fill="#8c0a10"/></svg>`
+  (flat: one path `M512 150 874 512 512 874 150 512Z` in `#e8141c`).
+- **Where:** every file in `apps/desktop/src-tauri/icons` and `apps/mobile/src-tauri/icons`
+  (PNGs, `icon.ico`, `icon.icns`, the `Square*Logo` and `StoreLogo` files), generated from the
+  master with the Tauri CLI's `tauri icon` (in `apps/desktop`); the browser tab of `apps/ui`
+  has no icon yet, so add one from the same master. Check `scripts/release-files.test.ts`.
+- **The running dot** (`with_running_dot` in `apps/desktop/src-tauri/src/tray.rs`: blue with a
+  white ring, lower right) stays, and must still read on the new icon (it did in the drafts).
+- **Done when:** `cargo test` and the release-files test pass, the Desktop app workflow's window
+  check is green, and a U-entry "Check in the app" says: the taskbar, the Start menu, the tray
+  (with and without the running dot), the window and the installer all show the red diamond.
+- **When:** a small change of its own between run L4 rounds, and before the owner's installer
+  (G) at the latest.
+
 ## Status at 2026-11-16 11:00 UTC (run C steps 1 to 4 merged; C4b next)
 
 Session `claude/nifty-knuth-f9udt0` resumed on 2026-11-15 at 05:35 UTC after the weekly reset
