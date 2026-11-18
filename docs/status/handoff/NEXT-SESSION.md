@@ -73,12 +73,15 @@ icon sucks. It's like a little weird yellow and blue half boob against some stra
 ... I want to have a very cool, graphically simple red diamond against a black background."
 The icon today is Tauri's stock logo (yellow and blue rings), never replaced.
 
-- **Design:** a red diamond on a black rounded square. Default: the faceted diamond below, four
-  shades of red, reading clearly at 16 px. The owner was shown three drafts on 2026-11-18 (flat,
-  faceted, cut gem); build the one the owner picks, the faceted one if they have not said.
-  Master, 1024 x 1024:
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="190" fill="#0a0a0a"/><path d="M512 150 512 512 150 512Z" fill="#ff3a3a"/><path d="M512 150 874 512 512 512Z" fill="#e8141c"/><path d="M150 512 512 512 512 874Z" fill="#b30d14"/><path d="M512 512 874 512 512 874Z" fill="#8c0a10"/></svg>`
-  (flat: one path `M512 150 874 512 512 874 150 512Z` in `#e8141c`).
+- **Design:** after seeing a first set of drafts, the owner asked the same day: "make the diamond
+  more of a kite shape ... add some ... extra elements to the design ... give it some more form
+  ... more like mahogany than like this bright red." So: a kite (short top, long bottom) in
+  mahogany tones, with facets, a lit edge and a glint, on a black rounded square with a faint
+  vignette. Three 1024 x 1024 masters are in `docs/design/icon/`: `k1-faceted.svg` (four
+  facets), `k2-bevel.svg` (a bevelled rim around a flat face), `k3-cut.svg` (eight facets
+  around a table, like a cut stone). Build the one the owner picks, `k3-cut.svg` if they have
+  not said, and show the owner the 16 px and 32 px renderings first: dark mahogany on black
+  has less contrast at small sizes, so lighten the facets there if the shape gets lost.
 - **Where:** every file in `apps/desktop/src-tauri/icons` and `apps/mobile/src-tauri/icons`
   (PNGs, `icon.ico`, `icon.icns`, the `Square*Logo` and `StoreLogo` files), generated from the
   master with the Tauri CLI's `tauri icon` (in `apps/desktop`); the browser tab of `apps/ui`
