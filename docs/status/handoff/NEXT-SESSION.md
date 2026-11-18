@@ -84,7 +84,7 @@ The icon today is Tauri's stock logo (yellow and blue rings), never replaced.
   like a radial fade." and finally "ok go back to the circle fade version". The master is
   `docs/design/icon/forerunner-icon.svg` (1024 x 1024): a crisp rounded square (no feathering)
   with a radial fade from cream at the centre to tan at the edges. `forerunner-icon-square-fade.svg`
-  is the square-edged fade the owner tried and set aside. Use the master. The icon tools
+  is the square-edged fade the owner tried and set aside. **The owner confirmed this master as final on 2026-11-18 ("Done, confirmed.").** The icon tools
   may not draw SVG blurs: render the master to a 1024 x 1024 PNG with the pre-installed
   Chromium (Playwright, transparent background) and feed that PNG to `tauri icon`, then look at
   the 16 px and 32 px results.
