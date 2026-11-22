@@ -1328,8 +1328,38 @@ export class ConversationAgent {
     // Understanding (spec Q.2): deterministic patterns first; a combined request is one card.
     if (this.deps.commands && !accepted) {
       let parsed: ParsedIntent | null = null;
+      // Review of l4-chat-answers: the option pressed under the parser's "Which project: Notes
+      // or Site?" (a project's name alone) finishes the line that asked, its "there" or "it"
+      // meaning that project ("add a task there: …" adds there), with no model call; read from
+      // the conversation's rows, so also after a restart. A line the name does not finish is
+      // read as it was before (the name alone).
+      const asked = earlier.at(-1);
+      const askedProject =
+        asked?.reply?.question?.options.length && !asked.reply.actions.length
+          ? { names: asked.reply.question.options, line: asked.human.text }
+          : undefined;
+      const answer = normaliseProjectName(req.text.replace(/[.!?]+$/, ""));
+      const chosen = askedProject?.names.some((n) => normaliseProjectName(n) === answer)
+        ? (await store.project.active({ limit: 200 })).find(
+            (p) => normaliseProjectName(p.name) === answer,
+          )
+        : undefined;
+      let line = req.text;
+      let lineTurn = turn;
       try {
-        parsed = await this.deps.commands.parse(req.text, turn);
+        if (chosen && askedProject) {
+          const finished = await this.deps.commands.parse(askedProject.line, {
+            ...turn,
+            namedProjectId: chosen.id,
+            wordsUsed: askedProject.line,
+          });
+          if (finished.commands.length) {
+            parsed = finished;
+            line = askedProject.line;
+            lineTurn = { ...turn, namedProjectId: chosen.id, wordsUsed: askedProject.line };
+          }
+        }
+        parsed ??= await this.deps.commands.parse(req.text, turn);
       } catch (e) {
         // Text that is data (the envelope, pasted content) is refused: say so, run nothing.
         return finish(`I cannot act on that: ${errorMessage(e)}`, []);
@@ -1343,7 +1373,7 @@ export class ConversationAgent {
         return finish(reply, [], { question: q });
       }
       if (parsed.commands.length) {
-        const r = await this.deps.commands.compose(parsed.commands, turn);
+        const r = await this.deps.commands.compose(parsed.commands, lineTurn);
         // Spec O.9: a stop in a line whose rest the parser did not understand ran alone; the
         // reply names what was left so the human can say it again (never asked as a question
         // in the stop's way, never handed to the session as data).
@@ -1360,13 +1390,13 @@ export class ConversationAgent {
             ? await store.project.get(conversationProject)
             : undefined;
         const stays =
-          tabProject && target !== tabProject.id && !OPEN_PROJECT_RE.test(req.text)
+          tabProject && target !== tabProject.id && !OPEN_PROJECT_RE.test(line)
             ? `This chat stays about ${tabProject.name}.`
             : "";
         return this.replyForResult(
           r,
           parsed.commands.map((c) => c.name),
-          turn,
+          lineTurn,
           finish,
           left,
           { key: pendingKey, earlier: pending },

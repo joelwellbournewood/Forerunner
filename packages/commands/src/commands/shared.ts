@@ -89,6 +89,27 @@ export function matchProjects<T extends { id: string; name: string }>(
   });
 }
 
+/**
+ * Projects a few words name as a target ("add a task to Site: …"; review of l4-chat-answers):
+ * the id or the whole name, else a name that holds the words as whole words or from a word's
+ * start ("Pharma" for "PharmaWatch"). Never by word overlap and never when the words hold more
+ * than the name ("fix the login page" names no "Login page"), so ordinary words before a colon
+ * stay the task's own words.
+ */
+export function projectsNamedBy<T extends { id: string; name: string }>(
+  projects: readonly T[],
+  words: string,
+): T[] {
+  const n = normaliseProjectName(words);
+  if (!n || POINTERS.has(n)) return [];
+  const byId = projects.filter((p) => p.id === words.trim());
+  if (byId.length) return byId;
+  const exact = projects.filter((p) => normaliseProjectName(p.name) === n);
+  if (exact.length) return exact;
+  if (n.length < 3) return [];
+  return projects.filter((p) => hasWords(normaliseProjectName(p.name), n));
+}
+
 /** The project a command applies to: the named one, else the active one. */
 export async function resolveProject(
   ctx: CommandContext,

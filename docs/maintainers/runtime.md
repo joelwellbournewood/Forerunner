@@ -8358,6 +8358,19 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   no task (fix-up of the review: before, every card oldest first, 500 at most, so on an install
   with more cards the stop's card was never found; test `credential-ask-words.test.ts` "... more
   than 500 earlier cards ...").
+- **The option pressed under the parser's "Which project: …?"** (review of l4-chat-answers,
+  2026-11-22). A parser question with options (the pronoun question of "add a task there: …" or
+  "open it" with two or more projects and none named in this conversation) is answered by the
+  next line when it is one of its options, a project's name alone (the button sends it): the
+  agent parses the line that asked again with `CommandTurn.namedProjectId` set to that project,
+  and its "there" or "it" means it ("add a task there: …" adds there, "open it" opens it), with
+  no model call. The line that asked is read from the conversation's rows (the turn before:
+  `reply.question` with options and no actions, its `human.text`), so a press after a restart
+  finishes it too; a line the name does not finish (an older question about a name) is read as
+  before, the name alone. The change's words are the line that asked. Before, the press sent the
+  bare name to the chat model, a paid call that added nothing. Tests: the real daemon's
+  "l4-chat-answers, run L4" ("ordinary 'add a task to …' lines add at once; …"), `chat.test.tsx`
+  "l4-chat-answers, run L4, fixup".
 - **Chat reads a stored result as it holds now too** (l4-chat-answers, run L4, L4-chat-103,
   live check 4's L4-creds-8): after Cancel on a session waiting to go on, chat's "summary" and the
   facts the chat model reads (the first message's "Last session" and `session_last`) said "...;

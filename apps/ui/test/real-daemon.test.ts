@@ -24698,4 +24698,63 @@ describe("l4-chat-answers, run L4", () => {
       await b.rt.close();
     }
   }, 60_000);
+  // Review of l4-chat-answers (blocking 1): the target reading asked "Which project: Notes or
+  // Site?" for ordinary lines ("add a task to re-check the prices", "… to fix the login: …") and
+  // added nothing; pressing an option sent the bare name to the chat model, a paid call that
+  // added no task; with one project it asked "Which project: Notes?".
+  it("POST /chat: ordinary 'add a task to …' lines add at once; only 'there' with two projects asks, and the option pressed adds there with no model call, also after a restart", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-which-");
+    const titles = async (c: typeof a.client, id: string) =>
+      (await c.tasks(id)).map((t) => t.title);
+    let notesId = "";
+    let siteId = "";
+    try {
+      const notes = await a.client.createProject({ name: "Notes", goal: "A notes page" });
+      notesId = notes.id;
+      // One project: "there" can only mean it.
+      const one = await a.chat(notes.id, "add a task there: write the about page");
+      expect(one.reply).not.toContain("Which project");
+      expect(await titles(a.client, notes.id)).toEqual(["Write the about page"]);
+      const site = await a.client.createProject({ name: "Site", goal: "A shop site" });
+      siteId = site.id;
+      for (const line of [
+        "add a task to re-check the prices",
+        "add a task to fix the login: users cannot sign in",
+      ]) {
+        const r = await a.chat(notes.id, line);
+        expect(r.reply, line).not.toContain("Which project");
+        expect(r.question ?? null, line).toBeNull();
+      }
+      expect(await titles(a.client, notes.id)).toEqual([
+        "Write the about page",
+        "Re-check the prices",
+        "Fix the login: users cannot sign in",
+      ]);
+      const asked = await a.chat(notes.id, "add a task there: write the shop page");
+      expect(asked.reply).toBe("Which project: Notes or Site? Options: Notes, Site.");
+      expect(asked.question?.options).toEqual(["Notes", "Site"]);
+      expect(await titles(a.client, site.id)).toEqual([]);
+      expect(a.chatCalls()).toHaveLength(0);
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+    // The option pressed after a restart still finishes the line that asked.
+    const b = await open("", {}, a.home);
+    try {
+      const pressed = await b.chat(notesId, "Site");
+      expect(pressed.reply).toContain('"Write the shop page" to Site');
+      expect(await titles(b.client, siteId)).toEqual(["Write the shop page"]);
+      expect(await titles(b.client, notesId)).toHaveLength(3);
+      // "open it" with no project named here asks; the option pressed opens it.
+      const which = await b.chat(notesId, "open it");
+      expect(which.question?.options).toEqual(["Notes", "Site"]);
+      const opened = await b.chat(notesId, "Site");
+      expect(opened.reply).toBe("Switched the active project to Site. Undo.");
+      expect(b.chatCalls()).toHaveLength(0);
+      await settleSessions(b.rt);
+    } finally {
+      await b.rt.close();
+    }
+  }, 60_000);
 });

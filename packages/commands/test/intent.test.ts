@@ -807,14 +807,21 @@ describe("l4-chat-answers, run L4: the project a line names", () => {
     expect(here.params?.project).toBeUndefined();
     expect(here.params?.title).toBe("Write the shop page");
     expect(taskTitleOf("there: write the shop page")).toBe("Write the shop page");
+    expect(taskTitleOf("there-and-back trip to the printer")).toBe(
+      "There-and-back trip to the printer",
+    );
   });
 
-  it("without a separator today's reading stays; 'to' + an unknown name asks; 'for' + words that name no project is the task (L4-selftasks-119)", async () => {
+  it("without a separator today's reading stays; words that name no project are the task's own words (L4-selftasks-119)", async () => {
     const plain = await created("add a task to write the README", two());
     expect(plain.params).toMatchObject({ title: "Write the README" });
     expect(plain.params?.project).toBeUndefined();
-    const unknown = await parser.parse("add a task to Shop: write the page", two());
-    expect(unknown.question?.text).toBe("Which project: Notes or Site?");
+    // fixup (review of l4-chat-answers): a name that is no project's is never asked about; the
+    // line keeps today's reading, acting at once with Undo (U-015).
+    const unknown = await created("add a task to Shop: write the page", two());
+    expect(unknown.r.question).toBeUndefined();
+    expect(unknown.params).toMatchObject({ title: "Shop: write the page" });
+    expect(unknown.params?.project).toBeUndefined();
     const forFaq = await created("add a task for the FAQ: list the opening hours", two());
     expect(forFaq.params?.project).toBeUndefined();
     expect(forFaq.params?.title).toBe("For the FAQ: list the opening hours");
@@ -828,5 +835,88 @@ describe("l4-chat-answers, run L4: the project a line names", () => {
     expect(named.commands).toEqual([{ name: "project.switch", params: { project: site.id } }]);
     const byName = await parser.parse("open Site", two());
     expect(byName.commands).toEqual([{ name: "project.switch", params: { project: site.id } }]);
+  });
+});
+
+/**
+ * l4-chat-answers, run L4, fixup (review): the target reading broke ordinary lines. A hyphen in
+ * a word ("re-check") or a colon after a few words that name no project asked "Which project:
+ * Notes or Site?" and added nothing; with one project it asked "Which project: Notes?".
+ */
+describe("l4-chat-answers, run L4, fixup: 'add a task …' names a project only when it names one", () => {
+  const notes = { id: "p-notes", name: "Notes" };
+  const site = { id: "p-site", name: "Site" };
+  const login = { id: "p-login", name: "Login page" };
+  const two = (over: Partial<IntentContext> = {}) =>
+    ctx({ activeProjectId: notes.id, projects: [notes, site], ...over });
+
+  it("a hyphen in a word, or a colon or dash after words that name no project, keeps today's task", async () => {
+    for (const [line, title] of [
+      ["add a task to re-check the prices", "Re-check the prices"],
+      ["add a task to e-mail Anna about the opening hours", "E-mail Anna about the opening hours"],
+      ["add a task to follow-up with the printer", "Follow-up with the printer"],
+      ["add a task to fix the login: users cannot sign in", "Fix the login: users cannot sign in"],
+      [
+        "add a task to write the README: explain how to open the page",
+        "Write the README: explain how to open the page",
+      ],
+      ["add a task to clean up - remove the old files", "Clean up - remove the old files"],
+      ["add a task in two weeks: renew the domain", "In two weeks: renew the domain"],
+      ["add a task to Site-wide search", "Site-wide search"],
+    ] as const) {
+      for (const c of [
+        two(),
+        two({ projects: [notes, site, login] }),
+        two({ projects: [notes] }),
+      ]) {
+        const r = await parser.parse(line, c);
+        expect(r.question, line).toBeUndefined();
+        expect(
+          r.commands.map((x) => x.name),
+          line,
+        ).toEqual(["task.create"]);
+        const params = r.commands[0]?.params as Record<string, unknown>;
+        expect(params.title, line).toBe(title);
+        expect(params.project, line).toBeUndefined();
+      }
+    }
+  });
+
+  it("a project named before a real separator still gets the task; a name inside other words never does", async () => {
+    const three = two({ projects: [notes, site, login] });
+    const r = await parser.parse("add a task to Login page: users cannot sign in", three);
+    expect(r.commands[0]?.params).toMatchObject({
+      title: "Users cannot sign in",
+      project: login.id,
+    });
+    const words = await parser.parse(
+      "add a task to fix the login page: users cannot sign in",
+      three,
+    );
+    expect(words.commands[0]?.params).toMatchObject({
+      title: "Fix the login page: users cannot sign in",
+    });
+    expect(
+      (words.commands[0]?.params as Record<string, unknown> | undefined)?.project,
+    ).toBeUndefined();
+  });
+
+  it("with one project, 'there' and 'it' mean that project: no 'Which project: Notes?'", async () => {
+    const one = two({ projects: [notes] });
+    const there = await parser.parse("add a task there: write the about page", one);
+    expect(there.question).toBeUndefined();
+    expect(there.commands[0]?.params).toMatchObject({ title: "Write the about page" });
+    const open = await parser.parse("open it", one);
+    expect(open.question).toBeUndefined();
+    expect(open.commands).toEqual([{ name: "project.switch", params: { project: notes.id } }]);
+  });
+
+  it("with two projects and none named in this conversation, a pronoun asks with the projects as options", async () => {
+    const there = await parser.parse("add a task there: write the about page", two());
+    expect(there.commands).toEqual([]);
+    expect(there.question).toEqual({
+      text: "Which project: Notes or Site?",
+      options: ["Notes", "Site"],
+    });
   });
 });

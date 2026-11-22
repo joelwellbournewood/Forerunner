@@ -375,7 +375,11 @@ them as you left them; an open file or task stays on its own tab.
   every task with its status (what it waits for, why it failed), the last session's result, what
   runs now, the cards waiting for you and where the files are, and it can look up a task's runs
   and review. Ask "what is going on?", "what failed and why?", "what is left?". Tell it what to
-  change: "add a task: …" (a ready task, with **Undo**), "make the FAQ task depend on the README
+  change: "add a task: …" (a ready task, with **Undo**; "add a task to Site: …" adds it to Site
+  from any project's Chat, and after "switch to Site", "add a task there: …" does too; with no
+  project named yet and several projects Chat asks "Which project: Notes or Site?" with a button
+  for each, and the one you press gets the task; other words before a colon stay the task's own:
+  "add a task to fix the login: users cannot sign in"), "make the FAQ task depend on the README
   task", "skip the LICENSE task" or "cancel …" (it is cancelled, as with Cancel on its row: a run
   or review going on stops and what it changed is removed, or its pull request stays open on
   GitHub, named with what to do: "#43 stays open on GitHub: close it there if you do not want it.";

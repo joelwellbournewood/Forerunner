@@ -1,7 +1,7 @@
 import { ForerunnerError, isForerunnerError } from "@forerunner/platform";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "@forerunner/runtime";
 import { z } from "zod";
-import { matchProjects } from "./commands/shared.ts";
+import { matchProjects, projectsNamedBy } from "./commands/shared.ts";
 import { type CommandRegistry, isSentence } from "./registry.ts";
 import { endOfTonight, localMidnight, nextLocalTime, startOfTomorrow } from "./time.ts";
 import type { CommandSource } from "./types.ts";
@@ -71,6 +71,14 @@ const said = (words: string) => words.trim().replace(/[.!?,]+$/, "");
 /** Whether a project's place in a line is a pronoun ("there", "it", "that project", "dort"). */
 export function isProjectPronoun(words: string): boolean {
   return PROJECT_PRONOUN_RE.test(said(words)) || HERE_RE.test(said(words));
+}
+
+/** "Which project: Notes or Site?" with the projects as its options (at most six). */
+function whichProjectOf(projects: readonly IntentProject[]): IntentQuestion {
+  const names = projects.slice(0, 6).map((p) => p.name);
+  const list =
+    names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : (names[0] ?? "");
+  return { text: list ? `Which project: ${list}?` : "Which project?", options: names };
 }
 
 export interface ModelIntentResult {
@@ -417,7 +425,7 @@ export function taskTitleOf(said: string): string {
       .replace(/^(?:to|zu)\s+/i, "")
       // l4-chat-answers (L4-selftasks-119): a pointer to a project is no word of a title
       // ('Added "There: write the about page"').
-      .replace(/^(?:there|here|dort|hier)\s*[:,-]\s*/i, "")
+      .replace(/^(?:there|here|dort|hier)(?:\s*[:,]|\s+[-–—])\s*/i, "")
       .trim();
     if (next === t) break;
     t = next;
@@ -688,6 +696,14 @@ export class IntentParser {
           command: { name: "project.switch", params: { project: named.id } },
           project: named.id,
         };
+      // One project: "open it" can only mean it (review of l4-chat-answers: never "Which
+      // project: Notes?").
+      const only = ctx.projects.length === 1 ? ctx.projects[0] : undefined;
+      if (only)
+        return {
+          command: { name: "project.switch", params: { project: only.id } },
+          project: only.id,
+        };
       return {
         question: { text: "Which project?", options: ctx.projects.slice(0, 6).map((p) => p.name) },
       };
@@ -760,20 +776,21 @@ export class IntentParser {
    * the full words stay its outcome.
    */
   private matchAddTask(c: string, ctx?: IntentContext): Match | null {
-    // l4-chat-answers (L4-selftasks-119): a target project before a colon, comma or dash: "add a
-    // task to Site: …", "add a task there: …", "neue Aufgabe für Site: …". Without the separator
-    // today's reading stays ("add a task to write the README" is a title).
+    // l4-chat-answers (L4-selftasks-119): a target project before a real separator: "add a task
+    // to Site: …", "add a task there: …", "neue Aufgabe für Site: …". A separator is a colon or
+    // a comma, or a dash with a space before it: never the hyphen inside a word ("re-check",
+    // "e-mail", "follow-up"; review of l4-chat-answers). Words that name no project keep
+    // today's reading: they are the task's own words ("add a task to fix the login: …").
     const target =
-      /^(?:(?:add|create|make)\s+(?:a\s+)?(?:new\s+)?task|new\s+task)(?:\s+(to|in|into|for)\s+(?:the\s+)?(.+?)|\s+(there|here))\s*[:,-]\s*(.+)$/is.exec(
+      /^(?:(?:add|create|make)\s+(?:a\s+)?(?:new\s+)?task|new\s+task)(?:\s+(to|in|into|for)\s+(?:the\s+)?(.+?)|\s+(there|here))(?:\s*[:,]|\s+[-–—])\s*(.+)$/is.exec(
         c,
       ) ??
-      /^(?:neue|erstelle\s+(?:eine\s+)?)\s*aufgabe(?:\s+(zu|zum|zur|in|im|für)\s+(?:dem\s+|der\s+)?(.+?)|\s+(dort|hier|da))\s*[:,-]\s*(.+)$/is.exec(
+      /^(?:neue|erstelle\s+(?:eine\s+)?)\s*aufgabe(?:\s+(zu|zum|zur|in|im|für)\s+(?:dem\s+|der\s+)?(.+?)|\s+(dort|hier|da))(?:\s*[:,]|\s+[-–—])\s*(.+)$/is.exec(
         c,
       );
     if (target?.[4]?.trim()) {
       const where = said(target[2] ?? target[3] ?? "").replace(/\s+(?:project|projekt)$/i, "");
-      const comma = /^[^:–-]*,/.test(c.slice(0, c.length - target[4].length));
-      const resolved = this.addTarget(where, target[1] ?? "", ctx, comma);
+      const resolved = this.addTarget(where, ctx);
       if (resolved !== "words") {
         if (resolved && typeof resolved === "object") return { question: resolved };
         const task = this.addTaskOf(target[4].trim(), resolved);
@@ -792,37 +809,27 @@ export class IntentParser {
   /**
    * Where "add a task <prep> <where>: …" adds (L4-selftasks-119): the tab's own project for
    * "here" (null), the project this conversation switched to for a pronoun ("there", "it"),
-   * else the project the words name. A pronoun with no project said, or a name that matches no
-   * project or several, asks "Which project: …?"; "for <words>" that names no project is the
-   * task's own words ("add a task for the FAQ: …").
+   * else the one project the words name (`projectsNamedBy`). Only a pronoun with no project
+   * said and two or more projects asks "Which project: …?"; with one project the pronoun means
+   * it (null: the line's own project). Words that name no project, or several, are the task's
+   * own words ("words"), as before this area: the task is added at once, with Undo (U-015).
    */
   private addTarget(
     where: string,
-    prep: string,
     ctx: IntentContext | undefined,
-    comma = false,
   ): string | null | IntentQuestion | "words" {
     if (!ctx) return "words";
     if (HERE_RE.test(where)) return null;
-    const ask = (from: readonly IntentProject[]): IntentQuestion => {
-      const names = (from.length ? from : ctx.projects).slice(0, 6).map((p) => p.name);
-      const list =
-        names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : (names[0] ?? "");
-      return { text: list ? `Which project: ${list}?` : "Which project?", options: names };
-    };
     if (PROJECT_PRONOUN_RE.test(where)) {
       const named = ctx.namedProjectId
         ? ctx.projects.find((p) => p.id === ctx.namedProjectId)
         : undefined;
-      return named ? named.id : ask([]);
+      if (named) return named.id;
+      if (ctx.projects.length < 2) return null;
+      return whichProjectOf(ctx.projects);
     }
-    const matches = matchProjects(ctx.projects, where);
-    if (matches.length === 1) return (matches[0] as IntentProject).id;
-    // Words that name no project stay the task's own words when they cannot be a project's
-    // name: after "for" ("for the FAQ: …"), before a comma ("to write a README that …, with
-    // screenshots"), or longer than a name is said (more than three words).
-    if (/^(?:for|für)$/i.test(prep) || comma || where.split(/\s+/).length > 3) return "words";
-    return ask(matches);
+    const matches = projectsNamedBy(ctx.projects, where);
+    return matches.length === 1 ? (matches[0] as IntentProject).id : "words";
   }
 
   /** The task.create of an "add a task" line's words, in `project` when one is given. */
