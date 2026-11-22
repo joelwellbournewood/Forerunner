@@ -4567,6 +4567,12 @@ now; `budget.test.ts` `SessionBudget.wrapUpNow`.
   ask line goes only under a longer pass whose budget line wrapped it up. Before, Answer now and
   the line were one decision, so the answer the person asked for now offered "This needs a
   stronger model ... Go ahead?" under it (live check 4, LC-C16).
+- *Composed cases (L4-chat-208, C3L-10).* The real-daemon describe "l4-chat-depth, run L4"
+  reads the project's cap line from the composed `chatRoom` (a project budget of USD 0.001:
+  "A closer look would pass this project's budget, so this is the quick answer.", no thorough
+  call; it fails when the project's room is left out) and Costs' "Planning and chat" row growing
+  with each chat turn (`GET /costs?projectId`). Stop with its Undo, "Chat asks first" at CHF 1.00,
+  the ask again after a price change and Answer now have their cases in `chat-depth.test.ts`.
 
 **The history leaves out a quoted record's words (L3-left-6).** An earlier reply whose own words
 the injection scan flags (a reply that quoted a report, a card or a recall hit) is sent in the

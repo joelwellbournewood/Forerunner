@@ -23823,4 +23823,54 @@ describe("l4-chat-depth, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+  // L4-chat-208 (C3L-10): the project-budget cap line had only a stubbed case (chat-depth.test.ts
+  // with a `chatRoom` dep); here the room is the composed one, read from the project's budget.
+  it("POST /chat 'think it through: …' on a project whose budget leaves under the pass's floor: the project's cap line, a quick answer, no longer call", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-208-cap-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.rt.store.project.patch(project.id, { budget_usd_micro: 1_000 });
+      const thorough = () =>
+        existsSync(join(a.home, "model-calls.jsonl"))
+          ? readFileSync(join(a.home, "model-calls.jsonl"), "utf8")
+              .trim()
+              .split("\n")
+              .filter(Boolean)
+              .map((l) => JSON.parse(l) as { system?: string })
+              .filter((c) => (c.system ?? "").includes("# Thinking it through")).length
+          : 0;
+      const r = await a.chat(project.id, "think it through: what did the last two sessions do?");
+      expect(r.reply).toBe(
+        "A closer look would pass this project's budget, so this is the quick answer.",
+      );
+      expect(r.depth).toBe("quick");
+      // No longer pass was asked of the model (the cap is checked before any call).
+      expect(thorough()).toBe(0);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-chat-208 (C3L-10): Costs' "Planning and chat" row had no case that chat turns grow it.
+  it("GET /costs?projectId: each chat turn on the project grows its 'Planning and chat' row", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-208-costs-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.client.createTask(project.id, {
+        title: "Write the README",
+        outcome: "README.md says what the page is",
+      });
+      const planningAndChat = async () =>
+        (await a.client.costs({ projectId: project.id })).byTask.find(
+          (b) => b.label === "Planning and chat",
+        )?.cost.usdMicro ?? 0;
+      const start = await planningAndChat();
+      await a.chat(project.id, "what is left?");
+      const once = await planningAndChat();
+      expect(once).toBeGreaterThan(start);
+      await a.chat(project.id, "what is the next task?");
+      expect(await planningAndChat()).toBeGreaterThan(once);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });
