@@ -11,6 +11,7 @@ import type { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../injection/scan.ts";
 import { TASK_CHECK_RUN_SPECIALIST } from "../models/ladder.ts";
+import { PRIORITY_VALUES } from "../priority.ts";
 import type { ModelProvider } from "../provider/types.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import type { CredentialWait } from "./credential-wait.ts";
@@ -876,6 +877,7 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
     let sourceId: string | null = null;
     let made = 0;
     const refs: { title: string; index: number }[] = [];
+    let kept: TaskChange = change;
     const refuse = (reason: string) => {
       refused.push({ what, reason });
       if (change.kind === "add") notAdded.add(change.title.trim());
@@ -887,12 +889,20 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
           refused.push({ what, reason: t });
           continue;
         }
-        if (change.title) texts.push(change.title);
-        if (change.outcome) texts.push(change.outcome);
-        if (change.acceptanceCriteria) {
-          texts.push(...change.acceptanceCriteria);
-          const kept = new Set(change.acceptanceCriteria.map((c) => c.trim()));
-          const removed = t.acceptance_criteria.filter((c) => !kept.has(c.trim()));
+        // l4-selftasks-105 (live check 4, LC-C28): only the fields that differ from the task as
+        // it is stay in the edit, and an edit with nothing left is no change (no read-back line,
+        // no call, not shown as refused). Before, an edit repeating the task's own criteria was
+        // read back as "the criteria", and the person's Yes to the set was refused whole
+        // ("Nothing to change on …"), the other changes with it.
+        const trimmed = edited(change, t);
+        if (!trimmed) continue;
+        kept = trimmed;
+        if (trimmed.title) texts.push(trimmed.title);
+        if (trimmed.outcome) texts.push(trimmed.outcome);
+        if (trimmed.acceptanceCriteria) {
+          texts.push(...trimmed.acceptanceCriteria);
+          const still = new Set(trimmed.acceptanceCriteria.map((c) => c.trim()));
+          const removed = t.acceptance_criteria.filter((c) => !still.has(c.trim()));
           if (removed.length && (await ranOrFindings(t)))
             ask(
               `it would take a criterion off "${t.title}", which already ran or has open findings`,
@@ -1104,7 +1114,7 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
         title: change.title.trim(),
       });
     changes.push({
-      change,
+      change: kept,
       taskIds,
       sourceId,
       newTasks: made,
@@ -1137,6 +1147,33 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
   }
 }
 
+/**
+ * An edit with only the fields that differ from the task (l4-selftasks-105): a title or an
+ * outcome trimmed, the criteria trimmed with empty lines dropped, a priority by its stored value
+ * (as `task.update` compares them); null when nothing is left to change.
+ */
+function edited(
+  change: Extract<TaskChange, { kind: "edit" }>,
+  t: TaskRow,
+): Extract<TaskChange, { kind: "edit" }> | null {
+  const norm = (cs: readonly string[]) => cs.map((c) => c.trim()).filter(Boolean);
+  const out: Extract<TaskChange, { kind: "edit" }> = {
+    kind: "edit",
+    task: change.task,
+    why: change.why,
+  };
+  if (change.title && change.title.trim() !== t.title.trim()) out.title = change.title;
+  if (change.outcome && change.outcome.trim() !== t.outcome.trim()) out.outcome = change.outcome;
+  if (
+    change.acceptanceCriteria &&
+    JSON.stringify(norm(change.acceptanceCriteria)) !== JSON.stringify(norm(t.acceptance_criteria))
+  )
+    out.acceptanceCriteria = change.acceptanceCriteria;
+  if (change.priority && PRIORITY_VALUES[change.priority] !== t.priority)
+    out.priority = change.priority;
+  return out.title || out.outcome || out.acceptanceCriteria || out.priority ? out : null;
+}
+
 // --- Registry calls -------------------------------------------------------------------------
 
 export interface CommandCallLike {
@@ -1158,6 +1195,9 @@ export async function callsOf(
   const c = fenced.change;
   switch (c.kind) {
     case "edit":
+      // l4-selftasks-105's backstop: an edit with no field to change makes no call, so a composed
+      // set never carries a step the command would refuse ("Nothing to change on …").
+      if (!c.title && !c.outcome && !c.acceptanceCriteria && !c.priority) return [];
       return [
         {
           name: "task.update",
@@ -1306,6 +1346,7 @@ export async function applyTaskChanges(
       (await store.task.forProject(project.id, {}, { limit: 10_000 })).map((t) => t.id),
     );
     let calls = planned[i] as CommandCallLike[];
+    if (!calls.length) continue;
     // A change that names a task an earlier add of the set makes gets that task's id, filled
     // just before it runs; when that add was not made, neither is this change.
     const missing = (fenced.refs ?? []).find((r) => !madeBy.has(r.index));

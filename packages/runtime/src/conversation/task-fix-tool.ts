@@ -233,7 +233,10 @@ export async function fixTasksInChat(input: ChatTaskFixInput): Promise<ChatTaskF
     if (readBack) {
       // One read-back for the whole set (every change's calls worked out before any is made).
       const planned: CommandCallLike[][] = [];
-      for (const f of fence.changes) planned.push(await callsOf(store, now, f));
+      for (const f of fence.changes) {
+        const calls = await callsOf(store, now, f);
+        if (calls.length) planned.push(calls);
+      }
       const reasons = fence.askFirst.filter((a) => !a.quote).map((a) => a.reason);
       const ask = fixAsk(
         now.name,

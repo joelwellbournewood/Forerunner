@@ -142,8 +142,12 @@ export async function fileTaskProposal(
   const { project, fence } = input;
   if (!fence.changes.length) return null;
   const changes: ProposedChange[] = [];
-  for (const f of fence.changes)
-    changes.push({ line: proposalLine(f), calls: await input.callsOf(f) });
+  for (const f of fence.changes) {
+    const calls = await input.callsOf(f);
+    // l4-selftasks-105: a change with no call (an edit that changes nothing) is not listed.
+    if (calls.length) changes.push({ line: proposalLine(f), calls });
+  }
+  if (!changes.length) return null;
   const fingerprint = fingerprintOf(changes.map((c) => c.line));
   if (input.sessionId) {
     const answered = await store.humanRequest.list(

@@ -7894,6 +7894,15 @@ hiding what it left out. What changed, item by item:
   (`session.task_check_left_out`, `taskCheckLeftOutLine`: 'Left out (and 1 more): the add of
   "X": ….'), the words chat's `fixLeftOut` says.
 
+- **An edit that changes nothing** (L4-selftasks-105 (a)): the fence keeps only the fields of an
+  edit that differ from the task (`edited`: title and outcome trimmed, criteria trimmed with
+  empty lines dropped, priority by its stored value, as `task.update` compares them) and drops an
+  edit with nothing left quietly (no read-back line, no call, not refused). Backstop: `callsOf`
+  returns no call for an empty edit, and `applyTaskChanges`, `fileTaskProposal` and chat's
+  read-back skip a change with no call, so a composed set never carries a step `task.update`
+  refuses ("Nothing to change on …", which rolled back the whole set). The chat reply when a
+  composed set is refused is l4-selftasks-chat's (L4-selftasks-105 (b)).
+
 Tests: `session-task-list.test.ts` and `chat-fix-tasks.test.ts` (describes "l4-selftasks-check,
 run L4"), `session.test.tsx` and real-daemon.test.ts' describe "l4-selftasks-check, run L4",
 and the injection suite's `report-007` (no change beside a flagged line: the check's own line
