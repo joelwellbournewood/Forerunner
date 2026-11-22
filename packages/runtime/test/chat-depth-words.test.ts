@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  askAboveWords,
   askLine,
   CHAT_THOROUGH_RULES,
   CHAT_WRAP_UP,
@@ -193,8 +192,6 @@ describe("d1109-chat-depth, run C: the sentences", () => {
     );
     expect(thinkingLongerFact({ state: "spoken" })).toBe("not on a spoken turn");
     expect(thinkingLongerFact({ state: "room" })).toBe("not now (the caps leave too little)");
-    expect(askAboveWords(0.1)).toBe("asks first above CHF 0.10");
-    expect(askAboveWords(0)).toBe("asks before every longer answer");
     expect(secondsWords(55)).toBe("a minute");
     expect(secondsWords(21)).toBe("30 seconds");
     expect(chfSpent(0, 0.8)).toBe("under CHF 0.01");

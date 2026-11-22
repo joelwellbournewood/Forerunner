@@ -597,8 +597,3 @@ export function thinkingLongerFact(
 
 /** The person's amount by default: CHF 0.10 (the session lead's reading of "expensive"). */
 export const DEFAULT_ASK_ABOVE_CHF = 0.1;
-
-/** The setting's value in words. */
-export function askAboveWords(chf: number): string {
-  return chf <= 0 ? "asks before every longer answer" : `asks first above CHF ${chf.toFixed(2)}`;
-}
