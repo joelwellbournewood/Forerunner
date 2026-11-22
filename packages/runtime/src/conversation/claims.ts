@@ -122,7 +122,9 @@ const CHANGED: ClaimPattern[] = [
   // l4-chat-answers (L4-selftasks-118, L4-chat-112): the app's own change line, written by the
   // model ("The app did: Updated the outcome of …" with no command). The line is stripped from
   // every reply (`withoutAppMarkers`); a turn whose command changed nothing is nudged for it.
-  { re: /^The app did:/g },
+  // A short bracketed lead before it ("[stand-in model] The app did: …") is still the line
+  // (review of l4-chat-answers: the bench's stand-in prefix kept the guard from firing).
+  { re: /^(?:\[[^\]]{1,40}\]\s*)?The app did:/g },
   // "I've set research to …", "I have changed the budget", "I've now paused it".
   {
     re: /\bI(?:'ve|’ve| have)\s+(?:now\s+|just\s+|also\s+|already\s+)?(?:changed|set|updated|switched|turned (?:on|off)|added|paused|resumed|cancell?ed|removed|deleted|stopped|started|raised|lowered|widened|narrowed|limited|restricted|allowed|enabled|disabled|reopened|moved|renamed)\b/gi,

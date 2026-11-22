@@ -1983,6 +1983,8 @@ describe("l4-chat-answers, run L4, fixup: clarifying questions stay free", () =>
       "Soll ich die Recherche wieder auf alle Websites umstellen oder nicht?",
     ])
       expect(claimOf(said)?.kind, said).toBe("asks");
+    // A forged change line behind a short bracketed lead is still a forged change line.
+    expect(claimOf("[stand-in model] The app did: Paused the FAQ task.")?.kind).toBe("changed");
   });
 
   it("a clarifying question reaches the person as the model wrote it, with one model call and no nudge", async () => {

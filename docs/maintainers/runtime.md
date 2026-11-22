@@ -4768,7 +4768,7 @@ in one project cancelled a task in another. Now:
   changed, …" at two model calls a turn). It stands when a command of the turn read a change back or an
   earlier turn's card still waits (a typed yes answers that one); otherwise the nudge is
   `ASKS_NUDGE` and a question still asked after it is replaced as above. **absent** is L4-chat-101's
-  (next bullet). A forged "The app did: …" line is a "changed" claim. A bare "yes" still never
+  (next bullet). A forged "The app did: …" line is a "changed" claim, also behind a short bracketed lead ("[stand-in model] The app did: …"). A bare "yes" still never
   reaches the model (design §3.9, the plan check's D-L4-23): `YES_TO_WHAT_REPLY` now names a next
   step ('Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it
   now" to start a session.'). One nudge per kind: an absence looked up may then ask in words,
