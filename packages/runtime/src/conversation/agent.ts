@@ -2343,7 +2343,15 @@ export class ConversationAgent {
     const answered = !!result && result.outcome === "completed" && !heldAfter && !stopped;
     // d1109-chat-depth: under a longer answer that reached its wrap-up, the next rung's ask line
     // (the stronger, or the strongest when the project's highest model is above it).
-    if (deep && !stopped && result?.wrapUpSent && !offer) {
+    // l4-chat-depth (L4-chat-206): only when its budget line wrapped it up; after Answer now the
+    // person asked for the answer, not for a stronger model (before, both earned the offer).
+    if (
+      deep &&
+      !stopped &&
+      result?.wrapUpSent &&
+      !offer &&
+      deep.run.budget.wrapReasonOf(`${transcriptId}:thorough`) === "line"
+    ) {
       const next = routeOf(deep.route.rung === "longer" ? "stronger" : "best");
       if (next.rung !== deep.route.rung && next.model !== deep.route.model)
         offer = offerOf(await figuresOf(next), question);

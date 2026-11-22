@@ -281,3 +281,20 @@ describe("d1109-chat-depth fixup: SessionBudget.wrapUpNow (Answer now)", () => {
     expect(b.precheck("r2", 1_000_000, 100_000, "work").decision).toBe("allow");
   });
 });
+
+// l4-chat-depth (L4-chat-206): chat offers the next rung only under a pass its line wrapped up.
+describe("l4-chat-depth, run L4: SessionBudget.wrapReasonOf", () => {
+  it("says 'now' for Answer now below the line, 'line' for a wrap-up by spend, nothing before a wrap-up", () => {
+    const b = mk(10_000_000);
+    expect(b.precheck("now", 1_000_000, 100_000, "work").decision).toBe("allow");
+    b.record("now", 100_000);
+    expect(b.wrapReasonOf("now")).toBeUndefined();
+    b.wrapUpNow("now");
+    expect(b.precheck("now", 1_000_000, 100_000, "work").decision).toBe("wrap_up");
+    expect(b.wrapReasonOf("now")).toBe("now");
+    expect(b.precheck("spend", 1_000_000, 300_000, "work").decision).toBe("allow");
+    b.record("spend", 600_000);
+    expect(b.precheck("spend", 1_000_000, 300_000, "work").decision).toBe("wrap_up");
+    expect(b.wrapReasonOf("spend")).toBe("line");
+  });
+});

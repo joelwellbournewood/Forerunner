@@ -4562,6 +4562,11 @@ now; `budget.test.ts` `SessionBudget.wrapUpNow`.
   words what it could not check. Before, the pass reused the quick facts ("asks the person
   first" after the yes) and the paid Sonnet answer said "I couldn't hand it to the stronger
   model" under "Thought it through with Sonnet". The fast request is byte for byte as before.
+- *Answer now earns no offer (L4-chat-206).* `SessionBudget` keeps why a run's wrap-up came
+  (`wrapReasonOf(runId)`: `line` by spend, `now` by Answer now; append-only), and the next rung's
+  ask line goes only under a longer pass whose budget line wrapped it up. Before, Answer now and
+  the line were one decision, so the answer the person asked for now offered "This needs a
+  stronger model ... Go ahead?" under it (live check 4, LC-C16).
 
 **The history leaves out a quoted record's words (L3-left-6).** An earlier reply whose own words
 the injection scan flags (a reply that quoted a report, a card or a recall hit) is sent in the

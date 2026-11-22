@@ -274,3 +274,6 @@ the person first" with no subject, and the definition deferred to it. The owner'
   quick pass's `thinking_longer`, and its rules say it is the closer look and that the
   `answer_thoroughly` tool and the "Thinking longer" section belong to the quick answer. The
   paid Sonnet answer of live check 4 said it could not hand the question to the stronger model.
+- **Answer now** (L4-chat-206). "A stronger answer that ran out of room" (the best rung's yes, the
+  next rung's offer) means a pass whose budget line wrapped it up, never one the person ended
+  with Answer now: that answer carries no new offer.

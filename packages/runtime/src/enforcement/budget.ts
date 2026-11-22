@@ -160,6 +160,8 @@ export class SessionBudget {
   private readonly runLines = new Map<string, RunWrapUpLine & { wrapped: boolean }>();
   /** Runs whose next call carries the wrap-up whatever they spent (`wrapUpNow`). */
   private readonly wrapNow = new Set<string>();
+  /** Why each run's wrap-up came (l4-chat-depth, L4-chat-206): its line, or Answer now. */
+  private readonly wrapReasons = new Map<string, "line" | "now">();
 
   constructor(readonly limits: SessionLimits) {
     // Negated comparisons so NaN fails each check instead of slipping through every one.
@@ -268,7 +270,14 @@ export class SessionBudget {
       !line.saveOnly &&
       !line.wrapped &&
       (runSpent + lineEstimateUsdMicro > line.lineUsdMicro || this.wrapNow.has(runId));
-    if (wrap && line) line.wrapped = true;
+    if (wrap && line) {
+      line.wrapped = true;
+      // l4-chat-depth (L4-chat-206): why the wrap-up came, its line or Answer now.
+      this.wrapReasons.set(
+        runId,
+        runSpent + lineEstimateUsdMicro > line.lineUsdMicro ? "line" : "now",
+      );
+    }
     return {
       decision: wrap ? "wrap_up" : local.decision,
       ...(first ? { line: first } : {}),
@@ -285,6 +294,16 @@ export class SessionBudget {
     if (line && (line.wrapped || line.saveOnly)) return false;
     this.wrapNow.add(runId);
     return true;
+  }
+
+  /**
+   * Why the run's wrap-up came (l4-chat-depth, L4-chat-206; append-only): `line` when its spend
+   * reached the wrap-up line, `now` when Answer now asked for it below the line; undefined before
+   * a wrap-up. Chat offers the next rung only under a pass its line wrapped up: the person who
+   * pressed Answer now asked for the answer, not for a stronger model.
+   */
+  wrapReasonOf(runId: string): "line" | "now" | undefined {
+    return this.wrapReasons.get(runId);
   }
 
   /** The run's wrap-up line, once its first call set it (ADR 0112). */

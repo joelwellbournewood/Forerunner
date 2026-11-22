@@ -23622,4 +23622,44 @@ describe("l4-chat-depth, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+
+  // L4-chat-206 (live check 4, L4-chat-18): after Answer now the answer offered the stronger model.
+  it("POST /chat/turns/:id/answer-now during 'think it through': the answer comes with no ask line and no Go ahead in the conversation view", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-206-", {
+      FORERUNNER_BENCH_CHAT_HOLD_MS: "1500",
+    });
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      let turnId = "";
+      const pending = streamChat(
+        a.client,
+        {
+          humanId: a.me.id,
+          agentId: a.agentId,
+          projectId: project.id,
+          projectTab: true,
+          text: "think it through: what did the last two sessions do?",
+          source: "text",
+        },
+        { onTurn: (t) => (turnId = t.turnId) },
+      );
+      await eventually(
+        async () =>
+          turnId !== "" && (await a.client.conversation(project.id)).answering?.depth === "longer",
+        "the longer pass to be answering (10 s)",
+        async () => JSON.stringify((await a.client.conversation(project.id)).answering),
+        10_000,
+      );
+      expect(await a.client.answerNow(turnId)).toEqual({ done: true });
+      const reply = await pending;
+      expect(reply.reply).toContain("wrapping up");
+      expect(reply.offer).toBeNull();
+      const view = await a.client.conversation(project.id);
+      expect(view.turns.at(-1)?.reply?.offer?.action ?? null).not.toBe("go_ahead");
+      expect(view.turns.at(-1)?.reply?.offer?.line ?? null).toBeNull();
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });

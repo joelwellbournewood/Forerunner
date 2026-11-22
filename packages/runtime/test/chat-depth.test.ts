@@ -834,6 +834,10 @@ describe("d1109-chat-depth, run C: money", () => {
     expect(thorough).toHaveLength(2);
     expect(JSON.stringify(thorough[1]?.messages.at(-1)?.content)).toContain(CHAT_WRAP_UP);
     expect(r.reply).toBe("From what I have so far: two tasks are left.");
+    // l4-chat-depth (L4-chat-206): the person asked for the answer now, so no stronger model is
+    // offered under it (only a pass whose budget line wrapped it up offers the next rung).
+    expect(r.offer).toBeNull();
+    expect((await w.lastRow()).offer ?? null).toBeNull();
     // A quick turn's run has no Answer now.
     const q = await world({ replies: [textReply("Two are left.")] });
     let quickTurn = "";
