@@ -7890,6 +7890,13 @@ hiding what it left out. What changed, item by item:
   cut by `quoteOf` (`session/task-list-notes.ts`: whole up to 100 characters, else at a word with
   "…") around the sentence that reads like an instruction, else the first one that asks
   ("Please …", an order's verb first, a question: `requestPart`).
+- **The left-out line when nothing reached the model** (L4-selftasks-110): `checkAtBoundary`'s
+  line for a set of only flagged lines quotes the first through `quoteOf(requestPart())` and
+  names a critic's note as one ('Left out of the task check: a note of the critic's that names
+  an instruction ("…").'; a report's line stays 'a line that reads like an instruction'). The
+  events view's `withoutIds` (`daemon/task-words.ts`) keeps the noun before a finding's or a
+  review's id ("Earlier finding: …") and takes a bare id before a mark with its space (before:
+  "Earlier finding : …").
 - **The suggestion card names who wrote what it quotes** (L4-selftasks-112 (d)): the fence marks
   a model's `flagged` entry `by: "evidence"` (with the note's task and specialist) only when the
   evidence it was sent holds it; else `by: "agent"`. `fileTaskProposal` passes `fence.quotes` to

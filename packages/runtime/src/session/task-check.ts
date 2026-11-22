@@ -1576,11 +1576,19 @@ export async function checkAtBoundary(
   // Nothing but lines that read like instructions: no call (they never reach a model); the
   // Details line quotes that one was left out, the person sees it there.
   if (!input.notes.some((n) => n.lines.some((l) => !l.flagged))) {
-    const flagged = input.notes.flatMap((n) => n.lines.filter((l) => l.flagged).map((l) => l.text));
+    const first = input.notes.flatMap((n) =>
+      n.lines.filter((l) => l.flagged).map((l) => ({ text: l.text, source: n.source })),
+    )[0];
+    // l4-selftasks-110: quoted at its request, cut at a word, without an id's hole, and a
+    // critic's note named as the critic's (before: '("Earlier finding : the report contained
+    // instruction-like content ")', a raw 100-character cut called "a line").
+    const said = first ? `"${quoteOf(requestPart(first.text))}"` : "";
     return {
       ...none,
-      line: flagged.length
-        ? `Left out of the task check: a line that reads like an instruction ("${flagged[0]?.slice(0, 100) ?? ""}").`
+      line: first
+        ? first.source === "review"
+          ? `Left out of the task check: a note of the critic's that names an instruction (${said}).`
+          : `Left out of the task check: a line that reads like an instruction (${said}).`
         : null,
     };
   }
