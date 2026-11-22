@@ -460,7 +460,9 @@ describe("polish-words, wave 13: the words a person reads (design §5)", () => {
     expect(withoutIds(`Stopped (task 01a196fe…) at its budget.`)).toBe("Stopped at its budget.");
     expect(withoutIds(`Stopped (run ${ID}) here.`)).toBe("Stopped here.");
     expect(withoutIds(`Answer request ${ID} now.`)).toBe("Answer now.");
-    expect(withoutIds(`It is ${ID}.`)).toBe("It is .");
+    // l4-selftasks-110: a bare id before a mark takes its space with it (before: "It is .", the
+    // gap live check 4 showed as "Earlier finding : …").
+    expect(withoutIds(`It is ${ID}.`)).toBe("It is.");
   });
 
   it("a failure reason reads plain: no markdown asterisks, no backticks, cut at a word (L-18)", async () => {
