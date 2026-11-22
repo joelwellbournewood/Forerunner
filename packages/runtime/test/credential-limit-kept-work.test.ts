@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { SimulatedClock } from "@forerunner/platform";
+import { join, SimulatedClock } from "@forerunner/platform";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   credWorld,
