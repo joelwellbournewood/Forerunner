@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs><radialGradient id="bg" cx="50%" cy="42%" r="70%"><stop offset="0" stop-color="#1d1615"/><stop offset="1" stop-color="#050505"/></radialGradient><linearGradient id="tb" x1="0" y1="0" x2="0.3" y2="1"><stop offset="0" stop-color="#b14a33"/><stop offset="1" stop-color="#6a2018"/></linearGradient></defs>
+<rect width="1024" height="1024" rx="190" fill="url(#bg)"/>
+<path d="M232 400 512 120 512 306Z" fill="#c9653f"/><path d="M232 400 394 423 512 306Z" fill="#a8472f"/>
+<path d="M512 120 792 400 630 423Z" fill="#8a3122"/><path d="M512 120 512 306 630 423Z" fill="#a03c2a"/>
+<path d="M792 400 512 904 512 635Z" fill="#350d09"/><path d="M792 400 630 423 512 635Z" fill="#4a130e"/>
+<path d="M512 904 232 400 394 423Z" fill="#5e1b14"/><path d="M512 904 394 423 512 635Z" fill="#74241a"/>
+<path d="M512 306 394 423 512 635 630 423Z" fill="url(#tb)"/>
+<path d="M232 400 512 120 792 400 512 904Z" fill="none" stroke="#e8916c" stroke-opacity=".35" stroke-width="6" stroke-linejoin="round"/>
+<path d="M440 352l10 28 28 10-28 10-10 28-10-28-28-10 28-10z" fill="#ffe2d2" fill-opacity=".85"/></svg>

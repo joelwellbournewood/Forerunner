@@ -1,0 +1,85 @@
+{
+ "merged": [
+  "l4-cred-engine: fix/l4-cred-engine at 2107349a08bc001812784e10a061dd69a37511fa (15 fixer commits c23b075..7591a7c plus 4 fix-up commits d632501, 529b958, fa0b266, 2107349), merged with --no-ff into claude/nifty-knuth-f9udt0 as ecd437a (parents 822f142 and 2107349). 72 files changed, +3848/-182. It does not touch apps/desktop, apps/*/src-tauri/icons, pnpm-lock.yaml, UPDATE-LOG, CHANGELOG, requirements.md or core-experience.md."
+ ],
+ "head_sha": "ecd437ab838762b50f818ec84b6036d6ea8f70e8",
+ "pushed": true,
+ "conflicts_resolved": [],
+ "integration_fixes": [],
+ "smoke": "25/25 checks passed, 0 findings, 0 recorded problems. Command: node scripts/bench/start.mjs --name merge-w25 --daemon-port 48930 --ui-port 2530 --fresh (provider bench), then node scripts/bench/journeys/smoke.cjs merge-w25. The plan card showed 2 tasks and Approve and start wrote both. The session completed with 2/2 done. The page was index.html with styles.css and script.js. Overview and Files showed the folder and the page, chat answered and named a task, and the critic reviewed (model calls intake 1, specialist 9, critic 6, chat 1). The journey script was not changed. The bench was stopped with scripts/bench/stop.mjs, and its home and browser profile were deleted. Result: /tmp/frbench/merge-w25/steps/smoke-result.json; log /tmp/frbench/merge-w25/smoke.log.",
+ "validation": [
+  {
+   "command": "git merge --no-edit --no-ff fix/l4-cred-engine; git grep -n '^<<<<<<< '",
+   "result": "Merged with no conflicts (merge commit ecd437a, signed). The conflict-marker grep found nothing."
+  },
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok (lockfile unchanged)"
+  },
+  {
+   "command": "DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. Lint: 1845 files, 42 warnings (the same count as before the merge), no errors. check-paths ok (1608 files). Typecheck ok. Unit: 555 files, 5906 passed, 7 skipped. docs-check ok (72 files) against origin/claude/nifty-knuth-f9udt0. link-check ok (213 files). secret-scan clean (2247 files). Log: /tmp/frbench/merge-w25/check.log"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 81 skipped (Postgres-backed tests skip without FORERUNNER_TEST_PG, as expected)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/live test (dry run, live secrets unset)",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0, Failures: None (report /tmp/forerunner-injection-report/injection-report.md)"
+  },
+  {
+   "command": "FORCE_COLOR=1 HOME=<empty dir> flock /tmp/frbench/heavy.lock pnpm test:unit (as CI runs it)",
+   "result": "exit 0: 555 files passed; 5906 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty dir> flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 101 files, 1362 tests passed"
+  },
+  {
+   "command": "FORCE_COLOR=1 HOME=<empty dir> pnpm --filter @forerunner/approvals-web test (CI's UI step); pnpm secrets:scan --logs",
+   "result": "exit 0: 11 files, 59 tests passed; secret-scan --logs clean"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "38 passed (1.4m)"
+  },
+  {
+   "command": "cargo fmt --check / clippy / cargo test in apps/desktop/src-tauri",
+   "result": "Not run: the merge touches nothing under apps/desktop (the diff 822f142..HEAD has no apps/desktop path)."
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name merge-w25 --daemon-port 48930 --ui-port 2530 --fresh && node scripts/bench/journeys/smoke.cjs merge-w25; node scripts/bench/stop.mjs --name merge-w25",
+   "result": "25/25 checks passed, 0 findings, 0 problems; bench stopped and home deleted"
+  },
+  {
+   "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "Printed nothing: all 20 commits (19 area commits and the merge commit) are signed"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "Pushed on the first try as a fast-forward, 822f142..ecd437a. Origin had not moved since the base. No force push."
+  }
+ ],
+ "problems_left": [
+  "Nothing the merge broke: every suite and the smoke are green on ecd437a. CI (Windows and Linux) and the Desktop app workflow on ecd437a have not been checked from here yet.",
+  "Carried from l4-cred-engine not_done: L4-creds-8 part 3. Chat's 'run it now' during a rest is not kept for the reset. The read-back says 'Start a session on Map notes (up to CHF 5)?', and the session then ends at once to wait. Nothing moves or is spent. This item is not on the spec's cut line.",
+  "Carried: L4-creds-9 part 3. The queued project's own status line ('Goes on after the session on ...') is not built. This item is not on the spec's cut line.",
+  "Carried, on the cut line: the C3-left-5 cases (handover continuation, Stop now during a continuation, project removal dropping its continuation, readmit), L4-creds-12 (background jobs not done for the period after a held call), the L4-creds-13 bench half, and L4-creds-14 (BA-7 restart cases and BA-3 effort-max case).",
+  "Carried: L4-creds-6's composed test covers only the not-offered case. The plan-form footer, the ask line and the ledger row (kind subscription, planUsageShare) on an answered chat are not asserted.",
+  "Owner or session-lead wording question: the L4-creds-1 ask card title is 'Use your API key until Tue 1 Dec?'. The acceptance text says 'Use your API key until Tue 1 Dec, 01:00?'.",
+  "Sibling for l4-cred-screens, per the fix-up: POST /sessions still checks continuations.waiting before startBlocked. A start from the API, the phone or the session page's Continue, made while a refused credential's session is kept, gets 'Your session of 10:00 goes on by itself once its Claude credential is back.' instead of the dialog's 'Nothing can run until you save a new API key in Settings.'.",
+  "Sentence for l4-cred-screens and l4-starts-sessions: keptWait's 'once its Claude credential is back' for a refused credential names no step (design section 5 rule 8). The session page's ended-to-wait block and the running bar may still read it.",
+  "Also for l4-cred-screens and l4-starts-sessions: the running bar shows 'Nothing starts when Claude is back; its tasks wait for your Start.' beside 'waiting until 10:26, then it goes on'. The session page's header and log times use the browser's zone while the waits use the person's zone.",
+  "From the fixer's new_problems, for other areas: scrubEnv (agent/sdk.ts) passes the host's CLAUDE* and CCR_* variables to the Claude Code subprocess. A critic review that meets the plan share is still a budget pause, not the credential stop 'share'. validZone still falls back to UTC for other callers. Scheduled jobs read the person's zone at start. The bench recorder writes the bench token into requestfailed URLs in problems.jsonl.",
+  "Live checks for the session lead with the real model: the fixer's and fix-up's check_in_the_app steps. These cover the expired subscription sign-in (one refused card, the task waits, chat's start says the dialog's sentence word for word), the plan share reached mid-run under each policy, the ask card's notification in Europe/Zurich time, the failed chat answer sentence, Stop booking on the serving credential, anthropicApiBase for task runs, and the ask card's yes applied once across a restart."
+ ]
+}

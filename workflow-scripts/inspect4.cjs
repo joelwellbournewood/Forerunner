@@ -1,0 +1,21 @@
+const fs = require("node:fs");
+const R = require("/home/user/Forerunner/.claude/worktrees/wf_3eff7ab7-708-4/scripts/bench/recorder.cjs");
+const NAME = "review-budget-resume";
+(async () => {
+  const { project, task } = JSON.parse(fs.readFileSync("/tmp/frbench/review-budget-resume/walk4.json", "utf8"));
+  const t = (await R.api(NAME, "GET", `/projects/${project}/tasks`)).find((x) => x.id === task);
+  console.log("task spent", JSON.stringify(t.actual), t.status);
+  const l = await R.api(NAME, "GET", `/sessions?projectId=${project}`);
+  const all = Array.isArray(l) ? l : l.sessions ?? [];
+  for (const s of all) console.log("session", s.startedAt, s.status, s.trigger, JSON.stringify(s.spent ?? s.spend ?? null), "|", (s.summary ?? "").replace(/\n/g, " / "));
+  const notes = (await R.api(NAME, "GET", "/notifications/recent?limit=200")).notifications ?? [];
+  const mine = notes.filter((n) => n.projectId === project);
+  console.log("notifications for the project:", mine.length);
+  for (const n of mine.slice(0, 4)) console.log("  ", n.kind, n.urgency ?? "", "|", n.title, "|", n.body);
+  const ib = await R.api(NAME, "GET", "/inbox");
+  const ups = (ib.messages ?? []).filter((m) => m.projectId === project);
+  console.log("updates for the project:", ups.length);
+  for (const u of ups.slice(0, 3)) console.log("  ", u.body);
+  const cards = ib.requests.filter((r) => r.taskId === task);
+  for (const c of cards.slice(0, 3)) console.log("card", c.status, "|", c.title, "|", c.outcome ?? "");
+})();

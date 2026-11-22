@@ -1,0 +1,31 @@
+{
+ "why": "Run L4 sub-run L4a's leftovers that no later run L4 area owns (cut-line items and small findings): for the final check F or a polish area.",
+ "base": "ecd437a",
+ "items": [
+  {
+   "id": "L4a-left-8",
+   "severity": "cut line",
+   "text": "C3-left-5 cases (the handover test's continuation, Stop now during a continuation, project removal dropping its continuation, a readmit case where B is not already promised), L4-creds-12 (background jobs marked 'not done for the period' after a held call, with a log line), the L4-creds-13 bench half (a Claude Code stand-in on the bench that does work and reports the limit) and L4-creds-14 (BA-7's composed restart cases and BA-3's effort-max case in task-budget-all.test.ts)."
+  },
+  {
+   "id": "L4a-left-9",
+   "severity": "minor, security",
+   "text": "scrubEnv (packages/runtime/src/agent/sdk.ts) passes the host's CLAUDE* and CCR_* variables to the Claude Code subprocess; pass only what the run needs."
+  },
+  {
+   "id": "L4a-left-10",
+   "severity": "minor",
+   "text": "validZone still falls back to UTC for other callers; scheduled jobs read the person's zone at start (L4a made the credential paths read it at each use)."
+  },
+  {
+   "id": "L4a-left-11",
+   "severity": "minor, tests",
+   "text": "The bench recorder writes the bench token into requestfailed URLs in problems.jsonl."
+  },
+  {
+   "id": "L4a-decision-1",
+   "severity": "decision",
+   "text": "Session lead decision (L4a merge, 2026-11-22): the share ask card's title stays 'Use your API key until Tue 1 Dec?' (the existing share form, as the triage said); the time of day adds nothing at a month boundary."
+  }
+ ]
+}

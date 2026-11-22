@@ -1,0 +1,4 @@
+[
+ {"id":"icon-left-1","severity":"minor","text":"apps/approvals-web (the browser fallback) has no favicon: its index.html has no <link rel=icon>. Add public/favicon.svg (a copy of docs/design/icon/forerunner-icon.svg) with href=\"./favicon.svg\" (base './'), and a case in scripts/app-icon.test.ts.","source":"review of fix/app-icon (wf_5e8d84f5-7e2)"},
+ {"id":"icon-left-2","severity":"owner_question","text":"Android 8+ adaptive icon: the mobile app ships only legacy mipmaps (no mipmap-anydpi-v26), as before; some launchers shrink a legacy icon into their own white shape. Whether to add an adaptive icon, and its background colour (tan #b3956a?), is the owner's choice. Also two unused template drawables (res/drawable/ic_launcher_background.xml, res/drawable-v24/ic_launcher_foreground.xml) could go.","source":"fix/app-icon not_done + review"}
+]

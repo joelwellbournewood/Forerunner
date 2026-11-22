@@ -1,0 +1,32 @@
+const fs = require("fs");
+const note = [
+  "This is wave 13, the last wave of wave 7 group 6: the polish of words and screens (polish-words, polish-screens) and the logic leftovers of waves 12 and 14 (leftovers7-tailmerge, leftovers7-tailrun), all four on base ce13bb1.",
+  "History: wave 12 merged leftovers7-merge and leftovers7-session (ca2c58d); wave 14 merged leftovers7-web, leftovers7-merge2 and the review fix-ups of leftovers7-merge and leftovers7-session (ce13bb1), full suite and bench smoke 25/25 green. Their reports, which the specs point to by file: /tmp/frbench/wave7g6a-fix-merge.json and wave7g6a-fix-session.json (wave 12 fixers), /tmp/frbench/wave7g6c-{fix,review,fixup}-<area>.json (wave 14, per area) and wave7g6c-merge.json. Read the ones your problems name, whole.",
+  "Your area spec is in /tmp/frbench/phaseE.json areas by key. The polish specs were written at fa1a86f, before waves 12 and 14: re-find each place at HEAD, and an item those waves already changed or fixed is confirmed at HEAD first (if it no longer fails, not_done with the evidence). shared_files: the rules marked '(wave 13)' at the end, and the one that starts 'Wave 13 (base ce13bb1)', decide over the older rules that name wave 12's areas as owners.",
+  "Open owner questions (NEXT-SESSION.md, wave7g6-triage.json owner_questions, the polish specs' owner_questions) are not decided: keep today's behaviour there, EXCEPT where a polish spec says to build its recommendation meanwhile (C-58's done line with taken-out tasks; 0 on a task's or a project's budget, the monthly cap staying positive): build that recommendation and name it in notes_for_other_areas as waiting for the owner's answer. The Files line's time: only P7-9's formats change. The rebuild card's Merge on a rebuilt_changed record and the Overview rules' staleness stay as built.",
+  "The common rule holds even where a spec's files list names them: do not edit docs/status/UPDATE-LOG.md, CHANGELOG.md or docs/requirements.md (the session lead writes them from your report). Maintainer docs, ADR amendments and your user-guide paragraphs: yes.",
+  "Words: polish-words and polish-screens own the wording in the shared files. The two tail areas change logic and the state the words read; where a tail item needs a new sentence (TM-4's wait, TR-12's planning line, TR-14's paused review), follow design section 5 (one sentence read at a glance, CHF only, no ids) and name it in notes_for_other_areas: the polish areas run beside you and will not see it.",
+  "Security in every area: never weaken the hooks or the sandbox; page, search and file text never becomes instructions; the page reader never reaches this PC or the home network; leftovers7-tailrun's TR-1 (a secret in a repository file on the subscription) and TR-8 (the sandbox refusal filter) are security boundaries: fail closed.",
+  "Merge order: leftovers7-tailmerge, leftovers7-tailrun, polish-words, polish-screens. In a conflict, keep the tail area's logic and the polish area's wording; in the append-only test files keep every area's describe block.",
+  "Reviewers: besides the acceptance lines, check every new or changed person-facing sentence against design section 5, and the siblings of each fix (validation rule 8).",
+  "Live checks after the merge are in /tmp/frbench/phaseE7-live.md and phaseE7-live-extra.md: write your check_in_the_app steps so the session lead can add them there (with a real credential where your item needs one).",
+].join(" ");
+
+const args = {
+  wave: 13,
+  keys: ["leftovers7-tailmerge", "leftovers7-tailrun", "polish-words", "polish-screens"],
+  noMerge: false,
+  note,
+  fixNotes: {
+    "leftovers7-tailmerge":
+      "Your area is new: the merge-side leftovers that the wave 14 reviewers and fix-ups listed but did not block on. Start with TM-1 (an empty pull request offered for Merge). leftovers7-merge (redo from main, cleanAfterCutShortRun) and leftovers7-merge2 (the worktree lock, owed rebuilds, the conflict notice, copy.stopped) built the code you change: read their reports (wave7g6a-fix-merge.json, wave7g6c-fix-leftovers7-merge2.json, wave7g6c-fixup-leftovers7-merge.json, wave7g6c-fixup-leftovers7-merge2.json) and reuse what they added. R-lock must keep holding: nothing you change may let a merge go through on an unrebuilt head.",
+    "leftovers7-tailrun":
+      "Your area is new: the run-side leftovers that the wave 14 reviewers and fixers listed but did not block on. Start with TR-1 (security: a secret in a repository file on the subscription) and TR-8. leftovers7-web (sandbox, R-failopen, R-readhook, credential waits, chooser inputs) and leftovers7-session (refused reviews, waits per task, recovery) built the code you change: read their reports (wave7g6c-fix-leftovers7-web.json, wave7g6c-review-leftovers7-web.json, wave7g6a-fix-session.json, wave7g6c-fixup-leftovers7-session.json) and the 2026-11-08 amendments of ADRs 0100, 0107 and 0112 before changing a credential wait or a hook. TR-15 is last: if time runs short, finish the others well and leave TR-15 precisely in not_done.",
+    "polish-words":
+      "Your spec has 53 items (46 from the triage plus W14-1..W14-7 from waves 12 and 14). They are small each; work in the spec's order and keep one commit per words file or screen. leftovers7-tailrun owns pausedWorkSentence in request-words.ts this wave; the tail areas may add a sentence or two in shared files (named in their reports): leave those to them. If time runs short, finish what you start, and list the remaining items precisely in not_done rather than rushing them.",
+    "polish-screens":
+      "Your spec has 24 items (22 from the triage plus W14-8 and W14-9). Each changes a screen's behaviour or words with a UI test and before/after screenshots. leftovers7-tailrun owns StartSessionDialog's line while the plan is drafted or queued (TR-12) and GET start-check; keep your StartSessionDialog changes to planSentence, waitsOnText, BlockerLines' budget lines, budgetProblem and the rest of the state after Start.",
+  },
+};
+fs.writeFileSync("/tmp/frbench/wave7g6d-args.json", JSON.stringify(args, null, 2));
+console.log("note chars", note.length, "args bytes", JSON.stringify(args).length);
