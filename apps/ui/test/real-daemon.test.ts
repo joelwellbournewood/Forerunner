@@ -18112,7 +18112,7 @@ describe("d1109-onerepo-link, run C", () => {
         // The tool's definition as the model received it.
         const def = chatCalls[0]?.tools?.find((t) => t.name === "project_create");
         expect(def?.description).toBe(
-          "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead (open it with project.switch, or add the new work to it), never a second project.",
+          "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch.",
         );
         const answer = JSON.stringify(chatCalls[1]?.messages.at(-1)?.content ?? "");
         return { reply, answer };
@@ -24368,6 +24368,14 @@ describe("l4-chat-answers, run L4", () => {
     const provider = createRolePlayer(
       benchOptionsFromEnv({ FORERUNNER_BENCH_DELAY_MS: "0", ...env }, log),
     );
+    // The chat model's requests as sent (a copy: the loop appends to the same messages).
+    const requests: ModelRequest[] = [];
+    const stream = provider.stream.bind(provider);
+    provider.stream = (req) => {
+      if (detectRole(req).role === "chat")
+        requests.push({ ...req, messages: structuredClone(req.messages) });
+      return stream(req);
+    };
     const rt = await composeRuntime({
       env: { FORERUNNER_HOME: dir },
       dirs: appDirs({ env: { FORERUNNER_HOME: dir } }),
@@ -24408,7 +24416,7 @@ describe("l4-chat-answers, run L4", () => {
             .map((l) => JSON.parse(l) as { role?: string; system?: string; messages?: unknown[] })
             .filter((c) => c.role === "chat")
         : [];
-    return { rt, client, me, agentId, chat, chatCalls, home: dir };
+    return { rt, client, me, agentId, chat, chatCalls, requests, home: dir };
   }
 
   // L4-chat-102 (live check 4, L4-l3-1, L4-session-2): chat asked for a yes in its own words
@@ -24530,6 +24538,29 @@ describe("l4-chat-answers, run L4", () => {
       await a.chat(notes.id, "add a task to write the README");
       expect(await titles(notes.id)).toEqual(["Write the README"]);
       expect(a.chatCalls()).toHaveLength(0);
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-creds-27 (merged into L4-chat-104): chat told the person "open Site with a project
+  // switch", because project_create's definition named the command project.switch.
+  it("POST /chat: project_create's definition names no command and only tools the model has; the system part holds the rule against naming tools", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-creds27-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.chat(project.id, "what is left?");
+      const call = a.requests[0];
+      const names = (call?.tools ?? []).map((t) => t.name);
+      const def = call?.tools?.find((t) => t.name === "project_create")?.description ?? "";
+      expect(def).toBe(
+        "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch.",
+      );
+      expect(def).not.toMatch(/\b[a-z]+\.[a-z_]+\b/);
+      for (const tool of def.match(/\b[a-z]+_[a-z_]+\b/g) ?? []) expect(names).toContain(tool);
+      expect(String(call?.system ?? "")).toContain(
+        "Never name a tool or a lookup (recall, recall_open, session_last, task_get, tasks_list,\nfiles_list, answer_thoroughly or any name with an underscore)",
+      );
       await settleSessions(a.rt);
     } finally {
       await a.rt.close();

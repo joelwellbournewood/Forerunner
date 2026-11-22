@@ -101,3 +101,41 @@ describe("one active project for every channel (U-056)", () => {
     expect(activeOnDaemon(harness)).toBe("proj_atlas");
   });
 });
+
+/**
+ * l4-chat-answers, run L4 (live check 4, L4-chat-104): "open it" in Notes' Chat said "Switched
+ * the active project to Site." and the page stayed on Notes. "open <project>" opens that
+ * project's page, as the New project dialog's Open it does; "switch to <project>" keeps the tab
+ * on its project (U-056) and says so.
+ */
+describe("l4-chat-answers, run L4: 'open <project>' opens it (L4-chat-104)", () => {
+  it("'open Beacon' in Atlas's Chat tab opens Beacon's Chat; 'switch to Beacon' keeps Atlas's tab and says 'This chat stays about Atlas.'", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "switch to Beacon");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("chat-agent")[0]).toHaveTextContent(
+        "Switched the active project to Beacon. This chat stays about Atlas.",
+      ),
+    );
+    expect(await screen.findByTestId("project-header")).toHaveTextContent("Atlas");
+
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "open Beacon");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() =>
+      expect(screen.getByTestId("project-header")).toHaveTextContent("Beacon"),
+    );
+    expect(postedCalls(harness, "/chat/stream").at(-1)?.body).toMatchObject({
+      projectId: "proj_atlas",
+      projectTab: true,
+      text: "open Beacon",
+    });
+    // Beacon's own Chat tab is the one on screen.
+    expect(await screen.findByTestId("chat-input")).toBeInTheDocument();
+  });
+});

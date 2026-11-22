@@ -4376,7 +4376,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       activeProjectId: active() ?? (projectTab ? null : (projectId ?? null)),
     };
     const lower = text.trim().toLowerCase();
-    const switchTo = /^switch to (.+)$/i.exec(text.trim());
+    // l4-chat-answers (L4-chat-104): "open X" switches as "switch to X" does (the Chat tab then
+    // opens X); "switch to X" in another project's own Chat tab says that tab stays on it.
+    const switchTo = /^(?:switch to|open) (.+)$/i.exec(text.trim());
     if (switchTo) {
       const wanted = (switchTo[1] ?? "").toLowerCase();
       const target = state.projects.find((p) => p.name.toLowerCase().includes(wanted));
@@ -4398,7 +4400,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         return {
           ...base,
           activeProjectId: target.id,
-          reply: sentence,
+          reply: (() => {
+            const tab = projectTab ? state.projects.find((p) => p.id === projectId) : undefined;
+            return tab && tab.id !== target.id && !/^open\b/i.test(text.trim())
+              ? sentence.replace(/ Undo\.$/, ` This chat stays about ${tab.name}. Undo.`)
+              : sentence;
+          })(),
           actions: [
             { kind: "project.switch", summary: sentence, id: entry.id, undoToken: entry.id },
           ],

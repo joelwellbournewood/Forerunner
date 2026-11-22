@@ -529,6 +529,12 @@ function answeredBy(r: CommandResultView): boolean {
 }
 
 /**
+ * "open <project>" (l4-chat-answers, L4-chat-104): the person asked to see that project, so the
+ * Chat tab opens its page (the UI's `OPEN_PROJECT_RE`), and the reply says no "This chat stays".
+ */
+const OPEN_PROJECT_RE = /^\s*(?:please\s+)?(?:open|öffne|oeffne)\b/i;
+
+/**
  * A "yes" when nothing waits for one (design §3.9): no card was read back in this conversation,
  * or the last one was answered here (a yes, a no, a stop). l4-chat-answers (L4-chat-102): it
  * names a next step (design §5 rule 8); a bare yes still never reaches the model (D-L4-23).
@@ -1342,6 +1348,19 @@ export class ConversationAgent {
         const left = parsed.unmatched?.length
           ? ` I did not act on ${parsed.unmatched.map((u) => JSON.stringify(u.slice(0, 80))).join(", ")}.`
           : "";
+        // l4-chat-answers (L4-chat-104): "switch to Site" in Notes' own Chat tab switches the
+        // active project and the tab stays on Notes (U-056), so the reply says so; "open Site"
+        // opens Site's page instead (the Chat tab navigates), with no such clause.
+        const switched = parsed.commands.find((c) => c.name === "project.switch");
+        const target = (switched?.params as { project?: unknown } | undefined)?.project;
+        const tabProject =
+          req.projectTab && conversationProject && typeof target === "string"
+            ? await store.project.get(conversationProject)
+            : undefined;
+        const stays =
+          tabProject && target !== tabProject.id && !OPEN_PROJECT_RE.test(req.text)
+            ? `This chat stays about ${tabProject.name}.`
+            : "";
         return this.replyForResult(
           r,
           parsed.commands.map((c) => c.name),
@@ -1349,6 +1368,7 @@ export class ConversationAgent {
           finish,
           left,
           { key: pendingKey, earlier: pending },
+          stays,
         );
       }
     }
@@ -2843,13 +2863,20 @@ export class ConversationAgent {
     ) => Promise<ChatReply>,
     tail: string,
     waiting: { key: string; earlier: PendingConfirmation | null },
+    /** A sentence after the change's own, before its "Undo." (l4-chat-answers, L4-chat-104). */
+    after = "",
   ): Promise<ChatReply> {
     if (r.status === "pending" && r.pendingId) {
       const card = cardOf(r, commands);
       const dropped = await this.replacePending(waiting.key, waiting.earlier, card, turn);
       return finish(`${dropped}${card.readback}${tail}`, [], { pendingConfirmation: card });
     }
-    return finish(`${this.sentenceOf(r, "Done")}${tail}`, this.actionsOf(r, commands));
+    const said = this.sentenceOf(r, "Done");
+    const done =
+      after && r.status === "done"
+        ? said.replace(/(\s*\bUndo\.)?\s*$/, (undo) => ` ${after}${undo}`)
+        : said;
+    return finish(`${done}${tail}`, this.actionsOf(r, commands));
   }
 
   /**

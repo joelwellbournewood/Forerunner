@@ -680,7 +680,10 @@ run C").
   brings its own `createProject` port, whose creation checks). Its definition is
   `PROJECT_CREATE_DESCRIPTION`: one repository or folder is one project; when another project
   uses the link the call is refused with that project's name, and the model offers that project
-  (project.switch, or the new work added to it), never a second project. The daemon's port
+  (the person can open it or add the new work to it), never a second project; a separate
+  sentence names the tool that opens it (`project_switch`), so the offer chat makes names no
+  command (l4-chat-answers, 2026-11-22, L4-creds-27: live check 4's chat told the person "open
+  Site with a project switch"). The daemon's port
   (`chatLinkCheck`) ends the answer with 'Open New project to work on it together.' when the
   repository's project is not on this computer (chat has no together flag yet). Its run's
   sentence names the project that was made (`createdOutcomeWords`): the port may make it under

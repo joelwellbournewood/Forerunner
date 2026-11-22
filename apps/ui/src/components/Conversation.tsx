@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { streamChat } from "../api/chat-stream.ts";
 import { type ConversationTurnView, describeError } from "../api/client.ts";
 import { systemClock, useNow } from "../lib/clock.ts";
@@ -93,6 +93,9 @@ export function recordLink(link: string | null): string | null {
  * through, the records it rests on (the From line), and for a line with no answer why, with
  * Ask again.
  */
+/** "open <project>": the person asked to see that project (the daemon says no "This chat stays"). */
+const OPEN_PROJECT_RE = /^\s*(?:please\s+)?(?:open|öffne|oeffne)\b/i;
+
 export function Conversation({
   projectId,
   testIds = "chat",
@@ -120,6 +123,7 @@ export function Conversation({
 }) {
   const client = useClient();
   const store = useUiStore();
+  const navigate = useNavigate();
   const identity = useIdentity();
   const key = conversationKey(projectId);
   const state = useUiState((s) => s.conversations[key]) ?? EMPTY_CONVERSATION;
@@ -223,6 +227,16 @@ export function Conversation({
       if (reply.activeProjectId && reply.activeProjectId !== store.getState().activeProjectId) {
         store.dispatch({ type: "activeProject", id: reply.activeProjectId });
       }
+      // l4-chat-answers (L4-chat-104): "open Beacon" in Atlas's Chat tab opens Beacon's Chat, as
+      // the New project dialog's Open it does; "switch to Beacon" keeps this tab on Atlas (U-056).
+      if (
+        projectId &&
+        OPEN_PROJECT_RE.test(said) &&
+        reply.activeProjectId &&
+        reply.activeProjectId !== projectId &&
+        reply.actions.some((a) => a.kind.split("+").includes("project.switch"))
+      )
+        navigate(`/projects/${reply.activeProjectId}/chat`);
     } catch (err) {
       const message = describeError(err);
       update((c) => (c.live ? { ...c, live: { ...c.live, error: message } } : c));

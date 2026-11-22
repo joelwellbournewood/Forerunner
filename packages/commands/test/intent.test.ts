@@ -777,7 +777,10 @@ describe("l4-chat-answers, run L4: the project a line names", () => {
       "neue Aufgabe für Site: write the shop page",
     ]) {
       const { params, r } = await created(line, two());
-      expect(r.commands.map((c) => c.name), line).toEqual(["task.create"]);
+      expect(
+        r.commands.map((c) => c.name),
+        line,
+      ).toEqual(["task.create"]);
       expect(params, line).toMatchObject({ title: "Write the shop page", project: site.id });
     }
   });
@@ -794,7 +797,10 @@ describe("l4-chat-answers, run L4: the project a line names", () => {
       text: "Which project: Notes or Site?",
       options: ["Notes", "Site"],
     });
-    const de = await created("neue Aufgabe dort: Shop-Seite schreiben", two({ namedProjectId: site.id }));
+    const de = await created(
+      "neue Aufgabe dort: Shop-Seite schreiben",
+      two({ namedProjectId: site.id }),
+    );
     expect(de.params).toMatchObject({ title: "Shop-Seite schreiben", project: site.id });
     // "here" is the project the line is said in: no project param, the tab's own.
     const here = await created("add a task here: write the shop page", two());

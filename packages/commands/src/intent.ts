@@ -63,7 +63,8 @@ const PROJECT_PRONOUN_RE =
   /^(?:there|it|that|that\s+one|that\s+project|the\s+same\s+project|the\s+other\s+project|dort|da|dorthin|es|das|dem|das\s+projekt|dem\s+projekt)$/i;
 
 /** Words for the project the line is said in ("here", "this project", "hier"). */
-const HERE_RE = /^(?:here|this|this\s+one|this\s+project|hier|dieses?|diesem|dieses\s+projekt|diesem\s+projekt)$/i;
+const HERE_RE =
+  /^(?:here|this|this\s+one|this\s+project|hier|dieses?|diesem|dieses\s+projekt|diesem\s+projekt)$/i;
 
 const said = (words: string) => words.trim().replace(/[.!?,]+$/, "");
 
