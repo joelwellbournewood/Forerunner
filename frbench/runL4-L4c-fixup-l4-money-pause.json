@@ -1,0 +1,170 @@
+{
+ "area": "l4-money-pause",
+ "branch": "fix/l4-money-pause",
+ "head_sha": "951a0cff3c24541ccf7d53d1bb60a51beed103cf",
+ "commits": [
+  {
+   "sha": "9d0930e",
+   "subject": "budget-pause: an outer limit's start line is whole, with every figure (L4-money-103)"
+  },
+  {
+   "sha": "bde04bd",
+   "subject": "test: the real-daemon session-review case makes a revise and asserts its line (L4-money-112)"
+  },
+  {
+   "sha": "dfc3207",
+   "subject": "session log: the session's size is said once, as its promise; notes are given now (L4-github-110)"
+  },
+  {
+   "sha": "66604b1",
+   "subject": "loop: a reply cut off at its length limit has a line with its CHF; a file-writing run hears one file per call (L4-money-106)"
+  },
+  {
+   "sha": "951a0cf",
+   "subject": "test: the real-daemon L3-run-2 case reads the plan's figure from the promise (L4-github-110)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 3 (L4-money-103): under an outer limit with the review's room kept, the run's start line was about 210 characters. event-lines.ts cut it at 200 on the session page, and its reserve was lost ('... keeping a reserve of…'). The tests matched only the prefix.",
+   "u_ids": [
+    "U-097 (new, session lead files it)"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts 'l4-money-pause, run L4: an outer limit's start line is whole, with every figure (L4-money-103)' (exact lines, plus a grid where every form is at most 200 characters and none is cut); the two L4-money-103 composed cases now assert the whole line from GET /sessions/:id/events; apps/ui/test/real-daemon.test.ts 'L4-money-103 (review)' (project budget USD 0.30 with the room kept, exact line through the client) and the L4-money-103 case's exact line",
+   "how": "budgetLineWords' outer branch has its own short forms with every figure. The wrap-up form: 'This run may spend CHF 0.20, the rest of the project's budget after CHF 0.04 for its review: it is told to wrap up before a step that could pass CHF 0.16, keeping CHF 0.04 to finish.' With no room kept, ' after ... for its review' is left out. The save-only form ends '..., so it pauses and keeps its work.' The first-step form ends '..., so it pauses before that step.' The task-budget (BA-4) and plain forms are unchanged. A dated note is appended to ADR 0112, and runtime.md and user-guide.md are updated.",
+   "check_in_the_app": "Live (bench-live): Settings > the project's budget at CHF 0.24 (USD 0.30). Start with CHF 5.00 on a writer task with no budget of its own. On the session page, tick Details. The run's first line is whole, with no '…'. It reads 'This run may spend CHF x, the rest of the project's budget after CHF y for its review: it is told to wrap up before a step that could pass CHF z, keeping CHF w to finish.' With a project budget of CHF 0.06 (no room kept) it reads 'This run may spend CHF 0.06, the rest of the project's budget: it is told to wrap up before a step that could pass CHF 0.05, keeping CHF 0.01 to finish.' Stand-in walk evidence: /tmp/frbench/fixup-l4-money-pause-evidence/steps/17-details-b2-58c0.txt (182 characters, whole) and 16-details-b-3b85.txt."
+  },
+  {
+   "problem": "Review blocking 4 (L4-money-112): the real-daemon case passed on the base. Its session review was 'accepted (grade 100, 0 findings)' because the estimate floor (CHF 0.02) and the cost (CHF 0.03) made no overrun. Removing the runner's `noted: reviseCause(...)` left every test green.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-money-pause, run L4' > 'L4-money-112: ...'. With the runner's noted wiring removed it fails ('Session review: noted (grade 85, 1 finding).'); on the base's words it reads 'sent back for changes'.",
+   "how": "The case now adds FORERUNNER_BENCH_USAGE='Write the pairing list:60000', as the review's bench journey D did. The send-back and the second try take the task far over its estimate, so the session review is a revise. The case asserts the task is done, the exact line 'Session review: planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice (grade 85, 1 finding).', and a session check with verdict revise and no 'sent back'. Test only: no source changed.",
+   "check_in_the_app": "Live: a session whose one task the critic sends back once and accepts at more than 1.5 times its estimate. Details shows 'Session review: planned tasks cost CHF ..., over their estimate of CHF ... by NN%, with one task tried twice (grade 85, 1 finding).' and never 'sent back'. Stand-in evidence: /tmp/frbench/fixup-l4-money-pause-evidence/steps/18-details-d-d950.txt ('... over their estimate of CHF 0.04 by 819%, with one task tried twice (grade 85, 1 finding).')."
+  },
+  {
+   "problem": "Review blocking 2 (L4-github-110, its log half): a first session's Details read 'Plan: 1 task, about CHF 0.13. The first session you approved with the project plan: 1 task in its order.' beside 'It promised 2 tasks, about CHF 0.26.' (live: 1 beside 3). They then read 'Gave 1 note for the next session to \"X\"' in the session that used the note.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-money-pause, run L4' > 'L4-github-110: Approve and start on a plan of two tasks, the second waiting on the first ...' (it reproduced the old lines word for word before the fix); packages/runtime/test/event-lines.test.ts 'l4-money-pause, run L4: the session's size is said once, as its promise (L4-github-110)'",
+   "how": "runner.ts: session.planned carries `promised` (the promise's task count) when the promise's line follows. views.ts: with `promised` and a summary, the Plan line says only how the tasks were chosen ('Plan: the first session you approved with the project plan, in its order.'). The size is said once, by 'It promised N tasks, about CHF X.' StaticPlanner's first-session summary counts nothing; it used to count the ready cut as what the person approved. task.notes reads 'Gave 1 note to \"X\".' Without a promise the Plan line is as before. A dated note is added to ADR 0116, and runtime.md and user-guide.md are updated.",
+   "check_in_the_app": "Live: a new project with a three-task brief whose tasks 2 and 3 wait on task 1. Approve and start, then open the session page and tick Details. There is one line 'Plan: the first session you approved with the project plan, in its order.', then one line 'It promised 3 tasks, about CHF X.'. No line reads 'Plan: 1 task' and none says 'for the next session'. The note line reads 'Gave 1 note to \"<first task>\".' Stand-in evidence: /tmp/frbench/fixup-l4-money-pause-evidence/steps/19-details-f-5cbb.txt."
+  },
+  {
+   "problem": "Review blocking 1 (L4-money-106, its log line and file-writing note): a reply cut off at max_tokens with nothing usable (live: 6308 of 6308 tokens, USD 0.065) had no line in the session log. The next request said only 'Answer again, more briefly.', even in a run that writes files. The loop's warning named a cap the next call never got.",
+   "u_ids": [
+    "U-085"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts 'l4-money-pause, run L4: a reply cut off at its length limit has its line and the file-writing note (L4-money-106)'. The composed case runs through the runner and the executor: list_dir, then a reply cut with no blocks that uses its whole max_tokens, then a report. It failed before: GET /sessions/:id/events had no cut line, and the request said 'Answer again, more briefly'. The unit case asserts the three line forms and both note forms exactly.",
+   "how": "loop.ts emits a typed `reply_cut` RunEvent (maxTokens, where, kept, the call's costUsdMicro, retry) on every cut: kept calls, a retry, and the last cut before the run errors. The executor's onEvent makes it one note line (budget-pause.ts replyCutWords): 'The coder's reply was cut off at its length limit, so nothing of it could be used (CHF 0.01); it was asked again.' With kept calls: '... (CHF x): the call it was writing did not run, and it was asked to make it again.' At the last try: '... again, so nothing of it could be used (CHF x).' cutOffNote has a `writesFiles` parameter: a run with a file-writing tool that is cut before it said anything hears 'Send less in one reply: one file per call, short enough to fit.' The warning no longer names a cap. runtime.md and user-guide.md are updated.",
+   "check_in_the_app": "Live (L3-research-2's shape): a writer or researcher task asked for one long file under a small task budget (CHF 0.08). When a reply is cut at its output limit, tick Details on the session page. A line 'The <specialist>'s reply was cut off at its length limit, so nothing of it could be used (CHF x); it was asked again.' appears after the folder or file line, with the call's cost. In the model-call log, the next request's last user message contains 'Your last reply was cut off at the output limit (N tokens) before it said anything, and nothing of it was used. Send less in one reply: one file per call, short enough to fit.'. The stand-in cannot play a cut reply (its max_tokens mode is not built), so this needs the real model."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-money-106's card clause (the budget card or the result names the cut) and the bench stand-in's max_tokens mode (testenv/src/provider/messages-api.ts).",
+   "why": "Both are on the spec's cut line. Only the log line and the file-writing note are never-cut, and both are built and tested. Without the stand-in mode the bench cannot show the cut line, so the evidence is the composed test through the runner and executor."
+  },
+  {
+   "problem": "L4-github-110's Overview half: 'Waiting for you: approve the plan' shows twice after Add to (ProjectPage.tsx planBanner and IntakeBanner.tsx).",
+   "why": "The spec's cut line allows the Overview half to stay in not_done ('never its log half'). The log half is built (dfc3207). The roots are unchanged: ProjectPage.tsx:129-137 and IntakeBanner.tsx:110-121."
+  },
+  {
+   "problem": "The fixer's other not_done items: L4-money-105, -107, -108, -110, -113, and L4a-left-7.",
+   "why": "This fix-up covered only the review's four blocking findings. Those items stand as the fixer reported them."
+  },
+  {
+   "problem": "The review's non-blocking items: the WORK_STATE guard is too narrow; the outer-limit session status reads 'Stopped at the project's budget' while spend is under it; the result.ts 'this session's CHF X was used' sibling; the loosened month's-cap regexes; 'To fix:' under a 'noted' finding; reviseCause cutting at 200 characters mid-word; no learned-EstimatePort case for L4-selftasks-107.",
+   "why": "They were not blocking, and this fix-up kept to the blocking findings. The outer-limit status sibling is still visible on the bench: /tmp/frbench/fixup-l4-money-pause-evidence/steps/17-details-b2-58c0.png shows 'Stopped at the project's budget' at CHF 0.18 of CHF 0.24."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0: lint, path lint and typecheck pass; 557 unit files, 6004 tests passed (7 skipped); docs:links and secrets:scan pass. The inner docs-check could not diff against origin/main, so it was run separately with the base."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (43 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped (Postgres-backed, as expected), 30 tests passed"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "First run: 1 failed, the real-daemon 'l3-money-engine, run L3: L3-run-2' sibling, which read the figure from the Plan line. Fixed in 951a0cf. Rerun: exit 0, 101 files, 1397 tests passed."
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "38 passed"
+  },
+  {
+   "command": "bench fixup-l4-money-pause (stand-in, daemon 49000, UI 2600) with FORERUNNER_BENCH_LONG, _USAGE and _CRITIC_REJECT; walk scripts /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fixup-money-walk.cjs and fixup-money-details.cjs",
+   "result": "Journey b (project budget CHF 0.06): start line whole at 152 characters. Journey b2 (CHF 0.24, room kept): whole at 182 characters with every figure. Journey d: 'Session review: planned tasks cost CHF 0.37, over their estimate of CHF 0.04 by 819%, with one task tried twice (grade 85, 1 finding).' Journey f (Approve and start, two tasks): 'Plan: the first session you approved with the project plan, in its order.', 'It promised 2 tasks, about CHF 0.24.', 'Gave 1 note to \"Build the random quote page ...\".'. The bench was stopped with stop.mjs and its home deleted; the evidence is in /tmp/frbench/fixup-l4-money-pause-evidence/."
+  },
+  {
+   "command": "mutation check: runner.ts `noted: reviseCause(...)` disabled, then the real-daemon L4-money-112 case run",
+   "result": "It failed as it should ('Session review: noted (grade 85, 1 finding).'); the source was restored."
+  },
+  {
+   "command": "git status; git grep -n '^<<<<<<< '",
+   "result": "Working tree clean, no conflict markers; fix/l4-money-pause = HEAD = 951a0cf"
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/budget-pause.test.ts 'l4-money-pause, run L4: a run under the project's budget or the month's cap ...' (both cases)",
+   "why": "These cases were the fixer's prefix regex /^This run may spend CHF (\\d+\\.\\d\\d), what is left of the project's budget[ :,]/ (and the month form). They now assert the whole new line: 'This run may spend CHF 0.06, the rest of the project's budget: it is told to wrap up before a step that could pass CHF 0.05, keeping CHF 0.01 to finish.' and the month form. The intent is kept: the line names at most what is left of the limit."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'l4-money-pause, run L4' L4-money-103 case",
+   "why": "The same change: the prefix regex became the exact new line."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'l4-money-pause, run L4' L4-money-112 case",
+   "why": "FORERUNNER_BENCH_USAGE was added so that a revise happens. The vague not-'sent back' check became the exact revise line plus 'check is defined with verdict revise'. The assertions are stronger, not weaker."
+  },
+  {
+   "test": "packages/runtime/test/session-keeps-going.test.ts L3-run-2",
+   "why": "L4-github-110. Old: said('session.planned')[0] matched /^Plan: 1 task, about CHF 0\\.11\\./. New: 'Plan: 1 ready task in priority order.' and said('session.promised') equals 'It promised 1 task, about CHF 0.11.'. The figure the person saw is the promise's."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'l3-money-engine, run L3' L3-run-2",
+   "why": "The same change: the figure is read from the promise's line, and the Plan line is asserted exactly. The session review still measures against it."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-l4-money-pause/steps/33-b-session-details-on.txt",
+   "/tmp/frbench/review-l4-money-pause/steps/32-d-session-details-on.png",
+   "/tmp/frbench/live4/session/s2/steps/05-c2-12-add-to-landed.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-l4-money-pause-evidence/steps/17-details-b2-58c0.png",
+   "/tmp/frbench/fixup-l4-money-pause-evidence/steps/17-details-b2-58c0.txt",
+   "/tmp/frbench/fixup-l4-money-pause-evidence/steps/16-details-b-3b85.txt",
+   "/tmp/frbench/fixup-l4-money-pause-evidence/steps/18-details-d-d950.png",
+   "/tmp/frbench/fixup-l4-money-pause-evidence/steps/19-details-f-5cbb.png",
+   "/tmp/frbench/fixup-l4-money-pause-evidence/steps/19-details-f-5cbb.txt"
+  ]
+ },
+ "new_problems": [
+  "Under an outer limit, the session status still reads 'Stopped at the project's budget' at CHF 0.18 of CHF 0.24 spent (bench journey b2: /tmp/frbench/fixup-l4-money-pause-evidence/steps/17-details-b2-58c0.png). This is the review's non-blocking L4-money-102 sibling for project and month pauses; stop-words.ts was not changed here.",
+  "The bench stand-in cannot play a cut reply, because the messages-api.ts max_tokens mode is not built. The L4-money-106 line can be seen only in the composed test or with the real model.",
+  "When one note names no task, it is given to every task in the session, so the log has 'Gave 1 note to \"A\".' and then 'Gave 1 note to \"B\".' for the same note (bench journey f). This is true but repetitive; a later words area may fold it into one line."
+ ],
+ "notes_for_other_areas": [
+  "New RunEvent `reply_cut` { maxTokens, where, kept, costUsdMicro, retry } (agent/loop.ts). It is emitted on every cut reply. The executor maps it to a task.step note through budget-pause.ts `replyCutWords(specialist, { kept, costUsdMicro, retry }, chfOf)`. The bare `warning` stays for logs, but it no longer names the next call's cap.",
+  "`cutOffNote(maxOut, where, kept, writesFiles = false)`: a file-writing run cut before it said anything gets the 'one file per call' wording. It is model-facing text, asserted exactly in budget-pause.test.ts.",
+  "session.planned now carries `promised` (number) when a session.promised event follows. views.ts then words the Plan line without a count or figure ('Plan: <summary>.'). StaticPlanner's first-session summary is 'the first session you approved with the project plan, in its order' (no count). task.notes reads 'Gave N note(s) to \"X\".'",
+  "budgetLineWords' outer forms (project/month) changed words: '..., the rest of the project's budget[ after CHF y for its review]: it is told to wrap up before a step that could pass CHF z, keeping CHF w to finish.' The task-budget and plain forms are unchanged. l4-chat-answers (merging after this area) touched none of these files.",
+  "Suggested UPDATE-LOG addition (not written): 'fixup l4-money-pause: an outer limit's start line stays whole with every figure; a reply cut off at its length limit has its own line with its CHF, and a file-writing run is told to write one file per reply; the session's Details say its size once, as its promise, and notes given to a task are no longer for the next session.'"
+ ]
+}

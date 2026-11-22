@@ -1,0 +1,76 @@
+{
+ "merged": [
+  "fix/l4-money-pause at 951a0cf: merge commit 8757302. No conflicts.",
+  "fix/l4-chat-answers at 6275e3f: merge commit d526f40. One conflict, in the append-only test file."
+ ],
+ "head_sha": "d526f405fa3690c37f02ba17e70296461e9a8b08",
+ "pushed": true,
+ "conflicts_resolved": [
+  "apps/ui/test/real-daemon.test.ts: both areas appended a describe block at the end of the file. Resolved under the run L4 shared_files rule for this append-only harness: 'l4-money-pause, run L4' comes first, then 'l4-chat-answers, run L4', in merge order. Each block was taken whole from its own branch, and l4-chat-answers' earlier in-file edits (YES_TO_WHAT_L4 at about :4415 and :4422, and the project_create definition pin at about :18115) are kept as that area left them. I checked the result: its diff from HEAD, as a set of lines, is exactly fd8dc9d..fix/l4-chat-answers for this file. Biome lints the merged file cleanly (1.1 MB, under files.maxSize 3 MiB). The merge commit's message lists the resolution.",
+  "Auto-merged without conflict, both areas' paragraphs kept: docs/maintainers/apps.md, docs/maintainers/commands.md, docs/maintainers/runtime.md and docs/user-guide.md. No other source file is touched by both areas."
+ ],
+ "integration_fixes": [],
+ "validation": [
+  {
+   "command": "git status (before the merge); git merge --no-edit --no-ff fix/l4-money-pause, then fix/l4-chat-answers; git grep -n '^<<<<<<< '",
+   "result": "Before the merge: on claude/nifty-knuth-f9udt0 at fd8dc9d, clean, up to date with origin. The first merge was clean. The second had one conflict (real-daemon.test.ts), resolved as described. git grep then found no markers."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm install --frozen-lockfile",
+   "result": "Done in under a second; the lockfile is unchanged."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "EXIT 0.\n- Lint: 0 errors, 42 warnings (the warnings were there before).\n- lint:paths ok (1610 files); typecheck green.\n- Unit: 557 files, 6030 passed, 7 skipped.\n- link-check ok (213 files); secret-scan clean (2252 files).\n- The inner docs:check cannot diff origin/main here, so it was run separately with the base.\n- My first attempt was killed during unit tests because I had given the background command a 10-minute limit. Nothing failed; I re-ran it with a longer limit."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (78 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "EXIT 0: 5 files passed, 6 skipped (Postgres-backed, as expected); 30 passed, 81 skipped."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "EXIT 0: 13 files, 25 passed, 1 skipped."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/live test",
+   "result": "EXIT 0: 11 files passed, 4 skipped; 63 passed, 17 skipped."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "EXIT 0, PASS: 82 cases (59 hostile, 23 controls), 82 passed, 0 failed; Failures: None."
+  },
+  {
+   "command": "HOME=<empty dir> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm test (as CI runs it)",
+   "result": "EXIT 0: 557 files, 6030 passed, 7 skipped."
+  },
+  {
+   "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "EXIT 0: 101 files, 1412 passed."
+  },
+  {
+   "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts)",
+   "result": "EXIT 0: 38 passed (1.3 min). The local config was removed afterwards and never committed."
+  },
+  {
+   "command": "cargo fmt --check / clippy / cargo test in apps/desktop/src-tauri",
+   "result": "Not run: neither area touched apps/desktop (git diff fd8dc9d..HEAD lists no file under it)."
+  },
+  {
+   "command": "signature check: for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "Printed nothing: all 31 commits are signed, both merge commits included. The second merge commit was amended to describe its resolution and is still signed."
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "fd8dc9d..d526f40, fast-forward, first try. Local HEAD equals origin."
+  }
+ ],
+ "smoke": "The bench smoke passed 25/25, with 0 findings and 0 recorded problems.\n\n- Started with: `node scripts/bench/start.mjs --name merge-w27 --daemon-port 49010 --ui-port 2610 --fresh` (stand-in provider), then `node scripts/bench/journeys/smoke.cjs merge-w27`.\n- What it walked: the plan card (2 tasks), then Approve and start. Session 1 completed with 2/2 tasks done. It wrote index.html, styles.css and script.js, plus README.md and .gitignore, and the page links both files. The Overview shows the folder, the Files tab lists index.html, and the chat reply names a task with no markdown. The critic reviewed the work.\n- Model calls: intake 1, specialist 9, critic 6, chat 1.\n- The journey script needed no change.\n- The bench was stopped with `stop.mjs`, which ended both its groups, and its home and browser profile were deleted.\n- Logs and the result are kept in `/tmp/frbench/merge-w27-logs/`: `smoke.log`, `smoke-result.json`, `daemon.log`, and the logs of every suite.",
+ "problems_left": [
+  "Nothing the merge broke is left: every suite passed on the merged head without a fix-up commit.",
+  "Each area's own not_done items still stand, as in its fix-up report.\n- l4-money-pause:\n  - L4-money-106: the card clause and the stand-in's max_tokens mode.\n  - L4-github-110: the doubled 'Waiting for you: approve the plan' on the Overview.\n  - L4-money-105, -107, -108, -110, -113 and L4a-left-7.\n  - The outer-limit session status still reads 'Stopped at the project's budget' while spend is under it. stop-words.ts is unchanged.\n  - project-facts.ts' chat block still says 'Paused: \"X\" at its budget' for a task whose review waits, and needs the next chat area's prompt bump.\n- l4-chat-answers:\n  - L4-chat-105 and -109.\n  - The L4-chat-113 reply check, the L4-chat-101 code-run recall fallback and the L4-chat-104 Open link.\n  - L4a-left-6 and L4b-left-9.\n  - namedProjectId reads the registry's active project, not the project the conversation switched to.\n  - Pressing an option under a parser question about a project's name, as opposed to a pronoun, still costs a chat model call."
+ ]
+}

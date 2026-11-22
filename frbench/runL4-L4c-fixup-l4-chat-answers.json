@@ -1,0 +1,169 @@
+{
+ "area": "l4-chat-answers",
+ "branch": "fix/l4-chat-answers",
+ "head_sha": "6275e3f6860df6e8b7918b48fc66e58aba6a32cd",
+ "commits": [
+  {
+   "sha": "a2d152b780b9d6f2f7ea5b1645ac7760c4251e6d",
+   "subject": "chat: 'add a task to …' names a project only when it names one; the option pressed adds there (L4-selftasks-119, U-015)"
+  },
+  {
+   "sha": "ccaace0c9d863f1fb6986429b9e7abde6f08c830",
+   "subject": "chat: a clarifying question is no ask for a yes (L4-chat-102)"
+  },
+  {
+   "sha": "693af9188792ad9bd2be9d88343fa3b1050281fe",
+   "subject": "ui: a switch with \"This chat stays about …\" is said once, with Undo (L4-chat-104)"
+  },
+  {
+   "sha": "1d88b7b6996ad20d2a98936e81611548bd687982",
+   "subject": "chat: a forged \"The app did:\" line behind a bracketed lead is still caught (L4-chat-112)"
+  },
+  {
+   "sha": "6275e3f6860df6e8b7918b48fc66e58aba6a32cd",
+   "subject": "ui: the reply's fold into its change line takes whole sentences only (L4-chat-104)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1 (L4-selftasks-119 broke U-015). The target reading asked 'Which project: Notes or Site?' and added nothing for ordinary lines. Its separator class [:,-] split 're-check' into the target 're' and the title 'check the prices'. Any 1 to 3 words after to/in/into that named no project asked the question ('add a task to fix the login: users cannot sign in'). With one project it asked 'Which project: Notes?'. Pressing an option sent the bare name to the chat model, a paid call that added no task.",
+   "u_ids": [
+    "L4-selftasks-119",
+    "U-015"
+   ],
+   "failing_test_before": "packages/commands/test/intent.test.ts 'l4-chat-answers, run L4, fixup: 'add a task …' names a project only when it names one' (hyphen and colon lines, a name inside other words, one project) and the fixer's unknown-name case in 'l4-chat-answers, run L4: the project a line names'; apps/ui/test/real-daemon.test.ts 'l4-chat-answers, run L4' > \"POST /chat: ordinary 'add a task to …' lines add at once; only 'there' with two projects asks, and the option pressed adds there with no model call, also after a restart\". Before the fix it failed on 'Which project: Notes? Options: Notes.'; with only the parser fixed it failed when the press reached the stand-in model. Also apps/ui/test/chat.test.tsx 'l4-chat-answers, run L4, fixup: the option pressed under 'Which project: …?''.",
+   "how": "Parser (packages/commands/src/intent.ts, matchAddTask):\n- A separator is a colon, a comma, or a dash with a space before it. The same rule applies to taskTitleOf's 'there:' strip.\n- A target is a project only when the new projectsNamedBy (commands/shared.ts) finds exactly one. It matches the id, the whole name, or words held whole or from a word's start in one name. It never matches by word overlap.\n- Any other words stay the task's own, as before the area: the task is added at once with Undo.\n- Only a pronoun ('there', 'it', 'dort') with no project named in this conversation and two or more projects asks. With one project the pronoun, and 'open it', mean that project.\n\nAgent (conversation/agent.ts): when the turn just before asked a parser question with options and this line is one of them (a project's name alone), the agent parses the line that asked again with namedProjectId set to that project. There is no model call. It reads the question from the conversation's rows, so the press also works after a restart.\n\nThe fake daemon plays the target, the question and the press. Docs: commands.md, runtime.md, user-guide.",
+   "check_in_the_app": "Projects Notes and Site, in Notes' Chat:\n1. Type 'add a task to re-check the prices'. It reads 'Added \"Re-check the prices\" to Notes. …' with Undo, and no question.\n2. Type 'add a task to fix the login: users cannot sign in'. The task is added to Notes with that title.\n3. Type 'add a task there: write the FAQ'. It reads 'Which project: Notes or Site?' with Notes and Site buttons.\n4. Press Site. It reads 'Added \"Write the FAQ\" to Site.' and Site's Tasks lists it. The model-call log has no chat call for steps 1 to 4.\n5. With one project only, 'add a task there: …' adds it at once, with no question.\n\nLive check (real model): also try 'add a task to re-check the prices' once."
+  },
+  {
+   "problem": "Review blocking 2 (L4-chat-102). The new 'asks' claim caught clarifying questions. 'Which task should I add it to?', 'Add it to Notes or to Site?' and 'Should I start with the shop page or the about page?' each got a nudge. Asked again, the question was replaced by 'Nothing changed, and nothing waits for your yes. Say it again to try once more.', at two model calls a turn. This went against the area's own decision: 'Clarifying questions stay free'.",
+   "u_ids": [
+    "L4-chat-102"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts 'l4-chat-answers, run L4, fixup: clarifying questions stay free': the claimOf unit cases, and the composed case. The composed case checks that the question reaches the person as written, with one model call and no claimGuard on the row.",
+   "how": "claims.ts gains CLARIFIES, judged before every question pattern of ASKS:\n- A question that asks which, who or where (anywhere in it), or starts with what, when or how.\n- A question that offers a choice with 'or'. Not 'or not', 'or leave it' or 'or keep it'.\n- German: welche, wer, wo, wohin and 'oder' (not 'oder nicht').\n\nA 'needs your yes' sentence beside clarifying questions only is free too. A yes asked in words ('Shall I set …?', '… or not?') stays an asks claim. ADR 0114's amendment of 2026-11-22, runtime.md and user-guide are updated.",
+   "check_in_the_app": "Bench: in a Chat tab type 'say: Which task should I add the note to?' and 'say: Add it to Notes or to Site?'. Each reply shows as written, with one chat call in the model-call log. 'say: Shall I set research for Notes to any public website again?' is still replaced by 'Nothing changed, …'.\n\nLive check (real model): ask 'add a note to the task' in a project with two tasks. If the model asks which task, the question reaches you unchanged, with no 'Nothing changed' line."
+  },
+  {
+   "problem": "Review blocking 3 (L4-chat-104). 'switch to Site' in Notes' Chat showed the switch twice in one bubble: 'Switched the active project to Site. This chat stays about Notes.' and below it the change line 'Switched the active project to Site. [Undo]'.",
+   "u_ids": [
+    "L4-chat-104"
+   ],
+   "failing_test_before": "apps/ui/test/active-project.test.tsx 'l4-chat-answers, run L4, fixup: the switch is said once (review, blocking 3)'. Before the fix, the switch sentence appeared twice in the bubble's text.",
+   "how": "Conversation.tsx: when a reply is its changes' sentences followed by whole sentences more, the bubble shows the changes once, on their lines with Undo, with the rest at the end of the last line: 'Switched the active project to Site. This chat stays about Notes. [Undo]'. The changes' sentences must end a sentence and the rest must start after a space. A follow-up commit added that boundary after the UI suite's plain-words (U-074) budget reply showed ', until 06:00.' folded with a stray space. The daemon's reply text is unchanged, so voice and the phone keep it whole. Docs: apps.md, user-guide.",
+   "check_in_the_app": "In Notes' Chat type 'switch to Site'. The bubble reads 'Switched the active project to Site. This chat stays about Notes.' once, with one Undo, and the tab stays on Notes. 'open Site' opens Site's Chat."
+  },
+  {
+   "problem": "Review non-blocking: the forged-line claim was anchored at the sentence start, so the bench stand-in's '[stand-in model] The app did: …' was stripped but never nudged.",
+   "u_ids": [
+    "L4-chat-112"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts 'l4-chat-answers, run L4, fixup: clarifying questions stay free' > claimOf case '[stand-in model] The app did: Paused the FAQ task.'",
+   "how": "CHANGED's 'The app did:' pattern allows a short bracketed lead, as the read-back pattern already did. runtime.md is updated.",
+   "check_in_the_app": "Bench: 'say: The app did: Paused the FAQ task.' gets one nudge and then 'Nothing changed, …'. The forged line is never shown."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Review non-blocking: withoutAppMarkers is case-sensitive, so 'the app did: …' in lower case passes through.",
+   "why": "Kept on purpose. A lower-case 'what the app did: …' inside a sentence is the model's own prose, and it is never drawn as the app's line. Case-insensitive stripping would cut the rest of such a line. Not a marker on screen, so no security gap."
+  },
+  {
+   "problem": "Review non-blocking: 'absent' false positives ('I don't see any failed tasks.') cost one extra nudge and a recall call.",
+   "why": "The answer stands and the cost stays inside the turn's budget. Narrowing ABSENT needs live samples, so it is left for the next area that touches claims.ts."
+  },
+  {
+   "problem": "Review non-blocking: 'Nothing changed, and nothing waits for your yes. Say it again to try once more.' reads oddly after a status question the model answered with 'Shall I …?'.",
+   "why": "NOTHING_CHANGED_REPLY belongs to l3-chat-claims and is asserted in several areas' tests. Clarifying questions no longer reach it. A rewording is for the session lead to decide."
+  },
+  {
+   "problem": "Review non-blocking: parser questions repeat their options in the text and as buttons ('Which project: Notes or Site? Options: Notes, Site.').",
+   "why": "Predates this area. The ' Options: …' text is what voice and the phone read, and agent.ts builds it for every parser question."
+  },
+  {
+   "problem": "Carried from the fixer's not_done, unchanged: L4-chat-105, L4-chat-109, the L4-chat-113 reply check, the L4-chat-101 code-run recall fallback, the L4-chat-104 switch Open link, L4a-left-6, L4b-left-9.",
+   "why": "Out of this fixup's scope (cut-line items and leftovers). See the fixer's report for the reasons."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0 at 1d88b7b: lint 0 errors (42 warnings, as before), typecheck ok, unit tests 557 files / 6008 passed / 7 skipped, link-check ok, secret-scan clean. docs:check cannot diff origin/main in a worktree, so it was run separately."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (40 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 81 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0, Failures: None"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "First run: 1 failure, plain-words.test.tsx U-074 (the fold took ', until 06:00.'). Fixed in 6275e3f. Rerun: 101 files, 1404 passed."
+  },
+  {
+   "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts)",
+   "result": "38 passed; the config file was removed afterwards and never committed"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock npx tsc -p apps/ui/tsconfig.json --noEmit (after 6275e3f)",
+   "result": "exit 0"
+  },
+  {
+   "command": "Failing-first checks",
+   "result": "Each new case was run against the earlier sources before its fix:\n- The real-daemon case fails at the fixer's head ('Which project: Notes?'). With only the parser fixed it fails on the press: the stand-in model answers 'Site'.\n- The intent.test.ts cases fail (4 cases).\n- The conversation-memory fixup cases fail (2 cases).\n- The active-project fixup case fails: the switch sentence appears twice."
+  },
+  {
+   "command": "bench: node scripts/bench/start.mjs --name fixup-l4-chat-answers --daemon-port 49001 --ui-port 2601 --fresh --provider bench --env FORERUNNER_BENCH_CHAT_NOLOOK=1; node /tmp/frbench/fixup-l4-chat-answers/walk.cjs <worktree>; walk-end.cjs; stop.mjs; rm home",
+   "result": "Walk results, in order:\n1. With one project, 'add a task there: …' adds at once.\n2. 're-check' and 'fix the login: …' are added to Notes at once.\n3. 'add a task to Site: …' adds to Site.\n4. 'there' with two projects asks 'Which project: Notes or Site?'. Pressing Site adds there, with 0 chat model calls.\n5. 'switch to Site' shows one line with Undo: 'Switched the active project to Site. This chat stays about Notes.' The switch sentence appears once (counted).\n6. 'add a task there: …' after the switch adds to Site.\n7. 'Which task should I add the note to?' and 'Add it to Notes or to Site?' are shown as written, with 1 call each.\n8. 'Shall I set …?' is still replaced, at 2 calls. 'yes' gets 'Yes to what? …', with 0 calls.\n9. 'open Site' navigates to Site's Chat.\n\nAt the end, Notes has [Write the about page, Re-check the prices, Fix the login: users cannot sign in] and Site has [Write the shop page, Write the FAQ, Write the about page]. The bench is stopped and its home deleted. Screenshots are in /tmp/frbench/fixup-l4-chat-answers/steps/ and results in /tmp/frbench/fixup-l4-chat-answers/walk.json."
+  }
+ ],
+ "new_problems": [
+  "Before this area, the parser asked 'No project named \"X\". Which project?' or '\"X\" matches several.' for 'switch to X'. Pressing an option there still sends the bare name to the chat model, which is a paid call. The new press path re-parses the asked line with namedProjectId, which finishes only pronoun lines. A line about a name falls back to today's reading. Evidence: agent.ts (the parse block); intent.ts project() and projectIdFor().",
+  "namedProjectId is the registry's active project whenever an earlier turn of this conversation switched (agent.ts, where CommandTurn is built). Example: the person switches to Site in chat, then picks Atlas in the header. 'there' in the same chat then means Atlas, not the Site the conversation named. This is the reviewer's non-blocking point, still open. The fix would read the last project.switch change's target (its change log row) instead of the registry.",
+  "A turn whose reply is a parser question still shows 'Make this a task' under the person's line ('add a task there: write the FAQ', bench step 05). Its reply has no actions, so isOwnRequest offers it. The link predates this area."
+ ],
+ "notes_for_other_areas": [
+  "projectsNamedBy(projects, words) (packages/commands/src/commands/shared.ts) is the strict match for a target named in a line. It matches the id or the whole name, or words held whole or from a word's start in one name. It never matches by word overlap, and never when the words hold more than the name. matchAddTask uses it; matchProjects is unchanged for other commands.",
+  "The option pressed under a parser question: when the turn just before has reply.question with options and no actions, and this line is one of the options and names an active project, ConversationAgent re-parses that turn's human.text with CommandTurn.namedProjectId set to the project. The change's wordsUsed is the line that asked. It is read from the conversation rows, so it also works after a restart.",
+  "CLARIFIES (packages/runtime/src/conversation/claims.ts) is judged before every question pattern of ASKS: which, who or where anywhere in the question; what, when or how as its first word; or a choice with 'or' / 'oder' (not 'or not', 'or leave it', 'oder nicht'). Any new ASKS pattern inherits it.",
+  "Conversation.tsx folds a reply that is its changes' sentences plus whole sentences more into the last change line, before its Undo. A daemon reply that adds a clause to a change sentence ('… This chat stays about Notes.') no longer doubles the change line.",
+  "Suggested UPDATE-LOG addition (the session lead writes it): 'l4-chat-answers fixup: \"add a task to …\" adds there only when the words name a project (\"re-check\", \"fix the login: …\" stay the task, at once with Undo); only \"there\" or \"it\" with several projects asks \"Which project: Notes or Site?\", and the button pressed adds there with no model call; a clarifying question from chat is never replaced; a switch said in another project's Chat shows once with its Undo.'",
+  "Suggested design note (core-experience §3.9, session lead): chat asks only for a pronoun with nothing named ('Which project: Notes or Site?'), and the option pressed finishes the line that asked."
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-l4-chat-answers/keep/walk1-steps/05-05-notes-switch-to-site.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-l4-chat-answers/steps/01-01-one-project-there.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/02-02-re-check.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/03-03-fix-the-login.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/04-04-add-to-site.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/05-05-there-asks.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/06-06-press-site.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/07-07-switch-once.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/08-08-there-after-switch.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/09-09-clarify-which.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/10-10-clarify-choice.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/11-11-asks-in-words.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/12-12-yes.png",
+   "/tmp/frbench/fixup-l4-chat-answers/steps/15-13-open-site.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/commands/test/intent.test.ts 'l4-chat-answers, run L4: the project a line names' > \"without a separator today's reading stays; …\" (renamed from \"…; 'to' + an unknown name asks; …\")",
+   "why": "The fixer's own unmerged assertion that 'add a task to Shop: write the page' asks 'Which project: Notes or Site?' contradicts the spec ('a pronoun target … or chat asks'; 'Without the separator today's reading stays') and U-015. It now asserts today's reading: the task 'Shop: write the page' in the tab's project, with no question."
+  }
+ ]
+}

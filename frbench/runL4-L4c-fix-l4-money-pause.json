@@ -1,0 +1,246 @@
+{
+ "area": "l4-money-pause",
+ "branch": "fix/l4-money-pause",
+ "head_sha": "db2d5dd8ab12adfb1074799b585b9fd722f8fe5d",
+ "commits": [
+  {
+   "sha": "71127f6",
+   "subject": "budget-pause: a 'nothing' the criteria need is nothing (L4-money-101)"
+  },
+  {
+   "sha": "618622c",
+   "subject": "runner: a larger task's wrap-up leaves the rest of the session to the tasks after it (L4-money-102)"
+  },
+  {
+   "sha": "7b59f03",
+   "subject": "executor: a run under the project's budget or the month's cap hears its wrap-up inside it (L4-money-103)"
+  },
+  {
+   "sha": "c58d2df",
+   "subject": "budget-card: a task whose review waits for room says the work is done (L4-money-111)"
+  },
+  {
+   "sha": "1288e80",
+   "subject": "session review: a session review says what it noted, never 'sent back' (L4-money-112)"
+  },
+  {
+   "sha": "cfb152f",
+   "subject": "settings: the review reserve is kept for the critic's reviews; the session budget's default has two decimals (L4-money-109, L4b-left-11)"
+  },
+  {
+   "sha": "804ebda",
+   "subject": "session review: the session's size is its promise, counted once and measured the same (L4-money-104, L4-selftasks-107)"
+  },
+  {
+   "sha": "f229a67",
+   "subject": "lint: import order and safe fixes in the l4-money-pause files"
+  },
+  {
+   "sha": "f6a60ad",
+   "subject": "test: review-waits rows and titles at the project's budget follow L4-money-111"
+  },
+  {
+   "sha": "db2d5dd",
+   "subject": "runner: a hard stop at the session's work budget still ends the session (L4-money-102)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L4-money-101: a report that ends 'Left to do: nothing the criteria require.' was read as one item left, so finished research paused and asked for CHF 0.40 more.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts 'l4-money-pause, run L4: a 'nothing' the criteria need is nothing (L4-money-101)': the composed live-report case, the parse cases and the exact brief line and wrap-up tail",
+   "how": "budget-pause.ts reads a relative-clause 'nothing' (RELATIVE_HEAD: 'nothing [that] the criteria require', 'nothing that the brief still needs'; a still or yet before the verb is not read as work). A general rule ends the patching one phrasing at a time: a one-clause line that starts with nothing or none, names the whole set (WHOLE_SET, not ONE_CRITERION), names no work (NOT_NOTHING) and states no state of the work (WORK_STATE) is empty. WRAP_UP_BRIEF_LINE and wrapUpText (both drivers) now ask for 'only the word nothing when they need nothing more'. ADR 0112 is amended and runtime.md updated.",
+   "check_in_the_app": "Live (bench-live): a researcher task 'Compare three static site hosts ... write hosts.md' with a task budget below its estimate so it hears the wrap-up. If its report ends 'Left to do: nothing the criteria require.', the session page shows no 'paused before' or 'listed one thing left to do' line, the task is reviewed and Done in the same session, and the Inbox has no Continue card. In the model-call log, the brief ends its wrap-up line with \"or only the word 'nothing' when they need nothing more; no optional extras\". The stand-in cannot word the live line (role-player.ts is l4-chat-answers' file in L4c), so this step needs the real model (phase F's F-9)."
+  },
+  {
+   "problem": "L4-money-102: a larger task's clean wrap-up ended the session with part of the work budget unspent (CHF 0.23 of 0.32). The tagline task after it did not run, and three screens said 'the budget is used'.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "packages/runtime/test/oversized-task.test.ts 'l4-money-pause, run L4: a larger task's wrap-up leaves the rest of the session to the tasks after it (L4-money-102)' (both cases); apps/ui/test/real-daemon.test.ts 'l4-money-pause, run L4' L4-money-102; packages/runtime/test/oversize-words.test.ts 'l4-money-pause, run L4'",
+   "how": "runner.ts roomAfterPause decides what a pause at the session's work budget does. It ends the session with budget_exceeded on a hard stop or once the budget takes no new work. It ends with no budget stop ('Ended: 1 paused') when the room left is less than the smallest task after the larger one (queued or after_large). Otherwise the loop goes on, and the re-plan takes the after_large tasks that fit; a task that still does not fit stays after_large. waitsForNextSessionSentence says what the larger task left ('\"B\" (about CHF 0.06) waits for your next session: \"X\" left CHF 0.03 of this one.') from ResultFacts.workLeftChfMicro. It says 'used the rest' only below half a centime. The regression fix db2d5dd keeps a hard stop there ending the session (phase-1 gate, e2e scenario 5).",
+   "check_in_the_app": "Live: session budget CHF 0.40. A researcher task larger than the work budget runs first, then a tagline task of about CHF 0.06. When the larger task wraps up and pauses with room left (e.g. CHF 0.23 spent), the tagline task starts and finishes in the same session. The session page and More > Sessions never read 'Stopped: the budget is used', 'The session's budget is used' or 'used the rest of this one' while the spend is under CHF 0.32. The status reads 'Ended: 1 paused', and the larger task has one Continue card. With a second task too big for what is left, the result reads '\"B\" (about CHF x) waits for your next session: \"<larger>\" left CHF y of this one.'"
+  },
+  {
+   "problem": "L4-money-103: under a project budget of CHF 0.06, a run's start line said 'This run may spend CHF 1.20'. The project's budget then stopped the run with no wrap-up.",
+   "u_ids": [
+    "U-097 (new, session lead files it)"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts 'l4-money-pause, run L4: a run under the project's budget or the month's cap hears its wrap-up inside it (L4-money-103)' (project and month cases); apps/ui/test/real-daemon.test.ts L4-money-103",
+   "how": "EnforcementHooks.outerRemainder reads what the month's cap and the project's budget still allow at their stop lines. It goes through the caps port's own check: what is left less one micro-unit, then one more look per level. It never uses the 80% room or the plan share, and compose.ts is unchanged. LoopAgentDriver.outerRemainder gives the executor access to it. The executor caps the run there when that figure is smaller (runCapSource project/month). It keeps the review's room inside it as BA-4 does, so reviewRoomOf is now priced for tasks without a budget of their own. budgetLineWords says ', what is left of the project's budget' / 'this month's cap'. The pause names that limit's own cap. budgetStopTitle gains '\"X\" paused before the project's budget ran out' / 'this month's cap', and the row reads 'Paused before the project's budget ran out'. The hooks' caps check stays the backstop. ADR 0112 is amended.",
+   "check_in_the_app": "Live: Settings > the project's budget CHF 0.06, then Start with CHF 5.00 on a writer task with no budget of its own. Under Details, the run's first line reads 'This run may spend CHF 0.06, what is left of the project's budget: before a step ...' (or a smaller figure 'less the CHF x kept for its review'). The run hears its wrap-up and pauses ('\"X\" paused before the project's budget of CHF 0.06 ran out: it spent CHF ... and listed N things left to do.'). Costs for the project never pass CHF 0.06. The Run row reads Paused, not stopped by a hard budget refusal."
+  },
+  {
+   "problem": "L4-money-104 with L4-selftasks-107: Details counted the plan two ways ('1 item cut to fit the budget', 'It promised 2 tasks', '0 of 1 planned task done'). The session review measured against a re-priced figure (CHF 0.31) beside 'It promised 3 tasks, about CHF 0.45'.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "packages/runtime/test/oversized-task.test.ts L4-money-102 wait case's 104/107 assertions (no 'cut to fit the budget', 'It promised 2 tasks, about CHF X.', '0 of 2 planned tasks done' against the same CHF X); packages/runtime/test/task-dependencies.test.ts cutPlanToBudget clause cases",
+   "how": "cutClause counts only no_room and after_others items. The critic's plannedItemsOf adds the promised tasks the plan's items do not list. planEstimateOf is the promise's figure plus what joined (promiseOf), so a re-plan's re-priced estimate no longer moves the measured figure. ADR 0116 has a dated note, and critic.md and runtime.md are updated.",
+   "check_in_the_app": "Live: after the LC-C7 session, the session page > Details shows no '(N items cut to fit the budget)' for the task after the larger one. 'It promised 2 tasks, about CHF X.' and 'Session review measured: ... of 2 planned tasks done; ... against an estimate of CHF X' show the same CHF X. In a three-task session whose re-plan re-priced a task, the promise line and the measured line still give the same figure."
+  },
+  {
+   "problem": "L4-money-111: a researcher task finished its work at CHF 0.08 of a CHF 0.15 budget, yet the card title, the notification, the result and the row said it was 'paused at its budget of CHF 0.15'. Only its review was waiting.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/task-budget-all.test.ts BA-3 (re-baselined and extended: task reason, card title, row label, result, notification); apps/ui/test/inbox.test.tsx 'l4-money-pause, run L4: a card whose review waits says the work is done'",
+   "how": "budgetStopTitle(..., { reviewWaits }) gives '\"X\" is done; its review waits for room in its budget', worded by source from the new leaf module session/review-room-words.ts. The runner and fileBudgetStopCard pass it, so the task reason, the card's why and title and the notification follow. PausedTask.reviewWaits gives the result sentence. budgetPauseLabelOf reads 'Review waits for room in its budget' (or 'in the session's budget', 'in the project's budget', 'under this month's cap'). The session task list reads 'Done; its review waits for room in ...'.",
+   "check_in_the_app": "Live: a researcher task with budget CHF 0.15 whose work fits but whose review does not. The Inbox card title, the Tasks row, the notification and the session result say '\"<title>\" is done; its review waits for room in its budget' (the result adds 'of CHF 0.15: continue or cancel it in the Inbox.'). The row reads 'Review waits for room in its budget', and nothing says 'paused at its budget of CHF 0.15'."
+  },
+  {
+   "problem": "L4-money-112 with C6L-19's L3-left-16: a done session's review read 'Session review: sent back for changes (grade 85, 1 finding)', and More > Reviews > Session checks showed 'sent back' and 'to fix'.",
+   "u_ids": [
+    "U-042"
+   ],
+   "failing_test_before": "packages/runtime/test/event-lines.test.ts 'l4-money-pause, run L4' (revise with and without its cause); apps/ui/test/reviews.test.tsx 'l4-money-pause, run L4'; packages/critic/test/session-review.test.ts reviseCause; apps/ui/test/real-daemon.test.ts L4-money-112",
+   "how": "The critic's reviseCause(findings) names a revise's cause: its first finding above low. The runner puts it on critic.session_review as 'noted'. sessionReviewWords (event-lines.ts) words a session review as accepted, needs you, the person's wait, or what it noted ('noted' when there is no cause), and views.ts uses it. The Reviews tab words a session check 'accepted', 'noted' or 'needs you' (warn tone unless accepted) and its findings 'noted'. The tab's change is local, and plain-words.ts is unchanged.",
+   "check_in_the_app": "Live: a session whose one task was sent back once and accepted at more than 1.5 times its estimate. Under Details, the line reads 'Session review: planned tasks cost CHF ..., over their estimate of CHF ... by NN%, with one task tried twice (grade 85, 1 finding).' More > Reviews > Session checks shows 'noted' with the finding 'noted', and never 'sent back' or 'to fix'."
+  },
+  {
+   "problem": "L4-money-109 and L4b-left-11: Settings and the caps note said the session's reserve is 'kept for review and fixes', but fixes are paid from the work budget. Settings also said '(CHF 5 unless set)' without two decimals.",
+   "u_ids": [],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts L4-money-109 (GET /settings, both rows); packages/commands/test/model-settings.test.ts and packages/billing/test/caps.test.ts 'l4-money-pause, run L4'",
+   "how": "The words in settings-view.ts, in commands SETTING_SPECS.session_reserve_share.description (which chat reads), in caps.ts' note and in the budget.ts/caps.ts comments are now 'kept for the critic's reviews'. Settings reads '(CHF 5.00 unless set)', and the fake daemon's fixture follows.",
+   "check_in_the_app": "Settings > Advanced for a project: the Review reserve row reads 'Share of each session budget on <project> kept for the critic's reviews. Shown for information: sessions keep 20% whatever is stored here', and the budget row reads '(CHF 5.00 unless set)'. In chat, 'what is session_reserve_share?' gets the same wording."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-money-106: a reply cut off at its length limit gets no person line with its CHF, and a file-writing run is told only 'Answer again, more briefly' (loop.ts typed reply_cut event, executor onEvent line, cutOffNote file note, stand-in max_tokens mode). Its log line and file note are on the 'never cut' list.",
+   "why": "I ran out of time and context after the eight items above and two full validation rounds. Nothing for it is built or committed. The session lead should give it to the next sub-run that may touch loop.ts and executor.ts onEvent (L4-money-106's root causes: loop.ts:910-948 and :1331-1338, executor.ts onEvent's mapping)."
+  },
+  {
+   "problem": "L4-github-110: the session log's 'Plan: 1 task' beside 'It promised 3 tasks', the 'note for the next session' words for a note this session used, and the Overview's doubled 'Waiting for you: approve the plan'. The log half is on the 'never cut' list.",
+   "why": "Time and context, as above. Not started. The roots are unchanged: runner.ts' session.planned emit and StaticPlanner's first-session summary, views.ts session.planned/task.notes, ProjectPage.tsx planBanner and IntakeBanner.tsx."
+  },
+  {
+   "problem": "L4-money-113: Left-to-do items are cut at 200 characters inside a word, and emptyChangeSummary's sentence split misses a closing quote.",
+   "why": "Not built (time). Its failed-card half was on the cut line; the item-length half was not."
+  },
+  {
+   "problem": "L4-money-105: a review-only pass is priced at the whole remaining estimate, not at its review part.",
+   "why": "On the cut line; not built."
+  },
+  {
+   "problem": "L4-money-107: node --test runs every script directly in test/, so a helper that never exits blocks the review.",
+   "why": "Not built (time)."
+  },
+  {
+   "problem": "L4-money-108: settleSessions/removeHomes in stop-by, capabilities-wiring and the older budget-pause and oversized-task cases.",
+   "why": "On the cut line. All my new describes use settleSessions and removeHomes; the older cases are unchanged."
+  },
+  {
+   "problem": "L4-money-110: a run again's spend is missing from the person-level lines.",
+   "why": "On the cut line; not built."
+  },
+  {
+   "problem": "L4a-left-7: a critic review that meets the subscription's plan share is still a budget pause, not the credential stop 'share'.",
+   "why": "Not built (time). It needs the critic's review path routed through l4-cred-engine's share stop."
+  },
+  {
+   "problem": "Bench walks with screenshots, before and after.",
+   "why": "Not done. I spent the time on the composed and real-daemon tests at the person's routes, which are the before/after evidence here (each failed first). Live check 4's screenshots under /tmp/frbench/live4/pause/p1/steps/ and /tmp/frbench/live4/l3/ show the before state. No bench was started and no bench home was left behind."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0: lint, path lint, typecheck, 557 unit files / 5997 tests passed (7 skipped), docs:links and secrets:scan pass; the inner docs-check could not diff against origin/main, so it was run separately with the base"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (42 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped (Postgres-backed, expected), 30 tests passed. An earlier run failed phase1-gate; that was a regression from 618622c, fixed in db2d5dd."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped. An earlier run failed scenario 5 (same regression, fixed in db2d5dd)."
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 101 files, 1395 tests passed"
+  },
+  {
+   "command": "cd apps/ui && npx playwright test --config playwright.local.config.ts",
+   "result": "38 passed"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing found; working tree clean; fix/l4-money-pause at db2d5dd"
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/wrap-up.test.ts 'd1109-oversize-pause, run C: the words of a good wrap-up (OP-1)' EXACT_62 and the brief's line",
+   "why": "L4-money-101 changes the model-facing words to 'or only the word nothing when they need nothing more' (both drivers). Old text: 'as a list with the next step first, or nothing; no optional extras' / \"or 'nothing'\"."
+  },
+  {
+   "test": "packages/runtime/test/budget-pause.test.ts W15-14 and W15-16 wrap-up text assertions",
+   "why": "Same new wrap-up words (L4-money-101)."
+  },
+  {
+   "test": "packages/runtime/test/oversized-task.test.ts 'd1109-oversize-start' first case and 'd1109-oversize-pause: the next Start continues it'",
+   "why": "L4-money-102: the wrap-up left room, so stopReason is 'completed' (old: /^budget_/, 'Stopped: the budget is used')."
+  },
+  {
+   "test": "packages/runtime/test/oversized-task.test.ts 'A, then the larger task ... B comes after it and runs with what it leaves' (renamed) and 'with the larger task at the highest priority it runs first, and the others take what it leaves' (renamed)",
+   "why": "L4-money-102: B runs with what the larger task left (started [a, big, b], B done; old: B ready, 'used the rest of this one'). The intent is kept and asserted on the room left."
+  },
+  {
+   "test": "packages/runtime/test/task-dependencies.test.ts two OP-0 cases",
+   "why": "Sentence now '\"B\" (about CHF 0.24) waits for your next session: \"Build the shop\" left CHF 0.04 of this one.' (old: 'used the rest of this one')."
+  },
+  {
+   "test": "packages/runtime/test/where-last-run-stopped.test.ts OS-7 case",
+   "why": "Facts given workLeftChfMicro: 0 to match their stopReason budget_exceeded; the expected sentence is unchanged."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'd1109-oversize-pause, run C' OP-0 case (renamed)",
+   "why": "L4-money-102: order [a, big, b] and B done (old: B ready, 'used the rest of this one')."
+  },
+  {
+   "test": "packages/runtime/test/budget-pause.test.ts 'a stop at the month's cap names the month' (3 cases)",
+   "why": "L4-money-103: the run now wraps up inside the month's cap. The sentence becomes 'paused before this month's cap of CHF 0.10 ran out', the card title '\"Members list\" paused before this month's cap ran out', the row 'Paused before this month's cap ran out', and the Run outcome 'paused' (old: a hard stop, budget_exceeded). 'Members page'/'Members map' now work until their wrap-up."
+  },
+  {
+   "test": "packages/runtime/test/task-budget-all.test.ts BA-3 review-waits case",
+   "why": "L4-money-111: the reason and title are '\"Write the footer\" is done; its review waits for room in its budget' (old: 'paused at its budget of CHF 0.06'). The intent is kept and the assertions are extended."
+  },
+  {
+   "test": "packages/runtime/test/budget-pause.test.ts 'a task paused at the project's budget goes on only once that budget changes' and 'a review refused at the project's budget pauses the task'",
+   "why": "L4-money-111: the review-waits row and title read 'Review waits for room in the project's budget' / '\"X\" is done; its review waits for room in the project's budget' (old: 'Paused at the project's budget' / 'paused at the project's budget of CHF 0.01')."
+  },
+  {
+   "test": "apps/ui/test/fixtures.ts settings row",
+   "why": "L4b-left-11: '(CHF 5.00 unless set)'."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/live4/pause/p1/steps/09-c7-20-session-page-ended.png",
+   "/tmp/frbench/live4/pause/p1/steps/10-c7-21-session-page-details.png",
+   "/tmp/frbench/live4/pause/p1/steps/30-c5-11-sessions-via-more.png"
+  ],
+  "after": []
+ },
+ "new_problems": [
+  "packages/runtime/src/conversation/project-facts.ts:187-193 (the chat's last-session block, which the model reads) still says 'Paused: \"X\" at its budget ...' for a task whose review waits. The fix is L4-money-111's sibling, but it is chat's model-facing text; the next chat area should add the reviewWaits form and bump the prompt version.",
+  "The card notification for a review-waits card is cut at 60 characters after the project-name prefix ('Write the footer project: \"Write the…\" is done; its review…'). The producer (notifications/producers.ts) cuts the end of the title as well as the task title.",
+  "The project's Sessions list and the session page now say 'Ended: 1 paused' after a larger task's clean wrap-up left too little room. The design names no other words for this case; the session lead may want a design §3.7 line."
+ ],
+ "notes_for_other_areas": [
+  "l4-chat-answers (merge after this): this area changed none of plain-words.ts, role-player.ts, compose.ts or the fake daemon's chat branch. The real-daemon describe 'l4-money-pause, run L4' sits at the end of real-daemon.test.ts.",
+  "New exports: reviewRoomWords (session/review-room-words.ts, a leaf module the UI's fake daemon can load); budgetStopTitle(task, stop, rate, { reviewWaits }); PausedTask.reviewWaits; ResultFacts.workLeftChfMicro; waitsForNextSessionSentence(titles, larger, { left, estimate }); budgetLineWords(line, chf, room, outer?: 'project'|'month'); EnforcementHooks.outerRemainder(scope, ceiling) and LoopAgentDriver.outerRemainder; sessionReviewWords (event-lines.ts); the critic's reviseCause, promiseOf and plannedItemsOf. critic.session_review carries 'noted' on a revise.",
+  "Runtime behaviour other areas read: a pause at the session's work budget no longer always ends the session. roomAfterPause in runner.ts ends it on a hard stop or when it takes no new work (budget_exceeded), ends it with no budget stop when the room is too small for the next task ('Ended: 1 paused'), else goes on. A run's cap can now be the project's or month's remainder: runCapSource 'project'/'month', and the card source is project/month with stopped_by wrap_up.",
+  "l4-cred-screens (L4d): start-check.ts is unchanged (L4-money-105 not built), so waitingWorkUsdMicro can be added without conflict.",
+  "l4-starts-sessions (L4g): result.ts' 'left for next time' builder now uses workLeftChfMicro. stop-words.ts is unchanged.",
+  "Suggested UPDATE-LOG line (not written): '2026-11-22 l4-money-pause (run L4): a report whose Left to do says nothing the criteria need goes to review; a larger task's wrap-up leaves the rest of the session to the tasks after it; a run under the project's budget or the month's cap hears its wrap-up inside it; a task whose review waits says the work is done; a session review says what it noted, never sent back; the reserve is kept for the critic's reviews; the session's size is its promise in Details (ADR 0112 amended 2026-11-22).'",
+  "U-entry Check in the app steps for the session lead: U-089 (a) and (b) and its 104/107 additions, U-042's review-waits and session-review lines, and U-097 (outer limits) are written in this report's fixed[].check_in_the_app."
+ ]
+}

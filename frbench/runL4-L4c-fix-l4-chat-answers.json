@@ -1,0 +1,319 @@
+{
+ "area": "l4-chat-answers",
+ "branch": "fix/l4-chat-answers",
+ "head_sha": "c41bfdd97b699e7b3e4217d1c679f2e58f246849",
+ "commits": [
+  {
+   "sha": "31401d21a71c3ca76c59e8bb1e46fd9416ead38d",
+   "subject": "chat: chat never asks a yes in words, never writes the app's lines (L4-chat-102, L4-selftasks-118, L4-chat-112)"
+  },
+  {
+   "sha": "95f89920bd5e26e7437207cbd347c9bc8e8c65d7",
+   "subject": "chat: chat looks a record up before it says it is missing (L4-chat-101)"
+  },
+  {
+   "sha": "40aed74298d46301e65e29946ae319bae2f5a1ca",
+   "subject": "chat: 'add a task to <project>' adds there, 'there' is never a title (L4-selftasks-119, L4-chat-104)"
+  },
+  {
+   "sha": "f29db9980809a9679674e60272bfc2f07779c159",
+   "subject": "chat: 'open <project>' opens it; a switch in a tab says the chat stays; no command name in project_create (L4-chat-104, L4-creds-27)"
+  },
+  {
+   "sha": "5117baa50736b4d130fb4e6d38e287a382313304",
+   "subject": "ui: a settled chat reply keeps its paragraphs and lists (L4-chat-111, L4-selftasks-124)"
+  },
+  {
+   "sha": "afe1e72cb9cbf2f4beb78119ce0b9297de1ed3fc",
+   "subject": "chat: a cancelled wait is never promised to go on in chat or on the Overview (L4-chat-103)"
+  },
+  {
+   "sha": "bf4542a661cf7d5da006cf9e33b0359eb20fad9c",
+   "subject": "recall: hit lines say what the screens say, and the From line follows the hits (L4-chat-106, L4-chat-107, L4-chat-108)"
+  },
+  {
+   "sha": "67a4853502eb391ccc4348e1026aa2e24908ded0",
+   "subject": "chat: a status question is no comparison or review, and a plain sentence about a stronger model stays (L4b-left-7, L4b-left-8)"
+  },
+  {
+   "sha": "c41bfdd97b699e7b3e4217d1c679f2e58f246849",
+   "subject": "docs: the stand-in's no-look mode and conversation-agent 1.5.1 in testing.md; import order (L4-chat-101, L4-chat-108)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L4-chat-101: the fast model said a recorded thing was not there ('There is no README task' for a task renamed since) or offered to look ('Should I look …?') without looking it up.",
+   "u_ids": [
+    "L4-chat-101"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'l4-chat-answers, run L4' > \"'what happened to the README task?' answered without a lookup is nudged once; the model looks it up and names 'Write the guide' with its merge date (L4-chat-101)\" and \"'which licence did we choose?' answered 'I can't see …' is looked up after the nudge ...\"; apps/ui/test/real-daemon.test.ts 'l4-chat-answers, run L4' > \"POST /chat on the stand-in's 'answers without looking' mode: ...\"",
+   "how": "claims.ts gains the 'absent' claim kind (English and German patterns: 'There is no <name> task', 'I can't see/find', 'I haven't searched', 'Should I look'); in a turn that offered recall and called neither recall tool it gets one nudge (ABSENT_NUDGE: call recall with the person's words and other words, never ask whether to look), never replaced by 'Nothing changed'; the step 'Looking through everything recorded…'. CHAT_RECALL_RULES and conversation-agent 1.5.1 say a lookup reads only and needs no yes, never offer to look, never say where something probably is without recall project all. The facts' task line names a task's earlier title ('(earlier \"X\")', earlierTitlesOf). The stand-in's FORERUNNER_BENCH_CHAT_NOLOOK mode plays the live behaviour.",
+   "check_in_the_app": "Real model: in a project, rename a task (Tasks, Edit: 'Write the README' -> 'Write the guide'). In its Chat tab ask 'what happened to the README task?'. The answer names 'Write the guide' (earlier 'Write the README') with its state or merge date and never says 'There is no ...' or asks whether to look; the waiting line shows 'Looking through everything recorded…' when it had to be nudged."
+  },
+  {
+   "problem": "L4-chat-102 / L4-selftasks-118: chat asked for a yes in its own words with no card (or wrote its own read-back 'Make X high priority?'), so the typed 'yes' met 'Yes to what?' with no next step.",
+   "u_ids": [
+    "L4-chat-102",
+    "L4-selftasks-118"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts 'l4-chat-answers, run L4' > 'claimOf reads a yes asked in words, a read-back the model wrote, ...', 'a yes asked in words with no tool call is nudged once; ...', 'a reply that still asks in words after the nudge is replaced; ...', \"'yes' after a plain answer gets 'Yes to what?' with its next step ...\", 'a read-back the model wrote itself is nudged; ...'; apps/ui/test/real-daemon.test.ts 'l4-chat-answers, run L4' > 'POST /chat: a yes asked in words is nudged and put right ...'; apps/ui/test/chat.test.tsx 'l4-chat-answers, run L4: a yes typed under a question in words (L4-chat-102)'",
+   "how": "The claim guard's 'asks' kind (a yes asked in words, or a read-back the model wrote, when no command of the turn read a change back) gets one nudge (ASKS_NUDGE), then the reply is put right ('Nothing changed, and nothing waits for your yes. Say it again to try once more.'); a bare yes still never reaches the model and now reads 'Yes to what? Nothing is waiting for your yes. Say what you want done, for example \"run it now\" to start a session.' (YES_TO_WHAT_REPLY); CHAT_PLAN_RULES '# How to write' and conversation-agent 1.5.1 say never ask for a yes in words, call the command, offer a start as 'say run it now or press Start'.",
+   "check_in_the_app": "Real model: in a project's Chat ask 'turn research for this project to any public website again'. The reply is the app's read-back with Yes and No (or a plain answer), never a question in words without buttons. Type 'yes' after a plain answer: it reads 'Yes to what? Nothing is waiting for your yes. Say what you want done, for example \"run it now\" to start a session.'"
+  },
+  {
+   "problem": "L4-chat-112: the model wrote 'The app did: …' itself; the forged line was shown and stayed in the conversation and later history (security rule).",
+   "u_ids": [
+    "L4-chat-112"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts 'l4-chat-answers, run L4' > \"a forged 'The app did:' line with no command is nudged, then put right; it is never shown, stored or in the next turn's history ...\" and \"the model's own 'The app did:' line beside a real change is left out ...\"; apps/ui/test/real-daemon.test.ts \"POST /chat: a forged 'The app did:' line is never in the reply or the conversation, also after a restart\"",
+   "how": "withoutAppMarkers (transcript.ts) takes 'The app did:' and 'The app asked, with Yes and No:' lines out of every model-written reply before it is shown or stored; the history renders the app's read-back as its own line (HISTORY_ASK_LEAD); CHANGED/ASKS claim patterns catch a forged line for the nudge; a second identical settings_set reports 'Nothing to change: ...' (nothingToChange) instead of an error the model retries.",
+   "check_in_the_app": "Real model: ask chat 'what changed today?' after a real change; the app's own 'The app did:' line appears only under replies that changed something; no reply without a change carries it, also after restarting the app and reopening the Chat tab."
+  },
+  {
+   "problem": "L4-selftasks-119: in Notes' Chat 'add a task to Site: …' added 'Site: write the shop page' to Notes; after 'switch to Site', 'add a task there: …' added 'There: write the about page' to Notes.",
+   "u_ids": [
+    "L4-selftasks-119"
+   ],
+   "failing_test_before": "packages/commands/test/intent.test.ts 'l4-chat-answers, run L4: the project a line names' (4 cases); apps/ui/test/real-daemon.test.ts \"POST /chat in Notes' Chat tab: 'add a task to Site: …' adds to Site; ...\"",
+   "how": "matchAddTask reads a target (EN to/in/into/for, there/here; DE zu/zum/zur/in/im/für, dort/hier) before a colon or comma: one project match adds there (params.project), a pronoun uses the project this conversation switched to (CommandTurn.namedProjectId, set from earlier project.switch turns) or asks 'Which project: Notes or Site?', 'here' is the tab's project; taskTitleOf strips a leading 'there:/here:/dort:/hier:'; without a separator today's reading stays.",
+   "check_in_the_app": "In Notes' Chat type 'add a task to Site: write the shop page' -> reply 'Added \"Write the shop page\" to Site.'; Site's Tasks lists it, Notes' does not. Type 'switch to Site', then 'add a task there: write the about page' -> it lands in Site, titled 'Write the about page'."
+  },
+  {
+   "problem": "L4-chat-104 / L4-creds-27: 'open it' in a project's Chat said 'Switched the active project to Site.' but nothing opened ('it' matched 'site'); project_create's definition told the model to 'open it with project.switch'.",
+   "u_ids": [
+    "L4-chat-104",
+    "L4-creds-27"
+   ],
+   "failing_test_before": "apps/ui/test/active-project.test.tsx \"l4-chat-answers, run L4: 'open <project>' opens it (L4-chat-104)\"; packages/commands/test/intent.test.ts \"'open it' is never Site by the 'it' in its name; ...\"; apps/ui/test/real-daemon.test.ts \"POST /chat: project_create's definition names no command and only tools the model has; ...\"",
+   "how": "Conversation.tsx navigates to /projects/<target>/chat after an 'open …' line whose reply carries project.switch; matchProjects never matches a pronoun or deictic word and matches at word starts; 'open it' resolves to the project the conversation switched to or asks 'Which project?'; a switch from another project's tab adds 'This chat stays about <tab>.'; PROJECT_CREATE_DESCRIPTION promises only what happens and says 'To open it for the person, call project_switch.'",
+   "check_in_the_app": "In Notes' Chat type 'open Site': the page opens Site's Chat tab. Back in Notes' Chat type 'switch to Site': the reply says 'Switched the active project to Site. This chat stays about Notes.' and the tab stays on Notes."
+  },
+  {
+   "problem": "L4-chat-111 / L4-selftasks-124: a settled chat reply glued its paragraphs and list lines into one block.",
+   "u_ids": [
+    "L4-chat-111",
+    "L4-selftasks-124"
+   ],
+   "failing_test_before": "apps/ui/test/rich-text.test.tsx 'l4-chat-answers, run L4: a settled reply keeps its paragraphs and lists (L4-chat-111)'",
+   "how": "inAppText (apps/ui/src/lib/plain-words.ts) collapses only runs of spaces and tabs, trims line ends and caps blank runs at one blank line, so newlines survive into the rich-text renderer.",
+   "check_in_the_app": "Real model: ask 'what is left?' in a project with several tasks; a reply with an intro, a list and a closing line shows them as separate paragraphs and list lines after it settles and after a reload."
+  },
+  {
+   "problem": "L4-chat-113: a reply named an internal tool ('The session_last lookup also reported no session').",
+   "u_ids": [
+    "L4-chat-113"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts 'l4-chat-answers, run L4' > 'the model is told, word for word: only the app writes its lines, never ask for a yes in words, never name a tool or narrate calls (L4-chat-102, L4-chat-112, L4-chat-113)'",
+   "how": "CHAT_PLAN_RULES '# How to write' (in the quick and, through the shared system part, the thorough request) says: 'Never name a tool or a lookup (recall, recall_open, session_last, task_get, tasks_list, files_list, answer_thoroughly or any name with an underscore): say what you read in the person's words ...' and 'Say what is true now ...; never describe your tool calls ...'; conversation-agent 1.5.1 'How you answer' says the same. Asserted verbatim.",
+   "check_in_the_app": "Real model: ask 'what did the last session do?' and 'why did it fail?' in a project with a failed session; no reply contains a word with an underscore or a tool name."
+  },
+  {
+   "problem": "L4-chat-103: after Cancel on a session waiting to go on, chat's 'summary' and the chat model's facts still said '...; then your session goes on.', and the Overview's Last result kept it until a reload.",
+   "u_ids": [
+    "L4-chat-103",
+    "L4-creds-8"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts \"POST /chat 'summary' and the chat model's facts read a cancelled wait's result as '...; then it runs at your next Start.', also after a restart\"; apps/ui/test/project.test.tsx 'l4-chat-answers, run L4: Last result after Cancel (L4-chat-103)'",
+   "how": "lastSessionNow (project-facts.ts) runs the stored last_session.summary through resultAfterWait for the first message and session_last; the commands' resultNow port (compose.ts) does the same for chatProjectSummary and the spoken text; SummaryCard's reload key includes this project's running entries (useRunning), so the entry Cancel removes reads Last result again; the fake daemon plays it.",
+   "check_in_the_app": "With a session waiting for Claude's limit (bar reads '… waiting until HH:MM, then it goes on'), press Cancel on the Overview. Without reloading, Last result reads '…; then it runs at your next Start.'; in Chat type 'summary' and ask 'what happened in the last session?': neither says 'then your session goes on'; the same after restarting the app."
+  },
+  {
+   "problem": "L4-chat-106: recall's session hit left out a task that failed in the same session and said 'How it ended: Ended: 1 task needs you.', so the thorough pass called a true earlier answer unconfirmed.",
+   "u_ids": [
+    "L4-chat-106"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'l4-chat-answers, run L4' > \"a session that did one task and failed another names both on its hit, as recall_open does; 'How it ended' says what waits now, never 'Ended:' twice or 'Done' beside a failure (L4-chat-106)\"",
+   "how": "recall.ts sessionDid names the failed tasks after the done list ('Did 1 task: \"Make the events calendar\"; \"Write the welcome page\" failed.', counts past 200 characters); sessionRowView gets blockedNow (stillBlocked); howItEnded drops the second 'Ended:' and says nothing for 'Done' beside a failure; recall_open says the same; the fixture has the runner's handoff shape (blocked).",
+   "check_in_the_app": "Real model: after a session that finished one task and failed another, ask chat 'what did the session of <day> do?' and then 'are you sure the welcome page failed?': the answer names both tasks, the failed one as failed, and the thorough pass does not call it unconfirmed."
+  },
+  {
+   "problem": "L4-chat-107: recall's card hit left out what a questions card asked, so chat said the records did not say what the writer asked.",
+   "u_ids": [
+    "L4-chat-107"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'l4-chat-answers, run L4' > \"an answered questions card's hit line holds what it asked and the answer; a planted line in a question stays inside the data envelope, flagged (L4-chat-107)\"",
+   "how": "askedOf starts a person_questions card's hit detail with 'It asked: <questions joined by | , cut at 120>', then 'Answer: …', then the outcome; other cards keep their line (their title is the question). The result stays inside the data envelope and the injection scan (a planted question is flagged with the NOTE line).",
+   "check_in_the_app": "Real model: answer a questions card ('Which recipes go on the first page?' -> 'The three soups'), then ask chat 'what did the writer ask about the first page?': the reply quotes the question and the answer."
+  },
+  {
+   "problem": "L4-chat-108: a reply that rested on recall's hit lines had no From line (only records opened with recall_open became sources).",
+   "u_ids": [
+    "L4-chat-108"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'l4-chat-answers, run L4' > 'a reply that rests on a hit line it did not open names that record as its source: ...' and 'namedSources: a weak hit named only by its date is not a source; ...'; apps/ui/test/real-daemon.test.ts \"POST /chat/stream on a reply from recall's hit line (no recall_open): reply.sources holds the card, and GET /projects/:id/conversation keeps it after a restart\"",
+   "how": "RecallScope.seen keeps every hit of the turn with its strength; namedSources names opened records first, then hits not opened by title or earlier title, by date only when strong and alone on its day, never a name found only inside another source's title; at most three, none twice. ADR 0114 amended 2026-11-22.",
+   "check_in_the_app": "Real model: ask 'what did I answer about the opening hours?' after answering such a card; under the reply a 'From:' line links the card (Inbox, Answered), also when the model did not open the record; reload the Chat tab and restart the app: the From line stays."
+  },
+  {
+   "problem": "L4b-left-7 / L4b-left-8: needOfLine read status questions ('how long has it been in review for?', 'how does this compare?') as review/comparison, putting a paid ask line under a quick status answer; withoutWordsOffer removed every sentence naming a stronger model.",
+   "u_ids": [
+    "L4b-left-7",
+    "L4b-left-8"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-depth-words.test.ts 'needOfLine finds a failure, a plan, a comparison, a review or many sessions, ...' and 'offersInWords reads a question ...; withoutWordsOffer takes those sentences out'",
+   "how": "A comparison needs what it compares ('compare the two …', 'compare X with Y'); 'in review' and 'review for' are not a review; withoutWordsOffer takes out a sentence naming a stronger model only when it is the offer's question or in that question's paragraph.",
+   "check_in_the_app": "Real model: ask 'how long has it been in review for?' about a task in review: a quick answer with no 'This needs a stronger model … Go ahead?' line under it."
+  },
+  {
+   "problem": "L4b-left-10: the conversation-agent principal needed this area's bump from 1.5.0.",
+   "u_ids": [
+    "L4b-left-10"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts 'the model is told, word for word: ... (L4-chat-102, L4-chat-112, L4-chat-113)' (expects version 1.5.1)",
+   "how": "evals/registry/principals/conversation-agent.md is 1.5.1 (the app's two lines, a bare yes never reaches the model, a lookup needs no yes, never name a tool, never ask for a yes in words); CHAT_THOROUGH_RULES' look-it-up sentence was not added again.",
+   "check_in_the_app": "Nothing to click: Settings > Advanced (if shown) or the model-call log names conversation-agent 1.5.1 for chat turns."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-chat-105: after Make one project, the closed project's lessons never reach the kept project's sessions (memory retrieval takes one project id).",
+   "why": "Cut line item. It needs a project-id set through packages/memory retrieval and the session brief builder plus a composed join/Undo test; there was no room for it after the never-cut items and the full validation. Root cause unchanged: packages/memory/src/retrieval.ts:180/:214 compare r.project_id with one id."
+  },
+  {
+   "problem": "L4-chat-109: recall ranks the person's own question lines above the record asked about, cuts a multi-question card's later answers at 160 characters and centres the snippet on the earliest term.",
+   "why": "Cut line item (golden set). Not started; the recall-rank golden set (recall-rank.test.ts) is unchanged and green. L4-chat-107's 'It asked: …' line makes the per-answer cut more relevant for cards with several long questions."
+  },
+  {
+   "problem": "L4-chat-113's code check (scrub or flag tool names in a reply).",
+   "why": "Cut line item. The prompt sentence (never cut) is in CHAT_PLAN_RULES and conversation-agent 1.5.1 and asserted verbatim; no reply-side check was built."
+  },
+  {
+   "problem": "L4-chat-101's code-run recall fallback (the app runs recall itself when the model still says 'not there' after the nudge).",
+   "why": "Cut line item. The nudge and prompt lines (never cut) are built and tested; the fallback was not."
+  },
+  {
+   "problem": "L4-chat-104's 'switch' Open link ('Switched the active project to Site. This chat stays about Notes.' with an Open Site link).",
+   "why": "Cut line item. The 'This chat stays about <tab>.' clause, 'open <project>' opening it, the pronoun rule and the definition without a command name are done; the reply carries no link (chat replies have no link slot yet)."
+  },
+  {
+   "problem": "L4a-left-6: L4-creds-6's composed test covers only the not-offered case (plan-form footer, ask line on an answered subscription chat, ledger row kind subscription/planUsageShare).",
+   "why": "A test-only extension of l4-cred-engine's composed test (cred-world.ts); not reached in this run. No behaviour change was found or needed."
+  },
+  {
+   "problem": "L4b-left-9: task.dependencies' dependenciesNextLine appends previewWork's line through afterMove when the task could already run; with the hands-off setting on and no session it may promise more than happens.",
+   "why": "Not investigated within this run (needs a composed case with start_by_itself on and the previewWork port); packages/commands/src/commands/task.ts:1954-1990 unchanged."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "green after sorting compose.ts's import: lint 0 errors, typecheck ok, unit 557 files / 6002 passed, 7 skipped; link-check ok; secret-scan clean (docs:check cannot diff origin/main in a worktree)"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (40 files) after the testing.md note"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped; 30 tests passed, 81 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0: Failures: None"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 101 files, 1401 passed"
+  },
+  {
+   "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts)",
+   "result": "38 passed (config file removed afterwards, never committed)"
+  },
+  {
+   "command": "npx vitest run --root apps/ui --config vitest.config.ts test/real-daemon.test.ts -t \"l4-chat-answers|d1109-chat-recall\"",
+   "result": "8 passed (each new case verified failing at the previous HEAD)"
+  },
+  {
+   "command": "bench: node scripts/bench/start.mjs --name fix-l4-chat-answers --daemon-port 48981 --ui-port 2581 --fresh --provider bench --env FORERUNNER_BENCH_CHAT_NOLOOK=1; node /tmp/frbench/fix-l4-chat-answers/walk.cjs <worktree> after; stop.mjs; rm home",
+   "result": "after walk: tasks land in Site (Notes empty, no 'There:' title); 'open Site' and 'open it' open Site's Chat; the switch says 'This chat stays about Notes.'; the asked yes is put right and 'yes' gets 'Yes to what? ... \"run it now\" ...'; the forged 'The app did:' line is gone; the past question is looked up after the nudge and shows 'From: add a task to Site: write the shop page (22 Nov)' for a hit it did not open. Bench stopped, home deleted."
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "empty; working tree clean; fix/l4-chat-answers = HEAD c41bfdd"
+  }
+ ],
+ "new_problems": [
+  "The walk's step 08 cannot show paragraphs on the bench: the chat input sends on Enter and the typed '\\n' arrive as spaces, so the stand-in echoes one line (L4-chat-111 is proven by rich-text.test.tsx, not by the walk).",
+  "The stand-in's recall (role-player recallPlay) never passes project 'all', so 'what happened to the shop page task?' asked in Notes about a Site task finds only Notes' conversation line; a real model told by CHAT_RECALL_RULES to recall with project all may do better. Worth one live-check question.",
+  "/tmp/frbench/fix-l4-chat-answers/walk.cjs reads sources as reply.sources.records, but GET /projects/:id/conversation serves reply.sources as the array itself, so the walk JSON shows no sources even when the From line is drawn (seen on the screenshot 10-after-10-past-question.png).",
+  "When the stand-in quotes a whole card hit line, the outcome names the task ('\"Ask for the opening hours\" is done.'), so the task hit becomes a second source beside the card; correct under the naming rule, but a real model that quotes outcomes will list the task too."
+ ],
+ "notes_for_other_areas": [
+  "CommandTurn.namedProjectId (packages/runtime/src/loop/ports.ts) and IntentContext.namedProjectId (packages/commands/src/intent.ts): the project an earlier turn of this conversation switched to; pronouns ('there', 'it', 'dort', 'es') resolve to it or ask 'Which project: …?'. matchProjects (commands/shared.ts) never matches a pronoun and matches at word starts.",
+  "CommandPorts.resultNow?(projectId, since, text) (packages/commands/src/types.ts), composed from the daemon's resultAfterWait; chatProjectSummary and the spoken summary read the last result through it. lastSessionNow(store, project, chf) in conversation/project-facts.ts is the chat facts' equivalent.",
+  "Claim guard (conversation/claims.ts): claimsOf(text) returns every claim (asked, changed, absent, asks); ASKS_NUDGE, ABSENT_NUDGE and LOOKING_STEP are exported; each kind is nudged once a turn inside CHAT_MAX_MODEL_CALLS.",
+  "withoutAppMarkers(text) and HISTORY_ASK_LEAD (conversation/transcript.ts): only the app writes 'The app did: …' and 'The app asked, with Yes and No: …'; any new reply path must run model text through withoutAppMarkers (security rule).",
+  "nothingToChange(reason) (packages/commands/src/registry.ts) and ToolOutcome.unchanged: a no-op command result the model reads as 'Nothing to change: …', not an error.",
+  "RecallScope.seen (conversation/recall.ts) keeps every hit of a turn with its strength; namedSources(reply, scope, tz, now) now takes the scope (opened, then seen hits).",
+  "Bench: FORERUNNER_BENCH_CHAT_NOLOOK=1 (testenv/src/bench/role-player.ts, chatNoLook) plays a fast model that says 'There is no record … Should I look?' first, then recall and an answer from the hit line without recall_open.",
+  "conversation-agent principal is 1.5.1 after this area; l4-selftasks-chat (or the next area changing it) bumps to 1.5.2. The YES_TO_WHAT_REPLY sentence ends 'for example \"run it now\" to start a session.'; real-daemon.test.ts keeps it as YES_TO_WHAT_L4.",
+  "This area decided no open owner question; it kept design §3.9's rule that a bare yes never reaches the model (D-L4-23) and only added the next step to 'Yes to what?'.",
+  "Suggested UPDATE-LOG line (session lead writes it): 'l4-chat-answers (run L4c): chat looks a record up before it says it is missing and never asks whether to look; a yes asked in words is nudged into the app's read-back and a typed yes with nothing waiting says what to do; only the app writes \"The app did:\"; \"add a task to <project>\" adds there and \"open <project>\" opens it; a cancelled wait is never promised to go on (Chat, summary, Overview); recall's lines name a session's failed tasks and a card's question, and the From line names hits the reply did not open; settled replies keep paragraphs; conversation-agent 1.5.1.'",
+  "Suggested design note (docs/design/core-experience.md §3.9, session lead): 'Yes to what? Nothing is waiting for your yes. Say what you want done, for example \"run it now\" to start a session.'; and under the From line: the sources are the records the reply names among this turn's lookups, opened or only seen in the search (by title, or by date only for a strong hit alone on its day)."
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-l4-chat-answers/before-steps/01-before-01-add-task-to-site.png",
+   "/tmp/frbench/fix-l4-chat-answers/before-steps/02-before-02-switch-to-site.png",
+   "/tmp/frbench/fix-l4-chat-answers/before-steps/03-before-03-add-task-there.png",
+   "/tmp/frbench/fix-l4-chat-answers/before-steps/04-before-04-open-site.png",
+   "/tmp/frbench/fix-l4-chat-answers/before-steps/05-before-05-open-it.png",
+   "/tmp/frbench/fix-l4-chat-answers/before-steps/06-before-06-asks-in-words.png",
+   "/tmp/frbench/fix-l4-chat-answers/before-steps/07-before-07-yes-after-question.png",
+   "/tmp/frbench/fix-l4-chat-answers/before-steps/08-before-08-paragraphs-and-list.png",
+   "/tmp/frbench/fix-l4-chat-answers/before-steps/09-before-09-forged-marker.png",
+   "/tmp/frbench/fix-l4-chat-answers/before-steps/10-before-10-past-question.png",
+   "/tmp/frbench/fix-l4-chat-answers/before-steps/11-before-08b-list-after-reload.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l4-chat-answers/steps/01-after-01-add-task-to-site.png",
+   "/tmp/frbench/fix-l4-chat-answers/steps/02-after-02-switch-to-site.png",
+   "/tmp/frbench/fix-l4-chat-answers/steps/03-after-03-add-task-there.png",
+   "/tmp/frbench/fix-l4-chat-answers/steps/04-after-04-open-site.png",
+   "/tmp/frbench/fix-l4-chat-answers/steps/05-after-05-open-it.png",
+   "/tmp/frbench/fix-l4-chat-answers/steps/06-after-06-asks-in-words.png",
+   "/tmp/frbench/fix-l4-chat-answers/steps/07-after-07-yes-after-question.png",
+   "/tmp/frbench/fix-l4-chat-answers/steps/08-after-08-paragraphs-and-list.png",
+   "/tmp/frbench/fix-l4-chat-answers/steps/09-after-09-forged-marker.png",
+   "/tmp/frbench/fix-l4-chat-answers/steps/10-after-10-past-question.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/chat-recall.test.ts 'd1109-chat-recall, run C: CR-2 sessions and tasks' > \"last week's sessions are listed, ...\"",
+   "why": "The fixture's sessions now have the runner's handoff shape (blocked lists the failed tasks), so the 6 Nov line reads 'How it ended: 1 task needs you.' instead of the unrealistic 'Done' (L4-chat-106)."
+  },
+  {
+   "test": "packages/runtime/test/chat-recall.test.ts 'd1109-chat-recall, run C: CR-3 cards and decisions' > 'the answered card is found by other words, ...' (Bakery line)",
+   "why": "A questions card's hit now starts with 'It asked: What are the opening hours?' before the answer and the outcome (L4-chat-107)."
+  },
+  {
+   "test": "packages/runtime/test/chat-recall.test.ts (prompt version and recall rule cases, token bound)",
+   "why": "conversation-agent 1.5.1 and the new CHAT_RECALL_RULES sentences (a lookup needs no yes; never say where something probably is without looking); the token bound subtracts this area's added lines."
+  },
+  {
+   "test": "packages/runtime/test/chat-depth.test.ts (yes line; version test name)",
+   "why": "'Yes to what?' now names a next step; the principal is 1.5.1."
+  },
+  {
+   "test": "packages/runtime/test/conversation-memory.test.ts 'l3-chat-claims' prompt case",
+   "why": "The recent-conversation line of the role prompt moved and now says a bare yes never reaches the model and only the app writes its two lines (1.5.1)."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts lines ~4415/~4422 (YES_TO_WHAT_L4 constant) and ~18115 (project_create definition pin)",
+   "why": "The 'Yes to what?' sentence gained its next step; project_create's definition no longer names a command (L4-creds-27)."
+  },
+  {
+   "test": "apps/ui/test/chat.test.tsx ~290 (yes line)",
+   "why": "The fake daemon's 'Yes to what?' sentence follows the daemon's new words."
+  },
+  {
+   "test": "packages/commands/test/onerepo-link.test.ts:78",
+   "why": "Pins PROJECT_CREATE_DESCRIPTION, which now says 'offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch.'"
+  }
+ ]
+}

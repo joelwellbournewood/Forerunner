@@ -1,0 +1,26 @@
+{
+ "why": "Run L4 sub-run L4c's leftovers that no later run L4 area owns: cut-line items, test-quality items, live checks and design-doc lines for the session lead. The money-pause correctness items (WORK_STATE guard etc.) go to the separate l4c-workstate fix.",
+ "base": "d526f40",
+ "items": [
+  {
+   "id": "L4c-left-11",
+   "severity": "cut line",
+   "text": "l4-money-pause: L4-money-105 (a review-only pass priced at the whole remaining estimate), -107 (node --test helper that never exits blocks the review), -108 (settleSessions/removeHomes in older cases), -110 (a run again's spend missing from person lines), -113 (Left-to-do cut at 200 chars inside a word; emptyChangeSummary quote split), L4-money-106's card clause and the bench stand-in's max_tokens mode, L4-selftasks-107's composed case with a learned EstimatePort."
+  },
+  {
+   "id": "L4c-left-12",
+   "severity": "minor (carried twice)",
+   "text": "L4a-left-7: a critic review that meets the subscription's plan share is still a budget pause, not the credential stop 'share'."
+  },
+  {
+   "id": "L4c-left-13",
+   "severity": "cut line",
+   "text": "l4-chat-answers: L4-chat-105 (a closed project's lessons reach the kept project), -109 (recall ranking golden set), the L4-chat-113 reply check (scrub or flag tool names), the L4-chat-101 code-run recall fallback, the L4-chat-104 'switch' Open link; L4a-left-6 (L4-creds-6 composed test), L4b-left-9 (dependenciesNextLine with the hands-off setting)."
+  }
+ ],
+ "for_session_lead": {
+  "update_log": "U-089 (a), (b) and its 104/107 additions, U-042's review-waits and session-review lines, U-097 (outer limits: new, file it) from l4-money-pause's fixed[].check_in_the_app; l4-chat-answers' suggested line in its notes_for_other_areas.",
+  "design_doc_changes": "core-experience.md section 3.9: 'Yes to what? Nothing is waiting for your yes. Say what you want done, for example \"run it now\" to start a session.'; the From line lists the records the reply names among this turn's lookups.",
+  "live_checks_for_F": "F-9: a researcher report ending 'Left to do: nothing the criteria require.' finishes in the same session; a real fast model's clarifying request (e.g. 'add a note to the task') is not replaced; 'add a task to re-check the prices'; LC-C10 recall again (needs 10 of 12 with date)."
+ }
+}

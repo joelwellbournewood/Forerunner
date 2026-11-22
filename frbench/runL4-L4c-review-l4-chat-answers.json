@@ -1,0 +1,101 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Bench \"review-l4-chat-answers\" (daemon 48991, UI 2591), started from my worktree at c41bfdd. I ran three walks and looked at every screenshot. Kept under /tmp/frbench/review-l4-chat-answers/keep/ (walk1-steps, walk2-steps, walk3-steps, walk1.json); the walk JSONs are /tmp/frbench/review-l4-chat-answers/walk2-first.json, walk2-restart.json and walk3.json. All bench homes are deleted and no bench is running.\n\nWalk 1 (--provider bench, FORERUNNER_BENCH_CHAT_NOLOOK=1), with projects Notes and Site:\n- In Site's Chat: \"add a task: write the README\". Then I renamed it with `tool: task_update` and pressed Yes, so it became \"Write the guide\" (01-03).\n- In Notes' Chat:\n  - \"add a task to Site: write the shop page\" gave 'Added \"Write the shop page\" to Site.' (04).\n  - \"switch to Site\" gave \"Switched the active project to Site. This chat stays about Notes.\", and the tab stayed on Notes. The bubble also shows a second line, \"Switched the active project to Site. [Undo]\" (05). See blocking 3.\n  - \"add a task there: write the about page\" landed in Site (06). Site's tasks: Write the guide, Write the shop page, Write the about page. Notes has none.\n  - \"open Site\" and \"open it\" both navigated to /projects/<Site>/chat (07, 08).\n  - \"add a task to re-check the prices\" gave \"Which project: Notes or Site? Options: Notes, Site.\" (09). Pressing Notes sent \"Notes\" to the model, a paid call, and no task was added (10). \"add a task to fix the login: users cannot sign in\" asked the same question (11). See blocking 1.\n  - \"say: Shall I set research ...?\" was nudged, then replaced by \"Nothing changed, and nothing waits for your yes. Say it again to try once more.\" (12). A typed \"yes\" then got 'Yes to what? Nothing is waiting for your yes. Say what you want done, for example \"run it now\" to start a session.' with 0 model calls (13).\n  - A read-back the model wrote itself was nudged and replaced (14).\n  - A forged \"The app did: ...\" line was stripped, leaving \"[stand-in model]\" (15). The claim guard did not fire here, because the stand-in's \"[stand-in model]\" prefix stops `^The app did:` from matching.\n  - A reply with paragraphs and a list, posted via POST /chat and read after a reload, renders as separate paragraphs and a list of two items (16).\n- In Site's Chat: \"what happened to the README task?\" In the model-call log (seq 9-11), the stand-in first said \"There is no record ... Should I look ...?\", the ABSENT_NUDGE followed, then a recall call. The answer was 'From the record of Sun 22 Nov: Write the guide: Ready. Earlier called \"Write the README\".' with \"From: Write the guide (22 Nov)\" for a hit it never opened, and the From line stays after a reload (17, 18).\n\nWalk 2 (--provider bench-api --api-key limited, FORERUNNER_BENCH_API_LIMIT_MIN=20), with Garden club and two tasks:\n- The session ended waiting. The bar read \"Garden club · waiting until 21:35, then it goes on\" with Cancel, and Last result read \"...; then your session goes on.\" (w2-01).\n- After Cancel, with no reload, Last result read \"...; then it runs at your next Start.\" and /running was empty (w2-02).\n- Chat \"summary\" gave \"Last session: ...; then it runs at your next Start.\" (w2-03).\n- After restart-daemon.mjs, both Last result and \"summary\" still read the new words (w2-04, w2-05). L4-chat-103 holds on screen.\n\nWalk 3 (--provider bench), with only one project, Notes:\n- \"add a task to re-check the prices\" gave \"Which project: Notes? Options: Notes.\" and no task was added (w3-01).\n- The clarifying questions \"say: Which task should I add the note to?\" and \"say: Add it to Notes or to Site?\" were both replaced by \"Nothing changed, and nothing waits for your yes. Say it again to try once more.\" This took 2 model calls per turn (w3-02, w3-03).\n\nTests:\n- I reverted packages/runtime/src, packages/commands/src, testenv/src, evals/registry and apps/ui/src to claude/nifty-knuth-f9udt0 and ran the area's tests. 19 runtime and commands cases failed (conversation-memory, chat-recall and intent 'l4-chat-answers'), and so did 11 UI and real-daemon cases. Restored afterwards; the worktree is clean.\n- On the branch:\n  - The 7 area test files passed (279 tests).\n  - pnpm test passed: 557 files, 6002 tests.\n  - pnpm test:injection: no failures.\n  - The UI area tests passed (real-daemon l4-chat-answers and d1109-chat-recall, rich-text, chat, project, active-project, plain-words, contracts): 110 tests.\n  - Playwright with the local config: 38 passed. I deleted the config afterwards.\n\nParser probe (a temporary vitest file, since deleted) on base and on the fix with projects Notes and Site:\n- Base adds a task for \"add a task to re-check the prices\", \"... to e-mail Anna about the opening hours\", \"... to follow-up with the printer\", \"... to fix the login: users cannot sign in\", \"... to write the README: explain how to open the page\", \"... to clean up - remove the old files\" and \"... in two weeks: renew the domain\".\n- The fix asks \"Which project: Notes or Site?\" for every one of them.",
+ "blocking": [
+  {
+   "issue": "L4-selftasks-119's target-project reading breaks ordinary 'add a task …' lines (U-015). A hyphen inside a word, or a colon or dash after 1 to 3 words that name no project, now asks 'Which project: …?' and adds nothing. The option button does not finish the add either: it sends the bare name to the chat model, a paid call that adds no task. With one project the question reads 'Which project: Notes?'.",
+   "evidence": "Bench walk 1, steps 09-11: in Notes' own Chat, 'add a task to re-check the prices' gives 'Which project: Notes or Site? Options: Notes, Site.'. Pressing Notes sends 'Notes' to the model (model-call log seq 2: '[stand-in model] I was given …') and the header still reads 'No tasks yet'. 'add a task to fix the login: users cannot sign in' asks the same. Walk 3 step w3-01, with one project: 'Which project: Notes? Options: Notes.'. Parser probe: base adds 'Re-check the prices', 'E-mail Anna about the opening hours', 'Follow-up with the printer', 'Fix the login: users cannot sign in', 'Clean up - remove the old files' and 'In two weeks: renew the domain'; the fix asks a question for each. The target regex accepts `[:,-]` with no space before it, so 're-check' splits into the target 're' and the title 'check the prices'. addTarget then asks for any unknown target of 1 to 3 words after to/in/into. The spec allows a question only for a pronoun target with no project switched to ('a pronoun target … resolves … or chat asks'), and fix_scope says 'Without the separator today's reading stays'.",
+   "expected": "Only a real separator counts: a colon or comma, or a dash with a space before it. Words after 'to/in/into' that name no project keep today's reading: the task with those words, acting at once with Undo. 'Which project: …?' is asked only for a pronoun ('there', 'it', 'dort') with no project switched to, and only with two or more projects. If a question is asked, pressing an option must finish the add in that project, not send the name to the model. Add intent.test.ts cases for 're-check', 'e-mail', 'follow-up', 'fix the login: …' and one project, plus a real-daemon or UI case for the option press.",
+   "where": "packages/commands/src/intent.ts:767, :775, :824-825"
+  },
+  {
+   "issue": "The new 'asks' claim catches clarifying questions. Each one gets a nudge, and if the model asks again its question is replaced by 'Nothing changed, and nothing waits for your yes. Say it again to try once more.'. This breaks the area's own decision ('Clarifying questions stay free') and the L4-selftasks-119 decision, under which chat asks 'Which project: Notes or Site?'.",
+   "evidence": "claimsOf probe: 'Which task should I add it to?' is asks ('should I add'). 'Add it to Notes or to Site?', 'Start it now or wait for the next session?' and 'Run the tests first?' are asks by the read-back pattern. 'Should I start with the shop page or the about page?' is asks. Bench walk 3 steps w3-02 and w3-03: 'Which task should I add the note to?' and 'Add it to Notes or to Site?' reach the person as 'Nothing changed, and nothing waits for your yes. Say it again to try once more.', at 2 model calls per turn (4 chat calls in total). The read-back pattern skips which-questions, but the 'shall/should/can I <verb>' and 'do you want me to <verb>' patterns do not, and no pattern skips either/or questions. The acceptance's only negative case is 'Which project do you mean?'.",
+   "expected": "A question that asks which, who, where or what, or offers a choice ('X or Y?'), is not an 'asks' claim under any ASKS pattern. claimOf returns null for 'Which task should I add it to?', 'Add it to Notes or to Site?' and 'Should I start with the shop page or the about page?' (unit cases), plus one composed case where such a reply reaches the person unchanged with one model call.",
+   "where": "packages/runtime/src/conversation/claims.ts:156-200 (the patterns at :162 and :184)"
+  },
+  {
+   "issue": "'switch to Site' in another project's Chat tab now shows the same sentence twice in one bubble: 'Switched the active project to Site. This chat stays about Notes.' and below it the change line 'Switched the active project to Site. [Undo]'. Before this change it showed once.",
+   "evidence": "Bench walk 1 step 05 (walk1-steps/05-05-notes-switch-to-site.png). The fixer's own after-screenshot /tmp/frbench/fix-l4-chat-answers/steps/02-after-02-switch-to-site.txt shows the same two lines; the before-screenshot (before-steps/02-before-02-switch-to-site.txt) shows one. Cause: the extra clause makes the reply text differ from the action's sentence, so Conversation.tsx's showText check (sentences.includes(text)) no longer folds it into the change line. Design §5 rule 10 (one place per fact) and §3.9 ('Undo.' never doubled next to the button) apply. active-project.test.tsx only checks toHaveTextContent, so it misses this.",
+   "expected": "The bubble says the switch once, with its Undo, and adds 'This chat stays about Notes.' once. For example, carry the clause in the action's sentence, or have the UI fold a reply that is the action's sentence plus that clause. A UI test should assert the sentence appears exactly once.",
+   "where": "packages/runtime/src/conversation/agent.ts:1362-1373 (stays), apps/ui/src/components/Conversation.tsx:542-549"
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L4-chat-101: a past question answered without a lookup is nudged once; recall runs and the answer names 'Write the guide' (earlier 'Write the README'); prompt and CHAT_RECALL_RULES asserted verbatim",
+   "holds": true,
+   "note": "The chat-recall 'l4-chat-answers' cases fail on base and pass now. Bench walk 1, step 17: the nudge (seq 10), then recall, then the answer from the hit with a From line that stays after a reload."
+  },
+  {
+   "claim": "L4-chat-102 / L4-selftasks-118: a yes asked in words or an imitated read-back is nudged, then put right; a typed yes gets 'Yes to what? … \"run it now\" …' with 0 model calls",
+   "holds": true,
+   "note": "Holds for the named cases (bench steps 12-14; the tests fail on base). But the detector also flags clarifying questions: blocking 2."
+  },
+  {
+   "claim": "L4-chat-112: a forged 'The app did:' line is never shown, stored or in the next turn's history; a repeated settings_set is 'Nothing to change: …'",
+   "holds": true,
+   "note": "The composed and real-daemon tests fail on base and pass now. On the bench the line is stripped (step 15), but the claim guard did not fire there because the stand-in prefixes '[stand-in model]' and CHANGED only matches at sentence start."
+  },
+  {
+   "claim": "L4-selftasks-119: 'add a task to Site: …' adds to Site; 'add a task there: …' after a switch adds there; without a separator today's reading stays",
+   "holds": false,
+   "note": "The named cases hold (bench steps 04 and 06). 'Without a separator today's reading stays' does not: hyphenated words and short colon phrases now ask a question and add nothing. Blocking 1."
+  },
+  {
+   "claim": "L4-chat-104 / L4-creds-27: 'open <project>' and 'open it' open the project's Chat; a switch says 'This chat stays about <tab>.'; project_create's definition names no command",
+   "holds": true,
+   "note": "Navigation holds (bench steps 07 and 08), and the definition text test fails on base. The switch clause duplicates the switch sentence in the bubble: blocking 3."
+  },
+  {
+   "claim": "L4-chat-111 / L4-selftasks-124: a settled reply keeps its paragraphs and lists",
+   "holds": true,
+   "note": "rich-text.test.tsx fails on base. Bench step 16, after a reload, renders an intro, a two-item list and a closing line."
+  },
+  {
+   "claim": "L4-chat-103: after Cancel, Last result (no reload), chat 'summary' and the chat facts read '…; then it runs at your next Start.', also after a restart",
+   "holds": true,
+   "note": "Bench walk 2 with a limited key (w2-01 to w2-05), including restart-daemon.mjs. The real-daemon and project.test.tsx cases fail on base."
+  },
+  {
+   "claim": "L4-chat-113: the no-tool-name sentence is in CHAT_PLAN_RULES and conversation-agent 1.5.1, asserted verbatim",
+   "holds": true,
+   "note": "The conversation-memory prompt case fails on base. The reply-side check is in not_done, which the cut line allows."
+  },
+  {
+   "claim": "L4-chat-106/107/108: a session hit names its failed tasks; a questions card's hit starts 'It asked: …'; From names hits the reply did not open (strong, alone on its day, or by title)",
+   "holds": true,
+   "note": "The chat-recall cases fail on base. The fixture change to the runner's handoff shape matches runner.ts:4129 (blocked = needsHuman + failed). The From line for an unopened hit shows on bench step 17."
+  },
+  {
+   "claim": "L4b-left-7/8: status questions are not a comparison or review; a plain sentence naming a stronger model stays",
+   "holds": true,
+   "note": "chat-depth-words cases pass. Not walked on the bench."
+  },
+  {
+   "claim": "L4b-left-10: conversation-agent principal is 1.5.1",
+   "holds": true
+  },
+  {
+   "claim": "Validation: pnpm test, test:injection, UI suite and Playwright green; new tests verified failing at the previous head",
+   "holds": true,
+   "note": "I reran pnpm test (557 files, 6002 passed), test:injection (no failures), the UI area tests (110 passed) and Playwright (38 passed). I did not rerun test:integration or test:e2e. 19 runtime and commands cases and 11 UI cases fail against base sources."
+  },
+  {
+   "claim": "The rest of the items are in not_done with reasons (L4-chat-105, -109, the 113 code check, the 101 fallback, the 104 switch link, L4a-left-6, L4b-left-9)",
+   "holds": true,
+   "note": "The first five are cut-line items. L4a-left-6 and L4b-left-9 are leftovers listed as 'not reached' or 'not investigated', and the session lead should route them on."
+  }
+ ],
+ "non_blocking": [
+  "The forged-line guard: CHANGED's `^The app did:` does not allow a leading bracket prefix, though the read-back ASKS pattern does. On the bench the stand-in's '[stand-in model] The app did: …' was stripped without a nudge. withoutAppMarkers is also case-sensitive, so 'the app did: paused it' passes through. Neither case is shown as a marker, but the bench never walks the guard.",
+  "'absent' false positives: 'I don't see any failed tasks.' in a 'what is left?' answer is an absence claim, so it costs one extra nudge and a recall call. The answer stands and the cost stays inside the turn budget.",
+  "The user guide says 'a change you ask for always comes back as the app's question with Yes and No'. If the model asks in words again after the nudge, the reply is 'Nothing changed, …' instead, so the sentence promises more than the code does (§5 rule 9). Reword it, for example to 'is read back by the app with Yes and No'.",
+  "The user guide does not mention 'add a task to <project>: …', 'open <project>' or 'This chat stays about <tab>'.",
+  "'Nothing changed, and nothing waits for your yes. Say it again to try once more.' reads oddly when the person asked for no change, as in a status question the model answered with 'Shall I …?'.",
+  "namedProjectId is the registry's active project whenever any earlier turn in this conversation switched. If the person later switches the active project from the header, 'there' means that project, not the one the conversation named.",
+  "Commits 95f8992, 40aed74 and bf4542a add real-daemon cases for changed POST /chat behaviour, but the fake daemon's chat does not play 'add a task to Site: …' or recall sources. The route shape is unchanged, so this is only a gap in the stand-in for UI tests.",
+  "Parser questions repeat their options in the text and as buttons ('Which project: Notes or Site? Options: Notes, Site.' plus Notes and Site buttons). This predates the area, but the new add-task question inherits it.",
+  "For the session lead's live check (final_check): ask a real fast model a clarifying-type request (for example 'add a note to the task') and confirm the answer is not replaced. Also try 'add a task to re-check the prices' once blocking 1 is fixed."
+ ]
+}

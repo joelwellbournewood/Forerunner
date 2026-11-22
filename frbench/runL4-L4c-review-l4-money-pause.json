@@ -1,0 +1,100 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Bench \"review-l4-money-pause\" (stand-in, daemon 48990, UI 2590), started from my worktree at db2d5dd (fix/l4-money-pause) with failure injection: FORERUNNER_BENCH_LONG=\"Build the shop,Write the club history\", FORERUNNER_BENCH_USAGE=\"Build the shop:100000,Write the club history:2000,Write the pairing list:60000\", FORERUNNER_BENCH_CRITIC_REJECT=\"Write the pairing list\" and FORERUNNER_BENCH_CRITIC_USAGE=\"Write the footer:40000\". Each project and task was created through the daemon API, the estimates were patched in sqlite, and each session was started through the UI Start dialog. Walk script: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk.cjs (plus walk2.cjs). Screenshots and texts: /tmp/frbench/review-l4-money-pause/steps/. Results: /tmp/frbench/review-l4-money-pause/walk-{a,b,c,d}.json.\n\n(A) L4-money-102/104: project Bakery, \"Build the shop\" (high priority, estimate USD 8), then \"Write a tagline\" (estimate USD 0.05). Start CHF 1.60.\n- Start dialog (02-a-start-dialog.png): '\"Write a tagline\" comes after it: it runs if \"Build the shop\" leaves budget, else in your next session.'\n- The larger task heard the wrap-up at CHF 1.07, paused at CHF 1.16 of the CHF 1.28 work budget, and the tagline ran and was accepted in the same session.\n- Session page (03-a-session-page.png): status \"Ended: 1 paused\"; CHF 1.17 of CHF 1.60. No \"budget is used\", \"used the rest\" or \"Stopped: the budget is used\" on the session page, the Sessions list or the Inbox.\n- Details: \"It promised 2 tasks, about CHF 1.28.\" and \"Session review measured: 1 of 2 planned tasks done; ... against an estimate of CHF 1.28\" give one count and one figure, and there is no \"cut to fit the budget\".\n- The Inbox has one card: '\"Build the shop\" paused before this session's budget ran out', Continue (CHF 6.59 more) / Cancel task.\n- Matches design §4.2 and the owner's option C (\"spare budget isn't wasted\").\n\n(B) L4-money-103: project Club with a project budget of USD 0.075 (CHF 0.06), a writer task with no budget of its own, Start CHF 5.00.\n- The run's line under Details reads 'This run may spend CHF 0.03, what is left of the project's budget less the CHF 0.03 kept for its review: before a step that could take it past CHF 0.02 it is told to wrap up, keeping a reserve of…'. The line is cut on screen (33-b-session-details-on.txt:48).\n- The run heard its wrap-up and paused '\"Write the club history\" paused before the project's budget of CHF 0.06 ran out: it spent CHF 0.02 and listed 2 things left to do; CHF 0.03 is kept for its review.'\n- Card: '\"Write the club history\" paused before the project's budget ran out', Cancel task only.\n- Session: \"Stopped at the project's budget\", result '... Stopped at the project's budget of CHF 0.06. CHF 0.02.'\n- Nothing passed the limit; before the fix the same run read \"This run may spend CHF 1.28 ...\" and stopped hard.\n\n(C) L4-money-111: a task \"Write the footer\" with a budget of USD 0.04 whose review does not fit.\n- Card title '\"Write the footer\" is done; its review waits for room in its budget'.\n- Row \"Review waits for room in its budget\" (21-c-tasks-after.png).\n- Result '\"Write the footer\" is done; its review waits for room in its budget of CHF 0.03: continue or cancel it in the Inbox.'\n- Notification '\"Write the…\" is done; its review waits for room in…'.\n- Nothing says \"paused at its budget\". The person-level log line still reads 'paused before its review: its own budget of CHF 0.03 has no room for it.' That is acceptable.\n\n(D) L4-money-112: Swiss pairing, sent back once, accepted at 18 times its estimate.\n- Details: 'Session review: planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1719%, with one task tried twice (grade 85, 1 finding).'\n- More > Reviews > Session checks: \"85 / 100 noted\", finding badge \"noted\" (31-d-reviews-session-checks.txt). The finding's action line still starts \"To fix:\".\n\n(E) Settings: the budget rows read '(CHF 5.00 unless set)'. GET /settings gives \"... kept for the critic's reviews. Shown for information: ...\", and \"review and fixes\" does not appear.\n\nBench stopped with scripts/bench/stop.mjs, and its home was deleted.\n\nTests:\n- The 11 area test files pass on the fix: 240 tests.\n- With the base sources (claude/nifty-knuth-f9udt0) checked out under the new tests, these fail as claimed: the L4-money-101 parse, brief and composed cases; L4-money-102's two oversized-task cases; L4-money-103's project and month cases; the BA-3 review-waits case; the real-daemon L4-money-102, -103 and -109 cases; reviews.test.tsx. The sources were restored afterwards and the worktree is clean.\n- The real-daemon L4-money-112 case passes on the base too (see blocking).\n- Full runs on the fix: pnpm test 557 files / 5997 passed; pnpm test:integration 5 passed, 6 skipped (Postgres); pnpm test:e2e 13 files, 25 passed, 1 skipped. Every run was under flock.",
+ "blocking": [
+  {
+   "issue": "L4-money-106's log line and file-writing note are not built. The area spec marks them never-cut.",
+   "where": "packages/runtime/src/agent/loop.ts:1350-1355; packages/runtime/src/session/executor.ts onEvent (~:1488-1520)",
+   "evidence": "The spec's size field says '-106's card clause and the stand-in mode (its log line and the file-writing note are never cut)'. On db2d5dd, cutOffNote still returns 'Answer again, more briefly.' (loop.ts:1355), and executor onEvent has no branch for a cut reply. The fixer's own not_done admits it: 'Its log line and file note are on the never cut list ... Nothing for it is built'. The acceptance line 'GET /sessions/:id/events has one person line that the reply was cut off with its CHF; the next request carries the file-writing note's exact text' therefore fails.",
+   "expected": "A cut-off reply gives one person-level line with its CHF in GET /sessions/:id/events, and the next request carries the exact file-writing note ('one file per call'), each with a failing-first composed test through runner and executor. Only the card clause and the stand-in mode may stay in not_done."
+  },
+  {
+   "issue": "The log half of L4-github-110 is not built. The spec says 'never its log half'.",
+   "where": "packages/runtime/src/daemon/views.ts:818; packages/runtime/src/session/runner.ts session.planned emit and StaticPlanner first-session summary",
+   "evidence": "views.ts:818 still returns 'Gave N note(s) for the next session to \"X\".' for a note this session used. The session.planned line and StaticPlanner's summary are unchanged, so the live 'Plan: 1 task' beside 'It promised 3 tasks' stands. The fixer put the whole item in not_done ('Time and context ... Not started'), but the fix_scope's cut line allows only the Overview half there.",
+   "expected": "A first session that approved 3 tasks never logs 'Plan: 1 task' beside 'It promised 3 tasks'. A brief this session used reads 'Gave your note to \"X\".'. A composed test reads GET /sessions/:id/events with details."
+  },
+  {
+   "issue": "The new outer-limit start line is cut on the session page and loses its reserve figure.",
+   "where": "packages/runtime/src/session/budget-pause.ts budgetLineWords (outer branch); packages/runtime/src/daemon/event-lines.ts:695 (task.step lines cut at 200)",
+   "evidence": "Bench journey B (project budget CHF 0.06, review room kept), session page with Details on (/tmp/frbench/review-l4-money-pause/steps/33-b-session-details-on.txt:48) shows: 'This run may spend CHF 0.03, what is left of the project's budget less the CHF 0.03 kept for its review: before a step that could take it past CHF 0.02 it is told to wrap up, keeping a reserve of…'. The outer form with its review clause runs past the 200-character cutAtWord in event-lines.ts:695. Both the composed and the real-daemon tests only match the prefix, so they miss it. Design §3.7 says the session page must not show cut text, and §5 says one sentence, read at a glance.",
+   "expected": "The run's first line under an outer limit with its review room is whole, at most 200 characters, with every figure kept (e.g. 'This run may spend CHF 0.03 (the project's budget less CHF 0.03 for its review): ...'). A test asserts the exact line as GET /sessions/:id/events gives it."
+  },
+  {
+   "issue": "L4-money-112's real-daemon case is vacuous. It passes on the base, so the runner's 'noted' wiring has no test at the person's boundary, and the report's 'failing_test_before' claim does not hold.",
+   "where": "apps/ui/test/real-daemon.test.ts describe 'l4-money-pause, run L4', case 'L4-money-112' (~:24467-24490); packages/runtime/src/session/runner.ts:4521-4525",
+   "evidence": "With the base sources under the new tests, the case passed. I dumped what the session said in this case: 'Session review: accepted (grade 100, 0 findings).' The estimate is floored at CHF 0.02 and the cost was CHF 0.03, so no revise happens and nothing could read 'sent back' before or after. check?.summary is also unchecked when no check exists. No other test drives a revise session review through the runner, so removing `noted: reviseCause(...)` from runner.ts would leave every test green. This breaks validation rules 1 and 8.",
+   "expected": "The real-daemon case produces an overrun revise (e.g. FORERUNNER_BENCH_USAGE on the task, as my bench journey D did). It asserts the exact line 'Session review: planned tasks cost CHF ..., over their estimate of CHF ... by NN%, with one task tried twice (grade 85, 1 finding).' and fails on the base."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L4-money-101: 'Left to do: nothing the criteria require.' is nothing; the brief line and the wrap-up ask for only the word nothing (both drivers)",
+   "holds": true,
+   "note": "The unit and composed cases fail on the base and pass on the fix. The LC-C7 report in the test matches live4 model-calls.jsonl seq 8 word for word. But the general rule's WORK_STATE guard is narrow (see non_blocking). sdk-driver.test.ts has no exact-text assertion; both drivers share wrapUpText."
+  },
+  {
+   "claim": "L4-money-102: a larger task's wrap-up leaves the rest of the session to the tasks after it; no 'budget is used' under the work budget",
+   "holds": true,
+   "note": "Bench journey A: the tagline ran in the same session, 'Ended: 1 paused', CHF 1.17 of 1.60, and no used/budget-is-used words. The composed and real-daemon cases fail on the base. integration (phase-1 gate) and e2e (scenario 5) pass after db2d5dd."
+  },
+  {
+   "claim": "L4-money-103: a run under the project's budget or the month's cap hears its wrap-up inside it",
+   "holds": true,
+   "note": "Bench journey B: the run paused inside CHF 0.06 at CHF 0.02 with its work kept and no hard stop. Its start line with the review clause is cut on screen (blocking 3)."
+  },
+  {
+   "claim": "L4-money-104 with L4-selftasks-107: one count and one figure",
+   "holds": true,
+   "note": "The 2-task case holds on the bench (CHF 1.28 in both lines, '1 of 2 planned tasks'). No composed case with a learned EstimatePort and a re-priced re-plan of 3 tasks, as the spec names. 107's start-line-vs-card half is neither built nor listed in not_done."
+  },
+  {
+   "claim": "L4-money-111: a review-waits pause says the work is done (title, reason, row, notification, result)",
+   "holds": true,
+   "note": "Bench journey C and BA-3 (fails on the base)."
+  },
+  {
+   "claim": "L4-money-112: a session review never says 'sent back'; Session checks read 'noted'",
+   "holds": true,
+   "note": "On screen in bench journeys C and D. The real-daemon test claimed as failing before passes on the base (blocking 4)."
+  },
+  {
+   "claim": "L4-money-109 / L4b-left-11: reserve 'kept for the critic's reviews'; '(CHF 5.00 unless set)'",
+   "holds": true,
+   "note": "GET /settings on the bench; the real-daemon case fails on the base."
+  },
+  {
+   "claim": "Fake daemon in step",
+   "holds": true,
+   "note": "fake-daemon.ts and fake-tasks.ts word rows through the runtime's task-words (now with the leaf review-room-words.ts). The fixtures.ts settings row was updated. No route shape changed."
+  },
+  {
+   "claim": "failing_test_before for real-daemon L4-money-112",
+   "holds": false,
+   "note": "It passes against the base sources: the session review in that case is 'accepted (grade 100, 0 findings)'."
+  },
+  {
+   "claim": "not_done items have reasons",
+   "holds": false,
+   "note": "Time is the only reason given. L4-money-106 (log line and file note) and L4-github-110 (log half) are never-cut parts, and L4-money-107 and 113's item-length half are not on the cut line. 107's start-line half is missing from not_done altogether."
+  },
+  {
+   "claim": "Validation: pnpm check, integration, e2e, UI suite, Playwright green",
+   "holds": true,
+   "note": "I re-ran pnpm test (557 files / 5997 passed), test:integration (30 passed) and test:e2e (25 passed, 1 skipped) on db2d5dd, plus the area's UI and real-daemon cases. I did not re-run Playwright or the whole UI suite."
+  }
+ ],
+ "non_blocking": [
+  "L4-money-101's general rule (isWholeSetNothing) reads lines that say the work is NOT done as an empty list, because WORK_STATE only knows a few verbs. The tsx probe of parseHandoff on db2d5dd turns each of these into [], where the base kept them as work: 'Nothing the task requires has been tested', 'Nothing the brief asks for is tested', 'Nothing for the task's criteria is verified', 'Nothing that the criteria require is checked', 'Nothing the task needs is deployed', 'Nothing the criteria require is in the repository', 'Nothing in the scope is tested'. Such a task goes to review instead of pausing. It follows the spec's WHOLE_SET decision literally, but the fixer's own WORK_STATE intent misses it. Widen WORK_STATE to passive states ('is/has been <verb>ed', 'is in ...'), or allow nothing after the noun phrase but a reason.",
+  "Under an outer limit the session status and result read 'Stopped at the project's budget' and '... Stopped at the project's budget of CHF 0.06. CHF 0.02.' while a third of that budget is spent; the Sessions row is '1 paused · Stopped at the project's budget · CHF 0.02'. This is the L4-money-102 sibling for project/month pauses that now wrap up early. The card also says 'Ready again once you raise the project's budget' while CHF 0.04 of it is left (most of it is kept for the review).",
+  "The 'Left for next time: ...; this session's CHF X was used.' branch in result.ts (~:502-512) can still fire for after_others items when a larger task's pause ends the session with room left ('room' case). This 'budget used' sibling is not covered.",
+  "budget-pause.test.ts month's-cap cases were loosened to accept either form ('paused (?:at|before) this month's cap(?: ran out)?') in the 'Members page' summary and the 'Members map' label. The runs are deterministic, so the tests should assert the one form that happens.",
+  "Session checks still show 'To fix: Record the overrun ...' under a finding whose badge reads 'noted'.",
+  "reviseCause cuts the finding at 200 characters with slice(0, 200), mid-word and without an ellipsis. The current findings are short and code-made.",
+  "L4-selftasks-107: no composed case with a learned EstimatePort and a re-priced re-plan (3 tasks), as the spec names; promiseOf, plannedItemsOf and planEstimateOf have no unit cases. The 'start line vs card estimate' half is not built and not in not_done.",
+  "L4-money-101's spec asked for the wrap-up block's exact text at PostToolUse's additionalContext in sdk-driver.test.ts. It is not asserted there; both drivers share wrapUpText, which is asserted.",
+  "L4-money-111 sibling: the session status reads 'Ended: 1 paused' and the log 'paused before its review' while the row says 'Done; its review waits'. The chat's project-facts block is the fixer's own new_problems item.",
+  "The fixer did no bench walk before or after (spec validation); my walk is the only on-screen evidence of the 'after' state.",
+  "L4-money-105, -107, -108, -110, -113 and L4a-left-7 are in not_done for time; -105, -108, -110 and 113's failed-card half are on the cut line."
+ ]
+}
