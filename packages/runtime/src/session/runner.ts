@@ -2222,14 +2222,22 @@ export class SessionRunner {
          * after it (about CHF 0.06) for the next session (live check 4, LC-C7). A pause at an
          * outer limit always ends it.
          */
-        const roomAfterPause = (source: BudgetStopSource): "go_on" | "room" | "end" => {
-          if (source !== "session" || budget.noNewWork) return "end";
-          const behind = ((plan as SessionPlan | null)?.leftOutForBudget ?? []).filter(
-            (l) => l.reason === "after_large",
-          );
-          if (behind.length === 0) return "go_on";
-          const smallest = Math.min(...behind.map((l) => l.estimateUsdMicro));
-          return budget.workRemainingUsdMicro() >= smallest ? "go_on" : "room";
+        const roomAfterPause = (
+          stop: Pick<BudgetStop, "source" | "stoppedBy">,
+          queued: readonly PlanItem[],
+        ): "go_on" | "room" | "end" => {
+          // A hard stop there (its next step did not fit what was left) used the work budget;
+          // only a clean wrap-up leaves its reserve unspent.
+          if (stop.source !== "session" || stop.stoppedBy !== "wrap_up" || budget.noNewWork)
+            return "end";
+          const next = [
+            ...((plan as SessionPlan | null)?.leftOutForBudget ?? []).filter(
+              (l) => l.reason === "after_large",
+            ),
+            ...queued,
+          ].map((l) => l.estimateUsdMicro);
+          if (next.length === 0) return "go_on";
+          return budget.workRemainingUsdMicro() >= Math.min(...next) ? "go_on" : "room";
         };
         const replan = async (): Promise<PlanItem[]> => {
           if (!project || !brief) return [];
@@ -3621,7 +3629,7 @@ export class SessionRunner {
               result.outcome === "paused" &&
               result.budgetStop &&
               stopEndsSession(result.budgetStop.source)
-                ? roomAfterPause(result.budgetStop.source)
+                ? roomAfterPause(result.budgetStop, queue)
                 : "go_on";
             if (after !== "go_on" && result.budgetStop) {
               // The session names the limit that ended it (review of budget-stop): before, it
