@@ -531,9 +531,40 @@ export const NOT_NOW = {
 /** The hand-over's own result (the fast run ends with it; no later call reads it). */
 export const HANDED_OVER_RESULT = "Handed over: the closer look answers this question.";
 
-/** The thorough pass's own rules, after the fast pass's in its system part. */
+/**
+ * The thorough pass's own rules, after the fast pass's in its system part (cache-stable).
+ * l4-chat-depth (L4-chat-203): they say the pass is the closer look itself. Before, it was never
+ * told so and read the quick pass's "Thinking longer" section and facts: the paid Sonnet answer
+ * said "I couldn't hand it to the stronger model" under "Thought it through with Sonnet" (live
+ * check 4). The sentence about earlier replies is L4-chat-106's (l4-chat-answers), carried here.
+ */
 export const CHAT_THOROUGH_RULES = `# Thinking it through
-This question was handed to you to think through; the person waits and sees what you look up. Look up what the answer rests on with recall, recall_open and the read tools, a few lookups at most. Then answer in at most six short sentences, or a short list whose lines start with "- ". Say what the answer rests on (sessions, tasks, cards, decisions or documents, by name and date), keep what the records say apart from what you conclude, and say what you could not check. When you suggest a next step, name one the app can do; make a change only when the person asked for it. When the app says to wrap up, answer from what you have.`;
+You are the closer look: the stronger model or the longer effort that the person said yes to or the app chose; the facts' this_answer line says which. answer_thoroughly and the "Thinking longer" section are the quick answer's, not yours: never say that you could not hand the question over or that a stronger model was not used. The person waits and sees what you look up. Look up what the answer rests on with recall, recall_open and the read tools, a few lookups at most. Your earlier replies rest on lookups not shown again here: before you call one wrong or unconfirmed, look it up in this turn; when a hit leaves something out, open it. Then answer in at most six short sentences, or a short list whose lines start with "- ". Say what the answer rests on (sessions, tasks, cards, decisions or documents, by name and date), keep what the records say apart from what you conclude, and say in plain words what you could not check. When you suggest a next step, name one the app can do; make a change only when the person asked for it. When the app says to wrap up, answer from what you have.`;
+
+/**
+ * The thorough pass's facts line in place of the quick pass's thinking_longer (L4-chat-203):
+ * what this answer is, who chose it, and the most it may spend. Never "asks the person first"
+ * to a pass that runs.
+ */
+export function thoroughFact(o: {
+  tier: ModelTier;
+  sameModel: boolean;
+  /** `yes`: Go ahead, a typed yes or Think it through; `asked`: the person's own words; `handed`: the quick answer's hand-over. */
+  by: "yes" | "asked" | "handed";
+  budgetUsdMicro: number;
+  chfPerUsd: number;
+}): string {
+  const what = o.sameModel
+    ? "the longer look on this model"
+    : `the closer look on ${modelName(o.tier)}`;
+  const who =
+    o.by === "yes"
+      ? "that the person said yes to"
+      : o.by === "asked"
+        ? "that the person asked for"
+        : "that the quick answer handed over";
+  return `${what} ${who} (at most ${chfUp(o.budgetUsdMicro, o.chfPerUsd)})`;
+}
 
 /** The wrap-up a thorough pass hears once, through the loop's wrapUp option (ADR 0112's mechanism). */
 export const CHAT_WRAP_UP =

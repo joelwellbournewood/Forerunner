@@ -107,6 +107,7 @@ import {
   THINK_THROUGH_WHAT,
   thinkItThroughExplain,
   thinkingLongerFact,
+  thoroughFact,
   VOICE_THOROUGH_NOTICE,
   WHY_VALUES,
   type Why,
@@ -1822,13 +1823,32 @@ export class ConversationAgent {
       };
     };
     /** A thorough pass on `route` within `budgetUsdMicro` (its figures for the step line). */
-    const thoroughPass = async (route: ChatRoute, f: ChatPassFigures, budgetUsdMicro: number) => {
+    const thoroughPass = async (
+      route: ChatRoute,
+      f: ChatPassFigures,
+      budgetUsdMicro: number,
+      by: "yes" | "asked" | "handed",
+    ) => {
       this.turnsOf().setDepth(transcriptId, route.rung);
       // The hand-over: text the quick pass streamed before it is dropped (the step's reset).
       streamed = "";
       gate?.end(true);
       step(handOverStep({ ...f, budgetUsdMicro }), { reset: true });
-      const t = thoroughRequest(volatile);
+      // l4-chat-depth (L4-chat-203): the pass is told what it is, in place of the quick pass's
+      // thinking_longer line (before, a pass the person said yes to read "asks the person first").
+      const t = thoroughRequest(
+        withNowFact(
+          context.volatile,
+          "this_answer",
+          thoroughFact({
+            tier: route.tier,
+            sameModel: route.sameModel,
+            by,
+            budgetUsdMicro,
+            chfPerUsd: chf,
+          }),
+        ),
+      );
       const r = runOf({
         runId: `${transcriptId}:thorough`,
         budgetUsdMicro,
@@ -1900,7 +1920,12 @@ export class ConversationAgent {
         offer = offerOf(f, question);
         return null;
       }
-      return thoroughPass(route, f, Math.min(budgetUsdMicro, room?.usdMicro ?? budgetUsdMicro));
+      return thoroughPass(
+        route,
+        f,
+        Math.min(budgetUsdMicro, room?.usdMicro ?? budgetUsdMicro),
+        yes ? "yes" : "asked",
+      );
     };
     if (accepted) {
       thorough = await personsPass(routeOf(accepted.rung), {
@@ -2011,6 +2036,7 @@ export class ConversationAgent {
           go.figures,
           // A pass that goes ahead without a yes: the person's amount within the outer room.
           Math.min(amountUsdMicro, room?.usdMicro ?? Number.POSITIVE_INFINITY),
+          "handed",
         );
       // l4-chat-depth (L4-chat-202, ADR 0114 amended 2026-11-22): the ask-only backstop. A
       // typed quick answer that ended without answer_thoroughly on a line that shows a need

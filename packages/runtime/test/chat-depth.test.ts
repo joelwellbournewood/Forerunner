@@ -1465,3 +1465,71 @@ describe("l4-chat-depth, run L4: the fast model's hand-over is never left to wor
     );
   });
 });
+
+/** The thorough pass's rules, word for word (L4-chat-203: it is told what it is). */
+const THOROUGH_RULES_TEXT = `# Thinking it through
+You are the closer look: the stronger model or the longer effort that the person said yes to or the app chose; the facts' this_answer line says which. answer_thoroughly and the "Thinking longer" section are the quick answer's, not yours: never say that you could not hand the question over or that a stronger model was not used. The person waits and sees what you look up. Look up what the answer rests on with recall, recall_open and the read tools, a few lookups at most. Your earlier replies rest on lookups not shown again here: before you call one wrong or unconfirmed, look it up in this turn; when a hit leaves something out, open it. Then answer in at most six short sentences, or a short list whose lines start with "- ". Say what the answer rests on (sessions, tasks, cards, decisions or documents, by name and date), keep what the records say apart from what you conclude, and say in plain words what you could not check. When you suggest a next step, name one the app can do; make a change only when the person asked for it. When the app says to wrap up, answer from what you have.`;
+
+/** The `# Now` line of a request's last message that starts with `- key:`. */
+const nowLine = (r: Omit<ModelRequest, "signal"> | undefined, key: string) =>
+  new RegExp(`\\n- ${key}: [^\\n]*`).exec(String(r?.messages.at(-1)?.content))?.[0]?.slice(1) ??
+  null;
+
+describe("l4-chat-depth, run L4: the paid closer look is told what it is (L4-chat-203)", () => {
+  it("after Go ahead the one fake-sonnet request has no thinking_longer line, has the this_answer line, and its system ends with the closer look's rules verbatim; the fast request is unchanged", async () => {
+    const w = await world({
+      replies: [textReply("The plan: first the README, then the FAQ.", { when: isThorough })],
+    });
+    const r = await w.chat("use a stronger model: make a plan for the next two sessions");
+    const atMost = /at most (CHF \d+\.\d{2})/.exec(r.reply)?.[1];
+    await w.chat("Go ahead.", { offer: r.transcriptId });
+    const [sonnet] = w.requests();
+    expect(sonnet?.model).toBe("fake-sonnet");
+    expect(nowLine(sonnet, "thinking_longer")).toBeNull();
+    expect(String(sonnet?.messages.at(-1)?.content)).not.toContain("asks the person first");
+    expect(nowLine(sonnet, "this_answer")).toBe(
+      `- this_answer: the closer look on Sonnet that the person said yes to (at most ${atMost})`,
+    );
+    expect(sonnet?.system?.endsWith(THOROUGH_RULES_TEXT)).toBe(true);
+    expect(CHAT_THOROUGH_RULES).toBe(THOROUGH_RULES_TEXT);
+  });
+
+  it("a quick-pass hand-over that went ahead says the quick answer handed it over; Think it through's press says the person asked for the longer look on this model", async () => {
+    const w = await world({
+      replies: [
+        toolReply("answer_thoroughly", { why: "many_records" }, undefined, {
+          when: (r) => !isThorough(r),
+        }),
+        textReply("Across the sessions.", { when: isThorough }),
+        textReply("Two are left.", { when: (r) => !isThorough(r) }),
+        textReply("Thought it through.", { when: isThorough }),
+      ],
+    });
+    await w.chat("what did the last two sessions do?");
+    const handed = w.requests()[1];
+    expect(isThorough(handed as ModelRequest)).toBe(true);
+    expect(nowLine(handed, "thinking_longer")).toBeNull();
+    expect(nowLine(handed, "this_answer")).toBe(
+      "- this_answer: the longer look on this model that the quick answer handed over (at most CHF 0.10)",
+    );
+    const quick = await w.chat("what is left?");
+    // The fast request keeps its thinking_longer line, byte for byte as before.
+    expect(nowLine(w.requests()[2], "thinking_longer")).toBe(
+      "- thinking_longer: available: call answer_thoroughly; the app goes ahead up to CHF 0.10 on this model",
+    );
+    expect(nowLine(w.requests()[2], "this_answer")).toBeNull();
+    await w.chat("Think it through.", { depth: "longer", offer: quick.transcriptId });
+    const pressed = w.requests().at(-1);
+    expect(nowLine(pressed, "this_answer")).toMatch(
+      /^- this_answer: the longer look on this model that the person said yes to \(at most CHF \d+\.\d{2}\)$/,
+    );
+  });
+
+  it("'think it through: …' (the person's own words, no ask) says the person asked for it", async () => {
+    const w = await world({ replies: [textReply("Thought it through.")] });
+    await w.chat("think it through: what did the last two sessions do?");
+    expect(nowLine(w.requests()[0], "this_answer")).toBe(
+      "- this_answer: the longer look on this model that the person asked for (at most CHF 0.10)",
+    );
+  });
+});

@@ -4551,6 +4551,17 @@ now; `budget.test.ts` `SessionBudget.wrapUpNow`.
   that was nothing else is the ask line itself, a notice); the row's `why` is the need. A rung
   that would go ahead is never started by the words: Think it through stays under the answer as
   under every quick answer. A pattern never spends; only the person's yes does.
+- *The closer look is told what it is (L4-chat-203).* The thorough request's `# Now` carries
+  `this_answer` (`thoroughFact`: "the closer look on Sonnet that the person said yes to (at most
+  CHF 0.57)", "the longer look on this model that the person asked for (...)" or "... that the
+  quick answer handed over (...)", the figure being the pass's budget) in place of the quick
+  pass's `thinking_longer`, and `CHAT_THOROUGH_RULES` opens with "You are the closer look ...
+  answer_thoroughly and the "Thinking longer" section are the quick answer's, not yours: never
+  say that you could not hand the question over or that a stronger model was not used", asks it
+  to look an earlier reply up before calling it wrong (L4-chat-106's sentence) and to say in plain
+  words what it could not check. Before, the pass reused the quick facts ("asks the person
+  first" after the yes) and the paid Sonnet answer said "I couldn't hand it to the stronger
+  model" under "Thought it through with Sonnet". The fast request is byte for byte as before.
 
 **The history leaves out a quoted record's words (L3-left-6).** An earlier reply whose own words
 the injection scan flags (a reply that quoted a report, a card or a recall hit) is sent in the

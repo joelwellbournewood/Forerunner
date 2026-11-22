@@ -269,3 +269,8 @@ the person first" with no subject, and the definition deferred to it. The owner'
   CHF on the line (rounded up to the centime); a Go ahead asks again only when the model changed
   or the floor, in whole centimes, is above the line's figure. Before, one cheap stronger answer
   anywhere made every later Go ahead ask again without a call.
+- **The closer look is told what it is** (L4-chat-203). The thorough pass's facts carry a
+  `this_answer` line (which model or effort, who chose it, the most it may spend) in place of the
+  quick pass's `thinking_longer`, and its rules say it is the closer look and that the
+  `answer_thoroughly` tool and the "Thinking longer" section belong to the quick answer. The
+  paid Sonnet answer of live check 4 said it could not hand the question to the stronger model.

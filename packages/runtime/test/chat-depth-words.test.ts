@@ -204,8 +204,10 @@ describe("d1109-chat-depth, run C: the sentences", () => {
     expect(CHAT_WRAP_UP).toBe(
       "Wrap up now: make no more lookups. Answer from what you have, and say in one sentence what you could not check.",
     );
+    // l4-chat-depth (L4-chat-203): the rules start by saying the pass is the closer look itself
+    // (the whole text is asserted in chat-depth.test.ts "L4-chat-203").
     expect(
-      CHAT_THOROUGH_RULES.startsWith("# Thinking it through\nThis question was handed to you"),
+      CHAT_THOROUGH_RULES.startsWith("# Thinking it through\nYou are the closer look: "),
     ).toBe(true);
   });
 });
