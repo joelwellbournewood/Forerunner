@@ -23669,4 +23669,54 @@ describe("l4-selftasks-check, run L4", () => {
       await a.rt.close();
     }
   }, 120_000);
+
+  it("L4-money-302 and L4-selftasks-112 (a): GET /inbox's questions card quotes why the specialist asks, from the live reports", async () => {
+    // Live check 4 (L4-l3-3, L4-session-7): the card quoted the reviewer's scope check line, a
+    // commit message that repeats the task's title, and the FAQ's side remark. The card is filed
+    // as the critic files it (`questionsReason` over the run's final report) and read through the
+    // UI's client.
+    const { filePersonQuestions, questionsReason, reportedQuestions } = await import(
+      "@forerunner/runtime/session/person-questions"
+    );
+    const live = JSON.parse(
+      readFileSync(
+        fileURLToPath(
+          new URL("../../../packages/runtime/test/fixtures/asking-live.json", import.meta.url),
+        ),
+        "utf8",
+      ),
+    ) as Record<"live4_launch_review" | "live4_faq", { report: string; task: string }>;
+    const a = await open("nothing", "");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "Pages" });
+      const me = await a.client.me();
+      const shown: Record<string, string | undefined> = {};
+      for (const name of ["live4_launch_review", "live4_faq"] as const) {
+        const created = await a.client.createTask(project.id, {
+          title: live[name].task,
+          outcome: "the work is done",
+        });
+        const task = await a.rt.store.task.mustGet(created.id);
+        const questions = reportedQuestions(live[name].report)?.questions ?? [];
+        const { request } = await filePersonQuestions(a.rt.store, {
+          task,
+          humanId: me.id,
+          agentId: null,
+          source: "critic",
+          questions,
+          context: questionsReason(live[name].report, questions),
+        });
+        shown[name] = (await a.client.inbox(me.id)).requests.find(
+          (r) => r.id === request.id,
+        )?.body;
+      }
+      expect(shown.live4_launch_review).toBe(
+        'The specialist said: "notes/plan.md does not exist, and I am not allowed to write review.md, so I could not produce the deliverable."',
+      );
+      expect(shown.live4_faq).toContain("not added yet");
+      expect(shown.live4_faq).not.toContain("I also split");
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
 });

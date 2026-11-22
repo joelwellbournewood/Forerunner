@@ -36,10 +36,16 @@ import { closingReply, doneExecutor, loopWorld, submitReply } from "./loop-helpe
  * the specialist's tool, answers in the Inbox, a restart) is `person-questions-daemon.test.ts`.
  */
 
-/** The real model's reports from the phase C live check (2026-11-02): `fixtures/asking-live.json`. */
+/**
+ * The real model's reports from the phase C live check (2026-11-02) and live check 4
+ * (2026-11-17): `fixtures/asking-live.json`.
+ */
 const LIVE = JSON.parse(
   readFileSync(join(import.meta.dirname, "fixtures", "asking-live.json"), "utf8"),
-) as Record<"home_page" | "contact_page", { report: string }>;
+) as Record<
+  "home_page" | "contact_page" | "live4_launch_review" | "live4_faq",
+  { report: string; task?: string }
+>;
 
 describe("which tasks are the person's (U-022)", () => {
   it("the explicit field, and the 1.0.3 plan's title from the owner's data", () => {
@@ -461,6 +467,51 @@ describe("the critic path: a run that needs the person's answers (U-022)", () =>
       await w.close();
     }
   });
+
+  // l4-selftasks-check, run L4 (L4-money-302, L4-selftasks-112 (a); live check 4, L4-l3-3 and
+  // L4-session-7): the card quoted the scope check's commit line, which repeats the task's title
+  // ('The one commit is "Workspace before 'Review the launch plan in notes/plan.md'".'), and the
+  // FAQ's side remark ('I also split "join / meeting times" into …'), not why the specialist asks.
+  for (const [name, verdict, title, body] of [
+    [
+      "live4_launch_review",
+      "revise",
+      "Review the launch plan in notes/plan.md",
+      'The specialist said: "notes/plan.md does not exist, and I am not allowed to write review.md, so I could not produce the deliverable."',
+    ],
+    [
+      "live4_faq",
+      "human",
+      "Write the FAQ",
+      `The specialist said: "The answers on joining the club and on contact details say 'not added yet'."`,
+    ],
+  ] as const)
+    it(`l4-selftasks-check, run L4: the live ${name} report's card quotes why the specialist asks, not a line that repeats a title or a side remark`, async () => {
+      const w = await loopWorld({
+        replies: [
+          submitReply(
+            {
+              grade: 40,
+              verdict,
+              summary: "The worker's report asks the person, so the work waits for the person.",
+            },
+            { times: 2 },
+          ),
+          closingReply(),
+        ],
+      });
+      try {
+        const task = await w.addTask(title);
+        await w.start(w.runner(doneExecutor(w, { finalReport: LIVE[name].report })));
+        const open = await w.store.humanRequest.open({ humanId: w.human });
+        const card = open.find((r) => personQuestionsCardOf(r) !== null) as HumanRequestRow;
+        const words = requestWords(card, { taskTitle: task.title });
+        expect(words.body).toBe(body);
+        expect(words.body).not.toMatch(/The one commit|I also split/);
+      } finally {
+        await w.close();
+      }
+    });
 
   it("an accepted run whose report mentions the person only in passing is left alone", async () => {
     const w = await loopWorld({ replies: [submitReply(), closingReply()] });

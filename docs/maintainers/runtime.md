@@ -1948,7 +1948,15 @@ a sign-off without the questions. One card, three ways in:
   placeholder): the report's sentence that shares most words with the first question (the next
   question's when the first shares none), a sentence under "Not done / risks" or one that says
   something is missing, a placeholder or assumed weighing more; else the report's first
-  sentences (`quotedWords`), else the critic's summary. `ask_person` stores its `why`. The card
+  sentences (`quotedWords`), else the critic's summary. Since run L4 (L4-money-302,
+  L4-selftasks-112 (a), live check 4): words a sentence quotes do not count (`unquoted`: a
+  quoted commit message repeated the task's title and won; double quotes always, single ones
+  only around a phrase, so "doesn't" stays), words match by stem ("joining" is "join"), the
+  reason words include "does not exist", "not allowed", "could not", "cannot" and "not found"
+  (`COULD_NOT`), a Summary's sentence gets no reason bonus, the report's lead sentence weighs one
+  more when it says the work could not be done, and on a tie an open section's sentence wins.
+  Fixtures: `asking-live.json` `live4_launch_review` and `live4_faq`. `ask_person` stores its
+  `why`. The card
   quotes it through `specialistReason` (`daemon/request-words.ts`, also the failed-task card's
   "The <specialist> said: …"): no markdown and no findings tag before it (run L3, live check 3,
   L3-research-3: a reviewer's "- **blocker**: `notes/plan.md` is missing." read 'The specialist

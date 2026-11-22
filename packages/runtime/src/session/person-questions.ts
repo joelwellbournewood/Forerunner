@@ -320,22 +320,56 @@ function contentWords(text: string): Set<string> {
       .replace(/['’]s\b/g, "")
       .split(/[^a-z0-9@.\-/]+/)
       .map((w) => w.replace(/^[.\-/]+|[.\-/]+$/g, ""))
-      .filter((w) => w.length >= 4 && !COMMON_WORDS.has(w)),
+      .filter((w) => w.length >= 4 && !COMMON_WORDS.has(w))
+      .map(stem),
   );
+}
+
+/**
+ * A word's stem for matching (l4-selftasks-112 (a)): "joining" matches "join", "answers"
+ * "answer"; a file name or an address stays whole, and no stem is shorter than four letters.
+ */
+function stem(w: string): string {
+  if (/[./@]/.test(w)) return w;
+  const s = w.replace(/(?:ing|ed|es|s)$/, "");
+  return s.length >= 4 ? s : w;
+}
+
+/**
+ * A sentence without what it quotes (L4-money-302, L4-selftasks-112 (a)): a quoted commit
+ * message or task title says what the work is, not why it asks, and a quoted phrase ('a "how do
+ * I join" question') is no word of the sentence's own. Double quotes always; single ones only
+ * where they open after a space (or the start) and close before a space or a mark, so an
+ * apostrophe ("doesn't", "club's") stays.
+ */
+function unquoted(text: string): string {
+  return text
+    .replace(/["“][^"”]*["”]/g, " ")
+    .replace(/(^|\s)['‘][^'’]*['’](?=[\s.,;:!?)]|$)/g, "$1 ");
 }
 
 /** Words of a sentence that say why something is asked: it is missing, a placeholder, assumed. */
 const REASON_WORDS =
   /\b(?:because|placeholder|missing|not\s+given|(?:does\s*n[o']t|did\s*n[o']t|does\s+not|did\s+not)\s+(?:give|say|name|include)|gave\s+no|no\s+real|unknown|not\s+known|assum\w*|guess\w*|invent\w*|unclear|not\s+sure|has\s+no|have\s+no)\b/i;
+/**
+ * A sentence that says the work could not be done (L4-money-302): live check 4's reviewer led
+ * its report with "notes/plan.md does not exist, and I am not allowed to write review.md, so I
+ * could not produce the deliverable." and the card quoted its scope check's commit line.
+ */
+const COULD_NOT =
+  /\b(?:does\s*n[o']t\s+exist|do\s*n[o']t\s+exist|does\s+not\s+exist|not\s+allowed|could\s*n[o']t|could\s+not|cannot|can[’']t|not\s+found|no\s+such)\b/i;
+/** A report section that sums up (its sentences get no reason bonus: they say what was done). */
+const SUMMARY_SECTION = /^\s*summary\s*$/i;
 /** A report section about what is open ("Not done / risks", "Assumptions", "Open points"). */
 const OPEN_SECTION = /not\s+done|risks?|open|blocked|caveats?|assum|limitation|gaps?|unknown/i;
 /** A markdown label at the start of a line: "**Summary**:", "## Risks", "Files changed:". */
 const LABEL = /^\s*(?:#{1,6}\s*)?\*\*([^*]+)\*\*\s*:?\s*/;
 
 /** A report's sentences with the section each is in, without the question list and lessons. */
-function reportSentences(report: string): { text: string; open: boolean }[] {
-  const out: { text: string; open: boolean }[] = [];
+function reportSentences(report: string): { text: string; open: boolean; summary: boolean }[] {
+  const out: { text: string; open: boolean; summary: boolean }[] = [];
   let open = false;
+  let summary = false;
   let inQuestions = false;
   for (const raw of report.split(/\r?\n/)) {
     if (headingAt(raw)) {
@@ -351,9 +385,11 @@ function reportSentences(report: string): { text: string; open: boolean }[] {
     const heading = /^\s*#{1,6}\s+(.+)$/.exec(line);
     if (label?.[1]) {
       open = OPEN_SECTION.test(label[1]);
+      summary = SUMMARY_SECTION.test(label[1]);
       line = line.slice(label[0].length);
     } else if (heading?.[1]) {
       open = OPEN_SECTION.test(heading[1]);
+      summary = SUMMARY_SECTION.test(heading[1]);
       continue;
     }
     const text = line
@@ -365,7 +401,7 @@ function reportSentences(report: string): { text: string; open: boolean }[] {
     // A dot inside a word (a file name, an address) does not end a sentence.
     for (const s of text.match(/(?:[^.!?]|[.!?](?=\S))+[.!?]+(?=\s|$)|(?:[^.!?]|[.!?](?=\S))+$/g) ??
       [])
-      if (s.trim() && !s.trim().endsWith("?")) out.push({ text: s.trim(), open });
+      if (s.trim() && !s.trim().endsWith("?")) out.push({ text: s.trim(), open, summary });
   }
   return out;
 }
@@ -387,13 +423,20 @@ export function questionsReason(
   const sentences = reportSentences(report);
   for (const q of questions) {
     const asked = contentWords(q);
-    let best: { text: string; score: number } | null = null;
-    for (const s of sentences) {
-      const words = contentWords(s.text);
+    let best: { text: string; score: number; open: boolean } | null = null;
+    for (const [i, s] of sentences.entries()) {
+      // L4-money-302, L4-selftasks-112 (a): words the sentence quotes do not count, a word
+      // matches its stem, a Summary's sentence gets no reason bonus (it says what was done), a
+      // lead sentence that says the work could not be done weighs one more, and on a tie a
+      // sentence of an open section ("Not done / risks") wins over an earlier one.
+      const words = contentWords(unquoted(s.text));
       const shared = [...asked].filter((w) => words.has(w)).length;
       if (shared === 0) continue;
-      const score = shared + (s.open ? 1 : 0) + (REASON_WORDS.test(s.text) ? 1 : 0);
-      if (!best || score > best.score) best = { text: s.text, score };
+      const reason = !s.summary && (REASON_WORDS.test(s.text) || COULD_NOT.test(s.text));
+      const lead = i === 0 && COULD_NOT.test(s.text);
+      const score = shared + (s.open ? 1 : 0) + (reason ? 1 : 0) + (lead ? 1 : 0);
+      if (!best || score > best.score || (score === best.score && s.open && !best.open))
+        best = { text: s.text, score, open: s.open };
     }
     if (best) return clean(best.text).slice(0, MAX_QUESTION_CHARS);
   }

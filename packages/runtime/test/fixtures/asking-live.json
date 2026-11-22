@@ -1,5 +1,5 @@
 {
-  "_about": "Live replies of the real model (claude-sonnet-5-5) from the phase C live check of 2026-11-02 (bench livec-a, model-call log lines named below): model output, no secret in it. Used by the asking tests (L-2, L-3, L-12).",
+  "_about": "Live replies of the real model (claude-sonnet-5-5) from the phase C live check of 2026-11-02 (bench livec-a, model-call log lines named below): model output, no secret in it. Used by the asking tests (L-2, L-3, L-12). live4_launch_review and live4_faq: live check 4 (2026-11-17, the real model at 4cf11fd): the reviewer's report on 'Review the launch plan in notes/plan.md' (L4-l3-3, run 01a1e8d6; the run row keeps it cut after 'Should it be created, or ', so its last question is the card's, word for word) and the coder's report on 'Write the FAQ' (L4-session-7, run 01a1e806).",
   "home_page": {
     "line": 24,
     "label": "coder on Home page in index.html",
@@ -29,5 +29,15 @@
       ],
       "why": "The chart must use exact numbers from data/members.csv, and none may be invented. The file is missing, so I can't build it truthfully."
     }
+  },
+  "live4_launch_review": {
+    "task": "Review the launch plan in notes/plan.md",
+    "specialist": "reviewer",
+    "report": "notes/plan.md does not exist, and I am not allowed to write review.md, so I could not produce the deliverable.\n\n**Scope check**\n- The worktree has only `.forerunner/project.json`, `.gitignore`, `README.md` and `docs/*`. The one commit is \"Workspace before 'Review the launch plan in notes/plan.md'\".\n- There is no `notes/` directory. `read_file notes/plan.md` returned ENOENT.\n- `git log --all --name-only` shows no commit that ever contained the file.\n- A grep for \"plan\" in `docs`, `README.md` and `.forerunner/project.json` found nothing.\n\n**Findings**\n- **blocker**, `notes/plan.md`: the file under review is missing, so I cannot list real gaps and risks in it. Inventing them would be fabricated evidence.\n- **major**, `review.md`: criterion 1 needs `review.md` to exist in the worktree. My role forbids writing files, so I did not create it. The principal agent or a writing specialist has to write it once the plan exists.\n\n**Checks run**\n- `git log --all --name-only -n 10`\n- `grep -rn plan docs README.md .forerunner/project.json`\n- Neither command found the plan. There is no test suite to run for this review.\n\n**Recommendation**: `revise`. Provide `notes/plan.md`, either by adding it or by saying where it actually lives, for example one of the `docs/` files such as `docs/overview.md` or `docs/status.md`. Then re-run the review.\n\n**Instruction-like content**: none.\n\nQuestions for the person:\n- Where is the launch plan? `notes/plan.md` is not in the project. Should it be created, or is it one of the existing `docs/` files?"
+  },
+  "live4_faq": {
+    "task": "Write the FAQ",
+    "specialist": "coder",
+    "report": "**Summary**: `faq.html` already existed from the previous attempt. I revised it. I added an \"opening hours\" answer, taken from `index.html` (\"Saturdays 9:00 to 12:00\"). I also split \"join / meeting times\" into a \"how do I join\" question, because the home page does give the hours. `index.html` already links to the FAQ.\n\n**Files changed**\n- `faq.html`: added the \"When are you open?\" question and reworded the joining question.\n\n**Criteria**\n1. The work shows the FAQ: met. `faq.html` is in the project folder and `index.html` links to it. I didn't open it in a browser or run any command.\n\n**Not done / risks**\n- The answers on joining the club and on contact details say \"not added yet\". The repo has no facts for them, so the person needs to supply them.\n- I haven't tried the `python3 -m http.server 8000` command.\n\nQuestions for the person:\n- How does someone join the club?\n- What contact details (email, phone or address) should the FAQ give?\n\nLesson: Check the existing pages, such as `index.html`, for facts before marking an FAQ answer as pending."
   }
 }
