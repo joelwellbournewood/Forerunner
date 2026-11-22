@@ -4369,10 +4369,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     store,
     criticAgentId: criticAgent.id,
     folds: runFolds,
+    // l4-cred-engine L4-creds-9: the person's own session that goes on after a credential wait
+    // (by "continuation") waits in line as their start does, and is named as next too.
     pendingPersonStarts: () =>
       scheduler
         .pendingStarts(agent.id)
-        .filter((e) => startByOf(e.req) === "person")
+        .filter((e) => {
+          const by = startByOf(e.req);
+          return by === "person" || by === "continuation";
+        })
         .map((e) => ({ agentId: e.req.agentId, projectId: e.req.projectId })),
     waitingContinuations: async () => {
       await quietHours.refresh();

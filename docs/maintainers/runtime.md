@@ -8112,6 +8112,12 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   `onGrant`; compose's `onGrant` treats a project with a session begun since an earlier cut-off
   apply as already gone on (drops its kept start, starts nothing). The card's outcome then
   replaces the mark.
+- **A continuation in line is named as next** (L4-creds-9, live check 4's LC-C31): the run
+  indicator's `pendingPersonStarts` counts a start by "continuation" with the person's, so the
+  running session's bar reads "... · then Bird notes" when another project's session that waited
+  for the same stop is queued behind it, and no entry says it waits until a reset that has
+  passed. The queued project's own status sentence ("Goes on after the session on ...") is not
+  built (the report's not_done).
 
 Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
 throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the
