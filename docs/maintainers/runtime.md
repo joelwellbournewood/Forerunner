@@ -8108,7 +8108,10 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   before the result: while it is open the words stay; once answered Wait they become the plain
   wait (`waitSentence` from the card's facts, at the result's time, in the person's zone, then
   the goes-on rule), after Use API key "Went on with your API key.". A notification already sent
-  is not reworded.
+  is not reworded. The cards are read newest first among the yes-or-no cards on no project and
+  no task (fix-up of the review: before, every card oldest first, 500 at most, so on an install
+  with more cards the stop's card was never found; test `credential-ask-words.test.ts` "... more
+  than 500 earlier cards ...").
 - **The configured API address covers the subscription's task runs** (L4-creds-10, live check
   4's L4-creds-16): `SdkDriverDeps.baseURL` is config.json's `anthropicApiBase` (compose); the
   driver sends `ANTHROPIC_BASE_URL` from `req.baseURL ?? deps.baseURL`, the default address

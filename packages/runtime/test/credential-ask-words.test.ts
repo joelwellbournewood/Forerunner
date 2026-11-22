@@ -400,4 +400,56 @@ describe("l4-cred-engine, run L4: a stored result's ask form after the card is a
       await rt.close();
     }, 120_000);
   }
+
+  // fixup-l4-cred-engine (review, non-blocking): the reader listed every card oldest first,
+  // 500 at most, so on an install with more cards than that the stop's ask card was never
+  // found and the stale "The card is in the Inbox." came back after Wait.
+  it("after Wait on an install with more than 500 earlier cards: the session page reads the plain wait", async () => {
+    const clock = new SimulatedClock("2026-10-31T08:00:00Z");
+    const world = credWorld({ clock, prefix: "fr-ask-stored-many-" });
+    homes.push(world.home);
+    world.limitSubscription(Date.parse("2026-10-31T14:00:00Z"));
+    const { rt, req } = await world.compose();
+    await setPolicy(rt, "subscription_then_ask");
+    const { project } = await seedProject(rt, "Quote page", ["Style the page", "Write the copy"]);
+    // 501 earlier yes-or-no cards on no project, as the ask card is, all answered long ago
+    // (none in the Inbox now).
+    for (let i = 0; i < 501; i++) {
+      const row = await rt.store.humanRequest.insert({
+        human_id: rt.human.id,
+        project_id: null,
+        task_id: null,
+        session_id: null,
+        kind: "approval",
+        why: `Earlier question ${i}`,
+        steps: [],
+        options: ["Yes", "No"],
+        blocking: false,
+        risk: "low",
+      } as never);
+      await rt.store.humanRequest.answer(row.id, row.version, "Yes", rt.human.id);
+    }
+    await clock.set("2026-10-31T09:00:00Z");
+    const first = await startSession(rt, project.id);
+    await settleSessions(rt);
+    expect(first.summary).toContain(
+      "Waits for your answer: use your API key? The card is in the Inbox.",
+    );
+    const [card] = await askCards(rt);
+    const inbox = (await req<InboxView>("/inbox")).body;
+    const label = inbox.requests.find((r) => r.id === card?.id)?.choices?.[1]?.label;
+    expect(label).toBe("Wait");
+    await req<HumanRequestView>(`/requests/${card?.id}/answer`, {
+      answer: label,
+      version: card?.version,
+    });
+    await settleSessions(rt);
+    const page = (await req<{ summary: string }>(`/sessions/${first.sessionId}`)).body.summary;
+    expect(page).not.toContain("The card is in the Inbox");
+    expect(page).toContain(
+      "Waits until 15:00 (your subscription's limit); then your session goes on.",
+    );
+    await settleSessions(rt);
+    await rt.close();
+  }, 120_000);
 });

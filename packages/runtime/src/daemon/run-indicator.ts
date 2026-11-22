@@ -96,7 +96,18 @@ async function askFormAfterAnswer(
   const m = ASK_FORM.exec(text);
   if (!m) return text;
   const sinceMs = Date.parse(since);
-  const cards = (await store.humanRequest.list({} as never, { limit: 500 }))
+  // The ask cards are yes-or-no cards on no project and no task (`ensureAskCard`), read newest
+  // first: before, every card oldest first, 500 at most, so on an install with more cards than
+  // that the stop's card was never found and the stale form came back (review of L4-creds-7).
+  const cards = (
+    await store.humanRequest.list({ kind: "approval", project_id: null, task_id: null } as never, {
+      limit: 500,
+      orderBy: [
+        { column: "created_at", direction: "desc" },
+        { column: "id", direction: "desc" },
+      ],
+    })
+  )
     .filter((r) => (r.change_card as { key?: unknown } | null)?.key === CREDENTIAL_ASK_KEY)
     .filter((r) => Date.parse(r.created_at) <= sinceMs + 1000)
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
