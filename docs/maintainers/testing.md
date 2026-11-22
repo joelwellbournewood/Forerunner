@@ -2881,6 +2881,14 @@ asks why something keeps failing (failure), to compare (comparison), a plan for 
 answer from what I have." after the app's "Not now"/"Not yet"; on the thorough pass (its system
 part has "# Thinking it through") it looks up the last session and the tasks, one per call, and
 answers "Thought it through after N lookups…", or at once after the wrap-up.
+l4-chat-depth (L4-chat-202): `FORERUNNER_BENCH_CHAT_ALONE=1` (`chatAlone`) plays what live
+check 4's real fast model did: it never calls `answer_thoroughly` and answers those lines alone,
+asking "Should I go ahead?" in its own words, so the app's ask-only backstop (its own ask line
+with Go ahead) can be walked and tested (`real-daemon.test.ts` "l4-chat-depth, run L4"); before,
+the stand-in called the tool from a regex and every test passed against behaviour the real model
+did not show. The role prompt it reads is conversation-agent 1.5.0 (`evals/registry/principals/
+conversation-agent.md`: "Thinking longer" says the app writes the ask, and is the quick answer's
+section). The bench README lists the variable.
 `FORERUNNER_BENCH_CHAT_HOLD_MS` (`chatHoldMs`) holds every chat reply that long after its input
 was billed, abortable, so a chat answer can be stopped, reloaded and answered now.
 `FORERUNNER_BENCH_DELAY_MS` waits before each reply but the critic's; `criticDelayMs`
