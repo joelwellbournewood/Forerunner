@@ -169,3 +169,7 @@ run, it should be able to do things like that."
   the report reads like an instruction and was left out ("…")"), and in chat under the reply
   (the footer, which is never sent back to a model). No new Inbox card. The model's own flagged
   entries are shown as what the agent's check noted, never as a line of a report.
+- Point 6 (dated note): a change may name a task an earlier add of the same reply makes (an add
+  after it, a task made to wait for it): the fence checks each change on the state after the ones
+  before it, as this point says, and the second missing step of one report is made in the same
+  check. What the fence or the commands refuse is listed in words on a Details line of its own.

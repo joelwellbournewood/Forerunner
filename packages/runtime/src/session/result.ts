@@ -204,6 +204,21 @@ export function taskCheckedLine(
   return `Checked the task list${after ? ` after "${after}"` : ""}: ${what} (${money}).`;
 }
 
+/**
+ * l4-selftasks-104: what a check's fence and the commands refused, as one Details line ('Left
+ * out (and 1 more): the add of "Write thanks.html": "Write book.html" was not added.'), the
+ * words chat's `fixLeftOut` says; null when nothing was refused. Before, the refusals were only
+ * in the event's payload and the person never read them.
+ */
+export function taskCheckLeftOutLine(
+  refused: readonly { what: string; reason: string }[],
+): string | null {
+  const [one] = refused;
+  if (!one) return null;
+  const more = refused.length > 1 ? ` (and ${refused.length - 1} more)` : "";
+  return `Left out${more}: ${one.what.replace(/[.\s]+$/, "")}: ${one.reason.replace(/[.\s]+$/, "")}.`;
+}
+
 /** Merge outcomes that merge by themselves later (merge-in-app): not left for the person. */
 export const MERGE_WAITS: ReadonlySet<string> = new Set(["checks_pending", "unreachable"]);
 

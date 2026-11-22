@@ -7882,6 +7882,18 @@ hiding what it left out. What changed, item by item:
   cut by `quoteOf` (`session/task-list-notes.ts`: whole up to 100 characters, else at a word with
   "…") around the sentence that reads like an instruction (`requestPart`).
 
+- **Chained adds** (L4-selftasks-104): the fence keeps the set's accepted adds in a pending map
+  (title to its index), so an add after, or an order waiting for, a task an earlier add of the
+  same reply makes is let through (`FencedChange.refs`); an add whose title is a live task, an
+  add before a pending one, and a change naming a refused add ('"Write book.html" was not
+  added') are refused in words; an order of a pending task folds into its add; the cycle check
+  runs over both. `applyTaskChanges` fills each ref with the id the earlier add made just before
+  the change runs (`fillRefs`). The card path keeps the titles: `task.create` resolves them when
+  it runs, a `task.dependencies` that names a new task is left out at the Yes with its reason.
+  What the fence and the commands refused is a Details line of its own
+  (`session.task_check_left_out`, `taskCheckLeftOutLine`: 'Left out (and 1 more): the add of
+  "X": ….'), the words chat's `fixLeftOut` says.
+
 Tests: `session-task-list.test.ts` and `chat-fix-tasks.test.ts` (describes "l4-selftasks-check,
 run L4"), `session.test.tsx` and real-daemon.test.ts' describe "l4-selftasks-check, run L4",
 and the injection suite's `report-007` (no change beside a flagged line: the check's own line

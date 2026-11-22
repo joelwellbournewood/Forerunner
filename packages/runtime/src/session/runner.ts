@@ -19,6 +19,7 @@ import {
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import {
   REVIEW_RESUMED_EVENT,
+  TASK_CHECK_LEFT_OUT_EVENT,
   TASK_CHECKED_EVENT,
   TASK_CONTINUES_EVENT,
   TOOK_LARGER_EVENT,
@@ -153,6 +154,7 @@ import {
   sessionResultLines,
   sessionUpdateLine,
   type TaskChangeFact,
+  taskCheckLeftOutLine,
   waitingOf,
 } from "./result.ts";
 import {
@@ -2455,6 +2457,13 @@ export class SessionRunner {
               },
               done.costUsdMicro,
             );
+          // l4-selftasks-104: what the fence and the commands refused, as a Details line.
+          const leftOut = taskCheckLeftOutLine(done.refused);
+          if (done.line && leftOut)
+            await emit(TASK_CHECK_LEFT_OUT_EVENT, {
+              sentence: leftOut,
+              refused: done.refused.map((r) => `${r.what}: ${r.reason}`),
+            });
           if (!done.applied.length) return false;
           tasksChanged.push(...done.facts);
           // The new tasks join only by the admit rule (D6, option C): a part of a promised task

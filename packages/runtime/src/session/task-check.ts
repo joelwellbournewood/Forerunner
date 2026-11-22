@@ -654,6 +654,12 @@ export interface FencedChange {
   newTasks: number;
   /** The one-sentence why, cut to `WHY_MAX`. */
   why: string;
+  /**
+   * l4-selftasks-104: the tasks it names that an earlier add of the same set makes (their titles
+   * and that add's index in `FenceResult.changes`). Applied one by one, each is filled with the
+   * id the earlier add made; if that add was refused, this change is refused too.
+   */
+  refs?: { title: string; index: number }[];
 }
 
 export interface AskFirst {
@@ -839,6 +845,24 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
     ? rows.find((t) => t.id === input.notes[0]?.taskId)
     : undefined;
 
+  // l4-selftasks-104: a task an earlier add of this set makes, by its title (a change is checked
+  // on the state after the ones before it); before, only stored tasks could be named, so "add
+  // thanks.html after book.html" beside "add book.html" was refused as "no task".
+  const pending = new Map<string, { index: number; key: string; title: string }>();
+  const notAdded = new Set<string>();
+  /** A task a change names: stored, made by an earlier add of the set, or why neither. */
+  const named = (
+    name: string,
+  ): { row: TaskRow } | { pending: { index: number; key: string; title: string } } | string => {
+    const t = byTitle.get(name.trim());
+    if (t) return { row: t };
+    const p = pending.get(name.trim());
+    if (p) return { pending: p };
+    return notAdded.has(name.trim())
+      ? `"${name.trim()}" was not added`
+      : `"${name.trim()}" is no task of ${project.name}`;
+  };
+
   let drops = 0;
   let newTasks = 0;
   for (const change of reply.changes) {
@@ -851,6 +875,11 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
     let taskIds: string[] = [];
     let sourceId: string | null = null;
     let made = 0;
+    const refs: { title: string; index: number }[] = [];
+    const refuse = (reason: string) => {
+      refused.push({ what, reason });
+      if (change.kind === "add") notAdded.add(change.title.trim());
+    };
     switch (change.kind) {
       case "edit": {
         const t = changeable(change.task);
@@ -917,24 +946,37 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
       case "add": {
         texts.push(change.title, change.outcome, ...change.acceptanceCriteria);
         const anchors: TaskRow[] = [];
+        const pendingAnchors: string[] = [];
         let bad: string | null = null;
+        const live = byTitle.get(change.title.trim());
+        if (live && live.status !== "cancelled")
+          bad = `"${live.title}" is already a task of ${project.name}`;
+        else if (pending.has(change.title.trim()))
+          bad = `"${change.title.trim()}" is added once already`;
         for (const a of change.after) {
-          const t = byTitle.get(a.trim());
-          if (!t) bad = `"${a.trim()}" is no task of ${project.name}`;
-          else if (t.status === "cancelled") bad = `"${t.title}" is cancelled`;
-          else anchors.push(t);
+          const n = named(a);
+          if (typeof n === "string") bad = n;
+          else if ("pending" in n) {
+            pendingAnchors.push(n.pending.key);
+            refs.push({ title: n.pending.title, index: n.pending.index });
+          } else if (n.row.status === "cancelled") bad = `"${n.row.title}" is cancelled`;
+          else anchors.push(n.row);
         }
         const before: TaskRow[] = [];
         for (const b of change.before) {
+          if (pending.has(b.trim())) {
+            bad = `"${b.trim()}" is added by this check too, so nothing is added before it`;
+            continue;
+          }
           const t = changeable(b);
           if (typeof t === "string") bad = t;
           else before.push(t);
         }
         if (bad) {
-          refused.push({ what, reason: bad });
+          refuse(bad);
           continue;
         }
-        const waits = waitsOnAll(anchors.map((a) => a.id));
+        const waits = waitsOnAll([...anchors.map((a) => a.id), ...pendingAnchors]);
         const looped = before.find((b) => waits.has(b.id) || anchors.some((a) => a.id === b.id));
         if (looped) {
           refused.push({
@@ -951,9 +993,33 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
         taskIds = before.map((b) => b.id);
         sourceId = source?.id ?? null;
         made = 1;
+        // Recorded once the size rules below let it through (`pending.set` after them).
+        deps.set(`new:${changes.length}`, [...anchors.map((a) => a.id), ...pendingAnchors]);
         break;
       }
       case "order": {
+        // l4-selftasks-104: an order of a task an earlier add of this set makes is folded into
+        // that add (it waits for these too), so the person reads one change for it.
+        const own = pending.get(change.task.trim());
+        if (own) {
+          const add = changes[own.index];
+          if (add?.change.kind === "add") {
+            const extra = change.waitsFor.filter((w) => {
+              const n = named(w);
+              return typeof n !== "string" && !("pending" in n && n.pending.key === own.key);
+            });
+            add.change.after = [...new Set([...add.change.after, ...extra])];
+            for (const w of extra) {
+              const n = named(w);
+              if (typeof n !== "string" && "pending" in n)
+                add.refs = [
+                  ...(add.refs ?? []),
+                  { title: n.pending.title, index: n.pending.index },
+                ];
+            }
+          }
+          continue;
+        }
         const t = changeable(change.task);
         if (typeof t === "string") {
           refused.push({ what, reason: t });
@@ -962,11 +1028,14 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
         const ids: string[] = [];
         let bad: string | null = null;
         for (const w of change.waitsFor) {
-          const d = byTitle.get(w.trim());
-          if (!d) bad = `"${w.trim()}" is no task of ${project.name}`;
-          else if (d.status === "cancelled") bad = `"${d.title}" is cancelled`;
-          else if (d.id === t.id) bad = "a task cannot wait for itself";
-          else ids.push(d.id);
+          const n = named(w);
+          if (typeof n === "string") bad = n;
+          else if ("pending" in n) {
+            ids.push(n.pending.key);
+            refs.push({ title: n.pending.title, index: n.pending.index });
+          } else if (n.row.status === "cancelled") bad = `"${n.row.title}" is cancelled`;
+          else if (n.row.id === t.id) bad = "a task cannot wait for itself";
+          else ids.push(n.row.id);
         }
         if (bad) {
           refused.push({ what, reason: bad });
@@ -1017,21 +1086,31 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
       }
     }
     if (newTasks + made > MAX_NEW_TASKS_PER_CHECK) {
-      refused.push({ what, reason: `a check adds at most ${MAX_NEW_TASKS_PER_CHECK} new tasks` });
+      refuse(`a check adds at most ${MAX_NEW_TASKS_PER_CHECK} new tasks`);
       continue;
     }
     if (input.addedThisSession + newTasks + made > MAX_NEW_TASKS_PER_SESSION) {
-      refused.push({
-        what,
-        reason: `a session adds at most ${MAX_NEW_TASKS_PER_SESSION} new tasks`,
-      });
+      refuse(`a session adds at most ${MAX_NEW_TASKS_PER_SESSION} new tasks`);
       continue;
     }
     for (const text of texts)
       if (text && readsLikeInstruction(text))
         ask("a change the agent wrote reads like an instruction", text);
     newTasks += made;
-    changes.push({ change, taskIds, sourceId, newTasks: made, why: cutWhy(change.why) });
+    if (change.kind === "add")
+      pending.set(change.title.trim(), {
+        index: changes.length,
+        key: `new:${changes.length}`,
+        title: change.title.trim(),
+      });
+    changes.push({
+      change,
+      taskIds,
+      sourceId,
+      newTasks: made,
+      why: cutWhy(change.why),
+      ...(refs.length ? { refs } : {}),
+    });
   }
   if (drops > MAX_DROPS_WITHOUT_ASKING) ask(`it would drop ${drops} tasks at once`);
   return { changes, refused, askFirst: changes.length ? askFirst : [], quotes };
@@ -1220,11 +1299,25 @@ export async function applyTaskChanges(
   // (a step before it) found no such task (the bench walk of 2026-11-16).
   const planned: CommandCallLike[][] = [];
   for (const fenced of fence.changes) planned.push(await callsOf(store, project, fenced));
+  // l4-selftasks-104: the task each add made, by its index in the set.
+  const madeBy = new Map<number, string>();
   for (const [i, fenced] of fence.changes.entries()) {
     const before = new Set(
       (await store.task.forProject(project.id, {}, { limit: 10_000 })).map((t) => t.id),
     );
-    const calls = planned[i] as CommandCallLike[];
+    let calls = planned[i] as CommandCallLike[];
+    // A change that names a task an earlier add of the set makes gets that task's id, filled
+    // just before it runs; when that add was not made, neither is this change.
+    const missing = (fenced.refs ?? []).find((r) => !madeBy.has(r.index));
+    if (missing) {
+      refused.push({ what: changeWhat(fenced.change), reason: `"${missing.title}" was not added` });
+      continue;
+    }
+    if (fenced.refs?.length)
+      calls = calls.map((c) => ({
+        name: c.name,
+        params: fillRefs(c.params, fenced.refs ?? [], madeBy),
+      }));
     const r = await port.run(calls, {
       projectId: project.id,
       sessionId: input.sessionId,
@@ -1237,6 +1330,7 @@ export async function applyTaskChanges(
     const now = await store.task.forProject(project.id, {}, { limit: 10_000 });
     const madeIds = now.filter((t) => !before.has(t.id)).map((t) => t.id);
     const c = fenced.change;
+    if (c.kind === "add" && madeIds[0]) madeBy.set(i, madeIds[0]);
     const made = madeIds.map((taskId) => ({
       taskId,
       ...(c.kind === "split" && fenced.taskIds[0] ? { partOf: fenced.taskIds[0] } : {}),
@@ -1254,6 +1348,22 @@ export async function applyTaskChanges(
       );
   }
   return { applied, refused, proposed: false };
+}
+
+/** A call's task names replaced by the ids the set's earlier adds made (l4-selftasks-104). */
+function fillRefs(
+  params: JsonValue,
+  refs: readonly { title: string; index: number }[],
+  madeBy: ReadonlyMap<number, string>,
+): JsonValue {
+  const ids = new Map(refs.map((r) => [r.title, madeBy.get(r.index) ?? r.title]));
+  const fill = (v: JsonValue): JsonValue =>
+    typeof v === "string" ? (ids.get(v.trim()) ?? v) : Array.isArray(v) ? v.map(fill) : v;
+  if (!params || typeof params !== "object" || Array.isArray(params)) return params;
+  const out: Record<string, JsonValue> = {};
+  for (const [k, v] of Object.entries(params))
+    out[k] = k === "task" || k === "depends_on" || k === "before" ? fill(v as JsonValue) : v;
+  return out as JsonValue;
 }
 
 // --- The session's boundary (runner.ts calls it between two tasks) ---------------------------

@@ -798,3 +798,105 @@ describe("l4-selftasks-check, run L4: what the check left out is quoted on its l
     expect(line).not.toContain("a line of the report");
   });
 });
+
+describe("l4-selftasks-check, run L4: two missing steps from one report (L4-selftasks-104)", () => {
+  /** "Write index.html and book.html" reported two pages left undone; styles waits for index. */
+  async function teaRoom(w: Awaited<ReturnType<typeof world>>) {
+    const index = await w.add("Write index.html and book.html", 0.2, { priority: 9 });
+    const styles = await w.add("Write styles.css and link it from every page", 0.1, {
+      depends_on: [index.id],
+    });
+    w.scripts.set("Write index.html and book.html", {
+      cost: 0.2,
+      report:
+        "Wrote index.html.\nFor the task list: book.html and thanks.html were left undone; styles.css must link them too.",
+    });
+    return { index, styles };
+  }
+  const BOOK = {
+    kind: "add",
+    title: "Write book.html",
+    outcome: "book.html has the booking form",
+    acceptanceCriteria: ["book.html exists"],
+    specialist: "coder",
+    after: ["Write index.html and book.html"],
+    why: "The report says book.html was left undone.",
+  };
+  const THANKS = {
+    kind: "add",
+    title: "Write thanks.html",
+    outcome: "thanks.html thanks the guest",
+    acceptanceCriteria: ["thanks.html exists"],
+    specialist: "coder",
+    after: ["Write book.html"],
+    why: "The report says thanks.html was left undone.",
+  };
+  const ORDER = {
+    kind: "order",
+    task: "Write styles.css and link it from every page",
+    waitsFor: ["Write index.html and book.html", "Write book.html", "Write thanks.html"],
+    why: "styles.css links every page.",
+  };
+
+  it("an add after a task added earlier in the same reply, and an order on both, are made: three changes, the new tasks wait as asked and both run in the session", async () => {
+    const w = await world();
+    const { index, styles } = await teaRoom(w);
+    w.replies.push(
+      JSON.stringify({ changes: [BOOK, THANKS, ORDER], flagged: [], why: "Two pages." }),
+    );
+    const r = await w.start(3);
+    expect(w.checkCalls.length).toBe(1);
+    const byTitle = new Map(
+      (await w.store.task.forProject(w.seeded.project)).map((t) => [t.title, t]),
+    );
+    const book = byTitle.get("Write book.html");
+    const thanks = byTitle.get("Write thanks.html");
+    expect(book?.depends_on).toEqual([index.id]);
+    expect(thanks?.depends_on).toEqual([book?.id]);
+    expect(byTitle.get(styles.title)?.depends_on.sort()).toEqual(
+      [index.id, book?.id, thanks?.id].sort(),
+    );
+    const seen = await w.lines(r);
+    expect(seen.find((l) => l.type === "session.task_checked")?.line).toMatch(
+      /^Checked the task list after "Write index\.html and book\.html": changed 3 tasks \(/,
+    );
+    expect(seen.filter((l) => l.type === "session.task_check_left_out")).toEqual([]);
+    expect(w.ran).toEqual([
+      "Write index.html and book.html",
+      "Write book.html",
+      "Write thanks.html",
+      "Write styles.css and link it from every page",
+    ]);
+  });
+
+  it("a change that names an add the fence refused is refused in words, and the refusals are a Details line", async () => {
+    const w = await world();
+    await teaRoom(w);
+    // The first add waits for a task the project does not have: refused, so thanks.html, which
+    // waits for it, cannot be made either.
+    w.replies.push(
+      JSON.stringify({
+        changes: [{ ...BOOK, after: ["Write the menu"] }, THANKS],
+        flagged: [],
+        why: "Two pages.",
+      }),
+    );
+    const r = await w.start(3);
+    const titles = (await w.store.task.forProject(w.seeded.project)).map((t) => t.title);
+    expect(titles).not.toContain("Write book.html");
+    expect(titles).not.toContain("Write thanks.html");
+    const row = (await w.store.event.list(r.sessionId)).find(
+      (e) => e.type === "session.task_check_left_out",
+    );
+    if (!row) throw new Error("no left-out line");
+    const view = eventView(row, 1);
+    expect(view.audience).toBe("detail");
+    expect(view.text).toBe(
+      'Left out (and 1 more): the add of "Write book.html": "Write the menu" is no task of Quote page.',
+    );
+    expect((row.payload as { refused?: string[] }).refused).toEqual([
+      'the add of "Write book.html": "Write the menu" is no task of Quote page',
+      'the add of "Write thanks.html": "Write book.html" was not added',
+    ]);
+  });
+});

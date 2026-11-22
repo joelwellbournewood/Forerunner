@@ -55,6 +55,11 @@ export const PROMISED_EVENT_TYPE = "session.promised";
  * line read like an instruction) stays a detail.
  */
 export const TASK_CHECKED_EVENT = "session.task_checked";
+/**
+ * l4-selftasks-104: what a check left out, in words ('Left out (and 1 more): the add of "X":
+ * …'), a Details line beside the check's own.
+ */
+export const TASK_CHECK_LEFT_OUT_EVENT = "session.task_check_left_out";
 
 /** The types a person reads by default; every other type is a detail. */
 export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([

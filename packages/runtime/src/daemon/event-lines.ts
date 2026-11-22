@@ -577,6 +577,9 @@ export function moreEventLines(type: string, p: Payload, chfPerUsd: number): str
     // with its cost on its row, a detail only when it made no call (`event-audience.ts`).
     case "session.task_checked":
       return s("sentence") || "Checked the task list.";
+    // l4-selftasks-104: the changes a check left out, with why, in words.
+    case "session.task_check_left_out":
+      return s("sentence") || "The task check left out a change.";
     // U-078 (ADR 0100): a credential met its usage limit; the sentence says what took over.
     case "billing.fallback":
       return s("sentence") || "A Claude credential reached its usage limit; the next one is used.";

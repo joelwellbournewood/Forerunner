@@ -23571,4 +23571,56 @@ describe("l4-selftasks-check, run L4", () => {
       await a.rt.close();
     }
   }, 120_000);
+
+  it("L4-selftasks-104: a change the fence refuses is a Details line on the session page that says what and why", async () => {
+    // A wait the fence refuses: "Write the footer" already waits for "Style the page".
+    const a = await open("Create the page", '"Style the page" must wait for "Write the footer".');
+    try {
+      const project = await a.client.createProject({
+        name: "Tea room",
+        goal: "A page for the tea room",
+        autonomyLevel: 2,
+      });
+      await a.client.createTask(project.id, {
+        title: "Create the page in index.html",
+        outcome: "index.html shows the tea room",
+        acceptanceCriteria: ["index.html exists"],
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const logo = await a.client.createTask(project.id, {
+        title: "Send the logo",
+        outcome: "The logo is in the folder",
+        specialist: "person",
+      });
+      const style = await a.client.createTask(project.id, {
+        title: "Style the page",
+        outcome: "The page has its colours",
+        acceptanceCriteria: ["the colours match the logo"],
+        riskTier: 1,
+        specialist: "coder",
+        dependsOn: [logo.id],
+      });
+      await a.client.createTask(project.id, {
+        title: "Write the footer",
+        outcome: "The page has a footer",
+        acceptanceCriteria: ["the footer names the tea room"],
+        riskTier: 1,
+        specialist: "coder",
+        dependsOn: [style.id],
+      });
+      const sessionId = await runAtStandard(a, project.id);
+      const events = await a.client.sessionEvents(sessionId);
+      const left = events.find((e) => e.type === "session.task_check_left_out");
+      expect(left?.audience).toBe("detail");
+      expect(left?.text).toBe(
+        'Left out: the order of "Style the page": "Style the page" would wait for itself through another task.',
+      );
+      expect(events.find((e) => e.type === "session.task_checked")?.text).toMatch(
+        /^Checked the task list after "Create the page in index\.html": no change \(/,
+      );
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
 });
