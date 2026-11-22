@@ -23783,6 +23783,66 @@ describe("l4-selftasks-check, run L4", () => {
     }
   }, 120_000);
 
+  it("L4-selftasks-114: Costs names a project's only task-less spend, the task check, as checking the task list; a project with an intake still reads planning", async () => {
+    // Live check 4 (L4-l3-17): 'planning 3 runs CHF 0.01' and 'Planning and chat 3 runs' on More >
+    // Costs for a folder project with no plan and no chat: its three runs were task checks.
+    const a = await open("nothing", "");
+    try {
+      const book = async (projectId: string, specialist: string) => {
+        const session = await a.rt.store.session.insert({
+          agent_id: a.rt.agent.id,
+          project_id: projectId,
+          trigger: "manual",
+          plan: {},
+          budget_cap_usd_micro: 1_000_000,
+          step_cap: 10,
+          spent_usd_micro: 0,
+          steps: 0,
+          status: "planned",
+          summary: "",
+          handoff: {},
+          runner: "pc",
+          author_agent: a.rt.agent.id,
+        } as never);
+        const run = await a.rt.store.run.insert({
+          session_id: session.id,
+          specialist,
+          model: "fake",
+        } as never);
+        await a.rt.store.costLedger.record({
+          human_id: a.rt.human.id,
+          project_id: projectId,
+          run_id: run.id,
+          kind: "api",
+          usd_micro: 10_000,
+          chf_micro: 8_000,
+          model: "fake",
+        } as never);
+      };
+      const folder = await a.client.createProject({ name: "Folder", goal: "A folder project" });
+      for (let i = 0; i < 3; i++) await book(folder.id, "task-check");
+      const planned = await a.client.createProject({ name: "Planned", goal: "A planned project" });
+      await book(planned.id, "intake");
+      await book(planned.id, "task-check");
+      const labels = async (projectId: string) => {
+        const c = await a.client.costs({ projectId });
+        return {
+          bySpecialist: c.bySpecialist.map((b) => b.label),
+          byTask: c.byTask.map((b) => b.label),
+        };
+      };
+      expect(await labels(folder.id)).toEqual({
+        bySpecialist: ["checking the task list"],
+        byTask: ["Checking the task list"],
+      });
+      const other = await labels(planned.id);
+      expect(other.bySpecialist.sort()).toEqual(["checking the task list", "planning"]);
+      expect(other.byTask).toEqual(["Planning and chat"]);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
   it("L4-money-302 and L4-selftasks-112 (a): GET /inbox's questions card quotes why the specialist asks, from the live reports", async () => {
     // Live check 4 (L4-l3-3, L4-session-7): the card quoted the reviewer's scope check line, a
     // commit message that repeats the task's title, and the FAQ's side remark. The card is filed

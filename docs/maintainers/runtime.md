@@ -7143,13 +7143,17 @@ and `plainPlurals`).
 ### Costs view (design §5 rule 3)
 
 `costView` (`GET /costs`) keeps the ledger's sums and adds what a person reads (`costFacts`): a
-task's row is labelled with its title ("Planning and chat" for spend that names no task), a
+task's row is labelled with its title ("Planning and chat" for spend that names no task;
+"Checking the task list" when the session's task check is all of it, `costFacts.taskless`,
+l4-selftasks-114, live check 4: a folder project with three task checks read "Planning and
+chat 3 runs"), a
 project's with its name, the work by the specialist that ran it (the ledger's `specialist`
 column is not filled; each entry names its run, and the run its specialist; the critic's runs
 are "the critic"), and `accepted`, the runs the critic accepted (a task's last work run before
 each accepting review; per task, per specialist and per model). `runs` counts runs, not the
 ledger's entries (one per model call): a task's work runs, a model's runs; the planning run is
-"planning" and, like the critic's reviews, has no accepted count. Without a period asked for,
+"planning", the task check's "checking the task list" (before, "planning" too), and, like the
+critic's reviews, neither has an accepted count. Without a period asked for,
 `from` and `to` are the first and the last entry's time, which the Costs tab says in words
 ("1 Nov to 3 Nov"). A specialist reads as the session log names it ("the writer", `saidByName`,
 not "writer-marketing"), and a model's `runs` are its work runs when it did any, so its accepted

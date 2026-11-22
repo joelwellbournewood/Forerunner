@@ -1263,7 +1263,13 @@ export async function costView(
       b.label = t.title;
       b.runs = facts.runsByTask.get(b.key) ?? b.runs;
       b.accepted = facts.acceptedRunsByTask.get(b.key) ?? 0;
-    } else if (b.key === "(none)") b.label = "Planning and chat";
+    } else if (b.key === "(none)")
+      // l4-selftasks-114 (live check 4, L4-l3-17): a project whose only spend outside its tasks
+      // is the task check reads it as that, not "Planning and chat".
+      b.label =
+        facts.taskless.size > 0 && [...facts.taskless].every((k) => k === TASK_CHECK_RUN_SPECIALIST)
+          ? "Checking the task list"
+          : "Planning and chat";
   }
   // later #91: a model's accepted runs are compared with its work runs (before, the critic's
   // reviews and the planning call counted too: "Accepted 3 / 16"); a model only the critic or
@@ -1384,6 +1390,8 @@ async function costFacts(
   }[];
   acceptedRunsByTask: Map<string, number>;
   acceptedRunsByModel: Map<string, number>;
+  /** The specialists of the spend outside any task (l4-selftasks-114). */
+  taskless: Set<string>;
   runsByTask: Map<string, number>;
   /** Work runs per model: not the critic's reviews, not the planning call. */
   runsByModel: Map<string, number>;
@@ -1476,17 +1484,26 @@ async function costFacts(
           ? "Planning and chat"
           : key === "critic"
             ? "the critic"
-            : key === INTAKE_RUN_SPECIALIST || key === TASK_CHECK_RUN_SPECIALIST
+            : key === INTAKE_RUN_SPECIALIST
               ? "planning"
-              : `the ${saidByName(key) ?? key}`,
+              : key === TASK_CHECK_RUN_SPECIALIST
+                ? "checking the task list"
+                : `the ${saidByName(key) ?? key}`,
       usdMicro: s.usdMicro,
       runs: s.runs.size || s.entries,
       accepted: notWork(key) ? null : s.accepted,
     }))
     .sort((a, b) => b.usdMicro - a.usdMicro || a.key.localeCompare(b.key));
   const times = entries.map((e) => e.occurred_at).sort();
+  // What the spend outside any task was: the runs' specialists ("(none)" for a run-less row).
+  const taskless = new Set(
+    entries
+      .filter((e) => !e.task_id)
+      .map((e) => e.specialist ?? (e.run_id ? runs.get(e.run_id)?.specialist : null) ?? "(none)"),
+  );
   return {
     tasks,
+    taskless,
     bySpecialist,
     acceptedRunsByTask,
     acceptedRunsByModel,
