@@ -546,8 +546,13 @@ function Turn({
   // the changes once, on their lines with Undo, and the sentence more at the end of the last
   // one, never the switch twice in one bubble (design §5 rule 10).
   const joined = sentences.join(" ").trim();
+  // Only whole sentences more: the changes' sentences end a sentence and the rest starts after a
+  // space (", until 06:00." after "… to CHF 20" is the same sentence, shown as the reply).
   const after =
-    r?.actions.length && joined && text.startsWith(joined) && text.length > joined.length
+    r?.actions.length &&
+    /[.!?…]["”')]?$/.test(joined) &&
+    text.startsWith(joined) &&
+    /^\s+\S/.test(text.slice(joined.length))
       ? text.slice(joined.length).trim()
       : "";
   const showText =
