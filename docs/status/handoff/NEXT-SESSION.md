@@ -99,6 +99,12 @@ The icon today is Tauri's stock logo (yellow and blue rings), never replaced.
   (with and without the running dot), the window and the installer all show the red diamond.
 - **When:** a small change of its own between run L4 rounds, and before the owner's installer
   (G) at the latest.
+- **Built 2026-11-22:** branch `fix/app-icon` (e049cf1, c682a4a, eae564a; independent review approved,
+  no blocking findings) merged after run L4 round L4a. `scripts/app-icon.test.ts` failed on the stock
+  icons and passes now. Left: the owner's check in the app (taskbar, Start menu, tray with and without
+  the running dot, window, installer, Android launcher, browser tab), a favicon for
+  `apps/approvals-web`, and the owner's choice about an Android adaptive icon
+  (`/tmp/frbench/leftovers-icon.json`).
 
 ## Status at 2026-11-16 11:00 UTC (run C steps 1 to 4 merged; C4b next)
 

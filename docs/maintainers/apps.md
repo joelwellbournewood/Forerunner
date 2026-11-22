@@ -1969,15 +1969,17 @@ radially to tan at the edges, transparent outside the rounded corners. Every ico
 is generated from it; none is drawn by hand. Until 1.0.4 the apps shipped Tauri's stock icon
 (yellow and blue rings).
 
-- `apps/desktop/src-tauri/icons` and `apps/mobile/src-tauri/icons` (the same bytes): the PNGs,
-  `icon.ico`, `icon.icns`, the `Square*Logo.png` tiles and `StoreLogo.png`. Each
+- `apps/desktop/src-tauri/icons` and `apps/mobile/src-tauri/icons` (the same pictures; the
+  `icon.icns` files may list their entries in a different order): the PNGs, `icon.ico`,
+  `icon.icns`, the `Square*Logo.png` tiles and `StoreLogo.png`. Each
   `tauri.conf.json` lists the PNGs, the `.ico` and the `.icns`. On Windows the taskbar, the
   Start menu, the window and the tray show the `icon.ico` resource in the exe and the MSI (at the
   system's icon size); on Linux the window and the tray show the first PNG listed,
   `icons/32x32.png`, and the AppImage and the .deb install the PNGs.
 - The Android launcher icons, `apps/mobile/src-tauri/gen/android/app/src/main/res/mipmap-*/`
-  (`ic_launcher.png`, `ic_launcher_round.png`, `ic_launcher_foreground.png`;
-  `AndroidManifest.xml` uses `@mipmap/ic_launcher`).
+  (`ic_launcher.png`, `ic_launcher_round.png`, `ic_launcher_foreground.png`). Only
+  `ic_launcher.png` is shown: `AndroidManifest.xml` uses `@mipmap/ic_launcher` and names no
+  round or adaptive icon.
 - The UI's browser tab: `apps/ui/public/favicon.svg` is the master itself, linked from
   `apps/ui/index.html`. Vite copies `public/` into `dist/`, which both shells load.
 
