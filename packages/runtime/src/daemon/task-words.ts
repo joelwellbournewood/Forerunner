@@ -426,6 +426,11 @@ export function budgetPauseLabelOf(card: unknown): string {
         return "Paused before its budget ran out";
       case "specialist_limit":
         return "Paused before its limit per run ran out";
+      // L4-money-103: a run capped at what was left of an outer limit wrapped up inside it.
+      case "project":
+        return "Paused before the project's budget ran out";
+      case "month":
+        return "Paused before this month's cap ran out";
       default:
         break;
     }

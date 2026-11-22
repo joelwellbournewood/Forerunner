@@ -4783,7 +4783,8 @@ export class SessionRunner {
    * budget of its own (its review is the session's), or without a critic that prices its call.
    */
   private async reviewRoomOf(task: TaskRow, item: PlanItem): Promise<number> {
-    if (!(task.budget_usd_micro > 0)) return 0;
+    // l4-money-pause, run L4 (L4-money-103): also for a task without a budget of its own, whose
+    // run an outer limit's remainder may cap (the executor keeps the room there when it can).
     const critic = this.deps.critic;
     if (!critic?.reviewCallUsdMicro) return 0;
     try {

@@ -138,6 +138,11 @@ export function budgetStopTitle(
         return `${title} paused before the ${saidByName(stop.specialist) ?? "specialist"}'s limit per run ran out`;
       case "session":
         return `${title} paused before this session's budget ran out`;
+      // L4-money-103: a run capped at what was left of an outer limit heard its wrap-up there.
+      case "project":
+        return `${title} paused before the project's budget ran out`;
+      case "month":
+        return `${title} paused before this month's cap ran out`;
       default:
         break;
     }

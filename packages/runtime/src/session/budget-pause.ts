@@ -263,7 +263,8 @@ export function parseHandoff(
  */
 export function stopSourceOf(
   error: { code?: string; level?: string } | undefined,
-  runCapSource: "task_budget" | "specialist_limit" | "session",
+  // L4-money-103: "project" or "month" when what is left of that limit capped the run.
+  runCapSource: BudgetStopSource,
 ): BudgetStopSource {
   if (error?.code !== "budget_exceeded") return runCapSource;
   switch (error.level) {
@@ -386,20 +387,33 @@ export function budgetLineWords(
   line: RunWrapUpLine,
   chfOf: (usdMicro: number) => string,
   roomUsdMicro = 0,
+  /**
+   * l4-money-pause, run L4 (L4-money-103): the outer limit whose remainder capped the run: 'This
+   * run may spend CHF 0.06, what is left of the project's budget: before a step ...' (live check
+   * 4: "This run may spend CHF 1.20" under a project budget of CHF 0.06). Its review's room, when
+   * kept, is said as what is left less it.
+   */
+  outer?: "project" | "month",
 ): string {
   // P7-1, W14-6 (polish-words): no "save only" (a word of the code, not the person's), and an
   // amount under a centime reads "less than CHF 0.01", never "CHF 0.00".
   const chf = (usd: number) => moneyWords(chfOf(usd), usd);
+  const of = outer === "project" ? "the project's budget" : "this month's cap";
   // d1116-budget-all (BA-4): what the run keeps of its task's budget for its review, after the
   // amount, only when it keeps some (no clause promises a room the code does not keep).
-  const kept =
-    roomUsdMicro > 0 ? ` (${chf(roomUsdMicro)} of the task's budget is kept for its review)` : "";
+  const kept = outer
+    ? `, what is left of ${of}${roomUsdMicro > 0 ? ` less the ${chf(roomUsdMicro)} kept for its review` : ""}`
+    : roomUsdMicro > 0
+      ? ` (${chf(roomUsdMicro)} of the task's budget is kept for its review)`
+      : "";
+  // L4-money-103: under an outer limit it pauses there, not at a budget of its own.
+  const at = outer ? `at ${of}` : "at its budget";
   if (line.saveOnly && line.firstCallUsdMicro > line.capUsdMicro)
     return chf(line.firstCallUsdMicro) === "less than CHF 0.01"
-      ? "This run may spend less than its first step may cost (both are under CHF 0.01): it pauses at its budget before that step."
-      : `This run may spend ${chf(line.capUsdMicro)}${kept}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): it pauses at its budget before that step.`;
+      ? `This run may spend less than its first step may cost (both are under CHF 0.01): it pauses ${at} before that step.`
+      : `This run may spend ${chf(line.capUsdMicro)}${kept}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): it pauses ${at} before that step.`;
   return line.saveOnly
-    ? `This run may spend ${chf(line.capUsdMicro)}${kept}, too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}): it pauses at its budget and keeps its work.`
+    ? `This run may spend ${chf(line.capUsdMicro)}${kept}, too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}): it pauses ${at} and keeps its work.`
     : `This run may spend ${chf(line.capUsdMicro)}${kept}: before a step that could take it past ${chf(line.lineUsdMicro)} it is told to wrap up, keeping a reserve of ${chf(line.reserveUsdMicro)} to finish.`;
 }
 

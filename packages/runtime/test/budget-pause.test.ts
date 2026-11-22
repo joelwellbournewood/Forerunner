@@ -95,6 +95,10 @@ function provider(clock: SimulatedClock, calls: ModelRequest[]) {
       ...works("Tiny page", 5_000, LEFT),
       ...works("Big report", 150_000, NOTHING_LEFT),
       ...works("Members list", 30_000, LEFT),
+      // l4-money-pause (L4-money-103): a run under the month's cap hears its wrap-up inside it,
+      // so these work until then (before: one call each, stopped by the cap a run before left).
+      ...works("Members page", 10_000, LEFT),
+      ...works("Members map", 10_000, LEFT),
       textReply("Wrote members-chart.html.\n\nLeft to do: nothing", {
         when: coderOn("Members chart"),
         times: Number.POSITIVE_INFINITY,
@@ -501,17 +505,21 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     const r = await runOne(req, rt, "Members list", { budgetUsdMicro: 2_000_000 });
     const said = lines(r.events);
     // Before: "stopped at its budget of CHF 1.60", and its card offered to raise that budget.
+    // l4-money-pause (L4-money-103): what is left of the month's cap caps the run, so it hears
+    // its wrap-up inside it (before: "stopped at this month's cap of CHF 0.10: it spent CHF
+    // 0.09, and its next step would have gone over.", a hard stop).
     expect(
       said.some((l) =>
-        /^"Members list" stopped at this month's cap of CHF 0\.10: it spent CHF [\d.]+, and its next step would have gone over\.$/.test(
+        /^"Members list" paused before this month's cap of CHF 0\.10 ran out: it spent CHF [\d.]+ and listed 2 things left to do(?:; CHF [\d.]+ is kept for its review)?\.$/.test(
           l,
         ),
       ),
+      said.join(" | "),
     ).toBe(true);
     const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
       (q) => q.taskId === r.taskId && q.status === "open",
     );
-    expect(card?.title).toBe('"Members list" paused at this month\'s cap of CHF 0.10');
+    expect(card?.title).toBe('"Members list" paused before this month\'s cap ran out');
     // budget-resume: a bigger task budget does not help at the month's cap (the review of
     // budget-stop: Raise the budget started a session that stopped at once at the same cap):
     // the card offers no Continue, says where to change it and that the task goes on by itself.
@@ -527,11 +535,12 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
       /Ready again once you raise the monthly cap in Settings, or on 1 December; it runs at your next Start\.$/,
     );
     expect(r.view.display).toMatchObject({
-      label: "Paused at this month's cap",
+      label: "Paused before this month's cap ran out",
       detail: "Ready again once that limit is raised or resets, for your next Start; or cancel it.",
     });
     expect(await rt.store.review.latestForTask(r.taskId)).toBeUndefined();
-    expect(r.runs[0]?.outcome).toBe("budget_exceeded");
+    // A clean pause, its work kept (before: "budget_exceeded", a hard stop).
+    expect(r.runs[0]?.outcome).toBe("paused");
   }, 60_000);
 
   // Review of budget-stop: the run, the card and the task named the month, but the session it
@@ -547,8 +556,10 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     expect(summary).not.toMatch(/session's budget|budget is used/);
     // Its card offers no Continue (the fixup's bench walk: the result said "continue or cancel
     // it in the Inbox"): it says how the task goes on.
-    expect(summary).toContain(
-      '"Members page" paused at this month\'s cap of CHF 0.10: it is ready again once that limit is raised or resets, for your next Start.',
+    // l4-money-pause (L4-money-103): it paused inside the month's cap, at its wrap-up or, with
+    // too little left to wrap up, before its next step.
+    expect(summary).toMatch(
+      /"Members page" paused (?:at|before) this month's cap of CHF 0\.10(?: ran out)?: it is ready again once that limit is raised or resets, for your next Start\./,
     );
     expect(summary).not.toContain("continue or cancel");
     const said = lines(r.events);
@@ -583,7 +594,9 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
 
   it("once the month's cap has room again the paused task goes on by itself: its card closes and it is ready (budget-resume)", async () => {
     const r = await runOne(req, rt, "Members map", { budgetUsdMicro: 2_000_000 });
-    expect(r.view.display).toMatchObject({ label: "Paused at this month's cap" });
+    expect(String((r.view.display as Json).label)).toMatch(
+      /^Paused (?:at|before) this month's cap(?: ran out)?$/,
+    );
     // As the daemon's own wake asks (compose.ts): the caps read again, not from the minute's
     // cache, so the session that goes on does not meet the old cap.
     const roomFor = async (projectId: string) => {
@@ -2432,4 +2445,100 @@ describe("l4-money-pause, run L4: a 'nothing' the criteria need is nothing (L4-m
       expect(cards).toEqual([]);
     }, 60_000);
   });
+});
+
+/**
+ * l4-money-pause, run L4 (L4-money-103, live check 4's L3-run-10): under a project budget of
+ * CHF 0.06 the writer's start line said "This run may spend CHF 1.20: before a step that could
+ * take it past CHF 0.96 it is told to wrap up ..."; the project's budget then stopped it with no
+ * wrap-up. A run's cap includes what the project's budget and the month's cap still allow, at
+ * their stop lines, so it hears its wrap-up inside the limit that would stop it and pauses with
+ * its work kept; nothing passes the limit.
+ */
+describe("l4-money-pause, run L4: a run under the project's budget or the month's cap hears its wrap-up inside it (L4-money-103)", () => {
+  const homes: string[] = [];
+  const opened: RuntimeApp[] = [];
+  afterAll(async () => {
+    for (const rt of opened) {
+      await settleSessions(rt);
+      await rt.close().catch(() => undefined);
+    }
+    removeHomes(homes);
+  });
+
+  async function open(stamp: string) {
+    const clock = new SimulatedClock(stamp);
+    const home = mkdtempSync(join(tmpdir(), "fr-l4-money-103-"));
+    homes.push(home);
+    const calls: ModelRequest[] = [];
+    const fake = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        ...works("Club history", 5_000, LEFT),
+      ],
+    });
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    const w = await compose(home, clock, fake);
+    opened.push(w.rt);
+    return { ...w, calls };
+  }
+
+  /** What the run spent in all, its reviews included (none: it paused). */
+  const spentOf = async (rt: RuntimeApp, taskId: string) =>
+    (await rt.store.run.forTask(taskId)).reduce((s, r) => s + r.cost_usd_micro, 0);
+
+  it("a project budget of USD 0.075 (CHF 0.06): the start line names what is left of it, the run hears its wrap-up and pauses there with its work kept; no hard stop, nothing past the budget", async () => {
+    const w = await open("2026-11-17T08:00:00Z");
+    const r = await runOne(w.req, w.rt, "Club history", {
+      projectBudgetUsdMicro: 75_000,
+      sessionBudgetUsdMicro: 2_000_000,
+    });
+    const said = lines(r.events);
+    const start = said.find((l) => l.startsWith("This run may spend")) ?? "";
+    const m = /^This run may spend CHF (\d+\.\d\d), what is left of the project's budget[ :,]/.exec(
+      start,
+    );
+    expect(m, start).not.toBeNull();
+    expect(Number(m?.[1])).toBeLessThanOrEqual(0.06);
+    // It heard the wrap-up, inside the project's budget.
+    expect(w.calls.filter(coderOn("Club history")).some(heardWrapUp)).toBe(true);
+    expect(r.runs.map((x) => x.outcome)).toEqual(["paused"]);
+    expect(handoffOf(r.runs[0]?.artifacts ?? [])?.stoppedBy).toBe("wrap_up");
+    expect(await spentOf(w.rt, r.taskId)).toBeLessThanOrEqual(75_000);
+    // What the person reads: the run paused before the project's budget ran out.
+    const card = ((await (await w.req("/inbox")).json()) as { requests: Json[] }).requests.find(
+      (q) => q.taskId === r.taskId && q.status === "open",
+    );
+    expect(card?.title).toBe('"Club history" paused before the project\'s budget ran out');
+    expect(said.join(" | ")).toMatch(
+      /"Club history" paused before the project's budget of CHF 0\.06 ran out: it spent CHF [\d.]+ and listed 2 things left to do\./,
+    );
+  }, 60_000);
+
+  it("the same under this month's cap: what is left of it caps the run", async () => {
+    const w = await open("2026-11-17T09:00:00Z");
+    await w.rt.store.human.patch(w.rt.human.id, { monthly_cap_usd_micro: 75_000 });
+    const r = await runOne(w.req, w.rt, "Club history");
+    const said = lines(r.events);
+    const start = said.find((l) => l.startsWith("This run may spend")) ?? "";
+    const m = /^This run may spend CHF (\d+\.\d\d), what is left of this month's cap[ :,]/.exec(
+      start,
+    );
+    expect(m, start).not.toBeNull();
+    expect(Number(m?.[1])).toBeLessThanOrEqual(0.06);
+    expect(r.runs.map((x) => x.outcome)).toEqual(["paused"]);
+    expect(await spentOf(w.rt, r.taskId)).toBeLessThanOrEqual(75_000);
+    const card = ((await (await w.req("/inbox")).json()) as { requests: Json[] }).requests.find(
+      (q) => q.taskId === r.taskId && q.status === "open",
+    );
+    expect(card?.title).toBe('"Club history" paused before this month\'s cap ran out');
+  }, 60_000);
 });

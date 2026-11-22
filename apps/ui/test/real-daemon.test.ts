@@ -24440,4 +24440,31 @@ describe("l4-money-pause, run L4", () => {
       await a.rt.close();
     }
   }, 120_000);
+
+  it("L4-money-103: under a project budget of CHF 0.06 the session's log through the client names what is left of it as the run's figure, and nothing passes the budget", async () => {
+    const a = await open({
+      FORERUNNER_BENCH_LONG: "Write the club history",
+      FORERUNNER_BENCH_USAGE: "Write the club history:2000",
+    });
+    try {
+      const project = await a.client.createProject({ name: "Club", goal: "A club page" });
+      await a.rt.store.project.patch(project.id, { budget_usd_micro: 75_000 });
+      const t = await task(a, project.id, "Write the club history", 0.05);
+      const sessionId = await startAndEnd(a, project.id, 2_000_000);
+      const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
+      const start = lines.find((l) => l.startsWith("This run may spend")) ?? "";
+      const m =
+        /^This run may spend (?:less than|CHF (\d+\.\d\d)), what is left of the project's budget/.exec(
+          start,
+        );
+      expect(m, lines.join(" | ")).not.toBeNull();
+      expect(Number(m?.[1] ?? 0)).toBeLessThanOrEqual(0.06);
+      // Before: "This run may spend CHF 1.20: ..." and a hard stop at the project's budget.
+      expect(lines.join(" | ")).not.toMatch(/This run may spend CHF 1\.\d\d/);
+      const runs = await a.rt.store.run.forTask(t.id);
+      expect(runs.reduce((s, r) => s + r.cost_usd_micro, 0)).toBeLessThanOrEqual(75_000);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
 });

@@ -635,4 +635,13 @@ Live check 4 (2026-11-17, the real model) found three ways a pause was read wron
    after the larger one; then it names no budget stop unless the spend reached the work line. With
    room left, the re-plan takes the tasks after it that fit. The work budget, the review reserve,
    the wrap-up line and its card are unchanged; nothing passes the work budget.
-
+3. **A run's cap includes what the outer limits still allow** (L4-money-103; the owner's D4, "No
+   limit is passed", and point 6). Points 4 and 7 capped a run at its own cap and the session's
+   work budget left; the project's budget and the month's cap only refused a call. Under a project
+   budget of CHF 0.06 the writer's start line said "This run may spend CHF 1.20" and the run was
+   then stopped there with no wrap-up. Now what the project's budget and the month's cap still
+   allow, at their stop lines, caps the run when it is smaller: its wrap-up line, its reserve and
+   its start line ("This run may spend CHF 0.06, what is left of the project's budget: ...")
+   follow it, and the review's room is kept inside it as BA-4 keeps it inside a task's budget,
+   when it can hold both. The plan share stays a credential's stop (ADR 0120). Every call is
+   still checked against every cap before it is made.

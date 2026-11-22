@@ -2265,7 +2265,19 @@ budget-stop; the owner's decision of 2026-11-02).**
   before that step.", and "Told the coder to wrap up: it spent CHF 0.02 of CHF 0.15, and its next
   step could take it past CHF 0.07." (W15-16: the start line said "at CHF 0.07" and the run was
   told at CHF 0.02; both lines now name the real trigger, spend plus the next step's worst
-  case). `limitWords`, `wrapUpSentWords`, the budget card's title and the flagged-search note
+  case). l4-money-pause, run L4 (L4-money-103, ADR 0112 amended 2026-11-22): the run's cap also
+  takes what the project's budget and the month's cap still allow at their stop lines
+  (`EnforcementHooks.outerRemainder`, read through the caps port's own `check`: what is left less
+  one micro-unit, a second look for a smaller level; never the 80% room, the session's level or
+  the plan share; `LoopAgentDriver.outerRemainder` is the executor's way to it, no compose
+  change). When it is smaller, `runCapSource` is `project` or `month`, the review's room
+  (`reviewRoomOf`, now priced for a task without a budget of its own too) is kept inside it when
+  it can hold both (BA-4's rule), the token, the wrap-up line and the reserve follow it, and the
+  start line says "This run may spend CHF 0.06, what is left of the project's budget: before a
+  step ..." (with "less the CHF 0.02 kept for its review" when kept; a save-only run "pauses at
+  the project's budget"); a pause names that limit's own cap ('"X" paused before the project's
+  budget ran out', the row "Paused before the project's budget ran out"; before: "This run may
+  spend CHF 1.20" and a hard stop at CHF 0.06). The hooks' caps check stays the backstop. `limitWords`, `wrapUpSentWords`, the budget card's title and the flagged-search note
   (`flaggedSearchNote`, executor.ts) name the specialist in words (`saidByName`: "the writer", never "writer-marketing"; W15-43, W15B-78).
   `limitWords`, `wrapUpSentWords` and the executor's `chfText` read an amount under a
   centime as "less than CHF 0.01" (W15-16). No

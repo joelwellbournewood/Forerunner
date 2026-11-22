@@ -442,6 +442,18 @@ export class LoopAgentDriver {
 
   constructor(private readonly deps: LoopDriverDeps) {}
 
+  /**
+   * l4-money-pause, run L4 (L4-money-103): what the project's budget or the month's cap still
+   * allows a run of `scope` below `ceilingUsdMicro`, through the hooks every call of the run
+   * meets (`EnforcementHooks.outerRemainder`); the executor caps the run there before it starts.
+   */
+  outerRemainder(
+    scope: { humanId: string; projectId?: string; sessionId?: string; taskId?: string },
+    ceilingUsdMicro: number,
+  ): Promise<{ usdMicro: number; level: "project" | "month"; capUsdMicro: number } | undefined> {
+    return this.deps.hooks.outerRemainder(scope, ceilingUsdMicro);
+  }
+
   async run(req: RunRequest): Promise<RunResult> {
     const { clock } = this.deps;
     if (
