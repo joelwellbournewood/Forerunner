@@ -197,3 +197,8 @@ run, it should be able to do things like that."
 - Point 9 (dated note, words): a left-out line is quoted at a word and without ids; a critic's
   note is named as the critic's; Costs names the check's spend "checking the task list", not
   "planning".
+- Point 9 (dated note, 2026-11-22, the review of fix/l4-selftasks-check): a left-out line is quoted
+  up to 100 characters (`QUOTE_MAX`), cut at a word with "…", also on the line of a check that
+  changed nothing. The line was kept out of the check's request whole, so the part the quote cuts
+  off was never acted on. Run L4's acceptance asked for the line whole; quoting it whole, or with a
+  higher cap on that one line, is the session lead's to decide (one constant).
