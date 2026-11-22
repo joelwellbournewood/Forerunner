@@ -142,6 +142,7 @@ import {
   parseHandoff,
   pauseSentence,
   type RunHandoff,
+  replyCutWords,
   stopSourceOf,
   WRAP_UP_BRIEF_LINE,
   wrapUpSentWords,
@@ -1534,6 +1535,12 @@ export class LoopTaskExecutor implements TaskExecutor {
           text: wrapUpSentWords(spec.name, ev.spentUsdMicro, ev.capUsdMicro, runLine, (n) =>
             this.chfText(n),
           ),
+        });
+      // L4-money-106: a reply cut off at its length limit is a line of the log, with its CHF.
+      else if (ev.type === "reply_cut")
+        ctx.onStep({
+          kind: "note",
+          text: replyCutWords(spec.name, ev, (n) => this.chfText(n)),
         });
       else if (ev.type === "model_call_end")
         ctx.onStep({ kind: "model", costUsdMicro: ev.costUsdMicro });

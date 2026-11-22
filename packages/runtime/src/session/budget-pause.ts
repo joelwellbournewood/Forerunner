@@ -454,6 +454,26 @@ export function wrapUpSentWords(
     : `Told the ${who} to wrap up: it spent ${chf(spentUsdMicro)} of ${chf(capUsdMicro)}.`;
 }
 
+/**
+ * l4-money-pause, run L4 (L4-money-106): the session log's line for a reply cut off at its
+ * length limit, with what that call cost (it is paid for whatever came of it, U-085). Live check
+ * 4: the writer's one-file reply was cut, CHF 0.05 spent and nothing written, and the log went
+ * from "read README.md" to "Told the writer to wrap up" with no line for it.
+ */
+export function replyCutWords(
+  specialist: string,
+  cut: { kept: number; costUsdMicro: number; retry: boolean },
+  chfOf: (usdMicro: number) => string,
+): string {
+  const who = specialistWords(specialist);
+  const chf = moneyWords(chfOf(cut.costUsdMicro), cut.costUsdMicro);
+  if (cut.kept > 0)
+    return `The ${who}'s reply was cut off at its length limit (${chf}): the call it was writing did not run, and it was asked to make it again.`;
+  return cut.retry
+    ? `The ${who}'s reply was cut off at its length limit, so nothing of it could be used (${chf}); it was asked again.`
+    : `The ${who}'s reply was cut off at its length limit again, so nothing of it could be used (${chf}).`;
+}
+
 /** A handoff as the run's artifact stores it: data only, already redacted and cut. */
 export function handoffArtifact(handoff: RunHandoff): {
   handoff: { stopped: string; leftToDo: string[]; optional?: string[]; stoppedBy: string };

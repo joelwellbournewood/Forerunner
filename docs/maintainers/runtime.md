@@ -266,7 +266,17 @@ critic at effort max, ADR 0028 amendment of 2026-10-26; tests in `test/loop-call
   after some text and with no tool call keeps its text and only warns, as before. Before this,
   a coder that wrote a whole file in one `write_file` call stopped at 4096 tokens mid-call and
   the loop took it for the end: the run "completed", empty, and the task failed with "no
-  changes were made in the worktree".
+  changes were made in the worktree". l4-money-pause (L4-money-106, live check 4: a writer's
+  one-file reply cut with nothing to show, CHF 0.05 spent and no line for it): each cut emits a
+  typed `reply_cut` RunEvent (`maxTokens`, `where`, `kept`, the call's `costUsdMicro`, `retry`),
+  which the executor's `onEvent` makes a line of the session's log (`replyCutWords`,
+  budget-pause.ts): "The writer's reply was cut off at its length limit, so nothing of it could be
+  used (CHF 0.05); it was asked again." (with kept calls: "... (CHF 0.05): the call it was writing
+  did not run, and it was asked to make it again."; at the last try: "... again, so nothing of it
+  could be used (CHF 0.05)."). A run that can write files and is cut off before it said anything
+  hears the one-file-per-call note, not "Answer again, more briefly." (`cutOffNote`'s
+  `writesFiles`), and the loop's warning no longer names a cap the next call may not get. The
+  budget card's clause for a cut and the bench stand-in's max_tokens mode are not built yet.
 `SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks; a task
 runs on it when its billing source is a subscription (see "Billing per task" below, ADR 0044).
 

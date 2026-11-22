@@ -10,7 +10,7 @@ import {
 } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
+import { cutOffNote, WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
 import { lastSessionBlock, workingNowBlock } from "../src/conversation/project-facts.ts";
 import { composeRuntime, type DynamicCaps, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
@@ -24,6 +24,7 @@ import {
   limitWords,
   parseHandoff,
   pauseSentence,
+  replyCutWords,
   WRAP_UP_BRIEF_LINE,
   wrapUpSentWords,
 } from "../src/session/budget-pause.ts";
@@ -2590,5 +2591,121 @@ describe("l4-money-pause, run L4: an outer limit's start line is whole, with eve
             if (s.length > 200 || s.includes("…")) long.push(`${s.length}: ${s}`);
           }
     expect(long).toEqual([]);
+  });
+});
+
+/**
+ * l4-money-pause, run L4 (L4-money-106, live check 4's L3-research-2): the writer's one-file reply
+ * was cut off at its length limit before it said anything, CHF 0.05 spent and nothing written.
+ * The log went from "read README.md" to "Told the writer to wrap up" with no line for it, and
+ * the next request said only "Answer again, more briefly." Through the runner and the executor
+ * the daemon uses: the cut reply has its line with its CHF, and a run that can write files hears
+ * the one-file-per-call note.
+ */
+describe("l4-money-pause, run L4: a reply cut off at its length limit has its line and the file-writing note (L4-money-106)", () => {
+  const homes: string[] = [];
+  const opened: RuntimeApp[] = [];
+  afterAll(async () => {
+    for (const rt of opened) {
+      await settleSessions(rt);
+      await rt.close().catch(() => undefined);
+    }
+    removeHomes(homes);
+  });
+
+  const TITLE = "Cut page";
+  const REPORT =
+    "Summary: my reply was cut off before the page was written.\n\nWhere I stopped: nothing is written yet.\n\nLeft to do:\n- write cut-page.html";
+  const ranATool = (r: ModelRequest) =>
+    r.messages.some(
+      (m) => Array.isArray(m.content) && m.content.some((b) => b.type === "tool_result"),
+    );
+  const toldCut = (r: ModelRequest) =>
+    JSON.stringify(r.messages).includes("Your last reply was cut off");
+
+  it("call 1 looks at the folder, call 2 is cut off before it says anything (all its max_tokens used), call 3 reports: the log has one line for the cut with its CHF, between the folder line and the next, and the next request carries the file-writing note", async () => {
+    const clock = new SimulatedClock("2026-11-17T10:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-l4-money-106-"));
+    homes.push(home);
+    const calls: ModelRequest[] = [];
+    // The cut reply uses all of its output limit, as live check 4's did (6308 of 6308).
+    const cut: { text: string; stopReason: "max_tokens"; usage: Record<string, number> } = {
+      text: "",
+      stopReason: "max_tokens",
+      usage: { input_tokens: 1_000, output_tokens: 0 },
+    };
+    const fake = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        textReply(REPORT, {
+          when: (r: ModelRequest) => coderOn(TITLE)(r) && toldCut(r),
+          times: Number.POSITIVE_INFINITY,
+          usage: { input_tokens: 1_000, output_tokens: 60 },
+        }),
+        { when: (r: ModelRequest) => coderOn(TITLE)(r) && ranATool(r), reply: cut, times: 1 },
+        toolReply("list_dir", { path: "." }, "Looking at the folder.", {
+          when: coderOn(TITLE),
+          times: 1,
+          usage: { input_tokens: 1_000, output_tokens: 10 },
+        }),
+      ],
+    });
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      if (coderOn(TITLE)(r) && ranATool(r) && !toldCut(r))
+        cut.usage = { input_tokens: 1_000, output_tokens: r.max_tokens ?? 0 };
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    const w = await compose(home, clock, fake);
+    opened.push(w.rt);
+    const r = await runOne(w.req, w.rt, TITLE, { budgetUsdMicro: 40_000 });
+    const mine = calls.filter(coderOn(TITLE));
+    expect(mine.length, JSON.stringify(mine.map((c) => c.max_tokens))).toBe(3);
+    const cutMax = mine[1]?.max_tokens ?? 0;
+    // What the cut call cost, as the ledger booked it (every call is paid for, U-085).
+    const said = lines(r.events);
+    const folder = said.indexOf("looked at the folder");
+    const at = said.findIndex((l) => l.includes("reply was cut off"));
+    expect(folder, said.join(" | ")).toBeGreaterThanOrEqual(0);
+    expect(at, said.join(" | ")).toBeGreaterThan(folder);
+    expect(said.filter((l) => l.includes("reply was cut off"))).toHaveLength(1);
+    // The line's CHF is the cut call's own cost: its input and its whole output limit, one
+    // micro-USD a token, at the default CHF 0.80 a dollar.
+    const cost = ((1_000 + cutMax) * 0.8) / 1_000_000;
+    expect(cutMax).toBeGreaterThan(4_096);
+    expect(said[at]).toBe(
+      `The coder's reply was cut off at its length limit, so nothing of it could be used (CHF ${cost.toFixed(2)}); it was asked again.`,
+    );
+    // The next request carries the file-writing note, word for word (before: "Answer again,
+    // more briefly.").
+    expect(JSON.stringify(mine[2]?.messages.at(-1))).toContain(
+      `Your last reply was cut off at the output limit (${cutMax} tokens) before it said anything, and nothing of it was used. Send less in one reply: one file per call, short enough to fit.`,
+    );
+    expect(JSON.stringify(mine[2]?.messages)).not.toContain("Answer again, more briefly");
+  }, 60_000);
+
+  it("the line's three forms and the note's, word for word", () => {
+    const chf = (usdMicro: number) => `CHF ${((usdMicro * 0.8) / 1_000_000).toFixed(2)}`;
+    expect(replyCutWords("writer", { kept: 0, costUsdMicro: 65_244, retry: true }, chf)).toBe(
+      "The writer's reply was cut off at its length limit, so nothing of it could be used (CHF 0.05); it was asked again.",
+    );
+    expect(replyCutWords("coder", { kept: 2, costUsdMicro: 65_244, retry: true }, chf)).toBe(
+      "The coder's reply was cut off at its length limit (CHF 0.05): the call it was writing did not run, and it was asked to make it again.",
+    );
+    expect(replyCutWords("coder", { kept: 0, costUsdMicro: 2_000, retry: false }, chf)).toBe(
+      "The coder's reply was cut off at its length limit again, so nothing of it could be used (less than CHF 0.01).",
+    );
+    // A run that cannot write files is still asked to answer more briefly.
+    expect(cutOffNote(6_308, "before it said anything", false)).toBe(
+      "Your last reply was cut off at the output limit (6308 tokens) before it said anything, and nothing of it was used. Answer again, more briefly.",
+    );
+    expect(cutOffNote(6_308, "before it said anything", false, true)).toBe(
+      "Your last reply was cut off at the output limit (6308 tokens) before it said anything, and nothing of it was used. Send less in one reply: one file per call, short enough to fit.",
+    );
   });
 });

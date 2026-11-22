@@ -351,6 +351,20 @@ export type RunEvent =
     }
   /** The run was told to wrap up (ADR 0112), once; `spentUsdMicro` is what it had spent then. */
   | { type: "wrap_up_sent"; spentUsdMicro: number; capUsdMicro: number }
+  /**
+   * l4-money-pause, run L4 (L4-money-106): a reply cut off at its output limit (U-085), paid for
+   * (`costUsdMicro`, that call's cost) whatever came of it: `kept`, its complete tool calls that
+   * ran (the cut one did not); `retry`, whether the run asks again (false: it ends as an error).
+   * Before, only a bare `warning` said it, which no line of the session's log read.
+   */
+  | {
+      type: "reply_cut";
+      maxTokens: number;
+      where: string;
+      kept: number;
+      costUsdMicro: number;
+      retry: boolean;
+    }
   | { type: "run_end"; outcome: RunOutcome; costUsdMicro: number; steps: number };
 
 export interface RunResult {
@@ -945,11 +959,21 @@ export class LoopAgentDriver {
             clock,
           );
           const next = Math.min(maxOut * 4, top);
+          const cutEvent = (retry: boolean) =>
+            emit({
+              type: "reply_cut",
+              maxTokens: maxOut,
+              where,
+              kept: kept.length,
+              costUsdMicro: callCost,
+              retry,
+            });
           if (kept.length > 0) {
             keptFromCut = true;
             toolUses = kept;
             content = response.content.filter((b) => b.type !== "tool_use" || kept.includes(b));
             if (next > maxOut) retryCap = next;
+            cutEvent(true);
             emit({
               type: "warning",
               message: `the reply was cut off at the output limit (${maxOut} tokens) ${where}; its ${kept.length} complete tool call(s) ran, the cut one did not`,
@@ -958,13 +982,20 @@ export class LoopAgentDriver {
             cutOffs++;
             if (cutOffs <= CUT_OFF_RETRIES && next > maxOut) {
               retryCap = next;
-              cutNote = { maxOut, text: cutOffNote(maxOut, where, false) };
+              // L4-money-106: a file-writing run cut off before it said anything was most likely
+              // writing a file (a write_file whose end never came, or hidden thinking): it hears
+              // the one-file-per-call note, not "Answer again, more briefly".
+              cutNote = { maxOut, text: cutOffNote(maxOut, where, false, writesFiles) };
+              cutEvent(true);
+              // The next call's cap is what the money below the run's line pays, up to `next`
+              // (live check 4: "asking again with up to 25232" for a call that got 4096).
               emit({
                 type: "warning",
-                message: `the reply was cut off at the output limit (${maxOut} tokens) ${where}; asking again with up to ${next}`,
+                message: `the reply was cut off at the output limit (${maxOut} tokens) ${where}; asking again`,
               });
               continue;
             }
+            cutEvent(false);
             throw new ForerunnerError(
               "provider_error",
               `The reply was cut off at the output limit (${maxOut} tokens) ${where}, ${cutOffs} time(s); nothing from it was used. Work this large has to be written in smaller parts.`,
@@ -1345,13 +1376,20 @@ export function fitMaxTokens(
  * What the call after a reply cut off at the output limit is told (U-085, W15-13), as a text block
  * after the last tool results: the cut call did not run (`kept`: the calls before it did), or,
  * when the money below the run's line could not raise the limit, that nothing of the reply was
- * used and less must go in one reply.
+ * used and less must go in one reply. A run that can write files hears "one file per call" also
+ * when the cut came before it said anything (L4-money-106, live check 4: a writer's whole file in
+ * one reply was cut with nothing to show, and it was told only "Answer again, more briefly").
  */
-export function cutOffNote(maxOut: number, where: string, kept: boolean): string {
+export function cutOffNote(
+  maxOut: number,
+  where: string,
+  kept: boolean,
+  writesFiles = false,
+): string {
   const said = `Your last reply was cut off at the output limit (${maxOut} tokens) ${where}`;
   if (kept)
     return `${said}, so that call did not run; the calls before it ran. Make it again on its own.`;
-  return where === "before it said anything"
+  return where === "before it said anything" && !writesFiles
     ? `${said}, and nothing of it was used. Answer again, more briefly.`
     : `${said}, and nothing of it was used. Send less in one reply: one file per call, short enough to fit.`;
 }

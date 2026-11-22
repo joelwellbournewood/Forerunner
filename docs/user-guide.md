@@ -1356,7 +1356,10 @@ is a fifth of the run's budget, or the cost of two calls when that is more; the 
 before a step that could take it past CHF 0.32 it is told to wrap up, keeping a reserve of CHF
 0.08 to finish."). Since one step can cost a lot (a long file, a large page), the wrap-up can come
 before the run has spent that much, and the log says so ("Told the researcher to wrap up: it spent
-CHF 0.02 of CHF 0.15, and its next step could take it past CHF 0.07."). A budget too small
+CHF 0.02 of CHF 0.15, and its next step could take it past CHF 0.07."). A reply cut off at its
+length limit is paid for and has a line of its own ("The writer's reply was cut off at its length
+limit, so nothing of it could be used (CHF 0.05); it was asked again."), and an agent that writes
+files is then asked to write one file per reply. A budget too small
 for even that is "save only": nothing is said to the agent, and the run pauses at its budget; one
 smaller than a single step's cost says so and pauses before that step. Under a project budget or
 a monthly spending cap that has less left than the run could otherwise spend, the run's figure is
