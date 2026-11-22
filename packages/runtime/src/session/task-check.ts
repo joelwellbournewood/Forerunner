@@ -22,7 +22,6 @@ import {
   markAgentWritten,
   markContinues,
   quoteFor,
-  quoteOf,
   readsLikeInstruction,
   type TaskListNote,
   type TaskListNoteSource,

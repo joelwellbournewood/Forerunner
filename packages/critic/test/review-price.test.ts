@@ -4,7 +4,6 @@ import {
   MAX_EFFORT_TOKENS_CEILING,
   REVIEW_EVIDENCE_ALLOWANCE_TOKENS,
   REVIEW_MIN_TOKENS_PER_CALL,
-  REVIEW_TOKENS_PER_CALL,
   SYSTEM_SUFFIX,
 } from "../src/critic.ts";
 import { CRITIC_PROMPT, world } from "./helpers.ts";
