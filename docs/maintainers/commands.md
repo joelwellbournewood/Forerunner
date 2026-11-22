@@ -720,8 +720,13 @@ run C").
 - **The moves** (`moveWork`, one `store.transaction`): every task of the closed project (any
   status), its milestones after the kept one's last `order_index` (reason 'Moved into "Site" when
   "Kite club" joined it.'), its human requests (the ones of a moved task and the open ones), its
-  queued queue items, merge records, decisions, accepted source candidates and data assets. The
-  closed project is archived (`active: false`, `repos: []`, `settings.joined_into`,
+  queued queue items, merge records, decisions, accepted source candidates and data assets; the
+  notes a session kept for its task check (`summary_cache.task_list_notes`, after the kept
+  project's own) and, when the kept project then holds more than one open suggestion card of the
+  agent (`task_proposal`), the older ones closed as replaced (`moved[...].taskListNotes`,
+  `.proposals`; Undo moves the notes back and opens those cards again; l4-selftasks-109, C4L-14:
+  before, the notes stayed on the closed project and were never checked, and the kept project
+  could show two suggestion cards). The closed project is archived (`active: false`, `repos: []`, `settings.joined_into`,
   `settings.was_linked`); the kept one's `settings.joined_from` gets it. Sessions, change rows,
   spending and lessons stay where they are (lessons are files, ADR 0002). `after` keeps
   `{keep, closed, moved: {[closedId]: ids}, at}` and `before` `{closed: [the rows as they

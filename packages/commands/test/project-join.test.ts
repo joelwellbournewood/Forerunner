@@ -642,3 +642,65 @@ describe("d1109-onerepo-join, run C: a closed project takes no new work (OJ-06)"
     await w.store.close();
   });
 });
+
+// l4-selftasks-check, run L4 (L4-selftasks-109; C4L-14, merge-w20): after Make one project, the
+// notes a session kept for the closing project were never checked (nothing moved
+// summary_cache.task_list_notes), and the kept project could show two open "the agent suggests
+// ... changes to the tasks" cards.
+describe("l4-selftasks-check, run L4: project.join and the agent's task-list notes and suggestions (L4-selftasks-109)", () => {
+  const NOTE = {
+    source: "report",
+    taskId: "t-kite",
+    taskTitle: "Signup form",
+    specialist: "coder",
+    lines: [{ text: "nothing checks the signup's email field", flagged: false }],
+    at: "2026-03-05T08:00:00.000Z",
+  };
+  const SITE_NOTE = { ...NOTE, taskId: "t-site", taskTitle: "Launch page" };
+  const proposalCard = (w: World, projectId: string, why: string) =>
+    w.store.humanRequest.insert({
+      human_id: w.human.id,
+      project_id: projectId,
+      kind: "decision",
+      why,
+      steps: ['Add "Check the email field".'],
+      options: ["Make these changes", "Keep the tasks"],
+      blocking: false,
+      risk: "low",
+      status: "open",
+      change_card: { key: "task_proposal", project_id: projectId },
+    } as never);
+  const openProposals = async (w: World, projectId: string) =>
+    (await w.store.humanRequest.list({ project_id: projectId, status: "open" } as never)).filter(
+      (r) => (r.change_card as { key?: unknown } | null)?.key === "task_proposal",
+    );
+  const notesOf = async (w: World, projectId: string) =>
+    ((await w.store.project.mustGet(projectId)).summary_cache as { task_list_notes?: unknown })
+      .task_list_notes ?? [];
+
+  it("the kept project holds the closing project's notes and one open suggestion; Undo puts both back as they were", async () => {
+    const w = await world();
+    w.ports.projectJoin = joinPort(w);
+    const { site, kite } = await seedPair(w);
+    await w.store.project.patch(kite.id, { summary_cache: { task_list_notes: [NOTE] } } as never);
+    await w.store.project.patch(site.id, {
+      summary_cache: { task_list_notes: [SITE_NOTE] },
+    } as never);
+    const siteCard = await proposalCard(w, site.id, "Site's suggestion.");
+    const kiteCard = await proposalCard(w, kite.id, "Kite club's suggestion.");
+    const r = await join(w, site.id, [kite.id]);
+    expect(r.status).toBe("done");
+    expect(await notesOf(w, site.id)).toEqual([SITE_NOTE, NOTE]);
+    expect(await notesOf(w, kite.id)).toEqual([]);
+    const open = await openProposals(w, site.id);
+    expect(open.map((c) => c.id)).toEqual([kiteCard.id]);
+    expect(await openProposals(w, kite.id)).toEqual([]);
+    const done = r as Extract<ExecuteResult, { status: "done" }>;
+    const undone = await w.executor.undo(done.changeLogId, w.ctx({ source: "ui" }));
+    expect(undone.status).toBe("done");
+    expect(await notesOf(w, site.id)).toEqual([SITE_NOTE]);
+    expect(await notesOf(w, kite.id)).toEqual([NOTE]);
+    expect((await openProposals(w, site.id)).map((c) => c.id)).toEqual([siteCard.id]);
+    expect((await openProposals(w, kite.id)).map((c) => c.id)).toEqual([kiteCard.id]);
+  });
+});

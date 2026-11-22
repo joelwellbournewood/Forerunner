@@ -119,6 +119,27 @@ interface Moved {
   candidates: string[];
   /** Data assets that gained the kept project (the ones that already listed it are not here). */
   assets: string[];
+  /** l4-selftasks-109: the closed project's task-list notes, now the kept project's. */
+  taskListNotes?: JsonValue[];
+  /** l4-selftasks-109: suggestion cards closed so the kept project has one open. */
+  proposals?: string[];
+}
+
+/**
+ * The runtime's keys (`session/task-list-notes.ts` TASK_LIST_NOTES_KEY, `daemon/task-proposal-words.ts`
+ * TASK_PROPOSAL_KEY), spelled here so this command imports no session module.
+ */
+const TASK_LIST_NOTES_KEY = "task_list_notes";
+const TASK_PROPOSAL_KEY = "task_proposal";
+
+function notesIn(p: ProjectRow): JsonValue[] {
+  const cache = asObject((p.summary_cache ?? null) as JsonValue);
+  const notes = cache[TASK_LIST_NOTES_KEY];
+  return Array.isArray(notes) ? notes : [];
+}
+
+function cacheOf(p: ProjectRow): JsonObject {
+  return { ...asObject((p.summary_cache ?? null) as JsonValue) };
 }
 
 /** What a closed project was before the join, for its Undo. */
@@ -216,6 +237,38 @@ async function moveWork(
     await tx.dataAsset.update(a.id, a.version, { project_ids: [...a.project_ids, to.id] });
     assets.push(a.id);
   }
+  // l4-selftasks-109 (C4L-14): the notes a session kept for the closed project's task check go
+  // with its tasks (before, they stayed on the closed project and were never checked), after the
+  // kept project's own.
+  const fromRow = await tx.project.mustGet(from.id);
+  const taskListNotes = notesIn(fromRow);
+  if (taskListNotes.length) {
+    const keepRow = await tx.project.mustGet(to.id);
+    await tx.project.update(keepRow.id, keepRow.version, {
+      summary_cache: {
+        ...cacheOf(keepRow),
+        [TASK_LIST_NOTES_KEY]: [...notesIn(keepRow), ...taskListNotes],
+      },
+    });
+    const rest = cacheOf(fromRow);
+    delete rest[TASK_LIST_NOTES_KEY];
+    await tx.project.update(fromRow.id, fromRow.version, { summary_cache: rest });
+  }
+  // One open suggestion of the agent per project (ADR 0119 point 7): the newest stays open, an
+  // older one is closed as replaced; Undo opens it again.
+  const proposals: string[] = [];
+  const open = (
+    await tx.humanRequest.list({ project_id: to.id, status: "open" } as never, { limit: 1_000 })
+  )
+    .filter((r) => (r.change_card as { key?: unknown } | null)?.key === TASK_PROPOSAL_KEY)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+  for (const old of open.slice(1)) {
+    const marked = await tx.humanRequest.patch(old.id, {
+      change_card: { ...asObject(old.change_card as JsonValue), replaced: true },
+    });
+    await tx.humanRequest.withdraw(marked.id, marked.version);
+    proposals.push(old.id);
+  }
   return {
     tasks,
     milestones: milestones.map((m) => ({ id: m.id, from: m.order_index })),
@@ -225,6 +278,8 @@ async function moveWork(
     decisions,
     candidates,
     assets,
+    ...(taskListNotes.length ? { taskListNotes } : {}),
+    ...(proposals.length ? { proposals } : {}),
   };
 }
 
@@ -255,6 +310,8 @@ function movedOf(v: JsonValue | undefined): Moved {
     decisions: ids(o.decisions),
     candidates: ids(o.candidates),
     assets: ids(o.assets),
+    taskListNotes: Array.isArray(o.taskListNotes) ? o.taskListNotes : [],
+    proposals: ids(o.proposals),
   };
 }
 
@@ -463,6 +520,35 @@ export const projectJoin: CommandDef<ProjectJoinParams> = {
           await tx.dataAsset.update(asset.id, asset.version, {
             project_ids: asset.project_ids.filter((x) => x !== keepId),
           });
+        }
+        // l4-selftasks-109: the suggestions the join closed open again, and the notes go back.
+        for (const id of m.proposals ?? []) {
+          const card = await tx.humanRequest.get(id);
+          if (card?.status !== "withdrawn") continue;
+          const { replaced: _replaced, ...rest } = asObject(card.change_card as JsonValue);
+          const reopened = await tx.humanRequest.reopenWithdrawn(card.id, card.version);
+          await tx.humanRequest.patch(reopened.id, { change_card: rest });
+        }
+        if (m.taskListNotes?.length) {
+          const moving = new Set(m.taskListNotes.map((n) => JSON.stringify(n)));
+          const keepRow = await tx.project.get(keepId);
+          if (keepRow)
+            await tx.project.update(keepRow.id, keepRow.version, {
+              summary_cache: {
+                ...cacheOf(keepRow),
+                [TASK_LIST_NOTES_KEY]: notesIn(keepRow).filter(
+                  (n) => !moving.has(JSON.stringify(n)),
+                ),
+              },
+            });
+          const back = await tx.project.get(c.id);
+          if (back)
+            await tx.project.update(back.id, back.version, {
+              summary_cache: {
+                ...cacheOf(back),
+                [TASK_LIST_NOTES_KEY]: [...notesIn(back), ...m.taskListNotes],
+              },
+            });
         }
         const row = await tx.project.get(c.id);
         if (row) {
