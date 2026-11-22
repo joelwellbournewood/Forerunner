@@ -30,7 +30,7 @@ import {
 import { eventAudience } from "../src/daemon/event-audience.ts";
 import { projectStatusLine } from "../src/daemon/project-status.ts";
 import { describeEvent } from "../src/daemon/views.ts";
-import { waitRowWords } from "../src/session/credential-wait.ts";
+import { needsWaitWords, waitRowWords } from "../src/session/credential-wait.ts";
 import {
   askCardWords,
   backLogLine,
@@ -542,5 +542,72 @@ describe("l4-cred-screens, run L4: one figure for the waiting work (L4-creds-15)
     expect(planCardLine(next, both, stopped, opts)).toBe(
       "Your subscription is at its limit until 15:40: your API key does the work meanwhile (costs money).",
     );
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-16, CS-5's needs form; run C decision 55: never cut): work
+ * that only one credential can do here and that waits for it says why on its row, the status line
+ * and the bar, each within design section 5's lengths.
+ */
+describe("l4-cred-screens, run L4: the needs form (L4-creds-16)", () => {
+  const keyWait = {
+    reason: "needs" as const,
+    sourceId: "k1",
+    kind: "api_key" as const,
+    until: "2026-11-16T14:40:00Z",
+    stop: "limit" as const,
+    needs: ["webRead"],
+  };
+  it("the row, the status head and the bar's line say what only the API key can do here", () => {
+    const words = needsWaitWords("api_key", ["webRead"]);
+    expect(words).toEqual({
+      label: "Waits for your API key: only it can read web pages here.",
+      line: "Waiting for your API key (only it can read web pages here)",
+      why: "Only your API key can read web pages here.",
+    });
+    for (const s of Object.values(words)) expect(s.length).toBeLessThanOrEqual(80);
+    // Two needs fit; a list too long for a row keeps the first.
+    expect(needsWaitWords("api_key", ["webRead", "webSearch"]).label).toBe(
+      "Waits for your API key: only it can read web pages and search the web here.",
+    );
+    expect(
+      needsWaitWords("api_key", ["webRead", "webSearch", "askPerson"]).label.length,
+    ).toBeLessThanOrEqual(80);
+  });
+
+  it("the row's detail says what holds the key and what then, at a limit, the share, a refusal", () => {
+    const row = waitRowWords(keyWait, { ...opts, goesOn: false });
+    expect(row.label).toBe("Waits for your API key: only it can read web pages here.");
+    expect(row.detail).toBe(
+      "Your API key is at its limit until 15:40; then it runs at your next Start.",
+    );
+    expect(row.line).toBe("Waiting for your API key (only it can read web pages here)");
+    expect(row.why).toBe("Only your API key can read web pages here.");
+    expect(row.save).toBeNull();
+    expect(waitRowWords(keyWait, { ...opts, goesOn: true }).detail).toBe(
+      "Your API key is at its limit until 15:40; then your session goes on.",
+    );
+    const refused = waitRowWords(
+      { ...keyWait, stop: "refused", until: null },
+      { ...opts, goesOn: false },
+    );
+    expect(refused.detail).toBe(
+      "Anthropic refused it. Save a new API key in Settings; then it runs at your next Start.",
+    );
+    expect(refused.save).toEqual({ label: "Save a new key", to: "/setup" });
+    const sub = waitRowWords(
+      { ...keyWait, kind: "subscription", stop: "share", until: "2026-12-01T00:00:00Z" },
+      { ...opts, goesOn: false },
+    );
+    expect(sub.label).toBe("Waits for your Claude subscription: only it can read web pages here.");
+    expect(sub.detail).toBe(
+      "Your Claude subscription has used its share until Tue 1 Dec; then it runs at your next Start.",
+    );
+    expect(sub.save).toEqual({ label: "Change the allowance", to: "/settings#plan-allowance" });
+    for (const r of [row, refused, sub]) {
+      expect(r.label.length).toBeLessThanOrEqual(80);
+      expect(r.line.length).toBeLessThanOrEqual(80);
+    }
   });
 });

@@ -25070,6 +25070,7 @@ describe("l4-cred-screens, run L4", () => {
       vault?: MemoryVault;
       sdkQuery?: ComposeOptions["sdkQuery"];
       standIn?: ReturnType<typeof messagesApiStandIn>;
+      billing?: ComposeOptions["billing"];
     } = {},
   ) {
     const home = opts.home ?? mkdtempSync(join(tmpdir(), "fr-ui-real-l4credscr-"));
@@ -25097,6 +25098,7 @@ describe("l4-cred-screens, run L4", () => {
         fallback: async () => new Response("not here", { status: 404 }),
       }),
       ...(opts.sdkQuery ? { sdkQuery: opts.sdkQuery } : {}),
+      ...(opts.billing ? { billing: opts.billing } : {}),
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.0.0-ui-contract",
@@ -25248,6 +25250,78 @@ describe("l4-cred-screens, run L4", () => {
     } finally {
       await settleSessions(rt);
       await rt.close();
+    }
+  }, 120_000);
+
+  // L4-creds-16 (CS-5's needs form, run C decision 55: never cut): under "API key first, then
+  // subscription" with the key at its limit, a research task only the key can do here (its page
+  // reading: the subscription cannot read pages on this install) waits for the key and says why
+  // on its row, the project's status line and the bar, also after a restart.
+  it("L4-creds-16: a task only the resting API key can do says why it waits on GET /projects/:id/tasks, the status line and GET /running, the same after composing again", async () => {
+    // This install reads pages only on the key, and the key does not search (one need).
+    const billing = { facts: { subscriptionPages: false, keySearch: false } };
+    const first = await composeL4({ billing });
+    let projectId = "";
+    const row = "Waits for your API key: only it can read web pages here.";
+    try {
+      await setPolicyL4(first.client, "key_then_subscription");
+      await restSource(first.rt, "api_key", resetAt);
+      const project = await first.client.createProject({ name: "Map notes", goal: "Notes" });
+      projectId = project.id;
+      await addTask(first.client, project.id, "Research the sources", {
+        specialist: "researcher",
+      });
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const started = await first.client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes(
+            (await first.client.session(sessionId)).status,
+          ),
+        "the session to end to wait (at least 10 s of real time)",
+        async () => (await first.client.session(sessionId)).status,
+        20_000,
+      );
+      const task = (await first.client.tasks(project.id)).find(
+        (t) => t.title === "Research the sources",
+      );
+      expect(task?.display?.label).toBe(row);
+      expect(task?.display?.detail).toBe(
+        "Your API key is at its limit until 11:40; then your session goes on.",
+      );
+      // The person's session waits to go on: the status line names the need.
+      const card = await first.client.project(project.id);
+      expect(card.statusLine?.text).toBe(
+        "Waiting for your API key (only it can read web pages here), then it goes on",
+      );
+      const entry = (await first.client.running()).find((r) => r.projectId === project.id);
+      expect(entry?.state).toBe("waiting");
+      expect(entry?.explain).toBe("Only your API key can read web pages here.");
+      expect(first.keyCalls()).toHaveLength(0);
+      await settleSessions(first.rt);
+    } finally {
+      await first.rt.close();
+    }
+    // Composed again on the same home: the wait and its need are read the same.
+    const second = await composeL4({
+      home: first.home,
+      vault: first.vault,
+      clock: first.clock,
+      billing,
+    });
+    try {
+      const task = (await second.client.tasks(projectId)).find(
+        (t) => t.title === "Research the sources",
+      );
+      expect(task?.display?.label).toBe(row);
+      expect((await second.client.project(projectId)).statusLine?.text).toBe(
+        "Waiting for your API key (only it can read web pages here), then it goes on",
+      );
+      const entry = (await second.client.running()).find((r) => r.projectId === projectId);
+      expect(entry?.explain).toBe("Only your API key can read web pages here.");
+    } finally {
+      await second.rt.close();
     }
   }, 120_000);
 });

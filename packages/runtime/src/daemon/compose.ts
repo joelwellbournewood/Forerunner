@@ -252,6 +252,7 @@ import {
   clockTime,
   credentialWaitOf,
   keptStartLine,
+  needsWaitWords,
   saveLink,
   startKeepsWaitSentence,
   waitSentence,
@@ -4423,6 +4424,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             since: w.kept.at || w.since || null,
             wait,
             ...(answer ? { answer } : {}),
+            // l4-cred-screens (L4-creds-16): why it waits for this credential, when only it can
+            // do the work here ("Only your API key can read web pages here.").
+            ...(w.needs?.length ? { why: needsWaitWords(row.kind, w.needs).why } : {}),
           });
         }
       }

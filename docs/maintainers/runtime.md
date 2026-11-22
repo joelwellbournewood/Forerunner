@@ -1176,6 +1176,17 @@ other ready work joins through `prepareWork` only if it fits. Tests:
 "l4-cred-screens, run L4"), `test/credential-policy-view.test.ts`, and the UI's
 `test/real-daemon.test.ts` (describe "l4-cred-screens, run L4").
 
+**The needs form (L4-creds-16, CS-5).** When the only credential that can do a task here is
+stopped, `RouterTaskBilling.pick` throws a `needs` wait whose `waitFor.needs` lists what only it
+can do (the hard needs the stopped kind meets and no later group does). `credentialWaitOf` keeps
+it as `CredentialWait.needs`; the executor's `noteWait` then calls `noteNeeds(sourceId,
+projectId, needs)` (an empty list clears it), which writes `WaitEntry.needs` on the project's one
+wait (`limits.waiting`, kept across a restart). `credentialWaitRow` passes it to `waitRowWords`,
+whose needs form (`needsWaitWords` in `session/credential-wait.ts`) gives the row's label, the
+status head (`line`) and the bar's `why`; compose's `waitingContinuations` sets the bar entry's
+`explain` from it and server.ts' `startsWaitOf` uses the needs head for the waiting
+continuation's status line.
+
 **Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
 left the row `running`, its run `running` and its task held under a claim nobody renews; the
 one-session rule then refused every later start ("agent Alice already has an active session

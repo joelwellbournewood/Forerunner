@@ -219,6 +219,7 @@ import {
   ACTION_FROM,
   ACTION_WORDS,
   changesTasks,
+  credentialWaitRow,
   loadTaskDisplayContext,
   runOrder,
   taskCheck,
@@ -978,6 +979,14 @@ export function createDaemonApp(
   const startsWaitOf = async (projectId: string): Promise<StartsWait | null> => {
     const now = () => rt.billing.waits.now(projectId).catch(() => null);
     if (await keptContinuationOf(rt.store, projectId)) {
+      // l4-cred-screens (L4-creds-16): work only one credential can do here says why it waits.
+      const needs = await credentialWaitRow(rt.store, projectId).catch(() => null);
+      if (needs?.why)
+        return {
+          kind: "continuation",
+          head: needs.line,
+          ...(needs.save ? { save: needs.save } : {}),
+        };
       const wait = await now();
       const text = wait?.text ?? "";
       const until = /^Waits (until .+); then your session goes on\.$/.exec(text);

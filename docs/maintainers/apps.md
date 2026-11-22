@@ -1038,6 +1038,11 @@ l4-cred-screens, run L4 ([ADR 0120](../decisions/0120-which-claude-does-the-work
   sentence) beside the stop line (`runOutOffered` in `StartSessionDialog.tsx`); a stop with Start
   alone shows no plan sentence. Tests: `test/credential-start.test.tsx` (describe
   "l4-cred-screens, run L4"), `test/real-daemon.test.ts` (describe "l4-cred-screens, run L4").
+- **The needs form (L4-creds-16).** A task only one credential can do here reads the daemon's
+  needs label on its row ("Waits for your API key: only it can read web pages here."); the bar
+  shows a waiting entry's `explain` beside its words (`run-wait-why`, `shell/RunIndicator.tsx`).
+  Tests: `test/tasks.test.tsx` and `test/run-indicator.test.tsx` (describes "l4-cred-screens, run
+  L4"; the fake's row words come from the daemon's `waitRowWords`).
 
 ## How to change it
 

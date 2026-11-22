@@ -164,6 +164,13 @@ function RunEntry({
           {elapsed}
         </span>
       ) : null}
+      {/* l4-cred-screens (L4-creds-16): a session that waits for the one credential that can do
+          its work here says why ("Only your API key can read web pages here."). */}
+      {waiting && run.explain ? (
+        <span className="text-xs text-blue-800 dark:text-blue-200" data-testid="run-wait-why">
+          {run.explain}
+        </span>
+      ) : null}
       {/* d1109-cred-screens (CS-7): Answer (the open ask card), Change the allowance. Beside the
           words they act on, apart from Cancel and its own line (CS-10's walk: "Answer" next to
           "Nothing starts when Claude is back; ..." read as if Answer did that). */}

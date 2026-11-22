@@ -806,3 +806,33 @@ describe("d1109-cred-screens, run C: the run indicator's credential forms (CS-7)
     expect(within(block).getByTestId("session-wait-cancel")).toBeInTheDocument();
   });
 });
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-16): a session that waits for the one credential that can do
+ * its work here says why under its words on the bar (`RunningView.explain`, the daemon's
+ * `needsWaitWords(...).why`), on every page.
+ */
+describe("l4-cred-screens, run L4: the bar says why a session waits for the API key (L4-creds-16)", () => {
+  it("a waiting entry with a why shows it beside its words, with Cancel", async () => {
+    const harness = createHarness();
+    harness.daemon.state.runningExtra = [
+      { ...WAITING, explain: "Only your API key can read web pages here." },
+    ];
+    renderApp("/", harness);
+    const bar = await screen.findByTestId("run-indicator-bar");
+    const entry = await within(bar).findByTestId("run-entry");
+    expect(within(entry).getByTestId("run-wait-why")).toHaveTextContent(
+      /^Only your API key can read web pages here\.$/,
+    );
+    expect(within(entry).getByTestId("run-cancel")).toBeInTheDocument();
+  });
+
+  it("a plain waiting entry shows no why", async () => {
+    const harness = createHarness();
+    harness.daemon.state.runningExtra = [WAITING];
+    renderApp("/", harness);
+    const bar = await screen.findByTestId("run-indicator-bar");
+    const entry = await within(bar).findByTestId("run-entry");
+    expect(within(entry).queryByTestId("run-wait-why")).toBeNull();
+  });
+});

@@ -1181,7 +1181,9 @@ if it fits its budget, as anything you make ready does.
 A waiting task's row says why and until when: "Waits until 15:40 (your subscription's limit)",
 "Waits until Tue 1 Dec (your subscription's share)" with **Change the allowance**, "Waits for your
 answer: use your API key?" with **Answer**. The project's status line says it once ("Waiting for
-you: use your API key?").
+you: use your API key?"). A task only one of your credentials can do here says so: "Waits for your
+API key: only it can read web pages here.", with what holds the key and when it is back under it;
+the status line and the bar at the top say the same.
 
 Reaching the share of your subscription that Forerunner may use in the middle of a task is
 running out too, and your choice decides what happens, as for a usage limit: the work goes on

@@ -191,6 +191,11 @@ export interface WaitingContinuation {
   wait: RunWait;
   /** d1109-cred-screens (CS-7): the open ask card of its stop (Answer opens it). */
   answer?: string | null;
+  /**
+   * l4-cred-screens (L4-creds-16): why it waits for this credential, when only it can do the
+   * work here ("Only your API key can read web pages here."): the entry's `explain`.
+   */
+  why?: string | null;
 }
 
 /** A link beside an indicator entry (`RunningView.links`): Answer, Change the allowance. */
@@ -369,7 +374,7 @@ export async function runViews(deps: RunIndicatorDeps): Promise<RunningView[]> {
       stop: stopChoices("waiting"),
       cancel: true,
       nextProject: null,
-      explain: null,
+      explain: w.why ?? null,
       ...(links.length ? { links } : {}),
     });
   }

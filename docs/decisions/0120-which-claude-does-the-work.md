@@ -207,3 +207,10 @@ answer 3 ("For all work.": the yes covers all work until the stop ends) and his 
    ready tasks the runner gave back with `CREDENTIAL_WAIT_REASON`). Other ready work joins only if
    it fits (the owner's option C); before, every ready task was taken back, also one the session
    had left out for its budget. Work the agent adds later stays bounded by the session's budget.
+3. **A task only one credential can do says why it waits (L4-creds-16, CS-5's needs form, run C
+   decision 55).** The router's `needs` wait carries what only the stopped credential can do here
+   (the chooser's `onlyIt`, e.g. reading web pages); the executor keeps it on the project's wait
+   (`WaitEntry.needs`, `noteNeeds`), read the same after a restart. The row reads "Waits for your
+   API key: only it can read web pages here." with what holds the key and what then; the status
+   line "Waiting for your API key (only it can read web pages here)"; the bar's waiting entry
+   "Only your API key can read web pages here." beside its words.

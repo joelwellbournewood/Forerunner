@@ -2395,6 +2395,13 @@ export class LoopTaskExecutor implements TaskExecutor {
       .catch((e: unknown) =>
         this.logger.warn("the wait for a credential was not kept", { error: errorMessage(e) }),
       );
+    // l4-cred-screens (L4-creds-16): what only that credential can do here, so the rows say why
+    // the work waits for it; a plain wait clears it.
+    await this.deps.billing
+      .noteNeeds?.(wait.sourceId, projectId, wait.needs ?? [])
+      .catch((e: unknown) =>
+        this.logger.warn("the need of the wait was not kept", { error: errorMessage(e) }),
+      );
   }
 
   /** The person's time zone and now, for the wait's reset time in their words (U-078). */
