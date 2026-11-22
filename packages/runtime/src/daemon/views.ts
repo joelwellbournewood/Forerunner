@@ -785,6 +785,10 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
           return `Plan: ${larger}: it works until that budget is used.${summary}`;
         return `Plan: ${count("items", "task")}, ${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}, then ${larger}, with what is left.${summary}`;
       }
+      // l4-money-pause, run L4 (L4-github-110): with the promise's line after it, the session's
+      // size is said there, once; this line says how the tasks were chosen.
+      const how = sentenceOf(cutAtWord(plainLine(s("summary")), 120));
+      if (n("promised") > 0 && how) return `Plan: ${how.charAt(0).toLowerCase()}${how.slice(1)}`;
       return `Plan: ${count("items", "task")}, ${aboutWords(chf("estimateUsdMicro"), n("estimateUsdMicro"))}.${summary}`;
     }
     case "session.paused":
@@ -814,8 +818,10 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
       return `Put ${count("count", "task")} back to ready: their claim had lapsed or no agent held it.`;
     case "task.skipped":
       return `Skipped a task: ${skipReason(s("reason"))}.`;
+    // L4-github-110: the notes are given now, in the session that uses them (before: "Gave 1 note
+    // for the next session to ..." at the start of the very session that ran the task).
     case "task.notes":
-      return `Gave ${count("count", "note")} for the next session to "${s("title")}".`;
+      return `Gave ${count("count", "note")} to "${s("title")}".`;
     case "inbox.message":
       // A name, never an id (U-074): the runner adds `fromName`; older rows say "another agent".
       return `Read a ${s("type") || "new"} message from ${s("fromName") || "another agent"}.`;

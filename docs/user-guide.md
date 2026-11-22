@@ -728,9 +728,12 @@ card still asking for one closes ("Closed: it no longer needs you.").
 and **Save note**; "note: ...", "correction: ..." or "idea: ..." in Chat adds one too. A note
 reaches the brief of the task it names, by the task's title ("Add the login page: reuse the
 session cookie"), or of every task when it names none ("Write in British English"). The session
-log says which task got which. Notes waiting for the next session are listed under the box with
+log says which task got which ('Gave 1 note to "Add the login page".'). Notes waiting for the next session are listed under the box with
 **Dismiss**. The first-session plan you approve with a new project's setup decides the first
-session: it runs those tasks, in that order, and later sessions go by priority.
+session: it runs those tasks, in that order, and later sessions go by priority. Its Details say
+the session's size once, as its promise ("It promised 3 tasks, about CHF 0.34."), after the line
+that says how they were chosen ("Plan: the first session you approved with the project plan, in
+its order.").
 
 When you give a brief, Forerunner drafts a plan from it and puts it in the Inbox for your
 approval (see "Inbox" below: Approve and start, Change the plan, Reject). Above the project's

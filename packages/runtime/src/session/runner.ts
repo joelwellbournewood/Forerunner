@@ -1809,8 +1809,14 @@ export class SessionRunner {
       // With a larger task, `items` and `estimateUsdMicro` count what runs before it (the
       // Details line: 'Plan: 1 task, about CHF 0.03, then "X" (about CHF 6.40), ...').
       const plannedBefore = plan.oversized ? beforeLarger(plan) : plan.items;
+      // l4-money-pause, run L4 (L4-github-110): when the promise's line follows, the session's
+      // size is said there, once (live check 4: "Plan: 1 task, about CHF 0.09" beside "It
+      // promised 3 tasks, about CHF 0.34"); the Plan line then says only how the tasks were
+      // chosen.
+      const promised = promise && promise.taskIds.length > 0 ? promise.taskIds.length : 0;
       await emit("session.planned", {
         items: plannedBefore.length,
+        ...(promised > 0 ? { promised } : {}),
         estimateUsdMicro: plan.oversized
           ? plannedBefore.reduce((s, i) => s + i.estimateUsdMicro, 0)
           : plan.estimateUsdMicro,
@@ -5631,8 +5637,11 @@ export class StaticPlanner implements Planner {
       items,
       estimateUsdMicro: items.reduce((s, i) => s + i.estimateUsdMicro, 0),
       // W15-60: plurals as the number says (design §5 rule 6; before: "task(s)").
+      // L4-github-110: the first session's words count nothing: `items` are its tasks that are
+      // ready now, not what the person approved ("1 task in its order" when 3 were approved and
+      // 2 waited on the first); the promise's line says the session's size.
       summary: first
-        ? `the first session you approved with the project plan: ${items.length} ${items.length === 1 ? "task" : "tasks"} in its order`
+        ? "the first session you approved with the project plan, in its order"
         : `${items.length} ready ${items.length === 1 ? "task" : "tasks"} in priority order`,
     };
   }

@@ -676,7 +676,10 @@ describe("l3-money-engine, run L3", () => {
       text: describeEvent(e.type, e.payload as Record<string, unknown>),
     }));
     const said = (type: string) => lines.filter((l) => l.type === type).map((l) => l.text);
-    expect(said("session.planned")[0]).toMatch(/^Plan: 1 task, about CHF 0\.11\./);
+    // l4-money-pause, run L4 (L4-github-110): the plan's figure the person saw is the promise's,
+    // said once (before: "Plan: 1 task, about CHF 0.11." beside "It promised 1 task, ...").
+    expect(said("session.planned")).toEqual(["Plan: 1 ready task in priority order."]);
+    expect(said("session.promised")).toEqual(["It promised 1 task, about CHF 0.11."]);
     // d1116-budget-all (BA-8): the plan's estimate holds the review, so the planned task's whole
     // cost is set against it (before: 'the work cost CHF x against an estimate of CHF 0.11').
     expect(said("critic.session_review_metrics")).toEqual([

@@ -1222,7 +1222,12 @@ what is left and keeps the smaller ones after it, in the planner's order; the it
 are on the plan as `leftOutForBudget` with `workBudgetUsdMicro` (the plan's reason still reads
 "(N item(s) cut to fit the budget)"). After the cut the runner reads
 `store.task.waitingTasks(project)` (ready tasks waiting on a task not done, each dependency with
-its title and status). `session.planned` carries both lists, and the summary names them:
+its title and status). `session.planned` carries both lists, and the summary names them (l4-money-pause, L4-github-110:
+when a `session.promised` follows, `session.planned` carries `promised`, its task count, and the
+Plan line says only how the tasks were chosen, "Plan: the first session you approved with the
+project plan, in its order.", so the session's size is said once, by "It promised 3 tasks, about
+CHF 0.34."; StaticPlanner's first-session summary counts nothing, since its items are the
+approved tasks that are ready now, not what the person approved):
 "Left out for budget: "Title" (about $5.00); this session's work budget was $1.60. …" and
 "Waiting on other tasks: "B" waits on "A" (cancelled); … A cancelled, failed or missing task is
 never done by itself: change the waiting task's dependencies on the Tasks tab, or mark the
@@ -2102,8 +2107,9 @@ approved first-session plan was written to the summary cache and read by nothing
 items the brief carried reach the specialists: for each task it runs, the runner passes
 `notesForTask(brief.queue.items, task, readyTasks)` as the executor context's `notes` (an item
 that names the task by its id or by its title as written, at least four characters, case
-aside; and every item that names none of the ready tasks) with a `task.notes` event ("Gave N
-item(s) from the next-session queue to ..."), and `LoopTaskExecutor` appends them after the
+aside; and every item that names none of the ready tasks) with a `task.notes` event ("Gave 1
+note to "X"."; never "for the next session", since the session that gives it uses it: L4-github-110),
+and `LoopTaskExecutor` appends them after the
 delegation brief as quoted data (`renderQueueNotes`: "## Left for this session by the human",
 each item's kind, priority and text, an instruction-shaped item flagged in a run warning by its
 id and rules, never its words). The intake's own announcement of the first session (kind

@@ -24524,6 +24524,64 @@ describe("l4-money-pause, run L4", () => {
     }
   }, 120_000);
 
+  it("L4-github-110: Approve and start on a plan of two tasks, the second waiting on the first: the session's Details state its size once, as its promise, and the brief it used is never a note 'for the next session'", async () => {
+    const a = await open({});
+    try {
+      const brief = "A page that shows a random quote";
+      const project = await a.client.createProject({
+        name: "Quote page",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await a.rt.intake.inFlight(project.id);
+      const me = await a.client.me();
+      const card = (await a.client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      if (!card) throw new Error("no plan card");
+      await a.client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
+      let sessionId = "";
+      await eventually(
+        async () => {
+          const ss = await a.client.sessions({ projectId: project.id });
+          sessionId = ss[0]?.id ?? "";
+          return (
+            ss.length > 0 && ss.every((x) => !["planned", "running", "paused"].includes(x.status))
+          );
+        },
+        "the session Approve and start began to end (at least 10 s of real time)",
+        async () => JSON.stringify(await a.client.sessions({ projectId: project.id })),
+        60_000,
+      );
+      await settleSessions(a.rt);
+      const tasks = await a.client.tasks(project.id);
+      const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
+      const said = lines.join(" | ");
+      expect(tasks.length).toBe(2);
+      // Before (live check 4's s2, the stand-in the same): "Plan: 1 task, about CHF 0.13. The
+      // first session you approved with the project plan: 1 task in its order." beside "It
+      // promised 2 tasks, about CHF 0.26.", then "Gave 1 note for the next session to ...".
+      expect(
+        lines.filter((l) => l.startsWith("Plan:")),
+        said,
+      ).toEqual(["Plan: the first session you approved with the project plan, in its order."]);
+      expect(
+        lines.filter((l) => l.startsWith("It promised")),
+        said,
+      ).toEqual(["It promised 2 tasks, about CHF 0.26."]);
+      // The session's size is said once: no other line counts its tasks with a figure.
+      expect(lines.filter((l) => /\b\d+ tasks?(?: in its order|, about CHF)/.test(l))).toEqual([
+        "It promised 2 tasks, about CHF 0.26.",
+      ]);
+      expect(said).not.toMatch(/for the next session/);
+      const build = tasks.find((t) => t.specialist === "coder");
+      expect(lines).toContain(`Gave 1 note to "${build?.title}".`);
+    } finally {
+      await a.rt.close();
+    }
+  }, 150_000);
+
   it("L4-money-109: GET /settings: the project's review reserve row says it is kept for the critic's reviews", async () => {
     const a = await open({});
     try {
