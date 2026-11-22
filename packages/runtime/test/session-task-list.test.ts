@@ -1120,8 +1120,9 @@ describe("l4-selftasks-check, run L4: an edit that changes nothing never enters 
     const card = (await w.store.humanRequest.list({ project_id: w.seeded.project } as never)).find(
       (x) => (x.change_card as { key?: string }).key === TASK_PROPOSAL_KEY,
     );
-    expect(card?.change_card).toMatchObject({ outcome: "applied", changed: 2 });
-    expect((card?.change_card as { left_out?: unknown }).left_out).toBeUndefined();
+    if (!card) throw new Error("no suggestion card");
+    expect(card.change_card).toMatchObject({ outcome: "applied", changed: 2 });
+    expect((card.change_card as { left_out?: unknown }).left_out).toBeUndefined();
     const byTitle = new Map(
       (await w.store.task.forProject(w.seeded.project, {}, { limit: 100 })).map((t) => [
         t.title,
