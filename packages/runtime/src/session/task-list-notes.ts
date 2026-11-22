@@ -143,16 +143,22 @@ export function notCausedByTask(f: { description: string }): boolean {
 /** A quoted line is at most this many characters (design §5: read at a glance). */
 export const QUOTE_MAX = 100;
 
+/** A sentence that asks for something: "Please …", an order's verb first, or a question. */
+const ASKS =
+  /^(?:please\b|(?:add|ask|change|confirm|create|delete|deploy|drop|give|ignore|keep|make|merge|move|put|raise|remove|run|say|send|set|skip|start|stop|tell|use|write)\b)|\?$/i;
+
 /**
  * The part of a line a quote shows (l4-selftasks-112 (d)): the first sentence that reads like an
- * instruction, else the whole line. A model's flagged entry often opens with what it read ("The
- * coder's report says the FAQ should …") and asks only after a hundred characters.
+ * instruction, else the first one that asks for something, else the whole line. A model's
+ * flagged entry often opens with what it read ("The critic could not verify the phone number on
+ * contact.html, which came from …") and asks only after a hundred characters ("Please confirm
+ * it, …"), so a quote cut from the start never reached the request.
  */
 export function requestPart(text: string): string {
   const t = text.replace(/\s+/g, " ").trim();
   const sentences = t.split(/(?<=[.!?])\s+(?=[A-Z"'(])/);
   if (sentences.length < 2) return t;
-  return sentences.find((s) => readsLikeInstruction(s)) ?? t;
+  return sentences.find((s) => readsLikeInstruction(s)) ?? sentences.find((s) => ASKS.test(s)) ?? t;
 }
 
 /**

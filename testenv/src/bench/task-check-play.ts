@@ -15,6 +15,10 @@ import { firstUserText } from "./roles.ts";
  *   the changeable tasks that wait for it;
  * - `"<a>" is the same as "<b>"` drops a; `"<a>" must wait for "<b>"` orders a after b;
  * - `"<a>" is urgent` raises a's priority to high (an edit with no new title);
+ * - `"<a>" is done when <what>` sets what done looks like for a to <what> and adds it to its
+ *   criteria (an edit of outcome and criteria, l4-selftasks-112 (d));
+ * - `the person must <what>` is a question for the person: the stand-in writes its own entry in
+ *   `flagged` ("… Please <what>."), as the live model did (l4-selftasks-112 (d), LC-C18);
  * - a line that asks for budgets, settings, merges, deploys or other projects is quoted in
  *   `flagged` and changes nothing (the runtime's fence decides in any case).
  *
@@ -242,6 +246,29 @@ export function taskCheckReply(req: ModelRequest): string {
           priority: "high",
           why: why("The person says it is urgent."),
         });
+        continue;
+      }
+      // l4-selftasks-check, run L4 (L4-selftasks-112 (d)): an edit of what done looks like.
+      const doneWhen = /^"([^"]+)" is done when (.+?)\.?$/i.exec(line);
+      const doneTask = doneWhen ? changeable(doneWhen[1] as string) : null;
+      if (doneWhen && doneTask && !done.has(`done:${doneTask.title}`)) {
+        done.add(`done:${doneTask.title}`);
+        const what = (doneWhen[2] as string).trim();
+        changes.push({
+          kind: "edit",
+          task: doneTask.title,
+          outcome: `${what.charAt(0).toUpperCase()}${what.slice(1)}`,
+          acceptanceCriteria: [...doneTask.criteria, what],
+          why: why(`The report says when "${cut(doneTask.title, 60)}" is done.`),
+        });
+        continue;
+      }
+      // The live model's own entry in `flagged` for a question it left to the person.
+      const ask = /^the person must (.+?)\.?$/i.exec(line);
+      if (ask) {
+        flagged.push(
+          `${STAND_IN} The report of "${note.taskTitle}" leaves a question to the person. Please ${(ask[1] as string).trim()}.`,
+        );
         continue;
       }
       const wait = /"([^"]+)" must wait for "([^"]+)"/i.exec(line);

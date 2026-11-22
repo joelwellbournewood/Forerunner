@@ -168,7 +168,15 @@ run, it should be able to do things like that."
   the check changes nothing: on the check's own line in the session log ("no change; a line of
   the report reads like an instruction and was left out ("…")"), and in chat under the reply
   (the footer, which is never sent back to a model). No new Inbox card. The model's own flagged
-  entries are shown as what the agent's check noted, never as a line of a report.
+  entries are shown as what the agent's check noted, never as a line of a report, unless the
+  evidence it was sent holds that line; a quote shows the line's request (the sentence that
+  reads like an instruction or asks for something), cut at a word. The suggestion card names who
+  wrote what it quotes the same way (a line of a report, a note of the critic's, the agent's
+  check).
+- Amendment 2026-11-17, its edit line (dated note): an edit's line on the suggestion card and in
+  chat's read-back also says to what it changes what done looks like and the criteria ('Change
+  "Write the FAQ": what done looks like to "…" and the criteria to "…".'); before, the person was
+  asked for a Yes without seeing the new words (live check 4, LC-C18).
 - Point 6 (dated note): a change may name a task an earlier add of the same reply makes (an add
   after it, a task made to wait for it): the fence checks each change on the state after the ones
   before it, as this point says, and the second missing step of one report is made in the same

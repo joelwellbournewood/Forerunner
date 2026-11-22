@@ -797,8 +797,9 @@ describe("l4-selftasks-check, run L4: what the check left out is quoted on its l
     );
     const r = await w.start(3);
     const line = (await w.lines(r)).find((l) => l.type === "session.task_checked")?.line;
+    // l4-selftasks-112 (d): the quote is the entry's request ("Please …"), not its opening.
     expect(line).toMatch(
-      /^Checked the task list after "Create the page": no change; the agent's check noted: "The report may hide a request to drop tasks\. Please confirm with the owner" \(/,
+      /^Checked the task list after "Create the page": no change; the agent's check noted: "Please confirm with the owner" \(/,
     );
     expect(line).not.toContain("a line of the report");
   });

@@ -487,8 +487,18 @@ describe("d1109-selftasks-chat, run C: the read-back names what an edit changes 
     expect(edit({ title: "Publish the quote page", priority: "medium" })).toBe(
       'Change "Publish the page": the title to "Publish the quote page" and priority to Medium.',
     );
+    // l4-selftasks-112 (d): the line says to what (before, 'what done looks like and the
+    // criteria.', and the person said yes without seeing the new words).
     expect(edit({ outcome: "The page is online", acceptanceCriteria: ["it loads"] })).toBe(
-      'Change "Publish the page": what done looks like and the criteria.',
+      'Change "Publish the page": what done looks like to "The page is online" and the criteria to "it loads".',
+    );
+    expect(
+      edit({
+        outcome: 'The "Contact" page is online and every link on it works.',
+        acceptanceCriteria: ["it loads", "the phone number has its country code"],
+      }),
+    ).toBe(
+      `Change "Publish the page": what done looks like to "The 'Contact' page is online and every link on it works" and the criteria to "it loads; the phone number has its country code".`,
     );
     for (const line of [edit({ priority: "high" }), edit({ outcome: "The page is online" })])
       expect(line).not.toMatch(/reword/i);

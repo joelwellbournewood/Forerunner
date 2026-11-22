@@ -1062,7 +1062,10 @@ starts none. The check's line is in the session log with its cost beside it, so 
 to what the session spent. When a line it was given reads like an instruction, the check leaves
 it out and quotes it there, even when it changes nothing ('Checked the task list after "Create
 the page": no change; a line of the report reads like an instruction and was left out ("…")
-(CHF 0.01).'); in chat the line under the reply quotes it.
+(CHF 0.01).'); in chat the line under the reply quotes it. The suggestion card says who wrote
+what it quotes (a line of the coder's report, a note of the critic's, or what the agent's check
+noted in its own words) and quotes the part that asks for something; a change to a task says to
+what ('Change "Write the FAQ": what done looks like to "…" and the criteria to "…".').
 
 Budgets exist per month, per project, per session, per task and per run. The runtime refuses a
 model call that would cross a cap; it never relies on the agent noticing. In Settings a money

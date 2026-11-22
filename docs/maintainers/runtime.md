@@ -7880,7 +7880,16 @@ hiding what it left out. What changed, item by item:
   history a later turn sends, so a flagged line reaches no model. A chat read-back's Inbox card
   does not quote it: the read-back card is listed in the chat's facts unenveloped. Quotes are
   cut by `quoteOf` (`session/task-list-notes.ts`: whole up to 100 characters, else at a word with
-  "…") around the sentence that reads like an instruction (`requestPart`).
+  "…") around the sentence that reads like an instruction, else the first one that asks
+  ("Please …", an order's verb first, a question: `requestPart`).
+- **The suggestion card names who wrote what it quotes** (L4-selftasks-112 (d)): the fence marks
+  a model's `flagged` entry `by: "evidence"` (with the note's task and specialist) only when the
+  evidence it was sent holds it; else `by: "agent"`. `fileTaskProposal` passes `fence.quotes` to
+  `proposalBody`: 'A line of the coder's report on "X" reads like an instruction: "…".', 'A note
+  of the critic's on "X" names an instruction: "…".' or 'The agent's check noted: "…".', the
+  quote at its request (`requestPart`). `change_card.quotes` keeps the quotes' words. An edit's
+  line (`proposalLine`, also chat's read-back) says to what: 'Change "Write the FAQ": what done
+  looks like to "…" and the criteria to "a; b".' (each cut at 120 characters at a word).
 
 - **Chained adds** (L4-selftasks-104): the fence keeps the set's accepted adds in a pending map
   (title to its index), so an add after, or an order waiting for, a task an earlier add of the

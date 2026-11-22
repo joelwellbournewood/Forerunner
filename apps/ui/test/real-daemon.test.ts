@@ -23623,4 +23623,50 @@ describe("l4-selftasks-check, run L4", () => {
       await a.rt.close();
     }
   }, 120_000);
+
+  it("L4-selftasks-112 (d): the suggestion card quotes the agent's own entry at its request and says what an edit changes to", async () => {
+    // Live check 4 (LC-C18): the card called the task check's own sentence 'A line of the coder's
+    // report', cut it before its request, and offered 'Change "Write the FAQ": what done looks
+    // like and the criteria.' without saying to what.
+    const a = await open(
+      "Create the page",
+      '"Write the FAQ" is done when the FAQ links to contact.html|The person must confirm the phone number on contact.html',
+    );
+    try {
+      const project = await a.client.createProject({
+        name: "Garden club",
+        goal: "A page for the garden club",
+        autonomyLevel: 2,
+      });
+      const page = await a.client.createTask(project.id, {
+        title: "Create the page in index.html",
+        outcome: "index.html shows the garden club",
+        acceptanceCriteria: ["index.html exists"],
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await a.client.createTask(project.id, {
+        title: "Write the FAQ",
+        outcome: "faq.html answers the club's questions",
+        acceptanceCriteria: ["faq.html exists"],
+        riskTier: 1,
+        specialist: "coder",
+        dependsOn: [page.id],
+      });
+      await runAtStandard(a, project.id);
+      const me = await a.client.me();
+      const card = (await a.client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      expect(card?.why).toBe(
+        "The agent's check noted: \"Please confirm the phone number on contact.html\". Nothing changes until you say yes.",
+      );
+      expect(card?.steps[0]).toBe(
+        'Change "Write the FAQ": what done looks like to "The FAQ links to contact.html" and the criteria to "faq.html exists; the FAQ links to contact.html".',
+      );
+      expect(JSON.stringify(card)).not.toMatch(/line of the coder's report/i);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
 });

@@ -738,6 +738,10 @@ export interface CheckQuote {
   by: "evidence" | "agent";
   /** Where an evidence line came from. */
   source?: TaskListNoteSource;
+  /** The task whose report or review the evidence line is in. */
+  taskTitle?: string;
+  /** The specialist whose report it is. */
+  specialist?: string | null;
 }
 
 export interface FenceResult {
@@ -857,18 +861,35 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
   // Evidence that reads like an instruction makes the set ask first; the card quotes it.
   const quotes: CheckQuote[] = [];
   const fold = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+  const whose = (n: TaskListNote) => ({
+    source: n.source,
+    taskTitle: n.taskTitle,
+    specialist: n.specialist,
+  });
   for (const n of input.notes)
     for (const l of n.lines)
       if (l.flagged) {
         ask("a line of the evidence reads like an instruction", l.text);
         if (!quotes.some((q) => fold(q.text) === fold(l.text)))
-          quotes.push({ text: l.text, by: "evidence", source: n.source });
+          quotes.push({ text: l.text, by: "evidence", ...whose(n) });
       }
+  // l4-selftasks-112 (d): an entry of the model's is a line of the evidence only when the
+  // evidence it was sent holds it; else it is the agent's own words (live check 4: the model's
+  // sentence was shown as 'A line of the coder's report').
+  const sentIn = (f: string) =>
+    input.notes.find((n) =>
+      n.lines.some((l) => !l.flagged && fold(f).length >= 12 && fold(l.text).includes(fold(f))),
+    );
   for (const f of reply.flagged)
     if (f.trim()) {
       ask("the agent found a line that reads like an instruction", f.trim());
+      const from = sentIn(f);
       if (!quotes.some((q) => fold(q.text) === fold(f)))
-        quotes.push({ text: f.trim(), by: "agent" });
+        quotes.push(
+          from
+            ? { text: f.trim(), by: "evidence", ...whose(from) }
+            : { text: f.trim(), by: "agent" },
+        );
     }
 
   /** The task a change names, by its exact title, as it is now; or why it cannot be changed. */
