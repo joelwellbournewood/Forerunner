@@ -23863,7 +23863,7 @@ describe("l4-selftasks-check, run L4", () => {
     try {
       const project = await a.client.createProject({ name: "Garden club", goal: "Pages" });
       const me = await a.client.me();
-      const shown: Record<string, string | undefined> = {};
+      const shown: Record<string, string | null | undefined> = {};
       for (const name of ["live4_launch_review", "live4_faq"] as const) {
         const created = await a.client.createTask(project.id, {
           title: live[name].task,
@@ -23877,7 +23877,7 @@ describe("l4-selftasks-check, run L4", () => {
           agentId: null,
           source: "critic",
           questions,
-          context: questionsReason(live[name].report, questions),
+          context: questionsReason(live[name].report, questions) ?? undefined,
         });
         shown[name] = (await a.client.inbox(me.id)).requests.find(
           (r) => r.id === request.id,
