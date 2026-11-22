@@ -7864,7 +7864,28 @@ hiding what it left out. What changed, item by item:
   as Draft, Ready, Waiting for, Stuck or Waiting for Docker" matches `CHANGEABLE` (draft and
   ready): Waiting for, Stuck and Waiting for Docker are stored `ready` (`taskDisplay`).
 
-Tests: `session-task-list.test.ts` (describe "l4-selftasks-check, run L4").
+- **The check's line is a person line** (L4-selftasks-108): `TASK_CHECKED_EVENT` lives in
+  `daemon/event-audience.ts` (the runner re-exports it) and is in `PERSON_EVENT_TYPES`; a check
+  that made no call (`called: false`) stays a detail. The runner books the check's cost on the
+  line's own row (`emit`'s cost), so the session page shows its CHF and the person-level lines
+  add up to the session's spend.
+- **What it left out is quoted** (L4-selftasks-103, ADR 0119 point 4): `FenceResult.quotes`
+  (`CheckQuote`: the scanner-flagged evidence lines first, verbatim, then the model's `flagged`
+  entries marked `by: "agent"`) is kept whether or not the set changes anything. A check with no
+  change writes `quotedPhrase(first)` into its line ('Checked the task list after "X": no change;
+  a line of the report reads like an instruction and was left out ("…") (CHF 0.01).'; a model's
+  entry reads 'the agent's check noted: "…"', never "a line of the report"); the event's
+  payload carries `flagged`. In chat (`task-fix-tool.ts`) the reply says only
+  `FIX_LEFT_OUT_SAID`; the quote is in the footer (`fixQuoteFooter`), which is never part of the
+  history a later turn sends, so a flagged line reaches no model. A chat read-back's Inbox card
+  does not quote it: the read-back card is listed in the chat's facts unenveloped. Quotes are
+  cut by `quoteOf` (`session/task-list-notes.ts`: whole up to 100 characters, else at a word with
+  "…") around the sentence that reads like an instruction (`requestPart`).
+
+Tests: `session-task-list.test.ts` and `chat-fix-tasks.test.ts` (describes "l4-selftasks-check,
+run L4"), `session.test.tsx` and real-daemon.test.ts' describe "l4-selftasks-check, run L4",
+and the injection suite's `report-007` (no change beside a flagged line: the check's own line
+quotes it).
 
 ### One credential policy for every call (d1109-cred-engine, [ADR 0120](../decisions/0120-which-claude-does-the-work.md))
 

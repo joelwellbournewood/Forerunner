@@ -164,3 +164,8 @@ run, it should be able to do things like that."
 - Point 9 (dated note): the check's line is a person-level line of the session log with its
   cost on its own row (its CHF beside it, so the person-level lines add up to the session's
   spend); a check that made no call (every line read like an instruction) stays under Details.
+- Point 4 (dated note): a line that reads like an instruction is quoted to the person even when
+  the check changes nothing: on the check's own line in the session log ("no change; a line of
+  the report reads like an instruction and was left out ("…")"), and in chat under the reply
+  (the footer, which is never sent back to a model). No new Inbox card. The model's own flagged
+  entries are shown as what the agent's check noted, never as a line of a report.

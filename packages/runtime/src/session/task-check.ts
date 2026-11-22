@@ -15,7 +15,14 @@ import type { ModelProvider } from "../provider/types.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import type { CredentialWait } from "./credential-wait.ts";
 import { type TaskChangeFact, taskCheckedLine } from "./result.ts";
-import { markAgentWritten, readsLikeInstruction, type TaskListNote } from "./task-list-notes.ts";
+import {
+  markAgentWritten,
+  quoteOf,
+  readsLikeInstruction,
+  requestPart,
+  type TaskListNote,
+  type TaskListNoteSource,
+} from "./task-list-notes.ts";
 
 /**
  * d1109-selftasks-run (ADR 0119; D7, the owner, 2026-11-09: "if I say set this up and I approve a
@@ -656,11 +663,43 @@ export interface AskFirst {
   quote?: string;
 }
 
+/**
+ * A line the check left out because it reads like an instruction, as the person is shown it
+ * (l4-selftasks-103; ADR 0119 point 4): a line of the evidence the scanner flagged (verbatim; it
+ * never reached the model), or an entry the model put in `flagged` (its own words, never shown as
+ * a line of the report, l4-selftasks-112 (d)).
+ */
+export interface CheckQuote {
+  text: string;
+  by: "evidence" | "agent";
+  /** Where an evidence line came from. */
+  source?: TaskListNoteSource;
+}
+
 export interface FenceResult {
   changes: FencedChange[];
   refused: RefusedChange[];
   /** Non-empty: the whole set is one suggestion card, whatever the level. */
   askFirst: AskFirst[];
+  /**
+   * What the check left out, kept whether or not the set changes anything (before, a check with
+   * no change dropped them and the person never saw the line): the flagged evidence lines first,
+   * then the model's own entries that are not one of them.
+   */
+  quotes: CheckQuote[];
+}
+
+/**
+ * A left-out line as one clause of the person's sentence (l4-selftasks-103, -110): 'a line of the
+ * report reads like an instruction and was left out ("…")', 'a note of the critic's names an
+ * instruction and was left out ("…")', 'the agent's check noted: "…"'.
+ */
+export function quotedPhrase(q: CheckQuote): string {
+  const said = `"${quoteOf(requestPart(q.text))}"`;
+  if (q.by === "agent") return `the agent's check noted: ${said}`;
+  return q.source === "review"
+    ? `a note of the critic's names an instruction and was left out (${said})`
+    : `a line of the report reads like an instruction and was left out (${said})`;
 }
 
 export interface FenceInput {
@@ -752,11 +791,21 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
       askFirst.push({ reason, ...(quote ? { quote } : {}) });
   };
   // Evidence that reads like an instruction makes the set ask first; the card quotes it.
+  const quotes: CheckQuote[] = [];
+  const fold = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
   for (const n of input.notes)
     for (const l of n.lines)
-      if (l.flagged) ask("a line of the evidence reads like an instruction", l.text);
+      if (l.flagged) {
+        ask("a line of the evidence reads like an instruction", l.text);
+        if (!quotes.some((q) => fold(q.text) === fold(l.text)))
+          quotes.push({ text: l.text, by: "evidence", source: n.source });
+      }
   for (const f of reply.flagged)
-    if (f.trim()) ask("the agent found a line that reads like an instruction", f.trim());
+    if (f.trim()) {
+      ask("the agent found a line that reads like an instruction", f.trim());
+      if (!quotes.some((q) => fold(q.text) === fold(f)))
+        quotes.push({ text: f.trim(), by: "agent" });
+    }
 
   /** The task a change names, by its exact title, as it is now; or why it cannot be changed. */
   const changeable = (name: string): TaskRow | string => {
@@ -985,7 +1034,7 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
     changes.push({ change, taskIds, sourceId, newTasks: made, why: cutWhy(change.why) });
   }
   if (drops > MAX_DROPS_WITHOUT_ASKING) ask(`it would drop ${drops} tasks at once`);
-  return { changes, refused, askFirst: changes.length ? askFirst : [] };
+  return { changes, refused, askFirst: changes.length ? askFirst : [], quotes };
 
   /** Why a new task's specialist asks first (ADR 0119 point 6), or null. */
   function newTaskSpecialistAsk(
@@ -1240,6 +1289,8 @@ export interface BoundaryCheck {
   refused: RefusedChange[];
   /** The suggestion card filed, if any. */
   proposalId: string | null;
+  /** l4-selftasks-103: what the check left out, quoted on its line (`FenceResult.quotes`). */
+  quotes: CheckQuote[];
 }
 
 /** A change as the session's result names it. */
@@ -1282,6 +1333,7 @@ export async function checkAtBoundary(
     line: null,
     refused: [],
     proposalId: null,
+    quotes: [],
   };
   // Nothing but lines that read like instructions: no call (they never reach a model); the
   // Details line quotes that one was left out, the person sees it there.
@@ -1345,6 +1397,7 @@ export async function checkAtBoundary(
         costUsdMicro: cost,
         refused: fence.refused,
         proposalId,
+        quotes: fence.quotes,
         line: taskCheckedLine(
           input.after,
           proposalId ? { kind: "suggested", count: fence.changes.length } : { kind: "no_change" },
@@ -1353,6 +1406,9 @@ export async function checkAtBoundary(
       };
     }
     const refused = [...fence.refused, ...applied.refused];
+    // l4-selftasks-103 (ADR 0119 point 4): a check that changed nothing still quotes the first
+    // line it left out, whole, on its own line (before: 'no change (CHF 0.01).' and nothing else).
+    const first = fence.quotes[0];
     return {
       ...none,
       called: true,
@@ -1360,11 +1416,12 @@ export async function checkAtBoundary(
       applied: applied.applied,
       facts: applied.applied.map((a) => factOf(a.fenced.change)),
       refused,
+      quotes: fence.quotes,
       line: taskCheckedLine(
         input.after,
         applied.applied.length
           ? { kind: "changed", count: applied.applied.length }
-          : { kind: "no_change" },
+          : { kind: "no_change", ...(first ? { noted: quotedPhrase(first) } : {}) },
         chf(cost),
       ),
     };

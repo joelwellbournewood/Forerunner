@@ -786,6 +786,7 @@ describe("d1109-selftasks-chat, run C: an added step marks only itself as the ag
         ],
         refused: [],
         askFirst: [],
+        quotes: [],
       },
     });
     const step = await w.store.task.mustGet((made as TaskRow | null)?.id ?? "");

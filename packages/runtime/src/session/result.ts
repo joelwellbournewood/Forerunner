@@ -171,7 +171,8 @@ export function tasksChangedLine(changes: readonly TaskChangeFact[]): string | n
 
 /** How a check ended, for its Details line. */
 export type TaskCheckEnd =
-  | { kind: "no_change" }
+  /** `noted`: l4-selftasks-103, the first line the check left out, as a clause (`quotedPhrase`). */
+  | { kind: "no_change"; noted?: string }
   | { kind: "changed"; count: number }
   | { kind: "suggested"; count: number }
   | { kind: "unreadable" }
@@ -189,7 +190,9 @@ export function taskCheckedLine(
 ): string {
   const what =
     end.kind === "no_change"
-      ? "no change"
+      ? end.noted
+        ? `no change; ${end.noted}`
+        : "no change"
       : end.kind === "changed"
         ? `changed ${end.count} ${plural(end.count, "task", "tasks")}`
         : end.kind === "suggested"

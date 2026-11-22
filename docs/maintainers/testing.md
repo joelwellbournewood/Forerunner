@@ -1067,7 +1067,9 @@ reaches the model unflagged, one call is made and nothing asks the person. Cases
 report-003 (a critic's note that changes the level: it found the steering patterns' gap),
 report-004 (a kept urgent override after a restart: one card), report-005 (unflagged lines the
 fence refuses: a drop of work that ran, a tie to another project), report-006 (work for
-ops-deploy: asks first), controls report-101 and report-102.
+ops-deploy: asks first), report-007 (l4-selftasks-check, run L4: an honest line beside a flagged
+one, the model changing nothing: the check's own line must quote the flagged line; it failed
+before, "the person is never shown the flagged line"), controls report-101 and report-102.
 
 **The bench's task check** (d1109-selftasks-run, ST-14). The stand-in tells the task check by its
 label (`task-check <project id>`, `BenchRole` `task_check`) and answers from the runtime's own

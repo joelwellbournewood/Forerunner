@@ -140,6 +140,45 @@ export function notCausedByTask(f: { description: string }): boolean {
   return f.description.endsWith(NOT_CAUSED_BY_TASK);
 }
 
+/** A quoted line is at most this many characters (design §5: read at a glance). */
+export const QUOTE_MAX = 100;
+
+/**
+ * The part of a line a quote shows (l4-selftasks-112 (d)): the first sentence that reads like an
+ * instruction, else the whole line. A model's flagged entry often opens with what it read ("The
+ * coder's report says the FAQ should …") and asks only after a hundred characters.
+ */
+export function requestPart(text: string): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  const sentences = t.split(/(?<=[.!?])\s+(?=[A-Z"'(])/);
+  if (sentences.length < 2) return t;
+  return sentences.find((s) => readsLikeInstruction(s)) ?? t;
+}
+
+/**
+ * A line as the person reads it quoted (l4-selftasks-103, -110): whitespace folded, an id after
+ * "finding" or "review" taken out with its noun kept ("Earlier finding 01a1…: x" reads "Earlier
+ * finding: x"), its own double quotes single and its end mark dropped, so the sentence around it
+ * closes the quote; whole when it fits in `max`, else cut at a word with "…". Before, the line
+ * was cut at 100 characters mid-word with an id's hole ('"Earlier finding : the report …').
+ */
+export function quoteOf(text: string, max = QUOTE_MAX): string {
+  const t = text
+    .replace(
+      /\b(finding|review)[ :]*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+      "$1",
+    )
+    .replace(/\s+/g, " ")
+    .replace(/\s+([:;,.])/g, "$1")
+    .trim()
+    .replace(/"/g, "'")
+    .replace(/[.;:,!]+$/, "");
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[\s.;:,]+$/, "")}…`;
+}
+
 /** The critic's notes on a task that the task did not cause, as evidence lines. */
 export function reviewNoteLines(notes: readonly string[]): TaskListLine[] {
   return notes

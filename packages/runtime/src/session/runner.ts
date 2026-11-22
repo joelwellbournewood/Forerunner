@@ -2446,6 +2446,8 @@ export class SessionRunner {
                 costUsdMicro: done.costUsdMicro,
                 called: done.called,
                 changed: done.applied.length,
+                // l4-selftasks-103: what it left out, quoted on its line (data; never sent on).
+                ...(done.quotes.length ? { flagged: done.quotes.map((q) => q.text) } : {}),
                 ...(done.proposalId ? { proposed: true } : {}),
                 ...(done.refused.length
                   ? { refused: done.refused.map((r) => `${r.what}: ${r.reason}`) }
