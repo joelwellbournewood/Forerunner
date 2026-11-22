@@ -295,7 +295,11 @@ stopped by you" back to them. Now:
   when the person has an open refused card or ask card for the source the session's wait names
   (cards of no project: the query is the person's); the "credential wait" result line is then
   left out of `news`, so a session whose only news is that wait sends no `session_ended` and no
-  Update. The session page and the Overview keep the whole result.
+  Update. The session page and the Overview keep the whole result. A card tells only its own
+  stop's wait (fix-up of the review): an ask card's `stop_key` equals the wait's `stopKey`, and a
+  refused card tells a refused wait; before, an open ask card of an earlier stop on the same
+  credential hid this session's wait (test `credential-notify-once.test.ts`, "an open ask card
+  of an earlier stop does not hide ...").
 - **Once per body:** `sessionEnded` adds "Answer it in the Inbox." only when the rest does not
   already point there ("The card is in the Inbox."); `fit` counts names a list already counted
   ('"A", "B" and 2 more' cut to one name reads '"A" and 3 more', never '... and 1 more and 2

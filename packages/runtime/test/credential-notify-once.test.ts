@@ -1,5 +1,6 @@
 import { SimulatedClock } from "@forerunner/platform";
 import { afterAll, describe, expect, it } from "vitest";
+import { CREDENTIAL_ASK_KEY } from "../src/session/credential-ask.ts";
 import { credWorld, seedProject, setPolicy } from "./cred-world.ts";
 import { removeHomes, settleSessions } from "./helpers.ts";
 
@@ -47,6 +48,79 @@ describe("l4-cred-engine, run L4: credential cards are heard once, in the person
     await settleSessions(rt);
     await rt.close();
   }, 90_000);
+
+  // fixup-l4-cred-engine (review, non-blocking): the session's news left out its wait whenever any
+  // open credential card named the same credential, also an ask card of another stop, so the
+  // person heard of this wait from nothing.
+  for (const stopKey of ["an earlier stop", null] as const)
+    it(`an open ask card ${stopKey ? "of an earlier stop does not hide" : "of this stop hides"} the session's wait in its news`, async () => {
+      const clock = new SimulatedClock("2026-11-17T09:00:00Z");
+      const world = credWorld({ clock, key: false, prefix: "fr-notify-oldask-" });
+      homes.push(world.home);
+      world.limitSubscription(Date.parse("2026-11-17T14:40:00Z"));
+      const { rt, req } = await world.compose();
+      try {
+        await setPolicy(rt, "subscription_then_wait");
+        const sub = (
+          await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+        ).find((s) => s.kind === "subscription");
+        const { project } = await seedProject(rt, "Pond notes", ["Write notes/pond.md"]);
+        const card = async (stop: string) =>
+          rt.store.humanRequest.insert({
+            human_id: rt.human.id,
+            project_id: null,
+            task_id: null,
+            session_id: null,
+            kind: "approval",
+            why: "Use your API key until your Claude subscription can work again?",
+            steps: [],
+            options: ["Use API key", "Wait"],
+            blocking: true,
+            risk: "medium",
+            change_card: {
+              key: CREDENTIAL_ASK_KEY,
+              source_id: sub?.id ?? "",
+              stop_key: stop,
+              credential_kind: "subscription",
+              reason: "limit",
+              until: "2026-11-17T14:40:00.000Z",
+              applied_at: null,
+            },
+          } as never);
+        if (stopKey) await card(stopKey);
+        else {
+          // This stop's own card, under the stop key the session's wait carries.
+          await rt.billing.pick.rest?.(sub?.id ?? "", "2026-11-17T14:40:00.000Z", "usage limit");
+          const router = rt.billing.pick as unknown as {
+            currentStopOf(id: string): Promise<{ stopKey: string } | null>;
+          };
+          const stop = await router.currentStopOf(sub?.id ?? "");
+          expect(stop?.stopKey).toBeTruthy();
+          await card(stop?.stopKey ?? "");
+        }
+        // The person's start as the scheduler runs it (it sends the session's end), while the
+        // subscription rests: the session meets the limit and ends to wait.
+        await rt.scheduler.requestStart({
+          agentId: rt.agent.id,
+          projectId: project.id,
+          trigger: "manual",
+          by: "person",
+          reason: "test",
+        } as never);
+        await settleSessions(rt);
+        const ended = (
+          await req<{ notifications: Note[] }>("/notifications/recent?limit=50")
+        ).body.notifications.filter((n) => n.kind === "session_ended");
+        if (stopKey) {
+          expect(ended.map((n) => `${n.title} ${n.body}`).join("\n")).toContain(
+            "Waits until 15:40",
+          );
+        } else expect(ended).toEqual([]);
+      } finally {
+        await settleSessions(rt);
+        await rt.close();
+      }
+    }, 90_000);
 
   it("a held chat question names the reset in the zone the person set in Settings, with no restart", async () => {
     const clock = new SimulatedClock("2026-11-17T09:00:00Z");

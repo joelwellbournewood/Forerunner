@@ -3993,10 +3993,19 @@ export class SessionRunner {
             .open({ humanId: agent.owner_human_id }, { limit: 200 })
             .catch(() => [])
         ).some((r) => {
-          const card = (r.change_card ?? {}) as { key?: unknown; source_id?: unknown };
+          const card = (r.change_card ?? {}) as {
+            key?: unknown;
+            source_id?: unknown;
+            stop_key?: unknown;
+          };
+          if (card.source_id !== credentialWait?.sourceId) return false;
+          // fixup-l4-cred-engine (review): a card tells only its own stop's wait. Before, an
+          // open ask card of an earlier stop on the same credential hid this session's wait, so
+          // the person heard of it from nothing.
+          if (card.key === CREDENTIAL_REFUSED_KEY) return credentialWait?.reason === "refused";
           return (
-            (card.key === CREDENTIAL_REFUSED_KEY || card.key === CREDENTIAL_ASK_KEY) &&
-            card.source_id === credentialWait?.sourceId
+            card.key === CREDENTIAL_ASK_KEY &&
+            (!credentialWait?.stopKey || card.stop_key === credentialWait.stopKey)
           );
         })
       : false;
