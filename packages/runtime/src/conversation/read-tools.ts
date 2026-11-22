@@ -8,7 +8,7 @@ import {
   cancelledPullRequests,
   donePullRequests,
   earlierTitlesOf,
-  lastSessionBlock,
+  lastSessionNow,
   prList,
   repositoryNameOf,
   tasksBlock,
@@ -310,7 +310,9 @@ export function readTools(deps: ReadToolDeps): ToolSpec[] {
       step("session_last", input);
       const project = await projectOf(deps, input.project);
       if (typeof project === "string") return err(project);
-      return ok(lastSessionBlock(project) || `${project.name} has had no session yet.`, "session");
+      // l4-chat-answers (L4-chat-103): the result as it holds now (after Cancel, no promise).
+      const last = await lastSessionNow(deps.store, project);
+      return ok(last || `${project.name} has had no session yet.`, "session");
     },
   };
   const filesList: ToolSpec<{ project?: string | undefined }> = {

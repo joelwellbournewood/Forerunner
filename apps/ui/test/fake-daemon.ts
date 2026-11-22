@@ -2500,7 +2500,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       spoken: `${p.name} has not run yet.`,
     };
     // As the daemon (C-54): what became of the tasks the last session left for the person.
-    const last = base.lastSession;
+    // l4-chat-answers (L4-chat-103), as the daemon's resultAfterWait: a stored "...; then your
+    // session goes on." reads "...; then it runs at your next Start." once no wait is kept.
+    const kept =
+      !!state.credentialWaitNow[id]?.kept ||
+      state.startsWait[id]?.kind === "continuation" ||
+      state.startsWait[id]?.kind === "kept_start";
+    const last =
+      base.lastSession && !kept
+        ? {
+            ...base.lastSession,
+            summary: base.lastSession.summary.replace(
+              "; then your session goes on.",
+              "; then it runs at your next Start.",
+            ),
+          }
+        : base.lastSession;
     const views = projectTaskViews(
       state.tasks,
       id,

@@ -121,7 +121,7 @@ import {
   cardNames,
   emptyTasksLine,
   filesBlock,
-  lastSessionBlock,
+  lastSessionNow,
   type PlanState,
   planBlock,
   quotesOthersWords,
@@ -3123,7 +3123,7 @@ export class ConversationAgent {
           empty: emptyTasksLine(plan),
         });
         blocks.push(tasks);
-        const last = lastSessionBlock(project, chf);
+        const last = await lastSessionNow(store, project, chf);
         if (last) blocks.push(last);
         // d1109-chat-guard: a task's reason and the last session's result quote what agents
         // reported; when the scan finds instructions there, the turn reads every change back.

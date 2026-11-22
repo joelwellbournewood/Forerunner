@@ -24566,4 +24566,52 @@ describe("l4-chat-answers, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+  // L4-chat-103 (live check 4, L4-creds-8): after Cancel on a session waiting to go on, chat's
+  // "summary" and the facts the chat model reads still said "...; then your session goes on.".
+  // The stored result of a session whose wait is no longer kept (Cancel removed it) is read as
+  // it holds now, as the Overview reads it; also after a restart.
+  it("POST /chat 'summary' and the chat model's facts read a cancelled wait's result as '...; then it runs at your next Start.', also after a restart", async () => {
+    const STORED = "Waits until 11:40 (your subscription's limit); then your session goes on.";
+    const NOW = "Waits until 11:40 (your subscription's limit); then it runs at your next Start.";
+    const a = await open("fr-ui-real-l4-chat-answers-103-");
+    let projectId = "";
+    try {
+      const project = await a.client.createProject({ name: "Notes", goal: "Two notes" });
+      projectId = project.id;
+      const row = await a.rt.store.project.mustGet(project.id);
+      await a.rt.store.project.patch(project.id, {
+        summary_cache: {
+          ...(row.summary_cache as object),
+          last_session: {
+            id: "s-l4-103",
+            summary: STORED,
+            stop_reason: "credential",
+            ended_at: "2026-03-05T08:10:00.000Z",
+            spent_usd_micro: 0,
+          },
+        },
+      } as never);
+      // No continuation is kept (the person pressed Cancel): the Overview reads the new words.
+      expect((await a.client.projectSummary(project.id)).lastSession?.summary).toBe(NOW);
+      const summary = await a.chat(project.id, "summary");
+      expect(summary.reply).toContain(`Last session: ${NOW}`);
+      expect(summary.reply).not.toContain("then your session goes on");
+      await a.chat(project.id, "what happened in the last session?");
+      const facts = JSON.stringify(a.requests.at(-1)?.messages ?? []);
+      expect(facts).toContain(`Result: ${NOW}`);
+      expect(facts).not.toContain("then your session goes on");
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+    const b = await open("", {}, a.home);
+    try {
+      const again = await b.chat(projectId, "summary");
+      expect(again.reply).toContain(`Last session: ${NOW}`);
+      expect(again.reply).not.toContain("then your session goes on");
+      await settleSessions(b.rt);
+    } finally {
+      await b.rt.close();
+    }
+  }, 60_000);
 });

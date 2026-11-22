@@ -8338,6 +8338,14 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   no task (fix-up of the review: before, every card oldest first, 500 at most, so on an install
   with more cards the stop's card was never found; test `credential-ask-words.test.ts` "... more
   than 500 earlier cards ...").
+- **Chat reads a stored result as it holds now too** (l4-chat-answers, run L4, L4-chat-103,
+  live check 4's L4-creds-8): after Cancel on a session waiting to go on, chat's "summary" and the
+  facts the chat model reads (the first message's "Last session" and `session_last`) said "...;
+  then your session goes on." while the Overview said "...; then it runs at your next Start.".
+  `lastSessionNow(store, project, chf)` (`conversation/project-facts.ts`) runs the stored
+  `last_session.summary` through `resultAfterWait` before either reads it, and the commands'
+  `ports.resultNow` (composed here) does the same for `chatProjectSummary`. Tests: the real
+  daemon's "l4-chat-answers, run L4" ("... a cancelled wait's result ..., also after a restart").
 - **The configured API address covers the subscription's task runs** (L4-creds-10, live check
   4's L4-creds-16): `SdkDriverDeps.baseURL` is config.json's `anthropicApiBase` (compose); the
   driver sends `ANTHROPIC_BASE_URL` from `req.baseURL ?? deps.baseURL`, the default address

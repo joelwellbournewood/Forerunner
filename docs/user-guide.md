@@ -1553,8 +1553,9 @@ with **Cancel** instead of Stop; Cancel means nothing starts when Claude is back
 wait for your Start. The same wait shows on the project's line and on that session's page (with
 Cancel, or once cancelled **Continue**, which opens Start with the rest of that session and what
 is left of its budget). After Cancel, the session's result on its page, on the Overview (and in
-Read aloud) and its Update line in the Inbox say "...; then it runs at your next Start." instead
-of "then your session goes on". The project's line also says what waits to start: "Starts at
+Read aloud), its Update line in the Inbox and Chat ("summary", or a question about the last
+session) say "...; then it runs at your next Start." instead of "then your session goes on",
+at once, with no reload of the page. The project's line also says what waits to start: "Starts at
 15:40" for a Start you pressed while Claude was out (with Cancel), "Starts after your quiet
 hours", 'Starts after the session on "Quote page"' (as soon as you press Start there, no reload
 needed), or "Ready: 3 tasks wait for your Start".

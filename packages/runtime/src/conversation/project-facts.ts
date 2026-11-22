@@ -9,6 +9,7 @@ import type {
   TaskRow,
 } from "@forerunner/state";
 import { requestWords } from "../daemon/request-words.ts";
+import { resultAfterWait } from "../daemon/run-indicator.ts";
 import {
   findingAsk,
   loadTaskDisplayContext,
@@ -206,9 +207,39 @@ function outcomeOf(project: ProjectRow): {
 const names = (l: readonly { title: string }[] | undefined) => (l ?? []).map((t) => quote(t.title));
 
 /**
+ * `# Last session` with its result as it holds now (l4-chat-answers, L4-chat-103): the stored
+ * result read through `resultAfterWait`, as the Overview, the session page and the Inbox read it,
+ * so after Cancel the chat model is never told "...; then your session goes on." (live check 4,
+ * L4-creds-8: chat's facts and "summary" still said it after the person cancelled the wait).
+ */
+export async function lastSessionNow(
+  store: StateStore,
+  project: ProjectRow,
+  chfPerUsd = 1,
+): Promise<string> {
+  const cache = (project.summary_cache ?? {}) as {
+    last_session?: { summary?: unknown; ended_at?: unknown };
+  };
+  const stored = cache.last_session?.summary;
+  if (typeof stored !== "string" || !stored) return lastSessionBlock(project, chfPerUsd);
+  const since =
+    typeof cache.last_session?.ended_at === "string" ? cache.last_session.ended_at : null;
+  const now = await resultAfterWait(store, project.id, since, stored).catch(() => stored);
+  if (now === stored) return lastSessionBlock(project, chfPerUsd);
+  const shown = {
+    ...project,
+    summary_cache: {
+      ...(project.summary_cache as object),
+      last_session: { ...(cache.last_session as object), summary: now },
+    },
+  } as ProjectRow;
+  return lastSessionBlock(shown, chfPerUsd);
+}
+
+/**
  * `# Last session`: the result the person saw (at most three lines, written by the engine) and
  * its lists by name: what was done, what failed and why, what needs the person, what is left.
- * Empty before the project's first session.
+ * Empty before the project's first session. The chat reads it through `lastSessionNow`.
  */
 export function lastSessionBlock(project: ProjectRow, chfPerUsd = 1): string {
   const o = outcomeOf(project);

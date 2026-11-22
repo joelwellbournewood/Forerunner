@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { EventSourceLike, StreamOptions } from "../src/api/sse.ts";
 import { milestonesFromTasks } from "../src/pages/project/PlanTab.tsx";
-import { money, PROJECTS, TASKS } from "./fixtures.ts";
+import { money, PROJECTS, SUMMARIES, TASKS } from "./fixtures.ts";
 import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
 
 /** An `/events` EventSource wired to the fake daemon's listeners, open at once. */
@@ -849,5 +849,66 @@ describe("l3-money-screens, run L3", () => {
     expect(line).toHaveTextContent(/^63,793 tokens$/);
     expect(screen.getByTestId("cost-savings").textContent).not.toContain("CHF 0.00");
     expect(screen.queryByTestId("cost-savings-compression")).toBeNull();
+  });
+});
+
+/**
+ * l4-chat-answers, run L4 (live check 4, L4-creds-8 / L4-chat-103): after Cancel on a session
+ * waiting to go on, the Overview's Last result kept "...; then your session goes on." until the
+ * page was reloaded: it read the summary again only when the status line or the progress
+ * changed, and with a card open the status line stayed "Waiting for you".
+ */
+describe("l4-chat-answers, run L4: Last result after Cancel (L4-chat-103)", () => {
+  it("Cancel on the waiting session: Last result reads '...; then it runs at your next Start.' with no remount", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const atlas = SUMMARIES.proj_atlas;
+    if (!atlas?.lastSession) throw new Error("fixture changed");
+    const was = atlas.lastSession.summary;
+    atlas.lastSession.summary =
+      "Waits until 09:30 (your API key's limit); then your session goes on.";
+    try {
+      harness.daemon.state.credentialWaitNow.proj_atlas = {
+        text: "Waits until 09:30 (your API key's limit); then your session goes on.",
+        save: null,
+        kept: true,
+      };
+      harness.daemon.state.runningExtra = [
+        {
+          key: "wait:proj_atlas",
+          sessionId: "sess_1",
+          projectId: "proj_atlas",
+          projectName: "Atlas",
+          state: "waiting",
+          what: "waiting until 09:30, then it goes on",
+          text: "Atlas · waiting until 09:30, then it goes on",
+          since: new Date().toISOString(),
+          stop: [],
+          cancel: true,
+          nextProject: null,
+          explain: null,
+        },
+      ];
+      renderApp("/projects/proj_atlas", harness);
+      expect(await screen.findByTestId("last-result")).toHaveTextContent(
+        "Waits until 09:30 (your API key's limit); then your session goes on.",
+      );
+      const status = (await screen.findByTestId("project-status")).textContent;
+      const section = await screen.findByTestId("overview-working");
+      await user.click(within(section).getByTestId("run-cancel"));
+      await waitFor(() =>
+        expect(postedCalls(harness, "/projects/proj_atlas/continuation/cancel")).toHaveLength(1),
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("last-result")).toHaveTextContent(
+          "Waits until 09:30 (your API key's limit); then it runs at your next Start.",
+        ),
+      );
+      expect(screen.getByTestId("last-result")).not.toHaveTextContent("then your session goes on");
+      // The status line did not change: the reload came from the run entry going away.
+      expect(screen.getByTestId("project-status").textContent).toBe(status);
+    } finally {
+      atlas.lastSession.summary = was;
+    }
   });
 });

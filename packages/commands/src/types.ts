@@ -402,6 +402,12 @@ export interface CommandPorts {
    * its plan and again at its run. Absent: the command is refused as unavailable.
    */
   projectJoin?: ProjectJoinPort;
+  /**
+   * l4-chat-answers (L4-chat-103): a stored session result as it holds now (the daemon's
+   * `resultAfterWait`): after Cancel, "...; then your session goes on." reads "...; then it runs
+   * at your next Start.". Chat's "summary" reads the last result through it. Absent: as stored.
+   */
+  resultNow?(projectId: string, since: string | null, text: string): Promise<string>;
 }
 
 /** What `project.join` asks the daemon before anything moves (`join-preview.ts`). */
