@@ -1,6 +1,10 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
-  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
   "files": {
     "includes": [
       "**",
@@ -11,7 +15,8 @@
       "!pnpm-lock.yaml",
       "!**/*.generated.*",
       "!docs/spec"
-    ]
+    ],
+    "maxSize": 3145728
   },
   "formatter": {
     "enabled": true,
@@ -24,13 +29,30 @@
     "enabled": true,
     "rules": {
       "preset": "recommended",
-      "suspicious": { "noExplicitAny": "error", "noConsole": "off" },
-      "style": { "useNodejsImportProtocol": "error", "noNonNullAssertion": "warn" },
-      "correctness": { "noUnusedVariables": "error", "noUnusedImports": "error" }
+      "suspicious": {
+        "noExplicitAny": "error",
+        "noConsole": "off"
+      },
+      "style": {
+        "useNodejsImportProtocol": "error",
+        "noNonNullAssertion": "warn"
+      },
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnusedImports": "error"
+      }
     }
   },
   "javascript": {
-    "formatter": { "quoteStyle": "double", "semicolons": "always", "trailingCommas": "all" }
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
   },
-  "json": { "formatter": { "enabled": true } }
+  "json": {
+    "formatter": {
+      "enabled": true
+    }
+  }
 }

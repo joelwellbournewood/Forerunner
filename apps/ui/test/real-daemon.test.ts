@@ -23665,7 +23665,7 @@ describe("l4-selftasks-check, run L4", () => {
         (r) => r.projectId === project.id && r.status === "open",
       );
       expect(card?.why).toBe(
-        "The agent's check noted: \"Please confirm the phone number on contact.html\". Nothing changes until you say yes.",
+        'The agent\'s check noted: "Please confirm the phone number on contact.html". Nothing changes until you say yes.',
       );
       expect(card?.steps[0]).toBe(
         'Change "Write the FAQ": what done looks like to "The FAQ links to contact.html" and the criteria to "faq.html exists; the FAQ links to contact.html".',
@@ -23716,9 +23716,7 @@ describe("l4-selftasks-check, run L4", () => {
       await eventually(
         async () =>
           (await a.client.tasks(project.id)).find((t) => t.id === cli.id)?.status === "done" &&
-          (await a.client.sessions({ projectId: project.id })).every(
-            (x) => x.status !== "running",
-          ),
+          (await a.client.sessions({ projectId: project.id })).every((x) => x.status !== "running"),
         "the approved session to end (at least 10 s of real time)",
         async () =>
           (await a.client.tasks(project.id)).map((t) => `${t.title}: ${t.status}`).join(", "),
@@ -23885,9 +23883,7 @@ describe("l4-selftasks-check, run L4", () => {
           questions,
           context: questionsReason(live[name].report, questions) ?? undefined,
         });
-        shown[name] = (await a.client.inbox(me.id)).requests.find(
-          (r) => r.id === request.id,
-        )?.body;
+        shown[name] = (await a.client.inbox(me.id)).requests.find((r) => r.id === request.id)?.body;
       }
       expect(shown.live4_launch_review).toBe(
         'The specialist said: "notes/plan.md does not exist, and I am not allowed to write review.md, so I could not produce the deliverable."',
@@ -23924,9 +23920,7 @@ describe("l4-selftasks-check, run L4", () => {
       const before = await card();
       if (!before?.planTasks) throw new Error(`no plan card: ${JSON.stringify(before)}`);
       // The stand-in's plan sets no task budget: no warning on any task.
-      expect(before.planTasks.map((t) => t.note ?? null)).toEqual(
-        before.planTasks.map(() => null),
-      );
+      expect(before.planTasks.map((t) => t.note ?? null)).toEqual(before.planTasks.map(() => null));
       // The plan as the live model wrote it (a short brief: the small plan's two tasks): the
       // build task's own budget USD 0.10 (CHF 0.08), the check's USD 5.00, room for its work and
       // its review.
@@ -24008,8 +24002,7 @@ describe("l4-chat-depth, run L4", () => {
       projectId: string,
       text: string,
       extra: { offer?: string; depth?: "longer" } = {},
-    ) =>
-      client.chat({ humanId: me.id, agentId, projectId, projectTab: true, text, ...extra });
+    ) => client.chat({ humanId: me.id, agentId, projectId, projectTab: true, text, ...extra });
     return { rt, client, me, agentId, chat, home: dir, log };
   }
 
@@ -24029,7 +24022,8 @@ describe("l4-chat-depth, run L4", () => {
           // Earlier stronger answers on this model were cheap (as one was on the live model):
           // twice their cost is below the pass's floor, so the floor sets the "at most".
           const rows = await a.rt.store.event.ofTypes(sessionId, ["chat.reply"], { limit: 5 });
-          const model = (rows[0]?.payload as { passes?: { model: string }[] }).passes?.[0]?.model;
+          const model = (rows[0]?.payload as { passes?: { model: string }[] } | undefined)
+            ?.passes?.[0]?.model;
           expect(model).toBeTruthy();
           for (let n = 0; n < 3; n++)
             await a.rt.store.event.append(sessionId, "chat.reply", {
@@ -24086,7 +24080,8 @@ describe("l4-chat-depth, run L4", () => {
           .trim()
           .split("\n")
           .map((l) => JSON.parse(l) as { system?: string; role?: string });
-      const thorough = () => calls().filter((c) => (c.system ?? "").includes("# Thinking it through"));
+      const thorough = () =>
+        calls().filter((c) => (c.system ?? "").includes("# Thinking it through"));
       expect(thorough()).toHaveLength(0);
       // The conversation view shows the ask line with Go ahead under the newest turn.
       const view = await a.client.conversation(project.id);
@@ -24217,7 +24212,10 @@ describe("l4-chat-depth, run L4", () => {
       });
       expect(await a.rt.store.task.forProject(kite.id, {}, { limit: 10 })).toEqual([]);
       await expect(
-        a.client.registerDataAsset(kite.id, { locator: "https://example.com/members.csv", kind: "table" }),
+        a.client.registerDataAsset(kite.id, {
+          locator: "https://example.com/members.csv",
+          kind: "table",
+        }),
       ).rejects.toMatchObject({ status: 409, message: sentence });
       await expect(
         a.client.importProject(kite.id, { source: "folder", locator: "/tmp/nothing-here" }),
