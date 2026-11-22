@@ -388,9 +388,9 @@ export function budgetLineWords(
   roomUsdMicro = 0,
   /**
    * l4-money-pause, run L4 (L4-money-103): the outer limit whose remainder capped the run: 'This
-   * run may spend CHF 0.06, what is left of the project's budget: before a step ...' (live check
-   * 4: "This run may spend CHF 1.20" under a project budget of CHF 0.06). Its review's room, when
-   * kept, is said as what is left less it.
+   * run may spend CHF 0.06, the rest of the project's budget: it is told to wrap up ...' (live
+   * check 4: "This run may spend CHF 1.20" under a project budget of CHF 0.06). Its review's
+   * room, when kept, is said as what the rest is after ("... after CHF 0.03 for its review").
    */
   outer?: "project" | "month",
 ): string {
@@ -398,19 +398,29 @@ export function budgetLineWords(
   // amount under a centime reads "less than CHF 0.01", never "CHF 0.00".
   const chf = (usd: number) => moneyWords(chfOf(usd), usd);
   const of = outer === "project" ? "the project's budget" : "this month's cap";
-  // d1116-budget-all (BA-4): what the run keeps of its task's budget for its review, after the
-  // amount, only when it keeps some (no clause promises a room the code does not keep).
-  const kept = outer
-    ? `, what is left of ${of}${roomUsdMicro > 0 ? ` less the ${chf(roomUsdMicro)} kept for its review` : ""}`
-    : roomUsdMicro > 0
-      ? ` (${chf(roomUsdMicro)} of the task's budget is kept for its review)`
-      : "";
   // L4-money-103: under an outer limit it pauses there, not at a budget of its own.
   const at = outer ? `at ${of}` : "at its budget";
-  if (line.saveOnly && line.firstCallUsdMicro > line.capUsdMicro)
-    return chf(line.firstCallUsdMicro) === "less than CHF 0.01"
-      ? `This run may spend less than its first step may cost (both are under CHF 0.01): it pauses ${at} before that step.`
-      : `This run may spend ${chf(line.capUsdMicro)}${kept}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): it pauses ${at} before that step.`;
+  const firstTooDear = line.saveOnly && line.firstCallUsdMicro > line.capUsdMicro;
+  if (firstTooDear && chf(line.firstCallUsdMicro) === "less than CHF 0.01")
+    return `This run may spend less than its first step may cost (both are under CHF 0.01): it pauses ${at} before that step.`;
+  // Review of L4-money-103: under an outer limit the line has words of its own, short enough
+  // to stay whole in the session log (200 characters) with every figure, its review's room
+  // included ("what is left of the project's budget less the CHF 0.03 kept for its review: ...
+  // keeping a reserve of…" was cut on screen).
+  if (outer) {
+    const head = `This run may spend ${chf(line.capUsdMicro)}, the rest of ${of}${roomUsdMicro > 0 ? ` after ${chf(roomUsdMicro)} for its review` : ""}`;
+    if (firstTooDear)
+      return `${head}: less than its first step may cost (${chf(line.firstCallUsdMicro)}), so it pauses before that step.`;
+    return line.saveOnly
+      ? `${head}: too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}), so it pauses and keeps its work.`
+      : `${head}: it is told to wrap up before a step that could pass ${chf(line.lineUsdMicro)}, keeping ${chf(line.reserveUsdMicro)} to finish.`;
+  }
+  // d1116-budget-all (BA-4): what the run keeps of its task's budget for its review, after the
+  // amount, only when it keeps some (no clause promises a room the code does not keep).
+  const kept =
+    roomUsdMicro > 0 ? ` (${chf(roomUsdMicro)} of the task's budget is kept for its review)` : "";
+  if (firstTooDear)
+    return `This run may spend ${chf(line.capUsdMicro)}${kept}, less than its first step may cost (${chf(line.firstCallUsdMicro)}): it pauses ${at} before that step.`;
   return line.saveOnly
     ? `This run may spend ${chf(line.capUsdMicro)}${kept}, too little to wrap up (two steps may cost ${chf(line.reserveUsdMicro)}): it pauses ${at} and keeps its work.`
     : `This run may spend ${chf(line.capUsdMicro)}${kept}: before a step that could take it past ${chf(line.lineUsdMicro)} it is told to wrap up, keeping a reserve of ${chf(line.reserveUsdMicro)} to finish.`;

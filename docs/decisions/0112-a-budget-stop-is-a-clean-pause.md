@@ -641,7 +641,15 @@ Live check 4 (2026-11-17, the real model) found three ways a pause was read wron
    budget of CHF 0.06 the writer's start line said "This run may spend CHF 1.20" and the run was
    then stopped there with no wrap-up. Now what the project's budget and the month's cap still
    allow, at their stop lines, caps the run when it is smaller: its wrap-up line, its reserve and
-   its start line ("This run may spend CHF 0.06, what is left of the project's budget: ...")
+   its start line ("This run may spend CHF 0.06, the rest of the project's budget: ...")
    follow it, and the review's room is kept inside it as BA-4 keeps it inside a task's budget,
    when it can hold both. The plan share stays a credential's stop (ADR 0120). Every call is
    still checked against every cap before it is made.
+
+Note 2026-11-22 (review of l4-money-pause): under an outer limit the start line has words of its
+own, short enough to stay whole in the session log (200 characters) with every figure, the
+review's room included: "This run may spend CHF 0.20, the rest of the project's budget after
+CHF 0.04 for its review: it is told to wrap up before a step that could pass CHF 0.16, keeping
+CHF 0.04 to finish." The first wording ("what is left of the project's budget less the CHF 0.04
+kept for its review: before a step that could take it past ...") ran to about 210 characters and
+the session page cut it before its reserve.

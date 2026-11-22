@@ -14,6 +14,7 @@ import { WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
 import { lastSessionBlock, workingNowBlock } from "../src/conversation/project-facts.ts";
 import { composeRuntime, type DynamicCaps, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { wrapUpLineOf } from "../src/enforcement/budget.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
 import type { ChatMessage, ModelRequest } from "../src/provider/types.ts";
 import { wakeBudgetWaits } from "../src/session/budget-card.ts";
@@ -2513,11 +2514,11 @@ describe("l4-money-pause, run L4: a run under the project's budget or the month'
     });
     const said = lines(r.events);
     const start = said.find((l) => l.startsWith("This run may spend")) ?? "";
-    const m = /^This run may spend CHF (\d+\.\d\d), what is left of the project's budget[ :,]/.exec(
-      start,
+    // The whole line as GET /sessions/:id/events gives it (review of L4-money-103: a prefix
+    // match let a line cut at 200 characters pass).
+    expect(start).toBe(
+      "This run may spend CHF 0.06, the rest of the project's budget: it is told to wrap up before a step that could pass CHF 0.05, keeping CHF 0.01 to finish.",
     );
-    expect(m, start).not.toBeNull();
-    expect(Number(m?.[1])).toBeLessThanOrEqual(0.06);
     // It heard the wrap-up, inside the project's budget.
     expect(w.calls.filter(coderOn("Club history")).some(heardWrapUp)).toBe(true);
     expect(r.runs.map((x) => x.outcome)).toEqual(["paused"]);
@@ -2539,11 +2540,9 @@ describe("l4-money-pause, run L4: a run under the project's budget or the month'
     const r = await runOne(w.req, w.rt, "Club history");
     const said = lines(r.events);
     const start = said.find((l) => l.startsWith("This run may spend")) ?? "";
-    const m = /^This run may spend CHF (\d+\.\d\d), what is left of this month's cap[ :,]/.exec(
-      start,
+    expect(start).toBe(
+      "This run may spend CHF 0.06, the rest of this month's cap: it is told to wrap up before a step that could pass CHF 0.05, keeping CHF 0.01 to finish.",
     );
-    expect(m, start).not.toBeNull();
-    expect(Number(m?.[1])).toBeLessThanOrEqual(0.06);
     expect(r.runs.map((x) => x.outcome)).toEqual(["paused"]);
     expect(await spentOf(w.rt, r.taskId)).toBeLessThanOrEqual(75_000);
     const card = ((await (await w.req("/inbox")).json()) as { requests: Json[] }).requests.find(
@@ -2551,4 +2550,45 @@ describe("l4-money-pause, run L4: a run under the project's budget or the month'
     );
     expect(card?.title).toBe('"Club history" paused before this month\'s cap ran out');
   }, 60_000);
+});
+
+/**
+ * l4-money-pause, run L4 (review of L4-money-103): under an outer limit with its review's room
+ * kept, the start line ran past the session log's 200 characters and lost its reserve on screen
+ * ("... it is told to wrap up, keeping a reserve of…"). Every form is whole: one sentence, at
+ * most 200 characters, with every figure (design §3.7, §5.1).
+ */
+describe("l4-money-pause, run L4: an outer limit's start line is whole, with every figure (L4-money-103)", () => {
+  const chf = (usdMicro: number) => `CHF ${((usdMicro * 0.8) / 1_000_000).toFixed(2)}`;
+
+  it("the project's budget with its review's room kept: the exact line", () => {
+    expect(budgetLineWords(wrapUpLineOf(37_500, 5_000), chf, 37_500, "project")).toBe(
+      "This run may spend CHF 0.03, the rest of the project's budget after CHF 0.03 for its review: it is told to wrap up before a step that could pass CHF 0.02, keeping CHF 0.01 to finish.",
+    );
+    expect(budgetLineWords(wrapUpLineOf(75_000, 5_000), chf, 0, "project")).toBe(
+      "This run may spend CHF 0.06, the rest of the project's budget: it is told to wrap up before a step that could pass CHF 0.05, keeping CHF 0.01 to finish.",
+    );
+    expect(budgetLineWords(wrapUpLineOf(25_000, 20_000), chf, 12_500, "month")).toBe(
+      "This run may spend CHF 0.02, the rest of this month's cap after CHF 0.01 for its review: too little to wrap up (two steps may cost CHF 0.03), so it pauses and keeps its work.",
+    );
+    expect(budgetLineWords(wrapUpLineOf(25_000, 45_000), chf, 12_500, "project")).toBe(
+      "This run may spend CHF 0.02, the rest of the project's budget after CHF 0.01 for its review: less than its first step may cost (CHF 0.04), so it pauses before that step.",
+    );
+  });
+
+  it("no form of the line passes 200 characters, and none is cut", () => {
+    const caps = [25_000, 37_500, 60_000, 75_000, 99_000, 400_000, 1_500_000, 12_500_000];
+    const firsts = [20_000, 45_000, 60_000, 150_000, 400_000, 2_000_000, 30_000_000];
+    const long: string[] = [];
+    // A task's own budget keeps at least a centime for its review; an outer limit's room can be
+    // less (what the limit still leaves).
+    for (const cap of [...caps, 125_000_000])
+      for (const first of firsts)
+        for (const outer of [undefined, "project", "month"] as const)
+          for (const room of outer ? [0, 500, 5_000, 12_500, cap] : [0, 12_500, cap]) {
+            const s = budgetLineWords(wrapUpLineOf(cap, first), chf, room, outer);
+            if (s.length > 200 || s.includes("…")) long.push(`${s.length}: ${s}`);
+          }
+    expect(long).toEqual([]);
+  });
 });

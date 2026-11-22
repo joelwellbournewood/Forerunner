@@ -2277,9 +2277,12 @@ budget-stop; the owner's decision of 2026-11-02).**
   change). When it is smaller, `runCapSource` is `project` or `month`, the review's room
   (`reviewRoomOf`, now priced for a task without a budget of its own too) is kept inside it when
   it can hold both (BA-4's rule), the token, the wrap-up line and the reserve follow it, and the
-  start line says "This run may spend CHF 0.06, what is left of the project's budget: before a
-  step ..." (with "less the CHF 0.02 kept for its review" when kept; a save-only run "pauses at
-  the project's budget"); a pause names that limit's own cap ('"X" paused before the project's
+  start line has words of its own, whole within the session log's 200 characters with every
+  figure: "This run may spend CHF 0.20, the rest of the project's budget after CHF 0.04 for its
+  review: it is told to wrap up before a step that could pass CHF 0.16, keeping CHF 0.04 to
+  finish." (no "after ..." when no room is kept; a save-only run "so it pauses and keeps its
+  work"; review of L4-money-103: the first wording ran past 200 characters and was cut on screen,
+  "... keeping a reserve of…"; `budget-pause.test.ts` checks every form's length); a pause names that limit's own cap ('"X" paused before the project's
   budget ran out', the row "Paused before the project's budget ran out"; before: "This run may
   spend CHF 1.20" and a hard stop at CHF 0.06). The hooks' caps check stays the backstop. `limitWords`, `wrapUpSentWords`, the budget card's title and the flagged-search note
   (`flaggedSearchNote`, executor.ts) name the specialist in words (`saidByName`: "the writer", never "writer-marketing"; W15-43, W15B-78).

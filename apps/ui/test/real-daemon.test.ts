@@ -24453,16 +24453,38 @@ describe("l4-money-pause, run L4", () => {
       const sessionId = await startAndEnd(a, project.id, 2_000_000);
       const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
       const start = lines.find((l) => l.startsWith("This run may spend")) ?? "";
-      const m =
-        /^This run may spend (?:less than|CHF (\d+\.\d\d)), what is left of the project's budget/.exec(
-          start,
-        );
-      expect(m, lines.join(" | ")).not.toBeNull();
-      expect(Number(m?.[1] ?? 0)).toBeLessThanOrEqual(0.06);
+      // Review of L4-money-103: the whole line, its review's room and reserve included (it was
+      // cut on screen at 200 characters: "... keeping a reserve of…").
+      expect(start, lines.join(" | ")).toBe(
+        "This run may spend CHF 0.06, the rest of the project's budget: it is told to wrap up before a step that could pass CHF 0.05, keeping CHF 0.01 to finish.",
+      );
       // Before: "This run may spend CHF 1.20: ..." and a hard stop at the project's budget.
       expect(lines.join(" | ")).not.toMatch(/This run may spend CHF 1\.\d\d/);
       const runs = await a.rt.store.run.forTask(t.id);
       expect(runs.reduce((s, r) => s + r.cost_usd_micro, 0)).toBeLessThanOrEqual(75_000);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-money-103 (review): with its review's room kept inside the project's budget, the run's start line through the client is whole, every figure in it", async () => {
+    const a = await open({
+      FORERUNNER_BENCH_LONG: "Write the club history",
+      FORERUNNER_BENCH_USAGE: "Write the club history:2000",
+    });
+    try {
+      const project = await a.client.createProject({ name: "Club", goal: "A club page" });
+      await a.rt.store.project.patch(project.id, { budget_usd_micro: 300_000 });
+      await task(a, project.id, "Write the club history", 0.05);
+      const sessionId = await startAndEnd(a, project.id, 2_000_000);
+      const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
+      const start = lines.find((l) => l.startsWith("This run may spend")) ?? "";
+      // Before: "This run may spend CHF 0.xx, what is left of the project's budget less the CHF
+      // 0.xx kept for its review: ... keeping a reserve of…", cut at 200 characters on screen.
+      expect(start, lines.join(" | ")).toBe(
+        "This run may spend CHF 0.20, the rest of the project's budget after CHF 0.04 for its review: it is told to wrap up before a step that could pass CHF 0.16, keeping CHF 0.04 to finish.",
+      );
+      expect(start.length).toBeLessThanOrEqual(200);
     } finally {
       await a.rt.close();
     }

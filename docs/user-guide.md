@@ -1357,7 +1357,7 @@ CHF 0.02 of CHF 0.15, and its next step could take it past CHF 0.07."). A budget
 for even that is "save only": nothing is said to the agent, and the run pauses at its budget; one
 smaller than a single step's cost says so and pauses before that step. Under a project budget or
 a monthly spending cap that has less left than the run could otherwise spend, the run's figure is
-what is left of it ("This run may spend CHF 0.06, what is left of the project's budget: ..."), so
+what is left of it ("This run may spend CHF 0.06, the rest of the project's budget: ..."), so
 it wraps up inside that limit with its work kept instead of being stopped there. A run that stopped at a
 budget, or that wrapped up with work left, is paused: the critic does not review half-done work,
 it does not count as a failed try, and its report stays in the task. A run that wraps up with
