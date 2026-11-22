@@ -18,6 +18,7 @@ import { removeHomes, settleSessions } from "./helpers.ts";
  * but the running bar did not name it as next ("· then Bird notes") and its own entry still read
  * "waiting until 08:32, then it goes on" after 08:32. Composed as `fr daemon` composes it with
  * the scripted Claude Code; the first continuation's run is held open while the bar is read.
+ * Composed again between the waits and the reset (the kept continuations are stored marks).
  */
 const homes: string[] = [];
 afterAll(() => removeHomes(homes));
@@ -29,7 +30,7 @@ describe("l4-cred-engine, run L4: a continuation queued behind another project's
     homes.push(world.home);
     const reset = Date.parse("2026-11-17T07:32:00Z");
     world.limitSubscription(reset);
-    const { rt, req } = await world.compose();
+    let { rt, req } = await world.compose();
     let releaseRun: () => void = () => undefined;
     try {
       await setPolicy(rt, "subscription_then_wait");
@@ -43,6 +44,15 @@ describe("l4-cred-engine, run L4: a continuation queued behind another project's
         (v) => v.state === "waiting",
       );
       expect(waits.map((v) => v.projectName).sort()).toEqual(["Bird notes", "Map notes"]);
+      // fixup-l4-cred-engine (review: validation rule 4): Forerunner opens again before the
+      // reset; both kept continuations are read from the store and wait as before.
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, req } = await world.compose());
+      const again = (await req<RunningView[]>("/running")).body.filter(
+        (v) => v.state === "waiting",
+      );
+      expect(again.map((v) => v.projectName).sort()).toEqual(["Bird notes", "Map notes"]);
 
       // The first continuation's run holds until released.
       let release: () => void = () => undefined;
