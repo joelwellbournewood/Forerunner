@@ -541,12 +541,17 @@ function Turn({
   // also when it is all of them joined (the claim guard's true line on a turn of two changes).
   const sentences = (r?.actions ?? []).map((a) => withoutUndoWord(a.sentence).text);
   const text = r ? withoutUndoWord(r.text).text : "";
+  // Review of l4-chat-answers (blocking 3): a reply that is its changes' sentences and then a
+  // sentence more ('Switched the active project to Beacon. This chat stays about Atlas.') says
+  // the changes once, on their lines with Undo, and the sentence more at the end of the last
+  // one, never the switch twice in one bubble (design §5 rule 10).
+  const joined = sentences.join(" ").trim();
+  const after =
+    r?.actions.length && joined && text.startsWith(joined) && text.length > joined.length
+      ? text.slice(joined.length).trim()
+      : "";
   const showText =
-    text &&
-    !(
-      r?.actions.length &&
-      (sentences.includes(text) || sentences.join(" ").trim() === text.trim())
-    );
+    text && !after && !(r?.actions.length && (sentences.includes(text) || joined === text.trim()));
   const offer = r?.offer ?? null;
   // L4-chat-212: an older ask line reads in the past, with no question and no button; the reply
   // that was only its ask line too (the daemon then sends the line as the text).
@@ -616,14 +621,18 @@ function Turn({
               Ask again
             </Button>
           ) : null}
-          {r.actions.map((a) => (
+          {r.actions.map((a, i) => (
             <div
               key={`${a.changeId ?? a.kind}-${a.sentence}`}
               className="mt-1 flex flex-wrap items-center gap-2"
               data-testid={`${testIds}-action`}
             >
-              {a.sentence ? (
-                <span className="whitespace-pre-wrap">{withoutUndoWord(a.sentence).text}</span>
+              {a.sentence || (after && i === r.actions.length - 1) ? (
+                <span className="whitespace-pre-wrap">
+                  {[withoutUndoWord(a.sentence).text, i === r.actions.length - 1 ? after : ""]
+                    .filter(Boolean)
+                    .join(" ")}
+                </span>
               ) : null}
               {a.sessionId ? (
                 <Link

@@ -137,3 +137,31 @@ describe("l4-chat-answers, run L4: 'open <project>' opens it (L4-chat-104)", () 
     expect(await screen.findByTestId("chat-input")).toBeInTheDocument();
   });
 });
+
+/**
+ * l4-chat-answers, run L4, fixup (review, blocking 3): "switch to Beacon" in Atlas's Chat tab
+ * showed the switch twice in one bubble: the reply "Switched the active project to Beacon. This
+ * chat stays about Atlas." and below it the change line "Switched the active project to Beacon."
+ * with Undo (design §5 rule 10: one place per fact).
+ */
+describe("l4-chat-answers, run L4, fixup: the switch is said once (review, blocking 3)", () => {
+  it("'switch to Beacon' in Atlas's Chat tab shows the switch once, with Undo, and 'This chat stays about Atlas.' once", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "switch to Beacon");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() => expect(screen.getAllByTestId("chat-agent")).toHaveLength(1));
+    const bubble = screen.getAllByTestId("chat-agent")[0] as HTMLElement;
+    await waitFor(() => expect(bubble).toHaveTextContent("This chat stays about Atlas."));
+    const said = bubble.textContent ?? "";
+    expect(said.split("Switched the active project to Beacon.")).toHaveLength(2);
+    expect(said.split("This chat stays about Atlas.")).toHaveLength(2);
+    expect(within(bubble).getAllByRole("button", { name: "Undo" })).toHaveLength(1);
+    expect(within(bubble).getByTestId("chat-action")).toHaveTextContent(
+      "Switched the active project to Beacon. This chat stays about Atlas.",
+    );
+  });
+});

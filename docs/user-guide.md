@@ -388,7 +388,9 @@ them as you left them; an open file or task stays on its own tab.
   "start working now" (the reply links the session it started), "stop" (stops the running
   session now; its task is ready again), "stop after this task",
   "stop everything" (Stop all) and "resume" (allows sessions again), "note: …" for the next
-  session, "summary". Chat changes a project's settings too: "only read developer.mozilla.org
+  session, "summary". "open Site" opens Site's Chat from any project's Chat; "switch to Site"
+  makes Site the active project and, said in Notes' Chat, keeps you in Notes' Chat with one line,
+  "Switched the active project to Site. This chat stays about Notes." and **Undo**. Chat changes a project's settings too: "only read developer.mozilla.org
   for research" changes **Web pages research may read** at once (the Overview's line reads
   "Research reads: only developer.mozilla.org"), and "research may read any public website
   again" asks your **Yes** first, as the setting's dialog does ("Set web pages research may read

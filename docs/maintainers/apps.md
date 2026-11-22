@@ -442,7 +442,7 @@ answer; tests: `chat-depth.test.tsx` "l4-chat-depth, run L4: an older ask line r
 past"). A line with no
 reply says "Forerunner closed before answering this." or "I could not answer this." with **Ask
 again**; a reply that says its answer failed (`turn.failed`, l4-cred-engine L4-creds-4) has Ask
-again and never Think it through. A reply that is its changes' sentences joined shows them once (L3-left-10). Tests:
+again and never Think it through. A reply that is its changes' sentences joined shows them once (L3-left-10); a reply that is those sentences and then more ('Switched the active project to Beacon. This chat stays about Atlas.', or a stop's "I did not act on …") shows the changes once, on their lines with Undo, with the rest at the end of the last line (review of l4-chat-answers, 2026-11-22: the switch showed twice in one bubble; test `active-project.test.tsx` "l4-chat-answers, run L4, fixup"). Tests:
 `chat-depth.test.tsx`, `e2e/chat.spec.ts` (the waiting line and Stop). Settings, Basics: "Chat asks
 first" (`human.chat_ask_above`: "before a stronger model or an answer over CHF 0.10", the line
 "Below that it thinks longer when it helps, on the same model.", any amount with a point or a
