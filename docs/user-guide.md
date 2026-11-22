@@ -892,7 +892,8 @@ line under Details says so ("Session review: the work waits for your answers (gr
 findings)."): answer the card in the Inbox and the work goes on. A session review sends nothing
 back: when it notes something, such as the planned tasks costing more than their estimate, its
 line says what it noted, and under **More ▾ → Reviews → Session checks** it reads "noted" (or
-"accepted", "needs you"), its findings "noted".
+"accepted", "needs you"), its findings "noted", with no "To fix" line: there is nothing for you
+to fix there.
 
 **Every session of a project** is listed under **More ▾ → Sessions** (also **All 3 sessions** on
 the Overview's Last result, and **All sessions** on every session page). The heading is the

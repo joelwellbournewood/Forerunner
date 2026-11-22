@@ -19,7 +19,8 @@ export function gradeTone(grade: number): Tone {
  * l4-money-pause, run L4 (L4-money-112, live check 4): a session check sends nothing back, so it
  * reads "accepted", "noted" or "needs you" (warn when not accepted), and its findings are
  * "noted", never "to fix" (before: "85 / 100 sent back", a finding "to fix"). A task's review
- * keeps the verdict's words.
+ * keeps the verdict's words. l4c-workstate: a noted finding has no "To fix" line either; its
+ * action is the agent's, not the person's.
  */
 const sessionCheck = (r: { taskId: string | null }) => r.taskId === null;
 function reviewLabel(r: { taskId: string | null; verdict: string }): string {
@@ -162,7 +163,10 @@ function ReviewItem({
                 </Badge>
               </div>
               <p className="mt-1">{f.description}</p>
-              {f.requiredAction ? (
+              {/* l4c-workstate, run L4: a session check's finding is "noted", and its action is
+                  the agent's ("Record the overrun against the estimate ..."), no step for the
+                  person, so it has no "To fix" line (before: under the "noted" badge). */}
+              {f.requiredAction && !sessionCheck(r) ? (
                 <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
                   To fix: {f.requiredAction}
                 </p>

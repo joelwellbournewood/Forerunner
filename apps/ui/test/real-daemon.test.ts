@@ -24529,6 +24529,15 @@ describe("l4-money-pause, run L4", () => {
       expect(check, JSON.stringify(reviews.reviews)).toBeDefined();
       expect(check?.verdict).toBe("revise");
       expect(check?.summary ?? "").not.toMatch(/sent back/);
+      // l4c-workstate: what the client gets for the check's one finding, as the Reviews tab's
+      // case (reviews.test.tsx, 'a noted finding shows what was noted and no To fix line') feeds
+      // the fake: the action is the agent's, and the tab shows no "To fix" line for it.
+      expect(check?.findings.map((f) => [f.description, f.requiredAction])).toEqual([
+        [
+          "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice",
+          "Record the overrun against the estimate so the next plan is calibrated; split the work that overran",
+        ],
+      ]);
     } finally {
       await a.rt.close();
     }
