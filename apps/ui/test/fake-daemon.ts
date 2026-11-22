@@ -4446,7 +4446,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         });
         startedSessions.set(confirmed.id, session.id);
       }
-      const sentence = `Started a session on ${target?.name ?? "this project"} (up to CHF 5).`;
+      const sentence = `Started a session on ${target?.name ?? "this project"} (up to CHF 5.00).`;
       return {
         ...base,
         reply: sentence,
@@ -4506,6 +4506,25 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ...base,
         reply:
           "Nothing can run yet: the plan from your brief waits for your approval. Review it in the Inbox.",
+      };
+    }
+    // l4-chat-depth (L4-chat-210), as the daemon's session.start read-back from chat: the
+    // project's name and the budget with two decimals.
+    if (/^(?:run it now|start now|start working now)[.!]?$/.test(lower) && turnProject) {
+      const id = nextId("confirm");
+      const name = state.projects.find((p) => p.id === turnProject)?.name ?? "this project";
+      const readback = `Start a session on ${name} (up to CHF 5.00)?`;
+      state.pendingConfirmation = { id, readback };
+      return {
+        ...base,
+        reply: readback,
+        pendingConfirmation: {
+          id,
+          readback,
+          estimate: money(6_250_000),
+          commands: ["session.start"],
+          decision: "needs_yes",
+        },
       };
     }
     if (lower.includes("start a session")) {

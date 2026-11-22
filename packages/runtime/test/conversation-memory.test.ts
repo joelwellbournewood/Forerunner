@@ -502,7 +502,7 @@ describe("a Yes/No card stays until it is answered (design §3.9)", () => {
       const answered = await w.chat(answer);
       expect(answered.reply).toBe(
         answer === "yes"
-          ? "Started a session on Quote Page (up to CHF 30)."
+          ? "Started a session on Quote Page (up to CHF 30.00)."
           : "Cancelled; nothing was changed.",
       );
       const again = await w.chat("yes");
@@ -570,7 +570,7 @@ describe("a Yes/No card stays until it is answered (design §3.9)", () => {
     expect(w.commands.pendingCard(id)).not.toBeNull();
     w.restart();
     const r = await w.chat("yes");
-    expect(r.reply).toBe("Started a session on Quote Page (up to CHF 30).");
+    expect(r.reply).toBe("Started a session on Quote Page (up to CHF 30.00).");
     await w.store.close();
   });
 

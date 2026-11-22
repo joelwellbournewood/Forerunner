@@ -30,7 +30,7 @@ describe("d1109-oversize-start, run C: the chat's start warns of a task larger t
     w.ports.startBlocked = async () => null;
     const card = await w.executor.plan({ name: "session.start", params: {} }, w.ctx());
     expect(card.impact.risk).toBe("medium");
-    expect(card.ask).toBe(`Start a session on PharmaWatch (up to CHF 5)? ${WARNING}`);
+    expect(card.ask).toBe(`Start a session on PharmaWatch (up to CHF 5.00)? ${WARNING}`);
     expect(asked).toEqual([{ projectId: w.pharma.id, budgetUsdMicro: 6_250_000 }]);
     // Yes: the session starts with the budget it said.
     const r = done(
@@ -42,7 +42,7 @@ describe("d1109-oversize-start, run C: the chat's start warns of a task larger t
       }),
     );
     // The read-back said the warning; what happened is said once, without it again.
-    expect(r.sentence).toBe("Started a session on PharmaWatch (up to CHF 5).");
+    expect(r.sentence).toBe("Started a session on PharmaWatch (up to CHF 5.00).");
     expect(w.ports.starts.map((s) => s.budgetUsdMicro)).toEqual([6_250_000]);
     await w.store.close();
   });
@@ -59,7 +59,7 @@ describe("d1109-oversize-start, run C: the chat's start warns of a task larger t
     });
     expect(asked).toMatchObject({
       status: "pending",
-      readback: `Start a session on PharmaWatch (up to CHF 1)? ${WARNING}`,
+      readback: `Start a session on PharmaWatch (up to CHF 1.00)? ${WARNING}`,
     });
     expect(w.ports.starts).toHaveLength(0);
     const r = done(
@@ -69,7 +69,7 @@ describe("d1109-oversize-start, run C: the chat's start warns of a task larger t
         ctx: w.ctx({ source: "ui" }),
       }),
     );
-    expect(r.sentence).toBe(`Started a session on PharmaWatch (up to CHF 1). ${WARNING}`);
+    expect(r.sentence).toBe(`Started a session on PharmaWatch (up to CHF 1.00). ${WARNING}`);
     expect(w.ports.starts).toHaveLength(1);
     await w.store.close();
   });
@@ -78,7 +78,7 @@ describe("d1109-oversize-start, run C: the chat's start warns of a task larger t
     const w = await world();
     w.ports.startWarning = async () => null;
     const card = await w.executor.plan({ name: "session.start", params: {} }, w.ctx());
-    expect(card.ask).toBe("Start a session on PharmaWatch (up to CHF 5)?");
+    expect(card.ask).toBe("Start a session on PharmaWatch (up to CHF 5.00)?");
     const r = done(
       await w.executor.execute({
         name: "session.start",
@@ -86,7 +86,7 @@ describe("d1109-oversize-start, run C: the chat's start warns of a task larger t
         ctx: w.ctx({ source: "ui" }),
       }),
     );
-    expect(r.sentence).toBe("Started a session on PharmaWatch (up to CHF 1).");
+    expect(r.sentence).toBe("Started a session on PharmaWatch (up to CHF 1.00).");
     await w.store.close();
   });
 });

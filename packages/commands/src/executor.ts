@@ -181,7 +181,7 @@ function readbackOf(
   source: CommandSource,
 ): string {
   // A card with its one question reads back as that question (design §5: "Start a session on
-  // Quote page (up to CHF 5)?"); the chat shows Yes and No, voice asks for the word. In chat
+  // Quote page (up to CHF 5.00)?"); the chat shows Yes and No, voice asks for the word. In chat
   // and voice a card without one is asked in one line too (review of d1109-chat-guard: after a
   // record, a project switch read back as "Change: the active project. From ... Risk: low.
   // Undo: ..." with "reply yes to the email" while email was off).

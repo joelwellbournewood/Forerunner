@@ -618,7 +618,7 @@ describe("conversation agent over the command registry", () => {
     expect(w.started).toHaveLength(1);
     expect(w.started[0]).toMatchObject({ projectId: w.pharma });
     const r3 = await w.chat("start a session on the game with 1 franc");
-    expect(r3.pendingConfirmation?.readback).toBe("Start a session on Game (up to CHF 1)?");
+    expect(r3.pendingConfirmation?.readback).toBe("Start a session on Game (up to CHF 1.00)?");
     expect(w.started).toHaveLength(1);
     await w.chat("yes");
     expect(w.started).toHaveLength(2);

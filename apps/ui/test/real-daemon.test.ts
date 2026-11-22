@@ -15556,7 +15556,7 @@ describe("d1109-oversize-start, run C", () => {
       // Before: refused with "Nothing can run within this budget: "Build the shop" needs ...".
       expect(asked.reply).not.toMatch(/Nothing can run/);
       expect(asked.pendingConfirmation?.readback).toBe(
-        'Start a session on Shop chat (up to CHF 5)? "Build the shop" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to continue.',
+        'Start a session on Shop chat (up to CHF 5.00)? "Build the shop" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to continue.',
       );
       const yes = await say("yes");
       expect(yes.reply).toMatch(/^Started a session on Shop chat/);
@@ -23753,6 +23753,43 @@ describe("l4-chat-depth, run L4", () => {
         kind: "table",
       });
       expect(added.projectIds).toEqual([site.id]);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-chat-210 (live check 4, L4-session-1): the start read-back and its done sentence dropped
+  // the decimals: "up to CHF 1" (design §5 rule 7: two decimals).
+  it("POST /chat 'run it now' with a CHF 1.00 session budget reads back 'up to CHF 1.00', its yes says it, and the Changes row too", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-210-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.client.createTask(project.id, {
+        title: "Write the README",
+        outcome: "README.md says what the page is",
+      });
+      const set = await a.client.executeCommands({
+        commands: [
+          { name: "budget.set", params: { scope: "session", amountChf: 1, project: project.id } },
+        ],
+        wordsUsed: "Session budget (Settings)",
+        source: "ui",
+      });
+      if (set.status === "pending" && set.pendingId)
+        expect((await a.client.confirmCommand(set.pendingId, { answer: "tap" })).status).toBe(
+          "done",
+        );
+      else expect(set.status).toBe("done");
+      const asked = await a.chat(project.id, "run it now");
+      expect(asked.pendingConfirmation?.readback).toBe(
+        "Start a session on Garden club (up to CHF 1.00)?",
+      );
+      const yes = await a.chat(project.id, "yes");
+      expect(yes.reply).toMatch(
+        /^(?:Started a session on Garden club|A session on Garden club starts after the one running now) \(up to CHF 1\.00\)\.$/,
+      );
+      const rows = await a.client.changes({ projectId: project.id, limit: 5 });
+      expect(rows.map((r) => r.sentence).join("\n")).toContain("(up to CHF 1.00)");
+      await settleSessions(a.rt);
     } finally {
       await a.rt.close();
     }

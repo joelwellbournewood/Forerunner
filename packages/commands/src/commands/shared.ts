@@ -130,8 +130,9 @@ export function chf(chfMicro: number): string {
 
 /**
  * An amount with its two decimals, "CHF 3.00", "CHF 12.50" (design §5 rule 7): budget.set's
- * sentences, read-backs and values (W15-44: they read "from CHF 3 to CHF 12"). A session
- * start's "(up to CHF 5)" keeps `chf`, as the design's own read-back writes it.
+ * sentences, read-backs and values (W15-44: they read "from CHF 3 to CHF 12"), and a session
+ * start's read-back, sentence and value, "(up to CHF 5.00)" (l4-chat-depth, L4-chat-210: before,
+ * it kept `chf` from the design's old example "(up to CHF 5)", against its rule 7).
  */
 export function chfExact(chfMicro: number): string {
   return `CHF ${formatAmount(chfMicro, { decimals: 2 })}`;

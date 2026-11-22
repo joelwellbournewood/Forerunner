@@ -202,7 +202,7 @@ describe("session.start / stop / pause", () => {
     });
     expect(asked).toMatchObject({
       status: "pending",
-      readback: "Start a session on PharmaWatch (up to CHF 1)?",
+      readback: "Start a session on PharmaWatch (up to CHF 1.00)?",
     });
     expect(w.ports.starts).toEqual([]);
     const cheap = done(
@@ -212,9 +212,9 @@ describe("session.start / stop / pause", () => {
       }),
     );
     // Design §5: the start in plain words, its budget, no "Undo." (the Undo is a button).
-    expect(cheap.sentence).toBe("Started a session on PharmaWatch (up to CHF 1).");
+    expect(cheap.sentence).toBe("Started a session on PharmaWatch (up to CHF 1.00).");
     // Read back as one question when it needs a yes (design §5 "Chat read-back").
-    expect(costly.ask).toBe("Start a session on PharmaWatch (up to CHF 5)?");
+    expect(costly.ask).toBe("Start a session on PharmaWatch (up to CHF 5.00)?");
     expect(w.ports.starts).toEqual([
       {
         agentId: w.agent.id,
@@ -243,7 +243,7 @@ describe("session.start / stop / pause", () => {
       }),
     );
     expect(r.sentence).toBe(
-      "Sent a start for PharmaWatch to your PC (up to CHF 1); it picks it up in seconds.",
+      "Sent a start for PharmaWatch to your PC (up to CHF 1.00); it picks it up in seconds.",
     );
     const [row] = await w.store.remoteCommand.pending("pc");
     expect(row).toMatchObject({

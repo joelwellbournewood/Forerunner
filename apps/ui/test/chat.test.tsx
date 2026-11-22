@@ -131,7 +131,7 @@ describe("Quick chat", () => {
     );
     await waitFor(() => expect(screen.getAllByTestId("chat-agent")).toHaveLength(2));
     const agents = screen.getAllByTestId("chat-agent");
-    expect(agents[1]).toHaveTextContent("Started a session on Atlas (up to CHF 5).");
+    expect(agents[1]).toHaveTextContent("Started a session on Atlas (up to CHF 5.00).");
     // No raw command chip ("session_start: ...", "task.create: ...").
     expect(agents[1]).not.toHaveTextContent(/session_start|session\.start:/);
     // The answered read-back says what became of it.
@@ -414,6 +414,28 @@ describe("Talk shows the conversation of the project on screen (design §3.9)", 
     expect(sent).not.toHaveProperty("projectId");
     expect(await within(talk).findByTestId("conversation-human")).toHaveTextContent(
       "what needs me?",
+    );
+  });
+});
+
+// l4-chat-depth (L4-chat-210): chat's start read-back names its budget with two decimals.
+describe("l4-chat-depth, run L4: the start read-back's money (L4-chat-210)", () => {
+  it("'run it now' reads back 'Start a session on Atlas (up to CHF 5.00)?' on a Yes/No card; Yes says it started with the same figure", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "run it now");
+    await user.click(screen.getByTestId("chat-send"));
+    const confirmation = await screen.findByTestId("pending-confirmation");
+    expect(confirmation).toHaveTextContent("Start a session on Atlas (up to CHF 5.00)?");
+    expect(confirmation.textContent ?? "").not.toMatch(/CHF \d+\)/);
+    await user.click(within(confirmation).getByTestId("confirm-yes"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("chat-agent").at(-1)).toHaveTextContent(
+        "Started a session on Atlas (up to CHF 5.00).",
+      ),
     );
   });
 });

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { buildCard } from "../change-card.ts";
 import type { CommandContext, CommandDef, CommandOutcome } from "../types.ts";
 import { rateOf, sessionBudgetOf } from "./budget.ts";
-import { asObject, authorOf, chf, type ResolvedProject, resolveProject } from "./shared.ts";
+import { asObject, authorOf, chfExact, type ResolvedProject, resolveProject } from "./shared.ts";
 
 /**
  * Session control (spec E, Q, R). From a paired phone or web client the commands become
@@ -80,7 +80,8 @@ async function startPlan(p: SessionStartParams, ctx: CommandContext): Promise<St
  */
 function startSentence(s: StartPlan, outcome?: "started" | "queued" | "deferred"): string {
   const where = s.runner === "cloud" ? " on the cloud runner" : "";
-  const up = `(up to ${chf(s.budgetChf)})`;
+  // l4-chat-depth (L4-chat-210): two decimals (design §5 rule 7), "(up to CHF 1.00)".
+  const up = `(up to ${chfExact(s.budgetChf)})`;
   const name = s.resolved.project.name;
   if (s.remote)
     return `Sent a start for ${name}${where} to your PC ${up}; it picks it up in seconds.`;
@@ -132,7 +133,7 @@ async function refuseWhileWaiting(s: StartPlan, ctx: CommandContext): Promise<vo
  */
 function startAsk(s: StartPlan, warning: string | null = null): string {
   const where = s.runner === "cloud" ? " on the cloud runner" : "";
-  const ask = `Start a session on ${s.resolved.project.name}${where} (up to ${chf(s.budgetChf)})?`;
+  const ask = `Start a session on ${s.resolved.project.name}${where} (up to ${chfExact(s.budgetChf)})?`;
   return warning ? `${ask} ${warning}` : ask;
 }
 
@@ -185,7 +186,7 @@ export const sessionStart: CommandDef<SessionStartParams> = {
       command: "session.start",
       what: `a session on ${s.resolved.project.name} ${s.where}`,
       oldValue: "no session",
-      newValue: `running with a budget of ${chf(s.budgetChf)}`,
+      newValue: `running with a budget of ${chfExact(s.budgetChf)}`,
       scope: "session",
       risk: costly ? "medium" : "low",
       sentence: startSentence(s),
