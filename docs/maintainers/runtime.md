@@ -1159,6 +1159,23 @@ and what is left of the monthly cap this month (`monthLeft`, the ledger's UTC
 month as the caps count it). `POST /sessions` refuses a budget above `monthLeft` with that
 sentence (`validation`); 0 and negative budgets never pass its schema.
 
+**One figure for the waiting work (l4-cred-screens, run L4, L4-creds-15; ADR 0120 amended
+2026-11-22).** `waitingWorkUsdMicro(check, inFlight)` (`session/start-check.ts`) is what a yes to
+"Use your API key until 15:40?" lets run: the promise (`promiseOf`: runnable tasks, the larger
+task's room, the later followers, each priced by the planner with its review part) plus what is
+left of the tasks a session holds (`inFlightWork`: claimed and in-progress tasks at their planned
+figure less `actual_cost_usd_micro`, floored at 0 and within their own budget), never more than
+the work budget. Its three callers: the ask card's closure in compose.ts (`RouterTaskBilling.ask`),
+the Start dialog's `credentialAtStart` in server.ts (the "Use API key" explain line) and the plan
+card's foot line (`planCredentialLine(deps, planUsdMicro)` over the plan's own tasks, said where
+the API key would do the work: under ask, under next and with a yes standing). The yes's grant
+(`onGrant` in compose.ts) readmits into a running session only `waitedForCredential`
+(`session/grant-readmit.ts`: the ready tasks the runner gave back with `CREDENTIAL_WAIT_REASON`);
+other ready work joins through `prepareWork` only if it fits. Tests:
+`test/credential-ask-figure.test.ts` and `test/credential-grant-readmit.test.ts` (describes
+"l4-cred-screens, run L4"), `test/credential-policy-view.test.ts`, and the UI's
+`test/real-daemon.test.ts` (describe "l4-cred-screens, run L4").
+
 **Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
 left the row `running`, its run `running` and its task held under a claim nobody renews; the
 one-session rule then refused every later start ("agent Alice already has an active session

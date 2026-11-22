@@ -314,3 +314,55 @@ describe("d1109-cred-screens, run C: a kept start alone says its own label (CS-3
     );
   });
 });
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-15, C6L-3; ADR 0120 amended 2026-11-22): with the first
+ * choice out and "Use API key" offered, the dialog keeps its plan sentence (which tasks the
+ * session runs) beside the stop line, so the figure under "Use API key" is for work the person
+ * can see. Before, the stop line replaced the plan sentence and the dialog named no task.
+ */
+describe("l4-cred-screens, run L4: the plan sentence stays beside the stop line (L4-creds-15)", () => {
+  it("under 'ask' with the subscription out: the plan names the task, then the stop line and the two buttons", async () => {
+    const harness = createHarness();
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Nothing can run until 15:40 (your subscription's limit). Press Start at 15:40 and the work starts then.",
+      save: null,
+      startable: true,
+    };
+    harness.daemon.state.startCredential.proj_atlas = {
+      line: null,
+      runOut: {
+        use: USE,
+        later: LATER,
+        lean: "use",
+        goesOnLine: null,
+        stoppedLine: "Your subscription is at its limit until 15:40.",
+      },
+    };
+    const { dialog } = await openDialog(harness);
+    await within(dialog).findByTestId("start-session-run-out");
+    expect(within(dialog).getByTestId("start-session-plan")).toHaveTextContent(
+      /^This session runs ".+" \(about CHF \d+\.\d\d\)/,
+    );
+    expect(within(dialog).getByTestId("start-session-blocked")).toHaveTextContent(
+      /^Your subscription is at its limit until 15:40\.$/,
+    );
+  });
+
+  it("a stop no button can run past (Start alone, kept for the reset) shows no plan sentence", async () => {
+    const harness = createHarness();
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Nothing can run until 15:40 (your subscription's limit). Press Start at 15:40 and the work starts then.",
+      save: null,
+      startable: true,
+    };
+    harness.daemon.state.startCredential.proj_atlas = { line: null, runOut: null };
+    const { dialog } = await openDialog(harness);
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("confirm-start-session")).toHaveTextContent(
+        "Start at 15:40",
+      ),
+    );
+    expect(within(dialog).queryByTestId("start-session-plan")).toBeNull();
+  });
+});

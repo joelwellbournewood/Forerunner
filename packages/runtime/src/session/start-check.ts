@@ -162,6 +162,73 @@ export function promiseOf(
 }
 
 /**
+ * A task a session already holds (claimed or in progress) when its credential stopped, as the
+ * waiting work counts it (l4-cred-screens L4-creds-15): what is left of its estimate.
+ */
+export interface InFlightTask {
+  taskId: string;
+  title: string;
+  /**
+   * Its estimate as the planner prices it (the learned estimate with its review part, the
+   * owner's answer of 2026-11-16: "yes it should count critics reviews, and fixes") less all it
+   * spent (work, reviews and fixes: `actual_cost_usd_micro`), floored at 0 and kept within what
+   * is left of its own budget.
+   */
+  leftUsdMicro: number;
+}
+
+/**
+ * The claimed and in-progress tasks of a project, priced as `InFlightTask` says: the task whose
+ * run met a credential's stop is still claimed while the ask card is filed (d1109-cred-screens
+ * CS-8), so the ready tasks alone leave it out.
+ */
+export async function inFlightWork(
+  deps: { store: StateStore; estimates?: EstimatePort; defaultEstimateUsdMicro?: number },
+  projectId: string,
+): Promise<InFlightTask[]> {
+  const fallback = deps.defaultEstimateUsdMicro ?? 500_000;
+  const rows = await deps.store.task
+    .forProject(projectId, { status: ["claimed", "in_progress"] }, { limit: 50 })
+    .catch(() => [] as TaskRow[]);
+  return rows.map((t) => {
+    const whole = deps.estimates
+      ? deps.estimates.estimate({
+          specialist: t.specialist,
+          risk_tier: t.risk_tier,
+          est_cost_usd_micro: t.est_cost_usd_micro,
+          budget_usd_micro: t.budget_usd_micro,
+          outcome: t.outcome,
+          acceptance_criteria: t.acceptance_criteria,
+        }).usdMicro
+      : t.est_cost_usd_micro || t.budget_usd_micro || fallback;
+    return {
+      taskId: t.id,
+      title: t.title,
+      leftUsdMicro: withinTaskBudget(Math.max(0, whole - (t.actual_cost_usd_micro ?? 0)), t),
+    };
+  });
+}
+
+/**
+ * The one figure for "the waiting work" (l4-cred-screens L4-creds-15, ADR 0120 amended
+ * 2026-11-22): what a yes to "Use your API key until 15:40?" lets run, priced once for the ask
+ * card, the Start dialog's "Use API key" line and the plan card's foot line. It is the session's
+ * promise (`promiseOf`: the runnable tasks, the larger task's room and the later followers, each
+ * priced with its review part) plus what is left of the tasks a session already holds
+ * (`inFlightWork`), never more than the session's work budget: nothing passes that budget.
+ * Before, the card priced the held tasks at their raw estimate without the review part and left
+ * out the followers, and the dialog priced the runnable tasks alone: three figures for one thing.
+ */
+export function waitingWorkUsdMicro(
+  check: Pick<StartCheck, "runnable" | "oversized" | "overBudget" | "later" | "workBudgetUsdMicro">,
+  inFlight: readonly Pick<InFlightTask, "leftUsdMicro">[] = [],
+): number {
+  const promised = promiseOf(check).estimateUsdMicro;
+  const held = inFlight.reduce((sum, t) => sum + Math.max(0, t.leftUsdMicro), 0);
+  return Math.max(0, Math.min(promised + held, check.workBudgetUsdMicro));
+}
+
+/**
  * The start check over the store, priced as the daemon's planner prices (`StaticPlanner` with
  * the learned estimates: `planEstimateUsdMicro`, else the task's estimate or budget, else the
  * planner's default) and cut as the runner cuts (`cutPlanToBudget` with the default reserve).

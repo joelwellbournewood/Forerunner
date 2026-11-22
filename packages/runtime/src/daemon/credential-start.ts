@@ -182,7 +182,15 @@ export async function startCredential(
  * credential saved. The per-task runs-on lines stay the chooser's.
  */
 export async function planCredentialLine(
-  deps: Pick<StartCredentialDeps, "store" | "clock" | "humanId" | "billing">,
+  deps: Pick<StartCredentialDeps, "store" | "clock" | "humanId" | "billing"> & {
+    chfPerUsd?: () => number;
+  },
+  /**
+   * l4-cred-screens (L4-creds-15): what the plan's work is planned at (`waitingWorkUsdMicro`
+   * over its tasks, within the work budget): said where the API key would do it, as the ask card
+   * and the Start dialog say it.
+   */
+  planUsdMicro?: number,
 ): Promise<string | null> {
   if (!deps.billing) return null;
   const human = await deps.store.human.get(deps.humanId);
@@ -196,10 +204,18 @@ export async function planCredentialLine(
   if (!first || first.reason === "needs") return planCardLine(policy.rule, saved, null, opts);
   const row = await deps.store.billingSource.get(first.sourceId).catch(() => undefined);
   const grant = grantOf((row?.limits as JsonObject | undefined)?.grant);
+  const about =
+    typeof planUsdMicro === "number" && planUsdMicro > 0 && deps.chfPerUsd
+      ? aboutWords(chfText(planUsdMicro, deps.chfPerUsd()), planUsdMicro)
+      : undefined;
   return planCardLine(
     policy.rule,
     saved,
     { kind: first.kind, stop: { reason: first.reason, until: first.until } },
-    { ...opts, granted: !!grant && grant.stopKey === first.stopKey },
+    {
+      ...opts,
+      granted: !!grant && grant.stopKey === first.stopKey,
+      ...(about ? { about } : {}),
+    },
   );
 }

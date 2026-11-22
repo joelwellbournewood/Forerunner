@@ -37,6 +37,7 @@ import {
   chatOneOffExplain,
   switchRunLine,
 } from "../src/session/credential-words.ts";
+import { waitingWorkUsdMicro } from "../src/session/start-check.ts";
 
 /**
  * d1109-cred-screens (run C, C6; ADR 0120 amended 2026-11-16): every screen sentence of "which
@@ -489,6 +490,57 @@ describe("d1109-cred-screens, run C: the ask card's figure (CS-8)", () => {
       askCardWords({ ...refused, estimateChf: "less than CHF 0.01" }).options[0]?.explain,
     ).toBe(
       "Your work and chat use your API key until a new sign-in is saved: less than CHF 0.01 for what waits now.",
+    );
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-15; ADR 0120 amended 2026-11-22): the waiting work has one
+ * figure (`waitingWorkUsdMicro`: the promise plus what is left of a held task, within the work
+ * budget), and the plan card's foot line says it where the API key would do the plan's work.
+ */
+describe("l4-cred-screens, run L4: one figure for the waiting work (L4-creds-15)", () => {
+  const t = (title: string, usd: number) => ({
+    taskId: title,
+    title,
+    estimateUsdMicro: Math.round(usd * 1_000_000),
+  });
+  it("the promise (runnable, the larger task's room, the followers) plus what is left of a held task, within the work budget", () => {
+    const check = {
+      runnable: [t("A", 0.13)],
+      later: [t("B", 0.12)],
+      overBudget: [],
+      oversized: null,
+      workBudgetUsdMicro: 4_000_000,
+    };
+    expect(waitingWorkUsdMicro(check)).toBe(250_000);
+    expect(waitingWorkUsdMicro(check, [{ leftUsdMicro: 90_000 }])).toBe(340_000);
+    // Never more than the work budget: nothing passes it.
+    expect(
+      waitingWorkUsdMicro({ ...check, workBudgetUsdMicro: 300_000 }, [{ leftUsdMicro: 90_000 }]),
+    ).toBe(300_000);
+    // A held task that spent more than its estimate adds nothing.
+    expect(waitingWorkUsdMicro(check, [{ leftUsdMicro: -5 }])).toBe(250_000);
+  });
+
+  it("the plan card's foot line says the figure where the API key would do the work, never 'costs money' beside it", () => {
+    const ask = ruleOf("subscription_then_ask");
+    const next = ruleOf("subscription_then_key");
+    const stopped = { kind: "subscription", stop: limit };
+    expect(planCardLine(ask, both, stopped, { ...opts, about: "about CHF 0.25" })).toBe(
+      "Your subscription is at its limit until 15:40: you are asked before your API key is used (about CHF 0.25).",
+    );
+    expect(planCardLine(next, both, stopped, { ...opts, about: "about CHF 0.25" })).toBe(
+      "Your subscription is at its limit until 15:40: your API key does the work meanwhile (about CHF 0.25).",
+    );
+    expect(
+      planCardLine(ask, both, stopped, { ...opts, granted: true, about: "about CHF 0.25" }),
+    ).toBe(
+      "Your subscription is at its limit until 15:40: you said yes, so your API key does the work meanwhile (about CHF 0.25).",
+    );
+    // Without a figure (no plan priced): as before.
+    expect(planCardLine(next, both, stopped, opts)).toBe(
+      "Your subscription is at its limit until 15:40: your API key does the work meanwhile (costs money).",
     );
   });
 });

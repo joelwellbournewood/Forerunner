@@ -377,7 +377,16 @@ export function StartSessionDialog({
   // or "Sessions are stopped", "This session runs ..." contradicted the disabled Start.
   // TR-12: while the agent drafts a plan, a Start waits for it: the line says that instead.
   const planning = !!data?.planning && !blocked;
-  const plan = data && !blocked ? (planning ? PLANNING_WAIT_LINE : planSentence(data)) : null;
+  // l4-cred-screens (L4-creds-15, C6L-3): with the first choice out and "Use API key" offered,
+  // the plan sentence stays beside the stop line: the figure under "Use API key" is for the
+  // tasks it names (before, the stop line replaced it and the dialog named no task).
+  const runOutOffered = !!blocked?.startable && !!data?.credential?.runOut;
+  const plan =
+    data && (!blocked || runOutOffered)
+      ? planning
+        ? PLANNING_WAIT_LINE
+        : planSentence(data)
+      : null;
   // While the plan from the brief waits for approval, is being drafted or waits for a Claude
   // credential (U-078), the daemon's one
   // sentence names it with its one link (startBlocked); nothing is said twice (wave 2 handoff:

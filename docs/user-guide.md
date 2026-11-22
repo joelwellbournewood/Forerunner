@@ -1172,6 +1172,12 @@ page says so with **Answer**, and the card names what the waiting work costs on 
 CHF 0.40"). If your choice moves work onto the key by itself, you get one notification for that
 stop with its cost.
 
+The card, the Start dialog's **Use API key** and the plan card's last line give one figure for
+the same waiting work: the tasks that wait, the ones that follow them, and the critic's reviews of
+each, never more than the session's work budget. The dialog still names the tasks it runs above
+the stop. Your yes lets the waiting work go on; other ready work joins a session that runs only
+if it fits its budget, as anything you make ready does.
+
 A waiting task's row says why and until when: "Waits until 15:40 (your subscription's limit)",
 "Waits until Tue 1 Dec (your subscription's share)" with **Change the allowance**, "Waits for your
 answer: use your API key?" with **Answer**. The project's status line says it once ("Waiting for

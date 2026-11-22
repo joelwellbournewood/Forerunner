@@ -272,6 +272,7 @@ import {
   fileCursorStore,
   GitHostWatcher,
 } from "../session/githost-watcher.ts";
+import { waitedForCredential } from "../session/grant-readmit.ts";
 import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
 import { type LateApprovalSyncResult, syncLateApprovals } from "../session/late-approval.ts";
 import { LiveSessions } from "../session/live-sessions.ts";
@@ -308,7 +309,12 @@ import {
   type TaskExecutor,
 } from "../session/runner.ts";
 import { syncSessionReviewAnswers } from "../session/session-review-answers.ts";
-import { type StartCheck, startCheck } from "../session/start-check.ts";
+import {
+  inFlightWork,
+  type StartCheck,
+  startCheck,
+  waitingWorkUsdMicro,
+} from "../session/start-check.ts";
 import { taskReasonForStop } from "../session/stop-words.ts";
 import { type TaskCheckDeps, callsOf as taskChangeCalls } from "../session/task-check.ts";
 import { fileTaskProposal, syncTaskProposals } from "../session/task-proposal.ts";
@@ -1820,27 +1826,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           projectId,
           cap,
         ).catch(() => null);
-        // d1109-cred-screens (CS-8): the task whose run met the stop is claimed while the card is
-        // filed, so the ready tasks alone left it out (the bench's card read "about CHF 0.00"):
-        // its own estimate counts too, at the start check's fallback pricing.
-        const inFlight = (
-          await store.task
-            .forProject(projectId, { status: ["claimed", "in_progress"] }, { limit: 50 })
-            .catch(() => [])
-        ).reduce(
-          (sum, t) =>
-            sum +
-            Math.max(
-              0,
-              (t.est_cost_usd_micro || t.budget_usd_micro || 500_000) - t.actual_cost_usd_micro,
-            ),
-          0,
+        // l4-cred-screens (L4-creds-15): the one figure the Start dialog and the plan card show
+        // too: the promise (runnable tasks and their followers, each with its review part) and
+        // what is left of the task whose run met the stop (claimed while the card is filed,
+        // d1109-cred-screens CS-8), within the work budget. Before, the card priced the claimed
+        // task at its raw estimate and left out its review part and its followers.
+        const inFlight = await inFlightWork(
+          { store, estimates, defaultEstimateUsdMicro: 500_000 },
+          projectId,
         );
-        if (check)
-          estimateUsdMicro += Math.min(
-            check.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0) + inFlight,
-            check.workBudgetUsdMicro,
-          );
+        if (check) estimateUsdMicro += waitingWorkUsdMicro(check, inFlight);
       }
       // "Use API key" is offered only when the caps have room for it: with the month cap
       // reached, the key could do nothing, so no card asks (the work waits as under 'wait').
@@ -5191,8 +5186,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             }
             const handle = liveSessions.forProject(projectId);
             if (handle) {
-              const ready = await store.task.readyTasks(projectId, { limit: 50 }).catch(() => []);
-              handle.readmit(ready.map((t) => t.id));
+              // l4-cred-screens (L4-creds-15, C5L-6): only the tasks that waited for this stop
+              // inside the running session; other ready work joins only if it fits (option C).
+              handle.readmit(await waitedForCredential(store, projectId));
               goesOn = true;
               continue;
             }

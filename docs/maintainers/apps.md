@@ -1029,6 +1029,16 @@ The fake daemon mirrors each route (`credentialPolicy` option, `startCredential`
 `switchLine`, sessions' `switchLine`, costs' `byCredential`) with the daemon's words; the
 real-daemon describe "d1109-cred-screens, run C" keeps it honest.
 
+l4-cred-screens, run L4 ([ADR 0120](../decisions/0120-which-claude-does-the-work.md) amended
+2026-11-22):
+
+- **One figure (L4-creds-15).** The ask card, the Start dialog's "Use API key" line and the plan
+  card's foot line say the daemon's one figure for the waiting work (`waitingWorkUsdMicro`). With
+  the first choice out and "Use API key" offered, the dialog keeps `start-session-plan` (the plan
+  sentence) beside the stop line (`runOutOffered` in `StartSessionDialog.tsx`); a stop with Start
+  alone shows no plan sentence. Tests: `test/credential-start.test.tsx` (describe
+  "l4-cred-screens, run L4"), `test/real-daemon.test.ts` (describe "l4-cred-screens, run L4").
+
 ## How to change it
 
 - **Add a page**: create `src/pages/XPage.tsx`, add a `<Route>` in `src/routes.tsx`, a nav entry

@@ -63,6 +63,7 @@ import {
 } from "../session/project-plan.ts";
 import { endDeadSession, isIntakeSession, namesOf } from "../session/recovery.ts";
 import { defaultPeers } from "../session/runner.ts";
+import { inFlightWork, waitingWorkUsdMicro } from "../session/start-check.ts";
 import {
   QUIT_REASON,
   STOP_ALL_REASON,
@@ -1595,7 +1596,10 @@ export function createDaemonApp(
    * stop its "Use API key" acts on (`credential-start.ts`). The figure is the runnable work's
    * estimate, never above the session's work budget.
    */
-  const credentialAtStart = (r: Awaited<ReturnType<RuntimeApp["startCheck"]>>, projectId: string) =>
+  const credentialAtStart = async (
+    r: Awaited<ReturnType<RuntimeApp["startCheck"]>>,
+    projectId: string,
+  ) =>
     startCredential(
       {
         store: rt.store,
@@ -1606,10 +1610,12 @@ export function createDaemonApp(
         monthLeftUsdMicro,
       },
       projectId,
-      Math.min(
-        r.workBudgetUsdMicro,
-        r.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0) +
-          (r.oversized ? r.workBudgetUsdMicro : 0),
+      // l4-cred-screens (L4-creds-15): the one figure of the waiting work the ask card and the
+      // plan card show too (the promise with its followers and review parts, plus what is left
+      // of a task a session holds), within the work budget. Before: the runnable tasks alone.
+      waitingWorkUsdMicro(
+        r,
+        await inFlightWork({ store: rt.store, estimates: rt.estimates }, projectId).catch(() => []),
       ),
       // "Use API key" only for a start that runs something and that Stop all does not refuse.
       { runsWork: runsWork(r), stopped: rt.kill.isFrozen({ agentId: rt.agent.id }) },
@@ -2495,14 +2501,34 @@ export function createDaemonApp(
       if (planTasks && view) {
         // R-inboxperf: through this request's chooser batch, so the vault is asked once.
         batch ??= rt.chooser.batch();
-        view.planCredentialLine = await planCredentialLine({
-          store: rt.store,
-          clock: rt.clock,
-          humanId: rt.human.id,
-          billing:
-            batch.billing ??
-            (rt.billing.pick instanceof RouterTaskBilling ? rt.billing.pick : null),
-        }).catch(() => null);
+        // l4-cred-screens (L4-creds-15): the plan's work at the one figure of the waiting work
+        // (its tasks as each is priced on the card, within the session's work budget), which
+        // the ask card and the Start dialog say once its tasks are written.
+        const planUsdMicro = planProject
+          ? waitingWorkUsdMicro({
+              runnable: planTasks.map((t) => ({
+                taskId: t.key ?? t.title,
+                title: t.title,
+                estimateUsdMicro: t.estimateUsdMicro ?? 0,
+              })),
+              later: [],
+              overBudget: [],
+              oversized: null,
+              workBudgetUsdMicro: (await rt.startCheck(planProject.id)).workBudgetUsdMicro,
+            })
+          : undefined;
+        view.planCredentialLine = await planCredentialLine(
+          {
+            store: rt.store,
+            clock: rt.clock,
+            humanId: rt.human.id,
+            billing:
+              batch.billing ??
+              (rt.billing.pick instanceof RouterTaskBilling ? rt.billing.pick : null),
+            chfPerUsd: chf,
+          },
+          planUsdMicro,
+        ).catch(() => null);
       }
     }
     const msgViews = [];

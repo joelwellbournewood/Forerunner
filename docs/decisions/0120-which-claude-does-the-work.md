@@ -186,3 +186,24 @@ each point.
    subscription's task runs (L4-creds-10), the ask card's yes is applied once across a restart
    (L4-creds-11), a continuation queued behind another project's session is named as next
    (L4-creds-9), and chat's room for a longer answer reads the plan's share (L4-creds-6).
+
+## Amendment 2026-11-22: the money consent and the screens agree with what runs (l4-cred-screens, run L4)
+
+Live check 4 asked "Use your API key until 08:26?" at about CHF 0.10 for work that then cost CHF
+0.24 on the key, while the Start dialog said CHF 0.15 and the plan card CHF 0.37 for the same
+work. The owner's D5 ("allow the task to be completed by the API, but in a transparent way"), his
+answer 3 ("For all work.": the yes covers all work until the stop ends) and his answer of
+2026-11-16 ("yes it should count critics reviews, and fixes") decide each point.
+
+1. **One figure for the waiting work (L4-creds-15).** `waitingWorkUsdMicro` (start-check.ts) is
+   the session's promise (`promiseOf`: the runnable tasks, the larger task's room and the later
+   followers, each priced with its review part) plus what is left of a task a session holds
+   (`inFlightWork`: its planned figure less all it spent), never more than the session's work
+   budget. The ask card, the Start dialog's "Use API key" line and the plan card's foot line say
+   it, the plan card over its own tasks. The dialog keeps its plan sentence beside the stop line,
+   so the figure is for tasks the person can see.
+2. **The yes lets in what waited (L4-creds-15, C5L-6).** On "Use API key", a running session
+   takes back only the tasks that waited for a credential inside it (`waitedForCredential`, the
+   ready tasks the runner gave back with `CREDENTIAL_WAIT_REASON`). Other ready work joins only if
+   it fits (the owner's option C); before, every ready task was taken back, also one the session
+   had left out for its budget. Work the agent adds later stays bounded by the session's budget.

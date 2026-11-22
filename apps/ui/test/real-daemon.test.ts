@@ -22469,8 +22469,11 @@ describe("d1109-cred-screens, run C", () => {
       const until = new Date(rt.clock.now() + 40 * 60_000).toISOString();
       await restSubscription(rt, until);
       const at = clockTime(until, rt.human.timezone, rt.clock.now());
-      expect((await card())?.planCredentialLine).toBe(
-        `Your subscription is at its limit until ${at}: you are asked before your API key is used.`,
+      // l4-cred-screens (L4-creds-15): with the plan's figure, as the ask card says it.
+      expect((await card())?.planCredentialLine).toMatch(
+        new RegExp(
+          `^Your subscription is at its limit until ${at}: you are asked before your API key is used \\(about CHF \\d+\\.\\d\\d\\)\\.$`,
+        ),
       );
       await setPolicyCs(client, "subscription_then_wait");
       expect((await card())?.planCredentialLine).toBe(
@@ -22513,8 +22516,11 @@ describe("d1109-cred-screens, run C", () => {
       await restSubscription(rt, until);
       const at = clockTime(until, rt.human.timezone, rt.clock.now());
       const first = await card();
-      expect(first?.planCredentialLine).toBe(
-        `Your subscription is at its limit until ${at}: your API key does the work meanwhile (costs money).`,
+      // l4-cred-screens (L4-creds-15): the plan's figure says what it costs.
+      expect(first?.planCredentialLine).toMatch(
+        new RegExp(
+          `^Your subscription is at its limit until ${at}: your API key does the work meanwhile \\(about CHF \\d+\\.\\d\\d\\)\\.$`,
+        ),
       );
       const lines = (first?.planTasks ?? []).map((t) => t.runsOn?.line ?? null);
       expect(lines.length).toBeGreaterThan(0);
@@ -22961,8 +22967,11 @@ describe("d1109-cred-screens, run C", () => {
       });
       expect(["started", "queued"]).toContain(goes.result);
       const after = await card();
-      expect(after?.planCredentialLine).toBe(
-        `Your subscription is at its limit until ${at}: you said yes, so your API key does the work meanwhile.`,
+      // l4-cred-screens (L4-creds-15): with the plan's figure, as the ask card says it.
+      expect(after?.planCredentialLine).toMatch(
+        new RegExp(
+          `^Your subscription is at its limit until ${at}: you said yes, so your API key does the work meanwhile \\(about CHF \\d+\\.\\d\\d\\)\\.$`,
+        ),
       );
       const lines = (after?.planTasks ?? []).map((t) => t.runsOn?.line ?? "");
       expect(lines.length).toBeGreaterThan(0);
@@ -25010,4 +25019,235 @@ describe("l4-chat-answers, run L4", () => {
       await b.rt.close();
     }
   }, 60_000);
+});
+
+describe("l4-cred-screens, run L4", () => {
+  const oauth = ["sk-ant-oat01-", "l4credscr", "6".repeat(40)].join(""); // not-a-secret
+  const apiKey = ["sk-ant-api03-", "l4credscr", "7".repeat(40)].join(""); // not-a-secret
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+  /** 10:40 UTC, 11:40 in Zurich (the person's zone). */
+  const resetAt = "2026-03-05T10:40:00.000Z";
+
+  /** Claude Code at its limit on its first `atLimit` calls, then it serves. */
+  const claudeCode =
+    (calls: string[], atLimit = 1): NonNullable<ComposeOptions["sdkQuery"]> =>
+    ({ prompt }) => {
+      calls.push(prompt);
+      const limited = calls.length <= atLimit;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        if (limited) {
+          yield {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt: Date.parse(resetAt) / 1000 },
+          };
+          yield {
+            type: "assistant",
+            error: "rate_limit",
+            message: { content: [{ type: "text", text: "You've hit your limit" }] },
+          };
+          yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+          return;
+        }
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${calls.length}`,
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+
+  /** The daemon as `fr daemon` composes it (no injected provider), read through the UI client. */
+  async function composeL4(
+    opts: {
+      home?: string;
+      clock?: SimulatedClock;
+      vault?: MemoryVault;
+      sdkQuery?: ComposeOptions["sdkQuery"];
+      standIn?: ReturnType<typeof messagesApiStandIn>;
+    } = {},
+  ) {
+    const home = opts.home ?? mkdtempSync(join(tmpdir(), "fr-ui-real-l4credscr-"));
+    if (!homes.includes(home)) homes.push(home);
+    const clock = opts.clock ?? new SimulatedClock("2026-03-05T08:00:00Z");
+    const vault =
+      opts.vault ??
+      new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey });
+    const standIn =
+      opts.standIn ??
+      messagesApiStandIn({
+        model: new AcceptingCriticProvider(
+          new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock),
+        ),
+        clock,
+      });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault,
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      ...(opts.sdkQuery ? { sdkQuery: opts.sdkQuery } : {}),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const keyCalls = () =>
+      standIn.requests.filter((r) => r.method === "POST" && r.path === "/v1/messages");
+    /** A route answered as the UI's client sees it, status included. */
+    const raw = async (path: string, body?: unknown) => {
+      const res = await app.request(path, {
+        method: body === undefined ? "GET" : "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      return { status: res.status, body: (await res.json().catch(() => null)) as unknown };
+    };
+    return { rt, client, home, clock, vault, standIn, keyCalls, raw };
+  }
+
+  const setPolicyL4 = async (client: DaemonClient, value: string) => {
+    const r = await client.executeCommands({
+      commands: [{ name: "settings.set", params: { key: "credential_policy", value } }],
+      wordsUsed: `Settings: Which Claude does the work to ${value}`,
+      source: "ui",
+    });
+    if (r.status === "pending") await client.confirmCommand(r.pendingId ?? "", { answer: "tap" });
+  };
+  const addTask = (
+    client: DaemonClient,
+    projectId: string,
+    title: string,
+    over: { dependsOn?: string[]; specialist?: string } = {},
+  ) =>
+    client.createTask(projectId, {
+      title,
+      outcome: `${title} is done`,
+      acceptanceCriteria: ["it is done"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: over.dependsOn ?? [],
+      budgetUsdMicro: 0,
+      specialist: over.specialist ?? "coder",
+      riskTier: 0,
+    });
+  /** A billing source's row rests until `until`, as the router writes it. */
+  async function restSource(rt: RuntimeApp, kind: string, until: string) {
+    const row = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
+      (r) => r.kind === kind,
+    );
+    if (!row) throw new Error(`no ${kind} row`);
+    await rt.store.billingSource.update(row.id, row.version, {
+      limits: { ...(row.limits as Record<string, unknown>), restingUntil: until } as never,
+    });
+    return row.id;
+  }
+  const chfIn = (s: string | null | undefined) => /about (CHF \d+\.\d\d)/.exec(s ?? "")?.[1];
+
+  // L4-creds-15 (live check 4, LC-C24: the ask card said about CHF 0.10, the Start dialog CHF
+  // 0.15 and the plan card CHF 0.37 for the same waiting work): one figure, the promise of the
+  // task that met the stop and its follower with their review parts.
+  it("L4-creds-15: the ask card's figure and the Start dialog's Use API key say the same, A and its follower B with their review parts; the dialog still names both", async () => {
+    const calls: string[] = [];
+    const { rt, client, keyCalls } = await composeL4({ sdkQuery: claudeCode(calls) });
+    try {
+      await setPolicyL4(client, "subscription_then_ask");
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      const a = await addTask(client, project.id, "Style the page");
+      await addTask(client, project.id, "Write the copy", { dependsOn: [a.id] });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end to wait (at least 10 s of real time)",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      const me = await client.me();
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.status === "open" && (r.title ?? "").startsWith("Use your API key"),
+      );
+      const onCard = chfIn(card?.body);
+      expect(onCard, card?.body ?? "no ask card").toBeDefined();
+      const check = await client.startCheck(project.id);
+      expect(check.runnable.map((t) => t.title)).toEqual(["Style the page"]);
+      expect(check.later.map((t) => t.title)).toEqual(["Write the copy"]);
+      expect(chfIn(check.credential?.runOut?.use.explain)).toBe(onCard);
+      const both = [...check.runnable, ...check.later].reduce(
+        (sum, t) => sum + t.estimate.chfMicro,
+        0,
+      );
+      expect(Math.abs(Number(onCard?.slice(4)) - both / 1_000_000)).toBeLessThanOrEqual(0.011);
+      expect(keyCalls()).toHaveLength(0);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("L4-creds-15: the plan card's foot line under 'ask' with the subscription out says the plan's figure, its tasks' figures within the work budget", async () => {
+    const both = await composeWithRolePlayer(
+      {},
+      {
+        vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      },
+    );
+    const { rt, client } = both;
+    try {
+      await setPolicyL4(client, "subscription_then_ask");
+      const brief = "A small web page that shows a quote of the day.";
+      const project = await client.createProject({
+        name: "Quote page",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const me = await client.me();
+      const until = new Date(rt.clock.now() + 40 * 60_000).toISOString();
+      await restSource(rt, "subscription", until);
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open" && r.planTasks,
+      );
+      const figure = chfIn(card?.planCredentialLine);
+      expect(figure, card?.planCredentialLine ?? "no plan card").toBeDefined();
+      const check = await client.startCheck(project.id);
+      const rate = check.workBudget.chfMicro / check.workBudget.usdMicro;
+      const planned = Math.min(
+        (card?.planTasks ?? []).reduce((s, t) => s + (t.estimateUsdMicro ?? 0), 0),
+        check.workBudget.usdMicro,
+      );
+      expect(Math.abs(Number(figure?.slice(4)) - (planned * rate) / 1_000_000)).toBeLessThan(
+        0.011,
+      );
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
 });

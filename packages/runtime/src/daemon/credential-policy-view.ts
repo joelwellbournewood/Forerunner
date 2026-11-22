@@ -402,17 +402,29 @@ export function planCardLine(
   rule: { order: readonly string[]; whenStopped: WhenStopped; kinds: readonly string[] },
   savedKinds: readonly string[],
   first: { kind: CredentialKind | string; stop: StopFacts } | null,
-  opts: ClockOpts & { granted?: boolean },
+  opts: ClockOpts & {
+    granted?: boolean;
+    /**
+     * l4-cred-screens (L4-creds-15): the waiting work's one figure ("about CHF 0.25", the ask
+     * card's and the Start dialog's), said where the API key would do the plan's work.
+     */
+    about?: string;
+  },
 ): string | null {
   const line = ifRunsOutLine(rule, savedKinds);
   if (!line) return null;
   if (!first) return line;
   const head = firstStoppedPhrase(first.kind, first.stop, opts);
-  const other = short(otherOf(first.kind));
-  if (opts.granted) return `${head}: you said yes, so ${other} does the work meanwhile.`;
-  if (rule.whenStopped === "ask") return `${head}: you are asked before ${other} is used.`;
-  if (rule.whenStopped === "next")
-    return `${head}: ${other} does the work meanwhile (costs money).`;
+  const otherKind = otherOf(first.kind);
+  const other = short(otherKind);
+  // Only the API key costs money per use (L4-creds-17: under "API key first, then
+  // subscription" the subscription takes over, and no money moves).
+  const cost = otherKind === "api_key" ? ` (${opts.about ?? "costs money"})` : "";
+  if (opts.granted)
+    return `${head}: you said yes, so ${other} does the work meanwhile${otherKind === "api_key" && opts.about ? ` (${opts.about})` : ""}.`;
+  if (rule.whenStopped === "ask")
+    return `${head}: you are asked before ${other} is used${opts.about ? ` (${opts.about})` : ""}.`;
+  if (rule.whenStopped === "next") return `${head}: ${other} does the work meanwhile${cost}.`;
   return `${head}: the work waits for it.`;
 }
 
