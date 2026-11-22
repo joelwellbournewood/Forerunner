@@ -59,6 +59,29 @@ describe("Settings -> Claude subscription allowance (U-052)", () => {
     expect(postedCalls(harness, "/settings/plan-allowance")).toHaveLength(0);
   });
 
+  // l4-cred-engine, run L4 (L4-creds-1, CE-6): a raise that ends the subscription's share stop
+  // says what the work that waited does now, in the daemon's words, beside the saved line.
+  it("a raise that ends the share's stop says that the waiting session goes on", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({
+      setup: { credentials: { github: true, anthropicApiKey: true, subscription: true } },
+      planAllowanceChangeLine:
+        "Your subscription's allowance is raised: your session of 10:00 goes on now.",
+    });
+    renderApp("/settings", harness);
+    const section = await screen.findByTestId("plan-allowance-section");
+    const input = await within(section).findByTestId("plan-allowance-input");
+    await user.clear(input);
+    await user.type(input, "200");
+    await user.click(within(section).getByTestId("plan-allowance-save"));
+    expect(await within(section).findByTestId("plan-allowance-saved")).toHaveTextContent(
+      "Saved. Subscription work stops at 95% of CHF 200.00 a month, from the next task on. Your subscription's allowance is raised: your session of 10:00 goes on now.",
+    );
+    expect(postedCalls(harness, "/settings/plan-allowance").map((c) => c.body)).toEqual([
+      { chfMonthly: 200 },
+    ]);
+  });
+
   it("when the environment variable decides, the field says so and stays locked", async () => {
     const harness = createHarness({ planAllowanceOverridden: true });
     renderApp("/settings", harness);

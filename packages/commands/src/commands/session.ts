@@ -110,7 +110,9 @@ async function refuseBlockedStart(s: StartPlan, ctx: CommandContext): Promise<vo
 /**
  * S-10 (ADR 0118): one wait per project: while the person's session waits to go on after its
  * Claude credential (or a Start was kept for the reset), a start keeps nothing new and starts
- * nothing; it says when that session goes on, with no read-back.
+ * nothing; it says when that session goes on, with no read-back. Asked after
+ * `refuseBlockedStart`: a start the Start dialog refuses (a refused credential, Stop all, a
+ * removed project) says the dialog's sentence first.
  */
 async function refuseWhileWaiting(s: StartPlan, ctx: CommandContext): Promise<void> {
   if (s.remote) return;
@@ -167,11 +169,15 @@ export const sessionStart: CommandDef<SessionStartParams> = {
   actionClass: "non_routine",
   async plan(p, ctx) {
     const s = await startPlan(p, ctx);
-    await refuseWhileWaiting(s, ctx);
     // A start that would do nothing is refused before any card is shown: the chat says why at
     // once, as the Start dialog does, instead of a Yes/No for a start that cannot happen (review
     // of fix/chat). `run` checks again: the state may change while a card waits.
+    // fixup-l4-cred-engine (L4-creds-8): the dialog's refusal comes before the one-wait rule, so a
+    // refused credential's start says what to do ("Nothing can run until you save a new API key
+    // in Settings.") also while the person's session is kept to go on; before, chat said 'Your
+    // session of 10:00 goes on by itself once its Claude credential is back.' beside the dialog.
     await refuseBlockedStart(s, ctx);
+    await refuseWhileWaiting(s, ctx);
     const costly =
       s.budgetUsd > (ctx.ports.costlySessionUsdMicro ?? DEFAULT_COSTLY_SESSION_USD_MICRO);
     const warning = await startWarningOf(s, ctx);
@@ -195,8 +201,8 @@ export const sessionStart: CommandDef<SessionStartParams> = {
   async run(p, ctx): Promise<CommandOutcome> {
     const s = await startPlan(p, ctx);
     const agentId = needAgent(ctx);
-    await refuseWhileWaiting(s, ctx);
     await refuseBlockedStart(s, ctx);
+    await refuseWhileWaiting(s, ctx);
     const reason = p.reason ?? `${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`;
     if (s.remote) {
       const row = await ctx.store.remoteCommand.enqueue({

@@ -1176,7 +1176,9 @@ describe("a reply cut off at max_tokens", () => {
     });
     const res = await w.chat("what is waiting on me?");
     expect(w.provider.calls).toHaveLength(0);
-    expect(res.reply).toContain("month cap reached");
+    // l4-cred-engine L4-creds-4: the cap names itself in one sentence (before, "I could not
+    // answer (month cap reached)." quoted the error's message).
+    expect(res.reply).toBe("This month's cap is reached, so I have not answered.");
     expect(res.reply).not.toMatch(/pasted|cheaper model|USD 0\.05/);
     const reply = (await w.log()).find((e) => e.type === "chat.reply");
     expect(reply?.payload).toMatchObject({ outcome: "budget_exceeded" });

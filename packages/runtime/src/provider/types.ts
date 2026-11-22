@@ -293,6 +293,11 @@ export type StreamEvent =
       resetAt?: string;
       /** The billing source the failed call was made on, when the provider chose it. */
       sourceId?: string;
+      /**
+       * A call that began and was cut off or failed (l4-cred-engine L4-creds-5): the source
+       * that served it, as `message_end.billing` names it for a finished call.
+       */
+      billing?: CallBilling;
     };
 
 /**
@@ -491,6 +496,7 @@ export async function collectStream(
           usage,
           time_to_first_token_ms: ttft < 0 ? now() - t0 : ttft,
           duration_ms: now() - t0,
+          ...(ev.billing ? { billing: ev.billing } : {}),
           error: {
             code: ev.code,
             message: ev.message,

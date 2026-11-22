@@ -694,7 +694,9 @@ function Turn({
               Go ahead
             </Button>
           ) : null}
-          {offer?.action === "think" && newest && via === "text" ? (
+          {/* l4-cred-engine L4-creds-4: never under a reply that says the answer failed (a paid
+              closer look at no answer). */}
+          {offer?.action === "think" && newest && via === "text" && !turn.failed ? (
             <div className="mt-1">
               <Button
                 className="px-2 py-0.5 text-xs"

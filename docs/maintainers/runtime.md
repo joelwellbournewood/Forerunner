@@ -4856,8 +4856,9 @@ of the 400 tokens were left for the visible text. Three changes:
   own `SessionBudget`: its run and session refusals carry `details.source`
   `LOCAL_BUDGET_SOURCE` (`src/enforcement/budget.ts`), which the loop copies to
   `RunResult.error.source`; an outer cap (project, month: `CapsPort`, whose `level` can also
-  read "run" or "session") keeps its own message in the reply ("I could not answer (month cap
-  reached)."). Every `chat.reply` row carries
+  read "run" or "session") names itself in the reply (`failureReply`, l4-cred-engine
+  L4-creds-4: "This month's cap is reached, so I have not answered."; before, "I could not
+  answer (month cap reached)."). Every `chat.reply` row carries
   `turnBudgetUsdMicro`. A configured turn budget is used as given.
 - Tests: `conversation.test.ts` ("a reply cut off at max_tokens": spoken and typed turns, no
   complete sentence, a pending card's read-back, a cut on a sentence end, an Opus-priced turn
@@ -8025,6 +8026,134 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
 `credential-policy.test.tsx`, `credential-start.test.tsx`, `credential-switch.test.tsx`,
 `credential-chat.test.tsx`, `run-indicator.test.tsx` with the real-daemon describe
 "d1109-cred-screens, run C".
+
+### Every credential stop read once (l4-cred-engine, run L4, ADR 0120 amended 2026-11-22)
+
+- **One verdict per Claude Code stream** (L4-creds-2, live check 4's LC-C22): Agent SDK 0.3.304
+  ends Claude Code's error result with a throw ("Claude Code returned an error result: ...").
+  `SdkAgentDriver.run` reads the iterator through its own `then`, so a throw ends the loop like
+  the stream's end and the mapping after it runs (the usage limit, `authentication_failed`, an
+  error result's verdict, `error_max_budget_usd`'s budget stop); a throw after the run was
+  stopped is the stop's. A throw with no message that said why is read by its own text
+  (`thrownClaudeCodeText` strips the prefix; `isClaudeCodeRefusal(null, text)`,
+  `usageLimitKindOfText`), the token cut out; any other throw is the run's error as before. A
+  bare 401 in a run's own output still does not count. `ClaudeCodeProvider.stream` keeps
+  `failure`, `rejected` and `sdkError` outside its `try` and yields `errorFromSdk(...)` from them
+  in the catch; an error result whose text is a refusal is `provider_auth` there too.
+  `REFUSED_TEXT` also reads Claude Code's "Authentication error ·" line and "OAuth access token
+  is invalid".
+- **Claude Code's own error message is no model call**: an assistant message with `error` set or
+  model `<synthetic>` (`CLAUDE_CODE_SYNTHETIC_MODEL`, `provider/usage-limit.ts`) adds no step,
+  gets no pre-call estimate and is booked only if it ever carries usage, under the run's model;
+  a `<synthetic>` key in the result's `modelUsage` is the run's model. Before, Costs listed
+  "<synthetic>" with zero tokens.
+- **The share reached mid-run is a credential stop** (L4-creds-1, CE-6; the owner's D5: "Running
+  out includes a usage limit, a plan-share cap and a monthly cap"): the executor reads a run's
+  `budget_exceeded` at level `plan` on the subscription as the stop `share` (the Run row
+  `usage_limit` with the artifact `{credentialStop: "share"}`, its report and handoff kept for
+  CE-5's brief, no attempt counted, no budget card). The policy then decides as for a usage
+  limit: under next the task goes on at once on the key from its kept work, under ask one card
+  for the stop, under wait the person's session ends to wait and goes on at the month's start UTC
+  (or at the end of their quiet hours). `billing.waits.allowanceRaised()` (Settings' `POST
+  /settings/plan-allowance`, `PlanAllowanceView.changeLine`, `allowanceRaisedLine`): when a raise
+  ended the stop, the waiting session goes on through the wake and the line says so ("Your
+  subscription's allowance is raised: your session of 14:05 goes on now.", with quiet hours "...
+  goes on at 07:00, after your quiet hours."), else "Your subscription's allowance is raised: 2
+  tasks are ready again for your next Start."; null when nothing waited. `continuations.waiting`
+  names the month's start for the share and a key's monthly cap (`monthStopOf`). The budget
+  card's 'plan' path stays for a critic's review that meets the share (runner's review pause) and
+  for cards stored before.
+- **Heard once, in the person's zone** (L4-creds-3): the notification of a card is built from the
+  Inbox's context (`notifications.md`, "Hearing once"); `ToldByCards.credential` leaves the
+  credential wait out of the session's news while its refused or ask card is open. The person's
+  time zone and monthly cap are read at each use (`zoneNow()` in compose for every wait
+  sentence, chat's `credentialHold` reads the person row per question), never the row composed
+  at start; `RouteContext.nowMs` is required.
+- **A chat answer that failed is no answer** (L4-creds-4, live check 4's L4-creds-13): the
+  switch note ("Answered with your Claude subscription: your API key is at its limit until
+  12:00.") is in the footer only under a completed answer, and the stop is marked as said
+  (`notedStops`) only when the footer is the note, so the first real answer on the other
+  credential has it. Think it through's `closer` needs a completed answer. Every other failure
+  reads `failureReply(error)` (`depth.ts`): one sentence by the error's code (a cap names itself,
+  "Claude did not answer this time; ask again in a moment." for the API's own error), never the
+  error's message; the `chat.reply` row is a notice, and `failed` (Ask again in the conversation)
+  where the same line could get an answer now. The UI never shows Think it through under a
+  failed turn. The Messages API stand-in answers `{kind: "error"}` with the API's 500.
+- **A cut-off call is booked on the credential that served it** (L4-creds-5, run L3's
+  L3-left-14): the routed provider's error for a call that began (Stop, a timeout, a failure
+  after `message_start`) carries `billing` from the input side `message_start` reported, and
+  `collectStream` keeps it on the response; the loop's `takeBilling` sets the call's source on
+  the run's context before the abort branch books it, as after a finished call. The SDK driver's
+  late bookings are on its run's one credential (no routing there).
+- **Chat follows the Start dialog under a refusal** (L4-creds-8, live check 4's L4-creds-3):
+  `chatHoldReply` is by the stop's reason and never promises a start ("Anthropic refused your
+  API key, so I have not answered. Save a new key in Settings; until then I can still add and
+  change tasks."; a sign-in: "Sign in again in Settings"; a limit, the share or a monthly cap:
+  "... so I have not answered. I can still add and change tasks."). Chat's `startBlocked` port
+  passes a refused credential's wait (`credentialWaits.now`: a save link, not startable) to
+  `startBlockedReason` as the dialog's check does, so "start a session" gets the dialog's
+  sentence ("Nothing can run until you save a new API key in Settings.", a sign-in: "... a new
+  Claude sign-in ...") with no read-back. A resting credential keeps the dialog's "Start at
+  15:40" and is no refusal there. Fix-up of the review: the refused wait is passed also while
+  the person's session is kept to go on (`kept`, the usual case: the Start they pressed met the
+  refusal), and `session.start` asks `startBlocked` before `startWaits` (commands.md); before,
+  chat said 'Your session of 10:00 goes on by itself once its Claude credential is back.' beside
+  the dialog's refusal. Test: `credential-chat-refused.test.ts` (Start by `POST /sessions`, then
+  chat, also after composing again; the refused sign-in's sibling). `POST /sessions` keeps its
+  own order (the continuation's sentence first, l4-cred-screens' validation status).
+- **A stored ask form reads as it is now** (L4-creds-7, live check 4's L4-creds-6):
+  `resultAfterWait` (every reader of a stored result: the session page, the Overview's Last
+  result and Read aloud, the Inbox's Update) first reads CE-7's ask form ("Waits for your
+  answer: use your API key? The card is in the Inbox.") against the stop's latest ask card filed
+  before the result: while it is open the words stay; once answered Wait they become the plain
+  wait (`waitSentence` from the card's facts, at the result's time, in the person's zone, then
+  the goes-on rule), after Use API key "Went on with your API key.". A notification already sent
+  is not reworded. The cards are read newest first among the yes-or-no cards on no project and
+  no task (fix-up of the review: before, every card oldest first, 500 at most, so on an install
+  with more cards the stop's card was never found; test `credential-ask-words.test.ts` "... more
+  than 500 earlier cards ...").
+- **The configured API address covers the subscription's task runs** (L4-creds-10, live check
+  4's L4-creds-16): `SdkDriverDeps.baseURL` is config.json's `anthropicApiBase` (compose); the
+  driver sends `ANTHROPIC_BASE_URL` from `req.baseURL ?? deps.baseURL`, the default address
+  left out as `ClaudeCodeProvider` leaves it out, and Headroom's `req.env` still wins while it is
+  on. Before, only chat's Claude Code calls and the key's provider used the address.
+- **The ask card's yes is applied once** (L4-creds-11, C5L-5): `syncAskAnswers` marks the card
+  `applying: {stopKey, at}` before the grant and the start, and passes `{since, again}` to
+  `onGrant`; compose's `onGrant` treats a project with a session begun since an earlier cut-off
+  apply as already gone on (drops its kept start, starts nothing). The card's outcome then
+  replaces the mark.
+- **A continuation in line is named as next** (L4-creds-9, live check 4's LC-C31): the run
+  indicator's `pendingPersonStarts` counts a start by "continuation" with the person's, so the
+  running session's bar reads "... · then Bird notes" when another project's session that waited
+  for the same stop is queued behind it, and no entry says it waits until a reset that has
+  passed. The queued project's own status sentence ("Goes on after the session on ...") is not
+  built (the report's not_done).
+- **Chat's room reads the plan's share** (L4-creds-6, C3-left-6): while chat answers on the
+  subscription (`routed.peek` of the chat model), compose's `chatRoom` adds the room the share
+  leaves (`(cap - share) x allowance` from `planUsageOf`, at API prices) as level `plan` beside
+  the month cap and the project's budget; the smallest binds (the month's on a tie). A longer
+  answer past it is not taken: "A closer look would pass the share of your Claude plan
+  Forerunner may use, so this is the quick answer."
+
+Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
+throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the
+0.3.304 shape), `claude-code-refusal.test.ts`, `credential-sdk-throw.test.ts` (composed on
+`cred-world.ts` at the routes: one refused card, no failed-task card or notification, the task
+waits, Settings reads refused, chat holds with no new call, no `<synthetic>` in Costs; the usage
+limit and Claude Code's spending limit after the throw; a run and a chat question meeting the
+refusal together), `sdk-contract.test.ts` (the real SDK against a local 401),
+`credential-share-midrun.test.ts` (the share reached mid-run under next, ask and wait, the raise,
+the month's start and restarts), `credential-chat-failure.test.ts` (POST /chat under
+key_then_subscription with the refused sign-in's turn, and under subscription_then_key with the
+API's 500), `credential-stop-booking.test.ts` (Stop on chat's call served by the subscription
+while the key rests: the ledger row and Costs by credential are the subscription's),
+`credential-limit-kept-work.test.ts` (CE-5's repository case: the subscription writes notes/a.md, meets
+its limit in the 0.3.304 shape, and the key's run is told to continue from the kept commit),
+`credential-api-base.test.ts` (the task run's and chat's `ANTHROPIC_BASE_URL`, with and without a
+configured address), `credential-ask-words.test.ts` ("l4-cred-engine, run L4": the stored ask form after Wait and
+after Use API key, composed twice), `chat-depth-words.test.ts` (`failureReply` over every code), the UI's
+`settings-plan-allowance.test.tsx` and `chat-depth.test.tsx` (no Think it through under a failed
+reply) and the real-daemon describe "l4-cred-engine, run L4".
 
 ## How to change it
 

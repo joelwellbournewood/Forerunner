@@ -19,6 +19,18 @@ describe("isClaudeCodeRefusal", () => {
     ["an HTTP status 401", null, "HTTP status 401 from api.anthropic.com"],
     ["an expired sign-in", null, "OAuth token has expired"],
     ["a sign-in to renew", null, "Not logged in. Please run /login"],
+    // l4-cred-engine L4-creds-2 (LC-C22): Claude Code 2.1.304's own words for a refused sign-in.
+    [
+      "Claude Code's 401 on a refused token",
+      null,
+      "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+    ],
+    [
+      "Claude Code's authentication error line",
+      null,
+      "Authentication error · This may be a temporary network issue, please try again",
+    ],
+    ["an invalid access token", null, "OAuth access token is invalid."],
   ])("%s is a refusal", (_label, kind, text) => {
     expect(isClaudeCodeRefusal(kind, text)).toBe(true);
   });

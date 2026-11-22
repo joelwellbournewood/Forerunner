@@ -274,6 +274,12 @@ export interface ToldByCards {
   docker?: boolean;
   /** The plan waits for approval on its own card. */
   plan?: boolean;
+  /**
+   * l4-cred-engine L4-creds-3: the person has an open card for the credential stop the session's
+   * wait names (Anthropic refused it, or the ask card of that stop), which was notified when it
+   * was filed and tells the wait: the result's credential line is no news of its own.
+   */
+  credential?: boolean;
 }
 
 /**
@@ -300,7 +306,8 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     // U-078: the work waits for a Claude credential, and says when it starts by itself.
     name: "credential wait",
     line: 1,
-    build: (_f, o) => (o.credentialWait ? [o.credentialWait] : []),
+    // L4-creds-3: an open card of the stop tells it (the session page keeps the whole result).
+    build: (_f, o, told) => (o.credentialWait && !told?.credential ? [o.credentialWait] : []),
   },
   {
     name: "plan approval",

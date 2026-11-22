@@ -10,12 +10,14 @@ import {
   closerLookWords,
   depthWords,
   FAILED_WORDS,
+  failureReply,
   footerWords,
   handOverStep,
   type PassFigures,
   STOP_EXPLAIN,
   secondsWords,
   stoppedWords,
+  TIMEOUT_REPLY,
   thinkItThroughExplain,
   thinkingLongerFact,
 } from "../src/conversation/depth.ts";
@@ -197,5 +199,78 @@ describe("d1109-chat-depth, run C: the sentences", () => {
     expect(
       CHAT_THOROUGH_RULES.startsWith("# Thinking it through\nThis question was handed to you"),
     ).toBe(true);
+  });
+});
+
+describe("l4-cred-engine, run L4 (L4-creds-4): a chat answer that did not complete", () => {
+  // Every code a chat run can end with: one sentence each, never the error's own message.
+  const table: [Parameters<typeof failureReply>[0], string, boolean][] = [
+    [{ code: "timeout" }, TIMEOUT_REPLY, true],
+    [
+      { code: "budget_exceeded", level: "month" },
+      "This month's cap is reached, so I have not answered.",
+      false,
+    ],
+    [
+      { code: "budget_exceeded", level: "project" },
+      "This project's budget is reached, so I have not answered.",
+      false,
+    ],
+    [
+      { code: "budget_exceeded", source: "plan" },
+      "The share of your Claude plan Forerunner may use is reached, so I have not answered.",
+      false,
+    ],
+    [
+      { code: "budget_exceeded", level: "run" },
+      "This answer would spend more than a chat answer may, so I stopped it; ask a shorter question.",
+      false,
+    ],
+    [
+      { code: "provider_rate_limit" },
+      "Claude is busy right now, so I have not answered; ask again in a minute.",
+      true,
+    ],
+    [{ code: "provider_error" }, "Claude did not answer this time; ask again in a moment.", true],
+    [
+      { code: "provider_auth" },
+      "Anthropic refused the credential, so I have not answered; check it in Settings.",
+      false,
+    ],
+    [
+      { code: "provider_usage_limit" },
+      "The credential is at its limit, so I have not answered; ask again after its reset.",
+      false,
+    ],
+    [
+      { code: "unavailable" },
+      "No credential can answer right now, so I have not answered; check Settings.",
+      false,
+    ],
+    [{ code: "killed" }, "This answer was cut off before it finished; ask again.", true],
+    [
+      { code: "step_cap_exceeded" },
+      "This answer took more steps than one answer may, so I stopped it; ask a narrower question.",
+      false,
+    ],
+    [
+      { code: "injection_suspected" },
+      "Something I read looked like instructions to me, so I stopped this answer and changed nothing.",
+      false,
+    ],
+    [{ code: "internal" }, "I could not answer this; ask again.", true],
+    [{ code: "validation" }, "I could not answer this; ask again.", true],
+    [null, "I could not answer this; ask again.", true],
+  ];
+  it.each(table)("%o reads its own sentence", (error, text, askAgain) => {
+    expect(failureReply(error)).toEqual({ text, askAgain });
+  });
+
+  it("never quotes the error's message", () => {
+    const said = failureReply({
+      code: "provider_error",
+      message: "Internal server error at /v1/messages (req_123)",
+    } as never);
+    expect(said.text).not.toMatch(/Internal|req_|v1|\(/);
   });
 });

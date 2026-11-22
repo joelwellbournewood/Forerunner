@@ -39,11 +39,11 @@ export interface SdkCall {
   system: string;
 }
 
-type SdkMessage = Record<string, unknown>;
+export type SdkMessage = Record<string, unknown>;
 const ev = (event: Record<string, unknown>): SdkMessage => ({ type: "stream_event", event });
 
 /** A provider call's reply as Claude Code streams it (`includePartialMessages`). */
-async function* providerReply(call: SdkCall): AsyncIterable<SdkMessage> {
+export async function* providerReply(call: SdkCall): AsyncIterable<SdkMessage> {
   yield { type: "system", subtype: "init", session_id: "cc-world" };
   yield ev({
     type: "message_start",
@@ -114,7 +114,38 @@ async function* runReply(n: number, text = SUBSCRIPTION_REPORT): AsyncIterable<S
   yield { type: "result", subtype: "success", is_error: false, result: text };
 }
 
-/** Claude Code when the subscription's limit is reached (Agent SDK 0.3.304's messages). */
+/**
+ * Claude Code's own error message, as Agent SDK 0.3.304 streams it (l4-cred-engine L4-creds-2,
+ * read on LC-C22 with the real SDK against a local 401): an assistant message with `error` set,
+ * model '<synthetic>' and zero usage. It is no model call.
+ */
+export const syntheticError = (error: string, text: string): SdkMessage => ({
+  type: "assistant",
+  error,
+  message: {
+    id: `synthetic-${error}`,
+    model: "<synthetic>",
+    content: [{ type: "text", text }],
+    usage: {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    },
+  },
+});
+/** What Agent SDK 0.3.304 throws after Claude Code's error result. */
+export const sdkThrow = (text: string) =>
+  new Error(`Claude Code returned an error result: ${text}`);
+
+/** The text Claude Code says when Anthropic refuses the sign-in (live check 4, LC-C22). */
+export const REFUSED_SIGN_IN_TEXT =
+  "Failed to authenticate. API Error: 401 OAuth access token is invalid.";
+
+/**
+ * Claude Code when the subscription's limit is reached, in Agent SDK 0.3.304's shape: the
+ * rejected rate-limit event, the synthetic error message, the error result, then the throw.
+ */
 async function* limitReply(resetMs: number): AsyncIterable<SdkMessage> {
   yield { type: "system", subtype: "init", session_id: "cc-limit" };
   yield {
@@ -125,23 +156,24 @@ async function* limitReply(resetMs: number): AsyncIterable<SdkMessage> {
       rateLimitType: "five_hour",
     },
   };
-  yield {
-    type: "assistant",
-    error: "rate_limit",
-    message: { content: [{ type: "text", text: "You've hit your limit" }] },
-  };
+  yield syntheticError("rate_limit", "You've hit your limit");
   yield { type: "result", subtype: "success", is_error: true, result: "You've hit your limit" };
+  throw sdkThrow("You've hit your limit");
 }
 
-/** Claude Code when the sign-in was refused. */
+/** Claude Code when the sign-in was refused, in Agent SDK 0.3.304's shape (then the throw). */
 async function* refusedReply(): AsyncIterable<SdkMessage> {
   yield { type: "system", subtype: "init", session_id: "cc-refused" };
+  yield syntheticError("authentication_failed", REFUSED_SIGN_IN_TEXT);
   yield {
-    type: "assistant",
-    error: "authentication_failed",
-    message: { content: [{ type: "text", text: "OAuth token has expired" }] },
+    type: "result",
+    subtype: "success",
+    is_error: true,
+    result: REFUSED_SIGN_IN_TEXT,
+    total_cost_usd: 0,
+    modelUsage: { "<synthetic>": { inputTokens: 0, outputTokens: 0 } },
   };
-  yield { type: "result", subtype: "success", is_error: true, result: "OAuth token has expired" };
+  throw sdkThrow(REFUSED_SIGN_IN_TEXT);
 }
 
 export interface CredWorld {
@@ -166,8 +198,24 @@ export interface CredWorld {
   setRunReport(text: string): void;
   /** Anthropic refuses the sign-in from now on. */
   refuseSubscription(on?: boolean): void;
-  /** The key is at its limit until `ms`, refused, or served. */
-  setKey(answer: "ok" | "refused" | { limitUntilMs: number }): void;
+  /**
+   * A task run on the subscription plays this script instead (null: the default report); it
+   * gets the `query()` options (the task's folder in `cwd`, the environment in `env`).
+   */
+  setRunScript(
+    script: ((options: Record<string, unknown>, n: number) => AsyncIterable<SdkMessage>) | null,
+  ): void;
+  /**
+   * A provider call on the subscription (chat, planning, a review) plays this script instead
+   * (null: `providerReply`); it gets the call and the `query()` options (its `abortController`).
+   */
+  setProviderScript(
+    script: ((call: SdkCall, options: Record<string, unknown>) => AsyncIterable<SdkMessage>) | null,
+  ): void;
+  /** The `query()` options of every Claude Code call, oldest first (for its environment). */
+  sdkOptions: Record<string, unknown>[];
+  /** The key is at its limit until `ms`, refused, answered with the API's 500, or served. */
+  setKey(answer: "ok" | "refused" | "error" | { limitUntilMs: number }): void;
   compose(): Promise<{ rt: RuntimeApp; req: Req }>;
 }
 
@@ -183,6 +231,8 @@ export function credWorld(opts: {
   key?: boolean;
   timezone?: string;
   prefix?: string;
+  /** config.json's `anthropicApiBase` (l4-cred-engine L4-creds-10); none: no config file. */
+  apiBase?: string;
 }): CredWorld {
   const { clock } = opts;
   const home = mkdtempSync(join(tmpdir(), opts.prefix ?? "fr-cred-world-"));
@@ -194,11 +244,19 @@ export function credWorld(opts: {
   const sdkCalls: SdkCall[] = [];
   let subLimitUntil: number | null = null;
   let subRefused = false;
-  let keyAnswer: "ok" | "refused" | { limitUntilMs: number } = "ok";
+  let keyAnswer: "ok" | "refused" | "error" | { limitUntilMs: number } = "ok";
   let runs = 0;
   let limitAfter: { at: number; untilMs: number } | null = null;
   let runReport = SUBSCRIPTION_REPORT;
+  let providerScript:
+    | ((call: SdkCall, options: Record<string, unknown>) => AsyncIterable<SdkMessage>)
+    | null = null;
+  let runScript:
+    | ((options: Record<string, unknown>, n: number) => AsyncIterable<SdkMessage>)
+    | null = null;
+  const sdkOptions: Record<string, unknown>[] = [];
   const sdkQuery: QueryLike = ({ prompt, options }) => {
+    sdkOptions.push(options ?? {});
     const o = (options ?? {}) as {
       maxTurns?: number;
       tools?: unknown[];
@@ -220,12 +278,15 @@ export function credWorld(opts: {
     }
     if (subRefused) return refusedReply();
     if (subLimitUntil !== null && clock.now() < subLimitUntil) return limitReply(subLimitUntil);
-    return provider ? providerReply(call) : runReply(++runs, runReport);
+    if (provider) return providerScript ? providerScript(call, options ?? {}) : providerReply(call);
+    runs++;
+    return runScript ? runScript(options ?? {}, runs) : runReply(runs, runReport);
   };
   const keyModel = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
   const answerFor = (_key: string, nowMs: number): KeyAnswer => {
     if (keyAnswer === "ok") return { kind: "ok" };
     if (keyAnswer === "refused") return { kind: "refused" };
+    if (keyAnswer === "error") return { kind: "error" };
     if (nowMs >= keyAnswer.limitUntilMs) return { kind: "ok" };
     return {
       kind: "limit",
@@ -242,12 +303,28 @@ export function credWorld(opts: {
     fallback: async () => new Response("not here", { status: 404 }),
   });
   const compose = async () => {
+    const stateUrl = `sqlite:${join(dirs.data, "state.sqlite")}`;
     const rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
       dirs,
-      config: null,
+      config: opts.apiBase
+        ? {
+            version: 1,
+            profile: "default",
+            timezone: opts.timezone ?? "Europe/Zurich",
+            githubApiBase: "http://gh.test",
+            anthropicApiBase: opts.apiBase,
+            repos: [],
+            credentials: {
+              github: false,
+              anthropic: opts.key !== false,
+              anthropicSubscription: opts.subscription !== false,
+            },
+            stateUrl,
+          }
+        : null,
       clock,
-      stateUrl: `sqlite:${join(dirs.data, "state.sqlite")}`,
+      stateUrl,
       vault,
       fetchImpl,
       sdkQuery,
@@ -302,6 +379,13 @@ export function credWorld(opts: {
     refuseSubscription: (on = true) => {
       subRefused = on;
     },
+    setRunScript: (script) => {
+      runScript = script;
+    },
+    setProviderScript: (script) => {
+      providerScript = script;
+    },
+    sdkOptions,
     setKey: (answer) => {
       keyAnswer = answer;
     },

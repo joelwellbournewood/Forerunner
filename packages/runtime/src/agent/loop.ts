@@ -16,6 +16,7 @@ import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken } from "../enforcement/token.ts";
 import { type InjectionReport, scanForInjection } from "../injection/scan.ts";
 import type {
+  CallBilling,
   ChatMessage,
   ContentBlock,
   EffortLevel,
@@ -767,8 +768,25 @@ export class LoopAgentDriver {
           () => callStart,
           () => clock.monotonic(),
         );
+        // The source a routed provider chose for this call pays for it (ADR 0100): the ledger
+        // row, its kind and a subscription's plan share follow the call, not the run's default.
+        // l4-cred-engine L4-creds-5: also for a call cut off by a stop (before, the abort branch
+        // below booked it on the run's own source; only a finished call took the call's).
+        const takeBilling = (b: CallBilling | undefined) => {
+          if (!b) return;
+          ctx.billingSourceId = b.sourceId;
+          const share = b.planUsageShare;
+          ctx.billing =
+            b.kind === "api"
+              ? undefined
+              : {
+                  kind: b.kind,
+                  ...(typeof share === "number" ? { planUsageShare: () => share } : {}),
+                };
+        };
         if (response.stop_reason === "error") {
           if (controller.signal.aborted) {
+            takeBilling(response.billing);
             // A call cut off by the kill switch or the timeout was billed for what the provider
             // reported before the stop (the input side on message_start): it stays in the run's
             // usage and cost, and it is booked once like any call (L3-run-5, live check 3): one
@@ -841,20 +859,7 @@ export class LoopAgentDriver {
           }
           throw new ForerunnerError("provider_error", "model call failed", { retryable: true });
         }
-        // The source a routed provider chose for this call pays for it (ADR 0100): the ledger
-        // row, its kind and a subscription's plan share follow the call, not the run's default.
-        if (response.billing) {
-          const b = response.billing;
-          ctx.billingSourceId = b.sourceId;
-          const share = b.planUsageShare;
-          ctx.billing =
-            b.kind === "api"
-              ? undefined
-              : {
-                  kind: b.kind,
-                  ...(typeof share === "number" ? { planUsageShare: () => share } : {}),
-                };
-        }
+        takeBilling(response.billing);
         const callCost = req.pricing.cost(response.usage);
         addUsage(usage, response.usage);
         cost += callCost;

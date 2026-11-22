@@ -24,7 +24,14 @@ import {
   type ToolDefinition,
   type Usage,
 } from "./types.ts";
-import { isClaudeCodeUsageLimit, rejectedRateLimitOf, USAGE_LIMIT_CODE } from "./usage-limit.ts";
+import {
+  isClaudeCodeRefusal,
+  isClaudeCodeUsageLimit,
+  rejectedRateLimitOf,
+  thrownClaudeCodeText,
+  USAGE_LIMIT_CODE,
+  usageLimitKindOfText,
+} from "./usage-limit.ts";
 
 /**
  * The model provider of an install whose only Claude credential is a subscription token from
@@ -140,15 +147,17 @@ export class ClaudeCodeProvider implements ModelProvider {
     const mapper = new RawEventMapper((name) =>
       name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : name,
     );
+    // What the stream said, read once it ends or throws (L4-creds-2: Agent SDK 0.3.304 throws
+    // after Claude Code's error result, and the catch used to drop all of it): Claude Code's
+    // report that the subscription's limit rejects calls (ADR 0100), the failed turn's error
+    // kind, and an error result, whichever came first.
+    let failure: StreamEvent | null = null;
+    let rejected: { resetAt?: string } | null = null;
+    let sdkError: { kind: string; text: string } | null = null;
     try {
       const options = await this.optionsFor(req, token, controller);
       const query = this.opts.query ?? (await loadSdkQuery());
       iterator = query({ prompt: promptFor(req.messages), options })[Symbol.asyncIterator]();
-      let failure: StreamEvent | null = null;
-      // Claude Code's report that the subscription's limit rejects calls (ADR 0100), and the
-      // failed turn's error kind; read together once the stream ends, whichever came first.
-      let rejected: { resetAt?: string } | null = null;
-      let sdkError: { kind: string; text: string } | null = null;
       for (;;) {
         const next = await iterator.next();
         if (next.done) break;
@@ -166,14 +175,19 @@ export class ClaudeCodeProvider implements ModelProvider {
           continue;
         }
         if (msg.type === "result" && msg.is_error === true && !mapper.stopped) {
-          failure ??= {
-            type: "error",
-            code: "provider_error",
-            message: `Claude Code ended the call: ${String(msg.subtype ?? "error")}${
-              typeof msg.result === "string" && msg.result ? `: ${msg.result}` : ""
-            }`,
-            retryable: false,
-          };
+          const said = typeof msg.result === "string" ? msg.result : "";
+          // A result that says the sign-in was refused is the refusal (U-078), never a passing
+          // error: chat holds, and no second call goes to the refused sign-in.
+          failure ??= isClaudeCodeRefusal(null, said)
+            ? errorFromSdk("authentication_failed", said, null)
+            : {
+                type: "error",
+                code: "provider_error",
+                message: `Claude Code ended the call: ${String(msg.subtype ?? "error")}${
+                  said ? `: ${said}` : ""
+                }`,
+                retryable: false,
+              };
         }
       }
       if (req.signal?.aborted && !mapper.stopped) {
@@ -193,17 +207,28 @@ export class ClaudeCodeProvider implements ModelProvider {
       }
       yield { type: "message_end", stop_reason: mapper.stopReason, usage: mapper.usage };
     } catch (e) {
-      yield req.signal?.aborted
-        ? aborted()
-        : {
-            type: "error",
-            code: e instanceof ForerunnerError ? e.code : "provider_error",
-            // What Claude Code said may quote its environment: the token is cut out (U-053).
-            message: redact(
-              `Claude Code could not answer: ${errorMessage(e).split(token).join("[REDACTED]")}`,
-            ),
-            retryable: false,
-          };
+      if (req.signal?.aborted) {
+        yield aborted();
+        return;
+      }
+      // What Claude Code said may quote its environment: the token is cut out (U-053).
+      const said = redact(thrownClaudeCodeText(errorMessage(e)).split(token).join("[REDACTED]"));
+      // The stream's own verdict first (the SDK throws after Claude Code's error result,
+      // L4-creds-2), then the throw's text read the same way, then the throw as it is.
+      const limitKind = rejected ? "rate_limit" : usageLimitKindOfText(said);
+      yield sdkError
+        ? errorFromSdk(sdkError.kind, sdkError.text, rejected)
+        : limitKind
+          ? errorFromSdk(limitKind, said, rejected)
+          : (failure ??
+            (isClaudeCodeRefusal(null, said)
+              ? errorFromSdk("authentication_failed", said, null)
+              : {
+                  type: "error",
+                  code: e instanceof ForerunnerError ? e.code : "provider_error",
+                  message: `Claude Code could not answer: ${said}`,
+                  retryable: false,
+                }));
     } finally {
       req.signal?.removeEventListener("abort", onAbort);
       // Stops the subprocess once the response is read (or the call failed); not awaited.

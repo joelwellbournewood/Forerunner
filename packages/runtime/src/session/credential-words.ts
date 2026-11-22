@@ -341,12 +341,22 @@ export function switchNotificationWords(input: {
 
 // ── CE-9: chat ───────────────────────────────────────────────────────────────────────────────
 
-/** The reply of a chat question the policy holds (no model call, no ledger row). */
+/**
+ * The reply of a chat question the policy holds (no model call, no ledger row). l4-cred-engine
+ * L4-creds-8: by the stop's reason, and never a promise to start work (before, every stop ended
+ * "I can still add, move and start tasks." while the Start dialog refused a start): a refusal
+ * says what to do in Settings; a limit, the share or a monthly cap says what chat still does.
+ */
 export function chatHoldReply(
   wait: Pick<CredentialWait, "reason" | "kind" | "stop">,
   until: string | null,
 ): string {
-  return `${stoppedPhrase(wait, until)}, so I have not answered. I can still add, move and start tasks.`;
+  const reason = wait.reason === "needs" ? (wait.stop ?? "limit") : wait.reason;
+  if (reason === "refused")
+    return `${stoppedPhrase(wait, until)}, so I have not answered. ${
+      wait.kind === "subscription" ? "Sign in again in Settings" : "Save a new key in Settings"
+    }; until then I can still add and change tasks.`;
+  return `${stoppedPhrase(wait, until)}, so I have not answered. I can still add and change tasks.`;
 }
 
 /** The one-off press's consequence line: "Answers this question on your API key: about CHF 0.02." */
@@ -363,6 +373,32 @@ export function chatSwitchNote(
   until: string | null,
 ): string {
   return `Answered with ${yourCredential(to)}: ${shortStoppedPhrase(wait, until)}.`;
+}
+
+// ── CE-6 (l4-cred-engine L4-creds-1): a raised allowance ends the share's stop ─────────────────
+
+/**
+ * The line Settings shows after the person raised the subscription's allowance and the share's
+ * stop ended: their session that waited goes on now (or at the end of their quiet hours), or the
+ * tasks that waited are ready for their next Start. Null when nothing waited for the share.
+ */
+export function allowanceRaisedLine(
+  input:
+    | { session: { startedAt: string | null }; quietUntil: string | null }
+    | { readyTasks: number },
+  words: { timezone?: string; nowMs: number },
+): string | null {
+  const head = "Your subscription's allowance is raised";
+  if ("session" in input) {
+    const of = input.session.startedAt
+      ? ` of ${clockTime(input.session.startedAt, words.timezone, words.nowMs)}`
+      : "";
+    return input.quietUntil
+      ? `${head}: your session${of} goes on at ${clockTime(input.quietUntil, words.timezone, words.nowMs)}, after your quiet hours.`
+      : `${head}: your session${of} goes on now.`;
+  }
+  if (input.readyTasks <= 0) return null;
+  return `${head}: ${input.readyTasks === 1 ? "1 task is" : `${input.readyTasks} tasks are`} ready again for your next Start.`;
 }
 
 // ── CE-13: the setting ───────────────────────────────────────────────────────────────────────

@@ -380,6 +380,12 @@ export interface FakeDaemonOptions {
   /** FORERUNNER_PLAN_USD_MONTHLY decides the subscription allowance (U-052). Default false. */
   planAllowanceOverridden?: boolean;
   /**
+   * l4-cred-engine, run L4 (L4-creds-1, CE-6): the change line a save answers with when the
+   * raise ended the subscription's share stop ("Your subscription's allowance is raised: ...").
+   * Default null (nothing waited for the share).
+   */
+  planAllowanceChangeLine?: string | null;
+  /**
    * Settings -> Claude: which to use first (U-078): the credentials `GET /settings/billing-order`
    * lists (each source's fields over a usable default), and the order chosen at start (none by
    * default). Default: a subscription and an API key, both usable.
@@ -775,6 +781,11 @@ export interface FakeDaemonState {
     oneOff?: { label: string; explain: string } | null;
     /** C5-left-3: the reply text of this turn (a hold reply, or the answer the press gets). */
     reply?: string;
+    /**
+     * l4-cred-engine L4-creds-4: the reply says the answer failed (the daemon's chat.reply row
+     * with `failed`, a notice): the conversation's turn has `failed`, so Ask again is under it.
+     */
+    failed?: boolean;
   } | null;
   /** C5-left-3: what the last chat posts asked for: the text and whether it was the one-off. */
   chatPosts: { text: string; oneOff: boolean }[];
@@ -4556,7 +4567,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   };
 
   /** A turn kept in its conversation, as the daemon writes chat.human and chat.reply. */
-  const keepTurn = (body: ChatRequestBody, reply: ChatReplyView): ChatReplyView => {
+  const keepTurn = (body: ChatRequestBody, reply: ChatReplyView, failed = false): ChatReplyView => {
     const key = body.projectId ?? "";
     const turns = state.conversations.get(key) ?? [];
     const readback = reply.pendingConfirmation?.readback ?? null;
@@ -4583,7 +4594,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           sessionId: (a.id ? startedSessions.get(a.id) : undefined) ?? null,
         })),
         question: reply.question,
-        notice: false,
+        notice: failed,
         readback,
         waiting: !!reply.pendingConfirmation,
         card: reply.pendingConfirmation ? "waiting" : null,
@@ -4595,6 +4606,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         offer: reply.offer ?? null,
         oneOff: reply.oneOff ?? null,
       },
+      // L4-creds-4: a reply that says the answer failed (Ask again under it).
+      ...(failed ? { failed: true } : {}),
     });
     // A yes or a no answers the card read back before it.
     const said = body.text.trim().toLowerCase();
@@ -4674,14 +4687,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.nextChatTurn = null;
     state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
     const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
-    const reply = keepTurn(parsed.data, {
-      ...base,
-      ...(extra?.reply ? { reply: extra.reply } : {}),
-      depth: extra?.depth ?? "quick",
-      footer: extra?.footer ?? null,
-      offer: extra?.offer ?? null,
-      oneOff: extra?.oneOff ?? null,
-    });
+    const reply = keepTurn(
+      parsed.data,
+      {
+        ...base,
+        ...(extra?.reply ? { reply: extra.reply } : {}),
+        depth: extra?.depth ?? "quick",
+        footer: extra?.footer ?? null,
+        offer: extra?.offer ?? null,
+        oneOff: extra?.oneOff ?? null,
+      },
+      extra?.failed === true,
+    );
     heardChat(reply, parsed.data.projectId);
     return c.json(reply);
   });
@@ -4762,7 +4779,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           turns.filter((t) => t.id !== base.transcriptId),
         );
       }
-      keepTurn(parsed.data, reply);
+      keepTurn(parsed.data, reply, extra?.failed === true && !stopped);
       heardChat(reply, parsed.data.projectId);
       emit("conversation.changed", { projectId: parsed.data.projectId ?? null });
       return reply;
@@ -8215,7 +8232,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     allowance.usdMonthly = Math.round((chfMonthly / allowanceRate) * 100) / 100;
     allowance.origin = "config";
-    return c.json(allowanceView());
+    // l4-cred-engine, run L4 (L4-creds-1): what the work that waited for the share does now.
+    return c.json({ ...allowanceView(), changeLine: options.planAllowanceChangeLine ?? null });
   });
   // Settings -> Claude: which to use first (U-078), mirroring
   // packages/runtime/src/daemon/billing-order-routes.ts: the rows in the person's order (else

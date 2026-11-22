@@ -844,6 +844,7 @@ export function createDaemonApp(
       onChanged: (a) => {
         rt.billing.planAllowance = a;
       },
+      onRaised: () => rt.billing.waits.allowanceRaised(),
     }),
   );
 

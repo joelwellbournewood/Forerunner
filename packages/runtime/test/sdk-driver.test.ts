@@ -897,3 +897,149 @@ describe("the SDK driver books every model at its own price, and what comes afte
     expect(ledgerTotal(h)).toBe(2_000_100 + 550);
   });
 });
+
+/**
+ * l4-cred-engine L4-creds-2 (live check 4, LC-C22): Agent SDK 0.3.304 throws after its error
+ * result ("Claude Code returned an error result: ..."), and the stream's first message on a
+ * refused sign-in is Claude Code's own synthetic error message (model '<synthetic>', zero usage).
+ * Before, the catch overwrote what the stream had said with `internal`, so a refused sign-in made
+ * the task Failed, and the synthetic message was booked as a model call. One verdict per stream,
+ * whether it ends normally or throws.
+ */
+describe("l4-cred-engine, run L4: one verdict per Claude Code stream, whether it ends or throws", () => {
+  const REFUSED = "Failed to authenticate. API Error: 401 OAuth access token is invalid.";
+  const synthetic = (error: string, text: string) => ({
+    type: "assistant",
+    error,
+    message: {
+      id: "synthetic-1",
+      model: "<synthetic>",
+      content: [{ type: "text", text }],
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+    },
+  });
+  /** The SDK's shape: the messages, then a throw (`thrown`), as 0.3.304 ends an error result. */
+  const throwing =
+    (msgs: Record<string, unknown>[], thrown: string | null): QueryLike =>
+    () =>
+      (async function* () {
+        for (const m of msgs) yield m;
+        if (thrown !== null) throw new Error(thrown);
+      })();
+  const run = (h: ReturnType<typeof harness>, q: QueryLike) =>
+    new SdkAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock, queryImpl: q }).run({
+      token: issue(h, { allowedTools: ["echo"], budgetUsdMicro: 1_000_000 }),
+      budget: budget("sess-1", 50_000_000, h.clock),
+      billingSourceId: "bs",
+      credential: { kind: "oauth_token", value: "oat-value" },
+      model: "claude-sonnet-5-5",
+      systemPrompt: "sys",
+      prompt: "p",
+      cwd: process.cwd(),
+      tools: registry(),
+      pricing: flatPricing,
+      timeoutMs: 60_000,
+    });
+
+  it("a refused sign-in followed by the SDK's throw is provider_auth, and the synthetic message is no model call", async () => {
+    const h = harness();
+    const q = throwing(
+      [
+        { type: "system", subtype: "init", session_id: "s" },
+        synthetic("authentication_failed", REFUSED),
+        {
+          type: "result",
+          subtype: "success",
+          is_error: true,
+          result: REFUSED,
+          total_cost_usd: 0,
+          modelUsage: { "<synthetic>": { inputTokens: 0, outputTokens: 0 } },
+        },
+      ],
+      `Claude Code returned an error result: ${REFUSED}`,
+    );
+    const res = await run(h, q);
+    expect(res.outcome).toBe("error");
+    expect(res.error?.code).toBe("provider_auth");
+    expect(res.error?.message).toBe(
+      `Anthropic refused the Claude sign-in (authentication_failed): ${REFUSED}`,
+    );
+    expect(res.numTurns).toBe(0);
+    expect(h.ledger.entries.map((e) => e.model)).not.toContain("<synthetic>");
+    expect(h.ledger.entries).toHaveLength(0);
+  });
+
+  it("the throw alone, with the refusal's text, is provider_auth; a bare 401 in the run's own words is not", async () => {
+    const alone = await run(
+      harness(),
+      throwing(
+        [{ type: "system", subtype: "init", session_id: "s" }],
+        `Claude Code returned an error result: ${REFUSED}`,
+      ),
+    );
+    expect(alone.error).toEqual({
+      code: "provider_auth",
+      message: `Anthropic refused the Claude sign-in: ${REFUSED}`,
+    });
+    const own = await run(
+      harness(),
+      throwing(
+        [{ type: "system", subtype: "init", session_id: "s" }],
+        "Claude Code returned an error result: expected 401 to be 200",
+      ),
+    );
+    expect(own.error?.code).not.toBe("provider_auth");
+    expect(own.outcome).toBe("error");
+  });
+
+  it("a usage limit followed by the throw rests the subscription until its reset (never Failed)", async () => {
+    const resetsAt = Date.parse("2026-11-01T15:00:00Z") / 1000;
+    const res = await run(
+      harness(),
+      throwing(
+        [
+          { type: "system", subtype: "init", session_id: "s" },
+          {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt, rateLimitType: "five_hour" },
+          },
+          synthetic("rate_limit", "You've hit your limit · resets 3pm"),
+          { type: "result", subtype: "success", is_error: true, result: "You've hit your limit" },
+        ],
+        "Claude Code returned an error result: You've hit your limit · resets 3pm",
+      ),
+    );
+    expect(res.outcome).toBe("error");
+    expect(res.error).toEqual({
+      code: "provider_usage_limit",
+      message:
+        "The Claude subscription's usage limit is reached: You've hit your limit · resets 3pm",
+      resetAt: "2026-11-01T15:00:00.000Z",
+    });
+  });
+
+  it("Claude Code's own spending limit followed by the throw is a budget stop", async () => {
+    const res = await run(
+      harness(),
+      throwing(
+        [
+          { type: "system", subtype: "init", session_id: "s" },
+          assistant("working"),
+          { type: "result", subtype: "error_max_budget_usd", is_error: true },
+        ],
+        "Claude Code returned an error result: error_max_budget_usd",
+      ),
+    );
+    expect(res.outcome).toBe("budget_exceeded");
+    expect(res.error).toEqual({
+      code: "budget_exceeded",
+      message: "Claude Code reached its spending limit for this run",
+      level: "run",
+    });
+  });
+});

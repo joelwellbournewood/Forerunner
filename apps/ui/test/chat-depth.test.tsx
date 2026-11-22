@@ -253,6 +253,33 @@ describe("d1109-chat-depth, run C: under the answer", () => {
     expect(screen.queryByTestId("chat-think")).toBeNull();
   });
 
+  it("l4-cred-engine L4-creds-4: no Think it through under a failed reply; Ask again sends the same line", async () => {
+    const { user, harness, input } = await openChat();
+    const failed = "Claude did not answer this time; ask again in a moment.";
+    // Before, the daemon kept Think it through's figures on a failed turn: a paid closer look
+    // at no answer. The screen never offers it under a reply that says the answer failed.
+    harness.daemon.state.nextChatTurn = {
+      reply: failed,
+      failed: true,
+      offer: {
+        line: null,
+        action: "think",
+        explain: "Thinks longer on this model: about 30 seconds, at most CHF 0.04.",
+      },
+    };
+    await user.type(input, "what is left?");
+    await user.click(screen.getByTestId("chat-send"));
+    const agent = await screen.findByText(failed);
+    expect(agent).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("chat-ask-again")).toBeInTheDocument());
+    expect(screen.queryByTestId("chat-think")).toBeNull();
+    expect(screen.queryByTestId("chat-think-explain")).toBeNull();
+    await user.click(screen.getByTestId("chat-ask-again"));
+    await waitFor(() => expect(postedCalls(harness, "/chat/stream")).toHaveLength(2));
+    const sent = postedCalls(harness, "/chat/stream")[1]?.body as { text: string } | undefined;
+    expect(sent?.text).toBe("what is left?");
+  });
+
   it("a line Forerunner closed on says so with Ask again, which sends the same line", async () => {
     const harness = createHarness();
     harness.daemon.state.conversations.set("proj_atlas", [

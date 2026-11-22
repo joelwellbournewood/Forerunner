@@ -159,7 +159,14 @@ describe("router: invariants no policy can switch off", () => {
     });
     for (const runner of ["pc", "cloud"] as const) {
       const e = await router
-        .pick({ humanId: "j", agentId: "alice", runner, purpose: "session", modelTier: "sonnet" })
+        .pick({
+          humanId: "j",
+          agentId: "alice",
+          runner,
+          purpose: "session",
+          modelTier: "sonnet",
+          nowMs: Date.now(),
+        })
         .catch((x) => x);
       expect(e).toBeInstanceOf(ForerunnerError);
       expect((e as ForerunnerError).code).toBe("unavailable");
@@ -197,6 +204,7 @@ describe("router: invariants no policy can switch off", () => {
     });
     const cloud = await router.pick({
       humanId: "j",
+      nowMs: Date.now(),
       agentId: "alice",
       runner: "cloud",
       purpose: "session",
@@ -210,6 +218,7 @@ describe("router: invariants no policy can switch off", () => {
     expect(probed).toBe(1);
     const pc = await router.pick({
       humanId: "j",
+      nowMs: Date.now(),
       agentId: "alice",
       runner: "pc",
       purpose: "session",
@@ -229,6 +238,7 @@ describe("router: invariants no policy can switch off", () => {
     });
     const d = await router.pick({
       humanId: "j",
+      nowMs: Date.now(),
       agentId: "alice",
       runner: "pc",
       purpose: "session",
@@ -244,6 +254,7 @@ describe("router: invariants no policy can switch off", () => {
       (
         await loose.pick({
           humanId: "j",
+          nowMs: Date.now(),
           agentId: "alice",
           runner: "pc",
           purpose: "session",

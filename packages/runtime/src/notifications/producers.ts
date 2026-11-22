@@ -8,7 +8,7 @@
 import { DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
 import type { HumanRequestRow, MessageRow, ReviewRow } from "@forerunner/state";
 import { balancedCut } from "../daemon/quoted-title.ts";
-import { requestWords } from "../daemon/request-words.ts";
+import { type RequestWordsContext, requestWords } from "../daemon/request-words.ts";
 import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
 import type { KillReport, KillScope } from "../enforcement/killswitch.ts";
 import type { InjectionReport } from "../injection/scan.ts";
@@ -133,11 +133,15 @@ function fit(text: string, max: number): string {
       .every((q, i) => [", ", " and "].includes(text.slice(names[i]?.end ?? 0, q.start)));
   if (listed) {
     const start = names[0]?.start ?? 0;
-    const end = names.at(-1)?.end ?? 0;
+    // L4-creds-3: a list that already counts the rest ('"A", "B" and 2 more') adds those to the
+    // names it drops, so one count remains (before: '"A" and 1 more and 2 more').
+    const counted = /^ and (\d+) more/.exec(text.slice(names.at(-1)?.end ?? 0));
+    const end = (names.at(-1)?.end ?? 0) + (counted?.[0].length ?? 0);
+    const already = counted ? Number(counted[1]) : 0;
     for (let keep = names.length - 1; keep >= 1; keep--) {
       const fewer = `${text.slice(0, start)}${nameList(
         names.slice(0, keep).map((q) => q.name),
-        names.length - keep,
+        names.length - keep + already,
       )}${text.slice(end)}`;
       const f = shortenNames(fewer, max);
       if (f.length <= max) return f;
@@ -170,16 +174,23 @@ function bodyOf(text: string | null | undefined, action: string): string {
   return `${said} ${action}`;
 }
 
-/** What a notification about a card needs beyond its row: the names it gives. */
-export interface RequestNames {
+/**
+ * What a notification about a card needs beyond its row: the names it gives, and (l4-cred-engine
+ * L4-creds-3) the rest of the context the Inbox reads for it (`requestContexts`: an ask card's
+ * time zone and filing time, a refused card's category and rule), so the notification's words
+ * are the card's.
+ */
+export type RequestNames = {
   projectName?: string | null;
   taskTitle?: string | null;
-}
+} & Omit<RequestWordsContext, "projectName" | "taskTitle">;
 
 /**
  * A human request was opened; blocking requests are urgent (ADR 0017). The title is the card's
  * own title with the project's name ('Quote page: "Style the page" failed 4 times'), the body
- * its first sentence and "Answer it in the Inbox."
+ * its first sentence and "Answer it in the Inbox." A card with nothing to answer (no choice, no
+ * reply) and one link says its own sentence and opens that link (a refused key's card: the
+ * setup assistant), never "Answer it in the Inbox." (L4-creds-3).
  */
 export function requestOpened(
   req: HumanRequestRow,
@@ -187,16 +198,23 @@ export function requestOpened(
   names: RequestNames = {},
 ): Notification {
   const words = requestWords(req, {
+    ...names,
     projectName: names.projectName ?? null,
     taskTitle: names.taskTitle ?? null,
   });
+  const onlyLink =
+    words.choices.length === 0 && words.reply === "none" && words.links.length === 1
+      ? words.links[0]
+      : undefined;
   return {
     kind: req.blocking ? "request_blocking" : "request_opened",
     humanId,
     title: titled(names.projectName, words.title),
     // A card whose text is one sentence has it as its title: the body only says what to do.
-    body: bodyOf(words.body, "Answer it in the Inbox."),
-    link: "/inbox",
+    body: onlyLink
+      ? bodyOf(words.body, "").trim() || `${onlyLink.label}.`
+      : bodyOf(words.body, "Answer it in the Inbox."),
+    link: onlyLink ? onlyLink.to : "/inbox",
     projectId: req.project_id ?? undefined,
     sessionId: req.session_id ?? undefined,
     dedupeKey: `request:${req.id}`,
@@ -322,11 +340,16 @@ export function sessionEnded(humanId: string, r: SessionEndFacts): Notification 
     ? lines.some((l) => /\bInbox\b/.test(l))
     : r.needsHuman.length > 0 || (r.failed?.length ?? 0) > 0;
   const gist = resultGist(first) || (r.completed.length ? "session done" : "session ended");
+  // L4-creds-3: the Inbox is named once ("... The card is in the Inbox." already points there).
+  const pointed = /\bInbox\b/.test(rest);
   return {
     kind: "session_ended",
     humanId,
     title: titled(r.projectName, gist),
-    body: bodyOf(rest, asks ? "Answer it in the Inbox." : "Open the session for the details."),
+    body: bodyOf(
+      rest,
+      asks && !pointed ? "Answer it in the Inbox." : "Open the session for the details.",
+    ),
     link: `/sessions/${r.sessionId}`,
     projectId: r.projectId ?? undefined,
     sessionId: r.sessionId,

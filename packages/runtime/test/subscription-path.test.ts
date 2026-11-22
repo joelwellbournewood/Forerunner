@@ -545,6 +545,37 @@ describe("the subscription path (ADR 0044)", () => {
         };
       },
     ],
+    [
+      // l4-cred-engine L4-creds-2 (LC-C22): Agent SDK 0.3.304's shape, the synthetic error
+      // message (model '<synthetic>', zero usage), the error result, then the SDK's throw.
+      "Agent SDK 0.3.304's refusal that ends in a throw",
+      async function* () {
+        yield init;
+        yield {
+          type: "assistant",
+          error: "authentication_failed",
+          message: {
+            model: "<synthetic>",
+            content: [
+              {
+                type: "text",
+                text: "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+              },
+            ],
+            usage: { input_tokens: 0, output_tokens: 0 },
+          },
+        };
+        yield {
+          type: "result",
+          subtype: "success",
+          is_error: true,
+          result: "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+        };
+        throw new Error(
+          "Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+        );
+      },
+    ],
   ] as const) {
     it(`${label} marks the sign-in refused, files one card, and under 'Wait' the task waits for a new sign-in`, async () => {
       const w = await seedTask(`Refused sign-in (${label})`);

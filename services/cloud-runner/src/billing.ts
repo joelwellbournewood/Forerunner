@@ -8,7 +8,7 @@ import {
   type RouteSkip,
   type RoutingPolicy,
 } from "@forerunner/billing";
-import { ForerunnerError, log } from "@forerunner/platform";
+import { type Clock, ForerunnerError, log, systemClock } from "@forerunner/platform";
 import { stateSources } from "@forerunner/runtime";
 import type { StateStore } from "@forerunner/state";
 import type { Vault } from "@forerunner/vault";
@@ -90,6 +90,8 @@ export interface PickRunnerBillingOptions {
   policy?: RoutingPolicy;
   /** Tier for a `kindsForTier` policy; default `DEFAULT_RUNNER_MODEL_TIER`. */
   modelTier?: ModelTier;
+  /** The runner's clock, for the end of a share or monthly stop (the router's `nowMs`). */
+  clock?: Pick<Clock, "now">;
 }
 
 export async function pickRunnerBillingSource(
@@ -114,6 +116,7 @@ export async function pickRunnerBillingSource(
     runner: "cloud",
     purpose: "session",
     modelTier: opts.modelTier ?? DEFAULT_RUNNER_MODEL_TIER,
+    nowMs: (opts.clock ?? systemClock).now(),
   });
   const reason = `${decision.reason} (${opts.personal ? "personal" : "shared"} runner)`;
   logger.info("billing source chosen", {

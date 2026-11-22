@@ -92,6 +92,7 @@ import {
   type DepthAsk,
   depthWords,
   FAILED_WORDS,
+  failureReply,
   footerWords,
   HANDED_OVER_RESULT,
   handOverStep,
@@ -102,7 +103,6 @@ import {
   rungOfWhy,
   stoppedWords,
   THINK_THROUGH_WHAT,
-  TIMEOUT_REPLY,
   thinkItThroughExplain,
   thinkingLongerFact,
   VOICE_THOROUGH_NOTICE,
@@ -1374,7 +1374,9 @@ export class ConversationAgent {
     }
     // The one-off press: this question's calls may move to the next credential at a stop.
     const provider = req.oneOffSwitch && hasOneOffSwitch(given) ? given.withOneOffSwitch() : given;
-    // The note under an answer another credential gave: once per stop per conversation.
+    // The note under an answer another credential gave: once per stop per conversation. It is
+    // marked as said only when it is under a completed answer (l4-cred-engine L4-creds-4: before,
+    // a failed turn took it, and the first real answer on the other credential had none).
     const switchedTo = credHold && !credHold.held ? (credHold.answersOn ?? null) : null;
     const stopNoted = credHold?.wait.stopKey ?? credHold?.wait.sourceId ?? "";
     const switchNote =
@@ -1385,10 +1387,6 @@ export class ConversationAgent {
             credHold?.untilText ?? null,
           )
         : null;
-    if (switchNote && !req.oneOffSwitch) {
-      conv.notedStops = conv.notedStops ?? new Set();
-      conv.notedStops.add(stopNoted);
-    }
 
     // The model path: a fast model with the registry's command tools, the read-only tools and
     // nothing else. d1109-chat-depth (ADR 0114): a longer pass when it helps, on the same model
@@ -2238,16 +2236,23 @@ export class ConversationAgent {
     }
     // "Done." only when a command of the turn did something (l3-chat-claims: a reply with no
     // text and no command claimed a change that never happened). L3-left-11: a turn its time
-    // limit cut off says so in one sentence with what to do, never "(run timeout)".
-    if (!reply && !stopped)
-      reply =
-        result && result.outcome !== "completed"
-          ? result.outcome === "timeout" || result.error?.code === "timeout"
-            ? TIMEOUT_REPLY
-            : `I could not answer (${result.error?.message ?? result.outcome}).`
-          : results.some((r) => r.status === "done" || r.status === "partial")
-            ? "Done."
-            : NO_ANSWER_REPLY;
+    // limit cut off says so in one sentence with what to do, never "(run timeout)". L4-creds-4:
+    // every other failure is one sentence by its code, never the error's own message.
+    let failedTurn: { askAgain: boolean } | null = null;
+    if (!reply && !stopped) {
+      if (result && result.outcome !== "completed") {
+        const failure = failureReply(
+          result.outcome === "timeout" ? { ...result.error, code: "timeout" } : result.error,
+        );
+        reply = failure.text;
+        failedTurn = { askAgain: failure.askAgain };
+      } else
+        reply = results.some((r) => r.status === "done" || r.status === "partial")
+          ? "Done."
+          : NO_ANSWER_REPLY;
+    }
+    // A completed model answer: the only one the switch note and Think it through go under.
+    const answered = !!result && result.outcome === "completed" && !heldAfter && !stopped;
     // d1109-chat-depth: under a longer answer that reached its wrap-up, the next rung's ask line
     // (the stronger, or the strongest when the project's highest model is above it).
     if (deep && !stopped && result?.wrapUpSent && !offer) {
@@ -2280,8 +2285,10 @@ export class ConversationAgent {
       !guardNotice &&
       !stopped &&
       // C5-left-3 (d1109-cred-screens): a hold reply is no answer to think longer about (before,
-      // it offered Think it through, whose press got the hold reply again).
+      // it offered Think it through, whose press got the hold reply again). L4-creds-4: nor is a
+      // reply that says the answer failed (before, a paid Think it through stood under it).
       !heldAfter &&
+      answered &&
       results.length === 0
         ? {
             estimateUsdMicro: longerFigures.estimateUsdMicro,
@@ -2303,8 +2310,14 @@ export class ConversationAgent {
               subscription: credential?.kind === "subscription",
             })
           : null) ??
-      switchNote ??
+      (answered ? switchNote : null) ??
       fixFooter;
+    // Said once per stop per conversation: the stop is marked only now that the note is under
+    // an answer (a one-off press always says it, and marks nothing).
+    if (switchNote && footer === switchNote && !req.oneOffSwitch) {
+      conv.notedStops = conv.notedStops ?? new Set();
+      conv.notedStops.add(stopNoted);
+    }
     const lineUnder: ChatOffer | null = offer
       ? ownAsk
         ? { line: (offer as StoredOffer).line, action: "go_ahead" }
@@ -2398,7 +2411,10 @@ export class ConversationAgent {
             }
           : {}),
         ...(stopped ? { stopped: true } : {}),
-        ...(ownAsk || heldAfter ? { notice: true } : {}),
+        ...(ownAsk || heldAfter || failedTurn ? { notice: true } : {}),
+        // L4-creds-4: a reply that says the answer failed; Ask again under it where the same
+        // line could get an answer now.
+        ...(failedTurn?.askAgain ? { failed: true } : {}),
         // C5-left-3: the hold reply keeps its one-off press, so the conversation shows it.
         ...(heldOneOff ? { oneOff: heldOneOff } : {}),
       } as never,

@@ -335,3 +335,121 @@ describe("d1109-cred-engine, run C: an open ask card closes when it no longer ap
     await rt.close();
   }, 90_000);
 });
+
+/**
+ * l4-cred-engine L4-creds-7 (live check 4, L4-creds-6): after the ask card is answered, the
+ * ended session's stored result still said "Waits for your answer: use your API key? The card
+ * is in the Inbox." on its session page, the Overview's Last result and the Inbox's Update. Every
+ * reader now reads it as it is now (`resultAfterWait`), also after composing again.
+ */
+describe("l4-cred-engine, run L4: a stored result's ask form after the card is answered", () => {
+  for (const choice of ["Wait", "Use API key"] as const) {
+    it(`after ${choice}: the session page, the Last result and the Update no longer say the card is in the Inbox`, async () => {
+      const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+      const world = credWorld({ clock, prefix: "fr-ask-stored-" });
+      homes.push(world.home);
+      world.limitSubscription(Date.parse("2026-10-31T14:00:00Z"));
+      let { rt, req } = await world.compose();
+      await setPolicy(rt, "subscription_then_ask");
+      const { project } = await seedProject(rt, "Quote page", ["Style the page", "Write the copy"]);
+      const first = await startSession(rt, project.id);
+      await settleSessions(rt);
+      expect(first.summary).toContain(
+        "Waits for your answer: use your API key? The card is in the Inbox.",
+      );
+      const [card] = await askCards(rt);
+      const inbox = (await req<InboxView>("/inbox")).body;
+      const shown = inbox.requests.find((r) => r.id === card?.id);
+      const label = choice === "Wait" ? shown?.choices?.[1]?.label : shown?.choices?.[0]?.label;
+      expect(label).toBe(choice);
+      await req<HumanRequestView>(`/requests/${card?.id}/answer`, {
+        answer: label,
+        version: card?.version,
+      });
+      await settleSessions(rt);
+      const read = async () => {
+        const page = (await req<{ summary: string }>(`/sessions/${first.sessionId}`)).body.summary;
+        const last = (
+          await req<{ lastSession: { id: string; summary: string } | null }>(
+            `/projects/${project.id}/summary`,
+          )
+        ).body.lastSession;
+        const updates = (await req<InboxView>("/inbox")).body.messages.map((m) => m.body);
+        return { page, last, updates };
+      };
+      for (let round = 0; round < 2; round++) {
+        const { page, last, updates } = await read();
+        expect(page).not.toContain("The card is in the Inbox");
+        for (const u of updates) expect(u).not.toContain("The card is in the Inbox");
+        if (last?.id === first.sessionId) expect(last.summary).not.toContain("The card is in");
+        if (choice === "Wait") {
+          expect(page).toContain(
+            "Waits until 15:00 (your subscription's limit); then your session goes on.",
+          );
+          if (last?.id === first.sessionId)
+            expect(last.summary).toContain(
+              "Waits until 15:00 (your subscription's limit); then your session goes on.",
+            );
+        } else expect(page).toContain("Went on with your API key.");
+        // Composed again on the same home: the same words.
+        await settleSessions(rt);
+        await rt.close();
+        ({ rt, req } = await world.compose());
+      }
+      await settleSessions(rt);
+      await rt.close();
+    }, 120_000);
+  }
+
+  // fixup-l4-cred-engine (review, non-blocking): the reader listed every card oldest first,
+  // 500 at most, so on an install with more cards than that the stop's ask card was never
+  // found and the stale "The card is in the Inbox." came back after Wait.
+  it("after Wait on an install with more than 500 earlier cards: the session page reads the plain wait", async () => {
+    const clock = new SimulatedClock("2026-10-31T08:00:00Z");
+    const world = credWorld({ clock, prefix: "fr-ask-stored-many-" });
+    homes.push(world.home);
+    world.limitSubscription(Date.parse("2026-10-31T14:00:00Z"));
+    const { rt, req } = await world.compose();
+    await setPolicy(rt, "subscription_then_ask");
+    const { project } = await seedProject(rt, "Quote page", ["Style the page", "Write the copy"]);
+    // 501 earlier yes-or-no cards on no project, as the ask card is, all answered long ago
+    // (none in the Inbox now).
+    for (let i = 0; i < 501; i++) {
+      const row = await rt.store.humanRequest.insert({
+        human_id: rt.human.id,
+        project_id: null,
+        task_id: null,
+        session_id: null,
+        kind: "approval",
+        why: `Earlier question ${i}`,
+        steps: [],
+        options: ["Yes", "No"],
+        blocking: false,
+        risk: "low",
+      } as never);
+      await rt.store.humanRequest.answer(row.id, row.version, "Yes", rt.human.id);
+    }
+    await clock.set("2026-10-31T09:00:00Z");
+    const first = await startSession(rt, project.id);
+    await settleSessions(rt);
+    expect(first.summary).toContain(
+      "Waits for your answer: use your API key? The card is in the Inbox.",
+    );
+    const [card] = await askCards(rt);
+    const inbox = (await req<InboxView>("/inbox")).body;
+    const label = inbox.requests.find((r) => r.id === card?.id)?.choices?.[1]?.label;
+    expect(label).toBe("Wait");
+    await req<HumanRequestView>(`/requests/${card?.id}/answer`, {
+      answer: label,
+      version: card?.version,
+    });
+    await settleSessions(rt);
+    const page = (await req<{ summary: string }>(`/sessions/${first.sessionId}`)).body.summary;
+    expect(page).not.toContain("The card is in the Inbox");
+    expect(page).toContain(
+      "Waits until 15:00 (your subscription's limit); then your session goes on.",
+    );
+    await settleSessions(rt);
+    await rt.close();
+  }, 120_000);
+});

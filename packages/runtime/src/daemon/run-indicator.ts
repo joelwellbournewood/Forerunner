@@ -1,5 +1,11 @@
 import { saidByName } from "@forerunner/critic";
 import type { SessionRow, StateStore } from "@forerunner/state";
+import { askAnswerOf, CREDENTIAL_ASK_KEY } from "../session/credential-ask.ts";
+import {
+  type CredentialWait,
+  otherCredentialOf,
+  waitSentence,
+} from "../session/credential-wait.ts";
 import { keptContinuationOf, keptStartOf } from "../wiring/billing-pick.ts";
 import type { RunningHealth, RunningView } from "./api-types.ts";
 import { isIntakeSession } from "./project-status.ts";
@@ -63,8 +69,74 @@ export async function resultAfterWait(
   since: string | null | undefined,
   text: string,
 ): Promise<string> {
-  if (!projectId || !since || !text.includes(GOES_ON_CLAUSE)) return text;
-  return (await waitPromiseHolds(store, projectId, since)) ? text : summaryAfterWait(text);
+  if (!projectId || !since) return text;
+  const now = await askFormAfterAnswer(store, projectId, since, text).catch(() => text);
+  if (!now.includes(GOES_ON_CLAUSE)) return now;
+  return (await waitPromiseHolds(store, projectId, since)) ? now : summaryAfterWait(now);
+}
+
+/** CE-7's ask form in a stored result ('Waits for your answer: use your API key? The card ...'). */
+const ASK_FORM =
+  /(Waits|"[^"\n]*" waits) for your answer: use ([^?\n]+)\? The card is in the Inbox\./;
+
+/**
+ * l4-cred-engine L4-creds-7 (live check 4, L4-creds-6): the ask form a session stored at its end
+ * is true only while the stop's one ask card is open. Once it is answered (or closed), it reads
+ * as what is true now: after Wait the plain wait ("Waits until 15:00 (your subscription's limit);
+ * then your session goes on.", the goes-on rule then applies), after Use API key "Went on with
+ * your API key.". The card is the stop's latest ask card filed before the result was written; a
+ * notification already sent is not reworded.
+ */
+async function askFormAfterAnswer(
+  store: StateStore,
+  projectId: string,
+  since: string,
+  text: string,
+): Promise<string> {
+  const m = ASK_FORM.exec(text);
+  if (!m) return text;
+  const sinceMs = Date.parse(since);
+  // The ask cards are yes-or-no cards on no project and no task (`ensureAskCard`), read newest
+  // first: before, every card oldest first, 500 at most, so on an install with more cards than
+  // that the stop's card was never found and the stale form came back (review of L4-creds-7).
+  const cards = (
+    await store.humanRequest.list({ kind: "approval", project_id: null, task_id: null } as never, {
+      limit: 500,
+      orderBy: [
+        { column: "created_at", direction: "desc" },
+        { column: "id", direction: "desc" },
+      ],
+    })
+  )
+    .filter((r) => (r.change_card as { key?: unknown } | null)?.key === CREDENTIAL_ASK_KEY)
+    .filter((r) => Date.parse(r.created_at) <= sinceMs + 1000)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const card = cards[0];
+  if (!card || card.status === "open") return text;
+  const facts = (card.change_card ?? {}) as Record<string, unknown>;
+  const kind = (
+    typeof facts.credential_kind === "string" ? facts.credential_kind : "subscription"
+  ) as CredentialWait["kind"];
+  const used = facts.outcome === "granted" || askAnswerOf(card.answer) === "use";
+  const who = m[1] ?? "Waits";
+  if (used) return text.replace(m[0], `Went on with ${otherCredentialOf(kind)}.`);
+  const person = card.human_id
+    ? await store.human.get(card.human_id).catch(() => undefined)
+    : undefined;
+  const wait: CredentialWait = {
+    reason: (typeof facts.reason === "string" ? facts.reason : "limit") as CredentialWait["reason"],
+    sourceId: typeof facts.source_id === "string" ? facts.source_id : "",
+    kind,
+    until: typeof facts.until === "string" ? facts.until : null,
+  };
+  const title = who === "Waits" ? undefined : who.slice(1, who.lastIndexOf('"'));
+  const plain = waitSentence(wait, {
+    nowMs: sinceMs,
+    goesOn: await waitPromiseHolds(store, projectId, since),
+    ...(person?.timezone ? { timezone: person.timezone } : {}),
+    ...(title ? { title } : {}),
+  });
+  return text.replace(m[0], plain);
 }
 
 /** The words with the specialist in a person's words (`saidByName`: writer-marketing is "writer"). */

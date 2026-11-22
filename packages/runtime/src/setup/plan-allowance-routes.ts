@@ -39,6 +39,12 @@ export interface PlanAllowanceRoutesDeps {
   current: () => PlanAllowance;
   /** Called with the allowance the field set, so the running runtime reports it. */
   onChanged?: (a: PlanAllowance) => void;
+  /**
+   * l4-cred-engine L4-creds-1 (CE-6): after the allowance is stored, the work that waited for
+   * the subscription's share goes on as the stop's end decides; the line it returns says what
+   * (null when nothing waited or the stop did not end).
+   */
+  onRaised?: () => Promise<string | null>;
 }
 
 /** The row's stop line when it has none (ADR 0044: `SEEDED_PLAN_SHARE_CAP`). */
@@ -135,8 +141,13 @@ export function createPlanAllowanceRoutes(deps: PlanAllowanceRoutesDeps): Hono {
       await updateSourceLimits(deps.store, row.id, (limits) => ({
         ...limits,
         planUsdMicro: next.usdMicro,
+        // L4-creds-1: the shares worked out with the earlier allowance stop counting from now.
+        ...(limits.planUsdMicro !== next.usdMicro
+          ? { planAllowanceSetAt: deps.clock.nowIso() }
+          : {}),
       }));
     deps.onChanged?.(next);
+    const changeLine = deps.onRaised ? await deps.onRaised().catch(() => null) : null;
     await deps.store.auditLog
       .append({
         tool: "settings.plan_allowance",
@@ -147,7 +158,7 @@ export function createPlanAllowanceRoutes(deps: PlanAllowanceRoutesDeps): Hono {
         occurred_at: deps.clock.nowIso(),
       })
       .catch(() => undefined);
-    return c.json(await view());
+    return c.json({ ...(await view()), changeLine } satisfies PlanAllowanceView);
   });
 
   return app;

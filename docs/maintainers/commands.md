@@ -757,7 +757,11 @@ run C").
   `test/starts-engine.test.ts`: "Start a work session now on the person's say-so, ...; read back
   for their yes. Answers and task changes never start one.". `refuseWhileWaiting` answers the
   port `startWaits` (the person's session waits to go on: one wait per project) in words, with
-  no read-back.
+  no read-back. It is asked after `refuseBlockedStart` (fixup-l4-cred-engine, L4-creds-8): a
+  start the Start dialog refuses says the dialog's sentence first ("Nothing can run until you
+  save a new API key in Settings." while the person's session is kept to go on after a refused
+  key; before, "Your session of 10:00 goes on by itself once its Claude credential is back.").
+  Test: `test/start-refusal-order.test.ts`.
 - **The parser** (`matchStart`) reads "run it now", "start it", "run them", "run the tasks",
   "let's run it", "starte es", "starten sie" and "(jetzt) ausführen" as a start; "please run it" is
   "run it" once `clean` drops the "please"; "go ahead and run it" is two clauses and goes to the

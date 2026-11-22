@@ -154,3 +154,35 @@ The review of the screens found three places where a screen promised what the ap
 
 Settings' "Stop using it" also says what it does ("Stop using it: what already runs on your API
 key finishes; new work waits for your subscription.").
+
+## Amendment 2026-11-22: every stop read once, and what a failed or refused call says (l4-cred-engine, run L4)
+
+Live check 4 (4cf11fd) found stops the policy did not see and words that promised what the app
+did not do. The owner's D5 ("Running out includes a usage limit, a plan-share cap and a monthly
+cap ... a refused credential follows the same policy as running out and also tells the person")
+and 7b ("It should definitely not automatically do something even when told to wait") decide
+each point.
+
+1. **How a refusal is read (L4-creds-2).** Agent SDK 0.3.304 ends Claude Code's error result
+   with a throw and starts the stream with Claude Code's own synthetic error message (model
+   `<synthetic>`, zero usage). The driver and the provider read the stream's verdict (or the
+   thrown text) once: a refused sign-in is the refusal (one card, the work waits, Settings reads
+   Refused), a usage limit rests, a budget end is a budget stop. The synthetic message is no
+   model call and is never booked or listed in Costs.
+2. **The share reached mid-run is a stop (L4-creds-1).** A run's budget stop at the plan's share
+   on the subscription is the credential stop `share`, under the person's policy as a usage limit
+   is: next goes on with the key, ask files one card, wait ends the session to go on at the
+   month's start. Raising the allowance in Settings ends the stop and says what goes on.
+3. **A card's notification says what the card says, once, in the person's zone (L4-creds-3).**
+   The person's time zone and monthly cap are read at each use, never the ones composed at start.
+4. **A failed chat answer is no answer (L4-creds-4).** The switch note is said only under a
+   completed answer (once per stop), Think it through is offered only under one, and every other
+   failure is one sentence by its error code, never the error's own message.
+5. **A cut-off call is booked on the credential that served it (L4-creds-5).**
+6. **Chat follows the Start dialog under a refusal (L4-creds-8).** The hold reply says what to do
+   and never promises a start; chat's start under a refused credential gets the dialog's sentence
+   and no read-back. Chat's start kept for a reset is not built yet.
+7. **A stored ask form reads as it is now (L4-creds-7)**, the configured API address covers the
+   subscription's task runs (L4-creds-10), the ask card's yes is applied once across a restart
+   (L4-creds-11), a continuation queued behind another project's session is named as next
+   (L4-creds-9), and chat's room for a longer answer reads the plan's share (L4-creds-6).

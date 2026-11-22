@@ -50,7 +50,9 @@ import type {
 export type KeyAnswer =
   | { kind: "ok" }
   | { kind: "refused" }
-  | { kind: "limit"; form: "429" | "400"; resetAt: string };
+  | { kind: "limit"; form: "429" | "400"; resetAt: string }
+  /** The API's own error (a 500 `api_error`), which the SDK is told not to retry. */
+  | { kind: "error" };
 
 /** One request as the stand-in's log keeps it: never the key, only its id. */
 export interface StandInRequest {
@@ -243,6 +245,16 @@ export function messagesApiStandIn(opts: MessagesApiStandInOptions): MessagesApi
       const status = answer.form === "400" ? 400 : 429;
       record({ ...base, status, answer: "limit" });
       return limitResponse(answer);
+    }
+    if (answer.kind === "error") {
+      record({ ...base, status: 500, answer: "error" });
+      return errorResponse(
+        500,
+        "api_error",
+        "Internal server error",
+        {},
+        { "x-should-retry": "false" },
+      );
     }
     if (request.method === "GET") {
       record({ ...base, status: 200, answer: "ok" });

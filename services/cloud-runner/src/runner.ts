@@ -434,6 +434,7 @@ export async function startCloudRunner(deps: CloudRunnerDeps): Promise<CloudRunn
       agentOwnerHumanId: agent.owner_human_id,
       personal: config.personal,
       probe,
+      clock,
     });
   } catch (e) {
     if (rt.provider?.name === "fake" || !rt.provider) {

@@ -218,7 +218,7 @@ describe("which Claude credential is used first (U-078)", () => {
     });
   };
   const HOLD_12 =
-    "Your Claude subscription is at its limit until 12:00, so I have not answered. I can still add, move and start tasks.";
+    "Your Claude subscription is at its limit until 12:00, so I have not answered. I can still add and change tasks.";
 
   // CE-1, CE-4 (the owner's answer 4 of 2026-11-09: "it should use the order that the user
   // specifies"): with nothing chosen, chat follows the default preset like the tasks: the

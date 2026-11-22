@@ -88,7 +88,7 @@ describe("d1109-cred-engine, run C: every call follows the policy in a session (
       ]);
       // Chat holds: the hold reply, no call.
       expect(await chat(rt, req)).toBe(
-        "Your Claude subscription is at its limit until 15:00, so I have not answered. I can still add, move and start tasks.",
+        "Your Claude subscription is at its limit until 15:00, so I have not answered. I can still add and change tasks.",
       );
       // A plan from a brief waits for the subscription too.
       const created = (

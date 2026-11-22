@@ -52,9 +52,10 @@ export function PlanAllowanceSection() {
       const next = await client.setPlanAllowance(amount);
       setView(next);
       setDraft(String(next.chfMonthly));
-      setSaved(
-        `Saved. Subscription work stops at ${Math.round(next.stopShare * 100)}% of ${chf(next.chfMonthly)} a month, from the next task on.`,
-      );
+      // l4-cred-engine L4-creds-1 (CE-6): when the raise ended the share's stop, the daemon's
+      // line says what the work that waited does now (the person's session goes on).
+      const saved = `Saved. Subscription work stops at ${Math.round(next.stopShare * 100)}% of ${chf(next.chfMonthly)} a month, from the next task on.`;
+      setSaved(next.changeLine ? `${saved} ${next.changeLine}` : saved);
     } catch (err) {
       if (isRouteMissing(err)) setMissing("setPlanAllowance");
       setError(describeError(err));
