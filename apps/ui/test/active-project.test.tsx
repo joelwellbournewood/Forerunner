@@ -127,9 +127,7 @@ describe("l4-chat-answers, run L4: 'open <project>' opens it (L4-chat-104)", () 
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, "open Beacon");
     await user.click(screen.getByTestId("chat-send"));
-    await waitFor(() =>
-      expect(screen.getByTestId("project-header")).toHaveTextContent("Beacon"),
-    );
+    await waitFor(() => expect(screen.getByTestId("project-header")).toHaveTextContent("Beacon"));
     expect(postedCalls(harness, "/chat/stream").at(-1)?.body).toMatchObject({
       projectId: "proj_atlas",
       projectTab: true,

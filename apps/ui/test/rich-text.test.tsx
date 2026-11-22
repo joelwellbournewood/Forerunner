@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { RichText } from "../src/components/RichText.tsx";
+import { inAppText } from "../src/lib/plain-words.ts";
 import { createHarness, renderApp } from "./helpers.tsx";
 
 /**
@@ -192,5 +193,68 @@ describe("model text in the chat and the session log", () => {
     expect(box.textContent).toBe("What I did\nSee the guide (https://example.test/guide).");
     expect(within(box).getByText("What I did").tagName).toBe("STRONG");
     expect(box.querySelector("a")).toBeNull();
+  });
+});
+
+/**
+ * l4-chat-answers, run L4 (live check 4, L4-chat-10/-17): a settled chat reply glued its
+ * paragraphs and lists into one line ('Four tasks are left in Garden club, plus one decision for
+ * you. - "Write the welcome page" failed ...') and the bubble reflowed when streaming ended;
+ * inAppText turned every blank line into a space before RichText split the lines.
+ */
+describe("l4-chat-answers, run L4: a settled reply keeps its paragraphs and lists (L4-chat-111)", () => {
+  const SAID = [
+    "Four tasks are left in Garden club, plus one decision for you.",
+    "",
+    '- "Write the welcome page" failed',
+    '- "Write the FAQ" waits for the README',
+    '- "Style the page" is ready',
+    "",
+    "Two tasks are done.",
+  ].join("\n");
+
+  const check = (agent: HTMLElement) => {
+    const items = within(agent)
+      .getAllByRole("listitem")
+      .map((li) => li.textContent);
+    expect(items).toEqual([
+      '"Write the welcome page" failed',
+      '"Write the FAQ" waits for the README',
+      '"Style the page" is ready',
+    ]);
+    for (const li of within(agent).getAllByRole("listitem")) {
+      expect(li.textContent).not.toContain("Four tasks are left");
+      expect(li.textContent).not.toContain("Two tasks are done");
+    }
+    expect(agent).toHaveTextContent(
+      "Four tasks are left in Garden club, plus one decision for you.",
+    );
+    expect(agent).toHaveTextContent("Two tasks are done.");
+    expect(agent.textContent).not.toContain("you. -");
+  };
+
+  it("an intro, a blank line, three items, a blank line and a closing line: three listitems exactly, the intro and the closing outside any <li>, also after the route is shown again", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.nextChatReply = SAID;
+    const app = renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "what is left?");
+    await user.click(screen.getByTestId("chat-send"));
+    const agent = await screen.findByTestId("chat-agent");
+    await waitFor(() => expect(agent).toHaveAttribute("data-streaming", "false"));
+    check(agent);
+    // Shown again from the conversation the daemon keeps (a reload of the route).
+    app.unmount();
+    renderApp("/projects/proj_atlas/chat", harness);
+    const again = await screen.findByTestId("chat-agent");
+    check(again);
+  });
+
+  it("inAppText keeps blank lines and line breaks, and still collapses runs of spaces", () => {
+    expect(inAppText("a\n\nb")).toBe("a\n\nb");
+    expect(inAppText("a\n\n\n\nb")).toBe("a\n\nb");
+    expect(inAppText("a  b \n- c\n- d")).toBe("a b\n- c\n- d");
   });
 });

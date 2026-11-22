@@ -502,7 +502,11 @@ undo or tap Undo in the change log." into "Undo it from Changes." (the change ca
 a command's read-back, a pending chat confirmation, an Inbox card's steps), and both of the
 daemon's device lines, "Confirm in the app on a paired device." and its long form "...; on the
 phone with biometric.", into "Confirm on this device." (W15B-24: the short form a one-question
-read-back ends in stayed; voice and the phone keep the daemon's words); `withoutMarks` drops a
+read-back ends in stayed; voice and the phone keep the daemon's words), and keeps the text's
+lines (l4-chat-answers, 2026-11-22, L4-chat-111: runs of spaces and tabs collapse, line ends are
+trimmed, a run of blank lines is one; before, every blank line became a space, so a settled chat
+reply glued its paragraphs into its list; test `rich-text.test.tsx` "l4-chat-answers, run L4");
+`withoutMarks` drops a
 specialist's markdown from what is shown (W15B-17); `withoutUndoWord`
 strips a change sentence's spoken "Undo.": the settings dialog shows its Undo button, a Chat
 reply an **Undo** button for each action with an `undoToken` (`POST /changes/:id/undo`, the
