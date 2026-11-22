@@ -781,6 +781,11 @@ export interface FakeDaemonState {
     oneOff?: { label: string; explain: string } | null;
     /** C5-left-3: the reply text of this turn (a hold reply, or the answer the press gets). */
     reply?: string;
+    /**
+     * l4-cred-engine L4-creds-4: the reply says the answer failed (the daemon's chat.reply row
+     * with `failed`, a notice): the conversation's turn has `failed`, so Ask again is under it.
+     */
+    failed?: boolean;
   } | null;
   /** C5-left-3: what the last chat posts asked for: the text and whether it was the one-off. */
   chatPosts: { text: string; oneOff: boolean }[];
@@ -4562,7 +4567,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   };
 
   /** A turn kept in its conversation, as the daemon writes chat.human and chat.reply. */
-  const keepTurn = (body: ChatRequestBody, reply: ChatReplyView): ChatReplyView => {
+  const keepTurn = (body: ChatRequestBody, reply: ChatReplyView, failed = false): ChatReplyView => {
     const key = body.projectId ?? "";
     const turns = state.conversations.get(key) ?? [];
     const readback = reply.pendingConfirmation?.readback ?? null;
@@ -4589,7 +4594,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           sessionId: (a.id ? startedSessions.get(a.id) : undefined) ?? null,
         })),
         question: reply.question,
-        notice: false,
+        notice: failed,
         readback,
         waiting: !!reply.pendingConfirmation,
         card: reply.pendingConfirmation ? "waiting" : null,
@@ -4601,6 +4606,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         offer: reply.offer ?? null,
         oneOff: reply.oneOff ?? null,
       },
+      // L4-creds-4: a reply that says the answer failed (Ask again under it).
+      ...(failed ? { failed: true } : {}),
     });
     // A yes or a no answers the card read back before it.
     const said = body.text.trim().toLowerCase();
@@ -4680,14 +4687,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.nextChatTurn = null;
     state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
     const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
-    const reply = keepTurn(parsed.data, {
-      ...base,
-      ...(extra?.reply ? { reply: extra.reply } : {}),
-      depth: extra?.depth ?? "quick",
-      footer: extra?.footer ?? null,
-      offer: extra?.offer ?? null,
-      oneOff: extra?.oneOff ?? null,
-    });
+    const reply = keepTurn(
+      parsed.data,
+      {
+        ...base,
+        ...(extra?.reply ? { reply: extra.reply } : {}),
+        depth: extra?.depth ?? "quick",
+        footer: extra?.footer ?? null,
+        offer: extra?.offer ?? null,
+        oneOff: extra?.oneOff ?? null,
+      },
+      extra?.failed === true,
+    );
     heardChat(reply, parsed.data.projectId);
     return c.json(reply);
   });
@@ -4768,7 +4779,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           turns.filter((t) => t.id !== base.transcriptId),
         );
       }
-      keepTurn(parsed.data, reply);
+      keepTurn(parsed.data, reply, extra?.failed === true && !stopped);
       heardChat(reply, parsed.data.projectId);
       emit("conversation.changed", { projectId: parsed.data.projectId ?? null });
       return reply;

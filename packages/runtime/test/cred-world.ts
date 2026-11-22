@@ -207,8 +207,8 @@ export interface CredWorld {
   ): void;
   /** The `query()` options of every Claude Code call, oldest first (for its environment). */
   sdkOptions: Record<string, unknown>[];
-  /** The key is at its limit until `ms`, refused, or served. */
-  setKey(answer: "ok" | "refused" | { limitUntilMs: number }): void;
+  /** The key is at its limit until `ms`, refused, answered with the API's 500, or served. */
+  setKey(answer: "ok" | "refused" | "error" | { limitUntilMs: number }): void;
   compose(): Promise<{ rt: RuntimeApp; req: Req }>;
 }
 
@@ -235,7 +235,7 @@ export function credWorld(opts: {
   const sdkCalls: SdkCall[] = [];
   let subLimitUntil: number | null = null;
   let subRefused = false;
-  let keyAnswer: "ok" | "refused" | { limitUntilMs: number } = "ok";
+  let keyAnswer: "ok" | "refused" | "error" | { limitUntilMs: number } = "ok";
   let runs = 0;
   let limitAfter: { at: number; untilMs: number } | null = null;
   let runReport = SUBSCRIPTION_REPORT;
@@ -274,6 +274,7 @@ export function credWorld(opts: {
   const answerFor = (_key: string, nowMs: number): KeyAnswer => {
     if (keyAnswer === "ok") return { kind: "ok" };
     if (keyAnswer === "refused") return { kind: "refused" };
+    if (keyAnswer === "error") return { kind: "error" };
     if (nowMs >= keyAnswer.limitUntilMs) return { kind: "ok" };
     return {
       kind: "limit",

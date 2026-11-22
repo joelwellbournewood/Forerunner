@@ -324,6 +324,77 @@ export const STOP_EXPLAIN = "Stops this answer. Changes it already made stay, ea
 export const TIMEOUT_REPLY =
   "I ran out of time before I could answer. Ask again, or ask for a shorter answer.";
 
+/**
+ * The reply to a chat answer that did not complete, by the run's error code (l4-cred-engine
+ * L4-creds-4, ADR 0120 amended 2026-11-22): one sentence each, never the error's own message
+ * (before, "I could not answer (<raw error>)." showed a provider's words, a path or an id). A
+ * cap names itself; a credential's stop normally gets the policy's hold reply before this is
+ * read, so its lines here are for a stop the policy did not hold. `askAgain`: the conversation
+ * shows Ask again under it (the same line could get an answer now).
+ */
+export function failureReply(
+  error: { code?: string; level?: string; source?: string } | null | undefined,
+): { text: string; askAgain: boolean } {
+  const code = error?.code ?? "";
+  switch (code) {
+    case "timeout":
+      return { text: TIMEOUT_REPLY, askAgain: true };
+    case "budget_exceeded":
+      if (error?.level === "month")
+        return { text: "This month's cap is reached, so I have not answered.", askAgain: false };
+      if (error?.level === "project")
+        return {
+          text: "This project's budget is reached, so I have not answered.",
+          askAgain: false,
+        };
+      if (error?.level === "plan" || error?.source === "plan")
+        return {
+          text: "The share of your Claude plan Forerunner may use is reached, so I have not answered.",
+          askAgain: false,
+        };
+      return {
+        text: "This answer would spend more than a chat answer may, so I stopped it; ask a shorter question.",
+        askAgain: false,
+      };
+    case "provider_rate_limit":
+      return {
+        text: "Claude is busy right now, so I have not answered; ask again in a minute.",
+        askAgain: true,
+      };
+    case "provider_error":
+      return { text: "Claude did not answer this time; ask again in a moment.", askAgain: true };
+    case "provider_auth":
+      return {
+        text: "Anthropic refused the credential, so I have not answered; check it in Settings.",
+        askAgain: false,
+      };
+    case "provider_usage_limit":
+      return {
+        text: "The credential is at its limit, so I have not answered; ask again after its reset.",
+        askAgain: false,
+      };
+    case "unavailable":
+      return {
+        text: "No credential can answer right now, so I have not answered; check Settings.",
+        askAgain: false,
+      };
+    case "killed":
+      return { text: "This answer was cut off before it finished; ask again.", askAgain: true };
+    case "step_cap_exceeded":
+      return {
+        text: "This answer took more steps than one answer may, so I stopped it; ask a narrower question.",
+        askAgain: false,
+      };
+    case "injection_suspected":
+      return {
+        text: "Something I read looked like instructions to me, so I stopped this answer and changed nothing.",
+        askAgain: false,
+      };
+    default:
+      return { text: "I could not answer this; ask again.", askAgain: true };
+  }
+}
+
 // ---------------------------------------------------------------------------------------------
 // What the model receives (code, asserted verbatim on the requests).
 

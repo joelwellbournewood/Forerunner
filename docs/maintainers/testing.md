@@ -2910,7 +2910,9 @@ bench-api` (U-078).** `testenv/src/provider/messages-api.ts` (`messagesApiStandI
 `POST /v1/messages` (SSE, or one JSON message), `GET /v1/models` and `GET /v1/models/<id>` per
 key, as the API does: a refused key gets 401 `authentication_error`, a key at its limit the
 spend cap (429 `enforced_spend_limit_reached`, "You will regain access on ... UTC") or the
-spend limit (400) until its reset, then answers again; any other key gets the model behind it.
+spend limit (400) until its reset, then answers again; `answerFor` may also give `{kind:
+"error"}`, the API's own 500 `api_error` with `x-should-retry: false` (l4-cred-engine
+L4-creds-4: chat's failed answer); any other key gets the model behind it.
 `keyRule` / `keyRuleFromEnv` decide by the key's text (`FORERUNNER_BENCH_API_REFUSE`, default
 "refused"; `FORERUNNER_BENCH_API_LIMIT`, default "limited", for `FORERUNNER_BENCH_API_LIMIT_MIN`
 minutes, default 3, in `FORERUNNER_BENCH_API_LIMIT_FORM` 429 or 400). Its log names keys by

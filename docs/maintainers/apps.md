@@ -433,7 +433,8 @@ through** with its consequence line (sends "Think it through." with `depth: "lon
 `offer`), a cap line with nothing to press, and the From line (up to three records; a link only
 where the page shows the record: a session, a task's drawer, a file; C2-left-7). A line with no
 reply says "Forerunner closed before answering this." or "I could not answer this." with **Ask
-again**. A reply that is its changes' sentences joined shows them once (L3-left-10). Tests:
+again**; a reply that says its answer failed (`turn.failed`, l4-cred-engine L4-creds-4) has Ask
+again and never Think it through. A reply that is its changes' sentences joined shows them once (L3-left-10). Tests:
 `chat-depth.test.tsx`, `e2e/chat.spec.ts` (the waiting line and Stop). Settings, Basics: "Chat asks
 first" (`human.chat_ask_above`: "before a stronger model or an answer over CHF 0.10", the line
 "Below that it thinks longer when it helps, on the same model.", any amount with a point or a

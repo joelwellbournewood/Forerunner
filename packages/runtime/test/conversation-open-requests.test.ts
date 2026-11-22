@@ -243,7 +243,8 @@ describe("conversation agent: open requests are not brought up in every reply", 
     );
     await modelWatchRequest(h);
     const failed = await h.chat("hello");
-    expect(failed.reply).toMatch(/could not answer/i);
+    // l4-cred-engine L4-creds-4: one sentence by the error's code, not its message.
+    expect(failed.reply).toBe("Claude did not answer this time; ask again in a moment.");
     expect(h.user(0)).toContain("Model watch 2026-10-26");
     await h.chat("hello again");
     expect(h.user(1)).toContain("Model watch 2026-10-26");

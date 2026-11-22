@@ -4856,8 +4856,9 @@ of the 400 tokens were left for the visible text. Three changes:
   own `SessionBudget`: its run and session refusals carry `details.source`
   `LOCAL_BUDGET_SOURCE` (`src/enforcement/budget.ts`), which the loop copies to
   `RunResult.error.source`; an outer cap (project, month: `CapsPort`, whose `level` can also
-  read "run" or "session") keeps its own message in the reply ("I could not answer (month cap
-  reached)."). Every `chat.reply` row carries
+  read "run" or "session") names itself in the reply (`failureReply`, l4-cred-engine
+  L4-creds-4: "This month's cap is reached, so I have not answered."; before, "I could not
+  answer (month cap reached)."). Every `chat.reply` row carries
   `turnBudgetUsdMicro`. A configured turn budget is used as given.
 - Tests: `conversation.test.ts` ("a reply cut off at max_tokens": spoken and typed turns, no
   complete sentence, a pending card's read-back, a cut on a sentence end, an Opus-priced turn
@@ -8068,6 +8069,16 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   time zone and monthly cap are read at each use (`zoneNow()` in compose for every wait
   sentence, chat's `credentialHold` reads the person row per question), never the row composed
   at start; `RouteContext.nowMs` is required.
+- **A chat answer that failed is no answer** (L4-creds-4, live check 4's L4-creds-13): the
+  switch note ("Answered with your Claude subscription: your API key is at its limit until
+  12:00.") is in the footer only under a completed answer, and the stop is marked as said
+  (`notedStops`) only when the footer is the note, so the first real answer on the other
+  credential has it. Think it through's `closer` needs a completed answer. Every other failure
+  reads `failureReply(error)` (`depth.ts`): one sentence by the error's code (a cap names itself,
+  "Claude did not answer this time; ask again in a moment." for the API's own error), never the
+  error's message; the `chat.reply` row is a notice, and `failed` (Ask again in the conversation)
+  where the same line could get an answer now. The UI never shows Think it through under a
+  failed turn. The Messages API stand-in answers `{kind: "error"}` with the API's 500.
 
 Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
 throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the
@@ -8077,8 +8088,11 @@ waits, Settings reads refused, chat holds with no new call, no `<synthetic>` in 
 limit and Claude Code's spending limit after the throw; a run and a chat question meeting the
 refusal together), `sdk-contract.test.ts` (the real SDK against a local 401),
 `credential-share-midrun.test.ts` (the share reached mid-run under next, ask and wait, the raise,
-the month's start and restarts), the UI's `settings-plan-allowance.test.tsx` and the real-daemon
-describe "l4-cred-engine, run L4".
+the month's start and restarts), `credential-chat-failure.test.ts` (POST /chat under
+key_then_subscription with the refused sign-in's turn, and under subscription_then_key with the
+API's 500), `chat-depth-words.test.ts` (`failureReply` over every code), the UI's
+`settings-plan-allowance.test.tsx` and `chat-depth.test.tsx` (no Think it through under a failed
+reply) and the real-daemon describe "l4-cred-engine, run L4".
 
 ## How to change it
 
