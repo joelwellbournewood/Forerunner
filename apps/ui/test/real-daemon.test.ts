@@ -23703,4 +23703,58 @@ describe("l4-chat-depth, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+  // L4-chat-204 (C4L-13): a project closed by Make one project still took new work from the
+  // plan route and the Data tab.
+  it("POST /projects/:closed/plan and the Data tab's Add and Import on a joined project: 409 with the joined sentence, nothing written", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-204-");
+    try {
+      const site = await a.client.createProject({ name: "Site", goal: "A page" });
+      const kite = await a.client.createProject({ name: "Kite club", goal: "A club page" });
+      // Closed into Site as Make one project closes it.
+      const row = await a.rt.store.project.mustGet(kite.id);
+      await a.rt.store.project.update(row.id, row.version, {
+        status: "archived",
+        settings: {
+          ...(row.settings as Record<string, unknown>),
+          joined_into: { project: site.id, name: "Site", at: new Date().toISOString() },
+        },
+      });
+      const sentence = '"Kite club" joined "Site", so its work runs there.';
+      const plan = await a.client.raw({
+        method: "POST",
+        path: `/projects/${kite.id}/plan`,
+        body: {
+          reason: "planned from the brief",
+          milestones: [
+            {
+              name: "Phase 1",
+              successCriteria: ["The page loads"],
+              tasks: [{ key: "page", title: "Write the page", outcome: "index.html" }],
+            },
+          ],
+        },
+      });
+      expect(plan.status).toBe(409);
+      expect(await plan.json()).toMatchObject({
+        message: sentence,
+        details: { cause: "project_joined" },
+      });
+      expect(await a.rt.store.task.forProject(kite.id, {}, { limit: 10 })).toEqual([]);
+      await expect(
+        a.client.registerDataAsset(kite.id, { locator: "https://example.com/members.csv", kind: "table" }),
+      ).rejects.toMatchObject({ status: 409, message: sentence });
+      await expect(
+        a.client.importProject(kite.id, { source: "folder", locator: "/tmp/nothing-here" }),
+      ).rejects.toMatchObject({ status: 409, message: sentence });
+      expect(await a.client.dataAssets(kite.id)).toEqual([]);
+      // The open project still takes them.
+      const added = await a.client.registerDataAsset(site.id, {
+        locator: "https://example.com/members.csv",
+        kind: "table",
+      });
+      expect(added.projectIds).toEqual([site.id]);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });

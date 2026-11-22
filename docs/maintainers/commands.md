@@ -748,7 +748,12 @@ run C").
   the same set): `summary.speak`, `session.stop`, `session.pause`, `request.answer` and
   `project.join` (which says itself why a closed project cannot be kept or closed). The sentence
   is `joinedRefusalSentence` there too. Tests: `test/project-join.test.ts` 'a closed project
-  takes no new work'.
+  takes no new work'. l4-chat-depth (L4-chat-204): `confirm` asks it again on the stored card
+  before it performs (`closedProjectRefusal`), so a change read back before Make one project
+  and answered Yes after it is refused with the joined sentence and changes nothing, from chat,
+  the Inbox or the email token alike; `restorePending` arms such a card again after a restart
+  as it was shown (before, it was left to expire and the yes met "it expired"), so its yes is
+  refused in the same words (`test/l4-chat-depth.test.ts`).
 
 ### Who starts a session (d1109-starts-engine, [ADR 0118](../decisions/0118-who-starts-a-session.md))
 

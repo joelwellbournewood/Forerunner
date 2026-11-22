@@ -12,9 +12,15 @@ import {
   osFacts,
   redact,
 } from "@forerunner/platform";
-import type { LessonStatus, MilestoneRow, SessionRow, TaskRow } from "@forerunner/state";
+import type {
+  LessonStatus,
+  MilestoneRow,
+  ProjectRow,
+  SessionRow,
+  TaskRow,
+} from "@forerunner/state";
 import { serve } from "@hono/node-server";
-import { type Context, Hono } from "hono";
+import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -181,6 +187,7 @@ import { planCredentialLine, startCredential } from "./credential-start.ts";
 import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
 import { joinPreview, sharesRepositoryWith } from "./join-preview.ts";
+import { joinedIntoOf } from "./join-words.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
 import { overBudgetView, oversizedView } from "./oversize-view.ts";
 import { reviewMayWaitLine } from "./oversize-words.ts";
@@ -273,6 +280,24 @@ export const AGENT_RENAME_AUDIT_TOOL = "agent.rename";
  * needs a bounded stop: an attached shell holds `/events` open for as long as it runs.
  */
 export const STOP_TIMEOUT_MS = 3_000;
+
+/**
+ * l4-chat-depth (L4-chat-204, ADR 0117): the 409 body a route that would give new work to a
+ * project closed by Make one project (or removed) answers with: the joined sentence ('"Kite club"
+ * joined "Site", so its work runs there.'), its cause, nothing written. Null for an open project.
+ */
+function closedProjectAnswer(project: ProjectRow) {
+  const refusal = removedProjectRefusal(project);
+  if (!refusal) return null;
+  return {
+    code: "conflict",
+    message: refusal,
+    details: {
+      cause: joinedIntoOf(project) ? "project_joined" : "project_removed",
+      projectId: project.id,
+    },
+  };
+}
 
 /** The schema sync gate as `/health` reports it (spec M); the refusal counter stays internal. */
 function syncHealth(s: SchemaSyncStatus): SyncHealth {
@@ -737,6 +762,17 @@ export function createDaemonApp(
   }
   // Files and data (spec L.1, A.3, K.2): the Data tab routes (list, register or upload, import,
   // describe, sample, delete); the daemon's human is the actor, so DELETE always has one.
+  // l4-chat-depth (L4-chat-204): the Data tab's Add and Import on a project closed by Make one
+  // project (or removed) are refused with the joined sentence, 409, nothing written.
+  const refuseClosedData: MiddlewareHandler = async (c, next) => {
+    if (c.req.method !== "POST") return next();
+    const project = await rt.store.project.get(c.req.param("id") ?? "");
+    const closed = project ? closedProjectAnswer(project) : null;
+    if (closed) return c.json(closed, 409);
+    return next();
+  };
+  app.use("/projects/:id/data", refuseClosedData);
+  app.use("/projects/:id/data/import", refuseClosedData);
   app.route(
     "/",
     createDataRoutes({
@@ -1431,6 +1467,10 @@ export function createDaemonApp(
   // first so an unknown project is 404 whatever the body.
   app.post("/projects/:id/plan", async (c) => {
     const project = await rt.store.project.mustGet(c.req.param("id"));
+    // l4-chat-depth (L4-chat-204): a project closed by Make one project (or removed) takes no
+    // new work: 409 with the joined sentence, nothing written.
+    const closed = closedProjectAnswer(project);
+    if (closed) return c.json(closed, 409);
     const body = await parse(c, ProjectPlanBody);
     const applied = await applyProjectPlan(rt.store, project, body, { humanId: rt.human.id });
     rt.events.emit("project", { id: project.id });

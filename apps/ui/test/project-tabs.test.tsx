@@ -323,6 +323,27 @@ describe("Docs tab", () => {
 });
 
 describe("Data tab", () => {
+  // l4-chat-depth (L4-chat-204): a project closed by Make one project takes no new data.
+  it("Add on a project that joined another is refused with the joined sentence and adds nothing", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.joined.proj_atlas = {
+      projectId: "proj_beacon",
+      name: "Beacon",
+      at: "2026-11-09T10:00:00.000Z",
+      text: 'Joined into "Beacon" on 9 Nov.',
+    };
+    renderApp("/projects/proj_atlas/data", harness);
+    await screen.findAllByTestId("data-row");
+    await user.type(screen.getByTestId("data-locator"), "C:\\data\\exports\\sales.csv");
+    await user.selectOptions(screen.getByTestId("data-kind"), "csv");
+    await user.click(screen.getByTestId("data-register"));
+    expect(
+      await screen.findByText('"Atlas" joined "Beacon", so its work runs there.', { exact: false }),
+    ).toBeTruthy();
+    expect(screen.getAllByTestId("data-row")).toHaveLength(1);
+  });
+
   it("lists registered data with samples, registers a new locator and removes one", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

@@ -1656,7 +1656,7 @@ them, and `task.update`, then stores `riskTierFor(specialist, tier)`: a deploy o
 named (phase C leftover C-2: before, only the critic applied the registry's floor, so the row
 read "Light review" and the run used the process sandbox on the host; the science evaluator's
 registry floor of 2 is still applied by the critic only).
-`applyProjectPlan(store, project, plan, author)`, served as `POST /projects/:id/plan`
+`applyProjectPlan(store, project, plan, author)`, served as `POST /projects/:id/plan` (l4-chat-depth, L4-chat-204: on a project closed by Make one project, or removed, the route answers 409 `conflict` with the joined sentence and `details.cause` `project_joined` or `project_removed` and writes nothing, as do the Data tab's `POST /projects/:id/data` and `/data/import` through a middleware in `server.ts`; `closedProjectAnswer`)
 (`ProjectPlanBody` to `PlanProjectView`), writes a plan (phases with their tasks, loose tasks,
 one reason for every row) as milestone and task rows in one transaction: outside the mode a
 milestone per phase after the project's existing ones (`order_index`) and the loose tasks under

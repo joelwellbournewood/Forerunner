@@ -8758,6 +8758,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!state.projects.some((p) => p.id === id)) {
       return errorBody(c, 404, "not_found", "no such project");
     }
+    // l4-chat-depth (L4-chat-204), as the daemon: a closed project takes no new data.
+    const joinedData = joinedRefusalOf(id);
+    if (joinedData)
+      return c.json(
+        {
+          code: "conflict",
+          message: joinedData,
+          details: { cause: "project_joined", projectId: id },
+        },
+        409,
+      );
     const body = (await c.req.json()) as { locator?: string; kind?: string };
     if (!body.locator?.trim() || !body.kind?.trim()) {
       return errorBody(c, 400, "validation", "locator and kind are required");
@@ -8790,6 +8801,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!state.projects.some((p) => p.id === id)) {
       return errorBody(c, 404, "not_found", "no such project");
     }
+    // l4-chat-depth (L4-chat-204), as the daemon: a closed project takes no import.
+    const joinedImport = joinedRefusalOf(id);
+    if (joinedImport)
+      return c.json(
+        {
+          code: "conflict",
+          message: joinedImport,
+          details: { cause: "project_joined", projectId: id },
+        },
+        409,
+      );
     const body = (await c.req.json()) as { source?: string; locator?: string; path?: string };
     const locator = (body.path ?? body.locator ?? "").trim();
     if (!locator || !["zip", "folder", "github"].includes(body.source ?? "")) {

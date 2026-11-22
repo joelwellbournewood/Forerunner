@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultRegistry, IntentParser } from "../src/index.ts";
+import { CommandExecutor, defaultRegistry, IntentParser } from "../src/index.ts";
 import { START, TZ, world } from "./helpers.ts";
 
 /**
@@ -100,5 +100,77 @@ describe("l4-chat-depth, run L4: a dependency change says when the task runs (L4
         { name: "task.dependencies", params: { task: expect.any(String), depends_on: [] } },
       ]);
     }
+  });
+});
+
+/** Close "Game" into "PharmaWatch" as Make one project does (archived, joined_into). */
+async function closeGameIntoPharma(w: Awaited<ReturnType<typeof world>>) {
+  const game = await w.store.project.mustGet(w.game.id);
+  await w.store.project.update(game.id, game.version, {
+    status: "archived",
+    settings: {
+      ...(game.settings as Record<string, unknown>),
+      joined_into: { project: w.pharma.id, name: "PharmaWatch", at: w.clock.nowIso() },
+    },
+  });
+}
+
+describe("l4-chat-depth, run L4: a closed project takes no new work, a yes after the join included (L4-chat-204)", () => {
+  it("a change read back in chat before the join and answered yes after it is refused in words, and changes nothing", async () => {
+    const w = await world();
+    const readme = await task(w, "Write the README");
+    const faq = await task(w, "Write the FAQ");
+    const asked = await w.executor.execute({
+      name: "task.dependencies",
+      params: { task: faq.id, add: [readme.id] },
+      ctx: w.ctx({ source: "chat", activeProjectId: w.game.id }),
+    });
+    expect(asked.status).toBe("pending");
+    const pendingId = asked.status === "pending" ? asked.pendingId : "";
+    await closeGameIntoPharma(w);
+    const yes = await w.executor.confirmByText(pendingId, "yes", {
+      kind: "human",
+      id: w.human.id,
+    });
+    expect(yes.status).toBe("refused");
+    expect(yes.status === "refused" ? yes.reason : "").toBe(
+      '"Game" joined "PharmaWatch", so its work runs there.',
+    );
+    expect((await w.store.task.mustGet(faq.id)).depends_on).toEqual([]);
+  });
+
+  it("after a restart the card is armed again and its yes is refused with the joined sentence; nothing changes", async () => {
+    const w = await world();
+    const readme = await task(w, "Write the README");
+    const faq = await task(w, "Write the FAQ");
+    const asked = await w.executor.execute({
+      name: "task.dependencies",
+      params: { task: faq.id, add: [readme.id] },
+      ctx: w.ctx({ source: "chat", activeProjectId: w.game.id }),
+    });
+    const pendingId = asked.status === "pending" ? asked.pendingId : "";
+    await closeGameIntoPharma(w);
+    // A new process on the same store: the executor arms the open cards again.
+    const again = new CommandExecutor({ registry: w.registry, store: w.store, clock: w.clock });
+    const open = await w.store.humanRequest.list({ status: "open", kind: "approval" } as never, {
+      limit: 50,
+    });
+    const armed = await again.restorePending(open, async (stored) => ({
+      ...w.ctx(),
+      actor: stored.actor,
+      humanId: stored.humanId,
+      agentId: stored.agentId,
+      activeProjectId: stored.activeProjectId,
+      source: stored.source,
+      wordsUsed: stored.wordsUsed,
+    }));
+    expect(armed).toContain(pendingId);
+    const yes = await again.confirmByText(pendingId, "yes", { kind: "human", id: w.human.id });
+    expect(yes.status).toBe("refused");
+    expect(yes.status === "refused" ? yes.reason : "").toBe(
+      '"Game" joined "PharmaWatch", so its work runs there.',
+    );
+    expect((await w.store.task.mustGet(faq.id)).depends_on).toEqual([]);
+    expect((await w.store.humanRequest.mustGet(pendingId)).status).toBe("answered");
   });
 });
