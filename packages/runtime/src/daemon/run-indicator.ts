@@ -107,9 +107,11 @@ async function askFormAfterAnswer(
     typeof facts.credential_kind === "string" ? facts.credential_kind : "subscription"
   ) as CredentialWait["kind"];
   const used = facts.outcome === "granted" || askAnswerOf(card.answer) === "use";
-  const who = m[1] === "Waits" ? "Waits" : m[1];
+  const who = m[1] ?? "Waits";
   if (used) return text.replace(m[0], `Went on with ${otherCredentialOf(kind)}.`);
-  const person = await store.human.get(card.human_id).catch(() => undefined);
+  const person = card.human_id
+    ? await store.human.get(card.human_id).catch(() => undefined)
+    : undefined;
   const wait: CredentialWait = {
     reason: (typeof facts.reason === "string" ? facts.reason : "limit") as CredentialWait["reason"],
     sourceId: typeof facts.source_id === "string" ? facts.source_id : "",

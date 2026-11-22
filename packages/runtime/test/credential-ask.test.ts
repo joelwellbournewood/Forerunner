@@ -211,7 +211,7 @@ describe("l4-cred-engine, run L4: the ask card's yes applied once across a resta
     });
     await updateSourceLimits(rt.store, facts.source_id ?? "", (limits) => ({
       ...limits,
-      grant: { to: "api_key", stopKey: facts.stop_key, by: "card", at: clock.nowIso() },
+      grant: { to: "api_key", stopKey: facts.stop_key ?? "", by: "card", at: clock.nowIso() },
     }));
     const started = await rt.scheduler.requestStart({
       agentId: rt.agent.id,

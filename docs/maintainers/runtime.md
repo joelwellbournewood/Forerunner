@@ -8137,6 +8137,8 @@ the month's start and restarts), `credential-chat-failure.test.ts` (POST /chat u
 key_then_subscription with the refused sign-in's turn, and under subscription_then_key with the
 API's 500), `credential-stop-booking.test.ts` (Stop on chat's call served by the subscription
 while the key rests: the ledger row and Costs by credential are the subscription's),
+`credential-limit-kept-work.test.ts` (CE-5's repository case: the subscription writes notes/a.md, meets
+its limit in the 0.3.304 shape, and the key's run is told to continue from the kept commit),
 `credential-api-base.test.ts` (the task run's and chat's `ANTHROPIC_BASE_URL`, with and without a
 configured address), `credential-ask-words.test.ts` ("l4-cred-engine, run L4": the stored ask form after Wait and
 after Use API key, composed twice), `chat-depth-words.test.ts` (`failureReply` over every code), the UI's
