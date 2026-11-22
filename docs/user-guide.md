@@ -457,10 +457,16 @@ them as you left them; an open file or task stays on its own tab.
   through: on the same model it goes ahead by itself up to your amount (CHF 0.10 at first); before
   a stronger model, or an answer that may cost more than your amount, it asks in one line with the
   cost and the time ("This needs a stronger model: about CHF 0.15 (at most CHF 0.30) and 30
-  seconds. Go ahead?") and goes on only when you press **Go ahead** or say "yes". Say "think it
-  through", "take your time" or "use a stronger model" yourself, or press **Think it through**
-  under an answer. The bubble says what it is doing and for how long, and a longer answer ends
-  with one line of its model, time and cost ("Thought it through with Sonnet · 34 s · CHF 0.06").
+  seconds. Go ahead?") and goes on only when you press **Go ahead** or say "yes". That line is
+  always the app's own, with its figures, even when the quick answer only said it in words; Go
+  ahead runs that answer once, within its "at most", and asks again only when the price or the
+  model changed. Once you write something else, the line stays as what was offered ("Offered: a
+  stronger model, about CHF 0.15 (at most CHF 0.30). Not taken.", or "You went ahead.") with no
+  button. Say "think it through", "take your time" or "use a stronger model" yourself, or press
+  **Think it through** under an answer. The bubble says what it is doing and for how long, and a
+  longer answer ends with one line of its model, time and cost ("Thought it through with Sonnet ·
+  34 s · CHF 0.06"). During a longer answer **Answer now** beside Stop answers at once from what
+  it has looked up, with no new offer under it.
   **Stopping an answer.** While Chat answers, **Send** becomes **Stop**: the answer ends, what it
   already changed stays with its Undo, and the line under it says what it cost. Only **Stop**
   stops it: pressing Enter while you type your next line meanwhile keeps the answer going and

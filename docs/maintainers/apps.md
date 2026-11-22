@@ -431,7 +431,15 @@ its footer ("Thought it through with Sonnet · 34 s · CHF 0.06", "You stopped t
 spent."), the offer line with **Go ahead** (sends "Go ahead." with `offer`) or **Think it
 through** with its consequence line (sends "Think it through." with `depth: "longer"` and
 `offer`), a cap line with nothing to press, and the From line (up to three records; a link only
-where the page shows the record: a session, a task's drawer, a file; C2-left-7). A line with no
+where the page shows the record: a session, a task's drawer, a file; C2-left-7). An older ask
+line, once another line follows it, reads in the past with no button (`pastOfferLine`: "Offered:
+a stronger model, about CHF 0.15 (at most CHF 0.30). Not taken.", or "... You went ahead." when
+the next line was its yes and its reply is not a quick one, `tookOffer`), also when the reply was
+only its ask line (the daemon then sends the line as the text); a line of another shape stays,
+and one ending "Go ahead?" that does not parse is left out (l4-chat-depth, L4-chat-212, C3L-8:
+before, the old line kept "Go ahead?" with no button, a question the person could no longer
+answer; tests: `chat-depth.test.tsx` "l4-chat-depth, run L4: an older ask line reads in the
+past"). A line with no
 reply says "Forerunner closed before answering this." or "I could not answer this." with **Ask
 again**; a reply that says its answer failed (`turn.failed`, l4-cred-engine L4-creds-4) has Ask
 again and never Think it through. A reply that is its changes' sentences joined shows them once (L3-left-10). Tests:
