@@ -891,7 +891,10 @@ describe("the UI client against the real daemon", () => {
       version: (await client.tasks(own.id)).find((x) => x.id === next.id)?.version ?? 0,
       dependsOn: [],
     });
-    expect(deps.change?.sentence).toBe('"Create notes/todo.md" waits for no other task now.');
+    // l4-chat-depth (L4-chat-207): a change that makes the task runnable says when it runs.
+    expect(deps.change?.sentence).toBe(
+      '"Create notes/todo.md" waits for no other task now. It runs at your next Start.',
+    );
     await client.undoChange(deps.change?.undoToken ?? "");
     expect((await client.tasks(own.id)).find((x) => x.id === next.id)?.dependsOn).toEqual([
       first.id,
