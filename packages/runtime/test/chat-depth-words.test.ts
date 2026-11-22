@@ -203,9 +203,9 @@ describe("d1109-chat-depth, run C: the sentences", () => {
     );
     // l4-chat-depth (L4-chat-203): the rules start by saying the pass is the closer look itself
     // (the whole text is asserted in chat-depth.test.ts "L4-chat-203").
-    expect(
-      CHAT_THOROUGH_RULES.startsWith("# Thinking it through\nYou are the closer look: "),
-    ).toBe(true);
+    expect(CHAT_THOROUGH_RULES.startsWith("# Thinking it through\nYou are the closer look: ")).toBe(
+      true,
+    );
   });
 });
 
