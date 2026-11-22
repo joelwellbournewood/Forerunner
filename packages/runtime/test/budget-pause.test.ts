@@ -509,15 +509,15 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     // Before: "stopped at its budget of CHF 1.60", and its card offered to raise that budget.
     // l4-money-pause (L4-money-103): what is left of the month's cap caps the run, so it hears
     // its wrap-up inside it (before: "stopped at this month's cap of CHF 0.10: it spent CHF
-    // 0.09, and its next step would have gone over.", a hard stop).
+    // 0.09, and its next step would have gone over.", a hard stop). l4c-workstate: the run is
+    // deterministic, so its one line is asserted exactly (L4-money-103 had made its review
+    // clause optional).
     expect(
-      said.some((l) =>
-        /^"Members list" paused before this month's cap of CHF 0\.10 ran out: it spent CHF [\d.]+ and listed 2 things left to do(?:; CHF [\d.]+ is kept for its review)?\.$/.test(
-          l,
-        ),
-      ),
+      said.filter((l) => l.startsWith('"Members list"')),
       said.join(" | "),
-    ).toBe(true);
+    ).toEqual([
+      '"Members list" paused before this month\'s cap of CHF 0.10 ran out: it spent CHF 0.05 and listed 2 things left to do; CHF 0.04 is kept for its review.',
+    ]);
     const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
       (q) => q.taskId === r.taskId && q.status === "open",
     );
@@ -558,10 +558,12 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     expect(summary).not.toMatch(/session's budget|budget is used/);
     // Its card offers no Continue (the fixup's bench walk: the result said "continue or cancel
     // it in the Inbox"): it says how the task goes on.
-    // l4-money-pause (L4-money-103): it paused inside the month's cap, at its wrap-up or, with
-    // too little left to wrap up, before its next step.
-    expect(summary).toMatch(
-      /"Members page" paused (?:at|before) this month's cap of CHF 0\.10(?: ran out)?: it is ready again once that limit is raised or resets, for your next Start\./,
+    // l4-money-pause (L4-money-103): it paused inside the month's cap, at its wrap-up (CHF 0.05
+    // was left of the cap: "This run may spend CHF 0.05, the rest of this month's cap: ..."; it
+    // heard the wrap-up at CHF 0.04). l4c-workstate: the run is deterministic, so the summary
+    // says this one sentence, exactly (L4-money-103 had accepted "paused at" too).
+    expect(summary).toBe(
+      "\"Members page\" paused before this month's cap of CHF 0.10 ran out: it is ready again once that limit is raised or resets, for your next Start.\nStopped at this month's cap of CHF 0.10. CHF 0.04.",
     );
     expect(summary).not.toContain("continue or cancel");
     const said = lines(r.events);
@@ -596,8 +598,16 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
 
   it("once the month's cap has room again the paused task goes on by itself: its card closes and it is ready (budget-resume)", async () => {
     const r = await runOne(req, rt, "Members map", { budgetUsdMicro: 2_000_000 });
-    expect(String((r.view.display as Json).label)).toMatch(
-      /^Paused (?:at|before) this month's cap(?: ran out)?$/,
+    // l4c-workstate: the run is deterministic. CHF 0.01 is left of the month's cap, too little
+    // to wrap up ("This run may spend CHF 0.01, the rest of this month's cap: too little to wrap
+    // up ..."), so it stops at the cap with its work kept, and the row says so, exactly
+    // (L4-money-103 had accepted "Paused before this month's cap ran out" too).
+    expect(r.view.display).toMatchObject({
+      label: "Paused at this month's cap",
+      detail: "Ready again once that limit is raised or resets, for your next Start; or cancel it.",
+    });
+    expect(lines(r.events)).toContain(
+      "This run may spend CHF 0.01, the rest of this month's cap: too little to wrap up (two steps may cost CHF 0.01), so it pauses and keeps its work.",
     );
     // As the daemon's own wake asks (compose.ts): the caps read again, not from the minute's
     // cache, so the session that goes on does not meet the old cap.
