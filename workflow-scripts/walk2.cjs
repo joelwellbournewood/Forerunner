@@ -1,142 +1,147 @@
-// Reviewer's walk 2 of d1109-run-visible: a queued person start, Stop after this task, Stop now, Stop all.
-"use strict";
-const fs = require("node:fs");
-const R = require("/home/user/Forerunner/.claude/worktrees/wf_bc132d49-0b3-5/scripts/bench/recorder.cjs");
-const NAME = process.argv[2] || "review-d1109-run-visible";
-const enc = encodeURIComponent;
-const out = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
-const checks = [];
-const check = (name, ok, seen) => {
-  checks.push({ name, ok: !!ok, seen });
-  out(ok ? "PASS" : "FAIL", name, ok ? "" : `-- saw: ${JSON.stringify(seen).slice(0, 400)}`);
-};
+// Review walk 2 (l4-chat-depth): dependency lines, the start read-back, the history window,
+// Chat asks first and Changes.
+const repo = process.argv[2];
+const R = require(`${repo}/scripts/bench/recorder.cjs`);
+const N = "review-l4-chat-depth";
+const UI = "http://127.0.0.1:2551";
+const fs = require("fs");
+const OUT = "/tmp/frbench/review-l4-chat-depth/walk2.json";
 
-async function barText(page) {
-  const bar = page.getByTestId("run-indicator-bar");
-  if (!(await bar.count())) return null;
-  return (await bar.innerText()).trim();
-}
-
-async function main() {
-  const { browser, page } = await R.openApp(NAME, { viewport: { width: 1280, height: 900 } });
-  page.setDefaultTimeout(15_000);
-  await R.skipSetup(page);
-  const mk = (name, goal) => R.api(NAME, "POST", "/projects", { name, goal });
-  const kite = await mk("Kite day", "A page for the kite club");
-  const bird = await mk("Bird walk", "Notes about birds");
-  const task = (pid, title, file, priority = "medium") =>
-    R.api(NAME, "POST", `/projects/${enc(pid)}/tasks`, {
-      title,
-      outcome: `${file} exists`,
-      acceptanceCriteria: [`${file} exists`],
-      priority,
-      status: "ready",
-      dependsOn: [],
-      budgetUsdMicro: 0,
-      specialist: "coder",
-      riskTier: 1,
-    });
-  const titles = [
-    "Create index.html",
-    "Write about.md",
-    "Write events.md",
-    "Write members.md",
-    "Write rules.md",
-    "Write the README.md",
-  ];
-  for (const [i, t] of titles.entries())
-    await task(kite.id, t, t.split(" ").pop(), i === 0 ? "high" : "medium");
-  await task(bird.id, "Write birds.md", "birds.md");
-  const startOn = async (pid) => {
-    await page.goto(`${R.bench(NAME).uiUrl}/projects/${enc(pid)}`);
-    await page.waitForTimeout(1500);
-    await page.getByRole("button", { name: /^(Start|Start session|Continue)$/ }).first().click();
-    await page.waitForTimeout(1500);
-    const ex = page.getByTestId("start-session-explain");
-    const et = (await ex.count()) ? await ex.innerText() : null;
-    await page.getByTestId("confirm-start-session").click();
-    await page.waitForTimeout(1500);
-    const close = page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).last();
-    if (await close.count()) await close.click();
-    await page.waitForTimeout(300);
-    return et;
+(async () => {
+  const out = { steps: {} };
+  const save = () => fs.writeFileSync(OUT, JSON.stringify(out, null, 1));
+  const { browser, page } = await R.openApp(N);
+  const idle = async (wait = 40_000) => {
+    const until = Date.now() + wait;
+    while (Date.now() < until) {
+      const busy = await page.getByRole("button", { name: "Stop", exact: true }).count();
+      if (!busy) break;
+      await page.waitForTimeout(400);
+    }
+    await page.waitForTimeout(1200);
   };
-  await startOn(kite.id);
-  await R.until(async () => /^Kite day ·/.test((await barText(page)) ?? ""), 30_000, 500, "the bar");
-  const et = await startOn(bird.id);
-  check('Start dialog names the other project', /Starts after the session on "Kite day"/.test(et ?? ""), et);
-  const tq = await barText(page);
-  check("bar adds · then Bird walk", /· then Bird walk/.test(tq ?? ""), tq);
-  // The project's own header line, as the person reads it, within 6 s and without a reload.
-  let hl = null;
-  for (let i = 0; i < 12; i++) {
-    hl = await page.getByTestId("project-status").first().innerText().catch(() => null);
-    if (/Starts after the session on "Kite day"/.test(hl ?? "")) break;
-    await page.waitForTimeout(500);
+  const say = async (text) => {
+    const box = page.getByPlaceholder("Message your agent…");
+    await box.fill(text);
+    await box.press("Enter");
+    await page.waitForTimeout(900);
+    await idle();
+  };
+  const press = async (name) => {
+    const b = page.getByRole("button", { name, exact: true });
+    const n = await b.count();
+    out.buttons = [...(out.buttons ?? []), { name, count: n }];
+    if (!n) return false;
+    await b.last().click();
+    await page.waitForTimeout(900);
+    await idle();
+    return true;
+  };
+  const shot = async (label) => {
+    out.steps[label] = await R.step(page, label);
+    save();
+  };
+  try {
+    const kite = await R.api(N, "POST", "/projects", { name: "Kite club", goal: "A page for the kite club" });
+    out.kite = kite.id;
+    await page.goto(`${UI}/projects/${kite.id}/chat`);
+    await page.waitForTimeout(2500);
+    await say("add a task: Write the README");
+    if (await page.getByRole("button", { name: "Yes", exact: true }).count()) await press("Yes");
+    await say("add a task: Write the FAQ");
+    if (await page.getByRole("button", { name: "Yes", exact: true }).count()) await press("Yes");
+    await shot("w2-01-tasks-added");
+    // L4-chat-207 in chat.
+    await say("make the FAQ task depend on the README task");
+    await shot("w2-02-depends-readback");
+    await press("Yes");
+    await shot("w2-03-depends-done");
+    await say("let the FAQ run on its own");
+    await shot("w2-04-on-its-own-readback");
+    await press("Yes");
+    await shot("w2-05-on-its-own-done");
+    await say("make the FAQ task depend on the README task");
+    await press("Yes");
+    // The Tasks drawer's Change what it waits for.
+    await page.goto(`${UI}/projects/${kite.id}/tasks`);
+    await page.waitForTimeout(2500);
+    await page.getByText("Write the FAQ", { exact: false }).first().click();
+    await page.waitForTimeout(1500);
+    await shot("w2-06-drawer");
+    const change = page.getByRole("button", { name: "Change what it waits for", exact: true });
+    out.drawerChange = await change.count();
+    if (out.drawerChange) {
+      await change.first().click();
+      await page.waitForTimeout(1000);
+      await shot("w2-07-deps-dialog");
+      const boxes = page.getByRole("dialog").getByRole("checkbox");
+      const nBoxes = await boxes.count();
+      for (let i = 0; i < nBoxes; i++) if (await boxes.nth(i).isChecked()) await boxes.nth(i).uncheck();
+      const dlg = page.getByRole("dialog");
+      const btns = await dlg.getByRole("button").allTextContents();
+      out.dialogButtons = btns;
+      const save2 = dlg.getByRole("button", { name: /^(Save|Change|Apply|Done|OK)/ });
+      if (await save2.count()) await save2.first().click();
+      await page.waitForTimeout(2000);
+      await shot("w2-08-deps-saved");
+    }
+    // L4-chat-210: run it now.
+    await page.goto(`${UI}/projects/${kite.id}/chat`);
+    await page.waitForTimeout(2500);
+    await say("run it now");
+    await shot("w2-09-run-it-now");
+    await press("No");
+    // L4-chat-205: many quick turns in this project (14 more).
+    const lines = [
+      "what is left?",
+      "what is the next task?",
+      "how much did this project cost?",
+      "what does the FAQ task wait for?",
+      "is anything running?",
+      "what is the README task?",
+      "what is left?",
+      "any open questions?",
+      "what is the next task?",
+      "what is left?",
+      "is anything running?",
+      "what is the FAQ task?",
+      "what is left?",
+      "what is the next task?",
+    ];
+    for (const l of lines) await say(l);
+    await shot("w2-10-many-turns");
+    // L4-chat-211: Settings, Chat asks first: 0, then 0.10.
+    await page.goto(`${UI}/settings`);
+    await page.waitForTimeout(2500);
+    const setTo = async (v) => {
+      const row = page.locator('[data-testid="setting-row"][data-key="human.chat_ask_above"]');
+      await row.getByTestId("setting-change").click();
+      await page.waitForTimeout(800);
+      const dialog = page.getByTestId("setting-dialog");
+      await dialog.getByTestId("setting-value").fill(String(v));
+      await shot(`w2-11-chat-asks-first-${v}`);
+      await dialog.getByTestId("setting-apply").click();
+      await page.waitForTimeout(1500);
+      await shot(`w2-12-after-apply-${v}`);
+      // A raise asks a yes.
+      const yes = page.getByRole("button", { name: /^(Yes|Confirm|Apply)/ });
+      if ((await page.getByTestId("setting-dialog").count()) && (await yes.count())) {
+        await yes.last().click();
+        await page.waitForTimeout(1500);
+        await shot(`w2-13-after-yes-${v}`);
+      }
+    };
+    await setTo(0);
+    await setTo(0.1);
+    await page.goto(`${UI}/changes`);
+    await page.waitForTimeout(2500);
+    await shot("w2-14-changes");
+    out.changes = (await R.api(N, "GET", "/changes?limit=12")).map((c) => c.sentence ?? c);
+  } finally {
+    save();
+    await browser.close();
   }
-  await R.step(page, "rv2-bird-overview-queued");
-  check('Bird walk header line says it starts after Kite day (no reload)', /Starts after the session on "Kite day"/.test(hl ?? ""), hl);
-  await page.reload();
-  await page.waitForTimeout(2000);
-  const hl2 = await page.getByTestId("project-status").first().innerText().catch(() => null);
-  check('Bird walk header line after a reload', /Starts after the session on "Kite day"/.test(hl2 ?? ""), hl2);
-  await page.goto(`${R.bench(NAME).uiUrl}/`);
-  await page.waitForTimeout(1500);
-  await R.step(page, "rv2-home-while-one-queued");
-
-  // Stop after this task from the bar.
-  await page.getByTestId("run-indicator-bar").getByTestId("run-stop").first().click();
-  await page.waitForTimeout(500);
-  await R.step(page, "rv2-stop-menu-open");
-  await page.getByTestId("run-indicator-bar").getByTestId("run-stop-after").first().click();
-  await page.waitForTimeout(2000);
-  const ts = await barText(page);
-  await R.step(page, "rv2-after-stop-after-this-task");
-  check("bar says stops after", /Kite day · stops after "/.test(ts ?? ""), ts);
-
-  await R.until(async () => /^Bird walk ·/.test((await barText(page)) ?? ""), 180_000, 1000, "Bird walk to run");
-  const tg = await barText(page);
-  await R.step(page, "rv2-bird-runs");
-  check("bar names Bird walk once it runs", /^Bird walk ·/.test(tg ?? ""), tg);
-  check("title names Bird walk", /^● Bird walk · Forerunner$/.test(await page.title()), await page.title());
-
-  // Stop now (asks once).
-  await page.getByTestId("run-indicator-bar").getByTestId("run-stop").first().click();
-  await page.waitForTimeout(400);
-  await page.getByTestId("run-indicator-bar").getByTestId("run-stop-now").first().click();
-  await page.waitForTimeout(400);
-  await R.step(page, "rv2-stop-now-question");
-  const q = page.getByTestId("stop-now-confirm");
-  check("Stop now asks once", (await q.count()) > 0, await q.count());
-  await page.getByTestId("run-stop-now-confirm").click();
-  await R.until(async () => (await barText(page)) === null, 30_000, 500, "the bar to go");
-  await R.step(page, "rv2-after-stop-now");
-  check("no bar after Stop now", (await barText(page)) === null, await barText(page));
-  check("title is Forerunner after", (await page.title()) === "Forerunner", await page.title());
-
-  // Start Kite day again and press Stop all.
-  await startOn(kite.id);
-  await R.until(async () => (await barText(page)) !== null, 30_000, 500, "the bar again");
-  await page.getByTestId("run-indicator-bar").getByTestId("run-stop").first().click();
-  await page.waitForTimeout(400);
-  await page.getByTestId("run-indicator-bar").getByTestId("kill-switch").first().click();
-  await page.waitForTimeout(400);
-  await R.step(page, "rv2-stop-all-question");
-  await page.getByTestId("kill-confirm-stop").click();
-  await page.waitForTimeout(2500);
-  const body = await R.step(page, "rv2-after-stop-all");
-  check("Sessions are stopped bar after Stop all", /Sessions are stopped/.test(body), body.slice(0, 300));
-  check("no run bar after Stop all", (await barText(page)) === null, await barText(page));
-  const allow = page.getByRole("button", { name: /Allow sessions again/ }).first();
-  if (await allow.count()) await allow.click();
-  await page.waitForTimeout(1500);
-  await R.step(page, "rv2-after-allow");
-  fs.writeFileSync(`${R.bench(NAME).steps}/rv2-result.json`, JSON.stringify({ checks }, null, 1));
-  out(`${checks.filter((c) => c.ok).length} of ${checks.length} passed`);
-  await browser.close();
-}
-main().catch((e) => {
+})().catch((e) => {
   console.error(e);
-  fs.writeFileSync(`${R.bench(NAME).steps}/rv2-result.json`, JSON.stringify({ checks, error: String(e) }, null, 1));
   process.exit(1);
 });

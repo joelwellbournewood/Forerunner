@@ -1,0 +1,86 @@
+{
+ "verdict": "pass",
+ "acceptance_walk": "Bench \"review-l4-chat-depth\" (daemon 48951, UI 2551) from my worktree at c3ac22a, --provider bench --fresh, env FORERUNNER_BENCH_CHAT_ALONE=1 (the live fast model's answer-alone mode), FORERUNNER_BENCH_CHAT_HOLD_MS=2500, FORERUNNER_BENCH_FAIL=styles.css. Screenshots and texts: /tmp/frbench/review-l4-chat-depth/steps/; walk results walk1..walk4.json beside them; scripts in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk*.cjs.\n\nWalk 1 (Garden club, planned from a brief; Approve and start ran a session; \"Build the page in index.html, styles.css and script.js\" failed 4 times with its retry card):\n- 02-w1-02-failure-question.png: 'why does \"Build the page…\" keep failing and what should I change?' answered alone by the fast model -> the app's own line \"This needs a stronger model: about CHF 0.07 (at most CHF 0.13) and 30 seconds. Go ahead?\" with a Go ahead button; no \"Should I go ahead?\" text; model-call log: no thorough request before the press (L4-chat-202).\n- 03: Go ahead -> one Sonnet answer, footer \"Thought it through with Sonnet · 8 s · CHF 0.03\" (within CHF 0.13). The Sonnet request carries \"- this_answer: the closer look on Sonnet that the person said yes to (at most CHF 0.13)\", no thinking_longer line, and its system ends with the new CHAT_THOROUGH_RULES (L4-chat-203). The fast requests carry the new thinking_longer fact, the new answer_thoroughly description and conversation-agent 1.5.0's \"Thinking longer\" lines.\n- 04/05: 'make a plan for the next two sessions' -> the app's ask line in place of the model's words; then 'what is left?' -> the older lines read \"Offered: a stronger model, about CHF 0.07 (at most CHF 0.13). You went ahead.\" and \"Offered: a stronger model, about CHF 0.03 (at most CHF 0.06). Not taken.\" with no button; Think it through only under the newest answer (L4-chat-212).\n- 06-09: two more 'use a stronger model: …' lines, each Go ahead ran Sonnet once (3 Go aheads in a row, no repeated ask) (L4-chat-201). 10-11: a typed \"yes\" under the plan ask ran it once.\n- 12-13: 'think it through: what did the last two sessions do?' with Answer now pressed while it held -> \"…wrapping up…\", footer \"Thought it through more carefully · 6 s · CHF 0.02\", no ask line and no Go ahead (L4-chat-206).\nWalk 2 (Kite club): chat 'make the FAQ task depend on the README task' -> Yes -> '\"Write the FAQ\" now waits for \"Write the README\". It runs after it is done, at your next Start.'; 'let the FAQ run on its own' -> read-back 'Let \"Write the FAQ\" run without waiting for another task?' -> Yes -> '\"Write the FAQ\" waits for no other task now. It runs at your next Start.' (16, 18); Tasks drawer Change what it waits for, untick, Save -> the same sentence (23-w2-08-deps-saved); 'run it now' -> \"Start a session on Kite club (up to CHF 5.00)?\" (24), No. 14 more quick lines: model-call log shows the history's first message unchanged for 8 calls (cache reads 10.5k-11.6k, writes ~100 tokens), then one step of 6 turns (35 -> 25 messages) and stable again (L4-chat-205). Settings > Chat asks first set to 0 then 0.10 with its Yes (26-27, walk2c): dialog and Changes read \"…from CHF 0.10 to CHF 0.00: chat asks before every longer answer.\" and \"…from CHF 0.00 to CHF 0.10. Undo.\" (L4-chat-211).\nWalk 3 (L4-chat-204): a Kite club read-back left waiting (32); project.join via the API was refused (no shared repository on the bench), so I closed Kite club into \"Site\" in the store as the area's real-daemon case does, then restarted the daemon (restart-daemon.mjs). Kite club's chat is kept to read (34); the read-back's card was armed again and shown in the Inbox with Yes/No (35); Yes -> Update \"Your Yes to … was not applied: \"Kite club\" joined \"Site\", so its work runs there.\" and FAQ's dependencies unchanged (38); Data tab Register on Kite club -> the joined sentence, nothing registered (37); POST /projects/:id/plan and /data/import -> 409 conflict, cause project_joined, the joined sentence.\nWalk 4: after the restart Garden club's older lines still read in the past and a new 'compare …' line got a fresh ask with Go ahead (40).\nEvery screen matched design §3.9/§5 for this area: one-line ask with CHF two decimals and time, buttons only on the newest ask, nothing spent before the yes, no ids/USD/raw states. Bench stopped with stop.mjs; its home and browser profile deleted.",
+ "blocking": [],
+ "claims_checked": [
+  {
+   "claim": "L4-chat-201: Go ahead runs the offered answer; composed tests fail before the fix",
+   "holds": true,
+   "note": "Reverting atMostOf and yesCovers locally: 2 of the 3 L4-chat-201 cases fail (stored at-most 39705 vs 50000; the typed yes re-asked, footer null). Bench: three Go aheads and a typed yes each ran Sonnet once. With only atMostOf's rounding kept (yesCovers reverted) all 3 cases still pass, so yesCovers is untested extra safety."
+  },
+  {
+   "claim": "L4-chat-202: words say who acts; ask-only backstop attaches the app's ask line; stand-in answer-alone mode",
+   "holds": true,
+   "note": "With the backstop disabled the two backstop cases fail (offer undefined). Bench answer-alone mode: plan and failure lines got the app's ask with Go ahead, no thorough call before the yes. Exact texts verified in the model-call log. The eval file is in not_done (cut line allows it)."
+  },
+  {
+   "claim": "L4-chat-203: the thorough pass gets this_answer and the closer-look rules; the fast request is unchanged",
+   "holds": true,
+   "note": "Model-call log: every Sonnet/longer request has '- this_answer: …' and no thinking_longer; its system ends with the rules text."
+  },
+  {
+   "claim": "L4-chat-204: a closed project takes no new work on plan, data add/import and a yes after the join, also after a restart",
+   "holds": true,
+   "note": "The restart case fails on base executor.ts (card not armed). Bench: a real daemon restart, the Inbox Yes refused in words, Data Register refused, plan/import 409. With confirm's new closedProjectRefusal disabled all 6 commands cases still pass: the in-process yes was already refused through redecide."
+  },
+  {
+   "claim": "L4-chat-205: stepped history window, cache reads past 12 turns, same after a restart",
+   "holds": true,
+   "note": "The base historyMessages fails all 3 cases. Bench log confirms the stepped window and the cache reads. The restart case recreates the agent on the same in-memory store."
+  },
+  {
+   "claim": "L4-chat-206: Answer now earns no offer; a pass wrapped by its line still offers",
+   "holds": true,
+   "note": "Reverting the wrapReasonOf condition fails the Answer now case. The control case at chat-depth.test.ts:675 still asserts the offer. Bench confirmed."
+  },
+  {
+   "claim": "L4-chat-207: a dependency change says when the task runs; 'let X run on its own' parsed; the drawer says the same",
+   "holds": true,
+   "note": "Bench chat and drawer sentences match exactly; each sentence is under 100 characters. The join wording is tested only with stubbed ports (commands test)."
+  },
+  {
+   "claim": "L4-chat-208: cap line and Costs row real-daemon cases",
+   "holds": true,
+   "note": "Both cases exist and pass; I did not re-verify that they fail with their guards reverted. The 10,000-token lookups case is in not_done (cut line)."
+  },
+  {
+   "claim": "L4-chat-209: askAboveWords removed",
+   "holds": true,
+   "note": "Typecheck green; no references are left."
+  },
+  {
+   "claim": "L4-chat-210: start read-back and sentence with two decimals",
+   "holds": true,
+   "note": "Bench: 'Start a session on Kite club (up to CHF 5.00)?'. Pinned strings updated across the commands, runtime, e2e and UI tests."
+  },
+  {
+   "claim": "L4-chat-211: chat_ask_above value and meaning apart",
+   "holds": true,
+   "note": "Bench Settings dialog and Changes rows read exactly as the acceptance says. The fake's SETTING_RISK gained chat_ask_above."
+  },
+  {
+   "claim": "L4-chat-212: older ask lines read in the past without a button",
+   "holds": true,
+   "note": "Bench screenshots 05, 13 and 40 show 'Offered: … Not taken.' and 'You went ahead.'. The UI test cases assert the visible text and that no button remains."
+  },
+  {
+   "claim": "Validation: UI vitest 1378 passed, Playwright 38 passed, e2e 25 passed, typecheck green",
+   "holds": true,
+   "note": "Re-run here under the heavy lock: UI vitest 101 files / 1378 passed; Playwright 38 passed; pnpm test:e2e 13 files / 25 passed, 1 skipped; pnpm typecheck green; area unit files and neighbours 123+165+161 passed. Not re-run: the full pnpm test, pnpm test:integration and pnpm test:injection."
+  }
+ ],
+ "non_blocking": [
+  "packages/commands/src/commands/task.ts dependenciesNextLine: in the branch where the task could already run before the change (wasRunnable), the done sentence appends previewWork's read-only line through afterMove. With the hands-off setting on and no session running, previewWork returns 'A session started for it (this project starts by itself when work is ready).', so the sentence claims a start that did not happen (§5 rule 9). afterDependenciesLine also maps that preview to 'at your next Start'. Both are narrow (the setting is off by default) and are siblings of withPreview's read-backs.",
+  "needOfLine (depth.ts) also matches status questions such as 'how long has it been in review for?' ('review for') or 'how does this compare?', so the app puts a paid ask line under a quick status answer. The ask spends nothing. LC-C13 on bench-live should check for false asks on plain questions.",
+  "executor.confirm's new closedProjectRefusal has no test that fails without it: redecide already re-runs prepare's refuseClosedProject for chat and Inbox cards, and the restart case was fixed by restorePending. The guard only adds cover for the Undo path (its redecide does not prepare), and that path has no test. A composed card that spans two projects has projectId null, so this guard skips it; redecide's per-step guard still refuses it.",
+  "L4-chat-201: yesCovers is untested defense in depth (the cases pass with only atMostOf's centime rounding). A floor that crosses a centime boundary between the ask and the Go ahead still asks once more with a figure 1 centime higher. The optional floor-without-the-ask-line is in not_done.",
+  "The 201 real-daemon case says that with cheap estimates the 'at most' equals the pass's floor, the pass reaches its wrap-up and the strongest model is offered under the Go ahead answer. On bench-live (LC-C14), check that a stronger Go ahead does not routinely end with 'This needs the strongest model … Go ahead?'.",
+  "withoutWordsOffer removes every sentence matching 'stronger model' or 'hand it over', not only questions. An answer that both mentions 'Sonnet is a stronger model.' and asks in words loses the plain sentence too.",
+  "Restart cases for the stepped history window and the Go ahead recreate the agent on the same in-memory store (w.restart()), not composeRuntime twice on one home (validation rule 4's preferred form; same convention as the file's earlier cases). My bench walk restarted the real daemon and the past-tense lines and a fresh ask held.",
+  "packages/runtime/test/chat-steering.test.ts: the new describe leaves its mkdtemp home behind (no removeHomes), as the file's earlier describe does.",
+  "Intermediate commit d7eba16 left real-daemon.test.ts :894 failing until c3ac22a. Only the history is affected; the head is green.",
+  "In FORERUNNER_BENCH_CHAT_ALONE mode the stand-in answers a failure question with the plan sentence, so on the bench the failure question also shows only the ask line (no quick answer). The composed test uses the recorded live reply, which keeps the answer.",
+  "Shared-files note for the merge: agent.ts gained `turn: nextTurnNumber(earlier)` in l4-cred-screens' chat.human write region (disclosed by the fixer). transcript.ts gained TranscriptTurn.index and readTranscript parsing, outside the window-only region this area owns.",
+  "Pre-existing, not this area: Settings 'Budget per session … (CHF 5 unless set)' lacks two decimals. The Inbox shows 'Done: You answered \"Yes\".' and then the Update 'was not applied' for a refused card."
+ ]
+}

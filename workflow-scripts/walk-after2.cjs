@@ -1,54 +1,59 @@
-// AFTER walk, part 2: after the take-over (bench fix-d1109-onerepo-link).
-const fs = require("node:fs");
-const { execFileSync } = require("node:child_process");
-const R = require("/home/user/Forerunner/.claude/worktrees/wf_6589accd-16a-1/scripts/bench/recorder.cjs");
-const N = "fix-d1109-onerepo-link";
-const DIR = "/tmp/frbench/fix-d1109-onerepo-link";
-const out = JSON.parse(fs.readFileSync(`${DIR}/after-walk.json`, "utf8"));
-delete out.error;
-const save = () => fs.writeFileSync(`${DIR}/after-walk.json`, JSON.stringify(out, null, 2));
-const bare = `${DIR}/githost/bench/empty.git`;
-const sh = (args) => {
-  try {
-    return execFileSync("git", ["--git-dir", bare, ...args], { encoding: "utf8" });
-  } catch (e) {
-    return null;
-  }
-};
-
+// AFTER walk 2: a check that changes nothing quotes the left-out line (LC-C29 shape), and a small
+// task with a CHF 0.08 budget gets its review (LC-C30 shape).
+const R = require("/home/user/Forerunner/.claude/worktrees/wf_801d579b-a17-1/scripts/bench/recorder.cjs");
+const n = "fix-l4-selftasks-check";
 (async () => {
-  const { browser, page } = await R.openApp(N);
-  const ui = R.bench(N).uiUrl.replace(/\?.*$/, "").replace(/\/$/, "");
+  const out = {};
+  const { browser, page } = await R.openApp(n);
   try {
-    out.branches = sh(["branch", "--list"]);
-    out.mainMarker = sh(["show", "main:.forerunner/project.json"]);
-    out.scaffoldMarker = sh(["show", "fr/docs-scaffold:.forerunner/project.json"]);
-    out.checks.scaffoldNamesThisProject = !!out.scaffoldMarker && out.scaffoldMarker.includes(out.empty);
-    out.checks.mainUntouched = !!out.mainMarker && out.mainMarker.includes("Kite club");
-    await page.goto(`${ui}/projects/${out.empty}/summary`);
-    await page.waitForTimeout(3000);
-    const overview = await R.step(page, "after-08-overview-after-take-over");
-    out.checks.lineGone = !overview.includes("is also the Forerunner project");
-    await page.goto(`${ui}/changes`);
+    const ui = R.bench(n).uiUrl;
+    const project = await R.api(n, "POST", "/projects", {
+      name: "Tea room",
+      goal: "A page for the tea room",
+      autonomyLevel: 2,
+    });
+    await R.api(n, "POST", `/projects/${project.id}/tasks`, {
+      title: "Build the page in index.html",
+      outcome: "index.html shows the tea room",
+      acceptanceCriteria: ["index.html exists"],
+      riskTier: 1,
+      specialist: "coder",
+    });
+    // A README task with a budget of USD 0.10 (CHF 0.08), as live check 4's LC-C30.
+    const readme = await R.api(n, "POST", `/projects/${project.id}/tasks`, {
+      title: "Write the README in README.md",
+      outcome: "README.md says what the page is",
+      acceptanceCriteria: ["README.md exists"],
+      riskTier: 1,
+      specialist: "coder",
+      budgetUsdMicro: 100000,
+    });
+    const s = await R.startSession(n, project.id);
+    const sid = s?.session?.id ?? s?.id;
+    await R.waitForSession(n, sid);
+    out.sessionId = sid;
+    await page.goto(`${ui}/sessions/${sid}`).catch(() => {});
     await page.waitForTimeout(2500);
-    const changes = await R.step(page, "after-07-changes");
-    out.checks.changesRow = changes.includes('Took over bench/empty from "Kite club".');
-    const rows = await R.api(N, "GET", "/changes");
-    const list = Array.isArray(rows) ? rows : (rows.changes ?? rows.rows ?? []);
-    const row = list.find((r) => String(r.sentence).startsWith("Took over"));
-    out.changeRow = row ? { sentence: row.sentence, undoable: row.undoable, undoBlockedReason: row.undoBlockedReason ?? null } : null;
-    if (row) {
-      const undo = await R.apiRaw(N, "POST", `/changes/${row.id}/undo`, {});
-      out.undo = { status: undo.status, result: undo.body?.status, reason: undo.body?.reason ?? null };
-    }
-    out.problems = R.problems(N).slice(-10);
+    out.session = await R.step(page, "after-06-session-no-change-quote");
+    await page.goto(`${ui}/projects/${project.id}/tasks?task=${readme.id}`).catch(() => {});
+    await page.waitForTimeout(2500);
+    out.readme = await R.step(page, "after-07-small-task-reviewed");
+    out.tasks = (await R.api(n, "GET", `/projects/${project.id}/tasks`)).map?.((t) => [
+      t.title,
+      t.status,
+    ]);
+    out.events = (await R.api(n, "GET", `/sessions/${sid}/events`))
+      .filter?.((e) => /task_check|review/.test(e.type))
+      .map((e) => ({ type: e.type, audience: e.audience, text: e.text }));
   } finally {
-    save();
     await browser.close();
   }
+  require("node:fs").writeFileSync(
+    "/tmp/frbench/fix-l4-selftasks-check/walk-after2.json",
+    JSON.stringify(out, null, 2),
+  );
+  console.log(JSON.stringify({ tasks: out.tasks, events: out.events }, null, 1));
 })().catch((e) => {
-  out.error = String(e?.stack ?? e);
-  save();
   console.error(e);
   process.exit(1);
 });

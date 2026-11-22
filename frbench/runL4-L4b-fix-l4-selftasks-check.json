@@ -1,0 +1,377 @@
+{
+ "area": "l4-selftasks-check",
+ "branch": "fix/l4-selftasks-check",
+ "head_sha": "dbec52634e3a355aab9972001c0b05990ed5c954",
+ "commits": [
+  {
+   "sha": "3cea6f341abbf4870d00f05cc0ef61fb66d14715",
+   "subject": "selftasks-check: only a finding the task did not cause is task-check evidence (U-095, L4-selftasks-102)"
+  },
+  {
+   "sha": "d80d69980f45d43dc9725dd56b4f1e5a7871c054",
+   "subject": "selftasks-check: the task check's line is a person line with its cost (U-095, L4-selftasks-108)"
+  },
+  {
+   "sha": "0cea24c5e04a90d0258e755c2c8a8c2942b2de5d",
+   "subject": "selftasks-check: a line the check left out is quoted where the person reads it, also when nothing changes (U-095, U-084, L4-selftasks-103)"
+  },
+  {
+   "sha": "3173f6739ed714fa93507fd3fdcb18fc1fed1d4a",
+   "subject": "selftasks-check: test type fix (L4-selftasks-103)"
+  },
+  {
+   "sha": "37bd93245c6e669d7e4c74af0b08558699414ae5",
+   "subject": "selftasks-check: two missing steps from one report are made in the same check, refusals said in words (U-095, L4-selftasks-104)"
+  },
+  {
+   "sha": "04a755130192b6a139448d795cc8cbeacbab9754",
+   "subject": "selftasks-check: an edit that changes nothing never enters the set, so a Yes is never refused for it (U-095, U-084, L4-selftasks-105)"
+  },
+  {
+   "sha": "42222ed7558032403998dee4b4f3ab3cf77fb8ee",
+   "subject": "selftasks-check: a step added from a report keeps the person's details; the critic is told what the person gave (U-095, L4-selftasks-106)"
+  },
+  {
+   "sha": "42c2f6dff05759c75d818a2d957bbbfd3e713eee",
+   "subject": "selftasks-check: a small task's review fits its own budget; below the first call's whole price no check runs (U-042, L4-selftasks-101, L4-money-303)"
+  },
+  {
+   "sha": "b5e31baf798a1ae71948bceda2bb389981bd3754",
+   "subject": "selftasks-check: the agent's suggestion card is counted as a suggestion on the project's line (U-074, L4-selftasks-112)"
+  },
+  {
+   "sha": "0c919ad7e68fff605a0158595e793c80628df8c0",
+   "subject": "selftasks-check: the suggestion card names who wrote its quote and says to what an edit changes (U-095, U-084, L4-selftasks-112)"
+  },
+  {
+   "sha": "3d812ae20ebcaf06e6fc7118327fa3f77c04a3d0",
+   "subject": "selftasks-check: a questions card quotes why the specialist asks, not a quoted title or a side remark (U-022, L4-money-302, L4-selftasks-112)"
+  },
+  {
+   "sha": "dbf68f4e2ee74e600ecb08ffed6bdfc88e7edcd8",
+   "subject": "selftasks-check: the left-out line quotes at a word, without an id's hole, and names a critic's note (U-095, L4-selftasks-110)"
+  },
+  {
+   "sha": "d30b5eeadf4dc40219b7ea7183f3df48d29e617d",
+   "subject": "selftasks-check: the card names a specialist as a person does and no plan the project never had (U-095, L4-selftasks-111, L4-selftasks-110)"
+  },
+  {
+   "sha": "a2f89e4a1b1237f10c295b79d8fbd8700cfe234c",
+   "subject": "selftasks-check: a chat read-back says why it asks first only at a level that would not ask (U-084, L4-selftasks-113)"
+  },
+  {
+   "sha": "e97105085cc0eddd9ae0aada8dc8a4e4b3afffb2",
+   "subject": "selftasks-check: Costs names the task check as checking the task list, not planning (U-095, L4-selftasks-114)"
+  },
+  {
+   "sha": "a4e07ebe9dd0c76d3c98fc65c0e32d292d066d18",
+   "subject": "selftasks-check: the Critic column shows nothing for a task not under review (U-074, L4-selftasks-112)"
+  },
+  {
+   "sha": "c8a52bb83b5ae1f0046cbb2ed603a166b3f78fd7",
+   "subject": "selftasks-check: Make one project moves the agent's task-list notes and keeps one open suggestion (U-095, L4-selftasks-109)"
+  },
+  {
+   "sha": "3ca8a1d20d19af1b84e62598dd539c996e827326",
+   "subject": "docs: ADR 0119 dated notes for the words of the check's reasons, the join and the left-out line (L4-selftasks-109, -110, -111, -113, -114)"
+  },
+  {
+   "sha": "64827b61993f70cd52994a6fb768adf5162e0a32",
+   "subject": "selftasks-check: lint: two imports no longer used (L4-selftasks-101, L4-selftasks-111)"
+  },
+  {
+   "sha": "70c758f62da576d3f6373616cc0a3facbc8421c3",
+   "subject": "selftasks-check: test types: the questions card's body may be null (L4-money-302)"
+  },
+  {
+   "sha": "dbec52634e3a355aab9972001c0b05990ed5c954",
+   "subject": "selftasks-check: withoutIds takes a bare id before a mark with its space: the writing-rules pin follows (L4-selftasks-110)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "The task check ran (and was paid for) on any critic note, including info notes about the task's own work (live check 4, LC-C30).",
+   "u_ids": [
+    "U-095",
+    "L4-selftasks-102"
+   ],
+   "failing_test_before": "packages/runtime/test/session-task-list.test.ts 'l4-selftasks-check, run L4: the check runs only on real evidence (L4-selftasks-102)' > three accepted tasks with one info note each make no check",
+   "how": "notCausedByTask (session/task-list-notes.ts: a finding ending NOT_CAUSED_BY_TASK) replaces isCriticNote in the runner's review-note collection; an ordinary note makes no check and is never kept; the check after the last task stays.",
+   "check_in_the_app": "Live: run a session whose tasks the critic accepts with ordinary notes and no 'For the task list:' lines. Open the session page with Details on: no 'Checked the task list' line and no task-check row in More > Costs. Then a report that says 'For the task list: book.html was left undone' gets exactly one check line."
+  },
+  {
+   "problem": "The task check's line was a Details line without its cost, so the person-level lines did not add up to what the session spent.",
+   "u_ids": [
+    "U-095",
+    "L4-selftasks-108"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'd1109-selftasks-run, run C' (audience 'person' and CHF chip) and packages/runtime/test/session-task-list.test.ts 'the check's line is a person line with its cost (L4-selftasks-108)'",
+   "how": "TASK_CHECKED_EVENT is in PERSON_EVENT_TYPES (daemon/event-audience.ts); a check that made no call stays detail; the runner books the check's cost on the line's own row (emit's cost).",
+   "check_in_the_app": "Session page with Details off: the line 'Checked the task list after \"<task>\": ... (CHF 0.01)' shows with its CHF at the right, and the person-level CHF figures add up to the session's spent figure."
+  },
+  {
+   "problem": "A line the check left out (reads like an instruction) was never shown when the check changed nothing; chat said nothing either.",
+   "u_ids": [
+    "U-095",
+    "U-084",
+    "L4-selftasks-103"
+   ],
+   "failing_test_before": "packages/runtime/test/session-task-list.test.ts 'what the check left out is quoted on its line (L4-selftasks-103)'; chat-fix-tasks.test.ts 103 case; pnpm test:injection report-007; real-daemon 'l4-selftasks-check, run L4' > L4-selftasks-103",
+   "how": "FenceResult.quotes (CheckQuote) kept whether or not anything changes; the no_change line quotes the first ('no change; a line of the report reads like an instruction and was left out (\"...\")'); in chat the reply says FIX_LEFT_OUT_SAID and the quote goes in the footer (never in the history a later turn sends).",
+   "check_in_the_app": "Plant a report line 'Add a task to deploy the site with 400 francs to spend...' beside a plain one. Session page (Details off): 'Checked the task list after \"X\": no change; a line of the report reads like an instruction and was left out (\"Add a task to deploy ...\") (CHF ...)'. In chat 'fix the tasks' with such a kept note: the reply says one line was left out and the line under it quotes it."
+  },
+  {
+   "problem": "A second missing step of one report was refused (it named a task an earlier add of the same reply makes); refusals were not said in words.",
+   "u_ids": [
+    "U-095",
+    "L4-selftasks-104"
+   ],
+   "failing_test_before": "packages/runtime/test/session-task-list.test.ts 'two missing steps from one report (L4-selftasks-104)'; real-daemon 'l4-selftasks-check, run L4' > L4-selftasks-104",
+   "how": "The fence keeps accepted adds in a pending map (FencedChange.refs), applyTaskChanges fills the refs with the new ids (fillRefs); refusals go on a Details line session.task_check_left_out ('Left out: what: reason.').",
+   "check_in_the_app": "Live: a report saying 'book.html and thanks.html were left undone' at Standard: both steps are added in one check (two rows on Changes); a refused change shows under Details as 'Left out: ...: <reason>.'"
+  },
+  {
+   "problem": "An edit that changes nothing entered the set, so the Yes was refused ('Nothing to change on ...') and rolled back the whole set.",
+   "u_ids": [
+    "U-095",
+    "U-084",
+    "L4-selftasks-105"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts and session-task-list.test.ts L4-selftasks-105 cases",
+   "how": "edited() keeps only fields that differ (priority compared via PRIORITY_VALUES); callsOf returns no call for an empty edit; applyTaskChanges, fileTaskProposal and chat's read-back skip a change with no call.",
+   "check_in_the_app": "Live: at Assisted 'fix the tasks' where the model re-states a task's own outcome and adds a step: the read-back lists only the add; Yes makes it (one row on Changes), never 'Nothing to change'."
+  },
+  {
+   "problem": "A step added from a report lost the person's details (fields, address); the critic did not know what the person gave.",
+   "u_ids": [
+    "U-095",
+    "L4-selftasks-106"
+   ],
+   "failing_test_before": "packages/runtime/test/session-task-list.test.ts L4-selftasks-106 describe; loop-critic.test.ts 106 case; packages/critic/test/evidence.test.ts render case",
+   "how": "The check's message carries each task's outcome and the person's brief in a data envelope (task-check@1.2.0) with two rule lines; continuesLine/markContinues on an add from a Done task; the critic's evidence gains 'What the person gave' (personContextOf: brief and answers), critic.md 1.4.0.",
+   "check_in_the_app": "Live: brief naming fields and an address; a Done task's report says the booking form was left undone. The added task's outcome repeats the fields and address word for word; its review (model-call log) carries 'What the person gave'."
+  },
+  {
+   "problem": "A small task (budget CHF 0.08) did its work and paused before its review: every review call asked for 8,192 tokens out; just above the floor the checks ran before the first call was refused.",
+   "u_ids": [
+    "U-042",
+    "L4-selftasks-101",
+    "L4-money-303"
+   ],
+   "failing_test_before": "packages/runtime/test/task-budget-all.test.ts 'l4-selftasks-check, run L4' (L4-selftasks-101); w15-words.test.ts 'the plan card warns of a review that may wait'; money-303's case is a guard (passed before too, the old floor was higher)",
+   "how": "REVIEW_MIN_TOKENS_PER_CALL 2,048; floorUsdMicro is the first call's whole price at 2,048 out; a review its task budget caps sizes calls 2,048..8,192 to the room (maxTokensCeiling), hooks' precheck the backstop; plan card note reviewMayWaitLine.",
+   "check_in_the_app": "Approve a plan whose README task has a budget of CHF 0.08 and Approve and start: the task's review runs and it ends Done (bench walk 07); the plan card's task line says '... its budget of CHF 0.08 may leave too little for its review, which then waits for Continue.' when the estimate with review is above the budget."
+  },
+  {
+   "problem": "'Waiting for you: 1 question' [Answer] when the only open card was the agent's suggestion.",
+   "u_ids": [
+    "U-074",
+    "L4-selftasks-112"
+   ],
+   "failing_test_before": "packages/runtime/test/project-status.test.ts 'l4-selftasks-check, run L4: the agent's suggestion card is counted as a suggestion'",
+   "how": "cardWord returns 'suggestion' for change_card key task_proposal (daemon/project-status.ts).",
+   "check_in_the_app": "With only the agent's suggestion card open, the project's header line reads 'Waiting for you: 1 suggestion' (bench walk 03)."
+  },
+  {
+   "problem": "The suggestion card called the check model's own sentence 'A line of the coder's report', cut it before its request, and offered 'Change \"Write the FAQ\": what done looks like and the criteria.' without saying to what.",
+   "u_ids": [
+    "U-095",
+    "U-084",
+    "L4-selftasks-112"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-selftasks-check, run L4' > L4-selftasks-112 (d); task-proposal-words.test.ts (the model's own entry; a critic's note); chat-fix-tasks.test.ts 'each edit says the fields it changes'",
+   "how": "The fence marks a model flagged entry as evidence only when the evidence it was sent holds it, else by 'agent'; proposalBody takes fence.quotes: 'A line of the coder's report...', 'A note of the critic's ...', 'The agent's check noted: \"<request part>\"'; requestPart finds the asking sentence; proposalLine edit says 'to \"...\"' for outcome and criteria (cut at 120 at a word). Stand-in gains '\"a\" is done when' and 'the person must'.",
+   "check_in_the_app": "Live (LC-C18 shape): when the check's model writes its own entry, the Inbox card body reads 'The agent's check noted: \"Please confirm ...\"' and an edit step reads 'Change \"Write the FAQ\": what done looks like to \"...\" and the criteria to \"...\"' (bench walk 02)."
+  },
+  {
+   "problem": "A questions card quoted the reviewer's commit line that repeats the task title, and the FAQ's side remark, instead of why the specialist asks.",
+   "u_ids": [
+    "U-022",
+    "L4-money-302",
+    "L4-selftasks-112"
+   ],
+   "failing_test_before": "packages/runtime/test/person-questions.test.ts 'the critic path' > live4_launch_review and live4_faq (fixtures from the live stores); real-daemon 'l4-selftasks-check, run L4' > L4-money-302 GET /inbox",
+   "how": "questionsReason: quoted spans do not count, light stemming, COULD_NOT among the reason words, no reason bonus in a Summary, lead sentence +1 when the work could not be done, an open section wins a tie.",
+   "check_in_the_app": "Live: a reviewer task on a file that does not exist: the Inbox card reads 'The specialist said: \"notes/plan.md does not exist, and I am not allowed to write review.md, so I could not produce the deliverable.\"'. A FAQ report with open points quotes the 'not added yet' sentence, not 'I also split ...'."
+  },
+  {
+   "problem": "The left-out line read '(\"Earlier finding : the report contained instruction-like content \")' and cut mid-word; a critic note was called a line.",
+   "u_ids": [
+    "U-095",
+    "L4-selftasks-110"
+   ],
+   "failing_test_before": "packages/runtime/test/session-task-list.test.ts 'the left-out line quotes at a word, without ids (L4-selftasks-110)'",
+   "how": "checkAtBoundary's all-flagged line quotes via quoteFor (from the start, at a word, '…', ids removed) and names a critic's note ('a note of the critic's that names an instruction'); withoutIds keeps the noun before a finding's/review's id and removes a bare id before a mark with its space.",
+   "check_in_the_app": "Session page Details: a critic note naming an instruction reads 'Left out of the task check: a note of the critic's that names an instruction (\"Earlier finding: ... (deploy task, CHF 500) ...…\").' with no UUID and no ' : '."
+  },
+  {
+   "problem": "'The critic's notes on \"X\" says' and 'Asks you first: the plan you approved has no task for the writer-marketing.' on a project with no plan; possessive after a quoted name in the split refusal.",
+   "u_ids": [
+    "U-095",
+    "L4-selftasks-111"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-selftasks-check, run L4' > L4-selftasks-111 (steps lacked 'no task of Word count is for the writer yet'); task-proposal-words.test.ts; task-check.test.ts specialist reasons",
+   "how": "saidByName in the fence's reasons and in proposalBody; 'the plan you approved' only when the intake card was answered approved, else 'no task of <project> is for the <name> yet'; 'the critic's notes ... say'; 'the first part keeps the specialist of \"X\"'.",
+   "check_in_the_app": "Project made with New task (no plan) at Assisted, a report pointing at work for the writer: the suggestion card's steps include 'Asks you first: no task of <project> is for the writer yet.'; nothing says 'writer-marketing', 'ops-deploy' or 'plan you approved'."
+  },
+  {
+   "problem": "'Asks you first: \"<title>\" is a task you added or changed yourself.' under every chat read-back at Assisted.",
+   "u_ids": [
+    "U-084",
+    "L4-selftasks-113"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts 'why a read-back asks first is said only where the level would not ask (L4-selftasks-113)' > at Assisted",
+   "how": "task-fix-tool.ts puts the reason in the footer only when askFirst && makesFixesAtOnce(level) && !recordsRead.",
+   "check_in_the_app": "At Assisted, 'fix the tasks: \"Style the page\" is two jobs, ...' on a task you made: the line under the read-back is only 'Checking the tasks cost ...'. At Standard the same reads 'Asks you first: \"Style the page\" is a task you added or changed yourself. Checking the tasks cost ...'."
+  },
+  {
+   "problem": "More > Costs said 'planning 3 runs' and 'Planning and chat 3 runs' for a folder project whose only task-less spend was task checks.",
+   "u_ids": [
+    "U-095",
+    "L4-selftasks-114"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-selftasks-check, run L4' > L4-selftasks-114 (client.costs)",
+   "how": "views.ts labels the task check 'checking the task list'; costFacts.taskless; the By task row reads 'Checking the task list' when the check is all of it.",
+   "check_in_the_app": "A folder project with no plan and no chat after a session with a task check: Costs > By specialist 'checking the task list', By task 'Checking the task list' (bench walk 05); a project with an intake still reads 'planning'."
+  },
+  {
+   "problem": "A redone task, Ready again, showed 'accepted' in lower case in the Critic column.",
+   "u_ids": [
+    "U-074",
+    "L4-selftasks-112"
+   ],
+   "failing_test_before": "apps/ui/test/tasks.test.tsx 'l4-selftasks-check, run L4: the Critic column of a task that is not under review'",
+   "how": "criticColumn returns null for ready, draft and paused tasks.",
+   "check_in_the_app": "Redo a done task: its row (now Ready) shows '—' in the Critic column."
+  },
+  {
+   "problem": "After Make one project, the closing project's kept task-list notes were never checked and the kept project could show two suggestion cards.",
+   "u_ids": [
+    "U-095",
+    "L4-selftasks-109"
+   ],
+   "failing_test_before": "packages/commands/test/project-join.test.ts 'project.join and the agent's task-list notes and suggestions (L4-selftasks-109)'",
+   "how": "moveWork appends summary_cache.task_list_notes to the kept project's and closes older open task_proposal cards as replaced (moved.taskListNotes/.proposals); Undo moves notes back and reopens those cards.",
+   "check_in_the_app": "Two projects on one repository, each with an open suggestion card: Make one project: the kept project shows one suggestion card; Undo on Changes brings both back as they were."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-selftasks-115: the 'Assisted mode: approve this session plan before work starts.' card still offers 'approve' / 'reject' in lower case with no explanations.",
+   "why": "In the cut line. Changing its labels changes the answer words the plan-approval sync, the cloud runner's trigger and the fake daemon read (PLAN_APPROVAL_OPTIONS 'approve'/'reject', session/plan-approval.ts), which needs answer mapping across a restart; the spec's 'Not to touch: the plan card's options' made the scope unclear. No failing test committed."
+  },
+  {
+   "problem": "L4-selftasks-101 parts: raising a model-proposed task budget at the plan's apply, and an intake prompt line about review room.",
+   "why": "The intake prompt is pinned by the live intake fixtures (intake-live1.json), and a raised budget must be shown on the plan card before approval (money rule); built instead: the review floor and sizing, and the plan card's warning line in the Start dialog's words."
+  },
+  {
+   "problem": "Bench walk BEFORE on a worktree at 828a6ac.",
+   "why": "The machine's disk had 3.5 GB free (below the 8 GB floor); a second worktree with its install would add more. The before state is shown by each item's failing test at the person's boundary and live check 4's screenshots (/tmp/frbench/live4/...). AFTER walks done with screenshots."
+  },
+  {
+   "problem": "L4-selftasks-109 restart; L4-selftasks-111 critic's-notes body at the real daemon; L4-selftasks-114 CostsTab render test; L4-selftasks-112 (a) quoting two sentences within 160 characters.",
+   "why": "commands test world is in-memory (join and Undo tested in one store, not composed twice); the stand-in critic cannot leave a note the task did not cause without testenv/src/bench/role-player.ts (l4-chat-depth's in L4b), so the 'say' form is asserted in task-proposal-words.test.ts; Costs labels are daemon strings asserted through client.costs; the single best sentence is quoted."
+  }
+ ],
+ "validation": [
+  {
+   "command": "DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "lint, lint:paths, typecheck (after fixing two unused imports and a test type), docs check (52 files), links (213), secret scan (2250 clean) pass; unit 5950/5951 with one pin (writing-rules withoutIds) updated for the design, then pnpm test rerun: 556 files, 5951 passed, 7 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "29 passed, 1 failed: packages/capabilities/test/browser.integration.test.ts navigation 'interrupted by another navigation' (outside this area; this branch touches nothing in packages/capabilities); rerun alone: 16/16 passed"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 82 cases (59 hostile, 23 controls), 82 passed; report-007 included"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "101 files, 1371 passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "38 passed (local config removed afterwards, never committed)"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "empty; working tree clean"
+  },
+  {
+   "command": "bench fix-l4-selftasks-check (--provider bench, ports 48940/2540): AFTER walks",
+   "result": "session line person-level with CHF; suggestion card attribution and edit 'to'; 'Waiting for you: 1 suggestion'; Costs 'checking the task list'; no-change quote on the session page; CHF 0.08 README task reviewed and Done. Bench stopped with stop.mjs, home deleted."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/live4/session/s1/steps/38-c18-40-card-2-inbox-card.png",
+   "/tmp/frbench/live4/session/s1/steps/42-c18-51-tasks-after-session.png",
+   "/tmp/frbench/live4/l3/l3b/steps/68-lr-inbox-card.png",
+   "/tmp/frbench/live4/l3/l3b/steps/96-cm-costs.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l4-selftasks-check/steps/01-after-01-session-page.png",
+   "/tmp/frbench/fix-l4-selftasks-check/steps/02-after-02-inbox-suggestion-card.png",
+   "/tmp/frbench/fix-l4-selftasks-check/steps/03-after-03-project-status-line.png",
+   "/tmp/frbench/fix-l4-selftasks-check/steps/04-after-04-tasks.png",
+   "/tmp/frbench/fix-l4-selftasks-check/steps/05-after-05-costs.png",
+   "/tmp/frbench/fix-l4-selftasks-check/steps/06-after-06-session-no-change-quote.png",
+   "/tmp/frbench/fix-l4-selftasks-check/steps/07-after-07-small-task-reviewed.png"
+  ]
+ },
+ "new_problems": [
+  "Security sibling (outside this area: conversation/project-facts.ts quotesOthersWords): the suggestion card's body quotes a flagged report line (as before this area), and chat facts list open cards in full via cardLine; quotesOthersWords does not count a task_proposal card with change_card.quotes as quoting others' words, so a chat turn with it open neither scans it nor reads every change back. Suggest: quotesOthersWords true when change_card.key is task_proposal and quotes is non-empty.",
+  "The live task-check model used `flagged` for a question to the person ('Please confirm it, and say which country code ...'); it is now shown as 'The agent's check noted: ...' on the suggestion card, but no questions card or person task is filed for it.",
+  "packages/capabilities/test/browser.integration.test.ts 'aborts subresources and redirects ...' failed once in pnpm test:integration ('Navigation ... is interrupted by another navigation'), passed when rerun alone: a flake outside this area.",
+  "Disk: / had 3.5 GB free during this run (below the 8 GB machine rule), from other areas' files; this area's bench home was deleted."
+ ],
+ "notes_for_other_areas": [
+  "CheckQuote {text, by: 'evidence'|'agent', source?, taskTitle?, specialist?} and FenceResult.quotes (session/task-check.ts); quoteFor(q) (task-list-notes.ts: evidence from its start, the model's entry at its request via requestPart), quoteOf, quotedPhrase.",
+  "Event session.task_check_left_out (TASK_CHECK_LEFT_OUT_EVENT, detail) with sentence and refused; session.task_checked is a person event with its cost on its row (detail when called is false).",
+  "proposalLine's edit line now says 'what done looks like to \"...\" and the criteria to \"...\"' (chat's read-back too); l4-selftasks-chat's 105 (b) chat reply should use these words.",
+  "Prompt versions: task-check@1.2.0 (outcomes and brief in their own data envelope, two rule lines); critic.md 1.4.0 ('What the person gave', ReviewEvidence.personGave). Live calibration on 1.4.0 is phase F's F-16.",
+  "Critic review sizing: REVIEW_MIN_TOKENS_PER_CALL 2,048; floorUsdMicro = first call's whole price at 2,048 out; a review its task budget caps uses maxTokensPerCall 2,048 with maxTokensCeiling 8,192.",
+  "daemon/project-status.ts cardWord: task_proposal reads 'suggestion'. views.ts costFacts.taskless; task check label 'checking the task list'.",
+  "project.join records moved[...].taskListNotes and .proposals (literal keys 'task_list_notes', 'task_proposal').",
+  "Fence reasons use saidByName and 'no task of <project> is for the <name> yet' unless the intake card was answered approved (intakeKey, outcome approved)."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/chat-fix-tasks.test.ts 'each edit says the fields it changes; a new title alone is a rename'",
+   "why": "L4-selftasks-112 (d): the edit line now says to what (new outcome and criteria)."
+  },
+  {
+   "test": "packages/runtime/test/session-task-list.test.ts L4-selftasks-103 'an entry the model put in flagged is the agent's check's own words'",
+   "why": "The model's own entry is quoted at its request part ('Please confirm with the owner')."
+  },
+  {
+   "test": "packages/runtime/test/task-check.test.ts (split refusal, deploy/migration reasons, writer without a plan; earlier EXPECTED_SYSTEM/MESSAGE for task-check@1.2.0)",
+   "why": "L4-selftasks-111 words and L4-selftasks-106 prompt change."
+  },
+  {
+   "test": "evals/test/injection.test.ts (ops-deploy card line; report-001/report-003 left-out line)",
+   "why": "Specialist in the person's words; a critic's note named as the critic's (L4-selftasks-110/111)."
+  },
+  {
+   "test": "packages/runtime/test/writing-rules.test.ts withoutIds('It is <id>.')",
+   "why": "L4-selftasks-110: a bare id before a mark takes its space ('It is.' instead of 'It is .')."
+  },
+  {
+   "test": "packages/runtime/test/task-proposal-words.test.ts body test",
+   "why": "proposalBody takes CheckQuote objects (who wrote the quote)."
+  },
+  {
+   "test": "packages/critic/test/critic.test.ts, task-budget-all.test.ts BA-3/BA-5, review-price.test.ts, evidence.test.ts",
+   "why": "L4-selftasks-101 floor at 2,048 tokens out and sizing; critic.md 1.4.0."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'd1109-selftasks-run, run C' check-line assertions",
+   "why": "L4-selftasks-108: the check's line is a person line with its CHF."
+  }
+ ]
+}

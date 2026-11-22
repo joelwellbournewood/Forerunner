@@ -1,61 +1,129 @@
-// Review walk 2b: set the time zone in Settings > Advanced as a person, then ask the chat.
-const R = require("/home/user/Forerunner/.claude/worktrees/wf_15a781ce-056-4/scripts/bench/recorder.cjs");
+// Review walk 2 (l4-chat-depth): dependency lines, the start read-back, the history window,
+// Chat asks first and Changes.
+const repo = process.argv[2];
+const R = require(`${repo}/scripts/bench/recorder.cjs`);
+const N = "review-l4-chat-depth";
+const UI = "http://127.0.0.1:2551";
 const fs = require("fs");
-const N = "review-d1109-chat-guard";
-const OUT = "/tmp/frbench/review-d1109-chat-guard/walk2b-result.json";
-const out = {};
+const OUT = "/tmp/frbench/review-l4-chat-depth/walk2b.json";
+
 (async () => {
-  const projectId = JSON.parse(
-    fs.readFileSync("/tmp/frbench/review-d1109-chat-guard/walk2-result.json", "utf8"),
-  ).projectId;
+  const out = { steps: {} };
+  const save = () => fs.writeFileSync(OUT, JSON.stringify(out, null, 1));
   const { browser, page } = await R.openApp(N);
-  await page.goto(`${R.bench(N).uiUrl}/settings`);
-  await page.waitForTimeout(1500);
-  const adv = page.getByText(/^Advanced/).first();
-  if (await adv.count()) await adv.click();
-  await page.waitForTimeout(1000);
-  const text = await page.evaluate(() => document.body.innerText);
-  const i = text.indexOf("Time zone");
-  out.around = i >= 0 ? text.slice(i - 100, i + 300) : null;
-  // The row: "Time zone" ... "Change".
-  const row = page.locator("div,li,section,tr").filter({ hasText: /^Time zone/ }).last();
-  out.rows = await row.count();
-  const change = row.getByRole("button", { name: "Change" }).first();
-  out.change = await change.count();
-  if (out.change) {
-    await change.click();
-    await page.waitForTimeout(800);
-    await R.step(page, "settings-zone-edit");
-    const input = row.locator("input,select").first();
-    const tag = await input.evaluate((el) => el.tagName).catch(() => null);
-    out.tag = tag;
-    if (tag === "SELECT") await input.selectOption("Europe/Zurich");
-    else if (tag) await input.fill("Europe/Zurich");
-    const save = row.getByRole("button", { name: /^Save/ }).first();
-    if (await save.count()) await save.click();
+  const idle = async (wait = 40_000) => {
+    const until = Date.now() + wait;
+    while (Date.now() < until) {
+      const busy = await page.getByRole("button", { name: "Stop", exact: true }).count();
+      if (!busy) break;
+      await page.waitForTimeout(400);
+    }
+    await page.waitForTimeout(1200);
+  };
+  const say = async (text) => {
+    const box = page.getByPlaceholder("Message your agent…");
+    await box.fill(text);
+    await box.press("Enter");
+    await page.waitForTimeout(900);
+    await idle();
+  };
+  const press = async (name) => {
+    const b = page.getByRole("button", { name, exact: true });
+    const n = await b.count();
+    out.buttons = [...(out.buttons ?? []), { name, count: n }];
+    if (!n) return false;
+    await b.last().click();
+    await page.waitForTimeout(900);
+    await idle();
+    return true;
+  };
+  const shot = async (label) => {
+    out.steps[label] = await R.step(page, label);
+    save();
+  };
+  try {
+    const kite = { id: JSON.parse(fs.readFileSync("/tmp/frbench/review-l4-chat-depth/walk2.json", "utf8")).kite };
+    out.kite = kite.id;
+    // The Tasks drawer's Change what it waits for.
+    await page.goto(`${UI}/projects/${kite.id}/tasks`);
+    await page.waitForTimeout(2500);
+    await page.getByText("Write the FAQ", { exact: false }).first().click();
     await page.waitForTimeout(1500);
-    await R.step(page, "settings-zone-saved");
+    await shot("w2-06-drawer");
+    const change = page.getByRole("button", { name: "Change what it waits for", exact: true });
+    out.drawerChange = await change.count();
+    if (out.drawerChange) {
+      await change.first().click();
+      await page.waitForTimeout(1000);
+      await shot("w2-07-deps-dialog");
+      const dlg = page.getByTestId("dependencies-dialog");
+      const boxes = dlg.getByRole("checkbox");
+      const nBoxes = await boxes.count();
+      for (let i = 0; i < nBoxes; i++) if (await boxes.nth(i).isChecked()) await boxes.nth(i).uncheck();
+      const btns = await dlg.getByRole("button").allTextContents();
+      out.dialogButtons = btns;
+      const save2 = dlg.getByRole("button", { name: "Save", exact: true });
+      if (await save2.count()) await save2.first().click();
+      await page.waitForTimeout(2000);
+      await shot("w2-08-deps-saved");
+    }
+    // L4-chat-210: run it now.
+    await page.goto(`${UI}/projects/${kite.id}/chat`);
+    await page.waitForTimeout(2500);
+    await say("run it now");
+    await shot("w2-09-run-it-now");
+    await press("No");
+    // L4-chat-205: many quick turns in this project (14 more).
+    const lines = [
+      "what is left?",
+      "what is the next task?",
+      "how much did this project cost?",
+      "what does the FAQ task wait for?",
+      "is anything running?",
+      "what is the README task?",
+      "what is left?",
+      "any open questions?",
+      "what is the next task?",
+      "what is left?",
+      "is anything running?",
+      "what is the FAQ task?",
+      "what is left?",
+      "what is the next task?",
+    ];
+    for (const l of lines) await say(l);
+    await shot("w2-10-many-turns");
+    // L4-chat-211: Settings, Chat asks first: 0, then 0.10.
+    await page.goto(`${UI}/settings`);
+    await page.waitForTimeout(2500);
+    const setTo = async (v) => {
+      const row = page.locator('[data-testid="setting-row"][data-key="human.chat_ask_above"]');
+      await row.getByTestId("setting-change").click();
+      await page.waitForTimeout(800);
+      const dialog = page.getByTestId("setting-dialog");
+      await dialog.getByTestId("setting-value").fill(String(v));
+      await shot(`w2-11-chat-asks-first-${v}`);
+      await dialog.getByTestId("setting-apply").click();
+      await page.waitForTimeout(1500);
+      await shot(`w2-12-after-apply-${v}`);
+      // A raise asks a yes.
+      const yes = page.getByRole("button", { name: /^(Yes|Confirm|Apply)/ });
+      if ((await page.getByTestId("setting-dialog").count()) && (await yes.count())) {
+        await yes.last().click();
+        await page.waitForTimeout(1500);
+        await shot(`w2-13-after-yes-${v}`);
+      }
+    };
+    await setTo(0);
+    await setTo(0.1);
+    await page.goto(`${UI}/changes`);
+    await page.waitForTimeout(2500);
+    await shot("w2-14-changes");
+    out.changes = (await R.api(N, "GET", "/changes?limit=12")).map((c) => c.sentence ?? c);
+  } finally {
+    save();
+    await browser.close();
   }
-  out.zoneNow = (await R.api(N, "GET", "/me")).human?.timezone ?? JSON.stringify(await R.api(N, "GET", "/me")).slice(0, 400);
-  // Ask the chat.
-  await page.goto(`${R.bench(N).uiUrl}/projects/${projectId}/chat`);
-  await page.waitForTimeout(1500);
-  const c0 = R.modelCalls(N, "chat").length;
-  const input = page.locator('[data-testid="chat-input"]').first();
-  await input.fill("what did we do yesterday?");
-  await input.press("Enter");
-  await R.until(async () => R.modelCalls(N, "chat").length > c0, 60000, 300, "chat call");
-  await page.waitForTimeout(1500);
-  await R.step(page, "chat-yesterday");
-  const m = R.modelCalls(N, "chat")[c0]?.messages?.at(-1)?.content;
-  const t = typeof m === "string" ? m : JSON.stringify(m);
-  out.now = t.slice(t.indexOf("# Now"), t.indexOf("# Now") + 140);
-  fs.writeFileSync(OUT, JSON.stringify(out, null, 2));
-  console.log(JSON.stringify(out, null, 2));
-  await browser.close();
 })().catch((e) => {
-  out.error = String(e?.stack || e);
-  fs.writeFileSync(OUT, JSON.stringify(out, null, 2));
   console.error(e);
   process.exit(1);
 });

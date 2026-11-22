@@ -4805,7 +4805,8 @@
     "[words] L4-money-112: The Swiss pairing session (one task done, tried twice, 51% over its estimate): Details 'Session review: sent back for changes (grade 85, 1 finding).' and More > Reviews > Session checks '85 / 100 sent back ... over their estimate of CHF 0.07 by 51%, with one task tried twice', the finding marked 'to fix'. Evidence: live4:L4-l3-7; live4:L4-l3-7: /tmp/frbench/live4/l3/evidence/swiss.json and 121-session-checks.txt; repro /tmp/frbench/l4-l3-7/check.mts. Root cause: packages/critic/src/session-review.ts:586 makes any medium finding 'revise', and the overrun note (:417-423) is medium; packages/runtime/src/daemon/views.ts:876 prints verdictWords('revise') = 'sent back for changes' (event-lines.ts:417-422); apps/ui/src/pages/project/ReviewsTab.tsx:108 shows verdictLabel for session checks ('sent back', apps/ui/src/lib/plain-words.ts:83-84) and the finding state 'to fix' (:141-150). L3-run-8 replaced the words only for the waits-for cases (runner.ts:4379-4388) and only in the log. Also C6:C6L-19's L3-left-16 (a session review's revise with another cause reads 'sent back for changes'; root packages/critic/src/session-review.ts' revise cause words), moved here from L4-selftasks-123.",
     "[words] L4-money-113: A writer task 'Write a 3,000-word guide to the club in guide.md' with Budget 0.15: its budget card's Left to do reads '... plus a short introduction. Put…'. A failed card reads 'It reported: ... (the git status check below shows… \"Write kite/club-day.txt ...\" waits on it.' Evidence: live4:L4-l3-14; live4:L4-l3-14: /tmp/frbench/live4/l3/l3b/steps/117-rg-card.png and .txt; l3b state.sqlite human_request 01a1e8f6-d22f (left[0] is exactly 200 characters, ending 'Put cl…'); /tmp/frbench/live4/l3/evidence/g1-inbox.json and l3a run 01a1e8e3-234b (the full report); repro /tmp/frbench/v-L4-l3-14/repro/repro.ts. Root cause: packages/runtime/src/session/budget-pause.ts:57 and :207: parseHandoff cuts each item at MAX_ITEM_CHARS = 200 inside a word; packages/runtime/src/daemon/request-words.ts:227-239 cardItem drops the broken word and keeps the stored '…', and cuts again at 220; task-context.ts quotes the item at 200 into the continuing brief. packages/capabilities/src/githost/pr-executor.ts:612-624 emptyChangeSummary splits sentences with /(?<=[.!?])\\s+(?=[\"'(\\p{Lu}])/u, which misses a stop followed by a closing quote, so its 'first sentence' runs on and is cut at 160 inside a parenthesis.",
     "[words] L4-github-110: the log says \"Plan: 1 task\" then \"It promised 3 tasks\" and \"note for the next session\"; the Overview says the plan wait twice after Add to. Evidence: live4:L4-session-9; /tmp/frbench/live4/session/s2/steps/05-c2-12-add-to-landed.png. Root cause: packages/runtime/src/session/runner.ts:1796, :5509; packages/runtime/src/daemon/views.ts:773-789, :816-817; apps/ui/src/pages/ProjectPage.tsx:129-137; apps/ui/src/pages/project/IntakeBanner.tsx:110-121.",
-    "[minor] L4a-left-7: a critic review that meets the subscription's plan share is still a budget pause, not the credential stop 'share' that L4a made for task runs (L4-creds-1); route it the same way under the person's policy. (L4a leftovers) Sources: /tmp/frbench/runL4-L4a-{fix,review,fixup}-l4-cred-engine.json and runL4-L4a-merge.json (problems_left, notes_for_other_areas)."
+    "[minor] L4a-left-7: a critic review that meets the subscription's plan share is still a budget pause, not the credential stop 'share' that L4a made for task runs (L4-creds-1); route it the same way under the person's policy. (L4a leftovers) Sources: /tmp/frbench/runL4-L4a-{fix,review,fixup}-l4-cred-engine.json and runL4-L4a-merge.json (problems_left, notes_for_other_areas).",
+    "[words] L4b-left-11: Settings 'Budget per session … (CHF 5 unless set)' lacks two decimals (design section 5 rule 7). (L4b leftovers) Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas)."
    ],
    "decisions": [
     "Nothing is nothing (L4-money-101): besides the live relative-clause form, a Left-to-do line that starts with nothing/none, names the whole set of criteria (WHOLE_SET) and has no NOT_NOTHING word is an empty list; the model-facing wrap-up words ask for the single word 'nothing'. ADR 0112's parse paragraph gets a dated amendment. It ends the one-phrasing-at-a-time patching (W15-14, L3-research-1, LC-C7).",
@@ -4946,7 +4947,11 @@
     "[minor] L4-chat-111: settled replies glue paragraphs and show a raw '- '; Evidence: live4:L4-chat-10; /tmp/frbench/live4/chat/c1/steps/48-c13b-03-e3-go-ahead.png; Root cause: apps/ui/src/lib/plain-words.ts:27, Conversation.tsx:560. Merged here: L4-selftasks-124 (live4:L4-chat-17): 'Four tasks are left in Garden club, plus one decision for you. - \"Write the welcome page\" failed ...' on one line, then two bullets, the last ending '... Two tasks are done: ...'; the bubble reflows when streaming ends.; Evidence: live4:L4-chat-17; /tmp/frbench/live4/chat/c1/steps/64-c15-01-k1.png, 66-c15-03-k3.png, 76-c16c-after-restart.png; the stored and API text has the blank lines; repro /tmp/frbench/verify-L4-chat-17/repro.mjs.; Root cause: apps/ui/src/lib/plain-words.ts:27 inAppText ends with .replace(/\\s{2,}/g, ' '), turning every blank line into a space before RichText splits lines; applied to stored replies at apps/ui/src/components/Conversation.tsx:560 (the streaming path :342 does not call it).",
     "[words] L4-chat-112: replies copy 'The app did:' and narrate tool calls and refusals; Evidence: live4:L4-l3-2; /tmp/frbench/live4/l3/evidence/reading-rules-b-t2.json, -c-t2.json; Root cause: conversation-agent.md:21-22, agent.ts CHAT_RETRIEVAL_RULES ~:603-605, transcript.ts:354-366, packages/commands/src/registry.ts:215-218 with settings.ts:1079-1084. Also the marker half of L4-selftasks-118 (merged into L4-chat-102 and this item): a model-written 'The app did: Updated ...' line with no command stays in the conversation and in the next turn's history.",
     "[words] L4-chat-113: 'The session_last lookup also reported no session'; Evidence: live4:L4-chat-19; /tmp/frbench/live4/chat/c1/steps/c16b.json; Root cause: conversation-agent.md:38-39, :58-70; agent.ts:659-661.",
-    "[tests] L4a-left-6: L4-creds-6's composed test covers only the not-offered case: assert the plan-form footer and the ask line on an answered chat on the subscription, and the ledger row (kind subscription, planUsageShare). (L4a leftovers) Sources: /tmp/frbench/runL4-L4a-{fix,review,fixup}-l4-cred-engine.json and runL4-L4a-merge.json (problems_left, notes_for_other_areas)."
+    "[tests] L4a-left-6: L4-creds-6's composed test covers only the not-offered case: assert the plan-form footer and the ask line on an answered chat on the subscription, and the ledger row (kind subscription, planUsageShare). (L4a leftovers) Sources: /tmp/frbench/runL4-L4a-{fix,review,fixup}-l4-cred-engine.json and runL4-L4a-merge.json (problems_left, notes_for_other_areas).",
+    "[minor] L4b-left-7: needOfLine (conversation/depth.ts) matches status questions such as 'how long has it been in review for?' or 'how does this compare?', so a paid ask line appears under a quick status answer (it spends nothing); narrow it, with cases. (L4b leftovers) Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+    "[minor] L4b-left-8: withoutWordsOffer removes every sentence matching 'stronger model' or 'hand it over', not only questions; an answer saying 'Sonnet is a stronger model.' loses that plain sentence too. (L4b leftovers) Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+    "[minor] L4b-left-9: task.dependencies' dependenciesNextLine (packages/commands/src/commands/task.ts): where the task could already run before the change, the done sentence appends previewWork's read-only line through afterMove; with the hands-off setting on and no session, check what it promises. (L4b leftovers) Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+    "[note] L4b-left-10: conversation-agent principal is 1.5.0 after L4b; bump from 1.5.0. CHAT_THOROUGH_RULES already carries L4-chat-106's look-it-up sentence: do not add it again. (L4b leftovers) Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas)."
    ],
    "decisions": [
     "A bare 'yes' keeps design §3.9's state: with no card and no app offer waiting it is never handed to the model and gets 'Yes to what? Nothing is waiting for your yes. Say what you want done, for example \"run it now\" to start a session.' (0 model calls). Chat's own asks are removed at their cause instead: a change asked for in words is an 'asks' claim the guard nudges into its command (read back with Yes and No), a lookup offer is L4-chat-101's absence guard (look it up, never ask), a hand-over offer is L4-chat-202's app ask with Go ahead, and the prompt says never to ask for a yes in words. Design §3.9 and agent.ts:1215-1219 stay as they are (the plan check, D-L4-23: the triage's forwarded yes reversed the design without a recorded decision).",
@@ -5421,7 +5426,12 @@
     "[words] L4-selftasks-127: In chat with no Claude credential, 'fix the tasks' answers 'Fixing the tasks needs Claude.' and nothing else.; Evidence: C6:C6L-12; /tmp/frbench/leftovers-C6.json C6L-12; design section 3.9 states ('questions need Claude [Connect]') and section 5 rule 8.; Root cause: packages/runtime/src/conversation/sentences.ts:70 FIX_NEEDS_CLAUDE; a chat reply has no Connect offer kind (ChatOfferView.action is go_ahead or think).",
     "[words] L4-selftasks-128: Under 'Fixing the tasks would pass this project's budget; nothing changed.' the chat offers 'Make this a task'.; Evidence: C6:C6L-13; /tmp/frbench/leftovers-C6.json C6L-13.; Root cause: apps/ui/src/components/Conversation.tsx:455-461 isOwnRequest ignores reply.notice, which ChatTaskFixResult sets for refusals.",
     "[words] L4-selftasks-129: 'Cannot be undone now: \"...: layout\" has run since ...' before that part started; after a reload an undone line shows only 'Undone.'; the suggestion card's open list shows 'Asks you first: ...' as a bullet among the changes.; Evidence: C6:C6L-15; /tmp/frbench/leftovers-C6.json C6L-15; runC-C6-fixup-d1109-selftasks-chat.json not_done.; Root cause: packages/commands/src/commands/task.ts:2250-2253 the split undo's refusal says 'has run since' for any part with a run or status change; the session page's change line after a reload has only the undone flag (EventView.undone) and no sentence; session/task-proposal.ts:184 puts the reasons in the steps list.",
-    "[words] L4-selftasks-130: '\"Write menu.html with five teas in CHF\" needs your decision (Inbox). Did 3 tasks: ... Changed 2 tasks: added \"Write book.html\"; added \"Write thanks.html\". 1 task waits on it. CHF 0.17.'; Evidence: live4:L4-selftasks-8; /tmp/frbench/live4/selftasks/st1/steps/18-c27b-session-person-level.png; Overview 'Last result'; repro /tmp/frbench/v-L4-selftasks-8/repro.ts.; Root cause: packages/runtime/src/session/result.ts:518-529 the 'waiting on other tasks' builder writes the bare '${n} task waits on it.' on line 3 when anything needs the person or failed; the antecedent is on line 1 (:313-339) and every line-2 sentence (:340-360, the tasks-changed one included) sits between; o.waiting counts any task waiting on any unfinished task (waitingOf, :802), and two blockers still read 'it'."
+    "[words] L4-selftasks-130: '\"Write menu.html with five teas in CHF\" needs your decision (Inbox). Did 3 tasks: ... Changed 2 tasks: added \"Write book.html\"; added \"Write thanks.html\". 1 task waits on it. CHF 0.17.'; Evidence: live4:L4-selftasks-8; /tmp/frbench/live4/selftasks/st1/steps/18-c27b-session-person-level.png; Overview 'Last result'; repro /tmp/frbench/v-L4-selftasks-8/repro.ts.; Root cause: packages/runtime/src/session/result.ts:518-529 the 'waiting on other tasks' builder writes the bare '${n} task waits on it.' on line 3 when anything needs the person or failed; the antecedent is on line 1 (:313-339) and every line-2 sentence (:340-360, the tasks-changed one included) sits between; o.waiting counts any task waiting on any unfinished task (waitingOf, :802), and two blockers still read 'it'.",
+    "[minor, decision] L4b-left-1: L4-selftasks-113's suggestion-card half: at Assisted the card still lists 'Asks you first: \"<title>\" is a task you added or changed yourself.' among its change steps. Session lead decision (L4b merge): follow chat's rule from L4-selftasks-113 (a reason to ask first is said only at a level that would otherwise not ask), so an Assisted card, which always asks, lists no 'Asks you first' reasons; keep reasons apart from the change list where a level that would not ask shows them. This overrides L4-selftasks-111's acceptance line about Assisted. (L4b leftovers) Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+    "[minor] L4b-left-2: the fence silently drops a wait whose order names a pending add of the same set and a name that is neither stored nor pending; refuse it in words, and run the loop check again for the extra waits (session/task-check.ts). (L4b leftovers) Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+    "[words] L4b-left-3: the Details line 'Left out: the add of \"Write thanks.html\": ...' uses 'add' as a noun; the plan card's warning repeats the task's title right under that task's row. (L4b leftovers) Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+    "[minor] L4b-left-4: quotesOthersWords does not count a task_proposal card. (L4b leftovers) Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+    "[tests] L4b-left-5: L4-selftasks-109 restart composed twice on one home (the commands world is in-memory), L4-selftasks-111's critic-notes body at the real daemon, a CostsTab render test for L4-selftasks-114, L4-selftasks-112 (a) quoting two sentences within 160 characters. (L4b leftovers) Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas)."
    ],
    "decisions": [
     "Owner's rule 'Changes the person names in their own words stay the person's instruction', as the session lead decided at C6's merge (runC-plan session_lead_decisions[52]): a change the person named and confirmed in chat is theirs ('by you', the person named on Changes, no Inbox Update); byAgent and the agent's words stay for the agent's own changes (planFix, the session source, fix_tasks' check, timed reverts, Undo). Default kept: a change that acts at once on the person's words is theirs too. The proposal still runs as the agent, so the limit-always-asks rule (ADR 0030 item 2) is unchanged.",
@@ -5568,7 +5578,8 @@
     "[words] L4-money-214: L3-run-4: Redo a task, Start, then Stop it from its drawer: the session result is only 'CHF 0.01.'; the Sessions row reads 'Nothing finished.'; the repository's status note says 'Ended: 1 task needs you.' Evidence: live4:L4-l3-8; live4:L4-l3-8: l3b state.sqlite session 01a1e8fa-461d (task.finished outcome killed, task.moved_while_running {needs_human, byPerson true, 'Stopped by you'}, session.ended counts 0, summary 'CHF 0.01.'). Root cause: packages/runtime/src/session/runner.ts:3825-3833 takes a person-paused task out of needsYou on purpose, and the outcome built after it (~:3853-3910) has no field for it; packages/runtime/src/session/result.ts:360-377 has a 'cancelled by you' builder (W15-59) and none for 'paused by you'; runner.ts ~:4008-4012 writes the status note 'Ended: 1 task needs you' for it.",
     "[words] L4-money-215: Two tasks named 'Write the guide'; 'pause Write the guide (the older one)' in chat reads back 'Pause \"Write the guide\"? No session runs it until you press Resume.', and the line after Yes names the title only. Evidence: live4:L4-l3-18; live4:L4-l3-18: /tmp/frbench/live4/l3/evidence/gc-p.json and gc-r.json (no model call; the app's own text). Root cause: packages/commands/src/commands/task.ts:496-509 (moveAsk) and :551-572 (moveSentence) quote the title only; findTask (~:243-288) picks the right task by the person's word and returns only the row; task.transition's card (~:1280-1301), the move's undo sentence and assertFrom (~:1621) do the same.",
     "[words] L4-money-216: A task made ready while the setting was off read 'It runs at your next Start.'; the person turns the setting on, and the yes reads only 'sessions of <project> will start by themselves when work you made ready can run, up to CHF N each. Never in your quiet hours or while sessions are stopped'; the next session it starts also runs that older task. Evidence: C3:C3L-4; C3:C3L-4 (/tmp/frbench/leftovers-C3.json). Root cause: packages/commands/src/commands/settings.ts:334-342 startByItselfEffect says nothing of the work already ready.",
-    "[minor] L4a-left-5: L4-creds-8 part 3 (not on the cut line): chat's 'run it now' during a rest is not kept for the reset: the read-back says 'Start a session on Map notes (up to CHF 5)?' and the session then ends at once to wait (nothing moves or is spent). Build: session.start calls continuations.keepStart with its own read-back ('Start a session on ... at 15:40') and Undo dropping it; the hold reply's 'a Start now runs at 15:40' clause then comes back. (L4a leftovers) Sources: /tmp/frbench/runL4-L4a-{fix,review,fixup}-l4-cred-engine.json and runL4-L4a-merge.json (problems_left, notes_for_other_areas)."
+    "[minor] L4a-left-5: L4-creds-8 part 3 (not on the cut line): chat's 'run it now' during a rest is not kept for the reset: the read-back says 'Start a session on Map notes (up to CHF 5)?' and the session then ends at once to wait (nothing moves or is spent). Build: session.start calls continuations.keepStart with its own read-back ('Start a session on ... at 15:40') and Undo dropping it; the hold reply's 'a Start now runs at 15:40' clause then comes back. (L4a leftovers) Sources: /tmp/frbench/runL4-L4a-{fix,review,fixup}-l4-cred-engine.json and runL4-L4a-merge.json (problems_left, notes_for_other_areas).",
+    "[minor] L4b-left-6: L4-selftasks-115: the 'Assisted mode: approve this session plan before work starts.' card still offers 'approve' / 'reject' in lower case with no explanation lines. Changing the labels changes the answer words the plan-approval sync, the cloud runner's trigger and the fake daemon read: keep the stored answer values and change only what the person sees (labels and one-line explanations, design section 3.4). (L4b leftovers) Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas)."
    ],
    "decisions": [
     "Every option that prepares work says what pressing it does now: run C's S-9 extended to the questions card's Send answers and Go ahead without (RequestWords.submit, append-only) and the Tasks row's Redo, Try again and Go ahead without tooltips (L4-money-202).",
@@ -11427,6 +11438,94 @@
    "area": "l4-money-pause",
    "evidence": "Sources: /tmp/frbench/runL4-L4a-{fix,review,fixup}-l4-cred-engine.json and runL4-L4a-merge.json (problems_left, notes_for_other_areas).",
    "note": "(L4a leftovers)"
+  },
+  {
+   "n": "L4b-left-1",
+   "item": "L4b-left-1: L4-selftasks-113's suggestion-card half: at Assisted the card still lists 'Asks you first: \"<title>\" is a task you added or changed yourself.' among its change steps. Session lead decision (L4b merge): follow chat's rule from L4-selftasks-113 (a reason to ask first is said only at a level that would otherwise not ask), so an Assisted card, which always asks, lists no 'Asks you first' reasons; keep reasons apart from the change list where a level that would not ask shows them. This overrides L4-selftasks-111's acceptance line about Assisted.",
+   "decision": "fix",
+   "area": "l4-selftasks-chat",
+   "evidence": "Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+   "note": "(L4b leftovers)"
+  },
+  {
+   "n": "L4b-left-2",
+   "item": "L4b-left-2: the fence silently drops a wait whose order names a pending add of the same set and a name that is neither stored nor pending; refuse it in words, and run the loop check again for the extra waits (session/task-check.ts).",
+   "decision": "fix",
+   "area": "l4-selftasks-chat",
+   "evidence": "Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+   "note": "(L4b leftovers)"
+  },
+  {
+   "n": "L4b-left-3",
+   "item": "L4b-left-3: the Details line 'Left out: the add of \"Write thanks.html\": ...' uses 'add' as a noun; the plan card's warning repeats the task's title right under that task's row.",
+   "decision": "fix",
+   "area": "l4-selftasks-chat",
+   "evidence": "Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+   "note": "(L4b leftovers)"
+  },
+  {
+   "n": "L4b-left-4",
+   "item": "L4b-left-4: quotesOthersWords does not count a task_proposal card.",
+   "decision": "fix",
+   "area": "l4-selftasks-chat",
+   "evidence": "Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+   "note": "(L4b leftovers)"
+  },
+  {
+   "n": "L4b-left-5",
+   "item": "L4b-left-5: L4-selftasks-109 restart composed twice on one home (the commands world is in-memory), L4-selftasks-111's critic-notes body at the real daemon, a CostsTab render test for L4-selftasks-114, L4-selftasks-112 (a) quoting two sentences within 160 characters.",
+   "decision": "fix",
+   "area": "l4-selftasks-chat",
+   "evidence": "Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+   "note": "(L4b leftovers)"
+  },
+  {
+   "n": "L4b-left-6",
+   "item": "L4b-left-6: L4-selftasks-115: the 'Assisted mode: approve this session plan before work starts.' card still offers 'approve' / 'reject' in lower case with no explanation lines. Changing the labels changes the answer words the plan-approval sync, the cloud runner's trigger and the fake daemon read: keep the stored answer values and change only what the person sees (labels and one-line explanations, design section 3.4).",
+   "decision": "fix",
+   "area": "l4-starts-sessions",
+   "evidence": "Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+   "note": "(L4b leftovers)"
+  },
+  {
+   "n": "L4b-left-7",
+   "item": "L4b-left-7: needOfLine (conversation/depth.ts) matches status questions such as 'how long has it been in review for?' or 'how does this compare?', so a paid ask line appears under a quick status answer (it spends nothing); narrow it, with cases.",
+   "decision": "fix",
+   "area": "l4-chat-answers",
+   "evidence": "Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+   "note": "(L4b leftovers)"
+  },
+  {
+   "n": "L4b-left-8",
+   "item": "L4b-left-8: withoutWordsOffer removes every sentence matching 'stronger model' or 'hand it over', not only questions; an answer saying 'Sonnet is a stronger model.' loses that plain sentence too.",
+   "decision": "fix",
+   "area": "l4-chat-answers",
+   "evidence": "Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+   "note": "(L4b leftovers)"
+  },
+  {
+   "n": "L4b-left-9",
+   "item": "L4b-left-9: task.dependencies' dependenciesNextLine (packages/commands/src/commands/task.ts): where the task could already run before the change, the done sentence appends previewWork's read-only line through afterMove; with the hands-off setting on and no session, check what it promises.",
+   "decision": "fix",
+   "area": "l4-chat-answers",
+   "evidence": "Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+   "note": "(L4b leftovers)"
+  },
+  {
+   "n": "L4b-left-10",
+   "item": "L4b-left-10: conversation-agent principal is 1.5.0 after L4b; bump from 1.5.0. CHAT_THOROUGH_RULES already carries L4-chat-106's look-it-up sentence: do not add it again.",
+   "decision": "fix",
+   "area": "l4-chat-answers",
+   "evidence": "Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+   "note": "(L4b leftovers)"
+  },
+  {
+   "n": "L4b-left-11",
+   "item": "L4b-left-11: Settings 'Budget per session … (CHF 5 unless set)' lacks two decimals (design section 5 rule 7).",
+   "decision": "fix",
+   "area": "l4-money-pause",
+   "evidence": "Sources: /tmp/frbench/runL4-L4b-{fix,review,fixup}-<key>.json and runL4-L4b-merge.json (not_done, non_blocking, notes_for_other_areas).",
+   "note": "(L4b leftovers)"
   }
  ],
  "wave7_live_check_after_merge": "After the whole wave is merged, the full suite is green, CI is green on Windows and Linux and the Desktop app workflow ran, the session lead walks six journeys with the real model (details and pass criteria: /tmp/frbench/phaseE7-live.md). Cap USD 4.00 in total, stopping at a clean point; GitHub only on joelwellbournewood/forerunner-sandbox; nothing printed or committed of any key. (1) Merging, about USD 1.10, bench-live: a 3-task chain left at 'You press Merge' (Overview, the dependents' words, Open this version, Merge in order as merge commits, Files within a minute without a session, Take this work out naming the dependent), then a 2-task chain whose first PR is squash-merged on GitHub's website (the dependent rebuilt, only its own commits, merges cleanly), then 'Merge automatically after review' with one task. (2) Credentials, about USD 0.20, on the routed provider (no --provider flag; bench-live ignores the vault): an invalid key in the bench's vault gives one 'Anthropic refused your API key' card and a waiting task; saving the real key starts it by itself; a research plan card says where it runs and why. (3) Budgets, about USD 0.90, bench-live: a coder task whose budget is about three times the reserve its run's log names hears the wrap-up, pauses with a local commit, and Continue finishes it with one review; a tiny budget (CHF 0.02) pauses with the save only and no wrap-up text; Cancel on a paused task names the stuck dependent. (4) Research with web search, about USD 1.00, bench-live: the server tool with max_uses at most 10, blocks sent back unchanged, no 400 (a '*.' block-list entry included), sources only from opened pages, the cost well under 2026-11-02's USD 1.32; then 'Only these websites: developer.mozilla.org' refuses another site and the report names the rule. (5) Costs, about USD 0.40: smoke.cjs --live on a fresh bench, each kind within about x2 of the plan card's estimate, cache reads after the first call. (6) The window: the Desktop app workflow's window check on Windows with Ctrl+click on Inbox (no model cost). Reserve about USD 0.40 for one retry. The subscription-only items (Claude Code stopped at a budget stop and counted once; the page reader, the WebSearch lists and the wrapper on the subscription; the SDK refusal card) go to the owner's checklist step 6, with what to look for; the three owner questions go to the owner with the U-entries. Findings go to a fix round with the same pipeline; spend is added to NEXT-SESSION.md.",

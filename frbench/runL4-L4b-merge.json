@@ -1,0 +1,77 @@
+{
+ "merged": [
+  "fix/l4-selftasks-check at 81d236551d6222e6182972a4a45fb65d7b4cd5c9 (the fixup head; fix/l4-selftasks-check had already been moved to it), merge commit 1cb7405",
+  "fix/l4-chat-depth at c3ac22a934b61dc1accb98aabe4335a24a041711, merge commit 1ea22e9"
+ ],
+ "head_sha": "1ea22e95e8bc6cf7e014881fb0ea78dc878516e7",
+ "pushed": true,
+ "validation": [
+  {
+   "command": "git merge --no-edit --no-ff fix/l4-selftasks-check, then fix/l4-chat-depth; git grep -n '^<<<<<<< '",
+   "result": "The first merge was clean. The second had one conflict, in apps/ui/test/real-daemon.test.ts, where both areas appended a describe block at the end. After resolving it, git grep finds no markers."
+  },
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "Done; the lockfile is unchanged."
+  },
+  {
+   "command": "DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "EXIT 0. Lint: 43 warnings, 0 errors (warnings were there before). lint:paths ok (1610 files). typecheck green. Unit tests: 557 files, 5982 passed, 7 skipped. docs-check ok (90 files), link-check ok (213 files), secret-scan clean (2251 files). The first attempt was stopped by my own 10-minute background time limit, not by a failure, and was rerun in full."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "EXIT 0: 5 files passed, 6 skipped (Postgres and live); 30 passed, 81 skipped."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "EXIT 0: 13 files, 25 passed, 1 skipped."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/live test",
+   "result": "EXIT 0: 11 files passed, 4 skipped; 63 passed, 17 skipped."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "EXIT 0, PASS: 82 cases (59 hostile, 23 controls), 82 passed, 0 failed (report-007 included)."
+  },
+  {
+   "command": "HOME=<empty dir> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm test (as CI runs it)",
+   "result": "EXIT 0: 557 files, 5982 passed, 7 skipped."
+  },
+  {
+   "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "EXIT 0: 101 files, 1389 passed."
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "EXIT 0: 38 passed. The local config was copied from the template, removed afterwards and never committed."
+  },
+  {
+   "command": "cargo fmt --check / clippy / cargo test in apps/desktop/src-tauri",
+   "result": "Not run: neither area touched apps/desktop (git diff origin..HEAD has no file under apps/desktop)."
+  },
+  {
+   "command": "npx biome check --files-max-size=3000000 apps/ui/test/real-daemon.test.ts (extra check of the file biome normally skips)",
+   "result": "2 findings in the two areas' own new describe blocks (they were hand-formatted on their branches and the merge did not cause them): format differences, and one noUnsafeOptionalChaining in a test line at about :24032 of the l4-chat-depth block. pnpm lint does not check this file because it is over biome's 1 MiB limit, so CI is unaffected."
+  },
+  {
+   "command": "signature check: for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "Printed nothing: all 44 commits are signed, both merge commits included."
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "828a6ac..1ea22e9, fast-forward, first try."
+  }
+ ],
+ "conflicts_resolved": [
+  "apps/ui/test/real-daemon.test.ts: both areas appended their describe block at the end of the file (the append-only harness). I kept both whole, in key order: 'l4-selftasks-check, run L4' first, closed with its own '});', then 'l4-chat-depth, run L4' with the file's last '});'. No assertion was changed. Both blocks passed in the UI suite."
+ ],
+ "integration_fixes": [],
+ "smoke": "node scripts/bench/start.mjs --name merge-w26 --daemon-port 48970 --ui-port 2570 --fresh, then smoke.cjs merge-w26: 25/25 checks passed, 0 findings, 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. The plan card had 2 tasks, Approve and start ran one session, both tasks ended Done, and the page files were written. The journey script needed no change. The bench was stopped with stop.mjs and its home deleted. Logs are in /tmp/frbench/merge-w26-logs/ (check, integration, e2e, live, injection, unit-ci, ui-ci, playwright and the smoke log; smoke-result.json).",
+ "problems_left": [
+  "Nothing is broken after the merge: every suite and the smoke passed, and no fix commit was needed.",
+  "apps/ui/test/real-daemon.test.ts is over biome's 1 MiB files.maxSize, so pnpm lint skips it (both areas reported this). Run with --files-max-size, biome shows format differences and one noUnsafeOptionalChaining in the two areas' new describe blocks. Splitting the file or raising files.maxSize would bring it back under lint.",
+  "Disk: / has 3.1 GB free, below the 8 GB machine rule, from other areas' files. This merge keeps only /tmp/frbench/merge-w26 (21 MB of bench steps) and /tmp/frbench/merge-w26-logs (112 KB); the bench home and the empty CI HOME are deleted.",
+  "Carried from the area reports for the session lead (not changed here), all in each report's not_done or non_blocking: L4-selftasks-113's suggestion-card half conflicts with L4-selftasks-111; L4-selftasks-101's budget raise at plan apply is not built; L4-selftasks-115's lowercase approve/reject; the fence's dropped wait; quotesOthersWords does not count a task_proposal card; L4-chat-208's 10,000-token lookups case; the L4-chat-202 eval file; the hands-off preview sentence in dependenciesNextLine; needOfLine false asks."
+ ]
+}

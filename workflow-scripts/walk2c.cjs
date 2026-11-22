@@ -1,69 +1,81 @@
-// Review walk 2c: open Settings > Advanced (a summary), change Time zone, then ask the chat.
-const R = require("/home/user/Forerunner/.claude/worktrees/wf_15a781ce-056-4/scripts/bench/recorder.cjs");
+// Review walk 2 (l4-chat-depth): dependency lines, the start read-back, the history window,
+// Chat asks first and Changes.
+const repo = process.argv[2];
+const R = require(`${repo}/scripts/bench/recorder.cjs`);
+const N = "review-l4-chat-depth";
+const UI = "http://127.0.0.1:2551";
 const fs = require("fs");
-const N = "review-d1109-chat-guard";
-const OUT = "/tmp/frbench/review-d1109-chat-guard/walk2c-result.json";
-const out = {};
+const OUT = "/tmp/frbench/review-l4-chat-depth/walk2c.json";
+
 (async () => {
-  const projectId = JSON.parse(
-    fs.readFileSync("/tmp/frbench/review-d1109-chat-guard/walk2-result.json", "utf8"),
-  ).projectId;
+  const out = { steps: {} };
+  const save = () => fs.writeFileSync(OUT, JSON.stringify(out, null, 1));
   const { browser, page } = await R.openApp(N);
-  await page.goto(`${R.bench(N).uiUrl}/settings`);
-  await page.waitForTimeout(1500);
-  await page.locator("summary").filter({ hasText: /^Advanced/ }).first().click();
-  await page.waitForTimeout(1500);
-  const text = await page.evaluate(() => document.body.innerText);
-  const i = text.indexOf("Time zone");
-  out.around = i >= 0 ? text.slice(i - 50, i + 250) : null;
-  // Find the element holding exactly the label "Time zone" and its nearest Change button.
-  const label = page.getByText("Time zone", { exact: true }).first();
-  out.label = await label.count();
-  if (out.label) {
-    const box = label.locator("xpath=ancestor::*[.//button][1]");
-    const change = box.getByRole("button", { name: "Change" }).first();
-    out.change = await change.count();
-    if (out.change) {
-      await change.click();
-      await page.waitForTimeout(800);
-      const field = box.locator("input,select").first();
-      const tag = await field.evaluate((el) => el.tagName).catch(() => null);
-      out.tag = tag;
-      if (tag === "SELECT") await field.selectOption("Europe/Zurich");
-      else if (tag) await field.fill("Europe/Zurich");
-      await R.step(page, "settings-zone-edit");
-      const save = box.getByRole("button", { name: /^(Save|Set|Change it)/ }).first();
-      out.save = await save.count();
-      if (out.save) await save.click();
-      await page.waitForTimeout(2000);
-      out.afterSave = await R.step(page, "settings-zone-saved");
-      // A read-back to confirm, if the row asks.
-      const yes = page.getByRole("button", { name: /^(Yes|Confirm)/ }).first();
-      if (await yes.count()) {
-        await yes.click();
-        await page.waitForTimeout(1500);
-      }
+  const idle = async (wait = 40_000) => {
+    const until = Date.now() + wait;
+    while (Date.now() < until) {
+      const busy = await page.getByRole("button", { name: "Stop", exact: true }).count();
+      if (!busy) break;
+      await page.waitForTimeout(400);
     }
+    await page.waitForTimeout(1200);
+  };
+  const say = async (text) => {
+    const box = page.getByPlaceholder("Message your agent…");
+    await box.fill(text);
+    await box.press("Enter");
+    await page.waitForTimeout(900);
+    await idle();
+  };
+  const press = async (name) => {
+    const b = page.getByRole("button", { name, exact: true });
+    const n = await b.count();
+    out.buttons = [...(out.buttons ?? []), { name, count: n }];
+    if (!n) return false;
+    await b.last().click();
+    await page.waitForTimeout(900);
+    await idle();
+    return true;
+  };
+  const shot = async (label) => {
+    out.steps[label] = await R.step(page, label);
+    save();
+  };
+  try {
+    const kite = { id: JSON.parse(fs.readFileSync("/tmp/frbench/review-l4-chat-depth/walk2.json", "utf8")).kite };
+    out.kite = kite.id;
+    // L4-chat-211: Settings, Chat asks first: 0, then 0.10.
+    await page.goto(`${UI}/settings`);
+    await page.waitForTimeout(2500);
+    const setTo = async (v) => {
+      const row = page.locator('[data-testid="setting-row"][data-key="human.chat_ask_above"]');
+      await row.getByTestId("setting-change").click();
+      await page.waitForTimeout(800);
+      const dialog = page.getByTestId("setting-dialog");
+      await dialog.getByTestId("setting-value").fill(String(v));
+      await shot(`w2-11-chat-asks-first-${v}`);
+      await dialog.getByTestId("setting-apply").click();
+      await page.waitForTimeout(1500);
+      await shot(`w2-12-after-apply-${v}`);
+      out.dialogButtonsAfter = await page.getByTestId("setting-dialog").getByRole("button").allTextContents().catch(() => []);
+      // A raise asks a yes.
+      const yes = page.getByTestId("setting-dialog").getByRole("button", { name: /^(Yes|Confirm|Apply|Set)/ });
+      if ((await page.getByTestId("setting-dialog").count()) && (await yes.count())) {
+        await yes.last().click();
+        await page.waitForTimeout(1500);
+        await shot(`w2-13-after-yes-${v}`);
+      }
+    };
+    await setTo(0.1);
+    await page.goto(`${UI}/changes`);
+    await page.waitForTimeout(2500);
+    await shot("w2-14-changes");
+    out.changes = (await R.api(N, "GET", "/changes?limit=12")).map((c) => c.sentence ?? c);
+  } finally {
+    save();
+    await browser.close();
   }
-  out.zoneNow = (await R.api(N, "GET", "/me")).timezone;
-  await page.goto(`${R.bench(N).uiUrl}/projects/${projectId}/chat`);
-  await page.waitForTimeout(1500);
-  const c0 = R.modelCalls(N, "chat").length;
-  const input = page.locator('[data-testid="chat-input"]').first();
-  await input.fill("what did we do yesterday?");
-  await input.press("Enter");
-  await R.until(async () => R.modelCalls(N, "chat").length > c0, 60000, 300, "chat call");
-  await page.waitForTimeout(1500);
-  await R.step(page, "chat-yesterday");
-  const m = R.modelCalls(N, "chat")[c0]?.messages?.at(-1)?.content;
-  const t = typeof m === "string" ? m : JSON.stringify(m);
-  out.now = t.slice(t.indexOf("# Now"), t.indexOf("# Now") + 140);
-  fs.writeFileSync(OUT, JSON.stringify(out, null, 2));
-  console.log(JSON.stringify(out, null, 2).slice(0, 4000));
-  await browser.close();
 })().catch((e) => {
-  out.error = String(e?.stack || e);
-  fs.writeFileSync(OUT, JSON.stringify(out, null, 2));
   console.error(e);
   process.exit(1);
 });

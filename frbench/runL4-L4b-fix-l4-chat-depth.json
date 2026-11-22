@@ -1,0 +1,287 @@
+{
+ "area": "l4-chat-depth",
+ "branch": "fix/l4-chat-depth",
+ "head_sha": "c3ac22a934b61dc1accb98aabe4335a24a041711",
+ "commits": [
+  {
+   "sha": "26caab65b11d1a3d84015adccea3452c9f90acf7",
+   "subject": "l4-chat-depth: a Go ahead runs the answer it offered (U-094, L4-chat-201)"
+  },
+  {
+   "sha": "527e908906a2ee9512fcc40017b8392384dfca63",
+   "subject": "l4-chat-depth: the fast model's hand-over is never left to words (U-094, L4-chat-202)"
+  },
+  {
+   "sha": "ceec87033399e4cd3edbd9e1ccd0154583aef649",
+   "subject": "l4-chat-depth: the paid closer look is told what it is (U-094, L4-chat-203)"
+  },
+  {
+   "sha": "61b9ee9eaf77e86a3a6d7608d2f0235f6cbfd7fe",
+   "subject": "l4-chat-depth: Answer now never earns a new offer (U-094, L4-chat-206)"
+  },
+  {
+   "sha": "7727d57339225cfed9be7d50a43b0a71d549a905",
+   "subject": "l4-chat-depth: the history is read from the prompt cache past 12 turns (U-094, L4-chat-205)"
+  },
+  {
+   "sha": "d7eba1688adef1d0bf3d346638a2ef24c4ee1b23",
+   "subject": "l4-chat-depth: a dependency change says when the task runs (U-093, L4-chat-207)"
+  },
+  {
+   "sha": "f8e565246ddb663092c6f2c86e732114ef4fe25d",
+   "subject": "l4-chat-depth: a closed project takes no new work on any path (U-091, L4-chat-204)"
+  },
+  {
+   "sha": "e07a434edc2b83d624570cdad5352182e510f723",
+   "subject": "l4-chat-depth: the start read-back and its sentence keep two decimals (U-093, L4-chat-210)"
+  },
+  {
+   "sha": "cef53ddc034e03d9fbc96a9fe2394000cdc653e8",
+   "subject": "l4-chat-depth: chat_ask_above keeps its value and its meaning apart (U-094, L4-chat-211)"
+  },
+  {
+   "sha": "fcf8182203cfb357e51afe2eb5f13a523ba3c2bd",
+   "subject": "l4-chat-depth: chat depth's composed cap line and Costs row cases (U-094, L4-chat-208)"
+  },
+  {
+   "sha": "0a40c4e205a42aa42d4622693e42ff74f65b46b5",
+   "subject": "l4-chat-depth: the dead askAboveWords export is gone (U-094, L4-chat-209)"
+  },
+  {
+   "sha": "e2746f22e2c2802fdf62bc66a341ccc72f4beacc",
+   "subject": "l4-chat-depth: an older ask line reads in the past (U-094, L4-chat-212)"
+  },
+  {
+   "sha": "9e0515f",
+   "subject": "l4-chat-depth: the words test in Biome's format (L4-chat-203)"
+  },
+  {
+   "sha": "(testing.md commit, between 9e0515f and c3ac22a)",
+   "subject": "l4-chat-depth: testing.md names the stand-in's answer-alone mode (L4-chat-202)"
+  },
+  {
+   "sha": "c3ac22a934b61dc1accb98aabe4335a24a041711",
+   "subject": "l4-chat-depth: the Tasks tab's dependency sentence says when the task runs (U-093, L4-chat-207)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L4-chat-201: after one cheap stronger answer anywhere on the install, every later Go ahead under 'This needs a stronger model ...' showed the same ask again and ran nothing (live check 4, LC-C14).",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-depth.test.ts 'l4-chat-depth, run L4: a Go ahead runs the answer it offered (L4-chat-201)' (3 cases); apps/ui/test/real-daemon.test.ts 'l4-chat-depth, run L4' > 'POST /chat: Go ahead under use a stronger model: runs Sonnet once, and again after cheap stronger answers ...'",
+   "how": "Root cause: atMostOf stored max(2x estimate, floor) with the floor unrounded, and the Go ahead's own turn measured a floor a few hundred micro-USD higher, so personsPass always asked again. Now the stored 'at most' is the CHF shown on the line, rounded up to the centime (usdMicroOfCentimes); a yes is judged as shown (yesCovers, whole centimes) and asks again only when the model changed or the shown figure would change; the pass budget is the yes's 'at most' capped by the room. Same comparison for the person's own amount (Think it through).",
+   "check_in_the_app": "Chat tab: 'use a stronger model: compare the two ways to write the FAQ' -> ask line with Go ahead; press Go ahead -> 'Thought it through with Sonnet · ...'. Ask a second stronger question later and press Go ahead again: it runs again, no repeated ask line."
+  },
+  {
+   "problem": "L4-chat-202: the real fast model never called answer_thoroughly (0 of 7 in LC-C13); it asked 'Should I go ahead?' in its own words, which the app could not act on.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-depth.test.ts 'l4-chat-depth, run L4: the fast model's hand-over is never left to words (L4-chat-202)'; real-daemon 'l4-chat-depth, run L4' answer-alone case (stand-in FORERUNNER_BENCH_CHAT_ALONE)",
+   "how": "Words: the thinking_longer fact and ANSWER_THOROUGHLY_DESCRIPTION say who acts ('call answer_thoroughly; the app asks the person with the cost (never ask in your own words)'); conversation-agent 1.5.0 says the same and scopes 'Thinking longer' to the quick answer. Ask-only backstop (ADR 0114 amended 2026-11-22): a typed quick answer without the tool on a line that shows a need (needOfLine, EN+DE, outside quotes) or whose reply asks in words (offersInWords) runs the gate in code; when the rung asks first the reply carries the app's own StoredOffer with Go ahead and the words' ask is removed (withoutWordsOffer). A rung that would go ahead is never started by words. Stand-in mode FORERUNNER_BENCH_CHAT_ALONE plays the live model.",
+   "check_in_the_app": "Chat tab: 'make a plan for the next two sessions' -> under the answer the app's line 'This needs a stronger model: about CHF … (at most CHF …) and … seconds. Go ahead?' with a Go ahead button; never 'Should I go ahead?' as plain text. Press Go ahead -> one Sonnet answer."
+  },
+  {
+   "problem": "L4-chat-203: the paid Sonnet pass said 'I couldn't hand it to the stronger model' under 'Thought it through with Sonnet': it reused the quick pass's facts.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-depth.test.ts 'l4-chat-depth, run L4: the paid closer look is told what it is (L4-chat-203)'",
+   "how": "thoroughPass gets its own facts line this_answer (thoroughFact: '... the closer look on Sonnet that the person said yes to (at most CHF 0.57)', or asked for / handed over) in place of thinking_longer; CHAT_THOROUGH_RULES opens 'You are the closer look ...' and says answer_thoroughly and 'Thinking longer' are the quick answer's; carries the look-it-up sentence and 'say in plain words what you could not check'. The fast request is byte-identical.",
+   "check_in_the_app": "Chat: 'use a stronger model: why does <a failed task> keep failing?' -> Go ahead -> the Sonnet answer never says it could not hand the question over or that a stronger model was not used."
+  },
+  {
+   "problem": "L4-chat-204: a project closed by Make one project still took new work through the plan route, the Data tab's Add/Import, and a Yes to a card restored after a restart.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "packages/commands/test/l4-chat-depth.test.ts 'after a restart the card is armed again and its yes is refused with the joined sentence'; apps/ui/test/real-daemon.test.ts 'POST /projects/:closed/plan and the Data tab's Add and Import on a joined project'; apps/ui/test/project-tabs.test.tsx 'Add on a project that joined another is refused'",
+   "how": "Executor confirm re-checks the stored card (closedProjectRefusal) before performing; restorePending arms a closed project's card as shown so its yes is refused in words; POST /projects/:id/plan and POST /projects/:id/data(/import) answer 409 conflict with the joined sentence and details.cause project_joined (closedProjectAnswer, refuseClosedData middleware). Fake daemon mirrors.",
+   "check_in_the_app": "Join project A into B (Make one project). On A's Data tab press Add: refused with the joined sentence, nothing added. Restart Forerunner with a chat card for A waiting, press Yes: refused in words."
+  },
+  {
+   "problem": "L4-chat-205: past 12 turns the history window slid by one turn, so every chat request re-sent the history uncached (prompt cache read only tools and system).",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-depth.test.ts 'l4-chat-depth, run L4: the history is read from the prompt cache (L4-chat-205)' (13 turns; long replies under 12; composed twice)",
+   "how": "Stepped window, a pure function of stored rows: chat.human rows keep a turn number (turn, nextTurnNumber); the window starts at floor((n-12)/6)*6 (12-17 turns) and the token cap drops whole steps; same for the thorough pass and after a restart.",
+   "check_in_the_app": "Not visible as a screen; on bench-live the session lead reads the model-call log: after 13+ chat turns, consecutive quick lines within five minutes show cache reads covering the history (LC-C12)."
+  },
+  {
+   "problem": "L4-chat-206: after Answer now during a longer answer, the answer offered 'This needs a stronger model ... Go ahead?' under it (LC-C16).",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-depth.test.ts 'Answer now during a longer pass ...' (now asserts no offer); packages/runtime/test/budget.test.ts 'l4-chat-depth, run L4: SessionBudget.wrapReasonOf'; real-daemon 'POST /chat/turns/:id/answer-now during think it through: ... no ask line and no Go ahead'",
+   "how": "SessionBudget keeps why a run's wrap-up came (wrapReasonOf: 'line' by spend, 'now' by Answer now); the next rung's ask goes only under a pass whose budget line wrapped it up.",
+   "check_in_the_app": "Chat: 'think it through: what did the last two sessions do?', press Answer now while it thinks -> the answer comes with no ask line and no Go ahead under it."
+  },
+  {
+   "problem": "L4-chat-207: a dependency change never said when the task runs, removing the last dependency prepared no work, and 'let X run on its own' was not understood.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-steering.test.ts 'l4-chat-depth, run L4: a dependency change says when the task runs (L4-chat-207)'; packages/commands/test/l4-chat-depth.test.ts (join wording, still waiting, paused, parser); real-daemon 'POST /chat and POST /tasks/:id/dependencies ...'",
+   "how": "task.dependencies.run appends one line: still waiting -> 'It runs after it is done, at your next Start.' (previewWork, read-only); made runnable -> prepared (withNextLine: joins a running session if it fits, else 'It runs at your next Start.'); already runnable -> previewWork's line. IntentParser reads 'let X run on its own' / 'make X wait for nothing' as depends_on []. Fake daemon mirrors.",
+   "check_in_the_app": "Chat: 'make \"Write the FAQ\" wait for \"Write the README\"' -> Yes -> '\"Write the FAQ\" now waits for \"Write the README\". It runs after it is done, at your next Start.'; then 'let \"Write the FAQ\" run on its own' -> Yes -> '\"Write the FAQ\" waits for no other task now. It runs at your next Start.' Same words from the Tasks drawer's Change what it waits for."
+  },
+  {
+   "problem": "L4-chat-210: chat's start read-back said 'Start a session on Garden club (up to CHF 1)?' (design §5 rule 7: two decimals).",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'POST /chat run it now with a CHF 1.00 session budget reads back up to CHF 1.00 ...'; apps/ui/test/chat.test.tsx 'l4-chat-depth, run L4: the start read-back's money'",
+   "how": "session.ts startSentence, startAsk and the card's newValue use chfExact; JSDoc and executor comment no longer name the start as an exception.",
+   "check_in_the_app": "Chat: 'run it now' -> 'Start a session on <project> (up to CHF 5.00)?' -> Yes -> 'Started a session on <project> (up to CHF 5.00).'; the Changes row shows the same figure."
+  },
+  {
+   "problem": "L4-chat-211: the Changes row read 'from CHF 0.00, so chat asks before every longer answer to CHF 0.10'.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "packages/commands/test/commands.test.ts 'l4-chat-depth, run L4: chat_ask_above keeps its value and its meaning apart (L4-chat-211)'; apps/ui/test/real-daemon.test.ts 'settings.set chat_ask_above 0, then 0.10 with its tap: GET /changes reads the amounts alone ...'; apps/ui/test/settings-basics.test.tsx 'l4-chat-depth, run L4: Chat asks first on the Changes page'",
+   "how": "chatAskAboveWords says the amount alone ('CHF 0.00'); what 0 means is the spec's effect after both amounts ('... to CHF 0.00: chat asks before every longer answer. Undo.'). The fake daemon's SETTING_RISK now names chat_ask_above (before, the fake refused 'unknown setting' and its branch never ran).",
+   "check_in_the_app": "Settings > Basics > Chat asks first: set 0, then 0.10 (Yes). Changes shows 'Set the amount above which chat asks first from CHF 0.10 to CHF 0.00: chat asks before every longer answer.' and 'Set the amount above which chat asks first from CHF 0.00 to CHF 0.10.'"
+  },
+  {
+   "problem": "L4-chat-208: chat depth's acceptance cases missing (C3L-10): the project-budget cap line was only tested with a stubbed room, and Costs' 'Planning and chat' growing had no case.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "New cases, each verified to fail with its guard reverted: real-daemon 'POST /chat think it through: … on a project whose budget leaves under the pass's floor: the project's cap line ...' (fails with the project room removed from compose.ts chatRoom); real-daemon 'GET /costs?projectId: each chat turn on the project grows its Planning and chat row' (fails with the row's label mapping reverted)",
+   "how": "Composed real-daemon cases on the stand-in. Stop with its Undo, 'Chat asks first' at CHF 1.00, the ask again after a price change (201) and Answer now (206) already have cases in chat-depth.test.ts. No product change.",
+   "check_in_the_app": "Set a project's budget very low, ask 'think it through: what did the last two sessions do?' -> 'A closer look would pass this project's budget, so this is the quick answer.' Costs > By task: 'Planning and chat' grows after each chat line."
+  },
+  {
+   "problem": "L4-chat-209: dead export askAboveWords in depth.ts ('asks first above CHF 0.10'), drifting from commands' chatAskAboveWords.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "none (dead code removal); pnpm typecheck and lint green",
+   "how": "Export and its two test lines removed from chat-depth-words.test.ts.",
+   "check_in_the_app": "Nothing visible; Settings > Chat asks first still reads 'before a stronger model or an answer over CHF 0.10'."
+  },
+  {
+   "problem": "L4-chat-212: an old ask line kept 'Go ahead?' with no button once another line followed, a question the person could no longer answer.",
+   "u_ids": [
+    "U-094"
+   ],
+   "failing_test_before": "apps/ui/test/chat-depth.test.tsx 'l4-chat-depth, run L4: an older ask line reads in the past (L4-chat-212)' (three cases fail with the render reverted)",
+   "how": "Conversation.tsx pastOfferLine words an older ask line (offer line, or a reply that was only its ask line) in the past: 'Offered: a stronger model, about CHF 0.15 (at most CHF 0.30). Not taken.' or '... You went ahead.' when the next line was its yes and its reply not quick (tookOffer); unparsable 'Go ahead?' lines are left out; the newest ask keeps its line and Go ahead.",
+   "check_in_the_app": "Chat: get an ask line, then type 'what is left?' -> the older line reads 'Offered: a stronger model, about CHF … (at most CHF …). Not taken.' with no button; after pressing Go ahead on an ask, that line reads '... You went ahead.'"
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-chat-208: the case 'at least three lookups before the wrap-up on a 10,000-token context'",
+   "why": "Cut line allows it; not built for time. The other C3L-10 cases exist (Stop/Undo, CHF 1.00, price change, Answer now, composed cap line, Costs row). The pre-existing run C cases (Stop/Undo, CHF 1.00) were not re-verified by reverting their guards."
+  },
+  {
+   "problem": "L4-chat-202: the eval file and the words-only offer check",
+   "why": "Cut line allows it. The words and the ask-only backstop are done and tested; no eval case was added under evals/ for 'the fast model calls answer_thoroughly instead of asking in words' (needs the live model, LC-C13 on bench-live)."
+  },
+  {
+   "problem": "L4-chat-201: the optional floor-without-the-ask-line",
+   "why": "Cut line allows it; the yes is judged on the shown centimes and runs; no separate floor line was added."
+  }
+ ],
+ "validation": [
+  {
+   "command": "DOCS_CHECK_BASE=828a6ac flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "lint, lint:paths, typecheck green; unit 557 files, 5947 passed, 7 skipped; docs:check first failed (testenv/evals/scripts without testing.md) -> fixed with a testing.md commit; then docs-check ok (43 files), link-check ok (213 files), secret-scan clean (2250 files). One Biome format error in chat-depth-words.test.ts fixed and committed (9e0515f)."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "5 files passed, 6 skipped; 30 passed, 81 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "13 files passed; 25 passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 81 cases (58 hostile, 23 controls), 0 failed"
+  },
+  {
+   "command": "apps/ui: flock ... npx vitest run --config vitest.config.ts",
+   "result": "first run 1 failed (real-daemon :894 pinned the old dependency sentence; design change of L4-chat-207, updated in c3ac22a); rerun 101 files, 1378 passed"
+  },
+  {
+   "command": "apps/ui: flock ... npx playwright test --config playwright.local.config.ts",
+   "result": "38 passed"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "empty"
+  },
+  {
+   "command": "bench walk after: node scripts/bench/start.mjs --name fix-l4-chat-depth --provider bench --fresh --env FORERUNNER_BENCH_CHAT_HOLD_MS=3000 --env FORERUNNER_BENCH_CHAT_ALONE=1; node /tmp/frbench/fix-l4-chat-depth/walk.cjs <repo> after; scripts/bench/stop.mjs",
+   "result": "walk done, no missing presses; dependency lines say when the task runs, 'let ... run on its own' understood, both Go aheads ran Sonnet, the plan line got the app's ask line, older asks read 'Offered: ... Not taken./You went ahead.', no offer after Answer now, read-back 'up to CHF 5.00', Changes rows read the amounts alone. Bench stopped, home deleted."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-l4-chat-depth/before-steps/02-before-02-depends-done.png",
+   "/tmp/frbench/fix-l4-chat-depth/before-steps/03-before-03-on-its-own-done.png",
+   "/tmp/frbench/fix-l4-chat-depth/before-steps/09-before-09-after-another-line.png",
+   "/tmp/frbench/fix-l4-chat-depth/before-steps/11-before-11-after-answer-now.png",
+   "/tmp/frbench/fix-l4-chat-depth/before-steps/12-before-12-run-it-now-readback.png",
+   "/tmp/frbench/fix-l4-chat-depth/before-steps/13-before-13-changes.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l4-chat-depth/after-steps/02-after-02-depends-done.png",
+   "/tmp/frbench/fix-l4-chat-depth/after-steps/03-after-03-on-its-own-done.png",
+   "/tmp/frbench/fix-l4-chat-depth/after-steps/08-after-08-plan-line.png",
+   "/tmp/frbench/fix-l4-chat-depth/after-steps/09-after-09-after-another-line.png",
+   "/tmp/frbench/fix-l4-chat-depth/after-steps/11-after-11-after-answer-now.png",
+   "/tmp/frbench/fix-l4-chat-depth/after-steps/12-after-12-run-it-now-readback.png",
+   "/tmp/frbench/fix-l4-chat-depth/after-steps/13-after-13-changes.png"
+  ]
+ },
+ "new_problems": [
+  "apps/ui/test/real-daemon.test.ts is over Biome's 1 MiB files.maxSize, so pnpm lint skips it with a warning (no format or lint check on that file); pre-existing, grows with every area.",
+  "The real daemon's GET /conversation sends an older turn's offer with action null but keeps the ask line (or the ask-only reply as text); the past-tense wording is done only in the desktop UI's Conversation.tsx. Any other surface that renders the conversation view (e.g. the phone app later) would still show 'Go ahead?' on old lines unless it reuses pastOfferLine or the daemon words it.",
+  "With FORERUNNER_BENCH_CHAT_ALONE=1 the stand-in's 'make a plan for the next two sessions' reply is only an ask in words, so after the backstop the reply is the ask line itself (no answer text). True to the live model's behaviour in LC-C13, but the person then gets no quick answer at all for that line; LC-C13 on bench-live should check whether the real model answers something before asking.",
+  "The fake daemon's chat_ask_above branch was dead (SETTING_RISK did not name the key) until L4-chat-211; other keys may have the same drift: SETTING_RISK should be checked against SETTING_SPECS once (a test that every SETTING_SPECS key is in the fake's table)."
+ ],
+ "notes_for_other_areas": [
+  "chat.human rows now carry `turn` (the turn number from the conversation's start; nextTurnNumber in transcript.ts) - one field added in l4-cred-screens' write region of agent.ts; historyMessages uses a stepped window (HISTORY_STEP_TURNS=6, 12-17 turns).",
+  "depth.ts new exports: usdMicroOfCentimes, atMostOf (centime-rounded), yesCovers, needOfLine, offersInWords, withoutWordsOffer, thoroughFact; thinkingLongerFact texts changed ('available: call answer_thoroughly; the app ...'); askAboveWords removed; CHAT_THOROUGH_RULES now opens 'You are the closer look' and carries L4-chat-106's look-it-up sentence (l4-chat-answers should not add it again).",
+  "SessionBudget.wrapReasonOf(runId): 'line' | 'now' (append-only) - use it to tell a spend wrap-up from Answer now.",
+  "conversation-agent principal is 1.5.0 ('Thinking longer' says the app writes the ask; scoped to the quick answer). l4-chat-answers (L4c) and l4-selftasks-chat (L4f) bump from 1.5.0.",
+  "Stand-in: FORERUNNER_BENCH_CHAT_ALONE=1 (BenchOptions.chatAlone) makes the role player answer alone and ask in words, like live check 4's fast model; use it for any test of the hand-over.",
+  "commands: executor.confirm re-checks closedProjectRefusal on the stored card; restorePending arms closed-project cards; server.ts closedProjectAnswer + refuseClosedData middleware on /projects/:id/data and /data/import; IntentParser reads 'let X run on its own' / 'make X wait for nothing' as task.dependencies depends_on [].",
+  "task.dependencies' result sentence now ends with when the task runs ('It runs after it is done, at your next Start.', 'It runs at your next Start.', or the join line); any test pinning the old sentence needs the tail.",
+  "session.start money uses chfExact ('(up to CHF 5.00)') on the read-back, the done sentence and the card's newValue.",
+  "settings: chat_ask_above's words are the amount alone; the meaning of 0 is the spec's `effect`. The fake daemon's SETTING_RISK now has chat_ask_above.",
+  "Conversation.tsx exports pastOfferLine(line, taken); Turn takes a `taken` prop (tookOffer of the next turn).",
+  "Real-daemon describe 'l4-chat-depth, run L4' sits at the end of apps/ui/test/real-daemon.test.ts with its open() helper (role player + composeRuntime); besides the two shared_files assertions (:4327, :15559) this area also changed :894 (the Tasks tab dependency sentence) for L4-chat-207.",
+  "design_doc_changes for the session lead: §5 'Chat read-back' After example '(up to CHF 5.00)'; §3.9 'a dependency change says when the task runs'; §3.9 'While it answers': Answer now ends with no new offer; §3.9 an older ask line reads 'Offered: … Not taken.' / 'You went ahead.'.",
+  "Live checks for the session lead (bench-live, not run here): LC-C13 (fast model hands over or the app's ask appears), LC-C14 (second Go ahead runs), LC-C15 (Sonnet answer never says it could not hand over), LC-C16 (no offer after Answer now)."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/chat-depth-words.test.ts (thinkingLongerFact texts; CHAT_THOROUGH_RULES startsWith 'You are the closer look: '; askAboveWords lines removed)",
+   "why": "L4-chat-202/203/209: the facts say who acts, the thorough rules say what the pass is, the dead export is gone."
+  },
+  {
+   "test": "packages/runtime/test/chat-depth.test.ts, chat-recall.test.ts, conversation-memory.test.ts (role prompt version 1.5.0; 'Answer now during a longer pass' asserts no offer)",
+   "why": "conversation-agent 1.5.0 (L4-chat-202); Answer now earns no offer (L4-chat-206)."
+  },
+  {
+   "test": "packages/runtime/test/chat-steering.test.ts :103, apps/ui/test/real-daemon.test.ts :4327 and :894, apps/ui/test/tasks.test.tsx :1022, apps/ui/test/fake-daemon.ts",
+   "why": "L4-chat-207: the dependency sentence now says when the task runs."
+  },
+  {
+   "test": "packages/commands/test/commands.test.ts, oversize-start.test.ts, scenario.test.ts, runtime conversation.test.ts, conversation-memory.test.ts, tests/e2e/scenarios/09-phone.scenario.test.ts, apps/ui/e2e/chat.spec.ts, apps/ui/test/chat.test.tsx, real-daemon :15559, fake-daemon.ts",
+   "why": "L4-chat-210: the start read-back and sentence keep two decimals ('up to CHF 5.00')."
+  },
+  {
+   "test": "packages/commands/test/commands.test.ts ~:1739 (chat_ask_above to 0 sentence)",
+   "why": "L4-chat-211: '... to CHF 0.00: chat asks before every longer answer. Undo.' (meaning after the amounts, not inside the value)."
+  }
+ ]
+}

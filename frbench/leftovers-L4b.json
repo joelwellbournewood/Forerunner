@@ -1,0 +1,30 @@
+{
+ "why": "Run L4 sub-run L4b's leftovers that no later run L4 area owns (cut-line items, test infra, live checks and design-doc lines for the session lead).",
+ "base": "1ea22e9",
+ "items": [
+  {
+   "id": "L4b-left-12",
+   "severity": "accepted",
+   "text": "L4-selftasks-101's budget raise at the plan's apply (raise a model-proposed task budget to its estimate with review before the plan card shows it) and an intake prompt line about review room: not built; the acceptance allows the warning instead, which is built and tested at the person's boundary."
+  },
+  {
+   "id": "L4b-left-13",
+   "severity": "cut line",
+   "text": "L4-chat-208's 'at least three lookups before the wrap-up on a 10,000-token context' case; L4-chat-202's eval file and words-only offer check; L4-chat-201's optional floor-without-the-ask-line."
+  },
+  {
+   "id": "L4b-left-14",
+   "severity": "tests",
+   "text": "Restart cases for the stepped history window and Go ahead use w.restart() on one in-memory store, not composeRuntime twice on one home; packages/runtime/test/chat-steering.test.ts leaves its mkdtemp home behind (no removeHomes)."
+  },
+  {
+   "id": "L4b-left-15",
+   "severity": "pre-existing",
+   "text": "The Inbox shows 'Done: You answered \"Yes\".' and then the Update 'was not applied' for a refused card."
+  }
+ ],
+ "for_session_lead": {
+  "design_doc_changes": "core-experience.md: section 5 'Chat read-back' After example '(up to CHF 5.00)'; section 3.9 'a dependency change says when the task runs'; section 3.9 'While it answers': Answer now ends with no new offer; section 3.9 an older ask line reads 'Offered: … Not taken.' / 'You went ahead.'.",
+  "live_checks_for_F": "LC-C13 (the fast model hands over or the app's ask appears), LC-C14 (a second Go ahead runs; a stronger Go ahead does not routinely offer the strongest model), LC-C15 (the Sonnet answer never says it could not hand over), LC-C16 (no offer after Answer now); live calibration of critic.md 1.4.0 (F-16); needOfLine on status questions."
+ }
+}

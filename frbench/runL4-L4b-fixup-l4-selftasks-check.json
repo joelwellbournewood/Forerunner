@@ -1,0 +1,177 @@
+{
+ "area": "l4-selftasks-check",
+ "branch": "fixup-l4-selftasks-check (fix/l4-selftasks-check could not be moved: `git branch -f fix/l4-selftasks-check HEAD` was refused with \"cannot force update the branch 'fix/l4-selftasks-check' used by worktree at /home/user/Forerunner/.claude/worktrees/wf_801d579b-a17-1\" (the fixer's worktree). This session may not move a branch another worktree has checked out. fixup-l4-selftasks-check fast-forwards fix/l4-selftasks-check: run `git branch -f fix/l4-selftasks-check 81d236551d6222e6182972a4a45fb65d7b4cd5c9` once that worktree is removed, or merge fixup-l4-selftasks-check directly.)",
+ "head_sha": "81d236551d6222e6182972a4a45fb65d7b4cd5c9",
+ "commits": [
+  {
+   "sha": "409129f",
+   "subject": "selftasks-check: Make one project's notes and suggestion are read back after a restart, and its Undo after another (U-095, L4-selftasks-109)"
+  },
+  {
+   "sha": "392ddec",
+   "subject": "selftasks-check: the plan card's review warning is read through GET /inbox and on the Inbox (U-042, L4-selftasks-101)"
+  },
+  {
+   "sha": "4f075a6",
+   "subject": "selftasks-check: a review at effort max starts only with room for its first call at 8,192 tokens out (U-042, L4-money-303, L4-selftasks-101)"
+  },
+  {
+   "sha": "0f64874",
+   "subject": "selftasks-check: the session's suggestion card lists no no-op edit and its Yes is applied (U-095, U-084, L4-selftasks-105)"
+  },
+  {
+   "sha": "6938441",
+   "subject": "docs: ADR 0119 dated note: a left-out line is quoted up to 100 characters, the choice named (L4-selftasks-103)"
+  },
+  {
+   "sha": "81d2365",
+   "subject": "selftasks-check: lint: the 105 session case reads its card without an unsafe optional chain (L4-selftasks-105)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Blocking 1 (L4-selftasks-109): no test proved that Make one project's moved notes and its single open suggestion survive a restart, or that Undo after a restart puts both back. The only test ran project.join and Undo in one in-memory commands store.",
+   "u_ids": [
+    "U-095",
+    "L4-selftasks-109"
+   ],
+   "failing_test_before": "packages/runtime/test/project-join.test.ts 'l4-selftasks-check, run L4: Make one project moves the agent's task-list notes and keeps one suggestion, also after a restart (L4-selftasks-109)' > 'after the join and a restart the kept project holds both notes and GET /inbox one suggestion; Undo after another restart puts both back as they were'. It fails with packages/commands/src/commands/project-join.ts at 828a6ac: after the restart the kept project holds only its own note. It passes on this head.",
+   "how": "Test only; the source was already right. The case composes the real daemon on a file database. Notes are kept with keepNotes, and two suggestion cards are stored as fileTaskProposal stores them (the newer one on the closing project). The join goes through POST /commands/execute. After composing again on the same home, the test checks: the kept project's notes (keptNotesOf, as the next check takes them); GET /inbox showing one open suggestion; GET /projects/:id statusLine.text reading 'Waiting for you: 1 suggestion'. Then POST /changes/:id/undo, compose again, and check: both cards open, each project's note back, and both status lines. The World helper gained a GET method.",
+   "check_in_the_app": "Live (or bench, with two projects on one folder made before the one-repository rule, each with an open 'The agent suggests changes to the tasks' card): press Make one project on the Overview. The kept project's header reads 'Waiting for you: 1 suggestion' and the Inbox shows one suggestion card. Quit and reopen the app: both are still the same. Press Undo on the join's row in More > Changes, then quit and reopen: both projects show 'Waiting for you: 1 suggestion' and the Inbox shows both cards."
+  },
+  {
+   "problem": "Blocking 2 (L4-selftasks-101): the plan card's warning 'its budget of CHF 0.08 may leave too little for its review, which then waits for Continue.' was tested only through planTaskViews with a hand-written estimator. A slip in GET /inbox's wiring (deps.estimate or deps.workBudget in server.ts) would hide it without any test failing.",
+   "u_ids": [
+    "U-042",
+    "L4-selftasks-101"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-selftasks-check, run L4' > 'L4-selftasks-101: GET /inbox's plan card warns under a task whose own budget may leave too little for its review; a task with room says nothing', and apps/ui/test/inbox.test.tsx 'l4-selftasks-check, run L4: the plan card warns under a task whose budget may leave too little for its review'. Both fail with packages/runtime/src/daemon/plan-tasks.ts at 828a6ac (the note is null) and pass on this head.",
+   "how": "Tests only. Real-daemon case: the stand-in plans a short brief (the small plan: build, check). The stored plan gets the budgets the live model wrote (build USD 0.10, check USD 5.00). client.inbox() then gives planTasks[build].note exactly '\"Build the page in index.html, styles.css and script.js\": its budget of CHF 0.08 may leave too little for its review, which then waits for Continue.' and null for the check. Before the budgets are set, no task has a note. The IntakeCard render case checks the line under the README task (CHF 0.08) and nothing under the task with room. The fake daemon needs no change: it calls planTaskViews with an estimate and a work budget, as the daemon does.",
+   "check_in_the_app": "Bench walk done (/tmp/frbench/fixup-l4-selftasks-check/steps/02-w1-02-plan-card-review-warning.png). Live (the final check): make a project whose plan from the brief gives a task its own budget below its estimate with review, as LC-C30's README task at CHF 0.08 did. On the Inbox's plan card, that task's line reads '\"<title>\": its budget of CHF 0.08 may leave too little for its review, which then waits for Continue.' in orange. A task whose budget has room shows no line. Then press Approve and start. In the model-call log, a critic call for that task should have max_tokens below 8192 (the bench prices 1 µUSD per token, so only the real price table shows the sizing)."
+  },
+  {
+   "problem": "Reviewer non-blocking 2, the effort-max sibling of L4-money-303: reviewCallUsdMicro priced every review's floor at 2,048 tokens out. A review at effort max (tier 3, or tier 2 raised by the slider) is never sized down, so its first call asks for at least 8,192. A tier 3 task whose room lay between those two prices started its review, ran its checks and wrote a critic Run row; then its first call was refused.",
+   "u_ids": [
+    "U-042",
+    "L4-money-303",
+    "L4-selftasks-101"
+   ],
+   "failing_test_before": "packages/runtime/test/task-budget-all.test.ts 'l4-selftasks-check, run L4' > 'L4-money-303 at effort max: a tier 3 task whose left lies above the price at 2,048 tokens out but below its first call's at 8,192: no review starts, no critic Run row, one review-waits card' (failed before: one critic Run row). Also packages/critic/test/review-price.test.ts 'at effort max on Opus 5.5 (a tier 3 review): ... the floor is the same input with 8,192 tokens out' (failed before: 81,252 instead of 204,132).",
+   "how": "packages/critic/src/critic.ts reviewCallUsdMicro: least = maxEffort ? out : (maxTokensPerCall ?? REVIEW_MIN_TOKENS_PER_CALL), and the ReviewCallPrice.floorUsdMicro doc now says so. The composed case runs on the Messages API stand-in with the composition's test-only process pin for every tier (world().open({ everyTier }) -> sandboxProcessForEveryTier). It derives the 2,048 and 8,192 prices from the critic's own model (service.modelFor) and price table (pricingFor), and sets the room a quarter of the way between them. The result: no critic call, no critic Run row, the task needs_human with one card 'The work is done; its review waits for room in the budget.'. Docs: docs/maintainers/critic.md and a dated note in ADR 0112's 2026-11-22 amendment.",
+   "check_in_the_app": "Not walkable on the bench: tier 3 needs Docker and the bench prices 1 µUSD per token. Live with Docker: give a tier 3 task a budget whose room after its work is below one Opus call at 8,192 tokens out (about USD 0.21 with its evidence). The task pauses before its review with 'The work is done; its review waits for room in the budget.' in the Inbox, with no critic run and no checks under Details. With room above that price, the review runs."
+  },
+  {
+   "problem": "Reviewer non-blocking 4 (L4-selftasks-105): the session path's acceptance part had no test, although the fixer's report named one. The part: a suggestion card for a set with a no-op edit lists only the real changes, and its Make these changes is applied, not not_applied.",
+   "u_ids": [
+    "U-095",
+    "U-084",
+    "L4-selftasks-105"
+   ],
+   "failing_test_before": "packages/runtime/test/session-task-list.test.ts 'l4-selftasks-check, run L4: an edit that changes nothing never enters the suggestion card (L4-selftasks-105)' > 'at Assisted the card lists the drop and the add only; ...'. It fails with 04a7551's task-check.ts and task-proposal.ts changes reversed (the card lists three steps) and passes on this head.",
+   "how": "Test only. At Assisted a report triggers the check, and the scripted model returns chat's set (drop the duplicate, an edit equal to the stored task, add a step). The card's steps are exactly 'Drop \"Style the page (copy)\": same as \"Style the page\".' and 'Add \"Add the prices\".'. The person answers with requestWords(card).choices[0] ('Make these changes') during the session. syncTaskProposals then records outcome 'applied', changed 2, and no left_out: the duplicate is cancelled, the step is made, and there is one change_log row (the person's) with Undo.",
+   "check_in_the_app": "Live at Assisted: a report whose task check returns an edit that changes nothing beside a real change files a suggestion card. The card lists only the real changes. Make these changes makes them (one row on More > Changes with Undo), and the card never says 'Nothing to change'."
+  },
+  {
+   "problem": "Reviewer non-blocking 5 (L4-selftasks-103): the acceptance asked to quote the flagged line whole, but quoteOf cuts it at 100 characters. Neither the code nor an ADR named that choice.",
+   "u_ids": [
+    "U-095",
+    "L4-selftasks-103"
+   ],
+   "failing_test_before": "none (a documentation choice, no behaviour change)",
+   "how": "Dated note in docs/decisions/0119-the-agent-keeps-its-task-list-right.md (point 9). The left-out line is quoted up to 100 characters (QUOTE_MAX), cut at a word. The whole line was kept out of the check's request, so the part cut off was never acted on. Whether to quote it whole is the session lead's decision (one constant).",
+   "check_in_the_app": "Session page with Details off, after a report with a long instruction-like line: the check's line quotes its first 100 characters, cut at a word with '…'."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-selftasks-113, the suggestion card's half: at Assisted the card still lists 'Asks you first: \"<title>\" is a task you added or changed yourself.' among its change steps (bench 13-w3-02 of the review).",
+   "why": "The spec contradicts itself. L4-selftasks-111's acceptance wants 'Asks you first: no task of Word count is for the writer yet.' in the steps of an Assisted card. L4-selftasks-113's wants the card to follow chat's rule (no reason at a level that asks anyway) and keep reasons apart from the change list. The triage proposed a separate RequestView field for the reasons, which is a route change (api-types, fake daemon, real-daemon case and UI). The session lead should pick one rule; nothing was changed here."
+  },
+  {
+   "problem": "L4-selftasks-101's other part: raise a model-proposed task budget to its estimate with review before the plan card shows it.",
+   "why": "Not built by the fixer, and not here. The acceptance accepts 'the raised budget or' the warning, and the warning is built and now tested at GET /inbox and on the Inbox. The reviewer notes the fixer's reason misreads the decision (the raise would come before the card is shown). The session lead decides whether the raise is still wanted."
+  },
+  {
+   "problem": "Fence: an order whose task is a pending add of the same set, waiting for a name that is neither stored nor pending, silently drops that wait instead of refusing it in words. The loop check is not run again for the extra waits (session/task-check.ts, the 'order' case's pending branch).",
+   "why": "Reviewer non-blocking; the fixup focused on the two blocking items and the money sibling. Suggested fix: when named(w) returns a string for any wait, push { what, reason } to refused and continue; for a pending wait, refuse when that pending add already waits for this one."
+  },
+  {
+   "problem": "Words: the Details line 'Left out: the add of \"Write thanks.html\": ...' uses 'add' as a noun, and the plan card's warning repeats the task's title right under that task's row.",
+   "why": "Reviewer non-blocking word items; not changed so the fixer's and other areas' pinned sentences stay stable. Suggested wording for the session lead: 'Left out: adding \"Write thanks.html\": ...'; and on the plan card, start the note 'Its budget of CHF 0.08 may leave ...' when it sits under its own row (one place: daemon/oversize-words.ts reviewMayWaitLine, shared with the Start dialog)."
+  },
+  {
+   "problem": "L4-selftasks-115: the Assisted session plan card still shows lowercase 'approve' / 'reject' with no explanation lines.",
+   "why": "Below the run's cut line, as the fixer reported. Changing the labels changes the answer words that the plan-approval sync, the cloud runner's trigger and the fake daemon read."
+  },
+  {
+   "problem": "Bench walk of Make one project after a restart (L4-selftasks-109).",
+   "why": "The bench cannot make two projects on one folder: the one-repository rule refuses the second at POST /projects. The restart and the Undo after a restart are now proven by the composed daemon case at the person's routes (GET /inbox, GET /projects/:id, POST /commands/execute, POST /changes/:id/undo, composed three times on one home)."
+  }
+ ],
+ "validation": [
+  {
+   "command": "DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "First run: biome found one error in my new session-task-list case (noUnsafeOptionalChaining), fixed in 81d2365. Second run green: lint, lint:paths, typecheck, unit 556 files / 5955 passed / 7 skipped, docs check, links, secret scan. EXIT 0."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "5 files passed, 6 skipped (Postgres and live); 30 tests passed. EXIT 0."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "13 files, 25 passed, 1 skipped. EXIT 0."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 82 cases (59 hostile, 23 controls), 82 passed, report-007 included. EXIT 0."
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "101 files, 1373 passed. EXIT 0."
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "38 passed. The local config was removed afterwards and never committed."
+  },
+  {
+   "command": "Failing-first checks (source reverted temporarily, then restored)",
+   "result": "project-join restart case fails with commands/project-join.ts at 828a6ac. The real-daemon and IntakeCard cases fail with daemon/plan-tasks.ts at 828a6ac. The effort-max composed case and the unit case fail before the critic.ts fix. The session 105 case fails with 04a7551's source reversed."
+  },
+  {
+   "command": "bench fixup-l4-selftasks-check (--provider bench, ports 48960/2560)",
+   "result": "Plan card walk: before the budgets, no task has a note. After the stored plan got build USD 0.10 and check USD 5.00, the Inbox card shows the orange line under the build task and nothing under the check (GET /inbox planTasks the same; /tmp/frbench/fixup-l4-selftasks-check/walk1.json). Bench stopped with stop.mjs; its home and browser profile deleted."
+  },
+  {
+   "command": "cargo checks",
+   "result": "Not run: the desktop shell did not change."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fixup-l4-selftasks-check/steps/01-w1-01-plan-card-no-budgets.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-l4-selftasks-check/steps/02-w1-02-plan-card-review-warning.png"
+  ]
+ },
+ "new_problems": [
+  "Branch: `git branch -f fix/l4-selftasks-check HEAD` was refused because the fixer's worktree /home/user/Forerunner/.claude/worktrees/wf_801d579b-a17-1 still has fix/l4-selftasks-check checked out (at dbec526). The fixup's head is on fixup-l4-selftasks-check (81d2365), a fast-forward of fix/l4-selftasks-check. The session lead moves the branch after removing that worktree, or merges fixup-l4-selftasks-check.",
+  "A review whose task budget does not hold it back (left ≥ the session token's budget) is not sized to the room (sizedToRoom needs left < token budget), so its first call still asks for 8,192 tokens out. Its floor is priced at 2,048, so in a session whose token budget is the tighter limit the review can start, run its checks and then be refused by the session's budget (capSource 'session'). This behaviour predates the area, but the window has the same shape as money-303. It is outside this fixup; the suggested direction is to size to min(left, token room) or price that floor at 8,192.",
+  "Disk: / had 3.4 GB free throughout this run, below the 8 GB machine rule, from other areas' files. This fixup's bench home and browser profile are deleted.",
+  "apps/ui/test/real-daemon.test.ts is over biome's 1 MiB limit (1,064,842 bytes at dbec526), so biome skips it with a warning. Its new cases are formatted by hand. A split of the file, or a raised files.maxSize, would bring it back under lint."
+ ],
+ "notes_for_other_areas": [
+  "CriticService.reviewCallUsdMicro: floorUsdMicro is the first call's whole price at the least output that call asks for. That is REVIEW_TOKENS_PER_CALL (8,192) at effort max (never sized down), else maxTokensPerCall ?? REVIEW_MIN_TOKENS_PER_CALL (2,048). The runner's review start (runner.ts, left < floorUsdMicro) is its only reader.",
+  "packages/runtime/test/task-budget-all.test.ts world().open({ everyTier: true }) composes with sandboxProcessForEveryTier, so a tier 2 or 3 task runs and is reviewed there without a container engine.",
+  "packages/runtime/test/project-join.test.ts World now has get(path) beside post(path); its 'l4-selftasks-check, run L4' describe reads GET /inbox and GET /projects/:id after composing again on one home.",
+  "critic.md 1.4.0 (the fixer's) also shortened two existing bullets to stay within 120 lines: it drops 'grade the diff by reading' and 'whatever you grade, and goes to the person'. Phase F's F-16 calibration should name them.",
+  "Open default left in place (the session lead decides, one place each): QUOTE_MAX = 100 in session/task-list-notes.ts for the left-out line's quote (ADR 0119 dated note); the Assisted suggestion card keeps its 'Asks you first' reasons among its steps (task-proposal.ts fileTaskProposal steps), pending the 111/113 rule.",
+  "Suggested CHANGELOG/UPDATE-LOG line: 'A tier 3 task whose budget cannot pay its review's first call no longer runs the review's checks before pausing; the plan card's review warning and Make one project's moved suggestions are now tested at the routes the person uses, across a restart.'"
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/critic/test/review-price.test.ts 'at effort max on Opus 5.5 (a tier 3 review): ...'",
+   "why": "The fixer's assertion pinned the effort-max floor at 2,048 tokens out, which encoded the bug: a max-effort review is never sized down. It now asserts 8,192 (REVIEW_TOKENS_PER_CALL). The intent, that no check runs below the first call's whole price, is kept."
+  }
+ ]
+}
