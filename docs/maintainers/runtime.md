@@ -4573,7 +4573,12 @@ now; `budget.test.ts` `SessionBudget.wrapUpNow`.
   typed yes runs it once) and the model's ask in words is taken out (`withoutWordsOffer`; a reply
   that was nothing else is the ask line itself, a notice); the row's `why` is the need. A rung
   that would go ahead is never started by the words: Think it through stays under the answer as
-  under every quick answer. A pattern never spends; only the person's yes does.
+  under every quick answer. A pattern never spends; only the person's yes does. l4-chat-answers
+  (L4b-left-7, -8): a comparison needs what it compares ("compare the two ways", "compare X with
+  Y"; "how does this compare?" is not one), a review is never "in review" ("how long has it been
+  in review for?"), and `withoutWordsOffer` takes out a sentence naming a stronger model only
+  when it is the offer's question or in that question's paragraph ("Sonnet is a stronger model
+  than Haiku." alone stays). Tests `chat-depth-words.test.ts`.
 - *The closer look is told what it is (L4-chat-203).* The thorough request's `# Now` carries
   `this_answer` (`thoroughFact`: "the closer look on Sonnet that the person said yes to (at most
   CHF 0.57)", "the longer look on this model that the person asked for (...)" or "... that the

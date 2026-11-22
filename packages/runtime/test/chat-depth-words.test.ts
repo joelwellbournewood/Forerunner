@@ -298,6 +298,11 @@ describe("l4-chat-depth, run L4: the lines the app reads itself (L4-chat-202)", 
     expect(needOfLine("what is in review?")).toBeNull();
     expect(needOfLine('what is "Plan for the next two sessions" waiting for?')).toBeNull();
     expect(needOfLine('add a task: "Compare the logos"')).toBeNull();
+    // L4b-left-7 (l4-chat-answers): status questions are not a comparison or a review.
+    expect(needOfLine("how long has it been in review for?")).toBeNull();
+    expect(needOfLine("how does this compare?")).toBeNull();
+    expect(needOfLine("compare the logo with the old one")).toBe("comparison");
+    expect(needOfLine("review it for me")).toBe("review");
   });
 
   it("offersInWords reads a question that offers a stronger model or a hand-over; withoutWordsOffer takes those sentences out", () => {
@@ -313,5 +318,12 @@ describe("l4-chat-depth, run L4: the lines the app reads itself (L4-chat-202)", 
     expect(
       withoutWordsOffer("It fails.\n\nTo fix it:\n- Add the file.\n\nWant me to think it through?"),
     ).toBe("It fails.\n\nTo fix it:\n- Add the file.");
+    // L4b-left-8 (l4-chat-answers): a plain sentence about a stronger model is an answer.
+    expect(withoutWordsOffer("Sonnet is a stronger model than Haiku. It costs more.")).toBe(
+      "Sonnet is a stronger model than Haiku. It costs more.",
+    );
+    expect(
+      withoutWordsOffer("Sonnet is a stronger model than Haiku.\n\nWant me to think it through?"),
+    ).toBe("Sonnet is a stronger model than Haiku.");
   });
 });
