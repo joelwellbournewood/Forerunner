@@ -646,6 +646,13 @@ describe("d1109-oversize-pause, run C: the larger task in its turn (OP-0)", () =
     const c = cutPlanToBudget(planOf(item("Big", 6), item("Big2", 9)), usd(4));
     expect(c.items.map((i) => i.taskId)).toEqual(["Big"]);
     expect(c.leftOutForBudget?.map((i) => [i.taskId, i.reason])).toEqual([["Big2", "after_large"]]);
+    // l4-money-pause (L4-money-104): a task after the larger one is the session's own, not cut.
+    expect(cutPlanToBudget(planOf(item("Big", 6), item("A", 0.4)), usd(4)).summary).not.toContain(
+      "cut to fit the budget",
+    );
+    expect(
+      cutPlanToBudget(planOf(item("A", 3.5), item("Big", 6), item("B", 0.3)), usd(4)).summary,
+    ).toContain("(1 item cut to fit the budget)");
     const d = cutPlanToBudget(planOf(item("A", 3.5), item("Big", 6), item("B", 0.3)), usd(4));
     expect(d.items.map((i) => i.taskId)).toEqual(["A", "B"]);
     expect(d.oversized).toBeUndefined();

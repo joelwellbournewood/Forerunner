@@ -451,6 +451,13 @@ task tried twice (grade 85, 1 finding).' (`sessionReviewWords` in the runtime's
 `daemon/event-lines.ts`; "noted" without a cause), never a task review's "sent back for changes";
 the Reviews tab words a session check "accepted", "noted" or "needs you" and its findings "noted".
 
+l4-money-pause, run L4 (L4-money-104, L4-selftasks-107): the session's size is its promise.
+`plannedItemsOf(plan)` is the planned set: the plan's items and each promised task they do not
+list (one that waited behind a larger task, at its left-out figure), so "0 of 2 planned tasks
+done" matches "It promised 2 tasks"; `planEstimateOf` is the promise's figure plus what joined it
+(`promiseOf`), so a re-plan's re-priced estimate of a promised task no longer moves the measured
+figure away from "It promised 3 tasks, about CHF X.". A plan without a promise reads as before.
+
 `reviewSession({ store, sessionId, criticAgentId })` runs three deterministic checks against the
 store and persists a `Review` with `session_id` set and `task_id` null:
 

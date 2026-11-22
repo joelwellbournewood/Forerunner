@@ -624,5 +624,18 @@ describe("l4-money-pause, run L4: a larger task's wrap-up leaves the rest of the
     );
     const view = JSON.stringify(await w.json(`/sessions/${sessionId}`));
     for (const said of USED) expect(view).not.toContain(said);
+    // L4-money-104 with L4-selftasks-107: the session's size is its promise, said once and
+    // measured the same: no item "cut to fit the budget", the promise's two tasks and its figure
+    // in the session review (before: "(1 item cut to fit the budget)", "0 of 1 planned task").
+    const events = (await w.json(`/sessions/${sessionId}/events`)) as unknown as Json[];
+    const said = events.map((e) => String(e.text ?? ""));
+    expect(said.join(" | ")).not.toContain("cut to fit the budget");
+    const promised = said
+      .map((l) => /^It promised 2 tasks, about (CHF \d+\.\d\d)\.$/.exec(l))
+      .find(Boolean);
+    expect(promised, said.join(" | ")).toBeTruthy();
+    const measured = said.find((l) => l.startsWith("Session review measured:")) ?? "";
+    expect(measured).toContain("0 of 2 planned tasks done");
+    expect(measured).toContain(`against an estimate of ${promised?.[1]}`);
   }, 240_000);
 });

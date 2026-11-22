@@ -303,6 +303,13 @@ export interface PlanItem {
   reviewRoomUsdMicro?: number;
 }
 
+/** A plan's summary with how many of its items the budget cut, when it cut any. */
+function cutClause(summary: string, cut: number): string {
+  return cut > 0
+    ? `${summary} (${cut} ${cut === 1 ? "item" : "items"} cut to fit the budget)`
+    : summary;
+}
+
 /**
  * Why a ready task was left out of a session's plan for its budget (U-040; D4, the owner's
  * decision of 2026-11-09, ordered by the owner's answer 5 of 2026-11-09): `after_others`, it fits
@@ -5486,10 +5493,9 @@ export function cutPlanToBudget(
   return {
     items,
     estimateUsdMicro: total,
-    summary:
-      leftOut.length > 0
-        ? `${plan.summary} (${leftOut.length} ${leftOut.length === 1 ? "item" : "items"} cut to fit the budget)`
-        : plan.summary,
+    // l4-money-pause, run L4 (L4-money-104): a task that comes after a larger one is the
+    // session's own (it runs if that task leaves room), never "cut to fit the budget".
+    summary: cutClause(plan.summary, leftOut.filter((l) => l.reason !== "after_large").length),
     ...(leftOut.length > 0 || larger ? { workBudgetUsdMicro } : {}),
     ...(leftOut.length > 0 ? { leftOutForBudget: leftOut } : {}),
     ...(larger ? { oversized: larger } : {}),

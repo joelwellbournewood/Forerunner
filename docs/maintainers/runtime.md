@@ -1297,7 +1297,8 @@ time").** The hold above is gone (OP-0). `cutPlanToBudget` takes the items in th
 larger task's title); with less than a fifth left it is `no_room` and the cut goes on. The queue
 loop takes it at its turn (`takeLarger`: the room then, the plan row's "took ..." reason, the Took
 line once, a take again silent); the re-plan has no held task, keeps `after_large` tasks out of
-`notAgain` (they are the session's own: it takes them first, by the room left) and drops what it
+`notAgain` (they are the session's own: it takes them first, by the room left; L4-money-104: they
+are never counted in the plan's "(N items cut to fit the budget)", `cutClause`) and drops what it
 takes from `leftOutForBudget`. `one_large` is gone. `planned(p)` (the approval at autonomy 0 and
 1) lists the larger task with its whole figure and the `after_large` tasks after it. The Start
 check reports `oversized.before` and `oversized.comesAfter` (the `after_large` titles, then the
