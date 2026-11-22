@@ -638,7 +638,8 @@ describe("d1109-chat-depth, run C: answer_thoroughly, the gate and the ask", () 
       fastPrefix(b.requests()[0] as ModelRequest),
     );
     expect(String(a.requests()[0]?.messages.at(-1)?.content)).toContain(
-      "- thinking_longer: goes ahead up to CHF 0.10 on this model",
+      // l4-chat-depth (L4-chat-202): the line names who acts.
+      "- thinking_longer: available: call answer_thoroughly; the app goes ahead up to CHF 0.10 on this model",
     );
     expect(String(b.requests()[0]?.messages.at(-1)?.content)).toContain(
       "- thinking_longer: not now (the caps leave too little)",
@@ -919,11 +920,12 @@ describe("d1109-chat-depth, run C: caching", () => {
 });
 
 describe("d1109-chat-depth, run C: the exact text", () => {
-  it("the role prompt sent is conversation-agent 1.4.0 with 'Thinking longer', on the fast and the thorough request", async () => {
+  it("the role prompt sent is conversation-agent 1.5.0 with 'Thinking longer', on the fast and the thorough request", async () => {
     const role = loadRegistry(
       resolve(import.meta.dirname, "..", "..", "..", "evals", "registry"),
     ).principals.get("conversation-agent");
-    expect(role?.version).toBe("1.4.0");
+    // l4-chat-depth (L4-chat-202, L4-chat-203) made 1.5.0: who writes the ask, and whose section.
+    expect(role?.version).toBe("1.5.0");
     expect(role?.prompt).toContain("## Thinking longer");
     expect(role?.prompt).toContain(
       "- `answer_thoroughly` hands a question to a stronger model that thinks it through. Call it\n  first, before any lookup, and write nothing before it",
@@ -1147,7 +1149,10 @@ describe("d1109-chat-depth fixup: a failed task's card listed in full", () => {
     const fastFacts = String(w.requests()[0]?.messages.at(-1)?.content);
     // The card is in the facts in full (the coder's words); the fact says the person is asked.
     expect(fastFacts).toContain("The coder said:");
-    expect(fastFacts).toContain("- thinking_longer: asks the person first");
+    // l4-chat-depth (L4-chat-202): the fact says who asks (the app), never the model in words.
+    expect(fastFacts).toContain(
+      "- thinking_longer: available: call answer_thoroughly; the app asks the person with the cost (never ask in your own words)",
+    );
     const back = JSON.stringify(w.requests()[1]?.messages.at(-1)?.content);
     expect(back).toContain(JSON.stringify(ASK_RESULT).slice(1, -1));
     expect(r.reply).toBe("The coder says the stylesheet is never linked.");
@@ -1305,5 +1310,158 @@ describe("l4-chat-depth, run L4: a Go ahead runs the answer it offered (L4-chat-
     const go = await w.chat("Go ahead.", { offer: again.transcriptId });
     expect(go.footer, go.reply).toMatch(/^Thought it through with Sonnet · /);
     expect(w.requests().filter((q) => q.model === "fake-sonnet")).toHaveLength(1);
+  });
+});
+
+/** The live fast model's reply to 'make a plan for the next two sessions' (live check 4, c13b). */
+const LIVE_PLAN_REPLY =
+  "This plan needs the stronger model, which costs more and asks you first. Should I go ahead?";
+/** Its reply to U-094's failure question (live check 4, c13c): an answer of its own, no tool. */
+const LIVE_FAILURE_REPLY =
+  "It keeps failing because data/members.csv is still missing, and the page's criterion needs the board members' names from that file.\n\nTo fix it, choose one:\n- Add data/members.csv, then choose Try again in your Inbox.\n- Change the criterion to a welcome text without names.\n\nWhich do you want?";
+const ASK_LINE_RE =
+  /^This needs a stronger model: about CHF \d+\.\d{2} \(at most CHF \d+\.\d{2}\) and \d+ seconds\. Go ahead\?$/;
+
+/** "Write the welcome page" at Needs you with the critic's retry card listed in full. */
+async function failedWelcomePage(w: World) {
+  const said = "I could not complete this task. data/members.csv is missing.";
+  const t = await w.store.task.insert({
+    project_id: w.project,
+    milestone_id: null,
+    title: "Write the welcome page",
+    outcome: "The welcome page names the board.",
+    acceptance_criteria: [],
+    risk_tier: 1,
+    status: "needs_human",
+    priority: 50,
+    depends_on: [],
+    budget_usd_micro: 0,
+    specialist: "coder",
+    reason:
+      "retry ladder exhausted after 3 failed attempt(s) at haiku (ceiling sonnet): human decides",
+  });
+  const words = retryCardWords({
+    title: "Write the welcome page",
+    attempts: 3,
+    said,
+    saidBy: "coder",
+  });
+  await w.store.humanRequest.insert({
+    human_id: w.human,
+    project_id: w.project,
+    task_id: t.id,
+    kind: "approval",
+    why: words.why,
+    steps: [],
+    options: [...RETRY_CARD_OPTIONS],
+    blocking: true,
+    risk: "medium",
+    change_card: signoffCard({
+      taskId: t.id,
+      reviewId: null,
+      runId: null,
+      findingIds: [],
+      reason: "retry_ladder_exhausted",
+      title: words.title,
+      said,
+      saidBy: "coder",
+    }),
+  } as never);
+}
+
+describe("l4-chat-depth, run L4: the fast model's hand-over is never left to words (L4-chat-202)", () => {
+  it("the fast model answers 'make a plan for the next two sessions' alone and asks in words: the app attaches its own ask line with Go ahead, no thorough request before the yes; 'yes' runs one", async () => {
+    const w = await world({
+      replies: [
+        textReply(LIVE_PLAN_REPLY, { when: (r) => !isThorough(r) }),
+        textReply("The plan: first the README, then the FAQ.", { when: isThorough }),
+      ],
+    });
+    const r = await w.chat("make a plan for the next two sessions");
+    expect(w.requests()).toHaveLength(1);
+    expect(r.offer?.action).toBe("go_ahead");
+    expect(r.offer?.line).toMatch(ASK_LINE_RE);
+    // The model's own ask is not said beside the app's: one question, the app's, with its cost.
+    expect(r.reply).not.toContain("Should I go ahead?");
+    expect(r.reply).toBe(r.offer?.line);
+    const row = await w.lastRow();
+    expect((row.offer as { action?: string }).action).toBe("go_ahead");
+    expect(row.why).toBe("plan");
+    expect(w.requests().some((q) => isThorough(q as ModelRequest))).toBe(false);
+    const yes = await w.chat("yes");
+    const thorough = w.requests().filter((q) => isThorough(q as ModelRequest));
+    expect(thorough).toHaveLength(1);
+    expect(thorough[0]?.model).toBe("fake-sonnet");
+    expect(w.runs.at(-1)?.req.label).toBe("conversation");
+    expect(yes.reply).toBe("The plan: first the README, then the FAQ.");
+    expect(yes.footer).toMatch(/^Thought it through with Sonnet · /);
+  });
+
+  it("U-094's failure question answered alone with a failed task's card in full: the answer stays, the ask line and Go ahead go under it; Go ahead runs one stronger pass", async () => {
+    const w = await world({
+      replies: [
+        textReply(LIVE_FAILURE_REPLY, { when: (r) => !isThorough(r) }),
+        textReply("It fails because data/members.csv is missing; add it.", { when: isThorough }),
+      ],
+    });
+    await failedWelcomePage(w);
+    const r = await w.chat(
+      'why does "Write the welcome page" keep failing and what should I change?',
+    );
+    expect(String(w.requests()[0]?.messages.at(-1)?.content)).toContain("The coder said:");
+    expect(r.reply).toBe(LIVE_FAILURE_REPLY);
+    expect(r.offer?.action).toBe("go_ahead");
+    expect(r.offer?.line).toMatch(ASK_LINE_RE);
+    expect(w.requests().some((q) => isThorough(q as ModelRequest))).toBe(false);
+    const go = await w.chat("Go ahead.", { offer: r.transcriptId });
+    const thorough = w.requests().filter((q) => isThorough(q as ModelRequest));
+    expect(thorough).toHaveLength(1);
+    expect(go.reply).toBe("It fails because data/members.csv is missing; add it.");
+  });
+
+  it("'what is left?' answered alone gets no ask; a line whose words a record wrote never gets one", async () => {
+    const w = await world({ replies: [textReply("Two tasks are left.", { times: 2 })] });
+    const r = await w.chat("what is left?");
+    expect(r.offer).toBeNull();
+    // A title in quotes that names a plan is a title, never a need.
+    const t = await w.chat('what is "Plan for the next two sessions" waiting for?');
+    expect(t.offer).toBeNull();
+    expect(w.requests().some((q) => isThorough(q as ModelRequest))).toBe(false);
+  });
+
+  it("a spoken turn, a 'quick' line and a turn whose records the scan flags get no backstop ask", async () => {
+    const w = await world({ replies: [textReply(LIVE_PLAN_REPLY, { times: 3 })] });
+    const spoken = await w.chat("make a plan for the next two sessions", { source: "voice" });
+    expect(spoken.offer).toBeNull();
+    const quick = await w.chat("make a plan for the next two sessions, briefly");
+    expect(quick.offer?.action ?? null).not.toBe("go_ahead");
+  });
+
+  it("a longer rung that would go ahead is never started by the words: only Think it through stays under the answer", async () => {
+    const w = await world({ replies: [textReply("The sessions built the page.")] });
+    const r = await w.chat("what did the last two sessions do?");
+    expect(r.offer).toBeNull();
+    expect(w.requests()).toHaveLength(1);
+    const row = await w.lastRow();
+    expect(row.closer).toBeTruthy();
+    expect(row.offer ?? null).toBeNull();
+  });
+
+  it("the model is told who acts: the thinking_longer fact and answer_thoroughly's definition, exactly", async () => {
+    const w = await world({ replies: [textReply("Two are left.")] });
+    await w.chat("what is left?");
+    const req = w.requests()[0];
+    expect(String(req?.messages.at(-1)?.content)).toContain(
+      "\n- thinking_longer: available: call answer_thoroughly; the app goes ahead up to CHF 0.10 on this model\n",
+    );
+    expect(req?.tools?.find((t) => t.name === ANSWER_THOROUGHLY_TOOL)?.description).toBe(
+      'Hand this question to a stronger model that thinks it through and can look up more. It is slower (often half a minute) and costs more, within limits the app sets. Use it only when a good answer needs reasoning across many records (several sessions, tasks or days), working out why something keeps failing and what to change, a plan, a comparison, a review or a recommendation, or when the person asks you to think harder. Never for what is running, what is left, one record, a greeting or a change. Call it first, before any lookup, and write nothing before it. The app decides: it hands the question over, asks the person first, or tells you to answer from what you have. Never offer a stronger model or ask "Should I go ahead?" yourself: call this tool, and the app writes the ask with its cost.',
+    );
+    const f = await world({ replies: [textReply("Two are left.")] });
+    await failedWelcomePage(f);
+    await f.chat("what is left?");
+    expect(String(f.requests()[0]?.messages.at(-1)?.content)).toContain(
+      "\n- thinking_longer: available: call answer_thoroughly; the app asks the person with the cost (never ask in your own words)\n",
+    );
   });
 });

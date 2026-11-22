@@ -168,6 +168,12 @@ export interface BenchOptions {
    * answer costs what the real API bills.
    */
   chatHoldMs?: number;
+  /**
+   * l4-chat-depth (L4-chat-202): the fast chat model answers a depth line alone, as live check
+   * 4's real fast model did (FORERUNNER_BENCH_CHAT_ALONE=1): it never calls answer_thoroughly and
+   * asks "Should I go ahead?" in its own words, so the app's own ask (the backstop) is walked.
+   */
+  chatAlone?: boolean;
   clock?: Clock;
 }
 
@@ -253,6 +259,9 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     delayMs: Number.isFinite(delay) && delay >= 0 ? delay : 250,
     criticDelayMs: Number.isFinite(criticDelay) && criticDelay > 0 ? criticDelay : 0,
     chatHoldMs: Number.isFinite(chatHold) && chatHold > 0 ? chatHold : 0,
+    chatAlone: ["1", "true", "yes", "on"].includes(
+      (env.FORERUNNER_BENCH_CHAT_ALONE ?? "").trim().toLowerCase(),
+    ),
   };
 }
 
@@ -383,7 +392,7 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
           titles,
         );
       case "chat":
-        return chatAnswer(req);
+        return chatAnswer(req, opts.chatAlone === true);
       case "task_check":
         // d1109-selftasks-run (ST-14): no change unless the evidence names one.
         return text(taskCheckReply(req));
@@ -1704,12 +1713,22 @@ function thoroughAnswer(req: ModelRequest, calls: ReturnType<typeof pastToolCall
   );
 }
 
-function chatAnswer(req: ModelRequest): Answer {
+function chatAnswer(req: ModelRequest, alone = false): Answer {
   const calls = pastToolCalls(req.messages);
   if ((req.system ?? "").includes("# Thinking it through")) return thoroughAnswer(req, calls);
   // d1109-chat-depth: a question that needs a closer look is handed over first, before any
   // lookup; after the app's answer ("Not now: ...", "Not yet: ...") a short answer from the facts.
   const why = thoroughWhy(turnLine(req));
+  // l4-chat-depth (L4-chat-202, FORERUNNER_BENCH_CHAT_ALONE): the live fast model's way instead:
+  // no tool call and an answer of its own that asks in words (live check 4, c13b, word for word).
+  if (why && alone && !calls.length) {
+    const told = chatFacts(req);
+    return text(
+      why === "many_records"
+        ? `${STAND_IN} A short answer on my own.${told ? ` ${told}` : ""}`
+        : `${STAND_IN} This plan needs the stronger model, which costs more and asks you first. Should I go ahead?`,
+    );
+  }
   if (why && (req.tools ?? []).some((t) => t.name === "answer_thoroughly")) {
     if (!calls.length)
       return { text: "", toolCalls: [{ name: "answer_thoroughly", input: { why } }] };

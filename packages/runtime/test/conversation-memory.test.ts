@@ -1193,7 +1193,8 @@ describe("l3-chat-claims, run L3", () => {
     );
     // d1109-chat-recall bumped it to 1.3.0 ("What you look up"); these lines stay.
     // d1109-chat-depth bumped it to 1.4.0 ("Thinking longer").
-    expect(prompt).toContain('version: "1.4.0"');
+    // l4-chat-depth bumped it to 1.5.0 ("Thinking longer": who writes the ask).
+    expect(prompt).toContain('version: "1.5.0"');
     expect(prompt).toContain(
       'A reply that changed something ends with the\n  app\'s own line "The app did: …"; a reply without it changed nothing, whatever it says.',
     );

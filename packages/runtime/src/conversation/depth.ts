@@ -134,6 +134,79 @@ export function depthWords(line: string): DepthAsk {
   return { ask: null, bare: false };
 }
 
+/**
+ * The need a typed line shows, read by the app itself (l4-chat-depth, L4-chat-202, ADR 0114
+ * amended 2026-11-22: the ask-only backstop): why something fails or keeps failing, a plan for
+ * what comes next, a comparison, a review, or what several sessions did, in English and German,
+ * outside quotes (a quoted title is never a need). The same lines the bench's stand-in hands
+ * over on. Its only use is to attach the app's own ask line under a quick answer that ended
+ * without `answer_thoroughly`: it never spends; only the person's yes does.
+ */
+export function needOfLine(line: string): Why | null {
+  const said = outsideQuotes(line).toLowerCase();
+  if (
+    /\bkeeps? (?:on )?failing\b|\bkeeps? going wrong\b/.test(said) ||
+    /\bwhy\b[^.?!]*\b(?:fail|fails|failed|failing|broke|breaks|went wrong|goes wrong)\b/.test(
+      said,
+    ) ||
+    /\bwarum\b[^.?!]*\b(?:scheitert|fehlgeschlagen|schlägt|schlaegt|klappt)\b/.test(said)
+  )
+    return "failure";
+  if (/\bcompare\b|\bcomparison\b|\bpros and cons\b|\bvergleich/.test(said)) return "comparison";
+  if (
+    /\b(?:a|the) plan (?:for|of)\b|\bplan (?:for|out) the next\b|\bplan the next\b/.test(said) ||
+    /\b(?:einen|den) plan\b|\bplan (?:für|fuer)\b/.test(said)
+  )
+    return "plan";
+  if (
+    /\breview (?:the|my|our|this|that|it|for|of)\b|\b(?:überprüfe|ueberpruefe|bewerte)\b/.test(said)
+  )
+    return "review";
+  if (
+    /\b(?:last|past) (?:two|three|few|2|3) sessions\b|\bacross (?:the )?sessions\b/.test(said) ||
+    /\bletzten (?:zwei|drei|2|3) sessions?\b/.test(said)
+  )
+    return "many_records";
+  return null;
+}
+
+/** A reply's sentence that offers a hand-over in its own words ("Should I go ahead?"). */
+const WORDS_OFFER_RE =
+  /\bstronger model\b|\bbetter model\b|\bhand (?:it|this|that) (?:over|to)\b|\b(?:should|shall) i go ahead\b|\bwant me to (?:go ahead|think)\b|\bsoll ich (?:weitermachen|fortfahren)\b/i;
+
+const sentencesOf = (para: string): string[] => para.match(/[^.?!]+[.?!]*\s*/g) ?? [para];
+
+/**
+ * Whether a reply offers a stronger model or a hand-over in its own words (L4-chat-202): a
+ * question that names one ("Should I go ahead?", "Want me to use a stronger model?"). A sentence
+ * that only mentions a stronger model ("Sonnet is a stronger model.") offers nothing.
+ */
+export function offersInWords(text: string): boolean {
+  return text
+    .split(/\n/)
+    .flatMap(sentencesOf)
+    .some((s) => WORDS_OFFER_RE.test(s) && s.trim().endsWith("?"));
+}
+
+/**
+ * The reply without its sentences that offer a hand-over in words, when the app writes its own
+ * ask under it (L4-chat-202): one question, the app's, with the cost and Go ahead. Empty when
+ * the reply was nothing else.
+ */
+export function withoutWordsOffer(text: string): string {
+  return text
+    .split(/\n/)
+    .map((para) =>
+      sentencesOf(para)
+        .filter((s) => !WORDS_OFFER_RE.test(s))
+        .join("")
+        .trim(),
+    )
+    .filter((para, i, all) => para !== "" || (i > 0 && all[i - 1] !== ""))
+    .join("\n")
+    .trim();
+}
+
 /** A model's name as the person reads it: "Sonnet", never "claude-sonnet-5-5" or a tier word. */
 export function modelName(tier: ModelTier): string {
   return tier.charAt(0).toUpperCase() + tier.slice(1);
@@ -424,9 +497,15 @@ export function failureReply(
 // ---------------------------------------------------------------------------------------------
 // What the model receives (code, asserted verbatim on the requests).
 
-/** answer_thoroughly's definition: the fast model's one way to ask for a longer answer. */
+/**
+ * answer_thoroughly's definition: the fast model's one way to ask for a longer answer.
+ * l4-chat-depth (L4-chat-202): it says who writes the ask. Before, it ended "The facts'
+ * thinking_longer line says whether it is available now", and that line said "asks the person
+ * first" with no subject: the live fast model asked "Should I go ahead?" in its own words, with
+ * no cost and no Go ahead, and never called the tool (live check 4, LC-C13: 0 of 7).
+ */
 export const ANSWER_THOROUGHLY_DESCRIPTION =
-  "Hand this question to a stronger model that thinks it through and can look up more. It is slower (often half a minute) and costs more, within limits the app sets. Use it only when a good answer needs reasoning across many records (several sessions, tasks or days), working out why something keeps failing and what to change, a plan, a comparison, a review or a recommendation, or when the person asks you to think harder. Never for what is running, what is left, one record, a greeting or a change. Call it first, before any lookup, and write nothing before it. The app decides: it hands the question over, asks the person first, or tells you to answer from what you have. The facts' thinking_longer line says whether it is available now.";
+  'Hand this question to a stronger model that thinks it through and can look up more. It is slower (often half a minute) and costs more, within limits the app sets. Use it only when a good answer needs reasoning across many records (several sessions, tasks or days), working out why something keeps failing and what to change, a plan, a comparison, a review or a recommendation, or when the person asks you to think harder. Never for what is running, what is left, one record, a greeting or a change. Call it first, before any lookup, and write nothing before it. The app decides: it hands the question over, asks the person first, or tells you to answer from what you have. Never offer a stronger model or ask "Should I go ahead?" yourself: call this tool, and the app writes the ask with its cost.';
 
 /** The tool's name (in the fast pass's list after the recall tools; never in the thorough pass's). */
 export const ANSWER_THOROUGHLY_TOOL = "answer_thoroughly";
@@ -460,7 +539,12 @@ This question was handed to you to think through; the person waits and sees what
 export const CHAT_WRAP_UP =
   "Wrap up now: make no more lookups. Answer from what you have, and say in one sentence what you could not check.";
 
-/** The facts' thinking_longer line: whether a closer look is available now, in the model's words. */
+/**
+ * The facts' thinking_longer line: whether a closer look is available now, in the model's words.
+ * l4-chat-depth (L4-chat-202): an available line names who acts (the model calls the tool; the
+ * app goes ahead or asks the person with the cost). Before, "asks the person first" had no
+ * subject, and the live fast model read it as an instruction to ask in its own words.
+ */
 export function thinkingLongerFact(
   o:
     | { state: "goes_ahead"; amountUsdMicro: number; chfPerUsd: number }
@@ -468,9 +552,9 @@ export function thinkingLongerFact(
 ): string {
   switch (o.state) {
     case "goes_ahead":
-      return `goes ahead up to ${chfUp(o.amountUsdMicro, o.chfPerUsd)} on this model`;
+      return `available: call answer_thoroughly; the app goes ahead up to ${chfUp(o.amountUsdMicro, o.chfPerUsd)} on this model`;
     case "asks":
-      return "asks the person first";
+      return "available: call answer_thoroughly; the app asks the person with the cost (never ask in your own words)";
     case "spoken":
       return "not on a spoken turn";
     case "room":

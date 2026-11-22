@@ -4532,6 +4532,25 @@ now; `budget.test.ts` `SessionBudget.wrapUpNow`.
   longer) measured a floor a few hundred micro-USD above it: after one cheap stronger answer
   anywhere on the install (the estimate is the median across the one conversation session), every
   later Go ahead showed the same ask again and made no call (live check 4, LC-C14).
+- *Who writes the ask (L4-chat-202).* The facts' `thinking_longer` names who acts:
+  "available: call answer_thoroughly; the app goes ahead up to CHF 0.10 on this model" or
+  "available: call answer_thoroughly; the app asks the person with the cost (never ask in your own
+  words)"; `ANSWER_THOROUGHLY_DESCRIPTION` ends 'Never offer a stronger model or ask "Should I go
+  ahead?" yourself: call this tool, and the app writes the ask with its cost.' (before: a
+  subject-less "asks the person first", which the live fast model read as an instruction to ask in
+  words; it never called the tool, 0 of 7 in LC-C13). conversation-agent 1.5.0 says the same in
+  "Thinking longer", and scopes that section to the quick answer.
+- *The ask-only backstop (L4-chat-202, ADR 0114 amended 2026-11-22).* A typed quick answer that
+  ended without `answer_thoroughly` on a line that shows a need (`needOfLine`: why something fails
+  or keeps failing, a plan for what comes next, a comparison, a review, what several sessions
+  did; English and German, outside quotes) or whose reply asks in its own words
+  (`offersInWords`: a question naming a stronger model or a hand-over) runs the gate in code: no
+  spoken turn, no quick line, nothing the scan flagged, no change this turn, the room, a rung
+  above. When the rung asks first, the reply keeps the app's own `StoredOffer` (Go ahead or a
+  typed yes runs it once) and the model's ask in words is taken out (`withoutWordsOffer`; a reply
+  that was nothing else is the ask line itself, a notice); the row's `why` is the need. A rung
+  that would go ahead is never started by the words: Think it through stays under the answer as
+  under every quick answer. A pattern never spends; only the person's yes does.
 
 **The history leaves out a quoted record's words (L3-left-6).** An earlier reply whose own words
 the injection scan flags (a reply that quoted a report, a card or a recall hit) is sent in the

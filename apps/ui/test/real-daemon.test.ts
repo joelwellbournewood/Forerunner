@@ -23588,4 +23588,38 @@ describe("l4-chat-depth, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+
+  // L4-chat-202 (live check 4, L4-chat-7): the real fast model never called answer_thoroughly; it
+  // asked "Should I go ahead?" in words with no cost and no button. The stand-in's answer-alone
+  // mode plays that; the app attaches its own ask.
+  it("POST /chat on the stand-in's answer-alone mode: 'make a plan for the next two sessions' gets the app's ask line with Go ahead (no thorough call before it); Go ahead runs Sonnet once; 'what is left?' gets no ask", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-202-", { FORERUNNER_BENCH_CHAT_ALONE: "1" });
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      const asked = await a.chat(project.id, "make a plan for the next two sessions");
+      expect(asked.reply).toMatch(
+        /^This needs a stronger model: about CHF \d+\.\d{2} \(at most CHF \d+\.\d{2}\) and \d+ seconds\. Go ahead\?$/,
+      );
+      expect(asked.reply).not.toContain("Should I go ahead?");
+      expect(asked.offer?.action).toBe("go_ahead");
+      const calls = () =>
+        readFileSync(join(a.home, "model-calls.jsonl"), "utf8")
+          .trim()
+          .split("\n")
+          .map((l) => JSON.parse(l) as { system?: string; role?: string });
+      const thorough = () => calls().filter((c) => (c.system ?? "").includes("# Thinking it through"));
+      expect(thorough()).toHaveLength(0);
+      // The conversation view shows the ask line with Go ahead under the newest turn.
+      const view = await a.client.conversation(project.id);
+      expect(view.turns.at(-1)?.reply?.offer?.action).toBe("go_ahead");
+      const go = await a.chat(project.id, "Go ahead.", { offer: asked.transcriptId });
+      expect(go.footer, go.reply).toMatch(/^Thought it through with Sonnet · \d+ s · /);
+      expect(thorough().length).toBeGreaterThan(0);
+      const plain = await a.chat(project.id, "what is left?");
+      expect(plain.offer?.action ?? null).not.toBe("go_ahead");
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });
