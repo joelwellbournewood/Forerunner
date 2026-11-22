@@ -1028,3 +1028,112 @@ describe("l4-selftasks-check, run L4: the left-out line quotes at a word, withou
     expect(long.startsWith(`${shown} `)).toBe(true);
   });
 });
+
+// l4-selftasks-check, run L4 (L4-selftasks-105; live check 4's LC-C28; the review of
+// fix/l4-selftasks-check, non-blocking 4): the session-path companion of chat's case. An edit the
+// check's model returns that changes nothing never enters the set, so the suggestion card lists
+// the real changes only and its "Make these changes" is applied, never refused for the no-op edit
+// ("Nothing to change on ...", which before rolled the whole set back as not_applied).
+describe("l4-selftasks-check, run L4: an edit that changes nothing never enters the suggestion card (L4-selftasks-105)", () => {
+  const SET = JSON.stringify({
+    changes: [
+      {
+        kind: "drop",
+        task: "Style the page (copy)",
+        sameAs: "Style the page",
+        why: "It is the same task.",
+      },
+      {
+        kind: "edit",
+        task: "Style the page",
+        acceptanceCriteria: ["the layout is a grid", "the colours match the logo"],
+        why: "No change needed to the criteria.",
+      },
+      {
+        kind: "add",
+        title: "Add the prices",
+        outcome: "The page lists the prices",
+        acceptanceCriteria: ["the prices are on the page"],
+        specialist: "coder",
+        after: ["Create the page"],
+        why: "Nothing lists the prices.",
+      },
+    ],
+    flagged: [],
+    why: "Two fixes.",
+  });
+
+  it("at Assisted the card lists the drop and the add only; the person's Make these changes applies both as one row, the duplicate cancelled and the new task made", async () => {
+    const w = await world({ level: 1 });
+    await w.add("Create the page", 0.3, { priority: 9 });
+    await w.add("Write the README", 0.1, { priority: 8 });
+    await w.add("Style the page", 0.2, {
+      acceptance_criteria: ["the layout is a grid", "the colours match the logo"],
+    });
+    await w.add("Style the page (copy)", 0.2);
+    w.replies.push(SET);
+    w.scripts.set("Create the page", { cost: 0.3, report: REPORT });
+    const seen: { steps: string[]; options: string[] } = { steps: [], options: [] };
+    w.scripts.set("Write the README", {
+      cost: 0.1,
+      // While the session runs, the person answers the card with the option the Inbox shows.
+      during: async () => {
+        const card = (await w.store.humanRequest.list({ status: "open" } as never)).find(
+          (r) => (r.change_card as { key?: string }).key === TASK_PROPOSAL_KEY,
+        );
+        if (!card) throw new Error("no suggestion card");
+        seen.steps = [...card.steps];
+        const words = requestWords(card, { projectName: "Quote page" });
+        seen.options = words.choices.map((c) => c.label);
+        const option = words.choices[0]?.label;
+        await w.store.humanRequest.answer(card.id, card.version, option as never, w.seeded.human);
+        await syncTaskProposals({
+          store: w.store,
+          clock: w.clock,
+          humanId: w.seeded.human,
+          check: async () => null,
+          apply: async (calls) => {
+            const r = await w.commands().compose(
+              calls.map((c) => ({ name: c.name, params: c.params })),
+              w.ctxOf({ wordsUsed: "Make these changes" }),
+              { confirmation: { kind: "tap", by: { kind: "human", id: w.seeded.human } } },
+            );
+            return r.status === "done" ? { changeLogId: r.changeLogId } : { refused: r.status };
+          },
+          admit: async (projectId, ids) => {
+            const handle = w.live.forProject(projectId);
+            if (!handle) return false;
+            await handle.admit(ids, "person");
+            return true;
+          },
+        });
+      },
+    });
+    const r = await w.start(3, { autonomy: 1, planApproved: true });
+    expect(w.checkCalls.length).toBe(1);
+    // The card the Inbox showed: the two real changes, no line for the edit that changes nothing.
+    expect(seen.steps).toEqual([
+      'Drop "Style the page (copy)": same as "Style the page".',
+      'Add "Add the prices".',
+    ]);
+    expect(seen.options).toEqual(["Make these changes", "Keep the tasks"]);
+    const card = (await w.store.humanRequest.list({ project_id: w.seeded.project } as never)).find(
+      (x) => (x.change_card as { key?: string }).key === TASK_PROPOSAL_KEY,
+    );
+    expect(card?.change_card).toMatchObject({ outcome: "applied", changed: 2 });
+    expect((card?.change_card as { left_out?: unknown }).left_out).toBeUndefined();
+    const byTitle = new Map(
+      (await w.store.task.forProject(w.seeded.project, {}, { limit: 100 })).map((t) => [
+        t.title,
+        t.status,
+      ]),
+    );
+    expect(byTitle.get("Style the page (copy)")).toBe("cancelled");
+    expect(byTitle.has("Add the prices")).toBe(true);
+    expect(byTitle.get("Style the page")).not.toBe("cancelled");
+    // One row, the person's, with one Undo.
+    const rows = await w.store.changeLog.forProject(w.seeded.project);
+    expect(rows.map((c) => [c.source, c.undo_state])).toEqual([["ui", "undoable"]]);
+    expect(r.status).toBe("completed");
+  });
+});
