@@ -44,6 +44,7 @@ import { clockTime } from "@forerunner/runtime/session/credential-wait";
 import { conflictNoticeSentence } from "@forerunner/runtime/session/dependent-branches";
 import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
+import { isIntakeSession } from "@forerunner/runtime/session/recovery";
 import { SECRET_NAMES } from "@forerunner/runtime/setup/wizard";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -22793,18 +22794,17 @@ describe("d1109-cred-screens, run C", () => {
       } as never);
       const project = await share.client.createProject({ name: "Quote page", goal: "A quote" });
       await addReady(share.client, project.id, "Style the page");
-      const agentId = (await share.client.agents())[0]?.id ?? "";
-      const started = await share.client.startSession({ agentId, projectId: project.id });
-      const sessionId = started.session?.id ?? "";
-      await eventually(
-        async () =>
-          !["running", "paused", "planned"].includes(
-            (await share.client.session(sessionId)).status,
-          ),
-        "the session to end to wait (at least 10 s of real time)",
-        async () => (await share.client.session(sessionId)).status,
-        20_000,
-      );
+      // l4-cred-screens (L4-creds-18): a Start pressed while the share is known is kept for the
+      // month's start ("Start on 1 Apr") and makes no session; the person's session that meets
+      // the share inside it ends to wait and goes on then.
+      await share.rt.runner.start({
+        agentId: share.rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        by: "person",
+        budgetCapUsdMicro: 5_000_000,
+        grant: await share.rt.sessionGrant(project.id),
+      });
       await settleSessions(share.rt);
       // The clock is 5 March: the share ends on 1 April, 00:00 UTC, 02:00 in Zurich (summer time).
       expect(await share.client.running()).toEqual([
@@ -25286,18 +25286,16 @@ describe("l4-cred-screens, run L4", () => {
       await addTask(first.client, project.id, "Research the sources", {
         specialist: "researcher",
       });
-      const agentId = (await first.client.agents())[0]?.id ?? "";
-      const started = await first.client.startSession({ agentId, projectId: project.id });
-      const sessionId = started.session?.id ?? "";
-      await eventually(
-        async () =>
-          !["running", "paused", "planned"].includes(
-            (await first.client.session(sessionId)).status,
-          ),
-        "the session to end to wait (at least 10 s of real time)",
-        async () => (await first.client.session(sessionId)).status,
-        20_000,
-      );
+      // The person's session meets the key's stop inside it (a Start pressed while the stop is
+      // known is kept for its end, L4-creds-18).
+      await first.rt.runner.start({
+        agentId: first.rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        by: "person",
+        budgetCapUsdMicro: 5_000_000,
+        grant: await first.rt.sessionGrant(project.id),
+      });
       const task = (await first.client.tasks(project.id)).find(
         (t) => t.title === "Research the sources",
       );
@@ -25376,6 +25374,124 @@ describe("l4-cred-screens, run L4", () => {
           : undefined;
         expect(source?.kind).toBe("subscription");
       }
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
+  // L4-creds-18 (C6L-2: "Start on 1 Dec" at the share's stop started a session that stopped at
+  // once): the start is kept for the month's start as "Start at 15:40" is for a limit, and starts
+  // exactly one session then, also after a restart.
+  it("L4-creds-18: 'Start on 1 Apr' at the share's stop keeps the start (no session row); at the month's start exactly one session starts, after composing again", async () => {
+    const calls: string[] = [];
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const first = await composeL4({ clock, sdkQuery: claudeCode(calls, 0) });
+    let projectId = "";
+    try {
+      const sub = (
+        await first.rt.store.billingSource.list({ human_id: first.rt.human.id }, { limit: 10 })
+      ).find((r) => r.kind === "subscription");
+      await first.rt.store.costLedger.record({
+        human_id: first.rt.human.id,
+        agent_id: first.rt.agent.id,
+        billing_source_id: sub?.id ?? null,
+        kind: "subscription",
+        usd_micro: 0,
+        chf_micro: 0,
+        plan_usage_share: 0.95,
+        model: "claude-sonnet-5-5",
+      } as never);
+      const project = await first.client.createProject({ name: "Quote page", goal: "A quote" });
+      projectId = project.id;
+      await addTask(first.client, project.id, "Style the page");
+      const check = await first.client.startCheck(project.id);
+      expect(check.credential?.runOut?.later?.label).toBe("Start on 1 Apr");
+      // "Start on 1 Apr" sends a plain start, as the dialog does.
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const kept = await first.client.startSession({ agentId, projectId: project.id });
+      expect(kept.result).toBe("kept");
+      expect(kept.sentence).toBe("A session of Quote page starts at Wed 1 Apr, 02:00.");
+      const rows = async (rt: RuntimeApp) =>
+        (await rt.store.session.forProject(projectId, { limit: 20 })).filter(
+          (s) => !isIntakeSession(s),
+        );
+      expect(await rows(first.rt)).toHaveLength(0);
+      expect(first.keyCalls()).toHaveLength(0);
+      await settleSessions(first.rt);
+    } finally {
+      await first.rt.close();
+    }
+    // Composed again on the same home: the kept start starts exactly one session on the 1st.
+    const second = await composeL4({
+      home: first.home,
+      vault: first.vault,
+      clock,
+      sdkQuery: claudeCode(calls, 0),
+    });
+    try {
+      clock.set(Date.parse("2026-04-01T00:01:00Z"));
+      expect(await second.rt.billing.waits.wake()).toBe(1);
+      expect(await second.rt.billing.waits.wake()).toBe(0);
+      await eventually(
+        async () =>
+          (await second.client.tasks(projectId)).every((t) => t.status === "done"),
+        "the kept start's session to run the task (at least 10 s of real time)",
+        async () => (await second.client.tasks(projectId)).map((t) => t.status).join(", "),
+        20_000,
+      );
+      const sessions = (await second.rt.store.session.forProject(projectId, { limit: 20 })).filter(
+        (s) => !isIntakeSession(s),
+      );
+      expect(sessions).toHaveLength(1);
+      await settleSessions(second.rt);
+    } finally {
+      await second.rt.close();
+    }
+  }, 120_000);
+
+  // L4-creds-18 (C6L-5: "Change the allowance" was only on the run bar): the person's session
+  // that met the share waits to go on; the project's status line and the session page's wait
+  // block offer Change the allowance too.
+  it("L4-creds-18: the share's wait offers Change the allowance on the status line and the session page's wait block", async () => {
+    const calls: string[] = [];
+    const { rt, client } = await composeL4({ sdkQuery: claudeCode(calls, 0) });
+    try {
+      const sub = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
+        (r) => r.kind === "subscription",
+      );
+      await rt.store.costLedger.record({
+        human_id: rt.human.id,
+        agent_id: rt.agent.id,
+        billing_source_id: sub?.id ?? null,
+        kind: "subscription",
+        usd_micro: 0,
+        chf_micro: 0,
+        plan_usage_share: 0.95,
+        model: "claude-sonnet-5-5",
+      } as never);
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addTask(client, project.id, "Style the page");
+      await addTask(client, project.id, "Write the copy");
+      const r = await rt.runner.start({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        by: "person",
+        budgetCapUsdMicro: 5_000_000,
+        grant: await rt.sessionGrant(project.id),
+      });
+      await settleSessions(rt);
+      const allowance = { label: "Change the allowance", to: "/settings#plan-allowance" };
+      const card = await client.project(project.id);
+      expect(card.statusLine?.text).toBe(
+        "Waiting until Wed 1 Apr, 02:00 (your subscription's share), then it goes on",
+      );
+      expect(card.statusLine?.action).toEqual({ kind: "link", ...allowance });
+      const block = (await client.session(r.sessionId)).waitBlock;
+      expect(block?.state).toBe("goes_on");
+      expect(block?.answer).toEqual(allowance);
+      expect(block?.action).toBe("cancel");
     } finally {
       await settleSessions(rt);
       await rt.close();

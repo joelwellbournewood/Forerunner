@@ -792,7 +792,8 @@ export const SessionView = z.object({
       budgetLeft: Money,
       /**
        * d1109-cred-screens (CS-7): while the one ask card of its stop is open, "Answer" opening
-       * it beside Cancel. Absent otherwise (and from an older daemon).
+       * it beside Cancel; l4-cred-screens (L4-creds-18): for the share's wait, "Change the
+       * allowance" opening Settings. Absent otherwise (and from an older daemon).
        */
       answer: z.object({ label: z.string(), to: z.string() }).optional(),
     })

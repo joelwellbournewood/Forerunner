@@ -1193,6 +1193,13 @@ key first, the subscription enabled, in the rule's kinds and without a stop of i
 is `startRunOutLine(first.kind, ...)`. `serves` alone still decides "Use API key" under ask and
 wait. `planCardLine` adds the cost clause only when the other credential is the API key.
 
+**A kept start at a month's stop (L4-creds-18).** `continuations.keepStart` keeps a person's
+Start for the stop of the wait the work meets now (`asStopWait`: a limit, the share or a key's
+monthly cap, a `needs` wait read as its stop), so "Start on 1 Dec" makes no session row and
+`takeReady` starts it once at the month's start. The share's wait links Change the allowance on
+the project's status line (`startsWaitOf`'s `save`) and in the session page's `waitBlock.answer`
+(server.ts, `ALLOWANCE_TO`).
+
 **Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
 left the row `running`, its run `running` and its task held under a claim nobody renews; the
 one-session rule then refused every later start ("agent Alice already has an active session

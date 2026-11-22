@@ -976,6 +976,8 @@ export function createDaemonApp(
    * for the reset, a person start waiting behind another project's session, a hands-off start
    * the quiet hours hold. Read only (d1109-starts-engine's accessors).
    */
+  /** Where the subscription's allowance is raised (Settings), as the share's wait links it. */
+  const ALLOWANCE_TO = "/settings#plan-allowance";
   const startsWaitOf = async (projectId: string): Promise<StartsWait | null> => {
     const now = () => rt.billing.waits.now(projectId).catch(() => null);
     if (await keptContinuationOf(rt.store, projectId)) {
@@ -990,7 +992,14 @@ export function createDaemonApp(
       const wait = await now();
       const text = wait?.text ?? "";
       const until = /^Waits (until .+); then your session goes on\.$/.exec(text);
-      if (until) return { kind: "continuation", head: `Waiting ${until[1]}` };
+      // l4-cred-screens (L4-creds-18, C6L-5): the share's wait offers Change the allowance here
+      // too, as the bar and the row do.
+      if (until)
+        return {
+          kind: "continuation",
+          head: `Waiting ${until[1]}`,
+          ...(needs?.save?.to === ALLOWANCE_TO ? { save: needs.save } : {}),
+        };
       const saved = /^Waits for (.+?): save one in Settings/.exec(text);
       if (saved)
         return { kind: "continuation", head: `Waiting for ${saved[1]}`, save: wait?.save ?? null };
@@ -2100,6 +2109,11 @@ export function createDaemonApp(
       : null;
     const budgetLeft = money(Math.max(0, s.budget_cap_usd_micro - s.spent_usd_micro), chf());
     const wait = await rt.billing.waits.now(projectId).catch(() => null);
+    // l4-cred-screens (L4-creds-18, C6L-5): the share's wait offers Change the allowance beside
+    // the block's own button, as the bar does (the ask card's Answer comes first while it is open).
+    const row = await credentialWaitRow(rt.store, projectId).catch(() => null);
+    const allowance =
+      row?.save?.to === ALLOWANCE_TO ? { answer: { label: row.save.label, to: row.save.to } } : {};
     // d1109-cred-screens (CS-7): under 'ask' with its card open, the wait's own time and stop
     // (before: "Waiting for Claude, then it goes on with ..."), and Answer opening the card.
     const text = wait?.asking?.plain ?? wait?.text ?? "";
@@ -2114,7 +2128,7 @@ export function createDaemonApp(
         explain: CANCEL_WAIT_EXPLAIN,
         projectId,
         budgetLeft,
-        ...(wait?.asking ? { answer: { label: "Answer", to: wait.asking.to } } : {}),
+        ...(wait?.asking ? { answer: { label: "Answer", to: wait.asking.to } } : allowance),
       };
     }
     if ((await keptStartOf(rt.store, projectId)) && names) {
@@ -2126,6 +2140,7 @@ export function createDaemonApp(
         explain: CANCEL_WAIT_EXPLAIN,
         projectId,
         budgetLeft,
+        ...allowance,
       };
     }
     if (!names || budgetLeft.usdMicro <= 0) return null;
@@ -2139,6 +2154,7 @@ export function createDaemonApp(
       explain: `Opens Start with the rest of this session and the ${formatChf(budgetLeft.chfMicro)} left of its budget.`,
       projectId,
       budgetLeft,
+      ...allowance,
     };
   };
   /**

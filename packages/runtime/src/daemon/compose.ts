@@ -247,6 +247,7 @@ import {
 import {
   askCardOpen,
   askShown,
+  asStopWait,
   CREDENTIAL_WAIT_REASON,
   type CredentialWait,
   clockTime,
@@ -4324,8 +4325,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // project, and no session of it runs or waits in line.
       if (busyHere(scheduler.activeStart(agentId), projectId)) return null;
       if (scheduler.pendingStarts(agentId).some((p) => p.req.projectId === projectId)) return null;
-      const wait = await credentialWaitNow(projectId);
-      if (wait?.reason !== "limit") return null;
+      // l4-cred-screens (L4-creds-18, C6L-2): the share's stop and a key's monthly cap keep a start
+      // for the month's start as a limit keeps one for its reset ("Start on 1 Dec"); before, only
+      // a limit did, and the dialog's "Start on 1 Dec" started a session that stopped at once.
+      const found = await credentialWaitNow(projectId);
+      const wait = found ? asStopWait(found) : null;
+      if (!wait || !["limit", "share", "key_month"].includes(wait.reason) || !wait.sourceId)
+        return null;
       if ((await keptContinuationOf(store, projectId)) || (await keptStartOf(store, projectId)))
         return null;
       // d1109-cred-screens (CS-3; the review of the fix-up): under "ask before API key", "Start

@@ -219,3 +219,8 @@ answer 3 ("For all work.": the yes covers all work until the stop ends) and his 
    ("Your API key is at its limit until 11:57, so this runs on your subscription (about CHF
    0.07)."; `nextServes` in credential-start.ts). The plan card says "(costs money)" only after
    the API key.
+5. **"Start on 1 Dec" keeps the start (L4-creds-18).** A Start at the share's stop or a key's
+   monthly cap is kept for the month's start as "Start at 15:40" is for a limit
+   (`continuations.keepStart` takes the stop of a `needs` wait too), and the wake starts it once,
+   also after a restart. "Change the allowance" is wherever the share's wait shows: the run bar,
+   the project's status line and the session page's wait block.

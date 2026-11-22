@@ -1043,6 +1043,9 @@ l4-cred-screens, run L4 ([ADR 0120](../decisions/0120-which-claude-does-the-work
   shows a waiting entry's `explain` beside its words (`run-wait-why`, `shell/RunIndicator.tsx`).
   Tests: `test/tasks.test.tsx` and `test/run-indicator.test.tsx` (describes "l4-cred-screens, run
   L4"; the fake's row words come from the daemon's `waitRowWords`).
+- **Change the allowance (L4-creds-18).** The Overview's status line and the session page's wait
+  block (`session-wait-answer`) show the daemon's link for the share's wait. Tests:
+  `test/credential-screens-l4.test.tsx`.
 
 ## How to change it
 
