@@ -1019,7 +1019,8 @@ describe("Tasks tab (design §3.5)", () => {
     });
     await waitFor(() =>
       expect(screen.getByTestId("task-moved-sentence")).toHaveTextContent(
-        '"Decide the versioning scheme" now waits for "Add the search box to the header".',
+        // l4-chat-depth (L4-chat-207): the sentence says when the task runs.
+        '"Decide the versioning scheme" now waits for "Add the search box to the header". It runs after it is done, at your next Start.',
       ),
     );
     expect(within(await rowOf("task_3")).getByTestId("task-status")).toHaveTextContent(

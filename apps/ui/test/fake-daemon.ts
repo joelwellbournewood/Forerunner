@@ -966,6 +966,27 @@ function errorBody(c: Context, status: 400 | 401 | 403 | 404 | 409, code: string
 }
 
 /**
+ * l4-chat-depth (L4-chat-207), as `task.dependencies` says it: when a ready task runs after a
+ * change to what it waits for (the fake runs no session, so the next Start).
+ */
+function fakeDependenciesNextLine(tasks: readonly TaskView[], task: TaskView): string {
+  if (task.status !== "ready") return "";
+  const deps = task.dependsOn
+    .map((id) => tasks.find((t) => t.id === id))
+    .filter((t): t is TaskView => !!t);
+  const undone = deps.filter((d) => d.status !== "done");
+  if (!undone.length) return " It runs at your next Start.";
+  const one = undone.length === 1;
+  const who =
+    undone.length === deps.length
+      ? one
+        ? "it is"
+        : "they are"
+      : `${undone.map((d) => `"${d.title}"`).join(" and ")} ${one ? "is" : "are"}`;
+  return ` It runs after ${who} done, at your next Start.`;
+}
+
+/**
  * The daemon's dependency check (`TaskRepo.checkDependencies`, U-040) over the fake's tasks:
  * the checked list, or the refusal message the daemon answers 409 with.
  */
@@ -3196,7 +3217,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       projectId: task.projectId,
       source: "ui",
       wordsUsed: parsed.data.reason ?? parsed.data.note ?? "Change what it waits for",
-      sentence: `${titles.length ? `"${task.title}" now waits for ${list}.` : `"${task.title}" waits for no other task now.`}${noteId ? " Your note goes into its next brief." : ""}`,
+      sentence: `${titles.length ? `"${task.title}" now waits for ${list}.` : `"${task.title}" waits for no other task now.`}${fakeDependenciesNextLine(state.tasks, task)}${noteId ? " Your note goes into its next brief." : ""}`,
       reversible: true,
     });
     return c.json(changeOf(task, entry));

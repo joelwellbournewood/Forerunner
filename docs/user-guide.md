@@ -345,7 +345,10 @@ them as you left them; an open file or task stays on its own tab.
   a task was set below the full review, the form says that saving moves it to the full review;
   a level you leave as it is is saved as it was) and **Change what it waits for** (the project's
   tasks by title; a failed one is flagged; a task cannot wait on itself, a cancelled task or a
-  task that already waits on it). **New task** asks the title, what done looks like, what it
+  task that already waits on it). The line after it says when the task runs ('"Write the FAQ"
+  now waits for "Write the README". It runs after it is done, at your next Start.'); when it
+  waits for nothing any more it runs at your next Start, or joins the session that is running if
+  it fits. In Chat: "make the FAQ wait for the README", "let the FAQ run on its own". **New task** asks the title, what done looks like, what it
   waits for, the review level ("Light review: the critic reads the work, nothing runs in
   isolation"; "Full review: needs Docker" says when Docker is not running on this computer),
   who does it (let the agent choose, a specialist, or **Me: ask me in the Inbox**: its questions

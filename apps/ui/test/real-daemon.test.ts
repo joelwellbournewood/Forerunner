@@ -4325,7 +4325,10 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     // The Yes/No card survived the restart (design §3.9): it still waits, and "yes" runs it.
     expect(again.waiting?.id).toBe(card.pendingConfirmation?.id);
     const yes = await say(quote.id, "yes");
-    expect(yes.reply).toBe('"Write the FAQ" now waits for "Write the README".');
+    // l4-chat-depth (L4-chat-207): the sentence says when the task runs.
+    expect(yes.reply).toBe(
+      '"Write the FAQ" now waits for "Write the README". It runs after it is done, at your next Start.',
+    );
     expect((await client.tasks(quote.id)).find((t) => t.id === faq.id)?.dependsOn).toEqual([
       readme.id,
     ]);
@@ -23657,6 +23660,44 @@ describe("l4-chat-depth, run L4", () => {
       const view = await a.client.conversation(project.id);
       expect(view.turns.at(-1)?.reply?.offer?.action ?? null).not.toBe("go_ahead");
       expect(view.turns.at(-1)?.reply?.offer?.line ?? null).toBeNull();
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-chat-207 (live check 4, L4-session-3): a dependency change said nothing about when the
+  // task runs, and removing the last one prepared no work.
+  it("POST /chat and POST /tasks/:id/dependencies: a dependency change says when the task runs; removing the last one says it runs at the next Start", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-207-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.client.createTask(project.id, {
+        title: "Write the README",
+        outcome: "README.md says what the page is",
+      });
+      const faq = await a.client.createTask(project.id, {
+        title: "Write the FAQ",
+        outcome: "faq.md answers three questions",
+      });
+      const asked = await a.chat(project.id, "make the FAQ task depend on the README task");
+      expect(asked.pendingConfirmation?.readback).toBe(
+        'Make "Write the FAQ" wait for "Write the README"?',
+      );
+      const yes = await a.chat(project.id, "yes");
+      expect(yes.reply).toBe(
+        '"Write the FAQ" now waits for "Write the README". It runs after it is done, at your next Start.',
+      );
+      // The Tasks drawer's "Change what it waits for", with nothing ticked.
+      const now = (await a.client.tasks(project.id)).find((t) => t.id === faq.id);
+      const own = await a.client.setTaskDependencies(faq.id, {
+        version: now?.version ?? 0,
+        dependsOn: [],
+      });
+      expect(own.change?.sentence).toBe(
+        '"Write the FAQ" waits for no other task now. It runs at your next Start.',
+      );
+      // No session started: the person says when one runs.
+      expect((await a.client.tasks(project.id)).map((t) => t.status)).toEqual(["ready", "ready"]);
       await settleSessions(a.rt);
     } finally {
       await a.rt.close();

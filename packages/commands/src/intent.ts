@@ -898,6 +898,20 @@ export class IntentParser {
    */
   private matchDependency(c: string): Match | null {
     if (QUESTION_RE.test(c)) return null;
+    // l4-chat-depth (L4-chat-207): "let the FAQ run on its own", "make X wait for nothing", "X
+    // should not wait for anything": what X waits for, emptied (read back before it happens).
+    const own =
+      /^let\s+(.+?)\s+run\s+(?:on\s+its\s+own|by\s+itself|without\s+waiting(?:\s+for\s+(?:anything|another\s+task|other\s+tasks))?)$/i.exec(
+        c,
+      ) ??
+      /^make\s+(.+?)\s+wait\s+for\s+nothing$/i.exec(c) ??
+      /^(.+?)\s+(?:should|must)\s+(?:not\s+wait\s+for\s+anything|wait\s+for\s+nothing)$/i.exec(c);
+    if (own) {
+      const task = taskName(own[1]);
+      return task
+        ? { command: { name: "task.dependencies", params: { task, depends_on: [] } } }
+        : null;
+    }
     const m =
       /^make\s+(.+?)\s+(?:depend|wait)\s+(?:on|for|upon)\s+(.+)$/i.exec(c) ??
       /^(.+?)\s+(?:should|must|has\s+to|needs\s+to)\s+(?:depend\s+on|wait\s+(?:for|on)|come\s+after|run\s+after)\s+(.+)$/i.exec(
