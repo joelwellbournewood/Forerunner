@@ -310,3 +310,23 @@ describe("CapChecker", () => {
     });
   });
 });
+
+describe("l4-money-pause, run L4: the review reserve's words say what it is kept for (L4-money-109)", () => {
+  it("the session level's note at the work line says the reserve is kept for the critic's reviews, never 'review and fixes'", async () => {
+    const checker = new CapChecker({
+      query: { sum: async () => ({ usd_micro: 740_000 }) } as never,
+      clock: { now: () => Date.parse("2026-11-22T10:00:00Z") } as never,
+      caps: {
+        monthUsdMicro: Number.MAX_SAFE_INTEGER,
+        sessionUsdMicro: 1_000_000,
+        reserveShare: 0.25,
+      },
+    });
+    const r = await checker.check({ humanId: "h", sessionId: "s" }, 20_000, { phase: "work" });
+    const session = r.levels.find((l) => l.level === "session");
+    expect(session?.note).toBe(
+      "review reserve 25% of the session cap is kept for the critic's reviews",
+    );
+    expect(JSON.stringify(r)).not.toMatch(/review and fixes/);
+  });
+});

@@ -96,3 +96,38 @@ describe("Reviews tab", () => {
     expect(missing).toHaveTextContent("GET /projects/:id/reviews");
   });
 });
+
+describe("l4-money-pause, run L4: a session check reads noted, never sent back (L4-money-112)", () => {
+  it("a session check that noted an overrun shows 'noted' in the warn tone and its finding 'noted', never 'sent back' or 'to fix'", async () => {
+    const harness = createHarness();
+    const check = harness.daemon.state.reviews.find((r) => r.id === "rev_0");
+    if (!check) throw new Error("no session check");
+    check.verdict = "revise";
+    check.grade = 85;
+    check.findings = [
+      {
+        id: "find_session_1",
+        reviewId: "rev_0",
+        taskId: null,
+        severity: "medium",
+        description:
+          "Planned tasks cost CHF 0.11, over their estimate of CHF 0.07 by 51%, with one task tried twice",
+        requiredAction: "Record the overrun against the estimate so the next plan is calibrated",
+        status: "open",
+        resolvedByRun: null,
+        fingerprint: "fp_session_1",
+        createdAt: "2026-10-19T21:12:00.000Z",
+        version: 1,
+      },
+    ];
+    renderApp("/projects/proj_atlas/reviews", harness);
+    const panel = await screen.findByTestId("reviews");
+    const checks = within(panel).getByTestId("session-checks");
+    const row = within(checks).getAllByTestId("review")[0] as HTMLElement;
+    expect(within(row).getByTestId("review-verdict")).toHaveTextContent("noted");
+    expect(within(row).getByTestId("review-grade").className).not.toMatch(/emerald/);
+    expect(within(row).getByTestId("finding-state")).toHaveTextContent("noted");
+    expect(row).not.toHaveTextContent(/sent back/);
+    expect(within(row).getByTestId("finding-state")).not.toHaveTextContent("to fix");
+  });
+});

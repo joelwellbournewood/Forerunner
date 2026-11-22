@@ -33,7 +33,10 @@ secret value); an unattended step (`RunContext.unattended`, the runtime's own ca
 | `afterToolCall(ctx, tool, input, result)` | redacts resolved secrets, wraps untrusted output in the data envelope and scans it for injection, audits. Every audit summary the hooks write (input and result, on the allow, deny and pending paths) is scrubbed first: the run's resolved secret values in every encoding (`SecretsPort.redact`), then the platform's credential shapes as a last line for a value the model obtained elsewhere and pasted into a later input, with `secret:<name>` references kept, since the name is what the audit is meant to carry |
 
 The per-session accounting is `SessionBudget` (`src/enforcement/budget.ts`): run and session
-caps, step cap, wall clock, the 80% rule and the review reserve (default 20%). The estimate
+caps, step cap, wall clock, the 80% rule and the review reserve (default 20%; kept for the
+critic's reviews: work runs, a fix after a send-back included, stop below it, so its words in
+Settings, the settings description chat reads and the caps' note say "kept for the critic's
+reviews", never "for review and fixes": l4-money-pause, run L4, L4-money-109). The estimate
 before a call is conservative: full input at input price plus `max_tokens` at output price.
 Every estimate and spend must be a non-negative safe integer of USD micro-units: `precheck`
 and `record` refuse NaN, infinity, a fraction and a negative with `validation` (a NaN recorded
@@ -263,7 +266,17 @@ critic at effort max, ADR 0028 amendment of 2026-10-26; tests in `test/loop-call
   after some text and with no tool call keeps its text and only warns, as before. Before this,
   a coder that wrote a whole file in one `write_file` call stopped at 4096 tokens mid-call and
   the loop took it for the end: the run "completed", empty, and the task failed with "no
-  changes were made in the worktree".
+  changes were made in the worktree". l4-money-pause (L4-money-106, live check 4: a writer's
+  one-file reply cut with nothing to show, CHF 0.05 spent and no line for it): each cut emits a
+  typed `reply_cut` RunEvent (`maxTokens`, `where`, `kept`, the call's `costUsdMicro`, `retry`),
+  which the executor's `onEvent` makes a line of the session's log (`replyCutWords`,
+  budget-pause.ts): "The writer's reply was cut off at its length limit, so nothing of it could be
+  used (CHF 0.05); it was asked again." (with kept calls: "... (CHF 0.05): the call it was writing
+  did not run, and it was asked to make it again."; at the last try: "... again, so nothing of it
+  could be used (CHF 0.05)."). A run that can write files and is cut off before it said anything
+  hears the one-file-per-call note, not "Answer again, more briefly." (`cutOffNote`'s
+  `writesFiles`), and the loop's warning no longer names a cap the next call may not get. The
+  budget card's clause for a cut and the bench stand-in's max_tokens mode are not built yet.
 `SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks; a task
 runs on it when its billing source is a subscription (see "Billing per task" below, ADR 0044).
 
@@ -1219,7 +1232,12 @@ what is left and keeps the smaller ones after it, in the planner's order; the it
 are on the plan as `leftOutForBudget` with `workBudgetUsdMicro` (the plan's reason still reads
 "(N item(s) cut to fit the budget)"). After the cut the runner reads
 `store.task.waitingTasks(project)` (ready tasks waiting on a task not done, each dependency with
-its title and status). `session.planned` carries both lists, and the summary names them:
+its title and status). `session.planned` carries both lists, and the summary names them (l4-money-pause, L4-github-110:
+when a `session.promised` follows, `session.planned` carries `promised`, its task count, and the
+Plan line says only how the tasks were chosen, "Plan: the first session you approved with the
+project plan, in its order.", so the session's size is said once, by "It promised 3 tasks, about
+CHF 0.34."; StaticPlanner's first-session summary counts nothing, since its items are the
+approved tasks that are ready now, not what the person approved):
 "Left out for budget: "Title" (about $5.00); this session's work budget was $1.60. …" and
 "Waiting on other tasks: "B" waits on "A" (cancelled); … A cancelled, failed or missing task is
 never done by itself: change the waiting task's dependencies on the Tasks tab, or mark the
@@ -1294,7 +1312,8 @@ time").** The hold above is gone (OP-0). `cutPlanToBudget` takes the items in th
 larger task's title); with less than a fifth left it is `no_room` and the cut goes on. The queue
 loop takes it at its turn (`takeLarger`: the room then, the plan row's "took ..." reason, the Took
 line once, a take again silent); the re-plan has no held task, keeps `after_large` tasks out of
-`notAgain` (they are the session's own: it takes them first, by the room left) and drops what it
+`notAgain` (they are the session's own: it takes them first, by the room left; L4-money-104: they
+are never counted in the plan's "(N items cut to fit the budget)", `cutClause`) and drops what it
 takes from `leftOutForBudget`. `one_large` is gone. `planned(p)` (the approval at autonomy 0 and
 1) lists the larger task with its whole figure and the `after_large` tasks after it. The Start
 check reports `oversized.before` and `oversized.comesAfter` (the `after_large` titles, then the
@@ -1302,7 +1321,18 @@ check reports `oversized.before` and `oversized.comesAfter` (the `after_large` t
 says 'after "A" it works with about CHF 2.80' (`before`), `comesAfterSentence` ('"B" comes after
 it: it runs if "Build the shop" leaves budget, else in your next session.', the dialog's amber
 note and chat's read-back through `oversizedWarning`), `waitsForNextSessionSentence` (the
-result's '"B" waits for your next session: "Build the shop" used the rest of this one.') and
+result's '"B" waits for your next session: "Build the shop" used the rest of this one.'; since
+l4-money-pause, run L4, L4-money-102, with what the larger task left of the work budget,
+`ResultFacts.workLeftChfMicro` from `budget.workRemainingUsdMicro()`, and the one task's estimate:
+'"B" (about CHF 0.06) waits for your next session: "Compare ..." left CHF 0.03 of this one.',
+"used the rest" only under half a centime). A pause at the session's work budget ends the session
+only when it cannot take more work (`roomAfterPause` in the runner): "end" once the budget takes
+no new work (a call refused at the session's cap, or the spend at the work line: the stop reason
+`budget_exceeded`), "room" when the room left is less than the smallest `after_large` task (the
+session ends with no budget stop: "Ended: 1 paused" and the sentence above), else "go_on": the
+loop goes on and the re-plan takes the `after_large` tasks that fit, keeping a task that still
+does not fit `after_large` behind it (before: every such pause ended the session as "the budget
+is used", at CHF 0.23 of a CHF 0.32 work budget in live check 4's LC-C7) and
 `oversizedPlanClause(title, alone, after)`. **Continue next time:** `continuableTasks(store,
 project)` (budget-card.ts) are the needs_human tasks whose open budget card `continuesAtStart`
 (source `session`, `session_budget` or `specialist_limit`, `no_progress` not true); the start's
@@ -2087,8 +2117,9 @@ approved first-session plan was written to the summary cache and read by nothing
 items the brief carried reach the specialists: for each task it runs, the runner passes
 `notesForTask(brief.queue.items, task, readyTasks)` as the executor context's `notes` (an item
 that names the task by its id or by its title as written, at least four characters, case
-aside; and every item that names none of the ready tasks) with a `task.notes` event ("Gave N
-item(s) from the next-session queue to ..."), and `LoopTaskExecutor` appends them after the
+aside; and every item that names none of the ready tasks) with a `task.notes` event ("Gave 1
+note to "X"."; never "for the next session", since the session that gives it uses it: L4-github-110),
+and `LoopTaskExecutor` appends them after the
 delegation brief as quoted data (`renderQueueNotes`: "## Left for this session by the human",
 each item's kind, priority and text, an instruction-shaped item flagged in a run warning by its
 id and rules, never its words). The intake's own announcement of the first session (kind
@@ -2254,7 +2285,22 @@ budget-stop; the owner's decision of 2026-11-02).**
   before that step.", and "Told the coder to wrap up: it spent CHF 0.02 of CHF 0.15, and its next
   step could take it past CHF 0.07." (W15-16: the start line said "at CHF 0.07" and the run was
   told at CHF 0.02; both lines now name the real trigger, spend plus the next step's worst
-  case). `limitWords`, `wrapUpSentWords`, the budget card's title and the flagged-search note
+  case). l4-money-pause, run L4 (L4-money-103, ADR 0112 amended 2026-11-22): the run's cap also
+  takes what the project's budget and the month's cap still allow at their stop lines
+  (`EnforcementHooks.outerRemainder`, read through the caps port's own `check`: what is left less
+  one micro-unit, a second look for a smaller level; never the 80% room, the session's level or
+  the plan share; `LoopAgentDriver.outerRemainder` is the executor's way to it, no compose
+  change). When it is smaller, `runCapSource` is `project` or `month`, the review's room
+  (`reviewRoomOf`, now priced for a task without a budget of its own too) is kept inside it when
+  it can hold both (BA-4's rule), the token, the wrap-up line and the reserve follow it, and the
+  start line has words of its own, whole within the session log's 200 characters with every
+  figure: "This run may spend CHF 0.20, the rest of the project's budget after CHF 0.04 for its
+  review: it is told to wrap up before a step that could pass CHF 0.16, keeping CHF 0.04 to
+  finish." (no "after ..." when no room is kept; a save-only run "so it pauses and keeps its
+  work"; review of L4-money-103: the first wording ran past 200 characters and was cut on screen,
+  "... keeping a reserve of…"; `budget-pause.test.ts` checks every form's length); a pause names that limit's own cap ('"X" paused before the project's
+  budget ran out', the row "Paused before the project's budget ran out"; before: "This run may
+  spend CHF 1.20" and a hard stop at CHF 0.06). The hooks' caps check stays the backstop. `limitWords`, `wrapUpSentWords`, the budget card's title and the flagged-search note
   (`flaggedSearchNote`, executor.ts) name the specialist in words (`saidByName`: "the writer", never "writer-marketing"; W15-43, W15B-78).
   `limitWords`, `wrapUpSentWords` and the executor's `chfText` read an amount under a
   centime as "less than CHF 0.01" (W15-16). No
@@ -2297,7 +2343,16 @@ budget-stop; the owner's decision of 2026-11-02).**
   l3-handoff-checks: a reason after a full stop, "Nothing is needed for the two criteria. Each
   listed page gives its address and was opened." (`AFTER`), what it is about said "to meet" or
   "to satisfy" the criteria, "No further work is required to meet the acceptance criteria.", and
-  "though" or "although" names work, as "but" does) and decides: a run is paused when it stopped
+  "though" or "although" names work, as "but" does; l4-money-pause, run L4, L4-money-101, live
+  check 4's LC-C7 "Left to do: nothing the criteria require.": a "nothing" with a relative clause
+  that names what needs it, "nothing [that] the [acceptance] criteria require", "nothing that the
+  brief still needs", "none the brief asks for" (`RELATIVE_HEAD`; its "still" belongs to the
+  clause, so "nothing the criteria require yet: the tests fail" stays an item), and the general
+  rule that ends the patching one phrasing at a time: a one-clause line that starts with
+  "nothing" or "none", names the whole set (`WHOLE_SET`, not `ONE_CRITERION`), names no work
+  (`NOT_NOTHING`) and says no state of the work ("Nothing in the task works", "Nothing has been
+  done for the task", "None of the criteria are met": `WORK_STATE`) is empty; the wrap-up and
+  the brief's line now ask for "only the word nothing when they need nothing more") and decides: a run is paused when it stopped
   at a budget of any level (`stoppedBy: "budget"`), or when it heard the wrap-up in this run and
   listed at least one item (`stoppedBy: "wrap_up"`); a run that ends normally without a wrap-up,
   or after one with nothing left, is reviewed as usual. The result is `TaskExecutionResult`
@@ -3118,7 +3173,15 @@ does (ADR 0112 point 6): `needs_human` with `budgetStopTitle`, one card (`fileBu
 the limit from the refusal's level: `reviewStopSource`, the critic's own run cap being the
 session's; `reviewWaits: true` puts `review_waits` on it, so its body says "The work is done; its
 review waits for room in the budget." instead of the run pause's "It stopped before it could say
-where it stood", `pausedWorkSentence`, TR-14), the line `REVIEW_PAUSED_EVENT` ('"X" paused before its review: the project's budget
+where it stood", `pausedWorkSentence`, TR-14; l4-money-pause, run L4, L4-money-111: its title,
+the task's reason, the notification and the result say the work is done, '"X" is done; its review
+waits for room in its budget' (`budgetStopTitle(..., { reviewWaits: true })`, the room by source
+from `session/review-room-words.ts`: "in this session's budget", "in the project's budget", "under
+this month's cap"), `PausedTask.reviewWaits` gives the result's '"X" is done; its review waits for
+room in its budget of CHF 0.15: continue or cancel it in the Inbox.', the row reads "Review waits
+for room in its budget" (`budgetPauseLabelOf`) and the session's task list "Done; its review waits
+for room in ..."; before, all of them said "paused at its budget of CHF 0.15" at CHF 0.08 spent),
+the line `REVIEW_PAUSED_EVENT` ('"X" paused before its review: the project's budget
 of CHF 0.01 has no room for it.', `reviewPausedWords`), and a stop at the session's budget or an
 outer limit ends the session there; no try is counted and no ladder card is filed. A
 credential's refusal gives the task back to ready (`restoreStatus`, attempt unchanged) with the

@@ -171,6 +171,9 @@ describe("d1109-oversize-start, run C: the result of a session with a task large
       ],
       sessionCapChfMicro: 5_000_000,
       workBudgetChfMicro: 4_000_000,
+      // The session's budget was used (l4-money-pause: the larger task's sentence says what it
+      // left, "used the rest" only when nothing was).
+      workLeftChfMicro: 0,
       openTasks: 4,
     });
     const text = lines.join("\n");

@@ -610,3 +610,46 @@ review, or tier 2 raised by the effort slider) is never sized down, its first ca
 8,192 tokens out at least, so its floor is the first call's whole price at 8,192 tokens out. Priced
 at 2,048, a tier 3 review whose room lay between the two prices started, ran its checks and wrote
 a critic Run row before its first call was refused.
+
+## Amendment 2026-11-22 (l4-money-pause, run L4: a paused or capped run is read right)
+
+Live check 4 (2026-11-17, the real model) found three ways a pause was read wrong.
+
+1. **Nothing is nothing** (L4-money-101). The researcher's report after its wrap-up ended "Left to
+   do: nothing the criteria require." and the run was paused with "one thing left to do", asking
+   for CHF 0.40 more. Point 5's parse now reads a "nothing" with a relative clause that names what
+   needs it ("nothing [that] the criteria require", "nothing that the brief still needs") as
+   empty, and ends the patching one live phrasing at a time (W15-14, L3-research-1, LC-C7) with a
+   general rule: a one-clause Left-to-do line that starts with "nothing" or "none", names the
+   whole set of criteria, the brief or the task (never one criterion), names no work ("but",
+   "still", "fails" ...) and says no state of the work ("Nothing in the task works") is an empty
+   list. The wrap-up and the brief's line ask for "only the word nothing when they need nothing
+   more". The trigger, the line, the reserve and the save-only rule are unchanged.
+2. **A session ends at a pause only when it cannot take more work** (L4-money-102; option C, the
+   owner's "the session keeps its promise and spare budget isn't wasted"). Point 6's "a pause at
+   the session's budget ends the session" read every pause whose run was capped at the work
+   budget left as the end: a larger task's clean wrap-up at CHF 0.23 of a CHF 0.32 work budget
+   ended the session, said "the budget is used" on three screens, and left the tagline task after
+   it (about CHF 0.06) for the next session. Now such a pause ends the session only when a call
+   was refused at its cap, it takes no new work, or the room left is less than the smallest task
+   after the larger one; then it names no budget stop unless the spend reached the work line. With
+   room left, the re-plan takes the tasks after it that fit. The work budget, the review reserve,
+   the wrap-up line and its card are unchanged; nothing passes the work budget.
+3. **A run's cap includes what the outer limits still allow** (L4-money-103; the owner's D4, "No
+   limit is passed", and point 6). Points 4 and 7 capped a run at its own cap and the session's
+   work budget left; the project's budget and the month's cap only refused a call. Under a project
+   budget of CHF 0.06 the writer's start line said "This run may spend CHF 1.20" and the run was
+   then stopped there with no wrap-up. Now what the project's budget and the month's cap still
+   allow, at their stop lines, caps the run when it is smaller: its wrap-up line, its reserve and
+   its start line ("This run may spend CHF 0.06, the rest of the project's budget: ...")
+   follow it, and the review's room is kept inside it as BA-4 keeps it inside a task's budget,
+   when it can hold both. The plan share stays a credential's stop (ADR 0120). Every call is
+   still checked against every cap before it is made.
+
+Note 2026-11-22 (review of l4-money-pause): under an outer limit the start line has words of its
+own, short enough to stay whole in the session log (200 characters) with every figure, the
+review's room included: "This run may spend CHF 0.20, the rest of the project's budget after
+CHF 0.04 for its review: it is told to wrap up before a step that could pass CHF 0.16, keeping
+CHF 0.04 to finish." The first wording ("what is left of the project's budget less the CHF 0.04
+kept for its review: before a step that could take it past ...") ran to about 210 characters and
+the session page cut it before its reserve.

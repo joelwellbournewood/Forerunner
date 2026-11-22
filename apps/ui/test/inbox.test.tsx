@@ -2240,3 +2240,66 @@ describe("l4-selftasks-check, run L4: the plan card warns under a task whose bud
     ]);
   });
 });
+
+describe("l4-money-pause, run L4: a card whose review waits says the work is done (L4-money-111)", () => {
+  // Live check 4: the title and the notification read '"Search MDN ..." paused at its budget of
+  // CHF 0.15' while the body said "The work is done; its review waits for room in the budget."
+  const setUp = () => {
+    const harness = createHarness();
+    harness.daemon.state.requests.unshift({
+      id: "req_review_waits",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: "task_3",
+      taskTitle: "Decide the versioning scheme",
+      sessionId: "sess_1",
+      kind: "approval",
+      why: '"Decide the versioning scheme" is done; its review waits for room in its budget.',
+      steps: [],
+      options: ["Continue (CHF 0.04 more)", "Cancel task"],
+      blocking: true,
+      risk: "medium" as const,
+      changeCard: {
+        key: "task:budget_stop",
+        task_id: "task_3",
+        task_title: "Decide the versioning scheme",
+        title: '"Decide the versioning scheme" is done; its review waits for room in its budget',
+        run_id: "run_1",
+        source: "task_budget",
+        specialist: "writer",
+        cap_usd_micro: 187_500,
+        spent_usd_micro: 100_000,
+        continue_usd_micro: 50_000,
+        stopped_by: "budget",
+        review_waits: true,
+        done: "",
+        left: [],
+        chf_per_usd: 0.8,
+        applied_at: null,
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-11-17T06:18:00.000Z",
+      version: 1,
+    });
+    const t3 = harness.daemon.state.tasks.find((t) => t.id === "task_3");
+    if (t3) t3.status = "needs_human";
+    return harness;
+  };
+
+  it("the title says the work is done and its review waits, above the body; nothing says it paused at its budget", async () => {
+    renderApp("/inbox", setUp());
+    const card = (await screen.findAllByTestId("request")).find(
+      (r) => r.getAttribute("data-request-id") === "req_review_waits",
+    ) as HTMLElement;
+    const title = within(card).getByTestId("request-title");
+    const body = within(card).getByTestId("request-body");
+    expect(title).toHaveTextContent(
+      '"Decide the versioning scheme" is done; its review waits for room in its budget',
+    );
+    expect(body).toHaveTextContent("The work is done; its review waits for room in the budget.");
+    // The title comes before the body.
+    expect(title.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(card).not.toHaveTextContent(/paused at its budget/);
+  });
+});

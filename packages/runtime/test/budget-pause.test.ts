@@ -10,10 +10,11 @@ import {
 } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
+import { cutOffNote, WRAP_UP_MARK, wrapUpText } from "../src/agent/loop.ts";
 import { lastSessionBlock, workingNowBlock } from "../src/conversation/project-facts.ts";
 import { composeRuntime, type DynamicCaps, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { wrapUpLineOf } from "../src/enforcement/budget.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
 import type { ChatMessage, ModelRequest } from "../src/provider/types.ts";
 import { wakeBudgetWaits } from "../src/session/budget-card.ts";
@@ -23,10 +24,12 @@ import {
   limitWords,
   parseHandoff,
   pauseSentence,
+  replyCutWords,
   WRAP_UP_BRIEF_LINE,
   wrapUpSentWords,
 } from "../src/session/budget-pause.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
+import { removeHomes, settleSessions } from "./helpers.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
 /**
@@ -94,6 +97,10 @@ function provider(clock: SimulatedClock, calls: ModelRequest[]) {
       ...works("Tiny page", 5_000, LEFT),
       ...works("Big report", 150_000, NOTHING_LEFT),
       ...works("Members list", 30_000, LEFT),
+      // l4-money-pause (L4-money-103): a run under the month's cap hears its wrap-up inside it,
+      // so these work until then (before: one call each, stopped by the cap a run before left).
+      ...works("Members page", 10_000, LEFT),
+      ...works("Members map", 10_000, LEFT),
       textReply("Wrote members-chart.html.\n\nLeft to do: nothing", {
         when: coderOn("Members chart"),
         times: Number.POSITIVE_INFINITY,
@@ -500,17 +507,21 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     const r = await runOne(req, rt, "Members list", { budgetUsdMicro: 2_000_000 });
     const said = lines(r.events);
     // Before: "stopped at its budget of CHF 1.60", and its card offered to raise that budget.
+    // l4-money-pause (L4-money-103): what is left of the month's cap caps the run, so it hears
+    // its wrap-up inside it (before: "stopped at this month's cap of CHF 0.10: it spent CHF
+    // 0.09, and its next step would have gone over.", a hard stop).
     expect(
       said.some((l) =>
-        /^"Members list" stopped at this month's cap of CHF 0\.10: it spent CHF [\d.]+, and its next step would have gone over\.$/.test(
+        /^"Members list" paused before this month's cap of CHF 0\.10 ran out: it spent CHF [\d.]+ and listed 2 things left to do(?:; CHF [\d.]+ is kept for its review)?\.$/.test(
           l,
         ),
       ),
+      said.join(" | "),
     ).toBe(true);
     const card = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.find(
       (q) => q.taskId === r.taskId && q.status === "open",
     );
-    expect(card?.title).toBe('"Members list" paused at this month\'s cap of CHF 0.10');
+    expect(card?.title).toBe('"Members list" paused before this month\'s cap ran out');
     // budget-resume: a bigger task budget does not help at the month's cap (the review of
     // budget-stop: Raise the budget started a session that stopped at once at the same cap):
     // the card offers no Continue, says where to change it and that the task goes on by itself.
@@ -526,11 +537,12 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
       /Ready again once you raise the monthly cap in Settings, or on 1 December; it runs at your next Start\.$/,
     );
     expect(r.view.display).toMatchObject({
-      label: "Paused at this month's cap",
+      label: "Paused before this month's cap ran out",
       detail: "Ready again once that limit is raised or resets, for your next Start; or cancel it.",
     });
     expect(await rt.store.review.latestForTask(r.taskId)).toBeUndefined();
-    expect(r.runs[0]?.outcome).toBe("budget_exceeded");
+    // A clean pause, its work kept (before: "budget_exceeded", a hard stop).
+    expect(r.runs[0]?.outcome).toBe("paused");
   }, 60_000);
 
   // Review of budget-stop: the run, the card and the task named the month, but the session it
@@ -546,8 +558,10 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     expect(summary).not.toMatch(/session's budget|budget is used/);
     // Its card offers no Continue (the fixup's bench walk: the result said "continue or cancel
     // it in the Inbox"): it says how the task goes on.
-    expect(summary).toContain(
-      '"Members page" paused at this month\'s cap of CHF 0.10: it is ready again once that limit is raised or resets, for your next Start.',
+    // l4-money-pause (L4-money-103): it paused inside the month's cap, at its wrap-up or, with
+    // too little left to wrap up, before its next step.
+    expect(summary).toMatch(
+      /"Members page" paused (?:at|before) this month's cap of CHF 0\.10(?: ran out)?: it is ready again once that limit is raised or resets, for your next Start\./,
     );
     expect(summary).not.toContain("continue or cancel");
     const said = lines(r.events);
@@ -582,7 +596,9 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
 
   it("once the month's cap has room again the paused task goes on by itself: its card closes and it is ready (budget-resume)", async () => {
     const r = await runOne(req, rt, "Members map", { budgetUsdMicro: 2_000_000 });
-    expect(r.view.display).toMatchObject({ label: "Paused at this month's cap" });
+    expect(String((r.view.display as Json).label)).toMatch(
+      /^Paused (?:at|before) this month's cap(?: ran out)?$/,
+    );
     // As the daemon's own wake asks (compose.ts): the caps read again, not from the minute's
     // cache, so the session that goes on does not meet the old cap.
     const roomFor = async (projectId: string) => {
@@ -662,14 +678,22 @@ describe("a task paused at the project's budget goes on only once that budget ch
       budgetUsdMicro: 2_000_000,
       projectBudgetUsdMicro: 7_500,
     });
-    expect(r.view.display).toMatchObject({ label: "Paused at the project's budget" });
+    // l4-money-pause (L4-money-111): its work is done and only its review waits (before:
+    // "Paused at the project's budget").
+    expect(r.view.display).toMatchObject({
+      label: "Review waits for room in the project's budget",
+    });
     expect(
       (await rt.caps.check({ humanId: rt.human.id, projectId: r.projectId }, 1, { phase: "work" }))
         .decision,
     ).toBe("allow");
     const before = await cardOf(r.taskId);
     expect(before.map((q) => q.status)).toEqual(["open"]);
-    expect(before[0]?.title).toBe('"Members chart" paused at the project\'s budget of CHF 0.01');
+    // l4-money-pause (L4-money-111): the work is done; only its review waits (before:
+    // '"Members chart" paused at the project's budget of CHF 0.01').
+    expect(before[0]?.title).toBe(
+      '"Members chart" is done; its review waits for room in the project\'s budget',
+    );
     const sessions = async () => (await rt.store.session.forProject(r.projectId)).length;
     expect(await sessions()).toBe(1);
 
@@ -834,8 +858,9 @@ describe("a review refused at the project's budget pauses the task (leftovers of
     const task = await rt.store.task.mustGet(r.taskId);
     expect(task.status).toBe("needs_human");
     expect(task.attempt).toBe(0);
+    // l4-money-pause (L4-money-111): the review waits (before: "Paused at the project's budget").
     expect(r.view.display).toMatchObject({
-      label: "Paused at the project's budget",
+      label: "Review waits for room in the project's budget",
       blocker: { kind: "card", cardKind: "budget" },
     });
     // The coder ran once; the critic's run was refused before its verdict: no review, no
@@ -848,7 +873,8 @@ describe("a review refused at the project's budget pauses the task (leftovers of
     // One card, the project's budget's: Cancel task and Open Settings; no "failed 4 times".
     const cards = await cardsOf(r.taskId);
     expect(cards.map((q) => [q.title, q.status])).toEqual([
-      ['"Review page" paused at the project\'s budget of CHF 0.01', "open"],
+      // L4-money-111 (before: '"Review page" paused at the project's budget of CHF 0.01').
+      ['"Review page" is done; its review waits for room in the project\'s budget', "open"],
     ]);
     // leftovers7-tailrun, wave 13 (TR-14): the coder finished; only the review waits. Before:
     // "It stopped before it could say where it stood; its work so far is kept."
@@ -1126,10 +1152,10 @@ describe("w15-run, wave 15: 'Left to do' counts only what the criteria still nee
   it("the wrap-up the model hears and the brief's line ask for what the criteria still need, or nothing", () => {
     // d1109-oversize-pause (OP-1): "as a list with the next step first" (before: "as a list").
     expect(wrapUpText(10_000, 100_000)).toContain(
-      "Left to do: (only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras).",
+      "Left to do: (only what the task's criteria still need, as a list with the next step first, or only the word nothing when they need nothing more; no optional extras).",
     );
     expect(WRAP_UP_BRIEF_LINE).toContain(
-      "'Left to do:' (only what the task's criteria still need, as a list with the next step first, or 'nothing'; no optional extras)",
+      "'Left to do:' (only what the task's criteria still need, as a list with the next step first, or only the word 'nothing' when they need nothing more; no optional extras)",
     );
   });
 
@@ -1169,7 +1195,7 @@ describe("w15-run, wave 15: 'Left to do' counts only what the criteria still nee
       // The request the model received asked for what the criteria still need, or nothing
       // (d1109-oversize-pause, OP-1: "as a list with the next step first").
       expect(JSON.stringify(told?.messages.at(-1))).toContain(
-        "only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras",
+        "only what the task's criteria still need, as a list with the next step first, or only the word nothing when they need nothing more; no optional extras",
       );
       // Reviewed and done; never paused at its budget.
       const task = await rt.store.task.mustGet(r.taskId);
@@ -1216,7 +1242,7 @@ describe("w15-run, wave 15: the wrap-up's words say what is true (W15-16)", () =
     // d1109-oversize-pause (OP-1): what a good wrap-up leaves (before: "Start nothing new, leave
     // the files working, and end your report with Where I stopped: and Left to do: (...)").
     expect(wrapUpText(29_045, 187_500)).toBe(
-      "Wrap up now: this run has used 15% of what it may spend, and its next step could take it past the share kept to finish. Finish the step you are on and start nothing new. Leave the files so the work can go on: what you changed builds and runs, and a change you cannot finish in a step or two is undone or kept out of use. End your report with Where I stopped: (what is done, anything half done with its file, and any caveat or what you did not cover) and Left to do: (only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras).",
+      "Wrap up now: this run has used 15% of what it may spend, and its next step could take it past the share kept to finish. Finish the step you are on and start nothing new. Leave the files so the work can go on: what you changed builds and runs, and a change you cannot finish in a step or two is undone or kept out of use. End your report with Where I stopped: (what is done, anything half done with its file, and any caveat or what you did not cover) and Left to do: (only what the task's criteria still need, as a list with the next step first, or only the word nothing when they need nothing more; no optional extras).",
     );
     expect(wrapUpText(1_000, 300_000)).toMatch(
       /^Wrap up now: this run has used under 1% of what it may spend,/,
@@ -2258,4 +2284,428 @@ describe("d1109-oversize-pause, run C: a pause at the project's budget that got 
       [["Continue", "Cancel task"], true],
     ]);
   }, 120_000);
+});
+
+/**
+ * l4-money-pause, run L4 (L4-money-101, live check 4's LC-C7): the researcher's report after the
+ * wrap-up ended "Left to do: nothing the criteria require." and the run was paused with one thing
+ * left to do: its card asked for CHF 0.40 more and the next run was told to start with "nothing
+ * the criteria require.". The report (model-call log seq 8 of live check 4's pause journey, word
+ * for word) is the fixture. The rule that ends the one-phrasing-at-a-time patching: a Left-to-do
+ * line that starts with nothing or none, names the whole set of criteria and names no work is an
+ * empty list; and the wrap-up words ask for the single word "nothing".
+ */
+const LIVE_LC_C7_REPORT = [
+  "`hosts.md` is written at the project root and compares three hosts: Netlify, GitHub Pages and Cloudflare Pages. I did not run `git status` or `git diff`, so I have no command output to show. The file is the only thing I changed.",
+  "",
+  "**What it contains**",
+  "- A comparison table with price, custom domain and HTTPS for each host.",
+  "- Every fact is followed by the address of the page I opened with `web_fetch`.",
+  '- A "Things to watch" section, a short recommendation and a "Gaps" section.',
+  "",
+  "**Recommendation**",
+  "- Netlify is the simplest fit. Its pricing page lists custom domains with SSL on the $0 plan.",
+  "- Cloudflare Pages is the alternative if the bakery wants its DNS on Cloudflare anyway.",
+  "- GitHub Pages only suits a site whose code is in a public GitHub repository.",
+  "- The file says this ranking is my judgement and not a statement by any host.",
+  "",
+  "**Caveats**",
+  '- **Cloudflare price:** the pages I read give no separate Pages price. The "$0" comes from the Cloudflare Free plan page.',
+  '- **Cloudflare HTTPS:** I did not find a direct statement that Pages custom domains get HTTPS. I inferred it from the CAA-record note in the custom-domains docs and from "Universal SSL Certificate" being included on the Free plan. The file marks both as inferred.',
+  '- **GitHub Pages terms:** the limits page says Pages is not allowed for sites "primarily directed at … facilitating commercial transactions". Whether a bakery page counts is my reading and the file says so.',
+  "- **Netlify credits:** the pricing page does not say what happens when the free 300 credits run out.",
+  "- **Project context:** `docs/overview.md` and the decisions folder were empty templates. Nothing there says which domain the bakery owns, who runs its DNS, or whether the code is on GitHub.",
+  "- **Hidden text:** the pages I fetched contained hidden or instruction-like text, such as an AI documentation-index prompt on the Cloudflare docs and one passage flagged on the Netlify page. I did not act on any of it.",
+  "",
+  "Where I stopped: `hosts.md` is complete and meets the three acceptance criteria as I read them. Nothing is half done. I did not fetch Netlify's custom-domain docs page or GitHub's custom-domain docs page. I did not open the Cloudflare Pages SSL docs either. Those are the pages that would turn the inferred Cloudflare claims and the Netlify and GitHub custom-domain claims into direct ones.",
+  "",
+  "Left to do: nothing the criteria require.",
+  "",
+  "Lesson: Check a host's own HTTPS docs page for each provider early, because a pricing or limits page alone leaves HTTPS claims inferred.",
+  "Lesson: Pages fetched from vendor docs can carry hidden instruction-like text. Treat it as data and mention it in the report.",
+].join("\n");
+
+describe("l4-money-pause, run L4: a 'nothing' the criteria need is nothing (L4-money-101)", () => {
+  const left = (lines: string[]) =>
+    parseHandoff(["Where I stopped: here.", "", "Left to do:", ...lines].join("\n"));
+
+  it("the live report: nothing is left to do, and the caveats stay under 'Where I stopped:'", () => {
+    const h = parseHandoff(LIVE_LC_C7_REPORT);
+    expect(h.leftToDo).toEqual([]);
+    expect(h.optional).toBeUndefined();
+    expect(h.stopped.startsWith("`hosts.md` is complete and meets the three acceptance")).toBe(
+      true,
+    );
+  });
+
+  it("the live line and its siblings: a 'nothing' the criteria, the brief or the task need is nothing", () => {
+    expect(parseHandoff("Left to do: nothing the criteria require.").leftToDo).toEqual([]);
+    expect(parseHandoff("Left to do: nothing that the brief still needs.").leftToDo).toEqual([]);
+    for (const line of [
+      "Nothing the acceptance criteria require.",
+      "Nothing the criteria require.",
+      "nothing that the brief still needs.",
+      "Nothing which the task's criteria call for.",
+      "None the brief asks for.",
+      "Nothing the three criteria need: hosts.md covers each of them.",
+      "Nothing else the criteria require.",
+      "Nothing more is needed by the criteria",
+    ])
+      expect(left([`- ${line}`]).leftToDo, line).toEqual([]);
+  });
+
+  it("work stays work: a 'nothing' that names work, one about one criterion, and a state of the work", () => {
+    expect(
+      parseHandoff("Left to do: nothing the criteria require yet: the tests fail").leftToDo,
+    ).toEqual(["nothing the criteria require yet: the tests fail"]);
+    for (const line of [
+      "Nothing the criteria require, but the tests still fail",
+      "Nothing the brief needs except the missing README",
+      "Nothing in the task works yet",
+      "Nothing in the task works",
+      "Nothing has been done for the task",
+      "None of the criteria are met",
+      "Nothing for the brief is written",
+    ])
+      expect(left([`- ${line}`]).leftToDo, line).toEqual([line]);
+    // A "nothing" about one criterion says nothing of the rest: what follows it stays work.
+    expect(left(["- nothing criterion 2 needs", "- write the tests"]).leftToDo).toEqual([
+      "write the tests",
+    ]);
+    // A "nothing" about the whole set makes an observation after it a note (L3-research-1).
+    expect(left(["- Nothing the criteria require.", "- The list isn't exhaustive."])).toEqual({
+      stopped: "here.",
+      leftToDo: [],
+      optional: ["The list isn't exhaustive."],
+    });
+  });
+
+  it("the earlier phrasings still read as they did (W15-14, L3-research-1)", () => {
+    expect(parseHandoff(LIVE_F4_REPORT).leftToDo).toEqual([]);
+    expect(parseHandoff(LIVE_L3_REPORT).leftToDo).toEqual([]);
+    expect(left(["- None of the tests pass"]).leftToDo).toEqual(["None of the tests pass"]);
+    expect(left(["- Nothing works yet: fix the build"]).leftToDo).toEqual([
+      "Nothing works yet: fix the build",
+    ]);
+    expect(left(["- nothing", "- write the tests"]).leftToDo).toEqual(["write the tests"]);
+  });
+
+  /** The words the model hears, exactly (the brief's line; the wrap-up is in wrap-up.test.ts). */
+  const BRIEF_LINE =
+    "If Forerunner tells you to wrap up, finish the step you are on, start nothing new, and leave the files so the work can go on (what you changed builds and runs; a change you cannot finish is undone or kept out of use). Then end your report with 'Where I stopped:' (what is done, anything half done with its file, and any caveat or what you did not cover) and 'Left to do:' (only what the task's criteria still need, as a list with the next step first, or only the word 'nothing' when they need nothing more; no optional extras): the run that continues this task starts from them.";
+  const WRAP_TAIL =
+    "End your report with Where I stopped: (what is done, anything half done with its file, and any caveat or what you did not cover) and Left to do: (only what the task's criteria still need, as a list with the next step first, or only the word nothing when they need nothing more; no optional extras).";
+
+  it("the brief's line and the wrap-up ask for the single word 'nothing'", () => {
+    expect(WRAP_UP_BRIEF_LINE).toBe(BRIEF_LINE);
+    expect(wrapUpText(10_000, 100_000).endsWith(WRAP_TAIL)).toBe(true);
+  });
+
+  describe("through the composed runtime", () => {
+    const clock = new SimulatedClock("2026-11-17T06:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-l4-money-101-"));
+    const calls: ModelRequest[] = [];
+    const title = "Compare three static site hosts for a bakery page";
+    const fake = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        ...works(title, 30_000, LIVE_LC_C7_REPORT),
+      ],
+    });
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    let rt: RuntimeApp;
+    let req: Req;
+    beforeAll(async () => {
+      ({ rt, req } = await compose(home, clock, fake));
+    }, 120_000);
+    afterAll(async () => {
+      if (rt) {
+        await settleSessions(rt);
+        await rt.close();
+      }
+      removeHomes([home]);
+    });
+
+    it("the live report after the wrap-up is reviewed and done in the same session: no pause line, no card", async () => {
+      const r = await runOne(req, rt, title, { budgetUsdMicro: 190_000 });
+      const mine = calls.filter(coderOn(title));
+      const told = mine.find(heardWrapUp);
+      expect(told).toBeDefined();
+      // The brief the model received carries the line word for word; the wrap-up its words.
+      expect(textOf(mine[0]?.messages[0] as ChatMessage)).toContain(BRIEF_LINE);
+      expect(JSON.stringify(told?.messages.at(-1))).toContain(
+        JSON.stringify(WRAP_TAIL).slice(1, -1),
+      );
+      const task = await rt.store.task.mustGet(r.taskId);
+      expect(task.status).toBe("done");
+      expect(await rt.store.review.latestForTask(r.taskId)).toBeDefined();
+      expect(r.runs.map((x) => x.outcome)).toEqual(["completed"]);
+      const said = lines(r.events).join(" | ");
+      expect(said).not.toMatch(/paused before/);
+      expect(said).not.toContain("listed one thing left to do");
+      const cards = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.filter(
+        (q) => q.taskId === r.taskId,
+      );
+      expect(cards).toEqual([]);
+    }, 60_000);
+  });
+});
+
+/**
+ * l4-money-pause, run L4 (L4-money-103, live check 4's L3-run-10): under a project budget of
+ * CHF 0.06 the writer's start line said "This run may spend CHF 1.20: before a step that could
+ * take it past CHF 0.96 it is told to wrap up ..."; the project's budget then stopped it with no
+ * wrap-up. A run's cap includes what the project's budget and the month's cap still allow, at
+ * their stop lines, so it hears its wrap-up inside the limit that would stop it and pauses with
+ * its work kept; nothing passes the limit.
+ */
+describe("l4-money-pause, run L4: a run under the project's budget or the month's cap hears its wrap-up inside it (L4-money-103)", () => {
+  const homes: string[] = [];
+  const opened: RuntimeApp[] = [];
+  afterAll(async () => {
+    for (const rt of opened) {
+      await settleSessions(rt);
+      await rt.close().catch(() => undefined);
+    }
+    removeHomes(homes);
+  });
+
+  async function open(stamp: string) {
+    const clock = new SimulatedClock(stamp);
+    const home = mkdtempSync(join(tmpdir(), "fr-l4-money-103-"));
+    homes.push(home);
+    const calls: ModelRequest[] = [];
+    const fake = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        ...works("Club history", 5_000, LEFT),
+      ],
+    });
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    const w = await compose(home, clock, fake);
+    opened.push(w.rt);
+    return { ...w, calls };
+  }
+
+  /** What the run spent in all, its reviews included (none: it paused). */
+  const spentOf = async (rt: RuntimeApp, taskId: string) =>
+    (await rt.store.run.forTask(taskId)).reduce((s, r) => s + r.cost_usd_micro, 0);
+
+  it("a project budget of USD 0.075 (CHF 0.06): the start line names what is left of it, the run hears its wrap-up and pauses there with its work kept; no hard stop, nothing past the budget", async () => {
+    const w = await open("2026-11-17T08:00:00Z");
+    const r = await runOne(w.req, w.rt, "Club history", {
+      projectBudgetUsdMicro: 75_000,
+      sessionBudgetUsdMicro: 2_000_000,
+    });
+    const said = lines(r.events);
+    const start = said.find((l) => l.startsWith("This run may spend")) ?? "";
+    // The whole line as GET /sessions/:id/events gives it (review of L4-money-103: a prefix
+    // match let a line cut at 200 characters pass).
+    expect(start).toBe(
+      "This run may spend CHF 0.06, the rest of the project's budget: it is told to wrap up before a step that could pass CHF 0.05, keeping CHF 0.01 to finish.",
+    );
+    // It heard the wrap-up, inside the project's budget.
+    expect(w.calls.filter(coderOn("Club history")).some(heardWrapUp)).toBe(true);
+    expect(r.runs.map((x) => x.outcome)).toEqual(["paused"]);
+    expect(handoffOf(r.runs[0]?.artifacts ?? [])?.stoppedBy).toBe("wrap_up");
+    expect(await spentOf(w.rt, r.taskId)).toBeLessThanOrEqual(75_000);
+    // What the person reads: the run paused before the project's budget ran out.
+    const card = ((await (await w.req("/inbox")).json()) as { requests: Json[] }).requests.find(
+      (q) => q.taskId === r.taskId && q.status === "open",
+    );
+    expect(card?.title).toBe('"Club history" paused before the project\'s budget ran out');
+    expect(said.join(" | ")).toMatch(
+      /"Club history" paused before the project's budget of CHF 0\.06 ran out: it spent CHF [\d.]+ and listed 2 things left to do\./,
+    );
+  }, 60_000);
+
+  it("the same under this month's cap: what is left of it caps the run", async () => {
+    const w = await open("2026-11-17T09:00:00Z");
+    await w.rt.store.human.patch(w.rt.human.id, { monthly_cap_usd_micro: 75_000 });
+    const r = await runOne(w.req, w.rt, "Club history");
+    const said = lines(r.events);
+    const start = said.find((l) => l.startsWith("This run may spend")) ?? "";
+    expect(start).toBe(
+      "This run may spend CHF 0.06, the rest of this month's cap: it is told to wrap up before a step that could pass CHF 0.05, keeping CHF 0.01 to finish.",
+    );
+    expect(r.runs.map((x) => x.outcome)).toEqual(["paused"]);
+    expect(await spentOf(w.rt, r.taskId)).toBeLessThanOrEqual(75_000);
+    const card = ((await (await w.req("/inbox")).json()) as { requests: Json[] }).requests.find(
+      (q) => q.taskId === r.taskId && q.status === "open",
+    );
+    expect(card?.title).toBe('"Club history" paused before this month\'s cap ran out');
+  }, 60_000);
+});
+
+/**
+ * l4-money-pause, run L4 (review of L4-money-103): under an outer limit with its review's room
+ * kept, the start line ran past the session log's 200 characters and lost its reserve on screen
+ * ("... it is told to wrap up, keeping a reserve of…"). Every form is whole: one sentence, at
+ * most 200 characters, with every figure (design §3.7, §5.1).
+ */
+describe("l4-money-pause, run L4: an outer limit's start line is whole, with every figure (L4-money-103)", () => {
+  const chf = (usdMicro: number) => `CHF ${((usdMicro * 0.8) / 1_000_000).toFixed(2)}`;
+
+  it("the project's budget with its review's room kept: the exact line", () => {
+    expect(budgetLineWords(wrapUpLineOf(37_500, 5_000), chf, 37_500, "project")).toBe(
+      "This run may spend CHF 0.03, the rest of the project's budget after CHF 0.03 for its review: it is told to wrap up before a step that could pass CHF 0.02, keeping CHF 0.01 to finish.",
+    );
+    expect(budgetLineWords(wrapUpLineOf(75_000, 5_000), chf, 0, "project")).toBe(
+      "This run may spend CHF 0.06, the rest of the project's budget: it is told to wrap up before a step that could pass CHF 0.05, keeping CHF 0.01 to finish.",
+    );
+    expect(budgetLineWords(wrapUpLineOf(25_000, 20_000), chf, 12_500, "month")).toBe(
+      "This run may spend CHF 0.02, the rest of this month's cap after CHF 0.01 for its review: too little to wrap up (two steps may cost CHF 0.03), so it pauses and keeps its work.",
+    );
+    expect(budgetLineWords(wrapUpLineOf(25_000, 45_000), chf, 12_500, "project")).toBe(
+      "This run may spend CHF 0.02, the rest of the project's budget after CHF 0.01 for its review: less than its first step may cost (CHF 0.04), so it pauses before that step.",
+    );
+  });
+
+  it("no form of the line passes 200 characters, and none is cut", () => {
+    const caps = [25_000, 37_500, 60_000, 75_000, 99_000, 400_000, 1_500_000, 12_500_000];
+    const firsts = [20_000, 45_000, 60_000, 150_000, 400_000, 2_000_000, 30_000_000];
+    const long: string[] = [];
+    // A task's own budget keeps at least a centime for its review; an outer limit's room can be
+    // less (what the limit still leaves).
+    for (const cap of [...caps, 125_000_000])
+      for (const first of firsts)
+        for (const outer of [undefined, "project", "month"] as const)
+          for (const room of outer ? [0, 500, 5_000, 12_500, cap] : [0, 12_500, cap]) {
+            const s = budgetLineWords(wrapUpLineOf(cap, first), chf, room, outer);
+            if (s.length > 200 || s.includes("…")) long.push(`${s.length}: ${s}`);
+          }
+    expect(long).toEqual([]);
+  });
+});
+
+/**
+ * l4-money-pause, run L4 (L4-money-106, live check 4's L3-research-2): the writer's one-file reply
+ * was cut off at its length limit before it said anything, CHF 0.05 spent and nothing written.
+ * The log went from "read README.md" to "Told the writer to wrap up" with no line for it, and
+ * the next request said only "Answer again, more briefly." Through the runner and the executor
+ * the daemon uses: the cut reply has its line with its CHF, and a run that can write files hears
+ * the one-file-per-call note.
+ */
+describe("l4-money-pause, run L4: a reply cut off at its length limit has its line and the file-writing note (L4-money-106)", () => {
+  const homes: string[] = [];
+  const opened: RuntimeApp[] = [];
+  afterAll(async () => {
+    for (const rt of opened) {
+      await settleSessions(rt);
+      await rt.close().catch(() => undefined);
+    }
+    removeHomes(homes);
+  });
+
+  const TITLE = "Cut page";
+  const REPORT =
+    "Summary: my reply was cut off before the page was written.\n\nWhere I stopped: nothing is written yet.\n\nLeft to do:\n- write cut-page.html";
+  const ranATool = (r: ModelRequest) =>
+    r.messages.some(
+      (m) => Array.isArray(m.content) && m.content.some((b) => b.type === "tool_result"),
+    );
+  const toldCut = (r: ModelRequest) =>
+    JSON.stringify(r.messages).includes("Your last reply was cut off");
+
+  it("call 1 looks at the folder, call 2 is cut off before it says anything (all its max_tokens used), call 3 reports: the log has one line for the cut with its CHF, between the folder line and the next, and the next request carries the file-writing note", async () => {
+    const clock = new SimulatedClock("2026-11-17T10:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-l4-money-106-"));
+    homes.push(home);
+    const calls: ModelRequest[] = [];
+    // The cut reply uses all of its output limit, as live check 4's did (6308 of 6308).
+    const cut: { text: string; stopReason: "max_tokens"; usage: Record<string, number> } = {
+      text: "",
+      stopReason: "max_tokens",
+      usage: { input_tokens: 1_000, output_tokens: 0 },
+    };
+    const fake = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        textReply(REPORT, {
+          when: (r: ModelRequest) => coderOn(TITLE)(r) && toldCut(r),
+          times: Number.POSITIVE_INFINITY,
+          usage: { input_tokens: 1_000, output_tokens: 60 },
+        }),
+        { when: (r: ModelRequest) => coderOn(TITLE)(r) && ranATool(r), reply: cut, times: 1 },
+        toolReply("list_dir", { path: "." }, "Looking at the folder.", {
+          when: coderOn(TITLE),
+          times: 1,
+          usage: { input_tokens: 1_000, output_tokens: 10 },
+        }),
+      ],
+    });
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      if (coderOn(TITLE)(r) && ranATool(r) && !toldCut(r))
+        cut.usage = { input_tokens: 1_000, output_tokens: r.max_tokens ?? 0 };
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    const w = await compose(home, clock, fake);
+    opened.push(w.rt);
+    const r = await runOne(w.req, w.rt, TITLE, { budgetUsdMicro: 40_000 });
+    const mine = calls.filter(coderOn(TITLE));
+    expect(mine.length, JSON.stringify(mine.map((c) => c.max_tokens))).toBe(3);
+    const cutMax = mine[1]?.max_tokens ?? 0;
+    // What the cut call cost, as the ledger booked it (every call is paid for, U-085).
+    const said = lines(r.events);
+    const folder = said.indexOf("looked at the folder");
+    const at = said.findIndex((l) => l.includes("reply was cut off"));
+    expect(folder, said.join(" | ")).toBeGreaterThanOrEqual(0);
+    expect(at, said.join(" | ")).toBeGreaterThan(folder);
+    expect(said.filter((l) => l.includes("reply was cut off"))).toHaveLength(1);
+    // The line's CHF is the cut call's own cost: its input and its whole output limit, one
+    // micro-USD a token, at the default CHF 0.80 a dollar.
+    const cost = ((1_000 + cutMax) * 0.8) / 1_000_000;
+    expect(cutMax).toBeGreaterThan(4_096);
+    expect(said[at]).toBe(
+      `The coder's reply was cut off at its length limit, so nothing of it could be used (CHF ${cost.toFixed(2)}); it was asked again.`,
+    );
+    // The next request carries the file-writing note, word for word (before: "Answer again,
+    // more briefly.").
+    expect(JSON.stringify(mine[2]?.messages.at(-1))).toContain(
+      `Your last reply was cut off at the output limit (${cutMax} tokens) before it said anything, and nothing of it was used. Send less in one reply: one file per call, short enough to fit.`,
+    );
+    expect(JSON.stringify(mine[2]?.messages)).not.toContain("Answer again, more briefly");
+  }, 60_000);
+
+  it("the line's three forms and the note's, word for word", () => {
+    const chf = (usdMicro: number) => `CHF ${((usdMicro * 0.8) / 1_000_000).toFixed(2)}`;
+    expect(replyCutWords("writer", { kept: 0, costUsdMicro: 65_244, retry: true }, chf)).toBe(
+      "The writer's reply was cut off at its length limit, so nothing of it could be used (CHF 0.05); it was asked again.",
+    );
+    expect(replyCutWords("coder", { kept: 2, costUsdMicro: 65_244, retry: true }, chf)).toBe(
+      "The coder's reply was cut off at its length limit (CHF 0.05): the call it was writing did not run, and it was asked to make it again.",
+    );
+    expect(replyCutWords("coder", { kept: 0, costUsdMicro: 2_000, retry: false }, chf)).toBe(
+      "The coder's reply was cut off at its length limit again, so nothing of it could be used (less than CHF 0.01).",
+    );
+    // A run that cannot write files is still asked to answer more briefly.
+    expect(cutOffNote(6_308, "before it said anything", false)).toBe(
+      "Your last reply was cut off at the output limit (6308 tokens) before it said anything, and nothing of it was used. Answer again, more briefly.",
+    );
+    expect(cutOffNote(6_308, "before it said anything", false, true)).toBe(
+      "Your last reply was cut off at the output limit (6308 tokens) before it said anything, and nothing of it was used. Send less in one reply: one file per call, short enough to fit.",
+    );
+  });
 });

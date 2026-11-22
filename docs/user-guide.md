@@ -728,9 +728,12 @@ card still asking for one closes ("Closed: it no longer needs you.").
 and **Save note**; "note: ...", "correction: ..." or "idea: ..." in Chat adds one too. A note
 reaches the brief of the task it names, by the task's title ("Add the login page: reuse the
 session cookie"), or of every task when it names none ("Write in British English"). The session
-log says which task got which. Notes waiting for the next session are listed under the box with
+log says which task got which ('Gave 1 note to "Add the login page".'). Notes waiting for the next session are listed under the box with
 **Dismiss**. The first-session plan you approve with a new project's setup decides the first
-session: it runs those tasks, in that order, and later sessions go by priority.
+session: it runs those tasks, in that order, and later sessions go by priority. Its Details say
+the session's size once, as its promise ("It promised 3 tasks, about CHF 0.34."), after the line
+that says how they were chosen ("Plan: the first session you approved with the project plan, in
+its order.").
 
 When you give a brief, Forerunner drafts a plan from it and puts it in the Inbox for your
 approval (see "Inbox" below: Approve and start, Change the plan, Reject). Above the project's
@@ -809,9 +812,10 @@ the shop" until its work budget is used; "B" runs after it only if budget is lef
 adds '"B" comes after it: it runs if "Build the shop" leaves budget, else in your next session.'
 The session's log says the take once ('Took "Build the shop", larger than this session's work
 budget, with about CHF 2.80 left.'). It works until that budget is used, keeps its work and
-pauses with one card in the Inbox; the tasks after it run only if it leaves budget (if it fails
-at once they run in the same session), else the result says '"B" waits for your next session:
-"Build the shop" used the rest of this one.' A larger task the tasks before it leave less than a
+pauses with one card in the Inbox; the tasks after it run in the same session with what it
+leaves of the work budget (if it fails at once they run too), and a task too big for what is left
+waits, the result saying '"B" (about CHF 0.30) waits for your next session: "Build the shop" left
+CHF 0.04 of this one.' A larger task the tasks before it leave less than a
 fifth of the work budget for waits for the next session. **Your next Start goes on with it**: a
 task that paused at a session's budget is taken in its turn by the next session you start, from
 where it stopped, and its card closes ("Your session of 14:05 went on with it."); the card's
@@ -870,7 +874,10 @@ earlier version marked failed for want of a sandbox goes back to ready by itself
 A session where nothing was done because its tasks failed, were sent back or wait for you gets a
 lower grade from the critic's session review. When its work only waits for you, the review's
 line under Details says so ("Session review: the work waits for your answers (grade 70, 2
-findings)."): answer the card in the Inbox and the work goes on.
+findings)."): answer the card in the Inbox and the work goes on. A session review sends nothing
+back: when it notes something, such as the planned tasks costing more than their estimate, its
+line says what it noted, and under **More ▾ → Reviews → Session checks** it reads "noted" (or
+"accepted", "needs you"), its findings "noted".
 
 **Every session of a project** is listed under **More ▾ → Sessions** (also **All 3 sessions** on
 the Overview's Last result, and **All sessions** on every session page). The heading is the
@@ -1349,13 +1356,19 @@ is a fifth of the run's budget, or the cost of two calls when that is more; the 
 before a step that could take it past CHF 0.32 it is told to wrap up, keeping a reserve of CHF
 0.08 to finish."). Since one step can cost a lot (a long file, a large page), the wrap-up can come
 before the run has spent that much, and the log says so ("Told the researcher to wrap up: it spent
-CHF 0.02 of CHF 0.15, and its next step could take it past CHF 0.07."). A budget too small
+CHF 0.02 of CHF 0.15, and its next step could take it past CHF 0.07."). A reply cut off at its
+length limit is paid for and has a line of its own ("The writer's reply was cut off at its length
+limit, so nothing of it could be used (CHF 0.05); it was asked again."), and an agent that writes
+files is then asked to write one file per reply. A budget too small
 for even that is "save only": nothing is said to the agent, and the run pauses at its budget; one
-smaller than a single step's cost says so and pauses before that step. A run that stopped at a
+smaller than a single step's cost says so and pauses before that step. Under a project budget or
+a monthly spending cap that has less left than the run could otherwise spend, the run's figure is
+what is left of it ("This run may spend CHF 0.06, the rest of the project's budget: ..."), so
+it wraps up inside that limit with its work kept instead of being stopped there. A run that stopped at a
 budget, or that wrapped up with work left, is paused: the critic does not review half-done work,
 it does not count as a failed try, and its report stays in the task. A run that wraps up with
 nothing left is reviewed as usual. "Left to do" counts only what the task's acceptance criteria
-still need: "Nothing for the acceptance criteria" is nothing, and an optional extra the agent
+still need: "Nothing for the acceptance criteria" or "nothing the criteria require" is nothing, and an optional extra the agent
 suggests is kept as a note, so finished work goes to its review instead of waiting on a card. The card and the task name the limit that stopped it: the
 task's budget, the specialist's limit, the session's budget, the project's budget, this month's
 cap or the share of your Claude subscription Forerunner may use. A stop at the session's budget,

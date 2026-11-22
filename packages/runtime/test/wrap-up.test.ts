@@ -249,7 +249,7 @@ describe("the Agent SDK path's wrap-up message (budget-stop)", () => {
  */
 describe("d1109-oversize-pause, run C: the words of a good wrap-up (OP-1)", () => {
   const EXACT_62 =
-    "Wrap up now: this run has used 62% of what it may spend, and its next step could take it past the share kept to finish. Finish the step you are on and start nothing new. Leave the files so the work can go on: what you changed builds and runs, and a change you cannot finish in a step or two is undone or kept out of use. End your report with Where I stopped: (what is done, anything half done with its file, and any caveat or what you did not cover) and Left to do: (only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras).";
+    "Wrap up now: this run has used 62% of what it may spend, and its next step could take it past the share kept to finish. Finish the step you are on and start nothing new. Leave the files so the work can go on: what you changed builds and runs, and a change you cannot finish in a step or two is undone or kept out of use. End your report with Where I stopped: (what is done, anything half done with its file, and any caveat or what you did not cover) and Left to do: (only what the task's criteria still need, as a list with the next step first, or only the word nothing when they need nothing more; no optional extras).";
   /** The delivered text with its share set to 62%, to compare with the exact words. */
   const at62 = (text: string) =>
     text.replace(/^(Wrap up now: this run has used )\S+(?: 1%)?/, "$162%");
@@ -373,7 +373,7 @@ describe("d1109-oversize-pause, run C: the words of a good wrap-up (OP-1)", () =
 
   it("the brief's line, word for word", () => {
     expect(WRAP_UP_BRIEF_LINE).toBe(
-      "If Forerunner tells you to wrap up, finish the step you are on, start nothing new, and leave the files so the work can go on (what you changed builds and runs; a change you cannot finish is undone or kept out of use). Then end your report with 'Where I stopped:' (what is done, anything half done with its file, and any caveat or what you did not cover) and 'Left to do:' (only what the task's criteria still need, as a list with the next step first, or 'nothing'; no optional extras): the run that continues this task starts from them.",
+      "If Forerunner tells you to wrap up, finish the step you are on, start nothing new, and leave the files so the work can go on (what you changed builds and runs; a change you cannot finish is undone or kept out of use). Then end your report with 'Where I stopped:' (what is done, anything half done with its file, and any caveat or what you did not cover) and 'Left to do:' (only what the task's criteria still need, as a list with the next step first, or only the word 'nothing' when they need nothing more; no optional extras): the run that continues this task starts from them.",
     );
   });
 });

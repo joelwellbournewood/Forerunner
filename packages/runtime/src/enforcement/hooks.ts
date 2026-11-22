@@ -209,6 +209,34 @@ export class EnforcementHooks {
     return Math.max(0, room);
   }
 
+  /**
+   * l4-money-pause, run L4 (L4-money-103; ADR 0112 amended 2026-11-22): what the outer money caps
+   * (the human's month, the project's budget) still allow `scope` at their stop lines, below
+   * `ceilingUsdMicro` (the run's own cap), with the level that binds and its cap; undefined when
+   * none binds below it. Read through the port's own `check`, the decision a run's call gets:
+   * the largest estimate it does not refuse is what is left less one micro-unit, and a second
+   * look at that figure finds a smaller level (at most one per level). Never the 80% room
+   * (`roomUsdMicro`), the session's level (in-process) or the plan share (a credential's stop,
+   * read by the caps check on each call). The executor caps the run there, so its wrap-up line
+   * and its start line follow the limit that would stop it; `check` stays the backstop.
+   */
+  async outerRemainder(
+    scope: Pick<CapScope, "humanId" | "projectId" | "sessionId" | "taskId">,
+    ceilingUsdMicro: number,
+  ): Promise<{ usdMicro: number; level: "project" | "month"; capUsdMicro: number } | undefined> {
+    let probe = Math.max(0, Math.floor(ceilingUsdMicro));
+    let found: { usdMicro: number; level: "project" | "month"; capUsdMicro: number } | undefined;
+    for (let looks = 0; looks < 4 && probe > 0; looks++) {
+      const d = await this.deps.caps.check(scope, probe, { phase: "work" });
+      if (d.decision !== "stop" || (d.level !== "project" && d.level !== "month")) break;
+      const left = Math.max(0, Math.floor(d.remainingUsdMicro ?? 0) - 1);
+      if (left >= probe) break;
+      found = { usdMicro: left, level: d.level, capUsdMicro: d.capUsdMicro ?? 0 };
+      probe = left;
+    }
+    return found;
+  }
+
   private capScope(claims: CapabilityClaims): CapScope {
     return {
       humanId: claims.ownerHumanId,

@@ -646,6 +646,13 @@ describe("d1109-oversize-pause, run C: the larger task in its turn (OP-0)", () =
     const c = cutPlanToBudget(planOf(item("Big", 6), item("Big2", 9)), usd(4));
     expect(c.items.map((i) => i.taskId)).toEqual(["Big"]);
     expect(c.leftOutForBudget?.map((i) => [i.taskId, i.reason])).toEqual([["Big2", "after_large"]]);
+    // l4-money-pause (L4-money-104): a task after the larger one is the session's own, not cut.
+    expect(cutPlanToBudget(planOf(item("Big", 6), item("A", 0.4)), usd(4)).summary).not.toContain(
+      "cut to fit the budget",
+    );
+    expect(
+      cutPlanToBudget(planOf(item("A", 3.5), item("Big", 6), item("B", 0.3)), usd(4)).summary,
+    ).toContain("(1 item cut to fit the budget)");
     const d = cutPlanToBudget(planOf(item("A", 3.5), item("Big", 6), item("B", 0.3)), usd(4));
     expect(d.items.map((i) => i.taskId)).toEqual(["A", "B"]);
     expect(d.oversized).toBeUndefined();
@@ -732,7 +739,7 @@ describe("d1109-oversize-pause, run C: the larger task in its turn (OP-0)", () =
     runs.clear();
   });
 
-  it("A, then the larger task until the session's budget is used; B waits for the next session, as the result says", async () => {
+  it("A, then the larger task until its wrap-up; B waits for the next session (too little left for it), as the result says", async () => {
     await add("A", 0.4, { priority: 9 });
     await add("Build the shop", 8, { priority: 5 });
     await add("B", 0.3, { priority: 1 });
@@ -743,9 +750,12 @@ describe("d1109-oversize-pause, run C: the larger task in its turn (OP-0)", () =
     expect(r.plan?.leftOutForBudget?.map((i) => [i.title, i.reason, i.after])).toEqual([
       ["B", "after_large", "Build the shop"],
     ]);
+    // l4-money-pause (L4-money-102): what the larger task left of the work budget (USD 0.05 of
+    // USD 1.60), less than B's estimate (before: "used the rest of this one").
     expect(r.summary).toContain(
-      '"B" waits for your next session: "Build the shop" used the rest of this one.',
+      '"B" (about CHF 0.24) waits for your next session: "Build the shop" left CHF 0.04 of this one.',
     );
+    expect(r.summary).not.toContain("budget is used");
     expect(r.summary).not.toMatch(
       /after the other tasks|after the work that fits|one task that large/,
     );
@@ -767,7 +777,7 @@ describe("d1109-oversize-pause, run C: the larger task in its turn (OP-0)", () =
     expect(ran).toEqual(["Build the shop"]);
     expect(r.plan?.leftOutForBudget?.map((i) => i.title)).toEqual(["A", "B"]);
     expect(r.summary).toContain(
-      '"A" and 1 more wait for your next session: "Build the shop" used the rest of this one.',
+      '"A" and 1 more wait for your next session: "Build the shop" left CHF 0.08 of this one.',
     );
     await store.close();
   });

@@ -102,12 +102,14 @@ export const WRAP_UP_MARK = "Wrap up now:";
  * use, what is half done and where, the next step first, and a caveat or what the run did not
  * cover under "Where I stopped:", never as work left (run L3's L3-left-4). It asks for no commit
  * (Forerunner commits) and promises no check. Before: "Start nothing new, leave the files
- * working, and end your report with Where I stopped: and Left to do: (...)".
+ * working, and end your report with Where I stopped: and Left to do: (...)". l4-money-pause, run
+ * L4 (L4-money-101): "or only the word nothing when they need nothing more" (before: "or
+ * nothing", and live check 4's researcher wrote "nothing the criteria require.").
  */
 export function wrapUpText(spentUsdMicro: number, capUsdMicro: number): string {
   const share = capUsdMicro > 0 ? (Math.max(0, spentUsdMicro) / capUsdMicro) * 100 : 100;
   const used = spentUsdMicro > 0 && share < 1 ? "under 1%" : `${Math.min(100, Math.round(share))}%`;
-  return `${WRAP_UP_MARK} this run has used ${used} of what it may spend, and its next step could take it past the share kept to finish. Finish the step you are on and start nothing new. Leave the files so the work can go on: what you changed builds and runs, and a change you cannot finish in a step or two is undone or kept out of use. End your report with Where I stopped: (what is done, anything half done with its file, and any caveat or what you did not cover) and Left to do: (only what the task's criteria still need, as a list with the next step first, or nothing; no optional extras).`;
+  return `${WRAP_UP_MARK} this run has used ${used} of what it may spend, and its next step could take it past the share kept to finish. Finish the step you are on and start nothing new. Leave the files so the work can go on: what you changed builds and runs, and a change you cannot finish in a step or two is undone or kept out of use. End your report with Where I stopped: (what is done, anything half done with its file, and any caveat or what you did not cover) and Left to do: (only what the task's criteria still need, as a list with the next step first, or only the word nothing when they need nothing more; no optional extras).`;
 }
 
 /**
@@ -349,6 +351,20 @@ export type RunEvent =
     }
   /** The run was told to wrap up (ADR 0112), once; `spentUsdMicro` is what it had spent then. */
   | { type: "wrap_up_sent"; spentUsdMicro: number; capUsdMicro: number }
+  /**
+   * l4-money-pause, run L4 (L4-money-106): a reply cut off at its output limit (U-085), paid for
+   * (`costUsdMicro`, that call's cost) whatever came of it: `kept`, its complete tool calls that
+   * ran (the cut one did not); `retry`, whether the run asks again (false: it ends as an error).
+   * Before, only a bare `warning` said it, which no line of the session's log read.
+   */
+  | {
+      type: "reply_cut";
+      maxTokens: number;
+      where: string;
+      kept: number;
+      costUsdMicro: number;
+      retry: boolean;
+    }
   | { type: "run_end"; outcome: RunOutcome; costUsdMicro: number; steps: number };
 
 export interface RunResult {
@@ -439,6 +455,18 @@ export class LoopAgentDriver {
   private readonly logger = log("agent-loop");
 
   constructor(private readonly deps: LoopDriverDeps) {}
+
+  /**
+   * l4-money-pause, run L4 (L4-money-103): what the project's budget or the month's cap still
+   * allows a run of `scope` below `ceilingUsdMicro`, through the hooks every call of the run
+   * meets (`EnforcementHooks.outerRemainder`); the executor caps the run there before it starts.
+   */
+  outerRemainder(
+    scope: { humanId: string; projectId?: string; sessionId?: string; taskId?: string },
+    ceilingUsdMicro: number,
+  ): Promise<{ usdMicro: number; level: "project" | "month"; capUsdMicro: number } | undefined> {
+    return this.deps.hooks.outerRemainder(scope, ceilingUsdMicro);
+  }
 
   async run(req: RunRequest): Promise<RunResult> {
     const { clock } = this.deps;
@@ -931,11 +959,21 @@ export class LoopAgentDriver {
             clock,
           );
           const next = Math.min(maxOut * 4, top);
+          const cutEvent = (retry: boolean) =>
+            emit({
+              type: "reply_cut",
+              maxTokens: maxOut,
+              where,
+              kept: kept.length,
+              costUsdMicro: callCost,
+              retry,
+            });
           if (kept.length > 0) {
             keptFromCut = true;
             toolUses = kept;
             content = response.content.filter((b) => b.type !== "tool_use" || kept.includes(b));
             if (next > maxOut) retryCap = next;
+            cutEvent(true);
             emit({
               type: "warning",
               message: `the reply was cut off at the output limit (${maxOut} tokens) ${where}; its ${kept.length} complete tool call(s) ran, the cut one did not`,
@@ -944,13 +982,20 @@ export class LoopAgentDriver {
             cutOffs++;
             if (cutOffs <= CUT_OFF_RETRIES && next > maxOut) {
               retryCap = next;
-              cutNote = { maxOut, text: cutOffNote(maxOut, where, false) };
+              // L4-money-106: a file-writing run cut off before it said anything was most likely
+              // writing a file (a write_file whose end never came, or hidden thinking): it hears
+              // the one-file-per-call note, not "Answer again, more briefly".
+              cutNote = { maxOut, text: cutOffNote(maxOut, where, false, writesFiles) };
+              cutEvent(true);
+              // The next call's cap is what the money below the run's line pays, up to `next`
+              // (live check 4: "asking again with up to 25232" for a call that got 4096).
               emit({
                 type: "warning",
-                message: `the reply was cut off at the output limit (${maxOut} tokens) ${where}; asking again with up to ${next}`,
+                message: `the reply was cut off at the output limit (${maxOut} tokens) ${where}; asking again`,
               });
               continue;
             }
+            cutEvent(false);
             throw new ForerunnerError(
               "provider_error",
               `The reply was cut off at the output limit (${maxOut} tokens) ${where}, ${cutOffs} time(s); nothing from it was used. Work this large has to be written in smaller parts.`,
@@ -1331,13 +1376,20 @@ export function fitMaxTokens(
  * What the call after a reply cut off at the output limit is told (U-085, W15-13), as a text block
  * after the last tool results: the cut call did not run (`kept`: the calls before it did), or,
  * when the money below the run's line could not raise the limit, that nothing of the reply was
- * used and less must go in one reply.
+ * used and less must go in one reply. A run that can write files hears "one file per call" also
+ * when the cut came before it said anything (L4-money-106, live check 4: a writer's whole file in
+ * one reply was cut with nothing to show, and it was told only "Answer again, more briefly").
  */
-export function cutOffNote(maxOut: number, where: string, kept: boolean): string {
+export function cutOffNote(
+  maxOut: number,
+  where: string,
+  kept: boolean,
+  writesFiles = false,
+): string {
   const said = `Your last reply was cut off at the output limit (${maxOut} tokens) ${where}`;
   if (kept)
     return `${said}, so that call did not run; the calls before it ran. Make it again on its own.`;
-  return where === "before it said anything"
+  return where === "before it said anything" && !writesFiles
     ? `${said}, and nothing of it was used. Answer again, more briefly.`
     : `${said}, and nothing of it was used. Send less in one reply: one file per call, short enough to fit.`;
 }

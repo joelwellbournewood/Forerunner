@@ -430,3 +430,78 @@ describe("l3-money-engine, run L3", () => {
     ).toBe("Session review: needs you (grade 40, 1 finding).");
   });
 });
+
+describe("l4-money-pause, run L4: a session review sends nothing back (L4-money-112)", () => {
+  it("a revise names what it noted, never 'sent back' (live check 4: 'sent back for changes (grade 85, 1 finding)')", () => {
+    expect(
+      describeEvent("critic.session_review", { verdict: "revise", grade: 85, findings: 1 }),
+    ).toBe("Session review: noted (grade 85, 1 finding).");
+    expect(
+      describeEvent("critic.session_review", {
+        verdict: "revise",
+        grade: 85,
+        findings: 1,
+        noted:
+          "Planned tasks cost CHF 0.11, over their estimate of CHF 0.07 by 51%, with one task tried twice",
+      }),
+    ).toBe(
+      "Session review: planned tasks cost CHF 0.11, over their estimate of CHF 0.07 by 51%, with one task tried twice (grade 85, 1 finding).",
+    );
+    for (const verdict of ["revise", "escalate"])
+      expect(
+        describeEvent("critic.session_review", { verdict, grade: 70, findings: 2 }),
+      ).not.toMatch(/sent back/);
+  });
+});
+
+describe("l4-money-pause, run L4: the session's size is said once, as its promise (L4-github-110)", () => {
+  const RATE = 0.8;
+  it("with the promise's line after it, the Plan line says how the tasks were chosen and no count or figure", () => {
+    expect(
+      describeEvent(
+        "session.planned",
+        {
+          items: 1,
+          estimateUsdMicro: 112_500,
+          promised: 3,
+          summary: "the first session you approved with the project plan, in its order",
+        },
+        RATE,
+      ),
+    ).toBe("Plan: the first session you approved with the project plan, in its order.");
+    expect(
+      describeEvent(
+        "session.planned",
+        {
+          items: 1,
+          estimateUsdMicro: 112_500,
+          promised: 1,
+          summary: "1 ready task in priority order",
+        },
+        RATE,
+      ),
+    ).toBe("Plan: 1 ready task in priority order.");
+  });
+
+  it("without a promise, or without words of its own, the Plan line keeps its count and figure", () => {
+    expect(
+      describeEvent(
+        "session.planned",
+        { items: 1, estimateUsdMicro: 112_500, summary: "1 ready task in priority order" },
+        RATE,
+      ),
+    ).toBe("Plan: 1 task, about CHF 0.09. 1 ready task in priority order.");
+    expect(
+      describeEvent("session.planned", { items: 2, estimateUsdMicro: 250_000, promised: 2 }, RATE),
+    ).toBe("Plan: 2 tasks, about CHF 0.20.");
+  });
+
+  it("notes given to a task are given now, never 'for the next session'", () => {
+    expect(describeEvent("task.notes", { title: "Build the page", count: 1 })).toBe(
+      'Gave 1 note to "Build the page".',
+    );
+    expect(describeEvent("task.notes", { title: "Build the page", count: 2 })).toBe(
+      'Gave 2 notes to "Build the page".',
+    );
+  });
+});

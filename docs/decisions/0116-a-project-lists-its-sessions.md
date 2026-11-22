@@ -131,3 +131,7 @@ no joined session is counted twice or shown in the kept project's rows. After Un
 gone. The chat's recall of the kept project reads the joined project's sessions as well
 (`conversation/scope.ts` `withJoined`), so "what did Kite club's last session do" is answered
 from "Site".
+
+Dated note, 2026-11-22 (l4-money-pause, run L4, L4-money-104 and L4-selftasks-107): the session's size is its promise on every screen: the plan's clause counts no task that comes after a larger one as cut, and the session review measures the promise's tasks against the promise's figure plus what joined it.
+
+Dated note, 2026-11-22 (review of l4-money-pause, L4-github-110): the session's Details say its size once, as the promise ("It promised 3 tasks, about CHF 0.34."). With a promise, the Plan line says only how the tasks were chosen ("Plan: the first session you approved with the project plan, in its order."; before: "Plan: 1 task, about CHF 0.09 ... 1 task in its order" beside the promise of 3), and notes given to a task read "Gave 1 note to "X".", never "for the next session".

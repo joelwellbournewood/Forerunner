@@ -15,6 +15,22 @@ export function gradeTone(grade: number): Tone {
   return "bad";
 }
 
+/**
+ * l4-money-pause, run L4 (L4-money-112, live check 4): a session check sends nothing back, so it
+ * reads "accepted", "noted" or "needs you" (warn when not accepted), and its findings are
+ * "noted", never "to fix" (before: "85 / 100 sent back", a finding "to fix"). A task's review
+ * keeps the verdict's words.
+ */
+const sessionCheck = (r: { taskId: string | null }) => r.taskId === null;
+function reviewLabel(r: { taskId: string | null; verdict: string }): string {
+  if (!sessionCheck(r)) return verdictLabel(r.verdict);
+  return r.verdict === "accept" ? "accepted" : r.verdict === "human" ? "needs you" : "noted";
+}
+function reviewTone(r: { taskId: string | null; verdict: string }): Tone {
+  if (!sessionCheck(r)) return verdictTone(r.verdict);
+  return r.verdict === "accept" ? "good" : "warn";
+}
+
 export function verdictTone(verdict: string): Tone {
   switch (verdict) {
     case "accept":
@@ -101,11 +117,11 @@ function ReviewItem({
     >
       <div className="flex flex-wrap items-center gap-2">
         {/* The grade takes the verdict's colour: a sent-back review is never green. */}
-        <Badge tone={verdictTone(r.verdict)} testId="review-grade">
+        <Badge tone={reviewTone(r)} testId="review-grade">
           {r.grade} / 100
         </Badge>
-        <Badge tone={verdictTone(r.verdict)} testId="review-verdict">
-          {verdictLabel(r.verdict)}
+        <Badge tone={reviewTone(r)} testId="review-verdict">
+          {reviewLabel(r)}
         </Badge>
         <span className="ml-auto text-xs text-neutral-500">{formatDateTime(r.createdAt)}</span>
       </div>
@@ -142,7 +158,7 @@ function ReviewItem({
                   }
                   testId="finding-state"
                 >
-                  {findingStateWords(f.status, r.taskStatus)}
+                  {sessionCheck(r) ? "noted" : findingStateWords(f.status, r.taskStatus)}
                 </Badge>
               </div>
               <p className="mt-1">{f.description}</p>

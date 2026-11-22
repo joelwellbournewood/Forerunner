@@ -15,6 +15,7 @@ import {
 } from "../loop/merge-mode.ts";
 import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { CREDENTIAL_WAIT_REASON } from "../session/credential-wait.ts";
+import { reviewRoomWords } from "../session/review-room-words.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
 import { cancelWorkKind, cancelWorkLine, prNumberOf } from "./cancel-words.ts";
@@ -417,6 +418,11 @@ export function budgetPauseLabelOf(card: unknown): string {
   const c = (card ?? {}) as Record<string, unknown>;
   // C2-left-1 (run C3): a pause that got no further reads as its card does, wherever it stopped.
   if (c.no_progress === true) return "Paused again without getting further";
+  // L4-money-111: the work is done and only its review waits (before: "Paused at its budget").
+  if (c.review_waits === true) {
+    const where = reviewRoomWords(c.source).replace(/^room/, "");
+    return `Review waits for room${where.replace(/ this session's/, " the session's")}`;
+  }
   if (c.stopped_by === "wrap_up" && c.review_waits !== true)
     switch (c.source) {
       case "session":
@@ -426,6 +432,11 @@ export function budgetPauseLabelOf(card: unknown): string {
         return "Paused before its budget ran out";
       case "specialist_limit":
         return "Paused before its limit per run ran out";
+      // L4-money-103: a run capped at what was left of an outer limit wrapped up inside it.
+      case "project":
+        return "Paused before the project's budget ran out";
+      case "month":
+        return "Paused before this month's cap ran out";
       default:
         break;
     }

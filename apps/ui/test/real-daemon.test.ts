@@ -16849,7 +16849,10 @@ describe("l3-money-engine, run L3", () => {
       expect(runs.map((r) => r.task_id)).toEqual([task.id, task.id]);
       const lines = (await client.sessionEvents(sessionId)).map((e) => [e.type, e.text]);
       const said = (type: string) => lines.filter(([t]) => t === type).map(([, text]) => text);
-      const planned = chfIn(said("session.planned")[0] ?? "");
+      // l4-money-pause, run L4 (L4-github-110): the figure the person saw is the promise's, said
+      // once; the Plan line says how the task was chosen (before: "Plan: 1 task, about CHF x.").
+      expect(said("session.planned")).toEqual(["Plan: 1 ready task in priority order."]);
+      const planned = chfIn(said("session.promised")[0] ?? "");
       expect(planned).not.toBeNull();
       // d1116-budget-all (BA-8): the plan's estimate holds the review, so the planned task's
       // whole cost (both tries and their reviews) is set against it, the session's own checks
@@ -18750,7 +18753,7 @@ describe("d1109-oversize-pause, run C", () => {
     return t;
   };
 
-  it("OP-0: GET start-check names the task before the larger one and the one after it; POST /sessions runs them in that order and the result says B waits", async () => {
+  it("OP-0: GET start-check names the task before the larger one and the one after it; POST /sessions runs them in that order, B with what the larger one leaves", async () => {
     const { rt, client } = await composeWithRolePlayer({
       FORERUNNER_BENCH_LONG: "Build the shop",
       FORERUNNER_BENCH_USAGE: "Build the shop:100000",
@@ -18796,12 +18799,12 @@ describe("d1109-oversize-pause, run C", () => {
       const order = (await rt.store.event.list(sessionId))
         .filter((e) => e.type === "task.started")
         .map((e) => (e.payload as { taskId?: string }).taskId);
-      expect(order).toEqual([a.id, big.id]);
-      expect((await rt.store.task.mustGet(b.id)).status).toBe("ready");
+      // l4-money-pause (L4-money-102): B runs after the larger task with what its wrap-up left
+      // of the work budget (before: B stayed ready, "used the rest of this one").
+      expect(order).toEqual([a.id, big.id, b.id]);
+      expect((await rt.store.task.mustGet(b.id)).status).toBe("done");
       const ended = await client.session(sessionId);
-      expect(ended.summary ?? "").toContain(
-        '"Write the notes" waits for your next session: "Build the shop" used the rest of this one.',
-      );
+      expect(ended.summary ?? "").not.toContain("used the rest of this one");
     } finally {
       await rt.close();
     }
@@ -24343,6 +24346,256 @@ describe("l4-chat-depth, run L4", () => {
       expect(once).toBeGreaterThan(start);
       await a.chat(project.id, "what is the next task?");
       expect(await planningAndChat()).toBeGreaterThan(once);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+});
+
+describe("l4-money-pause, run L4", () => {
+  // Live check 4 (2026-11-17) on a paused or capped run (ADR 0112): what the person reads of it,
+  // through the routes the session page, the Sessions list and the Inbox use, with the daemon as
+  // composed with the bench's stand-in.
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /** The daemon with the stand-in, on a home of its own that the describe removes. */
+  async function open(env: Record<string, string>) {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4-money-"));
+    homes.push(home);
+    const daemon = { FORERUNNER_HOME: home };
+    return composeWithRolePlayer(env, {
+      env: daemon,
+      dirs: appDirs({ env: daemon }),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+    });
+  }
+  type Open = Awaited<ReturnType<typeof open>>;
+
+  /** A coder task of the project, ready, priced at `usd` (its own estimate). */
+  async function task(
+    a: Open,
+    projectId: string,
+    title: string,
+    usd: number,
+    priority: "high" | "medium" | "low" = "medium",
+  ) {
+    const t = await a.client.createTask(projectId, {
+      title,
+      outcome: `${title} is done`,
+      acceptanceCriteria: [],
+      priority,
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    await a.rt.store.task.patch(t.id, { est_cost_usd_micro: Math.round(usd * 1_000_000) });
+    return t;
+  }
+
+  /** POST /sessions as the Start dialog sends it; waits until the session ended. */
+  async function startAndEnd(a: Open, projectId: string, budgetUsdMicro: number) {
+    const started = await a.client.startSession({
+      agentId: a.rt.agent.id,
+      projectId,
+      trigger: "manual",
+      budgetUsdMicro,
+    });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, JSON.stringify(started)).toBeTruthy();
+    await eventually(
+      async () =>
+        !["planned", "running", "paused"].includes((await a.client.session(sessionId)).status),
+      "the session to end (at least 10 s of real time)",
+      async () => `${(await a.client.session(sessionId)).status}`,
+      60_000,
+    );
+    await settleSessions(a.rt);
+    return sessionId;
+  }
+
+  it("L4-money-102: POST /sessions: the task after a larger one runs with what its wrap-up left; no session, row or line says the budget is used", async () => {
+    const a = await open({
+      FORERUNNER_BENCH_LONG: "Build the shop",
+      FORERUNNER_BENCH_USAGE: "Build the shop:100000",
+    });
+    try {
+      const project = await a.client.createProject({ name: "Bakery", goal: "A bakery page" });
+      const big = await task(a, project.id, "Build the shop", 8, "high");
+      const tagline = await task(a, project.id, "Write a tagline", 0.05);
+      const sessionId = await startAndEnd(a, project.id, 2_000_000);
+      const order = (await a.rt.store.event.list(sessionId))
+        .filter((e) => e.type === "task.started")
+        .map((e) => (e.payload as { taskId?: string }).taskId);
+      expect(order).toEqual([big.id, tagline.id]);
+      expect((await a.rt.store.task.mustGet(tagline.id)).status).toBe("done");
+      const session = await a.client.session(sessionId);
+      const used = /used the rest of this one|The session's budget is used|the budget is used/;
+      expect(JSON.stringify(session)).not.toMatch(used);
+      // The Sessions list: no row says it paused before a budget ran out and that it is used.
+      const rows = (await a.client.projectSessions(project.id)).rows;
+      for (const row of rows) expect(JSON.stringify(row)).not.toMatch(used);
+      const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "").join(" | ");
+      expect(lines).not.toMatch(used);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-money-103: under a project budget of CHF 0.06 the session's log through the client names what is left of it as the run's figure, and nothing passes the budget", async () => {
+    const a = await open({
+      FORERUNNER_BENCH_LONG: "Write the club history",
+      FORERUNNER_BENCH_USAGE: "Write the club history:2000",
+    });
+    try {
+      const project = await a.client.createProject({ name: "Club", goal: "A club page" });
+      await a.rt.store.project.patch(project.id, { budget_usd_micro: 75_000 });
+      const t = await task(a, project.id, "Write the club history", 0.05);
+      const sessionId = await startAndEnd(a, project.id, 2_000_000);
+      const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
+      const start = lines.find((l) => l.startsWith("This run may spend")) ?? "";
+      // Review of L4-money-103: the whole line, its review's room and reserve included (it was
+      // cut on screen at 200 characters: "... keeping a reserve of…").
+      expect(start, lines.join(" | ")).toBe(
+        "This run may spend CHF 0.06, the rest of the project's budget: it is told to wrap up before a step that could pass CHF 0.05, keeping CHF 0.01 to finish.",
+      );
+      // Before: "This run may spend CHF 1.20: ..." and a hard stop at the project's budget.
+      expect(lines.join(" | ")).not.toMatch(/This run may spend CHF 1\.\d\d/);
+      const runs = await a.rt.store.run.forTask(t.id);
+      expect(runs.reduce((s, r) => s + r.cost_usd_micro, 0)).toBeLessThanOrEqual(75_000);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-money-103 (review): with its review's room kept inside the project's budget, the run's start line through the client is whole, every figure in it", async () => {
+    const a = await open({
+      FORERUNNER_BENCH_LONG: "Write the club history",
+      FORERUNNER_BENCH_USAGE: "Write the club history:2000",
+    });
+    try {
+      const project = await a.client.createProject({ name: "Club", goal: "A club page" });
+      await a.rt.store.project.patch(project.id, { budget_usd_micro: 300_000 });
+      await task(a, project.id, "Write the club history", 0.05);
+      const sessionId = await startAndEnd(a, project.id, 2_000_000);
+      const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
+      const start = lines.find((l) => l.startsWith("This run may spend")) ?? "";
+      // Before: "This run may spend CHF 0.xx, what is left of the project's budget less the CHF
+      // 0.xx kept for its review: ... keeping a reserve of…", cut at 200 characters on screen.
+      expect(start, lines.join(" | ")).toBe(
+        "This run may spend CHF 0.20, the rest of the project's budget after CHF 0.04 for its review: it is told to wrap up before a step that could pass CHF 0.16, keeping CHF 0.04 to finish.",
+      );
+      expect(start.length).toBeLessThanOrEqual(200);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-money-112: a task sent back once and then accepted over its estimate: the session review's line says what it noted, never 'sent back'", async () => {
+    // Review of L4-money-112: the work's calls are made dear (60,000 output tokens a call), so
+    // the send-back and its second try take the task far over its estimate and the session
+    // review is a revise (before, the case's review was "accepted (grade 100, 0 findings)" and it
+    // passed without the fix).
+    const a = await open({
+      FORERUNNER_BENCH_CRITIC_REJECT: "Write the pairing list",
+      FORERUNNER_BENCH_USAGE: "Write the pairing list:60000",
+    });
+    try {
+      const project = await a.client.createProject({
+        name: "Swiss pairing",
+        goal: "A pairing list",
+      });
+      const t = await task(a, project.id, "Write the pairing list", 0.0001);
+      const sessionId = await startAndEnd(a, project.id, 2_000_000);
+      expect((await a.rt.store.task.mustGet(t.id)).status).toBe("done");
+      const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
+      const review = lines.find((l) => l.startsWith("Session review:")) ?? "";
+      expect(review, lines.join(" | ")).toBe(
+        "Session review: planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice (grade 85, 1 finding).",
+      );
+      // The project's reviews: the session check is a review with no task, and its verdict is
+      // the UI's to word ("noted"); the daemon's own summary never says "sent back".
+      const reviews = await a.client.reviews(project.id);
+      const check = reviews.reviews.find((r) => r.taskId === null);
+      expect(check, JSON.stringify(reviews.reviews)).toBeDefined();
+      expect(check?.verdict).toBe("revise");
+      expect(check?.summary ?? "").not.toMatch(/sent back/);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-github-110: Approve and start on a plan of two tasks, the second waiting on the first: the session's Details state its size once, as its promise, and the brief it used is never a note 'for the next session'", async () => {
+    const a = await open({});
+    try {
+      const brief = "A page that shows a random quote";
+      const project = await a.client.createProject({
+        name: "Quote page",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await a.rt.intake.inFlight(project.id);
+      const me = await a.client.me();
+      const card = (await a.client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      if (!card) throw new Error("no plan card");
+      await a.client.answerRequest(card.id, { version: card.version, answer: "Approve and start" });
+      let sessionId = "";
+      await eventually(
+        async () => {
+          const ss = await a.client.sessions({ projectId: project.id });
+          sessionId = ss[0]?.id ?? "";
+          return (
+            ss.length > 0 && ss.every((x) => !["planned", "running", "paused"].includes(x.status))
+          );
+        },
+        "the session Approve and start began to end (at least 10 s of real time)",
+        async () => JSON.stringify(await a.client.sessions({ projectId: project.id })),
+        60_000,
+      );
+      await settleSessions(a.rt);
+      const tasks = await a.client.tasks(project.id);
+      const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
+      const said = lines.join(" | ");
+      expect(tasks.length).toBe(2);
+      // Before (live check 4's s2, the stand-in the same): "Plan: 1 task, about CHF 0.13. The
+      // first session you approved with the project plan: 1 task in its order." beside "It
+      // promised 2 tasks, about CHF 0.26.", then "Gave 1 note for the next session to ...".
+      expect(
+        lines.filter((l) => l.startsWith("Plan:")),
+        said,
+      ).toEqual(["Plan: the first session you approved with the project plan, in its order."]);
+      expect(
+        lines.filter((l) => l.startsWith("It promised")),
+        said,
+      ).toEqual(["It promised 2 tasks, about CHF 0.26."]);
+      // The session's size is said once: no other line counts its tasks with a figure.
+      expect(lines.filter((l) => /\b\d+ tasks?(?: in its order|, about CHF)/.test(l))).toEqual([
+        "It promised 2 tasks, about CHF 0.26.",
+      ]);
+      expect(said).not.toMatch(/for the next session/);
+      const build = tasks.find((t) => t.specialist === "coder");
+      expect(lines).toContain(`Gave 1 note to "${build?.title}".`);
+    } finally {
+      await a.rt.close();
+    }
+  }, 150_000);
+
+  it("L4-money-109: GET /settings: the project's review reserve row says it is kept for the critic's reviews", async () => {
+    const a = await open({});
+    try {
+      await a.client.createProject({ name: "Reserve", goal: "A page" });
+      const view = JSON.stringify(await a.client.settings());
+      expect(view).toContain(
+        "Share of each session budget on Reserve kept for the critic's reviews. Shown for information: sessions keep 20% whatever is stored here",
+      );
+      expect(view).not.toMatch(/review and fixes/);
+      // L4b-left-11: the session budget's default in two decimals (design section 5, rule 7).
+      expect(view).toContain("The most one session on Reserve may spend (CHF 5.00 unless set)");
     } finally {
       await a.rt.close();
     }

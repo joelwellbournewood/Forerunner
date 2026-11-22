@@ -5,6 +5,7 @@ import {
   parseSummaryClaims,
   planItemsOf,
   reviewSession,
+  reviseCause,
   SESSION_REVIEW_KEY,
   SESSION_REVIEW_MODEL,
   SESSION_REVIEW_OPTIONS,
@@ -1075,5 +1076,23 @@ describe("d1116-budget-all, run C", () => {
     } finally {
       await w.close();
     }
+  });
+});
+
+describe("l4-money-pause, run L4: a session review's revise names its cause (L4-money-112, L3-left-16)", () => {
+  it("the cause is its first finding above low, in its words; nothing reads 'sent back for changes'", () => {
+    const overrun =
+      "Planned tasks cost CHF 0.11, over their estimate of CHF 0.07 by 51%, with one task tried twice";
+    expect(
+      reviseCause([
+        { severity: "low", description: "Summary to the human is empty" },
+        { severity: "medium", description: overrun },
+      ]),
+    ).toBe(overrun);
+    expect(
+      reviseCause([{ severity: "low", description: "Summary to the human is empty" }]),
+    ).toBeNull();
+    expect(reviseCause([])).toBeNull();
+    expect(overrun).not.toMatch(/sent back for changes/);
   });
 });

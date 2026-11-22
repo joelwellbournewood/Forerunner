@@ -758,7 +758,12 @@ function hereOf(
   // as the session's result right under this row says; a hard stop paused at it.
   if (paused)
     return {
-      words: paused.before ? `Paused before ${paused.limit} ran out` : `Paused at ${paused.limit}`,
+      // L4-money-111: the work is done and only its review waits for room.
+      words: paused.reviewWaits
+        ? `Done; its review waits for room in ${paused.limit}`
+        : paused.before
+          ? `Paused before ${paused.limit} ran out`
+          : `Paused at ${paused.limit}`,
       key: "answer",
     };
   if (has(record.needsYou)) return { words: "Needed your answer", key: "answer" };

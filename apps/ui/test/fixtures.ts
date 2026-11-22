@@ -742,7 +742,7 @@ export const SETTINGS: SettingView[] = [
     scope: "project",
     scopeId: "proj_atlas",
     value: money(6_250_000),
-    description: "The most one session on Atlas may spend (CHF 5 unless set)",
+    description: "The most one session on Atlas may spend (CHF 5.00 unless set)",
     risk: "medium",
   },
   {

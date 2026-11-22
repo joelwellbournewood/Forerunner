@@ -165,6 +165,22 @@ export function planItemsOf(plan: JsonValue): SessionPlanItemLike[] {
  * figure is computed from the first item per task instead of trusted.
  */
 export function planEstimateOf(plan: JsonValue, items: SessionPlanItemLike[]): number {
+  // l4-money-pause, run L4 (L4-selftasks-107, L4-money-104): the session's size is its promise:
+  // the promise's figure as the person was shown it, plus what joined it. A re-plan's re-priced
+  // estimate of a promised task no longer moves it (live check 4: "It promised 3 tasks, about CHF
+  // 0.45" beside "against an estimate of CHF 0.31").
+  const promise = promiseOf(plan);
+  if (promise) {
+    const promised = new Set(promise.taskIds);
+    const seen = new Set<string>();
+    let joined = 0;
+    for (const i of items) {
+      if (i.again || seen.has(i.taskId) || promised.has(i.taskId)) continue;
+      seen.add(i.taskId);
+      joined += i.estimateUsdMicro ?? 0;
+    }
+    return promise.estimateUsdMicro + joined;
+  }
   const total = num((plan as { estimateUsdMicro?: unknown } | null)?.estimateUsdMicro);
   const repeats = new Set(items.map((i) => i.taskId)).size < items.length;
   if (total !== undefined && !repeats && !items.some((i) => i.again)) return total;
@@ -200,12 +216,51 @@ export function tasksTriedAgainOf(items: SessionPlanItemLike[]): number {
   return again.size;
 }
 
+/** The session's promise on its plan (S-6: the tasks it promised and their figure), or null. */
+export function promiseOf(plan: JsonValue): { taskIds: string[]; estimateUsdMicro: number } | null {
+  const p = (plan as { promise?: unknown } | null)?.promise;
+  if (!p || typeof p !== "object" || Array.isArray(p)) return null;
+  const o = p as { taskIds?: unknown; estimateUsdMicro?: unknown };
+  const ids = Array.isArray(o.taskIds)
+    ? o.taskIds.filter((x): x is string => typeof x === "string")
+    : [];
+  const est = num(o.estimateUsdMicro);
+  return ids.length > 0 && est !== undefined ? { taskIds: ids, estimateUsdMicro: est } : null;
+}
+
+/**
+ * l4-money-pause, run L4 (L4-money-104): the session's planned set is its promise: the plan's
+ * items, then each promised task the items do not list (one that waited behind a larger task and
+ * never ran, at its left-out figure). Before, "0 of 1 planned task done" beside "It promised 2
+ * tasks".
+ */
+export function plannedItemsOf(plan: JsonValue): SessionPlanItemLike[] {
+  const items = planItemsOf(plan);
+  const promise = promiseOf(plan);
+  if (!promise) return items;
+  const listed = new Set(items.map((i) => i.taskId));
+  const leftOut = planItemsOf({
+    items: ((plan as { leftOutForBudget?: unknown } | null)?.leftOutForBudget ?? []) as JsonValue,
+  } as JsonValue);
+  for (const id of promise.taskIds) {
+    if (listed.has(id)) continue;
+    listed.add(id);
+    const l = leftOut.find((x) => x.taskId === id);
+    items.push({
+      taskId: id,
+      ...(l?.title ? { title: l.title } : {}),
+      ...(l?.estimateUsdMicro !== undefined ? { estimateUsdMicro: l.estimateUsdMicro } : {}),
+    });
+  }
+  return items;
+}
+
 export async function loadSessionReviewData(
   store: StateStore,
   sessionId: string,
 ): Promise<SessionReviewData> {
   const session = await store.session.mustGet(sessionId);
-  const planItems = planItemsOf(session.plan);
+  const planItems = plannedItemsOf(session.plan);
   const runs = await store.run.forSession(sessionId);
   const ids = new Set<string>(planItems.map((i) => i.taskId));
   for (const r of runs) if (r.task_id) ids.add(r.task_id);
@@ -861,4 +916,18 @@ export async function reviewSession(opts: ReviewSessionOptions): Promise<ReviewO
     log("critic").warn("could not append the session review event", { error: errorMessage(e) });
   }
   return { ...out, reviewId: review.id, findingIds, humanRequestId, patterns, lessonProposals };
+}
+
+/**
+ * l4-money-pause, run L4 (L4-money-112; C6L-19's L3-left-16): the cause a session review's
+ * `revise` found, in its own words: its first finding above low ("Planned tasks cost CHF 0.11,
+ * over their estimate of CHF 0.07 by 51%, with one task tried twice"), for the line the person
+ * reads; null when it found none. A session review sends nothing back, so its line names this
+ * cause, never a task review's "sent back for changes".
+ */
+export function reviseCause(
+  findings: readonly { severity: string; description: string }[],
+): string | null {
+  const f = findings.find((x) => x.severity !== "low" && x.description.trim() !== "");
+  return f ? f.description.replace(/\s+/g, " ").trim().slice(0, 200) : null;
 }

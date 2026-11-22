@@ -135,12 +135,14 @@ import {
   type TaskNeeds,
 } from "./billing.ts";
 import {
+  type BudgetStopSource,
   budgetLineWords,
   handoffArtifact,
   limitWords,
   parseHandoff,
   pauseSentence,
   type RunHandoff,
+  replyCutWords,
   stopSourceOf,
   WRAP_UP_BRIEF_LINE,
   wrapUpSentWords,
@@ -1079,7 +1081,35 @@ export class LoopTaskExecutor implements TaskExecutor {
     // Where the run's cap comes from: its own (the task's budget, the specialist's limit), or
     // the session's work budget when that is smaller. Compared with the run's own cap, so a stop
     // at a cap kept below the session's work budget reads as the task's.
-    const runCapSource = work.capUsdMicro <= sessionLeftUsdMicro ? cap.source : "session";
+    let runCapSource: BudgetStopSource =
+      work.capUsdMicro <= sessionLeftUsdMicro ? cap.source : "session";
+    let runCapUsdMicro = Math.min(work.capUsdMicro, sessionLeftUsdMicro);
+    // l4-money-pause, run L4 (L4-money-103; ADR 0112 amended 2026-11-22): what the project's
+    // budget or the month's cap still allows, at its stop line, caps the run when it is smaller,
+    // so its wrap-up line, its reserve and its start line follow the limit that would stop it
+    // (live check 4: "This run may spend CHF 1.20" under a project budget of CHF 0.06, then a
+    // hard stop there with no wrap-up). The review's room is kept inside that remainder as BA-4
+    // keeps it inside a task's budget, when it can hold both; else the review waits as before.
+    // The hooks' caps check stays the backstop of every call.
+    let outerLimit: { capUsdMicro: number; roomUsdMicro: number } | null = null;
+    const outer = await this.deps.driver
+      .outerRemainder?.(
+        {
+          humanId: token.claims.ownerHumanId,
+          ...(task.project_id ? { projectId: task.project_id } : {}),
+          sessionId: session.id,
+          taskId: task.id,
+        },
+        runCapUsdMicro,
+      )
+      .catch(() => undefined);
+    if (outer && outer.usdMicro < runCapUsdMicro) {
+      const room = Math.max(0, Math.round(item.reviewRoomUsdMicro ?? 0));
+      const keeps = room > 0 && room * 2 <= outer.usdMicro;
+      runCapUsdMicro = keeps ? outer.usdMicro - room : outer.usdMicro;
+      runCapSource = outer.level;
+      outerLimit = { capUsdMicro: outer.capUsdMicro, roomUsdMicro: keeps ? room : 0 };
+    }
     const brief: DelegationBrief = validateBrief({
       goal: `${task.title}: ${task.outcome}`,
       contextLinks: [
@@ -1127,7 +1157,7 @@ export class LoopTaskExecutor implements TaskExecutor {
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
         : [outcomeCriterion(task.outcome)],
-      budgetUsdMicro: Math.max(1, Math.min(work.capUsdMicro, sessionLeftUsdMicro)),
+      budgetUsdMicro: Math.max(1, runCapUsdMicro),
       riskTier: task.risk_tier as 0 | 1 | 2 | 3,
       specialist: defaultSpec.name,
       timeoutMs,
@@ -1468,7 +1498,9 @@ export class LoopTaskExecutor implements TaskExecutor {
           text: budgetLineWords(
             ev,
             (n) => this.chfText(n),
-            runCapSource === "task_budget" ? work.roomUsdMicro : 0,
+            runCapSource === "task_budget" ? work.roomUsdMicro : (outerLimit?.roomUsdMicro ?? 0),
+            // L4-money-103: a run capped at what is left of an outer limit says so.
+            runCapSource === "project" || runCapSource === "month" ? runCapSource : undefined,
           ),
         });
       } else if (ev.type === "web_search") {
@@ -1503,6 +1535,12 @@ export class LoopTaskExecutor implements TaskExecutor {
           text: wrapUpSentWords(spec.name, ev.spentUsdMicro, ev.capUsdMicro, runLine, (n) =>
             this.chfText(n),
           ),
+        });
+      // L4-money-106: a reply cut off at its length limit is a line of the log, with its CHF.
+      else if (ev.type === "reply_cut")
+        ctx.onStep({
+          kind: "note",
+          text: replyCutWords(spec.name, ev, (n) => this.chfText(n)),
         });
       else if (ev.type === "model_call_end")
         ctx.onStep({ kind: "model", costUsdMicro: ev.costUsdMicro });
@@ -1908,11 +1946,20 @@ export class LoopTaskExecutor implements TaskExecutor {
               ? budget.limits.budgetUsdMicro
               : source === "plan"
                 ? brief.budgetUsdMicro
-                : (result.error?.capUsdMicro ?? brief.budgetUsdMicro);
+                : // L4-money-103: a run capped at what was left of an outer limit names that
+                  // limit's own cap, whether it wrapped up or its run cap refused a step.
+                  outerLimit && source === runCapSource
+                  ? outerLimit.capUsdMicro
+                  : (result.error?.capUsdMicro ?? brief.budgetUsdMicro);
       const what = limitWords(source, capUsdMicro, (n) => this.chfText(n), spec.name);
       // d1116-budget-all (BA-4): at the task's budget the run may spend its work cap (what is
       // left less the room kept for its review), and the sentence names the room.
-      const roomKept = source === "task_budget" ? work.roomUsdMicro : 0;
+      const roomKept =
+        source === "task_budget"
+          ? work.roomUsdMicro
+          : outerLimit && source === runCapSource
+            ? outerLimit.roomUsdMicro
+            : 0;
       return {
         outcome: "paused",
         summary: pauseSentence(

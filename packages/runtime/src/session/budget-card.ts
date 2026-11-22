@@ -14,6 +14,7 @@ import { unappliedAnswers } from "./findings.ts";
 import { moneyWords } from "./money-words.ts";
 import type { PreparePort, PrepareResult } from "./prepared-work.ts";
 import { noteAboutTask, recordStart, type StartPort, startForPerson } from "./resume-work.ts";
+import { reviewRoomWords } from "./review-room-words.ts";
 import type { BudgetStop } from "./runner.ts";
 
 /**
@@ -127,9 +128,18 @@ export function budgetStopTitle(
   task: Pick<TaskRow, "title">,
   stop: Pick<BudgetStop, "capUsdMicro" | "source" | "specialist" | "stoppedBy">,
   rate: number,
+  /**
+   * l4-money-pause, run L4 (L4-money-111, live check 4): the specialist finished and only its
+   * review waits for room (TR-14): '"X" is done; its review waits for room in its budget'.
+   * Before, the card, the task's reason, the notification and the result read '"X" paused at its
+   * budget of CHF 0.15' beside "The work is done" at CHF 0.08 spent.
+   */
+  opts: { reviewWaits?: boolean } = {},
 ): string {
   const title = `"${task.title.replace(/\s+/g, " ").trim()}"`;
   const chf = chfText(stop.capUsdMicro, rate);
+  if (opts.reviewWaits)
+    return `${title} is done; its review waits for ${reviewRoomWords(stop.source)}`;
   if (stop.stoppedBy === "wrap_up")
     switch (stop.source) {
       case "task_budget":
@@ -138,6 +148,11 @@ export function budgetStopTitle(
         return `${title} paused before the ${saidByName(stop.specialist) ?? "specialist"}'s limit per run ran out`;
       case "session":
         return `${title} paused before this session's budget ran out`;
+      // L4-money-103: a run capped at what was left of an outer limit heard its wrap-up there.
+      case "project":
+        return `${title} paused before the project's budget ran out`;
+      case "month":
+        return `${title} paused before this month's cap ran out`;
       default:
         break;
     }
@@ -249,7 +264,7 @@ export async function fileBudgetStopCard(
         ...(needs !== undefined ? { needsUsdMicro: needs } : {}),
       })
     : null;
-  const title = budgetStopTitle(task, stop, rate);
+  const title = budgetStopTitle(task, stop, rate, { reviewWaits: input.reviewWaits === true });
   const left = cardHandoff(input.handoff);
   const request = await store.humanRequest.insert({
     human_id: input.humanId,

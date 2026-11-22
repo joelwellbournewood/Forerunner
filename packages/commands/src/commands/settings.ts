@@ -372,7 +372,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     scope: "project",
     risk: "medium",
     schema: z.number().min(0.15).max(0.25),
-    description: "Share of each session budget kept for review and fixes.",
+    description: "Share of each session budget kept for the critic's reviews.",
   },
   small_project_mode: {
     key: "small_project_mode",
