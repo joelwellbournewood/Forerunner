@@ -243,7 +243,8 @@ export function settingsView(input: SettingsViewInput): Row[] {
             DEFAULT_SESSION_CAP_CHF,
             rate,
           ),
-          description: `The most one session on ${p.name} may spend (CHF ${DEFAULT_SESSION_CAP_CHF} unless set)`,
+          // L4b-left-11 (design §5 rule 7): two decimals, as every money line.
+          description: `The most one session on ${p.name} may spend (CHF ${Number(DEFAULT_SESSION_CAP_CHF).toFixed(2)} unless set)`,
           risk: "medium",
         }),
         project({
@@ -269,7 +270,7 @@ export function settingsView(input: SettingsViewInput): Row[] {
               ? p.settings.session_reserve_share
               : null,
           // Stored by `settings.set`, but sessions keep their fixed 20% today: information only.
-          description: `Share of each session budget on ${p.name} kept for review and fixes. Shown for information: sessions keep 20% whatever is stored here`,
+          description: `Share of each session budget on ${p.name} kept for the critic's reviews. Shown for information: sessions keep 20% whatever is stored here`,
           risk: "medium",
         }),
         project({

@@ -17,7 +17,7 @@ export interface SessionLimits {
   stepCap: number;
   /** Absolute epoch ms when the session must stop. */
   deadlineMs: number;
-  /** Share of the session budget reserved for review and fixes (0.15-0.25). */
+  /** Share of the session budget kept for the critic's reviews (0.15-0.25); work, a fix after a send-back included, stops below it (l4-money-pause, L4-money-109). */
   reserveShare: number;
 }
 

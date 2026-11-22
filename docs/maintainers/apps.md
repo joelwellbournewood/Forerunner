@@ -3053,3 +3053,5 @@ what the agent did to the task when its last change was the agent's ("Added by t
 show no such line. The fake daemon sets it from the row's reason with the daemon's own
 `agentChangeLine` (fake-tasks.ts). Tests: `test/tasks.test.tsx` and `test/real-daemon.test.ts`
 (describe "d1109-selftasks-chat, run C", SC-8).
+
+l4-money-pause, run L4 (2026-11-22, L4-money-112): the Reviews tab words a session check (a review with no task) "accepted", "noted" or "needs you" (the warn tone unless accepted) and its findings "noted", never a task review's "sent back" and "to fix" (`reviewLabel`, `reviewTone` in `pages/project/ReviewsTab.tsx`, local to the tab).

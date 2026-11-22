@@ -33,7 +33,10 @@ secret value); an unattended step (`RunContext.unattended`, the runtime's own ca
 | `afterToolCall(ctx, tool, input, result)` | redacts resolved secrets, wraps untrusted output in the data envelope and scans it for injection, audits. Every audit summary the hooks write (input and result, on the allow, deny and pending paths) is scrubbed first: the run's resolved secret values in every encoding (`SecretsPort.redact`), then the platform's credential shapes as a last line for a value the model obtained elsewhere and pasted into a later input, with `secret:<name>` references kept, since the name is what the audit is meant to carry |
 
 The per-session accounting is `SessionBudget` (`src/enforcement/budget.ts`): run and session
-caps, step cap, wall clock, the 80% rule and the review reserve (default 20%). The estimate
+caps, step cap, wall clock, the 80% rule and the review reserve (default 20%; kept for the
+critic's reviews: work runs, a fix after a send-back included, stop below it, so its words in
+Settings, the settings description chat reads and the caps' note say "kept for the critic's
+reviews", never "for review and fixes": l4-money-pause, run L4, L4-money-109). The estimate
 before a call is conservative: full input at input price plus `max_tokens` at output price.
 Every estimate and spend must be a non-negative safe integer of USD micro-units: `precheck`
 and `record` refuse NaN, infinity, a fraction and a negative with `validation` (a NaN recorded

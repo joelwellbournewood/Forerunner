@@ -457,3 +457,5 @@ defaults. All time comes from `SimulatedClock`. The runtime's `views.test.ts` an
   subscription at its limit and a real key with an empty balance have not been seen yet (the
   live harness, BLOCKERS.md). A limit the classification does not recognise stays the call's
   error, shown to the person, and nothing rests.
+
+l4-money-pause, run L4 (2026-11-22, L4-money-109): the session level's note at the work line says "review reserve 20% of the session cap is kept for the critic's reviews" (before: "for review and fixes"; a fix after a send-back is work and stops below it). L4-money-103 reads what the month's cap and the project's budget still allow through `check` (`EnforcementHooks.outerRemainder` in the runtime); no check changed.

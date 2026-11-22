@@ -199,3 +199,12 @@ describe("model.settings.set", () => {
     await w.store.close();
   });
 });
+
+describe("l4-money-pause, run L4: the reserve setting's description, as chat reads it (L4-money-109)", () => {
+  it("says the share is kept for the critic's reviews: work, a fix after a send-back included, stops below it", async () => {
+    const { SETTING_SPECS } = await import("../src/commands/settings.ts");
+    expect(SETTING_SPECS.session_reserve_share?.description).toBe(
+      "Share of each session budget kept for the critic's reviews.",
+    );
+  });
+});

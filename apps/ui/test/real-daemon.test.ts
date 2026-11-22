@@ -24491,4 +24491,20 @@ describe("l4-money-pause, run L4", () => {
       await a.rt.close();
     }
   }, 120_000);
+
+  it("L4-money-109: GET /settings: the project's review reserve row says it is kept for the critic's reviews", async () => {
+    const a = await open({});
+    try {
+      await a.client.createProject({ name: "Reserve", goal: "A page" });
+      const view = JSON.stringify(await a.client.settings());
+      expect(view).toContain(
+        "Share of each session budget on Reserve kept for the critic's reviews. Shown for information: sessions keep 20% whatever is stored here",
+      );
+      expect(view).not.toMatch(/review and fixes/);
+      // L4b-left-11: the session budget's default in two decimals (design section 5, rule 7).
+      expect(view).toContain("The most one session on Reserve may spend (CHF 5.00 unless set)");
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });

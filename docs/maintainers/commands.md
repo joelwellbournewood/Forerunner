@@ -1018,3 +1018,5 @@ by voice, chat or UI" (`scenario.test.ts`); O.2 and J.1 with the runtime (`memor
 lesson stated in chat recorded in the principal's memory, `packages/runtime/test/conversation.test.ts`);
 C.5 with the runtime (`specialist.propose`, the PM's proposal reaching the approval gate from a
 chat turn, `packages/runtime/test/specialist-propose-tool.test.ts`).
+
+l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserve_share.description`, the settings description chat reads, says what the reserve is kept for: "Share of each session budget kept for the critic's reviews." (before: "for review and fixes"; work runs, a fix after a send-back included, stop below the reserve).

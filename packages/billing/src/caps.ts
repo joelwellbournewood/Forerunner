@@ -34,7 +34,7 @@ export interface Caps {
   sessionUsdMicro: number;
   taskUsdMicro?: number;
   runUsdMicro?: number;
-  /** Share of the session cap kept for review and fixes, 0.15..0.25. Default 0.2. */
+  /** Share of the session cap kept for the critic's reviews, 0.15..0.25. Default 0.2 (L4-money-109: fixes are work). */
   reserveShare?: number;
   /** Plan usage share at which subscription work stops. Default 0.95. */
   planShareCap?: number;
@@ -168,7 +168,7 @@ export class CapChecker {
         const workLimit = roundHalfUp(cap * (1 - caps.reserveShare));
         if (projected > workLimit) {
           status.decision = "finish_current";
-          status.note = `review reserve ${Math.round(caps.reserveShare * 100)}% of the session cap is kept for review and fixes`;
+          status.note = `review reserve ${Math.round(caps.reserveShare * 100)}% of the session cap is kept for the critic's reviews`;
         }
       }
       levels.push(status);
