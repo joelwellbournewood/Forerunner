@@ -16849,7 +16849,10 @@ describe("l3-money-engine, run L3", () => {
       expect(runs.map((r) => r.task_id)).toEqual([task.id, task.id]);
       const lines = (await client.sessionEvents(sessionId)).map((e) => [e.type, e.text]);
       const said = (type: string) => lines.filter(([t]) => t === type).map(([, text]) => text);
-      const planned = chfIn(said("session.planned")[0] ?? "");
+      // l4-money-pause, run L4 (L4-github-110): the figure the person saw is the promise's, said
+      // once; the Plan line says how the task was chosen (before: "Plan: 1 task, about CHF x.").
+      expect(said("session.planned")).toEqual(["Plan: 1 ready task in priority order."]);
+      const planned = chfIn(said("session.promised")[0] ?? "");
       expect(planned).not.toBeNull();
       // d1116-budget-all (BA-8): the plan's estimate holds the review, so the planned task's
       // whole cost (both tries and their reviews) is set against it, the session's own checks
