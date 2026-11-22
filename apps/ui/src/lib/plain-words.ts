@@ -20,11 +20,23 @@ const IN_APP: Array<[RegExp, string]> = [
   [/Confirm in the app on a paired device\.?/g, "Confirm on this device."],
 ];
 
-/** A daemon text as the app shows it: no "say yes", "reply to the email" or "say undo". */
+/**
+ * A daemon text as the app shows it: no "say yes", "reply to the email" or "say undo". Its
+ * lines stay (l4-chat-answers, L4-chat-111): runs of spaces and tabs collapse, line ends are
+ * trimmed and a run of blank lines is one blank line. Before, every blank line became a space,
+ * so a settled chat reply glued its paragraphs and lists into one line ("… - "Write the
+ * welcome page" failed …") while the streaming bubble had shown them apart.
+ */
 export function inAppText(text: string): string {
   let out = text;
   for (const [re, by] of IN_APP) out = out.replace(re, by);
-  return out.replace(/\s{2,}/g, " ").trim();
+  return out
+    .replace(/[^\S\n]{2,}/g, " ")
+    .split("\n")
+    .map((line) => line.replace(/[^\S\n]+$/, ""))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /**

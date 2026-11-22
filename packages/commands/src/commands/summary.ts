@@ -68,9 +68,10 @@ export type SummarySpeakParams = z.infer<typeof params>;
  * then the spoken text, whose project total and the session's spend disagreed.
  */
 export async function chatProjectSummary(
-  ctx: Pick<CommandContext, "store">,
+  ctx: Pick<CommandContext, "store"> & { ports?: Pick<CommandContext["ports"], "resultNow"> },
   p: ProjectRow,
 ): Promise<string> {
+  p = await withResultNow(ctx, p);
   const tasks = (await ctx.store.task.forProject(p.id, {}, { limit: 10_000 })).filter(
     (t) => t.status !== "cancelled",
   );
@@ -110,7 +111,34 @@ function notAloudWords(reason: string | undefined): string {
 async function textOf(ctx: Parameters<CommandDef<SummarySpeakParams>["run"]>[1], p: ProjectRow) {
   const spend = await ctx.store.costLedger.sum({ projectId: p.id });
   const chf = await ctx.ports.chfPerUsd(ctx.clock.nowIso());
-  return spokenProjectSummary(p, spend.usd_micro, chf);
+  return spokenProjectSummary(await withResultNow(ctx, p), spend.usd_micro, chf);
+}
+
+/**
+ * l4-chat-answers (L4-chat-103): the project with its last result as it holds now (the
+ * `resultNow` port, the daemon's `resultAfterWait`), as the Overview reads it. Live check 4: after
+ * Cancel, chat's "summary" still said "...; then your session goes on.".
+ */
+async function withResultNow(
+  ctx: { ports?: Pick<CommandContext["ports"], "resultNow"> },
+  p: ProjectRow,
+): Promise<ProjectRow> {
+  const cache = (p.summary_cache ?? {}) as {
+    last_session?: { summary?: unknown; ended_at?: unknown };
+  };
+  const stored = cache.last_session?.summary;
+  if (!ctx.ports?.resultNow || typeof stored !== "string" || !stored) return p;
+  const since =
+    typeof cache.last_session?.ended_at === "string" ? cache.last_session.ended_at : null;
+  const now = await ctx.ports.resultNow(p.id, since, stored).catch(() => stored);
+  if (now === stored) return p;
+  return {
+    ...p,
+    summary_cache: {
+      ...(p.summary_cache as object),
+      last_session: { ...(cache.last_session as object), summary: now },
+    },
+  } as ProjectRow;
 }
 
 /** The named or active project, refused when it belongs to another human (ADR 0041 item 4). */

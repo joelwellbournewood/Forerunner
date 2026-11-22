@@ -138,7 +138,13 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
     [client, projectId],
   );
   // The project changed (a task finished, a session ended): read Last result and Next again.
-  const version = project ? JSON.stringify([project.statusLine, project.progress]) : "";
+  // l4-chat-answers (L4-chat-103): and when this project's running entries change (Cancel on a
+  // session that waits to go on removes its entry while the status line may stay "Waiting for
+  // you"), so Last result stops promising "...; then your session goes on." without a reload.
+  const runKeys = useRunning(projectId)
+    .map((r) => `${r.key}:${r.state}`)
+    .join(",");
+  const version = project ? JSON.stringify([project.statusLine, project.progress, runKeys]) : "";
   const { reload } = summary;
   useEffect(() => {
     if (version) reload();

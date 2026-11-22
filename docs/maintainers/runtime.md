@@ -4479,6 +4479,21 @@ agent wraps each command tool with `withStep`, C2-left-6). The
 records a reply names among those it opened are kept on its `chat.reply` row as
 `sources.records` (`namedSources`, at most three, `{kind, title, date, link}`), read by
 `readTranscript` and served as `ChatReplyView.sources` and `ConversationTurnView.reply.sources`.
+l4-chat-answers (run L4, L4-chat-108): then the hits the turn's searches showed and the reply did
+not open (`RecallScope.seen`, kept across the turn's searches, each with whether it was strong),
+named by title or an earlier title, by date alone only when the hit was strong and no other hit
+of the turn has that day; a name found only inside an already named source's title does not
+count (a task's title inside its card's '"X" needs your answers'); at most three, none twice
+(test `chat-recall.test.ts` "l4-chat-answers, run L4"; the real daemon's "... a reply from
+recall's hit line (no recall_open) ..."). Live check 4: 9 of 11 recall turns answered from the hit
+line and had no From line. L4-chat-106: a session's hit names the tasks that failed beside those
+it did ('Did 1 task: "Make the events calendar"; "Write the welcome page" failed.', `sessionDid`;
+the counts when the names pass 200 characters), reads what still waits now (`stillBlocked`), and
+says "How it ended: 1 task needs you." (`howItEnded`: no second "Ended:", nothing for "Done"
+beside a failure); recall_open's "What it did" and "How it ended" say the same. The Sessions
+list's own sentence (`sessionGist`) is unchanged. L4-chat-107: a questions card's hit (key
+`person_questions:`) starts with "It asked: <questions joined by | , cut at 120>", then "Answer:
+…", then what came of it (`askedOf`); every other card's title is its question.
 A session's title is "The session of Sun 15 Nov", with its start time ("… at 18:22") when
 another of the project's sessions started that day, so hits and sources tell them apart. A
 link is the app's own path; a line of the conversation outside any project has none (that
@@ -4621,7 +4636,12 @@ now; `budget.test.ts` `SessionBudget.wrapUpNow`.
   typed yes runs it once) and the model's ask in words is taken out (`withoutWordsOffer`; a reply
   that was nothing else is the ask line itself, a notice); the row's `why` is the need. A rung
   that would go ahead is never started by the words: Think it through stays under the answer as
-  under every quick answer. A pattern never spends; only the person's yes does.
+  under every quick answer. A pattern never spends; only the person's yes does. l4-chat-answers
+  (L4b-left-7, -8): a comparison needs what it compares ("compare the two ways", "compare X with
+  Y"; "how does this compare?" is not one), a review is never "in review" ("how long has it been
+  in review for?"), and `withoutWordsOffer` takes out a sentence naming a stronger model only
+  when it is the offer's question or in that question's paragraph ("Sonnet is a stronger model
+  than Haiku." alone stays). Tests `chat-depth-words.test.ts`.
 - *The closer look is told what it is (L4-chat-203).* The thorough request's `# Now` carries
   `this_answer` (`thoroughFact`: "the closer look on Sonnet that the person said yes to (at most
   CHF 0.57)", "the longer look on this model that the person asked for (...)" or "... that the
@@ -4796,6 +4816,57 @@ in one project cancelled a task in another. Now:
   "The app did: …" is what a turn changed). Tests: `conversation-memory.test.ts` "l3-chat-claims,
   run L3" and "l3-chat-claims, run L3: what the turn did", `real-daemon.test.ts` "l3-chat-claims,
   run L3" (the reply agrees with its own card and with the change it made, through POST /chat).
+- **Chat's own questions and the app's own lines** (l4-chat-answers, run L4, 2026-11-22; live
+  check 4's L4-chat-102, L4-selftasks-118, L4-chat-112). The guard has two more kinds
+  (`claimsOf`, one per kind, judged in the order asked, changed, absent, asks): **asks**, a yes
+  asked for in the reply's own words to make a change ("Shall I set research … again?", "Do you
+  want me to start a session …?", "Should research … be allowed to …?", "Soll ich … umstellen?",
+  a read-back the model wrote itself such as 'Make "X" high priority?', or "I need your yes"
+  beside a question); a clarifying question stays free under every pattern (`CLARIFIES`: it asks
+  which, who, where, or starts with what, when or how, "Which task should I add it to?", "Where
+  should I put the new page?"; or it offers a choice, "Add it to Notes or to Site?", "Start it now
+  or wait for the next session?", but not "… or not?" or "… or leave it as it is?"; German
+  welche, wo, oder), and so is a "needs your yes" sentence beside clarifying questions only
+  (review of l4-chat-answers: each such question got a nudge and, asked again, became "Nothing
+  changed, …" at two model calls a turn). It stands when a command of the turn read a change back or an
+  earlier turn's card still waits (a typed yes answers that one); otherwise the nudge is
+  `ASKS_NUDGE` and a question still asked after it is replaced as above. **absent** is L4-chat-101's
+  (next bullet). A forged "The app did: …" line is a "changed" claim, also behind a short bracketed lead ("[stand-in model] The app did: …"). A bare "yes" still never
+  reaches the model (design §3.9, the plan check's D-L4-23): `YES_TO_WHAT_REPLY` now names a next
+  step ('Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it
+  now" to start a session.'). One nudge per kind: an absence looked up may then ask in words,
+  which is nudged once more while the turn's calls last. Only the app writes its lines: the reply
+  the person sees and the stored row leave out any "The app did: …" or "The app asked, with Yes
+  and No: …" line the model wrote (`withoutAppMarkers`, a security rule: a forged change line can
+  no longer pose as a change in the conversation or a later turn's history), and the history says
+  an earlier read-back as the app's question, "The app asked, with Yes and No: <read-back>"
+  (`HISTORY_ASK_LEAD`, `replyInHistory`), never as the model's own prose it would copy. A set to
+  the value already in force goes back to the model as "Nothing to change: <what> is already
+  <value>." (`nothingToChange` in `packages/commands/src/registry.ts`, from the refusal's
+  `details.unchanged`), not as an is_error "Refused: …" to read and retry. The rules say it
+  (`CHAT_RETRIEVAL_RULES`: only the app writes its two lines; `CHAT_PLAN_RULES`' "# How to write":
+  never name a tool, never narrate tool calls or refusals, never ask for a yes in words;
+  `conversation-agent.md` 1.5.1). Tests: `conversation-memory.test.ts` "l4-chat-answers, run L4",
+  `real-daemon.test.ts` "l4-chat-answers, run L4", `chat.test.tsx` "l4-chat-answers, run L4".
+- **Look it up, never say it is missing** (l4-chat-answers, run L4, 2026-11-22; live check 4's
+  L4-chat-101: "There is no README task" for a task renamed since, "I haven't searched the records
+  yet. Should I look …?", LC-C10 3 of 12 with a date). The **absent** kind: a reply that says a
+  record is not there or offers to look ("I can't see/find", "I found no record", "nothing …
+  mentions", "I haven't searched", "Should I look", "There is no <Name> task", "keine …
+  gefunden", "Soll ich nachsehen?"; `ABSENT` in `claims.ts`) in a turn that offered `recall` and
+  called neither `recall` nor `recall_open` gets one nudge, `ABSENT_NUDGE` ("You said it is not
+  there without looking it up. Call recall now …"), inside the turn's calls and budget, its text
+  not streamed (the step line "Looking through everything recorded…", `LOOKING_STEP`). An absence
+  said after a lookup stands, and an absence is never replaced by a "Nothing changed" line: the
+  answer after the nudge is the reply (with no call left the first one stays; the guard is on the
+  row as `claimGuard.kind: "absent"`). "There is no ready task" names no record and stays free.
+  The facts' task line names a renamed task's earlier title ('"Write the guide" (earlier "Write
+  the README"): Done'; `earlierTitlesOf`, moved from `read-tools.ts` to `project-facts.ts`), and
+  the rules say a lookup needs no yes (`CHAT_RECALL_RULES`, the prompt's "What you look up" and
+  "How you answer"). Not built (the area's cut line): code running recall itself when the model
+  still makes no lookup after the nudge. The bench stand-in's `FORERUNNER_BENCH_CHAT_NOLOOK=1`
+  plays the fast model that answers without looking. Tests: `chat-recall.test.ts`
+  "l4-chat-answers, run L4", `real-daemon.test.ts` "l4-chat-answers, run L4" (the stand-in's mode).
 - **The context** (`src/conversation/project-facts.ts`, in the volatile part): `# Tasks of
   <project>` (every task in run order, at most `CONTEXT_TASKS_MAX` by name, each with its status
   in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,
@@ -8355,6 +8426,27 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   no task (fix-up of the review: before, every card oldest first, 500 at most, so on an install
   with more cards the stop's card was never found; test `credential-ask-words.test.ts` "... more
   than 500 earlier cards ...").
+- **The option pressed under the parser's "Which project: …?"** (review of l4-chat-answers,
+  2026-11-22). A parser question with options (the pronoun question of "add a task there: …" or
+  "open it" with two or more projects and none named in this conversation) is answered by the
+  next line when it is one of its options, a project's name alone (the button sends it): the
+  agent parses the line that asked again with `CommandTurn.namedProjectId` set to that project,
+  and its "there" or "it" means it ("add a task there: …" adds there, "open it" opens it), with
+  no model call. The line that asked is read from the conversation's rows (the turn before:
+  `reply.question` with options and no actions, its `human.text`), so a press after a restart
+  finishes it too; a line the name does not finish (an older question about a name) is read as
+  before, the name alone. The change's words are the line that asked. Before, the press sent the
+  bare name to the chat model, a paid call that added nothing. Tests: the real daemon's
+  "l4-chat-answers, run L4" ("ordinary 'add a task to …' lines add at once; …"), `chat.test.tsx`
+  "l4-chat-answers, run L4, fixup".
+- **Chat reads a stored result as it holds now too** (l4-chat-answers, run L4, L4-chat-103,
+  live check 4's L4-creds-8): after Cancel on a session waiting to go on, chat's "summary" and the
+  facts the chat model reads (the first message's "Last session" and `session_last`) said "...;
+  then your session goes on." while the Overview said "...; then it runs at your next Start.".
+  `lastSessionNow(store, project, chf)` (`conversation/project-facts.ts`) runs the stored
+  `last_session.summary` through `resultAfterWait` before either reads it, and the commands'
+  `ports.resultNow` (composed here) does the same for `chatProjectSummary`. Tests: the real
+  daemon's "l4-chat-answers, run L4" ("... a cancelled wait's result ..., also after a restart").
 - **The configured API address covers the subscription's task runs** (L4-creds-10, live check
   4's L4-creds-16): `SdkDriverDeps.baseURL` is config.json's `anthropicApiBase` (compose); the
   driver sends `ANTHROPIC_BASE_URL` from `req.baseURL ?? deps.baseURL`, the default address

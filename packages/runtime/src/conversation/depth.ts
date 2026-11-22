@@ -152,14 +152,25 @@ export function needOfLine(line: string): Why | null {
     /\bwarum\b[^.?!]*\b(?:scheitert|fehlgeschlagen|schlägt|schlaegt|klappt)\b/.test(said)
   )
     return "failure";
-  if (/\bcompare\b|\bcomparison\b|\bpros and cons\b|\bvergleich/.test(said)) return "comparison";
+  // L4b-left-7 (l4-chat-answers): "compare" asks for a comparison only with what it compares
+  // ("compare the two ways", "compare X with Y"); "how does this compare?" is a status question.
+  if (
+    /\bcompare (?:the|these|those|both|two|three|my|our)\b|\bcompare\b[^.?!]*\b(?:with|to|against|and|or)\b/.test(
+      said,
+    ) ||
+    /\bcomparison\b|\bpros and cons\b|\bvergleich/.test(said)
+  )
+    return "comparison";
   if (
     /\b(?:a|the) plan (?:for|of)\b|\bplan (?:for|out) the next\b|\bplan the next\b/.test(said) ||
     /\b(?:einen|den) plan\b|\bplan (?:für|fuer)\b/.test(said)
   )
     return "plan";
   if (
-    /\breview (?:the|my|our|this|that|it|for|of)\b|\b(?:überprüfe|ueberpruefe|bewerte)\b/.test(said)
+    // L4b-left-7: "in review" is a task's state ("how long has it been in review for?").
+    /(?<!\bin )\breview (?:the|my|our|this|that|it|of)\b|\b(?:überprüfe|ueberpruefe|bewerte)\b/.test(
+      said,
+    )
   )
     return "review";
   if (
@@ -191,17 +202,22 @@ export function offersInWords(text: string): boolean {
 /**
  * The reply without its sentences that offer a hand-over in words, when the app writes its own
  * ask under it (L4-chat-202): one question, the app's, with the cost and Go ahead. Empty when
- * the reply was nothing else.
+ * the reply was nothing else. A sentence that names a stronger model goes only when it is the
+ * question or leads to one in its paragraph (L4b-left-8: "Sonnet is a stronger model." alone is
+ * an answer and stays).
  */
 export function withoutWordsOffer(text: string): string {
+  const asks = (s: string) => WORDS_OFFER_RE.test(s) && s.trim().endsWith("?");
   return text
     .split(/\n/)
-    .map((para) =>
-      sentencesOf(para)
-        .filter((s) => !WORDS_OFFER_RE.test(s))
+    .map((para) => {
+      const parts = sentencesOf(para);
+      const offered = parts.some(asks);
+      return parts
+        .filter((s) => !(asks(s) || (offered && WORDS_OFFER_RE.test(s))))
         .join("")
-        .trim(),
-    )
+        .trim();
+    })
     .filter((para, i, all) => para !== "" || (i > 0 && all[i - 1] !== ""))
     .join("\n")
     .trim();

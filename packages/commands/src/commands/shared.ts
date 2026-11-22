@@ -24,7 +24,48 @@ export function normaliseProjectName(name: string): string {
     .toLowerCase();
 }
 
-/** Projects whose name matches a spoken name: exact, then containing, then by word overlap. */
+/**
+ * Words that point at a project instead of naming one (l4-chat-answers, L4-chat-104): never a
+ * project's name, whatever name holds them ("it" in "Site", "da" in "Daten").
+ */
+const POINTERS = new Set([
+  "it",
+  "that",
+  "this",
+  "there",
+  "here",
+  "one",
+  "that one",
+  "this one",
+  "same",
+  "other",
+  "es",
+  "das",
+  "dies",
+  "dieses",
+  "dort",
+  "da",
+  "hier",
+]);
+
+/**
+ * Whether `part` is in `whole` from the start of a word: whole words ("notes" in "notes cli"),
+ * or the start of a word for three letters or more ("pharma" in "pharmawatch"); never inside a
+ * word ("it" in "site").
+ */
+function hasWords(whole: string, part: string): boolean {
+  const at = whole.indexOf(part);
+  if (at < 0 || !part) return false;
+  const edge = (ch: string | undefined) => !ch || !/[\p{L}\p{N}]/u.test(ch);
+  for (let i = at; i >= 0; i = whole.indexOf(part, i + 1))
+    if (edge(whole[i - 1]) && (part.length >= 3 || edge(whole[i + part.length]))) return true;
+  return false;
+}
+
+/**
+ * Projects whose name matches a spoken name: exact, then containing (as whole words), then by
+ * word overlap. A pointer word ("it", "that", "there", "dort") matches no project.
+ */
 export function matchProjects<T extends { id: string; name: string }>(
   projects: readonly T[],
   needle: string,
@@ -35,9 +76,10 @@ export function matchProjects<T extends { id: string; name: string }>(
   if (byId.length) return byId;
   const exact = projects.filter((p) => normaliseProjectName(p.name) === n);
   if (exact.length) return exact;
+  if (POINTERS.has(n)) return [];
   const contains = projects.filter((p) => {
     const pn = normaliseProjectName(p.name);
-    return pn.includes(n) || n.includes(pn);
+    return hasWords(pn, n) || hasWords(n, pn);
   });
   if (contains.length) return contains;
   const words = n.split(/[^a-z0-9äöüß]+/i).filter((w) => w.length >= 3);
@@ -45,6 +87,27 @@ export function matchProjects<T extends { id: string; name: string }>(
     const pw = normaliseProjectName(p.name).split(/[^a-z0-9äöüß]+/i);
     return words.some((w) => pw.includes(w));
   });
+}
+
+/**
+ * Projects a few words name as a target ("add a task to Site: …"; review of l4-chat-answers):
+ * the id or the whole name, else a name that holds the words as whole words or from a word's
+ * start ("Pharma" for "PharmaWatch"). Never by word overlap and never when the words hold more
+ * than the name ("fix the login page" names no "Login page"), so ordinary words before a colon
+ * stay the task's own words.
+ */
+export function projectsNamedBy<T extends { id: string; name: string }>(
+  projects: readonly T[],
+  words: string,
+): T[] {
+  const n = normaliseProjectName(words);
+  if (!n || POINTERS.has(n)) return [];
+  const byId = projects.filter((p) => p.id === words.trim());
+  if (byId.length) return byId;
+  const exact = projects.filter((p) => normaliseProjectName(p.name) === n);
+  if (exact.length) return exact;
+  if (n.length < 3) return [];
+  return projects.filter((p) => hasWords(normaliseProjectName(p.name), n));
 }
 
 /** The project a command applies to: the named one, else the active one. */

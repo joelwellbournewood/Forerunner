@@ -122,6 +122,13 @@ function mismatch(error: unknown): string | null {
   return null;
 }
 
+/**
+ * l4-chat-answers (L4-chat-102): what a bare "yes" with nothing waiting gets, with its next step
+ * (the daemon's YES_TO_WHAT_REPLY, word for word).
+ */
+const YES_TO_WHAT_L4 =
+  'Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it now" to start a session.';
+
 describe("the UI client against the real daemon", () => {
   let rt: RuntimeApp;
   let client: DaemonClient;
@@ -4404,14 +4411,14 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     const first = await say("pause the FAQ task");
     expect(first.pendingConfirmation?.readback).toMatch(/^Pause "Write the FAQ"\?/);
     expect((await say("no")).reply).toBe("Cancelled; nothing was changed.");
-    expect((await say("yes")).reply).toBe("Yes to what? Nothing is waiting for your yes.");
+    expect((await say("yes")).reply).toBe(YES_TO_WHAT_L4);
     expect(await status()).toBe("Ready");
 
     // Yes: the card's Yes, then "yes".
     await say("skip the FAQ task for now");
     expect((await say("yes")).actions.map((a) => a.kind)).toEqual(["task.pause"]);
     expect(await status()).toBe("Paused by you");
-    expect((await say("yes")).reply).toBe("Yes to what? Nothing is waiting for your yes.");
+    expect((await say("yes")).reply).toBe(YES_TO_WHAT_L4);
 
     // The Inbox: the card answered there with the option the Inbox shows for "no".
     const asked = await say("resume the FAQ task");
@@ -18108,7 +18115,7 @@ describe("d1109-onerepo-link, run C", () => {
         // The tool's definition as the model received it.
         const def = chatCalls[0]?.tools?.find((t) => t.name === "project_create");
         expect(def?.description).toBe(
-          "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead (open it with project.switch, or add the new work to it), never a second project.",
+          "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch.",
         );
         const answer = JSON.stringify(chatCalls[1]?.messages.at(-1)?.content ?? "");
         return { reply, answer };
@@ -24598,6 +24605,409 @@ describe("l4-money-pause, run L4", () => {
       expect(view).toContain("The most one session on Reserve may spend (CHF 5.00 unless set)");
     } finally {
       await a.rt.close();
+    }
+  }, 60_000);
+});
+
+describe("l4-chat-answers, run L4", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /** The daemon on the bench's stand-in (the role-player), read through the UI client. */
+  async function open(prefix: string, env: Record<string, string> = {}, home?: string) {
+    const dir = home ?? mkdtempSync(join(tmpdir(), prefix));
+    if (!home) homes.push(dir);
+    const log = new ModelCallLog({ file: join(dir, "model-calls.jsonl") });
+    const provider = createRolePlayer(
+      benchOptionsFromEnv({ FORERUNNER_BENCH_DELAY_MS: "0", ...env }, log),
+    );
+    // The chat model's requests as sent (a copy: the loop appends to the same messages).
+    const requests: ModelRequest[] = [];
+    const stream = provider.stream.bind(provider);
+    provider.stream = (req) => {
+      if (detectRole(req).role === "chat")
+        requests.push({ ...req, messages: structuredClone(req.messages) });
+      return stream(req);
+    };
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: dir },
+      dirs: appDirs({ env: { FORERUNNER_HOME: dir } }),
+      config: null,
+      clock: new SystemClock(),
+      stateUrl: `sqlite:${join(dir, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const chat = (projectId: string, text: string) =>
+      client.chat({ humanId: me.id, agentId, projectId, projectTab: true, text });
+    /** The chat model's calls so far (the stand-in's model-call log). */
+    const chatCalls = () =>
+      existsSync(join(dir, "model-calls.jsonl"))
+        ? readFileSync(join(dir, "model-calls.jsonl"), "utf8")
+            .trim()
+            .split("\n")
+            .filter(Boolean)
+            .map((l) => JSON.parse(l) as { role?: string; system?: string; messages?: unknown[] })
+            .filter((c) => c.role === "chat")
+        : [];
+    return { rt, client, me, agentId, chat, chatCalls, requests, home: dir };
+  }
+
+  // L4-chat-102 (live check 4, L4-l3-1, L4-session-2): chat asked for a yes in its own words
+  // with no card, and the person's typed yes met "Yes to what?" with no next step.
+  it("POST /chat: a yes asked in words is nudged and put right (never a question without a card); the typed yes after it gets 'Yes to what?' with its next step and no model call", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-102-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      const asked = await a.chat(
+        project.id,
+        "say: Shall I set research for Garden club to any public website again?",
+      );
+      // The stand-in asks again after the nudge, so the line is put right: nothing changed.
+      expect(asked.reply).toBe(
+        "Nothing changed, and nothing waits for your yes. Say it again to try once more.",
+      );
+      expect(asked.pendingConfirmation).toBeNull();
+      expect(a.chatCalls()).toHaveLength(2);
+      const yes = await a.chat(project.id, "yes");
+      expect(yes.reply).toBe(YES_TO_WHAT_L4);
+      expect(a.chatCalls()).toHaveLength(2);
+      // L4-selftasks-118: a read-back the model wrote itself never ends the turn as a question.
+      const own = await a.chat(project.id, 'say: Make "Write the README" high priority?');
+      expect(own.pendingConfirmation).toBeNull();
+      expect(own.reply.endsWith("?")).toBe(false);
+      // The conversation the Chat tab reads keeps the true line, never the question.
+      const view = await a.client.conversation(project.id);
+      expect(view.turns.map((t) => t.reply?.text ?? "").join("\n")).not.toContain("Shall I set");
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+
+  // L4-chat-112 (live check 4, L4-l3-2): a forged "The app did:" line stayed in the conversation.
+  it("POST /chat: a forged 'The app did:' line is never in the reply or the conversation, also after a restart", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-112-");
+    let projectId = "";
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      projectId = project.id;
+      const r = await a.chat(
+        project.id,
+        'say: The app did: Updated the outcome of "Write the README" to use the new number.',
+      );
+      expect(r.reply).not.toContain("The app did:");
+      expect(r.actions).toEqual([]);
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+    const b = await open("", {}, a.home);
+    try {
+      const view = await b.client.conversation(projectId);
+      expect(view.turns.length).toBe(1);
+      expect(view.turns.map((t) => t.reply?.text ?? "").join("\n")).not.toContain("The app did:");
+    } finally {
+      await b.rt.close();
+    }
+  }, 60_000);
+  // L4-chat-101 (live check 4, L4-chat-1/-4): the fast model said "There is no README task" for
+  // a task renamed since, and offered to look. The stand-in's "answers without looking" mode
+  // plays it; the app nudges it to look it up, and the answer comes from the record.
+  it("POST /chat on the stand-in's 'answers without looking' mode: 'what happened to the README task?' is looked up after one nudge and answered from the record, never 'There is no record'", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-101-", { FORERUNNER_BENCH_CHAT_NOLOOK: "1" });
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.client.createTask(project.id, {
+        title: "Write the README",
+        outcome: "README.md says what the page is",
+      });
+      const renamed = await a.client.executeCommands({
+        commands: [
+          { name: "task.update", params: { task: "Write the README", title: "Write the guide" } },
+        ],
+        wordsUsed: "Edit: Write the guide",
+        source: "ui",
+        projectId: project.id,
+      });
+      expect(renamed.status).toBe("done");
+      const r = await a.chat(project.id, "what happened to the README task?");
+      for (const said of ["There is no record", "Should I look"])
+        expect(r.reply).not.toContain(said);
+      expect(r.reply).toContain("Write the guide");
+      // Three calls: the answer without looking, the lookup after the nudge, the answer.
+      const calls = a.chatCalls();
+      expect(calls).toHaveLength(3);
+      expect(JSON.stringify(calls[1]?.messages?.at(-1))).toContain(
+        "You said it is not there without looking it up.",
+      );
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-selftasks-119 (live check 4, L4-github-4): in Notes' Chat, "add a task to Site: …" added
+  // 'Site: write the shop page' to Notes, and after "switch to Site", "add a task there: …" added
+  // 'There: write the about page' to Notes.
+  it("POST /chat in Notes' Chat tab: 'add a task to Site: …' adds to Site; after 'switch to Site', 'add a task there: …' adds to Site too; nothing lands in Notes and no title starts 'There:'", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-119-");
+    try {
+      const notes = await a.client.createProject({ name: "Notes", goal: "A notes page" });
+      const site = await a.client.createProject({ name: "Site", goal: "A shop site" });
+      const titles = async (id: string) => (await a.client.tasks(id)).map((t) => t.title);
+      // Before any switch, "there" names no project: chat asks which.
+      const asked = await a.chat(notes.id, "add a task there: write the about page");
+      expect(asked.reply).toBe("Which project: Notes or Site? Options: Notes, Site.");
+      expect(await titles(notes.id)).toEqual([]);
+      const added = await a.chat(notes.id, "add a task to Site: write the shop page");
+      expect(added.reply).toContain('"Write the shop page" to Site');
+      expect(await titles(site.id)).toEqual(["Write the shop page"]);
+      expect(await titles(notes.id)).toEqual([]);
+      await a.chat(notes.id, "switch to Site");
+      const there = await a.chat(notes.id, "add a task there: write the about page");
+      expect(there.reply).toContain('"Write the about page" to Site');
+      expect(await titles(site.id)).toEqual(["Write the shop page", "Write the about page"]);
+      expect(await titles(notes.id)).toEqual([]);
+      // Today's reading stays without a separator.
+      await a.chat(notes.id, "add a task to write the README");
+      expect(await titles(notes.id)).toEqual(["Write the README"]);
+      expect(a.chatCalls()).toHaveLength(0);
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-creds-27 (merged into L4-chat-104): chat told the person "open Site with a project
+  // switch", because project_create's definition named the command project.switch.
+  it("POST /chat: project_create's definition names no command and only tools the model has; the system part holds the rule against naming tools", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-creds27-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.chat(project.id, "what is left?");
+      const call = a.requests[0];
+      const names = (call?.tools ?? []).map((t) => t.name);
+      const def = call?.tools?.find((t) => t.name === "project_create")?.description ?? "";
+      expect(def).toBe(
+        "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch.",
+      );
+      expect(def).not.toMatch(/\b[a-z]+\.[a-z_]+\b/);
+      for (const tool of def.match(/\b[a-z]+_[a-z_]+\b/g) ?? []) expect(names).toContain(tool);
+      expect(String(call?.system ?? "")).toContain(
+        "Never name a tool or a lookup (recall, recall_open, session_last, task_get, tasks_list,\nfiles_list, answer_thoroughly or any name with an underscore)",
+      );
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-chat-103 (live check 4, L4-creds-8): after Cancel on a session waiting to go on, chat's
+  // "summary" and the facts the chat model reads still said "...; then your session goes on.".
+  // The stored result of a session whose wait is no longer kept (Cancel removed it) is read as
+  // it holds now, as the Overview reads it; also after a restart.
+  it("POST /chat 'summary' and the chat model's facts read a cancelled wait's result as '...; then it runs at your next Start.', also after a restart", async () => {
+    const STORED = "Waits until 11:40 (your subscription's limit); then your session goes on.";
+    const NOW = "Waits until 11:40 (your subscription's limit); then it runs at your next Start.";
+    const a = await open("fr-ui-real-l4-chat-answers-103-");
+    let projectId = "";
+    try {
+      const project = await a.client.createProject({ name: "Notes", goal: "Two notes" });
+      projectId = project.id;
+      const row = await a.rt.store.project.mustGet(project.id);
+      await a.rt.store.project.patch(project.id, {
+        summary_cache: {
+          ...(row.summary_cache as object),
+          last_session: {
+            id: "s-l4-103",
+            summary: STORED,
+            stop_reason: "credential",
+            ended_at: "2026-03-05T08:10:00.000Z",
+            spent_usd_micro: 0,
+          },
+        },
+      } as never);
+      // No continuation is kept (the person pressed Cancel): the Overview reads the new words.
+      expect((await a.client.projectSummary(project.id)).lastSession?.summary).toBe(NOW);
+      const summary = await a.chat(project.id, "summary");
+      expect(summary.reply).toContain(`Last session: ${NOW}`);
+      expect(summary.reply).not.toContain("then your session goes on");
+      await a.chat(project.id, "what happened in the last session?");
+      const facts = JSON.stringify(a.requests.at(-1)?.messages ?? []);
+      expect(facts).toContain(`Result: ${NOW}`);
+      expect(facts).not.toContain("then your session goes on");
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+    const b = await open("", {}, a.home);
+    try {
+      const again = await b.chat(projectId, "summary");
+      expect(again.reply).toContain(`Last session: ${NOW}`);
+      expect(again.reply).not.toContain("then your session goes on");
+      await settleSessions(b.rt);
+    } finally {
+      await b.rt.close();
+    }
+  }, 60_000);
+
+  // L4-chat-108 (live check 4, L4-chat-3): 9 of 11 recall turns answered from the hit line and
+  // had no From line, since only records opened with recall_open became sources. The stand-in's
+  // "answers without looking" mode answers from the strong hit's line and opens nothing.
+  it("POST /chat/stream on a reply from recall's hit line (no recall_open): reply.sources holds the card, and GET /projects/:id/conversation keeps it after a restart", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-108-", { FORERUNNER_BENCH_CHAT_NOLOOK: "1" });
+    let projectId = "";
+    let source: Record<string, unknown> = {};
+    let sources: unknown[] = [];
+    try {
+      const project = await a.client.createProject({ name: "Bakery", goal: "A page" });
+      projectId = project.id;
+      const t = await a.rt.store.task.insert({
+        project_id: project.id,
+        title: "Ask for the opening hours",
+        outcome: "The opening hours are known.",
+        status: "done",
+        specialist: "person",
+      } as never);
+      const card = await a.rt.store.humanRequest.insert({
+        human_id: a.rt.human.id,
+        project_id: project.id,
+        task_id: t.id,
+        kind: "decision",
+        why: "What are the opening hours?",
+        steps: ["What are the opening hours?"],
+        options: ["Cancel the task"],
+        risk: "low",
+        change_card: { key: `person_questions:${t.id}`, outcome: "answered" },
+      } as never);
+      const answered = await a.rt.store.humanRequest.answer(
+        card.id,
+        card.version,
+        {
+          answers: [{ question: "What are the opening hours?", answer: "Mon to Fri 9 to 18" }],
+        } as never,
+        a.rt.human.id,
+      );
+      const day = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/Zurich",
+        day: "numeric",
+        month: "short",
+      }).format(new Date(answered.answered_at ?? ""));
+      const reply = await streamChat(a.client, {
+        humanId: a.me.id,
+        agentId: a.agentId,
+        projectId: project.id,
+        projectTab: true,
+        text: "what did I answer about the opening hours?",
+        source: "text",
+      });
+      // L4-chat-107: the hit line it answered from holds the question and the answer.
+      expect(reply.reply).toContain("It asked: What are the opening hours?");
+      expect(reply.reply).toContain("Mon to Fri 9 to 18");
+      // No record was opened: the lookup, then the answer from its hit line.
+      const tools = JSON.stringify(a.requests.at(-1)?.messages ?? []);
+      expect(tools).toContain('"recall"');
+      expect(tools).not.toContain("recall_open");
+      source = {
+        kind: "card",
+        title: '"Ask for the opening hours" needs your answers',
+        date: day,
+        link: `/inbox?answered=${card.id}`,
+      };
+      // The card first; the stand-in quotes the whole hit line, whose outcome names the task
+      // ('"Ask for the opening hours" is done.'), so the task hit is a source too.
+      expect(reply.sources?.[0]).toEqual(source);
+      sources = reply.sources ?? [];
+      expect((await a.client.conversation(project.id)).turns.at(-1)?.reply?.sources).toEqual(
+        sources,
+      );
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+    const b = await open("", { FORERUNNER_BENCH_CHAT_NOLOOK: "1" }, a.home);
+    try {
+      const view = await b.client.conversation(projectId);
+      expect(view.turns.at(-1)?.reply?.sources).toEqual(sources);
+      expect(view.turns.at(-1)?.reply?.sources?.[0]).toEqual(source);
+    } finally {
+      await b.rt.close();
+    }
+  }, 60_000);
+  // Review of l4-chat-answers (blocking 1): the target reading asked "Which project: Notes or
+  // Site?" for ordinary lines ("add a task to re-check the prices", "… to fix the login: …") and
+  // added nothing; pressing an option sent the bare name to the chat model, a paid call that
+  // added no task; with one project it asked "Which project: Notes?".
+  it("POST /chat: ordinary 'add a task to …' lines add at once; only 'there' with two projects asks, and the option pressed adds there with no model call, also after a restart", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-which-");
+    const titles = async (c: typeof a.client, id: string) =>
+      (await c.tasks(id)).map((t) => t.title);
+    let notesId = "";
+    let siteId = "";
+    try {
+      const notes = await a.client.createProject({ name: "Notes", goal: "A notes page" });
+      notesId = notes.id;
+      // One project: "there" can only mean it.
+      const one = await a.chat(notes.id, "add a task there: write the about page");
+      expect(one.reply).not.toContain("Which project");
+      expect(await titles(a.client, notes.id)).toEqual(["Write the about page"]);
+      const site = await a.client.createProject({ name: "Site", goal: "A shop site" });
+      siteId = site.id;
+      for (const line of [
+        "add a task to re-check the prices",
+        "add a task to fix the login: users cannot sign in",
+      ]) {
+        const r = await a.chat(notes.id, line);
+        expect(r.reply, line).not.toContain("Which project");
+        expect(r.question ?? null, line).toBeNull();
+      }
+      expect(await titles(a.client, notes.id)).toEqual([
+        "Write the about page",
+        "Re-check the prices",
+        "Fix the login: users cannot sign in",
+      ]);
+      const asked = await a.chat(notes.id, "add a task there: write the shop page");
+      expect(asked.reply).toBe("Which project: Notes or Site? Options: Notes, Site.");
+      expect(asked.question?.options).toEqual(["Notes", "Site"]);
+      expect(await titles(a.client, site.id)).toEqual([]);
+      expect(a.chatCalls()).toHaveLength(0);
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+    // The option pressed after a restart still finishes the line that asked.
+    const b = await open("", {}, a.home);
+    try {
+      const pressed = await b.chat(notesId, "Site");
+      expect(pressed.reply).toContain('"Write the shop page" to Site');
+      expect(await titles(b.client, siteId)).toEqual(["Write the shop page"]);
+      expect(await titles(b.client, notesId)).toHaveLength(3);
+      // "open it" with no project named here asks; the option pressed opens it.
+      const which = await b.chat(notesId, "open it");
+      expect(which.question?.options).toEqual(["Notes", "Site"]);
+      const opened = await b.chat(notesId, "Site");
+      expect(opened.reply).toBe("Switched the active project to Site. Undo.");
+      expect(b.chatCalls()).toHaveLength(0);
+      await settleSessions(b.rt);
+    } finally {
+      await b.rt.close();
     }
   }, 60_000);
 });

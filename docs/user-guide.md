@@ -375,7 +375,11 @@ them as you left them; an open file or task stays on its own tab.
   every task with its status (what it waits for, why it failed), the last session's result, what
   runs now, the cards waiting for you and where the files are, and it can look up a task's runs
   and review. Ask "what is going on?", "what failed and why?", "what is left?". Tell it what to
-  change: "add a task: …" (a ready task, with **Undo**), "make the FAQ task depend on the README
+  change: "add a task: …" (a ready task, with **Undo**; "add a task to Site: …" adds it to Site
+  from any project's Chat, and after "switch to Site", "add a task there: …" does too; with no
+  project named yet and several projects Chat asks "Which project: Notes or Site?" with a button
+  for each, and the one you press gets the task; other words before a colon stay the task's own:
+  "add a task to fix the login: users cannot sign in"), "make the FAQ task depend on the README
   task", "skip the LICENSE task" or "cancel …" (it is cancelled, as with Cancel on its row: a run
   or review going on stops and what it changed is removed, or its pull request stays open on
   GitHub, named with what to do: "#43 stays open on GitHub: close it there if you do not want it.";
@@ -384,7 +388,9 @@ them as you left them; an open file or task stays on its own tab.
   "start working now" (the reply links the session it started), "stop" (stops the running
   session now; its task is ready again), "stop after this task",
   "stop everything" (Stop all) and "resume" (allows sessions again), "note: …" for the next
-  session, "summary". Chat changes a project's settings too: "only read developer.mozilla.org
+  session, "summary". "open Site" opens Site's Chat from any project's Chat; "switch to Site"
+  makes Site the active project and, said in Notes' Chat, keeps you in Notes' Chat with one line,
+  "Switched the active project to Site. This chat stays about Notes." and **Undo**. Chat changes a project's settings too: "only read developer.mozilla.org
   for research" changes **Web pages research may read** at once (the Overview's line reads
   "Research reads: only developer.mozilla.org"), and "research may read any public website
   again" asks your **Yes** first, as the setting's dialog does ("Set web pages research may read
@@ -400,8 +406,13 @@ them as you left them; an open file or task stays on its own tab.
   never a lesson: "remember that …" keeps a lesson for later sessions, and its line says it
   changes no setting. A change to a task is read back once in one line ('Make "Write the FAQ"
   wait for "Write the README"?') with **Yes** and **No**; the card stays while you type other
-  things, and "yes" with nothing waiting asks "Yes to what?" (or, when the card it meant was
-  answered in the Inbox or expired, says so). Under each read-back the conversation says what
+  things, and "yes" with nothing waiting asks 'Yes to what? Nothing is waiting for your yes. Say
+  what you want done, for example "run it now" to start a session.' (or, when the card it meant
+  was answered in the Inbox or expired, says so). Chat never asks for your yes in its own words
+  ("Shall I set …?"): only the app's own question with **Yes** and **No** under a reply waits for
+  your yes. A question about which task or project you mean ("Which task should I add it to?")
+  is just a question: answer it in your words. A line "The app did: …" is only ever the app's own
+  record of a change it made; Chat never writes one itself. Under each read-back the conversation says what
   became of it: you said yes, you said no, or not answered. You can answer an Inbox card in
   Chat too ("approve the plan"; "try the contact page again", "cancel …" or "mark … done" on a
   task whose card offers **Try again**, **Cancel task** or **Mark done anyway**): Chat reads it
@@ -447,7 +458,11 @@ them as you left them; an open file or task stays on its own tab.
   and earlier lines of your conversations ("what did I say about the logo?", in English or
   German). Give it a time ("last week", "on 3 Nov") and it looks in those days of your own
   calendar. It names what it found by its title and date ("in the session of 3 Nov"), never by an
-  id; when nothing matches it says what it looked through. Questions about now ("what is left?") are
+  id; when nothing matches it says what it looked through. It looks a thing up before it says it
+  is not there, and never asks whether to look. A session it finds names the tasks that failed
+  in it as well as those it did; a card that asked you questions shows what it asked and your
+  answer. Under the answer, **From:** links the records it rests on (at most three), also those it
+  only saw in its search. Questions about now ("what is left?") are
   answered at once, without a lookup. Inbox Updates, notifications and the session log's lines
   are not searched: ask about the session, task or card they are about. What a lookup returns is
   data to Chat, like a report: a change it proposes after a lookup waits for your **Yes**.
@@ -1562,8 +1577,9 @@ with **Cancel** instead of Stop; Cancel means nothing starts when Claude is back
 wait for your Start. The same wait shows on the project's line and on that session's page (with
 Cancel, or once cancelled **Continue**, which opens Start with the rest of that session and what
 is left of its budget). After Cancel, the session's result on its page, on the Overview (and in
-Read aloud) and its Update line in the Inbox say "...; then it runs at your next Start." instead
-of "then your session goes on". The project's line also says what waits to start: "Starts at
+Read aloud), its Update line in the Inbox and Chat ("summary", or a question about the last
+session) say "...; then it runs at your next Start." instead of "then your session goes on",
+at once, with no reload of the page. The project's line also says what waits to start: "Starts at
 15:40" for a Start you pressed while Claude was out (with Cancel), "Starts after your quiet
 hours", 'Starts after the session on "Quote page"' (as soon as you press Start there, no reload
 needed), or "Ready: 3 tasks wait for your Start".

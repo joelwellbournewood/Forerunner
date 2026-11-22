@@ -277,3 +277,41 @@ the person first" with no subject, and the definition deferred to it. The owner'
 - **Answer now** (L4-chat-206). "A stronger answer that ran out of room" (the best rung's yes, the
   next rung's offer) means a pass whose budget line wrapped it up, never one the person ended
   with Answer now: that answer carries no new offer.
+
+## Amendment 2026-11-22: chat looks before it says something is missing, and hears its own questions (l4-chat-answers, run L4)
+
+Live check 4 ran the real fast model. It said a recorded thing was not there ("There is no README
+task" for a task renamed since) and offered to look instead of looking. It asked for a yes in its
+own words with no card, so the person's typed "yes" met "Yes to what?" with no next step. It
+wrote "The app did: …" itself, and the line stayed in the conversation. Recall's hit lines left
+out what the screens say (a failed task of a session, a card's question), and 9 of 11 replies
+that rested on a hit line had no From line.
+
+- **The claim guard has two more kinds.** "absent" is a reply that says a record is not there,
+  or asks whether to look, in a turn that offered recall and called neither recall tool. It gets
+  one nudge to call recall with the person's words and other words for it, and it is never
+  replaced by "Nothing changed". "asks" is a reply that asks the person for a yes in words when
+  no command of the turn read a change back. Its nudge says that a typed yes reaches no one, and
+  tells the model to call the command or answer again without the question. Each kind is nudged
+  once a turn, inside `CHAT_MAX_MODEL_CALLS` and the turn's budget. A clarifying question is never
+  an "asks" claim (review of the area, 2026-11-22): one that asks which, who, where, what, when or
+  how ("Which task should I add it to?") or offers a choice ("Add it to Notes or to Site?") asks
+  for no yes and reaches the person as written, with no nudge.
+- **A bare yes still never reaches the model** (design §3.9). When nothing waits, the answer is
+  'Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it now"
+  to start a session.' The role prompt (1.5.1) and `CHAT_PLAN_RULES` say never to ask for a yes in
+  words, never to name a tool, and that a lookup needs no yes.
+- **Only the app writes its two lines** (a security rule). "The app did: …" and "The app asked,
+  with Yes and No: …" are taken out of every reply the model writes (`withoutAppMarkers`), and the
+  history shows the app's read-back as the app's own line. A forged line never reaches the
+  person, the conversation or a later turn.
+- **Recall's lines say what the screens say.** A session's hit names the tasks that failed beside
+  the ones it did, and "How it ended" uses the words of what still waits now, with no second
+  "Ended:" and no "Done" beside a failure. A questions card's hit starts with "It asked: …", then
+  the answer, then what came of it. All of this stays inside the data envelope and the scan.
+- **Sources, amended.** A reply's sources are the records it names among this turn's lookups:
+  first those it opened, then the hits its searches showed that it did not open
+  (`RecallScope.seen`). A hit it did not open is named by its title or an earlier title, or by
+  its date only when the hit was strong and no other hit of this turn has that day. A name found
+  only inside another source's title does not count. There are at most three sources, and none
+  appears twice.

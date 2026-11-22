@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { streamChat } from "../api/chat-stream.ts";
 import { type ConversationTurnView, describeError } from "../api/client.ts";
 import { systemClock, useNow } from "../lib/clock.ts";
@@ -93,6 +93,9 @@ export function recordLink(link: string | null): string | null {
  * through, the records it rests on (the From line), and for a line with no answer why, with
  * Ask again.
  */
+/** "open <project>": the person asked to see that project (the daemon says no "This chat stays"). */
+const OPEN_PROJECT_RE = /^\s*(?:please\s+)?(?:open|öffne|oeffne)\b/i;
+
 export function Conversation({
   projectId,
   testIds = "chat",
@@ -120,6 +123,7 @@ export function Conversation({
 }) {
   const client = useClient();
   const store = useUiStore();
+  const navigate = useNavigate();
   const identity = useIdentity();
   const key = conversationKey(projectId);
   const state = useUiState((s) => s.conversations[key]) ?? EMPTY_CONVERSATION;
@@ -223,6 +227,16 @@ export function Conversation({
       if (reply.activeProjectId && reply.activeProjectId !== store.getState().activeProjectId) {
         store.dispatch({ type: "activeProject", id: reply.activeProjectId });
       }
+      // l4-chat-answers (L4-chat-104): "open Beacon" in Atlas's Chat tab opens Beacon's Chat, as
+      // the New project dialog's Open it does; "switch to Beacon" keeps this tab on Atlas (U-056).
+      if (
+        projectId &&
+        OPEN_PROJECT_RE.test(said) &&
+        reply.activeProjectId &&
+        reply.activeProjectId !== projectId &&
+        reply.actions.some((a) => a.kind.split("+").includes("project.switch"))
+      )
+        navigate(`/projects/${reply.activeProjectId}/chat`);
     } catch (err) {
       const message = describeError(err);
       update((c) => (c.live ? { ...c, live: { ...c.live, error: message } } : c));
@@ -527,12 +541,22 @@ function Turn({
   // also when it is all of them joined (the claim guard's true line on a turn of two changes).
   const sentences = (r?.actions ?? []).map((a) => withoutUndoWord(a.sentence).text);
   const text = r ? withoutUndoWord(r.text).text : "";
+  // Review of l4-chat-answers (blocking 3): a reply that is its changes' sentences and then a
+  // sentence more ('Switched the active project to Beacon. This chat stays about Atlas.') says
+  // the changes once, on their lines with Undo, and the sentence more at the end of the last
+  // one, never the switch twice in one bubble (design §5 rule 10).
+  const joined = sentences.join(" ").trim();
+  // Only whole sentences more: the changes' sentences end a sentence and the rest starts after a
+  // space (", until 06:00." after "… to CHF 20" is the same sentence, shown as the reply).
+  const after =
+    r?.actions.length &&
+    /[.!?…]["”')]?$/.test(joined) &&
+    text.startsWith(joined) &&
+    /^\s+\S/.test(text.slice(joined.length))
+      ? text.slice(joined.length).trim()
+      : "";
   const showText =
-    text &&
-    !(
-      r?.actions.length &&
-      (sentences.includes(text) || sentences.join(" ").trim() === text.trim())
-    );
+    text && !after && !(r?.actions.length && (sentences.includes(text) || joined === text.trim()));
   const offer = r?.offer ?? null;
   // L4-chat-212: an older ask line reads in the past, with no question and no button; the reply
   // that was only its ask line too (the daemon then sends the line as the text).
@@ -602,14 +626,18 @@ function Turn({
               Ask again
             </Button>
           ) : null}
-          {r.actions.map((a) => (
+          {r.actions.map((a, i) => (
             <div
               key={`${a.changeId ?? a.kind}-${a.sentence}`}
               className="mt-1 flex flex-wrap items-center gap-2"
               data-testid={`${testIds}-action`}
             >
-              {a.sentence ? (
-                <span className="whitespace-pre-wrap">{withoutUndoWord(a.sentence).text}</span>
+              {a.sentence || (after && i === r.actions.length - 1) ? (
+                <span className="whitespace-pre-wrap">
+                  {[withoutUndoWord(a.sentence).text, i === r.actions.length - 1 ? after : ""]
+                    .filter(Boolean)
+                    .join(" ")}
+                </span>
               ) : null}
               {a.sessionId ? (
                 <Link

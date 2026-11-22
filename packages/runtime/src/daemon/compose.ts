@@ -427,6 +427,7 @@ import {
   RUN_CHANGED_EVENT,
   type RunIndicatorDeps,
   type RunWait,
+  resultAfterWait,
   runFoldsOf,
   runViews,
   type WaitingContinuation,
@@ -4881,6 +4882,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         events.emit("session", { type: "kill.resumed", payload: {} });
         return { wasStopped };
       },
+      // l4-chat-answers (L4-chat-103): chat's "summary" reads the last result as it holds now.
+      resultNow: (projectId, since, text) => resultAfterWait(store, projectId, since, text),
       // session.start refuses in words what the Start dialog refuses (design §3.6, §3.9).
       startBlocked: async (projectId, budgetUsdMicro) => {
         const project = await store.project.mustGet(projectId);

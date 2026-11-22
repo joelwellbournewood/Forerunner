@@ -759,6 +759,11 @@ export interface FakeDaemonState {
   killActive: boolean;
   calls: RecordedCall[];
   pendingConfirmation: { id: string; readback: string } | null;
+  /**
+   * As the daemon (review of l4-chat-answers): the line the parser's "Which project: …?" asked
+   * about; the option pressed next (a project's name alone) finishes it.
+   */
+  askedProjectLine: string | null;
   /** When set, the next `/chat/stream` reply has this text (tests script the agent). */
   nextChatReply: string | null;
   /**
@@ -1444,6 +1449,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     killActive: false,
     calls: [],
     pendingConfirmation: null,
+    askedProjectLine: null,
     nextChatReply: null,
     nextChatSources: null,
     nextChatTurn: null,
@@ -2500,7 +2506,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       spoken: `${p.name} has not run yet.`,
     };
     // As the daemon (C-54): what became of the tasks the last session left for the person.
-    const last = base.lastSession;
+    // l4-chat-answers (L4-chat-103), as the daemon's resultAfterWait: a stored "...; then your
+    // session goes on." reads "...; then it runs at your next Start." once no wait is kept.
+    const kept =
+      !!state.credentialWaitNow[id]?.kept ||
+      state.startsWait[id]?.kind === "continuation" ||
+      state.startsWait[id]?.kind === "kept_start";
+    const last =
+      base.lastSession && !kept
+        ? {
+            ...base.lastSession,
+            summary: base.lastSession.summary.replace(
+              "; then your session goes on.",
+              "; then it runs at your next Start.",
+            ),
+          }
+        : base.lastSession;
     const views = projectTaskViews(
       state.tasks,
       id,
@@ -4376,7 +4397,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       activeProjectId: active() ?? (projectTab ? null : (projectId ?? null)),
     };
     const lower = text.trim().toLowerCase();
-    const switchTo = /^switch to (.+)$/i.exec(text.trim());
+    // As the daemon (review of l4-chat-answers): only the reply just before can be answered by
+    // pressing one of its project options.
+    const asked = state.askedProjectLine;
+    state.askedProjectLine = null;
+    const pressed = asked ? state.projects.find((p) => p.name.toLowerCase() === lower) : undefined;
+    // l4-chat-answers (L4-chat-104): "open X" switches as "switch to X" does (the Chat tab then
+    // opens X); "switch to X" in another project's own Chat tab says that tab stays on it.
+    const switchTo = /^(?:switch to|open) (.+)$/i.exec(text.trim());
     if (switchTo) {
       const wanted = (switchTo[1] ?? "").toLowerCase();
       const target = state.projects.find((p) => p.name.toLowerCase().includes(wanted));
@@ -4398,28 +4426,59 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         return {
           ...base,
           activeProjectId: target.id,
-          reply: sentence,
+          reply: (() => {
+            const tab = projectTab ? state.projects.find((p) => p.id === projectId) : undefined;
+            return tab && tab.id !== target.id && !/^open\b/i.test(text.trim())
+              ? sentence.replace(/ Undo\.$/, ` This chat stays about ${tab.name}. Undo.`)
+              : sentence;
+          })(),
           actions: [
             { kind: "project.switch", summary: sentence, id: entry.id, undoToken: entry.id },
           ],
         };
       }
     }
-    const addTask = /^add a task:?\s+(.+)$/i.exec(text.trim());
-    if (addTask && turnProject) {
-      const target = state.projects.find((p) => p.id === turnProject);
-      const title = (addTask[1] ?? "").trim();
-      const task = newTask(turnProject, title, "ready");
+    // As the daemon's parser (l4-chat-answers, L4-selftasks-119 and its review): "add a task to
+    // <project>: …" adds there; "add a task there: …" with two projects and none named asks
+    // "Which project: …?", and the option pressed next adds there; other words stay the title.
+    const line = pressed && asked ? asked : text.trim();
+    const aimed =
+      /^add a task(?:\s+(?:to|in|for)\s+(?:the\s+)?(.+?)|\s+(there))(?:\s*[:,]|\s+[-–—])\s*(.+)$/i.exec(
+        line,
+      );
+    const named = aimed?.[1]
+      ? state.projects.find((p) => p.name.toLowerCase() === (aimed[1] ?? "").toLowerCase())
+      : undefined;
+    if (aimed?.[2] && !pressed && state.projects.length > 1) {
+      state.askedProjectLine = line;
+      const names = state.projects.slice(0, 6).map((p) => p.name);
+      const ask = `Which project: ${names.slice(0, -1).join(", ")} or ${names.at(-1)}?`;
+      return {
+        ...base,
+        reply: `${ask} Options: ${names.join(", ")}.`,
+        question: { text: ask, options: names },
+      };
+    }
+    const addTask =
+      (named || aimed?.[2]) && aimed?.[3]
+        ? ([line, aimed[3]] as const)
+        : /^add a task:?\s+(.+)$/i.exec(line);
+    const addTo = pressed?.id ?? named?.id ?? turnProject;
+    if (addTask && addTo) {
+      const target = state.projects.find((p) => p.id === addTo);
+      const words = (addTask[1] ?? "").trim();
+      const title = named || aimed?.[2] ? words.charAt(0).toUpperCase() + words.slice(1) : words;
+      const task = newTask(addTo, title, "ready");
       state.tasks.push(task);
-      const sentence = `Added "${title}" to ${target?.name ?? turnProject}.`;
+      const sentence = `Added "${title}" to ${target?.name ?? addTo}.`;
       const entry = pushChange({
-        commands: [{ name: "task.create", params: { title, project: turnProject } }],
-        before: { task_id: null, project_id: turnProject },
-        after: { task_id: task.id, project_id: turnProject, status: "ready" },
+        commands: [{ name: "task.create", params: { title, project: addTo } }],
+        before: { task_id: null, project_id: addTo },
+        after: { task_id: task.id, project_id: addTo, status: "ready" },
         scope: "project",
-        projectId: turnProject,
+        projectId: addTo,
         source: "chat",
-        wordsUsed: text,
+        wordsUsed: line,
         sentence,
         reversible: true,
       });
@@ -4459,7 +4518,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     // A "yes" with nothing waiting never reaches the model (the daemon's `YES_TO_WHAT_REPLY`).
     if (!state.pendingConfirmation && lower === "yes") {
-      return { ...base, reply: "Yes to what? Nothing is waiting for your yes." };
+      // l4-chat-answers (L4-chat-102): the line names a next step.
+      return {
+        ...base,
+        reply:
+          'Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it now" to start a session.',
+      };
     }
     // "stop everything" is Stop all and "resume" lifts it, as the daemon's session.stop (scope
     // all) and session.resume, with their sentences.

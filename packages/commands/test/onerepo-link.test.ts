@@ -75,7 +75,7 @@ describe("d1109-onerepo-link, run C: project.create on a link another project us
     const w = await world();
     const def = w.registry.get("project.create");
     expect(def?.description).toBe(
-      "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead (open it with project.switch, or add the new work to it), never a second project.",
+      "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch.",
     );
     expect(def?.description).toBe(PROJECT_CREATE_DESCRIPTION);
     const spec = toToolSpecs(w.registry, {

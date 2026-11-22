@@ -9,6 +9,7 @@ import type {
   TaskRow,
 } from "@forerunner/state";
 import { requestWords } from "../daemon/request-words.ts";
+import { resultAfterWait } from "../daemon/run-indicator.ts";
 import {
   findingAsk,
   loadTaskDisplayContext,
@@ -77,13 +78,44 @@ export function todayLine(timeZone: string, nowMs: number): string {
 const quote = (s: string) => `"${s.replace(/\s+/g, " ").trim()}"`;
 
 /** One task's line: title, status in words, what it waits for, why it failed or stopped, the critic. */
+/**
+ * Each task's earlier titles (task.update's renames in the change log, newest 1,000 changes), by
+ * task id: what recall's task hits, task_get and (l4-chat-answers) the facts' task lines name.
+ */
+export async function earlierTitlesOf(
+  store: Pick<StateStore, "changeLog">,
+  projectId: string,
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  for (const r of await store.changeLog.forProject(projectId, { limit: 1000 })) {
+    const before = r.before as { task_id?: unknown; title?: unknown } | null;
+    const after = r.after as { title?: unknown } | null;
+    if (!before || typeof before.task_id !== "string" || typeof before.title !== "string") continue;
+    if (
+      typeof after?.title !== "string" ||
+      after.title === before.title ||
+      r.undo_state === "undone"
+    )
+      continue;
+    const list = out.get(before.task_id) ?? [];
+    if (!list.includes(before.title)) list.push(before.title);
+    out.set(before.task_id, list);
+  }
+  return out;
+}
+
 async function taskLine(
   store: Pick<StateStore, "review" | "finding">,
   t: TaskRow,
   label: string,
   titleOf: (id: string) => string | undefined,
+  earlier: readonly string[] = [],
 ): Promise<string> {
-  const parts = [`- ${quote(t.title)}: ${label}`];
+  // l4-chat-answers (L4-chat-101): a renamed task names its earlier title, so "what happened to
+  // the README task?" is answered from the facts after "Write the README" became "Write the
+  // guide" (live check 4: "There is no README task").
+  const was = earlier.length ? ` (earlier ${earlier.slice(0, 2).map(quote).join(", ")})` : "";
+  const parts = [`- ${quote(t.title)}${was}: ${label}`];
   const waits = t.depends_on
     .map((id) => titleOf(id))
     .filter((x): x is string => !!x)
@@ -125,10 +157,19 @@ export async function tasksBlock(
   const ctx = await loadTaskDisplayContext(store, rows, opts.sandboxReady ?? null);
   const ordered = runOrder(rows);
   const titles = new Map(rows.map((t) => [t.id, t.title]));
+  const earlier = await earlierTitlesOf(store, projectId);
   const max = opts.max ?? CONTEXT_TASKS_MAX;
   const lines: string[] = [];
   for (const t of ordered.slice(0, max))
-    lines.push(await taskLine(store, t, taskDisplay(t, ctx).label, (id) => titles.get(id)));
+    lines.push(
+      await taskLine(
+        store,
+        t,
+        taskDisplay(t, ctx).label,
+        (id) => titles.get(id),
+        earlier.get(t.id),
+      ),
+    );
   const counts = new Map<string, number>();
   for (const t of rows) counts.set(t.status, (counts.get(t.status) ?? 0) + 1);
   const done = counts.get("done") ?? 0;
@@ -166,9 +207,39 @@ function outcomeOf(project: ProjectRow): {
 const names = (l: readonly { title: string }[] | undefined) => (l ?? []).map((t) => quote(t.title));
 
 /**
+ * `# Last session` with its result as it holds now (l4-chat-answers, L4-chat-103): the stored
+ * result read through `resultAfterWait`, as the Overview, the session page and the Inbox read it,
+ * so after Cancel the chat model is never told "...; then your session goes on." (live check 4,
+ * L4-creds-8: chat's facts and "summary" still said it after the person cancelled the wait).
+ */
+export async function lastSessionNow(
+  store: StateStore,
+  project: ProjectRow,
+  chfPerUsd = 1,
+): Promise<string> {
+  const cache = (project.summary_cache ?? {}) as {
+    last_session?: { summary?: unknown; ended_at?: unknown };
+  };
+  const stored = cache.last_session?.summary;
+  if (typeof stored !== "string" || !stored) return lastSessionBlock(project, chfPerUsd);
+  const since =
+    typeof cache.last_session?.ended_at === "string" ? cache.last_session.ended_at : null;
+  const now = await resultAfterWait(store, project.id, since, stored).catch(() => stored);
+  if (now === stored) return lastSessionBlock(project, chfPerUsd);
+  const shown = {
+    ...project,
+    summary_cache: {
+      ...(project.summary_cache as object),
+      last_session: { ...(cache.last_session as object), summary: now },
+    },
+  } as ProjectRow;
+  return lastSessionBlock(shown, chfPerUsd);
+}
+
+/**
  * `# Last session`: the result the person saw (at most three lines, written by the engine) and
  * its lists by name: what was done, what failed and why, what needs the person, what is left.
- * Empty before the project's first session.
+ * Empty before the project's first session. The chat reads it through `lastSessionNow`.
  */
 export function lastSessionBlock(project: ProjectRow, chfPerUsd = 1): string {
   const o = outcomeOf(project);

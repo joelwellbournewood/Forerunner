@@ -2895,6 +2895,16 @@ the stand-in called the tool from a regex and every test passed against behaviou
 did not show. The role prompt it reads is conversation-agent 1.5.0 (`evals/registry/principals/
 conversation-agent.md`: "Thinking longer" says the app writes the ask, and is the quick answer's
 section). The bench README lists the variable.
+l4-chat-answers (run L4, L4-chat-101, L4-chat-108): `FORERUNNER_BENCH_CHAT_NOLOOK=1`
+(`chatNoLook`, `recallPlay(req, calls, noLook)`) plays live check 4's fast model on a question
+about the past: it first answers "There is no record of … Should I look through the earlier
+records for it?" with no lookup; after the app's absence nudge ("You said it is not there without
+looking it up.", `ABSENT_NUDGE_RE`) it calls `recall` and answers "From the record of <date>:
+<hit line>" from the first strong hit without `recall_open`, so the nudge and the From line of a
+hit that was not opened can be walked and tested (`real-daemon.test.ts` "l4-chat-answers, run
+L4"). The role prompt is now conversation-agent 1.5.1 (the app's two lines, a bare yes, a lookup
+needs no yes, never name a tool, never ask for a yes in words; asserted word for word in
+`conversation-memory.test.ts`). The bench README lists the variable.
 `FORERUNNER_BENCH_CHAT_HOLD_MS` (`chatHoldMs`) holds every chat reply that long after its input
 was billed, abortable, so a chat answer can be stopped, reloaded and answered now.
 `FORERUNNER_BENCH_DELAY_MS` waits before each reply but the critic's; `criticDelayMs`

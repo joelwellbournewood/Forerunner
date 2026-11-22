@@ -174,6 +174,13 @@ export interface BenchOptions {
    * asks "Should I go ahead?" in its own words, so the app's own ask (the backstop) is walked.
    */
   chatAlone?: boolean;
+  /**
+   * l4-chat-answers (L4-chat-101, L4-chat-108): the fast chat model answers a question about the
+   * past without looking first, as live check 4's did (FORERUNNER_BENCH_CHAT_NOLOOK=1): "There is
+   * no record of … Should I look …?". After the app's nudge it calls recall and answers from the
+   * strong hit's line itself, without recall_open, so the From line of a hit not opened is walked.
+   */
+  chatNoLook?: boolean;
   clock?: Clock;
 }
 
@@ -261,6 +268,9 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     chatHoldMs: Number.isFinite(chatHold) && chatHold > 0 ? chatHold : 0,
     chatAlone: ["1", "true", "yes", "on"].includes(
       (env.FORERUNNER_BENCH_CHAT_ALONE ?? "").trim().toLowerCase(),
+    ),
+    chatNoLook: ["1", "true", "yes", "on"].includes(
+      (env.FORERUNNER_BENCH_CHAT_NOLOOK ?? "").trim().toLowerCase(),
     ),
   };
 }
@@ -392,7 +402,7 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
           titles,
         );
       case "chat":
-        return chatAnswer(req, opts.chatAlone === true);
+        return chatAnswer(req, opts.chatAlone === true, opts.chatNoLook === true);
       case "task_check":
         // d1109-selftasks-run (ST-14): no change unless the evidence names one.
         return text(taskCheckReply(req));
@@ -1628,6 +1638,9 @@ export function recallWords(line: string): string {
   return words || bare;
 }
 
+/** The app's nudge after a reply that said a record is not there (packages/runtime claims.ts). */
+const ABSENT_NUDGE_RE = /You said it is not there without looking it up\./;
+
 /** A record's own lines, without the data envelope the hooks put around a tool result. */
 function recordLines(result: string): string[] {
   return result
@@ -1651,11 +1664,29 @@ function recordLines(result: string): string[] {
  * the bench never showed the looked-through answer while any word matched. Null for a line about
  * now, or no recall tool.
  */
-function recallPlay(req: ModelRequest, calls: ReturnType<typeof pastToolCalls>): Answer | null {
+function recallPlay(
+  req: ModelRequest,
+  calls: ReturnType<typeof pastToolCalls>,
+  noLook = false,
+): Answer | null {
   const names = (req.tools ?? []).map((t) => t.name);
   const line = turnLine(req);
   if (!names.includes("recall") || !PAST_RE.test(line)) return null;
   const last = calls.at(-1);
+  // l4-chat-answers (FORERUNNER_BENCH_CHAT_NOLOOK): live check 4's fast model said a recorded
+  // thing was not there and offered to look, with no lookup; the app's nudge then asks it to.
+  if (noLook && !last && !ABSENT_NUDGE_RE.test(lastUserText(req.messages)))
+    return text(
+      `${STAND_IN} There is no record of ${recallWords(line)} in what I was given. Should I look through the earlier records for it?`,
+    );
+  // After a lookup in that mode it answers from the strong hit's own line, opening nothing.
+  if (noLook && last?.name === "recall") {
+    const hit = recordLines(last.result ?? "")
+      .map((l) => /^r\d+ \[[^,\]]+, ([^,\]]+), [^\]]*strong\] (.*)$/.exec(l))
+      .find(Boolean);
+    if (hit)
+      return text(`${STAND_IN} From the record of ${hit[1]}: ${(hit[2] ?? "").slice(0, 300)}`);
+  }
   if (!last)
     return {
       text: "Looking it up.",
@@ -1713,7 +1744,7 @@ function thoroughAnswer(req: ModelRequest, calls: ReturnType<typeof pastToolCall
   );
 }
 
-function chatAnswer(req: ModelRequest, alone = false): Answer {
+function chatAnswer(req: ModelRequest, alone = false, noLook = false): Answer {
   const calls = pastToolCalls(req.messages);
   if ((req.system ?? "").includes("# Thinking it through")) return thoroughAnswer(req, calls);
   // d1109-chat-depth: a question that needs a closer look is handed over first, before any
@@ -1742,7 +1773,7 @@ function chatAnswer(req: ModelRequest, alone = false): Answer {
   if (next) return { text: `Running ${next.name}.`, toolCalls: [next] };
   const tail = chainedSay(req);
   if (tail) return text(`${STAND_IN} ${tail}`);
-  const recalled = recallPlay(req, calls);
+  const recalled = recallPlay(req, calls, noLook);
   if (recalled) return recalled;
   // After a command tool ran: say what it answered.
   const lastMsg = req.messages.at(-1);
