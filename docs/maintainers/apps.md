@@ -1699,7 +1699,9 @@ Quote page is working" (`state::window_title`, `windows::set_main_title`; a proj
 before the critic's monthly check, which `/health.running.check` marks and the title names:
 "Forerunner — the critic's monthly check") and the tray icon gets
 a blue dot at its lower right (V-8: `tray::with_running_dot` draws it over the app's own icon
-once, no new asset; `state::icon_dot` picks the icon on each refresh). Then Open Forerunner;
+once, no new asset; `state::icon_dot` picks the icon on each refresh). The app's own icon is
+`app.default_window_icon()`: on Linux the first PNG `tauri.conf.json` lists (`icons/32x32.png`),
+on Windows the `icon.ico` resource at the system's icon size (see "The app icon" below). Then Open Forerunner;
 **Stop all sessions** (confirm dialog "Stop every running session now? No session starts until
 you allow it again." → `POST /kill { scope: "all" }`; the notification says how many stopped, in
 words, `actions::stopped_words`; then disabled, **Allow sessions again** enabled →
@@ -1958,6 +1960,58 @@ in the system browser cannot drive the window through it. Development and CI onl
 `[redacted]`), every error string from the HTTP client passes through `redact()`, and the
 token never appears in a URL or an argv; tests assert the derived `Debug` output of every
 struct that carries it. `node scripts/secret-scan.mjs apps/desktop` is clean.
+
+### The app icon
+
+The master is `docs/design/icon/forerunner-icon.svg` (1024 x 1024), the owner's design confirmed
+on 2026-11-18: a mahogany cut-stone kite on a crisp rounded square, cream at the centre fading
+radially to tan at the edges, transparent outside the rounded corners. Every icon the apps ship
+is generated from it; none is drawn by hand. Until 1.0.4 the apps shipped Tauri's stock icon
+(yellow and blue rings).
+
+- `apps/desktop/src-tauri/icons` and `apps/mobile/src-tauri/icons` (the same bytes): the PNGs,
+  `icon.ico`, `icon.icns`, the `Square*Logo.png` tiles and `StoreLogo.png`. Each
+  `tauri.conf.json` lists the PNGs, the `.ico` and the `.icns`. On Windows the taskbar, the
+  Start menu, the window and the tray show the `icon.ico` resource in the exe and the MSI (at the
+  system's icon size); on Linux the window and the tray show the first PNG listed,
+  `icons/32x32.png`, and the AppImage and the .deb install the PNGs.
+- The Android launcher icons, `apps/mobile/src-tauri/gen/android/app/src/main/res/mipmap-*/`
+  (`ic_launcher.png`, `ic_launcher_round.png`, `ic_launcher_foreground.png`;
+  `AndroidManifest.xml` uses `@mipmap/ic_launcher`).
+- The UI's browser tab: `apps/ui/public/favicon.svg` is the master itself, linked from
+  `apps/ui/index.html`. Vite copies `public/` into `dist/`, which both shells load.
+
+To regenerate them after the master changes:
+
+1. Render the master to a 1024 x 1024 PNG with a transparent background in Chromium (the icon
+   tools may not draw every SVG feature). With Playwright (`@playwright/test` in `apps/ui`, or
+   the machine's own `playwright`):
+   ```js
+   const browser = await chromium.launch();
+   const page = await browser.newPage({ viewport: { width: 1024, height: 1024 } });
+   await page.setContent(`<style>html,body{margin:0;background:transparent}
+     svg{display:block;width:1024px;height:1024px}</style>${svgText}`);
+   await page.screenshot({ path: png, omitBackground: true });
+   ```
+2. `pnpm --filter @forerunner/desktop tauri icon <png>` and
+   `pnpm --filter @forerunner/mobile tauri icon <png>`. The mobile run also writes the Android
+   launcher icons into `gen/android`, because that folder exists.
+3. Keep each app's files as they are. The CLI also writes `64x64.png` and `ios/` into both icons
+   folders, `android/` into the desktop's, and an adaptive icon for the phone
+   (`res/mipmap-anydpi-v26/ic_launcher.xml` and `res/values/ic_launcher_background.xml`, a white
+   background). No config uses them: delete them, unless the change is meant to add them (an
+   adaptive icon puts the tile on the launcher's white shape, which is the owner's choice).
+4. Copy the master to `apps/ui/public/favicon.svg` and update `MASTER_SHA256` in
+   `scripts/app-icon.test.ts`. Look at the 16, 32 and 256 px results (the `.ico` frames,
+   `32x32.png`, `128x128@2x.png`) and check that the tray's running dot still reads on the
+   32 px icon.
+
+`scripts/app-icon.test.ts` (unit suite) decodes the shipped files: each PNG, each PNG frame in
+`icon.ico` and `icon.icns`, the Android launcher icons. It asserts the design: a mahogany centre,
+tan or cream just inside each edge, transparent corners (alpha under 32: the 16 and 32 px
+frames keep a trace of 3 or 4 from resampling). It also checks that no file has the sha256 of
+Tauri's stock icon, that each folder has the same files as before, that the favicon link points
+at the master's bytes, and the master's own sha256.
 
 ### How to change it
 
@@ -2696,6 +2750,9 @@ warnings and messages, suppressed inside quiet hours.
   plugin) and pick it in `platform_bits`; `SecureFiles` and the tests stay.
 - **Directory rules**: `dirs.rs` mirrors `packages/platform/src/paths.ts`; change both and
   their tests together.
+- **The launcher icon**: generated with the desktop's from one master; see "The app icon" in
+  the desktop shell section (`tauri icon` for `@forerunner/mobile` writes the `mipmap-*`
+  launcher PNGs in `gen/android`).
 
 ### Tests
 
