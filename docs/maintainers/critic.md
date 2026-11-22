@@ -450,6 +450,10 @@ words; the runner puts it on `critic.session_review` as `noted`, and the session
 task tried twice (grade 85, 1 finding).' (`sessionReviewWords` in the runtime's
 `daemon/event-lines.ts`; "noted" without a cause), never a task review's "sent back for changes";
 the Reviews tab words a session check "accepted", "noted" or "needs you" and its findings "noted".
+l4c-workstate, run L4 (the review of l4-money-pause): a long cause is cut at a word with "…",
+within 200 characters, by `quotedWords` (followup.ts, one or two sentences as a card quotes them);
+before, `slice(0, 200)` cut it inside a word with no ellipsis ("... the critic asked for a
+result").
 
 l4-money-pause, run L4 (L4-money-104, L4-selftasks-107): the session's size is its promise.
 `plannedItemsOf(plan)` is the planned set: the plan's items and each promised task they do not
