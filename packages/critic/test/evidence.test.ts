@@ -3,6 +3,7 @@ import {
   CHECKS_TRUST_LINE,
   EVIDENCE_COMPLETE_LINE,
   EVIDENCE_SECTIONS,
+  PERSON_GAVE_LINE,
   renderEvidence,
 } from "../src/evidence.ts";
 import { ESCALATION_REASONS } from "../src/schema.ts";
@@ -126,6 +127,30 @@ describe("renderEvidence: what the critic is given (ADR 0042)", () => {
     );
     // W15-25: the prompt names the site rule's section and says a refusal under it is right.
     expect(prompt).toContain(EVIDENCE_SECTIONS.webRule);
-    expect(CRITIC_PROMPT.promptVersion).toMatch(/^critic@1\.3\.0\+[0-9a-f]{8}$/);
+    expect(CRITIC_PROMPT.promptVersion).toMatch(/^critic@1\.4\.0\+[0-9a-f]{8}$/);
+  });
+});
+
+// l4-selftasks-check, run L4 (L4-selftasks-106; live check 4: the critic called an address from
+// the person's own brief "an invented contact detail"): what the person gave is its own section,
+// right after the brief, as data, with the line that says where its details come from.
+describe("l4-selftasks-check, run L4: what the person gave (L4-selftasks-106)", () => {
+  it("renders the person's brief and answers after the brief, fenced as data, and names it in the prompt", () => {
+    const r = renderEvidence(
+      input({
+        personGave: 'The person\'s brief for the project: "Bookings go to book@willowtea.example."',
+      }),
+    );
+    expect(r.sections.slice(0, 3)).toEqual([
+      EVIDENCE_SECTIONS.brief,
+      EVIDENCE_SECTIONS.personGave,
+      EVIDENCE_SECTIONS.criteria,
+    ]);
+    expect(r.text).toContain(`## ${EVIDENCE_SECTIONS.personGave}\n${PERSON_GAVE_LINE}\n`);
+    expect(r.text).toContain("book@willowtea.example");
+    expect(EVIDENCE_SECTIONS.personGave).toBe("What the person gave (their own words, data)");
+    expect(CRITIC_PROMPT.prompt).toContain(`**${EVIDENCE_SECTIONS.personGave}**`);
+    // Without it, no empty section.
+    expect(renderEvidence(input()).sections).not.toContain(EVIDENCE_SECTIONS.personGave);
   });
 });

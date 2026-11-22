@@ -122,6 +122,13 @@ export interface ReviewEvidence {
   /** The delegation brief as rendered for the worker (goal, constraints, criteria). */
   brief?: string;
   /**
+   * l4-selftasks-106 (append-only): what the person gave for the work in their own words, as
+   * data: their brief for the project and their answers to the questions asked on the task and
+   * on what it waited for, with the decision record they are recorded in. A detail found here
+   * comes from the person; the review never calls it invented, missing or a placeholder.
+   */
+  personGave?: string;
+  /**
    * The project's rule on which websites research may read, as the worker's brief said it
    * (W15-25): the rule the work ran under. A page it refuses was rightly not read.
    */

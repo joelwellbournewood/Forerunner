@@ -173,3 +173,9 @@ run, it should be able to do things like that."
   after it, a task made to wait for it): the fence checks each change on the state after the ones
   before it, as this point says, and the second missing step of one report is made in the same
   check. What the fence or the commands refuse is listed in words on a Details line of its own.
+- Point 5 (dated note, widened on purpose): the check's message also carries what each task it
+  may change and each task the evidence comes from (a Done one included) is to do, and the
+  person's brief, inside a data envelope of their own; an added task that does work a Done task
+  left undone carries that task's details word for word, and its brief and review say which task
+  it continues. Before, run C's rule gave titles, criteria, status words and report lines only,
+  and a step added for the person's booking form lost the fields and the address they gave.

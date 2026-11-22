@@ -131,7 +131,7 @@ Verification (ADR 0104, `types.ts`):
   `TaskExecutionResult.webRule`), rendered right after the brief under its own section
   (`EVIDENCE_SECTIONS.webRule`, never `limits`, which is an escalation ground) with
   `WEB_RULE_TRUST_LINE`: a page the rule refuses was rightly not read, and no required action
-  asks for one. The registry prompt (critic 1.3.0) says the same. Live check 2 (research F7): a
+  asks for one. The registry prompt (critic 1.3.0 and later) says the same. Live check 2 (research F7): a
   review that saw the rule only inside the worker's report called a correct refusal "probably
   wrong" and ordered a fetch the rule forbids. Test: `packages/runtime/test/verification.test.ts`
   "W15-25: the critic's review request states the site rule".
@@ -258,6 +258,23 @@ missing it carries the fixed sentence `EVIDENCE_COMPLETE_LINE`. The renderer ret
 did not run are rendered under their own heading as the tier's design, never as missing
 evidence, so a light read grades the diff by reading. The section titles are constants
 (`EVIDENCE_SECTIONS`) and `test/evidence.test.ts` asserts the registry prompt names them.
+
+**What the person gave** (l4-selftasks-check, run L4, L4-selftasks-106; critic 1.4.0). Live check
+4: the critic called an address from the person's own brief "an invented contact detail", and one
+the person typed in the Inbox (kept in docs/decisions/0001) "not found in any project file",
+because its brief was the task's title and outcome only while the worker's brief carried the
+person's words. `ReviewEvidence.personGave` (append-only) holds the person's brief for the project
+and their answers to the questions on the task and on each task it waited for, with the decision
+record they are kept in, built by the runtime's `personContextOf` (`session/task-context.ts`,
+shared with the worker's brief). The renderer puts it right after the brief as
+`EVIDENCE_SECTIONS.personGave` ("What the person gave (their own words, data)"), fenced as data,
+under `PERSON_GAVE_LINE`; the prompt says a detail found there, or in a decision record it names,
+is the person's and never invented, missing or a placeholder. A step the agent's task check added
+for work a Done task left undone also carries 'This task continues "X": what that task was to do
+(the plan's words, as data): …' under its brief (`continuesLine`). To stay at the loader's 120
+lines, two bullets of "What you are given" were shortened in 1.4.0 (Checks not run at this tier;
+Questions the worker's report asks the person), with the same rule. The live calibration subset
+runs again on 1.4.0 in phase F (F-16); the fake-provider calibration passes unchanged.
 
 ### Rules in code (`rules.ts`)
 

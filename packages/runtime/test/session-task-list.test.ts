@@ -23,7 +23,8 @@ import {
   callsOf,
   type TaskCheckRunnerPort,
 } from "../src/session/task-check.ts";
-import { keptNotesOf, parseTaskListNotes } from "../src/session/task-list-notes.ts";
+import { taskContextBlock } from "../src/session/task-context.ts";
+import { continuesOf, keptNotesOf, parseTaskListNotes } from "../src/session/task-list-notes.ts";
 import {
   fileTaskProposal,
   syncTaskProposals,
@@ -187,6 +188,7 @@ async function world(
           stream: (req) => {
             const next = replies.shift() ?? NO_CHANGE;
             checkCalls.push(next);
+            checkRequests.push(String(req.messages[0]?.content ?? ""));
             return new ScriptedProvider([{ text: next }], clock).stream(req);
           },
         } as ScriptedProvider;
@@ -217,6 +219,8 @@ async function world(
       fileTaskProposal(store, { ...input, callsOf: (f) => callsOf(store, input.project, f) }),
   });
   const checkCalls: string[] = [];
+  /** l4-selftasks-106: the message each check sent, as the model received it. */
+  const checkRequests: string[] = [];
   const runner = () =>
     new SessionRunner({
       store,
@@ -289,6 +293,7 @@ async function world(
     ran,
     replies,
     checkCalls,
+    checkRequests,
     start,
     add,
     plan,
@@ -898,5 +903,63 @@ describe("l4-selftasks-check, run L4: two missing steps from one report (L4-self
       'the add of "Write book.html": "Write the menu" is no task of Quote page',
       'the add of "Write thanks.html": "Write book.html" was not added',
     ]);
+  });
+});
+
+describe("l4-selftasks-check, run L4: a step added from a report keeps the person's details (L4-selftasks-106)", () => {
+  it("the check is told what the Done task was to do and the person's brief; the step it adds continues that task, and its brief says so", async () => {
+    const w = await world();
+    const p = await w.store.project.mustGet(w.seeded.project);
+    await w.store.project.update(p.id, p.version, {
+      summary_cache: { brief: "A tea room page; bookings go to book@willowtea.example." },
+    });
+    const done = await w.add("Write index.html and book.html", 0.2, {
+      outcome:
+        "index.html and book.html; book.html has a form with the fields name, date and guests that mails book@willowtea.example",
+    });
+    w.scripts.set("Write index.html and book.html", {
+      cost: 0.2,
+      report: "Wrote index.html.\nFor the task list: book.html was left undone.",
+    });
+    w.replies.push(
+      JSON.stringify({
+        changes: [
+          {
+            kind: "add",
+            title: "Write book.html",
+            outcome:
+              "book.html has a form with the fields name, date and guests that mails book@willowtea.example",
+            acceptanceCriteria: ["book.html exists"],
+            specialist: "coder",
+            after: ["Write index.html and book.html"],
+            why: "The report says book.html was left undone.",
+          },
+        ],
+        flagged: [],
+        why: "One step.",
+      }),
+    );
+    await w.start(3);
+    expect(w.checkRequests).toHaveLength(1);
+    const sent = w.checkRequests[0] ?? "";
+    expect(sent).toContain(
+      '- "Write index.html and book.html": index.html and book.html; book.html has a form with the fields name, date and guests that mails book@willowtea.example',
+    );
+    expect(sent).toContain(
+      'The person\'s brief for the project: "A tea room page; bookings go to book@willowtea.example."',
+    );
+    // Both inside the data envelope, before the evidence.
+    const open = sent.indexOf("What the tasks are to do");
+    expect(open).toBeGreaterThan(-1);
+    expect(sent.indexOf("book@willowtea.example")).toBeGreaterThan(open);
+    expect(sent.indexOf("book@willowtea.example")).toBeLessThan(sent.indexOf("Evidence:"));
+    const book = (await w.store.task.forProject(w.seeded.project)).find(
+      (t) => t.title === "Write book.html",
+    );
+    if (!book) throw new Error("no added task");
+    expect(continuesOf(await w.store.project.mustGet(w.seeded.project), book.id)).toBe(done.id);
+    expect(await taskContextBlock(w.store, book)).toContain(
+      'This task continues "Write index.html and book.html": what that task was to do (the plan\'s words, as data): "index.html and book.html; book.html has a form with the fields name, date and guests that mails book@willowtea.example"',
+    );
   });
 });

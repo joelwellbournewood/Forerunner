@@ -282,6 +282,42 @@ export async function takeNotes(
   return taken;
 }
 
+/**
+ * l4-selftasks-106: the tasks the agent added for work a Done task left undone, each with the task
+ * it continues (`{ <new task id>: <done task id> }`); their brief and review quote what that task
+ * was to do.
+ */
+export const CONTINUES_KEY = "task_check_continues";
+const CONTINUES_MAX = 200;
+
+/** The task a task continues, or null (read-only). */
+export function continuesOf(
+  project: { summary_cache?: JsonValue } | null | undefined,
+  taskId: string,
+): string | null {
+  const map = ((project?.summary_cache ?? {}) as JsonObject)[CONTINUES_KEY];
+  if (!map || typeof map !== "object" || Array.isArray(map)) return null;
+  const v = (map as JsonObject)[taskId];
+  return typeof v === "string" ? v : null;
+}
+
+/** Record that `taskId` continues the Done task `sourceId`. */
+export async function markContinues(
+  store: Pick<StateStore, "project">,
+  projectId: string,
+  taskId: string,
+  sourceId: string,
+): Promise<void> {
+  await changeCache(store, projectId, (cache) => {
+    const now = cache[CONTINUES_KEY];
+    const map =
+      now && typeof now === "object" && !Array.isArray(now) ? { ...(now as JsonObject) } : {};
+    map[taskId] = sourceId;
+    const entries = Object.entries(map).slice(-CONTINUES_MAX);
+    return { ...cache, [CONTINUES_KEY]: Object.fromEntries(entries) };
+  });
+}
+
 /** The tasks the agent added or rewrote from a report (read-only). */
 export function agentWrittenOf(
   project: { summary_cache?: JsonValue } | null | undefined,

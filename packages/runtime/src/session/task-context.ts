@@ -3,6 +3,7 @@ import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../injection/scan.ts";
 import { handoffOf, keptOf, type RunHandoff, type RunKept } from "./budget-pause.ts";
 import { TASK_FILES_EVENT } from "./peers.ts";
 import { isPersonTask, personAnswersOn } from "./person-questions.ts";
+import { continuesOf } from "./task-list-notes.ts";
 
 /**
  * What a specialist is told beyond its own task (core-experience design §4.6). Before, the
@@ -283,6 +284,49 @@ export function keptChecksLines(kept: RunKept | null): string[] {
   ];
 }
 
+/**
+ * l4-selftasks-106: the line a task the agent added for a Done task's undone work carries in its
+ * brief and its review ('This task continues "X": what that task was to do (the plan's words, as
+ * data): …'); null for any other task.
+ */
+export async function continuesLine(store: StateStore, task: TaskRow): Promise<string | null> {
+  const project = task.project_id ? await store.project.get(task.project_id) : undefined;
+  const sourceId = continuesOf(project, task.id);
+  const source = sourceId ? await store.task.get(sourceId) : undefined;
+  if (!source?.outcome.trim()) return null;
+  return `This task continues "${source.title}": what that task was to do (the plan's words, as data): ${JSON.stringify(quote(source.outcome, 600))}`;
+}
+
+/**
+ * l4-selftasks-106 (live check 4: the critic called an address from the person's own brief "an
+ * invented contact detail", and one the person typed in the Inbox "not found in any project
+ * file"): what the person gave for a task, as the critic's review is told it, as data: the
+ * person's brief for the project and their answers to the questions asked on the task and on
+ * each task it waited for, with the decision record they are recorded in. The worker's brief
+ * carries the same (`taskContextBlock`); null when the person gave nothing.
+ */
+export async function personContextOf(store: StateStore, task: TaskRow): Promise<string | null> {
+  const out: string[] = [];
+  const project = task.project_id ? await store.project.get(task.project_id) : undefined;
+  const brief = (project?.summary_cache as { brief?: unknown } | null)?.brief;
+  if (typeof brief === "string" && brief.trim())
+    out.push(`The person's brief for the project: ${JSON.stringify(quote(brief))}`);
+  const asked: { title: string; id: string }[] = [{ title: task.title, id: task.id }];
+  for (const id of task.depends_on.slice(0, MAX_DEPENDENCIES)) {
+    const dep = await store.task.get(id);
+    if (dep) asked.push({ title: dep.title, id: dep.id });
+  }
+  for (const t of asked) {
+    const said = await personAnswersOn(store, t.id);
+    if (!said.pairs.length) continue;
+    out.push(
+      `The person's answers to the questions on "${t.title}"${said.doc ? ` (recorded in ${said.doc})` : ""}:`,
+      quote(said.pairs.join("\n").trim(), MAX_ANSWERS_CHARS),
+    );
+  }
+  return out.length ? out.join("\n") : null;
+}
+
 /** The sections a task's brief carries after the delegation brief (empty sections left out). */
 export async function taskContextBlock(
   store: StateStore,
@@ -303,6 +347,8 @@ export async function taskContextBlock(
         : []),
       "What the project is and what was decided: docs/overview.md and the decision record in docs/decisions/ (read them when the task touches them).",
     );
+    const continues = await continuesLine(store, task);
+    if (continues) out.push(continues);
   }
   // What the task waited on: each dependency's result and files, and the person's answers to
   // the questions asked on it (live walk 2: the next task's coder asked the same questions

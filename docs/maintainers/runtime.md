@@ -7903,6 +7903,19 @@ hiding what it left out. What changed, item by item:
   refuses ("Nothing to change on …", which rolled back the whole set). The chat reply when a
   composed set is refused is l4-selftasks-chat's (L4-selftasks-105 (b)).
 
+- **The person's details reach the check and the critic** (L4-selftasks-106, prompt
+  `task-check@1.2.0`): `TaskCheckTask.outcome` (redacted, at most 600 characters) for every task
+  the check may change and every task the evidence comes from (a Done one too), and the person's
+  brief (`summary_cache.brief`, at most 1,500 characters), in a data envelope of their own before
+  the evidence ("What the tasks are to do, in the plan's words, and the person's brief"). Two
+  rule lines: a change may name a task an earlier add of the same reply makes; an added task that
+  does work a Done task left undone carries that task's details word for word. Backstop:
+  `applyTaskChanges` records an add whose source is a Done task (`markContinues`,
+  `summary_cache.task_check_continues`); its brief (`taskContextBlock`) and its review
+  (`loop/critic.ts`) carry `continuesLine`. The critic's review request carries `personGave`
+  (`personContextOf`: the brief and the answers on the task and on what it waited for, with their
+  decision record) as data; see critic.md.
+
 Tests: `session-task-list.test.ts` and `chat-fix-tasks.test.ts` (describes "l4-selftasks-check,
 run L4"), `session.test.tsx` and real-daemon.test.ts' describe "l4-selftasks-check, run L4",
 and the injection suite's `report-007` (no change beside a flagged line: the check's own line
