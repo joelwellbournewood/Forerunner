@@ -1949,3 +1949,53 @@ describe("l4-chat-answers, run L4", () => {
     await w.store.close();
   });
 });
+
+/**
+ * l4-chat-answers, run L4, fixup (review, blocking 2): the "asks" kind caught clarifying
+ * questions ("Which task should I add the note to?", "Add it to Notes or to Site?"): each got a
+ * nudge and, asked again, was replaced by "Nothing changed, and nothing waits for your yes." at
+ * two model calls a turn. The area's decision: "Clarifying questions stay free."
+ */
+describe("l4-chat-answers, run L4, fixup: clarifying questions stay free", () => {
+  it("claimOf: a question that asks which, who, where or what, or offers a choice, is no 'asks' claim; a yes asked in words still is", async () => {
+    const { claimOf } = await import("../src/conversation/claims.ts");
+    for (const said of [
+      "Which task should I add it to?",
+      "Which task should I add the note to?",
+      "Add it to Notes or to Site?",
+      "Should I start with the shop page or the about page?",
+      "Start it now or wait for the next session?",
+      "Where should I put the new page?",
+      "What should the new task be called?",
+      "Who should I add as the reviewer?",
+      "To which project should I add it?",
+      "Soll ich es zu Notes oder zu Site hinzufügen?",
+      "In welches Projekt soll ich die Aufgabe hinzufügen?",
+      "Two tasks are ready. Moving one needs your yes. Which one do you mean?",
+    ])
+      expect(claimOf(said), said).toBeNull();
+    for (const said of [
+      "Shall I set research for Reading rules to any public website again?",
+      "Should I start a session on Garden club or not?",
+      "Shall I widen research to any public website, or leave it as it is?",
+      "Do you want me to add it to Site?",
+      'Make "Write the prices page" high priority?',
+      "Soll ich die Recherche wieder auf alle Websites umstellen oder nicht?",
+    ])
+      expect(claimOf(said)?.kind, said).toBe("asks");
+  });
+
+  it("a clarifying question reaches the person as the model wrote it, with one model call and no nudge", async () => {
+    const ASK = "Which task should I add the note to? Write the README or Write the FAQ?";
+    const w = await setup([textReply(ASK, { ttftMs: 0 })]);
+    const res = await w.chat("add a note to the task");
+    expect(w.provider.calls).toHaveLength(1);
+    expect(res.reply).toBe(ASK);
+    const sessionId = await w.agent.conversationSessionId(w.alice, w.quote);
+    const row = (await w.store.event.list(sessionId, 0, 500))
+      .filter((e) => e.type === "chat.reply")
+      .at(-1)?.payload as Record<string, unknown>;
+    expect(row.claimGuard).toBeUndefined();
+    await w.store.close();
+  });
+});

@@ -4759,8 +4759,13 @@ in one project cancelled a task in another. Now:
   asked for in the reply's own words to make a change ("Shall I set research … again?", "Do you
   want me to start a session …?", "Should research … be allowed to …?", "Soll ich … umstellen?",
   a read-back the model wrote itself such as 'Make "X" high priority?', or "I need your yes"
-  beside a question); a clarifying question with no change verb ("Which project do you mean?",
-  "Start which task?") stays free. It stands when a command of the turn read a change back or an
+  beside a question); a clarifying question stays free under every pattern (`CLARIFIES`: it asks
+  which, who, where, or starts with what, when or how, "Which task should I add it to?", "Where
+  should I put the new page?"; or it offers a choice, "Add it to Notes or to Site?", "Start it now
+  or wait for the next session?", but not "… or not?" or "… or leave it as it is?"; German
+  welche, wo, oder), and so is a "needs your yes" sentence beside clarifying questions only
+  (review of l4-chat-answers: each such question got a nudge and, asked again, became "Nothing
+  changed, …" at two model calls a turn). It stands when a command of the turn read a change back or an
   earlier turn's card still waits (a typed yes answers that one); otherwise the nudge is
   `ASKS_NUDGE` and a question still asked after it is replaced as above. **absent** is L4-chat-101's
   (next bullet). A forged "The app did: …" line is a "changed" claim. A bare "yes" still never

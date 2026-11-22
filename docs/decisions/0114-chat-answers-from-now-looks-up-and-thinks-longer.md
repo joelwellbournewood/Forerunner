@@ -293,7 +293,10 @@ that rested on a hit line had no From line.
   replaced by "Nothing changed". "asks" is a reply that asks the person for a yes in words when
   no command of the turn read a change back. Its nudge says that a typed yes reaches no one, and
   tells the model to call the command or answer again without the question. Each kind is nudged
-  once a turn, inside `CHAT_MAX_MODEL_CALLS` and the turn's budget.
+  once a turn, inside `CHAT_MAX_MODEL_CALLS` and the turn's budget. A clarifying question is never
+  an "asks" claim (review of the area, 2026-11-22): one that asks which, who, where, what, when or
+  how ("Which task should I add it to?") or offers a choice ("Add it to Notes or to Site?") asks
+  for no yes and reaches the person as written, with no nudge.
 - **A bare yes still never reaches the model** (design §3.9). When nothing waits, the answer is
   'Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it now"
   to start a session.' The role prompt (1.5.1) and `CHAT_PLAN_RULES` say never to ask for a yes in

@@ -407,8 +407,9 @@ them as you left them; an open file or task stays on its own tab.
   things, and "yes" with nothing waiting asks 'Yes to what? Nothing is waiting for your yes. Say
   what you want done, for example "run it now" to start a session.' (or, when the card it meant
   was answered in the Inbox or expired, says so). Chat never asks for your yes in its own words
-  ("Shall I set …?"): a change you ask for always comes back as the app's question with **Yes**
-  and **No**, so the yes you give reaches it. A line "The app did: …" is only ever the app's own
+  ("Shall I set …?"): only the app's own question with **Yes** and **No** under a reply waits for
+  your yes. A question about which task or project you mean ("Which task should I add it to?")
+  is just a question: answer it in your words. A line "The app did: …" is only ever the app's own
   record of a change it made; Chat never writes one itself. Under each read-back the conversation says what
   became of it: you said yes, you said no, or not answered. You can answer an Inbox card in
   Chat too ("approve the plan"; "try the contact page again", "cancel …" or "mark … done" on a

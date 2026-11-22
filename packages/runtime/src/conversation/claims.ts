@@ -151,7 +151,8 @@ const CHANGE_VERB_DE =
  * l4-chat-answers (L4-chat-102, L4-selftasks-118): a sentence that asks the person for a yes in
  * the reply's own words to make a change. Judged on question sentences only (a "?" ends them),
  * except the "needs your yes" sentence, which says a yes is due whether or not it asks.
- * A clarifying question ("Which project do you mean?") names no change verb and stays free.
+ * A clarifying question (`CLARIFIES`: "Which task should I add it to?", "Add it to Notes or to
+ * Site?") stays free under every pattern.
  */
 const ASKS: { re: RegExp; question: boolean; besideQuestion?: boolean }[] = [
   // The app's own read-back line, written by the model.
@@ -233,6 +234,25 @@ const ABSENT: RegExp[] = [
   /\bsoll\s+ich\b[^.!?]{0,40}\b(?:nachsehen|nachschauen|suchen|nachschlagen)\b/gi,
 ];
 
+/**
+ * Review of l4-chat-answers (blocking 2): a clarifying question asks which, who, where or what
+ * ("Which task should I add it to?", "Where should I put the new page?") or offers a choice ("Add
+ * it to Notes or to Site?", "Start it now or wait for the next session?"). It asks for no yes and
+ * stays free under every "asks" pattern (the area's decision: "Clarifying questions stay free").
+ * "… or not?", "… or leave it as it is?" and "… oder nicht?" offer no choice: the question still
+ * asks for a yes. "what" counts only as the question's first word (after a preposition), since
+ * "add what you said" is no question word.
+ */
+const CLARIFIES: RegExp[] = [
+  /\b(?:which|who|whom|whose|where)\b/i,
+  /^(?:\[[^\]]{1,40}\]\s*)?(?:(?:to|in|for|on|at|with|from|into)\s+)?(?:what|when|how(?!\s+about))\b/i,
+  /\bor\b(?!\s+(?:not|no|leave|keep|stay)\b)/i,
+  /\b(?:welche[rsmn]?|wer|wem|wen|wo|wohin|wozu)\b/i,
+  /\boder\b(?!\s+(?:nicht|nein|lassen|so\s+lassen)\b)/i,
+];
+
+const clarifies = (s: string) => CLARIFIES.some((re) => re.test(s));
+
 /** The reply's sentences (a claim is judged per sentence). */
 function sentences(text: string): string[] {
   return text
@@ -275,12 +295,14 @@ export function claimsOf(text: string): ReplyClaim[] {
         out.push({ kind: "absent", phrase: m[0].trim() });
         break absent;
       }
-  const asksSomething = own.some((s) => s.endsWith("?"));
+  // A clarifying question is no ask, and a "needs your yes" sentence beside one only is free
+  // too: the person's answer to it comes back here, and a change then is read back.
+  const asksSomething = own.some((s) => s.endsWith("?") && !clarifies(s));
   // The patterns in their order across the reply's sentences: the question itself is named
   // before a "needs your yes" sentence beside it.
   asks: for (const p of ASKS)
     for (const s of own) {
-      if (p.question && !s.endsWith("?")) continue;
+      if (p.question && (!s.endsWith("?") || clarifies(s))) continue;
       if (p.besideQuestion && !asksSomething) continue;
       for (const m of s.matchAll(p.re)) {
         out.push({ kind: "asks", phrase: m[0].trim() });
