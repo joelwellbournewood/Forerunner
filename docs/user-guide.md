@@ -400,8 +400,12 @@ them as you left them; an open file or task stays on its own tab.
   never a lesson: "remember that …" keeps a lesson for later sessions, and its line says it
   changes no setting. A change to a task is read back once in one line ('Make "Write the FAQ"
   wait for "Write the README"?') with **Yes** and **No**; the card stays while you type other
-  things, and "yes" with nothing waiting asks "Yes to what?" (or, when the card it meant was
-  answered in the Inbox or expired, says so). Under each read-back the conversation says what
+  things, and "yes" with nothing waiting asks 'Yes to what? Nothing is waiting for your yes. Say
+  what you want done, for example "run it now" to start a session.' (or, when the card it meant
+  was answered in the Inbox or expired, says so). Chat never asks for your yes in its own words
+  ("Shall I set …?"): a change you ask for always comes back as the app's question with **Yes**
+  and **No**, so the yes you give reaches it. A line "The app did: …" is only ever the app's own
+  record of a change it made; Chat never writes one itself. Under each read-back the conversation says what
   became of it: you said yes, you said no, or not answered. You can answer an Inbox card in
   Chat too ("approve the plan"; "try the contact page again", "cancel …" or "mark … done" on a
   task whose card offers **Try again**, **Cancel task** or **Mark done anyway**): Chat reads it

@@ -1194,9 +1194,11 @@ describe("l3-chat-claims, run L3", () => {
     // d1109-chat-recall bumped it to 1.3.0 ("What you look up"); these lines stay.
     // d1109-chat-depth bumped it to 1.4.0 ("Thinking longer").
     // l4-chat-depth bumped it to 1.5.0 ("Thinking longer": who writes the ask).
-    expect(prompt).toContain('version: "1.5.0"');
+    // l4-chat-answers bumped it to 1.5.1 (a bare yes never reaches the model; only the app
+    // writes its lines): the line moved, its words stay.
+    expect(prompt).toContain('version: "1.5.1"');
     expect(prompt).toContain(
-      'A reply that changed something ends with the\n  app\'s own line "The app did: …"; a reply without it changed nothing, whatever it says.',
+      'A reply that changed something ends with the app\'s own line "The app did: …"; a reply without\n  it changed nothing, whatever it says.',
     );
     expect(prompt).toContain(
       'Never say you asked for a yes, sent a request, or that a change waits for\n   confirmation unless a tool answered "Needs confirmation" in this turn; never say something\n   changed unless a tool said so in this turn. When you called no command, say that nothing\n   changed.',
@@ -1696,5 +1698,254 @@ describe("l3-small, run L3: the chat is told what was found when the critic name
     expect(withoutNoActionGiven("[high] x is missing -> Add x.")).toBe(
       "[high] x is missing -> Add x.",
     );
+  });
+});
+
+/**
+ * l4-chat-answers, run L4 (live check 4: L4-chat-102, L4-selftasks-118, L4-chat-112). Live, the
+ * fast model asked for the person's yes in its own words ("Shall I set research for Reading rules
+ * to any public website again?", "Do you want me to start a session on Garden club?", a read-back
+ * it wrote itself: 'Make "Write the prices page prices.html" high priority?') with no tool call,
+ * so no card waited and the person's typed "yes" met "Yes to what?"; it also wrote the app's own
+ * "The app did: …" line for a change no command made, which stayed in the conversation and in
+ * every later turn's history. A bare yes still never reaches the model (design §3.9, D-L4-23).
+ */
+describe("l4-chat-answers, run L4", () => {
+  const ONLY = { key: "web_access", value: { mode: "only", only: ["developer.mozilla.org"] } };
+  const ANY = { key: "web_access", value: { mode: "any" } };
+  const READBACK =
+    "Set web pages research may read for Quote Page to any public website? Research reads any public website, on the API key and on the subscription.";
+  const YES_TO_WHAT =
+    'Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it now" to start a session.';
+  const NOTHING = "Nothing changed, and nothing waits for your yes. Say it again to try once more.";
+  const ASKS_NUDGE =
+    "Your reply asks the person for a yes in words, but no command in this turn read a change back, and a typed yes reaches no one. If the person asked for a change, call its command now; the runtime reads it back with Yes and No. Otherwise answer again without asking for a yes.";
+  const webAccess = async (w: World) =>
+    ((await w.store.project.mustGet(w.quote)).settings as Record<string, unknown>).web_access;
+  const lastRow = async (w: World) => {
+    const sessionId = await w.agent.conversationSessionId(w.alice, w.quote);
+    return (await w.store.event.list(sessionId, 0, 500))
+      .filter((e) => e.type === "chat.reply")
+      .at(-1)?.payload as Record<string, unknown>;
+  };
+  const nudgeText = (w: World, call: number) =>
+    text(w.provider.calls[call]?.request.messages.at(-1)?.content);
+
+  it("claimOf reads a yes asked in words, a read-back the model wrote, an absence and a forged change line; a clarifying question stays free (L4-chat-102, L4-selftasks-118)", async () => {
+    const { claimOf } = await import("../src/conversation/claims.ts");
+    for (const [said, kind] of [
+      // Live check 4, l3b model-call log seq 3 and 14, and the session walk's c17.
+      [
+        "This widens what research may read, so I need your yes first. Shall I set research for Reading rules to any public website again?",
+        "asks",
+      ],
+      [
+        "This widens what research may read, so it needs your yes first. Should research for Reading rules C be allowed to read any public website again?",
+        "asks",
+      ],
+      [
+        'Nothing has started yet. Garden club has two ready tasks, "Write the README" and "Write the welcome page", and no session is running. Do you want me to start a session on Garden club (up to CHF 1)?',
+        "asks",
+      ],
+      ["Do you want me to start a session on Garden club?", "asks"],
+      [
+        'Make "Write the prices page prices.html" high priority? That is a change to the task\'s priority.',
+        "asks",
+      ],
+      ["Soll ich die Recherche wieder auf alle Websites umstellen?", "asks"],
+      // Live check 4, c10-follow: an absence and an offer to look.
+      [
+        "I can't see a licence choice in what I have for Quote Page. Nothing in its tasks, open questions or the last session mentions one. I haven't searched the records yet. Should I look through the earlier notes and decisions for it?",
+        "absent",
+      ],
+      ["There is no README task in Quote Page.", "absent"],
+      ["There was no card about the first page.", "absent"],
+      ['The app did: Updated the outcome of "Write the contact page contact.html".', "changed"],
+    ] as const)
+      expect(claimOf(said)?.kind, said).toBe(kind);
+    for (const said of [
+      "Which project do you mean?",
+      "Start which task: the README or the FAQ?",
+      "Two tasks are left; there is no ready task.",
+      "Nothing changed: I've stopped short of widening research, since that needs your yes.",
+      "Should I go ahead?",
+    ])
+      expect(claimOf(said), said).toBeNull();
+  });
+
+  it("a yes asked in words with no tool call is nudged once; the model then calls the command, the Yes/No read-back is the reply, and 'yes' changes it (L4-chat-102)", async () => {
+    const ASKS =
+      "This widens what research may read, so I need your yes first. Shall I set research for Quote Page to any public website again?";
+    const w = await setup([
+      toolReply("settings_set", ONLY),
+      textReply("Done.", { ttftMs: 0 }),
+      textReply(ASKS, { ttftMs: 0 }),
+      toolReply("settings_set", ANY),
+      textReply("That widens research.", { ttftMs: 0 }),
+    ]);
+    await w.chat("only read developer.mozilla.org for research");
+    const before = w.provider.calls.length;
+    const res = await w.chat("research may read any public website again");
+    expect(w.provider.calls.length - before).toBe(3);
+    expect(nudgeText(w, before + 1)).toBe(ASKS_NUDGE);
+    expect(res.pendingConfirmation?.readback).toBe(READBACK);
+    expect(res.reply).toBe(`That widens research. ${READBACK}`);
+    expect((await lastRow(w)).claimGuard).toEqual({
+      kind: "asks",
+      phrase: "Shall I set",
+      nudged: true,
+      replaced: false,
+    });
+    const yes = await w.chat("yes");
+    expect(yes.actions.map((a) => a.kind)).toEqual(["settings.set"]);
+    expect(await webAccess(w)).toEqual({ mode: "any", only: [], never: [] });
+    await w.store.close();
+  });
+
+  it("a reply that still asks in words after the nudge is replaced; the 'yes' typed after it gets 'Yes to what?' with its next step and no model call (L4-chat-102)", async () => {
+    const ASKS = "Do you want me to start a session on Quote Page?";
+    const w = await setup([textReply(ASKS, { ttftMs: 0 }), textReply(ASKS, { ttftMs: 0 })]);
+    const res = await w.chat("sounds good");
+    expect(w.provider.calls).toHaveLength(2);
+    expect(nudgeText(w, 1)).toBe(ASKS_NUDGE);
+    expect(res.reply).toBe(NOTHING);
+    expect(res.pendingConfirmation).toBeNull();
+    const yes = await w.chat("yes");
+    expect(yes.reply).toBe(YES_TO_WHAT);
+    expect(w.provider.calls).toHaveLength(2);
+    await w.store.close();
+  });
+
+  it("'yes' after a plain answer gets 'Yes to what?' with its next step, with no model call (L4-chat-102)", async () => {
+    const w = await setup([textReply("Two tasks are ready.", { ttftMs: 0 })]);
+    await w.chat("what is left?");
+    const yes = await w.chat("yes");
+    expect(yes.reply).toBe(YES_TO_WHAT);
+    expect(YES_TO_WHAT_REPLY).toBe(YES_TO_WHAT);
+    expect(w.provider.calls).toHaveLength(1);
+    await w.store.close();
+  });
+
+  it("a read-back the model wrote itself is nudged; the command's own read-back follows, 'yes' sets the priority, and the next turn's history shows the app's question as the app's line (L4-selftasks-118)", async () => {
+    const OWN =
+      'Make "Write the prices page prices.html" high priority? That is a change to the task\'s priority.';
+    const w = await setup([
+      textReply(OWN, { ttftMs: 0 }),
+      toolReply("task_update", { task: "Write the prices page prices.html", priority: "high" }),
+      textReply("", { ttftMs: 0 }),
+      textReply("It is high now.", { ttftMs: 0 }),
+    ]);
+    const t = await task(w, "Write the prices page prices.html");
+    const res = await w.chat("the prices page is the most important one");
+    expect(nudgeText(w, 1)).toBe(ASKS_NUDGE);
+    const readback = res.pendingConfirmation?.readback ?? "";
+    expect(readback).not.toBe("");
+    expect(res.reply).toBe(readback);
+    expect(res.reply).not.toContain("That is a change to the task's priority");
+    const yes = await w.chat("yes");
+    expect(yes.actions.length).toBeGreaterThan(0);
+    // Stored as its number: high is 10 (priority.ts PRIORITY_VALUES).
+    expect((await w.store.task.mustGet(t.id)).priority).toBe(10);
+    await w.chat("is it high now?");
+    // The read-back reaches the model as the app's question, never as its own prose.
+    const history = w.messages(w.provider.calls.length - 1).slice(0, -1);
+    expect(history[1]).toEqual({
+      role: "assistant",
+      content: `The app asked, with Yes and No: ${readback}`,
+    });
+    await w.store.close();
+  });
+
+  it("a forged 'The app did:' line with no command is nudged, then put right; it is never shown, stored or in the next turn's history (L4-selftasks-118, L4-chat-112)", async () => {
+    const FORGED =
+      'The app did: Updated the outcome of "Write the contact page contact.html" to use the new number, 044 765 43 21.';
+    const w = await setup([
+      textReply(FORGED, { ttftMs: 0 }),
+      textReply(FORGED, { ttftMs: 0 }),
+      textReply("The outcome still names the old number.", { ttftMs: 0 }),
+    ]);
+    await task(w, "Write the contact page contact.html");
+    const res = await w.chat("use the new number 044 765 43 21 on the contact page");
+    expect(w.provider.calls).toHaveLength(2);
+    expect(res.reply).toBe(NOTHING);
+    expect(res.actions).toEqual([]);
+    expect((await lastRow(w)).claimGuard).toMatchObject({ kind: "changed", replaced: true });
+    await w.chat("what does the contact page say now?");
+    const sent = w
+      .messages(2)
+      .map((m) => m.content)
+      .join("\n");
+    expect(sent).not.toContain("The app did:");
+    expect(sent).toContain(NOTHING);
+    await w.store.close();
+  });
+
+  it("the model's own 'The app did:' line beside a real change is left out: the person reads the answer, and the next turn's history holds the app's line once (L4-chat-112)", async () => {
+    const CHANGE =
+      "Set web pages research may read for Quote Page from any public website to only developer.mozilla.org: research reads only these websites and their subdomains, on the API key and on the subscription.";
+    const w = await setup([
+      toolReply("settings_set", ONLY),
+      textReply(
+        "The app did: research for Quote Page now reads only developer.mozilla.org and its subdomains. Undo is available if you want it back.\n\nResearch now reads only developer.mozilla.org.",
+        { ttftMs: 0 },
+      ),
+      textReply("ok", { ttftMs: 0 }),
+    ]);
+    const res = await w.chat("only read developer.mozilla.org for research");
+    expect(res.actions.map((a) => a.kind)).toEqual(["settings.set"]);
+    expect(res.reply).toBe("Research now reads only developer.mozilla.org.");
+    expect((await lastRow(w)).text).toBe("Research now reads only developer.mozilla.org.");
+    await w.chat("thanks");
+    const reply = w.messages(2)[1]?.content ?? "";
+    expect(reply).toBe(`Research now reads only developer.mozilla.org.\n\nThe app did: ${CHANGE}`);
+    expect(reply.match(/The app did:/g)).toHaveLength(1);
+    await w.store.close();
+  });
+
+  it("a second identical settings_set is nothing to change, not an error the model reads and retries (L4-chat-112)", async () => {
+    const w = await setup([
+      toolReply("settings_set", ONLY),
+      toolReply("settings_set", ONLY),
+      textReply("Research reads only developer.mozilla.org.", { ttftMs: 0 }),
+    ]);
+    const res = await w.chat("only read developer.mozilla.org for research");
+    expect(res.actions.map((a) => a.kind)).toEqual(["settings.set"]);
+    const results = (w.provider.calls[2]?.request.messages.at(-1)?.content ?? []) as {
+      type: string;
+      is_error?: boolean;
+      content?: unknown;
+    }[];
+    const second = results.find((b) => b.type === "tool_result");
+    expect(second?.is_error ?? false).toBe(false);
+    const said = text(second?.content);
+    expect(said).toContain(
+      "Nothing to change: web pages research may read for Quote Page is already only developer.mozilla.org.",
+    );
+    expect(said).not.toContain("Refused:");
+    await w.store.close();
+  });
+
+  it("the model is told, word for word: only the app writes its lines, never ask for a yes in words, never name a tool or narrate calls (L4-chat-102, L4-chat-112, L4-chat-113)", async () => {
+    const prompt = readFileSync(
+      new URL("../../../evals/registry/principals/conversation-agent.md", import.meta.url),
+      "utf8",
+    );
+    expect(prompt).toContain('version: "1.5.1"');
+    expect(prompt).toContain(
+      '- The recent conversation: the person\'s earlier lines and your earlier replies. "It", "that"\n  and "what did I just ask?" refer to them; a bare "yes" never reaches you (the app answers it).\n  A reply that changed something ends with the app\'s own line "The app did: …"; a reply without\n  it changed nothing, whatever it says. A change the app read back shows as "The app asked, with\n  Yes and No: …". Only the app writes these two lines: never write them yourself.',
+    );
+    expect(prompt).toContain(
+      '- Never name a tool or command to the person; say what it does ("the last session", "the\n  records of 15 Nov"). Say what is true now; never describe your lookups, their order or a\n  refusal.\n- Never ask for a yes in words ("Shall I …?"): call the command, and the app asks with Yes and\n  No; to offer a start, say "say run it now or press Start".',
+    );
+    const w = await setup([textReply("ok", { ttftMs: 0 })]);
+    await w.chat("what is left?");
+    const system = String(w.provider.calls[0]?.request.system ?? "");
+    expect(system).toContain(
+      'An earlier reply\'s line "The app did: …" is what that turn\nchanged; a reply without one changed nothing. Only the app writes "The app did: …" and "The\napp asked, with Yes and No: …": never write either line yourself.',
+    );
+    expect(system).toContain(
+      '# How to write\nWrite plain sentences. No markdown: no asterisks for bold, no headings, no tables. A short\nlist may use lines that start with "- ".\nNever name a tool or a lookup (recall, recall_open, session_last, task_get, tasks_list,\nfiles_list, answer_thoroughly or any name with an underscore): say what you read in the\nperson\'s words ("the last session", "the runs of "X"", "the records of 15 Nov").\nSay what is true now for the person; never describe your tool calls, their order or their\nrefusals.\nNever ask for a yes in words ("Shall I …?"): call the command, and the app asks with Yes and\nNo; to offer a start, say "say run it now or press Start".',
+    );
+    await w.store.close();
   });
 });

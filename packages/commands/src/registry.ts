@@ -161,6 +161,11 @@ export interface ToolOutcome {
   status: "done" | "partial" | "pending" | "refused" | "cancelled";
   sentence?: string;
   reason?: string;
+  /**
+   * l4-chat-answers (L4-chat-112): the refusal is a set to the value already in force
+   * (`details.unchanged`): nothing to change, not an error the model reads and retries.
+   */
+  unchanged?: boolean;
   card?: { sentence: string } & Parameters<typeof renderChangeCard>[0];
   pendingId?: string;
   /** The card's one-line read-back, for a pending change: what the person is asked. */
@@ -170,6 +175,17 @@ export interface ToolOutcome {
    * result carries the mark, so the hooks wrap it as data and scan it (d1109-chat-guard).
    */
   untrusted?: ToolResult["untrusted"];
+}
+
+/**
+ * l4-chat-answers (L4-chat-112): what the model reads for a set to the value already in force:
+ * "Nothing to change: research for Quote Page is already any public website." (the command's own
+ * sentence, its first letter lower case unless it starts a name such as "API").
+ */
+export function nothingToChange(reason: string): string {
+  const said = reason.trim();
+  const first = /^[A-Z][a-z]/.test(said) ? `${said.charAt(0).toLowerCase()}${said.slice(1)}` : said;
+  return `Nothing to change: ${first}`;
 }
 
 /**
@@ -213,6 +229,10 @@ export function toToolSpecs(registry: CommandRegistry, binding: ToolBinding): To
             case "cancelled":
               return { content: "Cancelled; nothing was changed." };
             default:
+              // l4-chat-answers (L4-chat-112): a set to the value in force is no refusal: before,
+              // "Refused: …" with is_error told the model to read why and try again, and live
+              // check 4's chat set it twice and told the person "the second call was refused".
+              if (out.unchanged && out.reason) return { content: nothingToChange(out.reason) };
               return {
                 content: `Refused: ${out.reason ?? "not allowed"}`,
                 isError: true,

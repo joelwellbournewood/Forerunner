@@ -4459,7 +4459,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     // A "yes" with nothing waiting never reaches the model (the daemon's `YES_TO_WHAT_REPLY`).
     if (!state.pendingConfirmation && lower === "yes") {
-      return { ...base, reply: "Yes to what? Nothing is waiting for your yes." };
+      // l4-chat-answers (L4-chat-102): the line names a next step.
+      return {
+        ...base,
+        reply:
+          'Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it now" to start a session.',
+      };
     }
     // "stop everything" is Stop all and "resume" lifts it, as the daemon's session.stop (scope
     // all) and session.resume, with their sentences.

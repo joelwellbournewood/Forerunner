@@ -286,8 +286,9 @@ describe("Quick chat", () => {
     await user.type(input, "yes");
     await user.click(screen.getByTestId("chat-send"));
     await waitFor(() => expect(screen.getAllByTestId("chat-agent")).toHaveLength(3));
+    // l4-chat-answers (L4-chat-102): it names a next step.
     expect(screen.getAllByTestId("chat-agent")[2]).toHaveTextContent(
-      "Yes to what? Nothing is waiting for your yes.",
+      'Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it now" to start a session.',
     );
   });
 
@@ -437,5 +438,27 @@ describe("l4-chat-depth, run L4: the start read-back's money (L4-chat-210)", () 
         "Started a session on Atlas (up to CHF 5.00).",
       ),
     );
+  });
+});
+
+describe("l4-chat-answers, run L4: a yes typed under a question in words (L4-chat-102)", () => {
+  it("'yes' under an answer that asked in words gets 'Yes to what?' with its next step, and no Yes/No card appears", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    harness.daemon.state.nextChatReply = "Two tasks are ready. Shall I start a session on Atlas?";
+    await user.type(input, "what is left?");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() => expect(screen.getAllByTestId("chat-agent")).toHaveLength(1));
+    await user.type(input, "yes");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() => expect(screen.getAllByTestId("chat-agent")).toHaveLength(2));
+    expect(postedCalls(harness, "/chat/stream").at(-1)?.body).toMatchObject({ text: "yes" });
+    expect(screen.getAllByTestId("chat-agent")[1]).toHaveTextContent(
+      'Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it now" to start a session.',
+    );
+    expect(screen.queryByTestId("pending-confirmation")).toBeNull();
   });
 });

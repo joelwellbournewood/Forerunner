@@ -4733,6 +4733,33 @@ in one project cancelled a task in another. Now:
   "The app did: …" is what a turn changed). Tests: `conversation-memory.test.ts` "l3-chat-claims,
   run L3" and "l3-chat-claims, run L3: what the turn did", `real-daemon.test.ts` "l3-chat-claims,
   run L3" (the reply agrees with its own card and with the change it made, through POST /chat).
+- **Chat's own questions and the app's own lines** (l4-chat-answers, run L4, 2026-11-22; live
+  check 4's L4-chat-102, L4-selftasks-118, L4-chat-112). The guard has two more kinds
+  (`claimsOf`, one per kind, judged in the order asked, changed, absent, asks): **asks**, a yes
+  asked for in the reply's own words to make a change ("Shall I set research … again?", "Do you
+  want me to start a session …?", "Should research … be allowed to …?", "Soll ich … umstellen?",
+  a read-back the model wrote itself such as 'Make "X" high priority?', or "I need your yes"
+  beside a question); a clarifying question with no change verb ("Which project do you mean?",
+  "Start which task?") stays free. It stands when a command of the turn read a change back or an
+  earlier turn's card still waits (a typed yes answers that one); otherwise the nudge is
+  `ASKS_NUDGE` and a question still asked after it is replaced as above. **absent** is L4-chat-101's
+  (next bullet). A forged "The app did: …" line is a "changed" claim. A bare "yes" still never
+  reaches the model (design §3.9, the plan check's D-L4-23): `YES_TO_WHAT_REPLY` now names a next
+  step ('Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it
+  now" to start a session.'). One nudge per kind: an absence looked up may then ask in words,
+  which is nudged once more while the turn's calls last. Only the app writes its lines: the reply
+  the person sees and the stored row leave out any "The app did: …" or "The app asked, with Yes
+  and No: …" line the model wrote (`withoutAppMarkers`, a security rule: a forged change line can
+  no longer pose as a change in the conversation or a later turn's history), and the history says
+  an earlier read-back as the app's question, "The app asked, with Yes and No: <read-back>"
+  (`HISTORY_ASK_LEAD`, `replyInHistory`), never as the model's own prose it would copy. A set to
+  the value already in force goes back to the model as "Nothing to change: <what> is already
+  <value>." (`nothingToChange` in `packages/commands/src/registry.ts`, from the refusal's
+  `details.unchanged`), not as an is_error "Refused: …" to read and retry. The rules say it
+  (`CHAT_RETRIEVAL_RULES`: only the app writes its two lines; `CHAT_PLAN_RULES`' "# How to write":
+  never name a tool, never narrate tool calls or refusals, never ask for a yes in words;
+  `conversation-agent.md` 1.5.1). Tests: `conversation-memory.test.ts` "l4-chat-answers, run L4",
+  `real-daemon.test.ts` "l4-chat-answers, run L4", `chat.test.tsx` "l4-chat-answers, run L4".
 - **The context** (`src/conversation/project-facts.ts`, in the volatile part): `# Tasks of
   <project>` (every task in run order, at most `CONTEXT_TASKS_MAX` by name, each with its status
   in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,

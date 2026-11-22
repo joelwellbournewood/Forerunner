@@ -360,12 +360,58 @@ export function actionLines(reply: TranscriptReply): string[] {
 }
 
 /**
+ * How an earlier reply's read-back starts in the history (l4-chat-answers, L4-selftasks-118):
+ * the runtime's question with Yes and No, said as the app's line. Before, the read-back was bare
+ * assistant prose ("Make "X" high priority? …"), and live check 4's fast model copied it with no
+ * tool call: a question with no buttons, whose typed yes met "Yes to what?".
+ */
+export const HISTORY_ASK_LEAD = "The app asked, with Yes and No: ";
+
+/**
+ * A line the model wrote that only the app writes (l4-chat-answers, L4-chat-112, a security rule):
+ * "The app did: …" or "The app asked, with Yes and No: …", from the lead to the end of its line.
+ * Live check 4's model began a reply "The app did: research … now reads only …" (copied from the
+ * rules), and a forged one ("The app did: Updated the outcome of …" with no command) stayed in the
+ * conversation and in every later turn's history as a change that never happened.
+ */
+const APP_MARKER_RE = /(?:^|(?<=[\s.!?]))The app (?:did|asked, with Yes and No):[^\n]*/g;
+
+/**
+ * A reply's own words without any line only the app writes (`APP_MARKER_RE`), its blank lines
+ * kept: what the person is shown and what is stored. The app's own lines are added from the
+ * stored row (`actionLines`), never from the model's text.
+ */
+export function withoutAppMarkers(text: string): string {
+  if (!text.includes("The app ")) return text;
+  return text
+    .replace(APP_MARKER_RE, "")
+    .split("\n")
+    .map((l) => l.replace(/[ \t]+$/, ""))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
  * A reply in the history: its text, then what it changed (`actionLines`). A reply that is only
  * the changes' own sentences (a command's reply, no model: "Paused "X". Undo.") is said once, as
- * the app's lines.
+ * the app's lines. l4-chat-answers: a read-back is the app's line too (`HISTORY_ASK_LEAD`), and
+ * a marker line the model wrote is left out (`withoutAppMarkers`), so the app's lines are the
+ * only marker lines a later turn reads.
  */
 function replyInHistory(reply: TranscriptReply): string {
-  const raw = reply.text.trim();
+  let raw = withoutAppMarkers(reply.text.trim());
+  // The read-back the reply ends with is the app's question, not the model's words.
+  const asked =
+    reply.readback && raw.endsWith(reply.readback.trim())
+      ? `${HISTORY_ASK_LEAD}${reply.readback.trim()}`
+      : "";
+  if (asked) raw = raw.slice(0, raw.length - (reply.readback ?? "").trim().length).trim();
+  if (asked && !raw) return cap(asked);
+  if (asked)
+    return [cap(replyInHistory({ ...reply, text: raw, readback: null })), cap(asked)]
+      .filter(Boolean)
+      .join("\n\n");
   const did = actionLines(reply);
   // The reply's own words, unless they quote instructions (the action lines are kept apart).
   let prose = raw;

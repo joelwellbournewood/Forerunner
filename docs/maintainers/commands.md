@@ -61,7 +61,11 @@ dots replaced by underscores (`budget_set`), the schema is the command's, the ac
 `binding.ctxFor(toolCtx, command)`. A pending confirmation comes back to the model as text to
 read out: "Needs confirmation. The person is asked: <the card's one-line read-back>", with no
 pending id (phase E: the model repeated ids to the person, live walk 2 #10). The conversation
-agent's own tools are replaced by these in the daemon wiring step.
+agent's own tools are replaced by these in the daemon wiring step. A refusal goes back as
+"Refused: <reason>" with is_error, except a set to the value already in force (the refusal's
+`details.unchanged`, `ToolOutcome.unchanged`): that is "Nothing to change: <what> is already
+<value>." (`nothingToChange`), not an error (l4-chat-answers, run L4, 2026-11-22, L4-chat-112:
+live check 4's chat set the same rule twice and told the person "the second call was refused").
 
 | Command | Scope | Risk | Reversible | Writes |
 | --- | --- | --- | --- | --- |

@@ -13,12 +13,25 @@
  * (`ConversationAgent.chat`) checks the claim against what the turn's commands did (`TurnDid`):
  * a claim no command backs is nudged once (`claimNudge`), then replaced with what is true (the
  * turn's change sentences, its read-back, or one of the "Nothing changed" lines below).
+ *
+ * l4-chat-answers (run L4, live check 4): two more kinds. "asks": the reply asks the person for a
+ * yes in its own words to make a change ("Shall I set …?", a read-back it wrote itself), which no
+ * card carries, so a typed yes reaches no one (design §3.9 keeps "Yes to what?" for a bare yes).
+ * "absent": the reply says a record is not there, or offers to look, in a turn that offered
+ * recall and called neither recall tool. A forged "The app did: …" line is a "changed" claim.
  */
 
 /** What a reply claims the app did in this turn. */
 export interface ReplyClaim {
-  /** "asked": a yes was asked for or a request sent; "changed": something was changed. */
-  kind: "asked" | "changed";
+  /**
+   * "asked": a yes was asked for or a request sent; "changed": something was changed.
+   * l4-chat-answers (run L4, L4-chat-101/102, L4-selftasks-118): "asks": the reply asks the
+   * person for a yes in its own words to make a change ("Shall I set …?", "Do you want me to
+   * start …?", a read-back it wrote itself: "Make "X" high priority?"), which no card carries, so
+   * a typed yes reaches no one; "absent": it says a record is not there, or offers to look, in a
+   * turn that offered recall and called neither recall tool.
+   */
+  kind: "asked" | "changed" | "asks" | "absent";
   /** The words that claim it, as the reply has them (logged on the chat.reply row). */
   phrase: string;
 }
@@ -106,6 +119,10 @@ const ASKED: ClaimPattern[] = [
 ];
 
 const CHANGED: ClaimPattern[] = [
+  // l4-chat-answers (L4-selftasks-118, L4-chat-112): the app's own change line, written by the
+  // model ("The app did: Updated the outcome of …" with no command). The line is stripped from
+  // every reply (`withoutAppMarkers`); a turn whose command changed nothing is nudged for it.
+  { re: /^The app did:/g },
   // "I've set research to …", "I have changed the budget", "I've now paused it".
   {
     re: /\bI(?:'ve|’ve| have)\s+(?:now\s+|just\s+|also\s+|already\s+)?(?:changed|set|updated|switched|turned (?:on|off)|added|paused|resumed|cancell?ed|removed|deleted|stopped|started|raised|lowered|widened|narrowed|limited|restricted|allowed|enabled|disabled|reopened|moved|renamed)\b/gi,
@@ -116,6 +133,104 @@ const CHANGED: ClaimPattern[] = [
   {
     re: /\bhabe\b(?:[^.!?\n]|\.(?=\S)){0,60}?\b(?:geändert|gesetzt|umgestellt|aktualisiert|hinzugefügt|pausiert|fortgesetzt|abgebrochen|gestoppt|gestartet|erhöht|gesenkt|eingeschränkt|erweitert|erlaubt|aktiviert|deaktiviert|entfernt|gelöscht|verschoben|umbenannt)\b/gi,
   },
+];
+
+/**
+ * The verbs of a change a command makes (l4-chat-answers, L4-chat-102): what a question in the
+ * reply's own words would do. "look", "search", "check", "open" and "go ahead" are not changes: a
+ * lookup offer is the "absent" kind, a stronger model's offer is the app's ask (l4-chat-depth).
+ */
+const CHANGE_VERB =
+  "(?:set|change|widen|narrow|allow|block|start|run|add|create|cancel|pause|resume|stop|raise|lower|increase|reduce|remove|delete|drop|reopen|retry|try|move|rename|switch|turn|enable|disable|make|mark|split|answer|record|update|edit|reword|restart|apply|put|give|let|limit|restrict|reset|leave|skip|undo|merge|close)";
+
+/** German change verbs, as the infinitive ends a "Soll ich …?" question. */
+const CHANGE_VERB_DE =
+  "(?:ändern|setzen|umstellen|starten|erlauben|freigeben|hinzufügen|anlegen|pausieren|fortsetzen|abbrechen|stoppen|erhöhen|senken|entfernen|löschen|verschieben|umbenennen|aktivieren|deaktivieren|einschränken|erweitern|beantworten|wiederholen|zurücksetzen)";
+
+/**
+ * l4-chat-answers (L4-chat-102, L4-selftasks-118): a sentence that asks the person for a yes in
+ * the reply's own words to make a change. Judged on question sentences only (a "?" ends them),
+ * except the "needs your yes" sentence, which says a yes is due whether or not it asks.
+ * A clarifying question ("Which project do you mean?") names no change verb and stays free.
+ */
+const ASKS: { re: RegExp; question: boolean; besideQuestion?: boolean }[] = [
+  // The app's own read-back line, written by the model.
+  { re: /^The app asked, with Yes and No:/g, question: false },
+  // "Shall I set …?", "Should I start a session?", "Can I add it?".
+  {
+    re: new RegExp(
+      `\\b(?:shall|should|may|can|could)\\s+I\\s+(?:now\\s+|also\\s+|just\\s+|go\\s+ahead\\s+and\\s+)?${CHANGE_VERB}\\b`,
+      "gi",
+    ),
+    question: true,
+  },
+  // "Do you want me to start a session on Garden club?", "Want me to pause it?".
+  {
+    re: new RegExp(
+      `\\b(?:(?:do|would)\\s+you\\s+(?:want|like)|want)\\s+me\\s+to\\s+(?:now\\s+|also\\s+|go\\s+ahead\\s+and\\s+)?${CHANGE_VERB}\\b`,
+      "gi",
+    ),
+    question: true,
+  },
+  // "Should research for Reading rules C be allowed to read any public website again?".
+  {
+    re: /\b(?:should|shall)\s+(?!I\b)[^?]{1,80}?\s+be\s+(?:allowed|set|changed|widened|narrowed|started|raised|lowered|paused|resumed|cancell?ed|removed|added|reopened|switched|turned\s+(?:on|off)|enabled|disabled|made|marked|moved|renamed|stopped)\b/gi,
+    question: true,
+  },
+  // A read-back it wrote itself (L4-selftasks-118): 'Make "Write the prices page" high
+  // priority?', 'Start a session on Garden club (up to CHF 1)?'. Only the runtime reads a
+  // change back, with Yes and No under it; "Start which task?" asks which and stays free.
+  {
+    re: /^(?:\[[^\]]{1,40}\]\s*)?(?:Make|Set|Change|Start|Run|Pause|Resume|Cancel|Add|Remove|Delete|Stop|Raise|Lower|Widen|Narrow|Allow|Block|Reopen|Move|Rename|Switch|Turn|Mark|Split|Retry|Leave|Answer|Let|Give|Put|Drop|Skip|Restart|Reset|Merge|Close)\b(?![^?]*\b(?:which|who|whom|whose|where)\b)[^?]{3,}\?$/g,
+    question: true,
+  },
+  // "This widens what research may read, so I need your yes first.", "It needs your
+  // confirmation before it applies.", beside a question in the same reply ("… Shall I …?").
+  {
+    re: /\b(?:I|it|this|that|the change|this change|that change)\s+(?:need|needs|requires?|is\s+waiting\s+for|waits\s+for)\s+your\s+(?:yes|confirmation|approval|go-ahead|ok)\b/gi,
+    question: false,
+    besideQuestion: true,
+  },
+  // German: "Soll ich die Regel ändern?", "Möchtest du, dass ich eine Sitzung starte?".
+  {
+    re: new RegExp(`\\bsoll\\s+ich\\b[^?]{0,80}?\\b${CHANGE_VERB_DE}\\b`, "gi"),
+    question: true,
+  },
+  {
+    re: /\b(?:möchtest|willst|möchten|wollen)\s+(?:du|Sie),?\s+dass\s+ich\b/gi,
+    question: true,
+  },
+  {
+    re: /\b(?:braucht|brauche|benötigt)\b[^.!?]{0,40}\b(?:dein|Ihr)\s+Ja\b/gi,
+    question: false,
+    besideQuestion: true,
+  },
+];
+
+/**
+ * l4-chat-answers (L4-chat-101): a reply that says a record is not there, or offers to look it
+ * up, instead of looking ("There is no README task in Quote Page", "I can't find anything about a
+ * pizza oven", "I haven't searched the records yet. Should I look …?", live check 4). Judged only
+ * in a turn that offered recall and called neither recall tool (`ConversationAgent.chat`). "There
+ * is no ready task" (about now, from the facts) names no record by a name and stays free.
+ */
+const ABSENT: RegExp[] = [
+  /\bI\s+(?:can(?:no|')t|cannot|couldn(?:'|’)t|could\s+not|do(?:n't|n’t| not)|did(?:n't|n’t| not))\s+(?:see|find|spot|locate)\b/gi,
+  /\bI\s+(?:found|see|have)\s+no\s+(?:record|mention|trace|sign|note|card|decision|task|entry)\b/gi,
+  /\bI\s+(?:found|see)\s+nothing\b/gi,
+  /\bno\s+records?\s+(?:of|about|for|mention)\b/gi,
+  /\bnothing\b[^.!?]{0,80}\bmentions?\b/gi,
+  /\bI\s+(?:haven(?:'|’)t|have\s+not|did(?:n't|n’t| not))\s+(?:yet\s+)?(?:searched|looked|checked)\b/gi,
+  /\b(?:should|shall|can|could)\s+I\s+(?:look|search|check|dig)\b/gi,
+  /\bI\s+can\s+(?:look|search)\s+(?:it\s+up|for|through|the)\b/gi,
+  /\b(?:do\s+you\s+want|would\s+you\s+like|want)\s+me\s+to\s+(?:look|search|check)\b/gi,
+  /\b[Tt]here(?:'s|’s| is| was| are| were)\s+no\s+(?:(?:["“][^"”]{1,60}["”]|[A-Z][\w.-]*)\s+){1,4}(?:task|card|decision|record|session|document|lesson|question|change)s?\b/g,
+  /\bthere(?:'s|’s| is| was| are| were)\s+no\s+(?:task|card|decision|record|session|document|lesson|mention|note|question|change)s?\s+(?:about|of|for|called|named|on|that|with)\b/gi,
+  // German: "Ich habe keine Lizenzwahl gefunden", "nicht gefunden", "Soll ich nachsehen?".
+  /\bkeine?n?\b[^.!?]{0,60}\bgefunden\b/gi,
+  /\bnicht\s+gefunden\b/gi,
+  /\bich\s+finde\s+(?:kein|nichts)\w*\b/gi,
+  /\bsoll\s+ich\b[^.!?]{0,40}\b(?:nachsehen|nachschauen|suchen|nachschlagen)\b/gi,
 ];
 
 /** The reply's sentences (a claim is judged per sentence). */
@@ -135,17 +250,49 @@ function claims(s: string, m: RegExpMatchArray, p: ClaimPattern): boolean {
   return !(word && (NEGATION.test(word) || NOT_THE_APP.test(word)));
 }
 
-/** The first claim the reply makes about this turn, or null. "asked" is looked for first. */
-export function claimOf(text: string): ReplyClaim | null {
+/**
+ * Every kind of claim the reply makes about this turn, one per kind, in the order the guard
+ * judges them: "asked", "changed", "absent", "asks" (l4-chat-answers: a reply that says a record
+ * is missing and offers to add it is first told to look it up).
+ */
+export function claimsOf(text: string): ReplyClaim[] {
   const own = sentences(text).filter((s) => !EARLIER.test(s));
+  const out: ReplyClaim[] = [];
   for (const [kind, patterns] of [
     ["asked", ASKED],
     ["changed", CHANGED],
   ] as const)
-    for (const s of own)
+    found: for (const s of own)
       for (const p of patterns)
-        for (const m of s.matchAll(p.re)) if (claims(s, m, p)) return { kind, phrase: m[0].trim() };
-  return null;
+        for (const m of s.matchAll(p.re))
+          if (claims(s, m, p)) {
+            out.push({ kind, phrase: m[0].trim() });
+            break found;
+          }
+  absent: for (const s of own)
+    for (const re of ABSENT)
+      for (const m of s.matchAll(re)) {
+        out.push({ kind: "absent", phrase: m[0].trim() });
+        break absent;
+      }
+  const asksSomething = own.some((s) => s.endsWith("?"));
+  // The patterns in their order across the reply's sentences: the question itself is named
+  // before a "needs your yes" sentence beside it.
+  asks: for (const p of ASKS)
+    for (const s of own) {
+      if (p.question && !s.endsWith("?")) continue;
+      if (p.besideQuestion && !asksSomething) continue;
+      for (const m of s.matchAll(p.re)) {
+        out.push({ kind: "asks", phrase: m[0].trim() });
+        break asks;
+      }
+    }
+  return out;
+}
+
+/** The first claim the reply makes about this turn, or null. "asked" is looked for first. */
+export function claimOf(text: string): ReplyClaim | null {
+  return claimsOf(text)[0] ?? null;
 }
 
 /**
@@ -157,6 +304,28 @@ export const CLAIM_NUDGE =
   'Your reply says that you changed something or asked for the person\'s yes, but no command in this turn did either: nothing changed in this turn and nothing waits for a yes. If the person asked for a change, call its command now; the runtime reads a change that needs a yes back with Yes and No. If you meant a change an earlier turn made, say so ("Earlier, ..."). Otherwise answer again and say that nothing changed.';
 
 /**
+ * l4-chat-answers (L4-chat-102, L4-selftasks-118): the nudge for a reply that asks the person for
+ * a yes in its own words, or reads a change back itself, while no command of the turn read one
+ * back and no card waits (model-facing; asserted word for word in conversation-memory.test.ts,
+ * "l4-chat-answers, run L4"). Before, "Shall I set research …?" went to the person with no card,
+ * and the person's typed "yes" met "Yes to what?" (design §3.9 keeps that line for a bare yes).
+ */
+export const ASKS_NUDGE =
+  "Your reply asks the person for a yes in words, but no command in this turn read a change back, and a typed yes reaches no one. If the person asked for a change, call its command now; the runtime reads it back with Yes and No. Otherwise answer again without asking for a yes.";
+
+/**
+ * l4-chat-answers (L4-chat-101): the nudge for a reply that says a record is not there, or offers
+ * to look, in a turn that offered recall and called neither recall tool (model-facing; asserted
+ * word for word in chat-recall.test.ts, "l4-chat-answers, run L4"). Before, live check 4's fast
+ * model answered "There is no README task" for a task renamed since, and "Should I look …?".
+ */
+/** What chat shows while the absence nudge looks it up (recall's own step line follows). */
+export const LOOKING_STEP = "Looking through everything recorded…";
+
+export const ABSENT_NUDGE =
+  "You said it is not there without looking it up. Call recall now with the person's words and other words for it (an earlier name, another language), then answer from what it returns. Never ask whether to look.";
+
+/**
  * The nudge for this claim and what the turn did (model-facing; asserted word for word in
  * conversation-memory.test.ts, "l3-chat-claims, run L3: what the turn did"): what the claim
  * says that no command did, then what is true (a change this turn made, this turn's card
@@ -164,6 +333,8 @@ export const CLAIM_NUDGE =
  * told not to call its command again: a second card would wait where no reply shows it.
  */
 export function claimNudge(claim: ReplyClaim, did: TurnDid): string {
+  if (claim.kind === "absent") return ABSENT_NUDGE;
+  if (claim.kind === "asks") return ASKS_NUDGE;
   if (!did.changed && !did.asked && !did.waiting) return CLAIM_NUDGE;
   const lead =
     claim.kind === "asked"

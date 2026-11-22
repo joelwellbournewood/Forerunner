@@ -309,6 +309,9 @@ export class CommandLoop implements ConversationCommands {
             ? {
                 status: "refused",
                 reason: r.reason,
+                // l4-chat-answers (L4-chat-112): a set to the value in force is said as nothing to
+                // change (registry.ts' `nothingToChange`), not as an error to retry.
+                ...(r.details?.unchanged === true ? { unchanged: true } : {}),
                 // d1109-onerepo-link: a refusal quoting repository text goes to the model as data.
                 ...(r.untrusted ? { untrusted: r.untrusted } : {}),
               }

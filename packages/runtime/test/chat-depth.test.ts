@@ -465,7 +465,10 @@ describe("d1109-chat-depth, run C: answer_thoroughly, the gate and the ask", () 
     await w.chat("no, thanks");
     expect(w.requests().every((r) => !isThorough(r as ModelRequest))).toBe(true);
     const y = await w.chat("yes");
-    expect(y.reply).toBe("Yes to what? Nothing is waiting for your yes.");
+    // l4-chat-answers (L4-chat-102): the line names a next step.
+    expect(y.reply).toBe(
+      'Yes to what? Nothing is waiting for your yes. Say what you want done, for example "run it now" to start a session.',
+    );
   });
 
   // fixup-d1109-chat-depth (review): with an older read-back card still waiting and a newer ask
@@ -924,12 +927,13 @@ describe("d1109-chat-depth, run C: caching", () => {
 });
 
 describe("d1109-chat-depth, run C: the exact text", () => {
-  it("the role prompt sent is conversation-agent 1.5.0 with 'Thinking longer', on the fast and the thorough request", async () => {
+  it("the role prompt sent is conversation-agent 1.5.1 with 'Thinking longer', on the fast and the thorough request", async () => {
     const role = loadRegistry(
       resolve(import.meta.dirname, "..", "..", "..", "evals", "registry"),
     ).principals.get("conversation-agent");
     // l4-chat-depth (L4-chat-202, L4-chat-203) made 1.5.0: who writes the ask, and whose section.
-    expect(role?.version).toBe("1.5.0");
+    // l4-chat-answers (L4c) made 1.5.1 (what it is given, what it looks up, how it answers).
+    expect(role?.version).toBe("1.5.1");
     expect(role?.prompt).toContain("## Thinking longer");
     expect(role?.prompt).toContain(
       "- `answer_thoroughly` hands a question to a stronger model that thinks it through. Call it\n  first, before any lookup, and write nothing before it",
