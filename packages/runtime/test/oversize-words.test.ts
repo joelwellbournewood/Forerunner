@@ -273,3 +273,29 @@ describe("d1109-oversize-pause, run C: the order sentences (OP-0)", () => {
     expect(all).not.toMatch(/after the other tasks|after the work that fits|one task that large/);
   });
 });
+
+describe("l4-money-pause, run L4: the tasks after a larger one say what it left (L4-money-102)", () => {
+  const amount = (chfMicro: number) => ({ chfMicro, text: formatChf(chfMicro) });
+  it("what it left of the work budget and the one task's estimate; 'used the rest' only under a centime", () => {
+    expect(
+      waitsForNextSessionSentence(["Write a tagline in tagline.md"], "Compare three hosts", {
+        left: amount(30_000),
+        estimate: amount(60_000),
+      }),
+    ).toBe(
+      '"Write a tagline in tagline.md" (about CHF 0.06) waits for your next session: "Compare three hosts" left CHF 0.03 of this one.',
+    );
+    expect(
+      waitsForNextSessionSentence(["B", "C"], "Build the shop", {
+        left: amount(80_000),
+        estimate: amount(60_000),
+      }),
+    ).toBe('"B" and 1 more wait for your next session: "Build the shop" left CHF 0.08 of this one.');
+    expect(
+      waitsForNextSessionSentence(["B"], "Build the shop", {
+        left: amount(4_000),
+        estimate: amount(60_000),
+      }),
+    ).toBe('"B" waits for your next session: "Build the shop" used the rest of this one.');
+  });
+});

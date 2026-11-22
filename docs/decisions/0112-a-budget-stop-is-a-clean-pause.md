@@ -625,3 +625,14 @@ Live check 4 (2026-11-17, the real model) found three ways a pause was read wron
    "still", "fails" ...) and says no state of the work ("Nothing in the task works") is an empty
    list. The wrap-up and the brief's line ask for "only the word nothing when they need nothing
    more". The trigger, the line, the reserve and the save-only rule are unchanged.
+2. **A session ends at a pause only when it cannot take more work** (L4-money-102; option C, the
+   owner's "the session keeps its promise and spare budget isn't wasted"). Point 6's "a pause at
+   the session's budget ends the session" read every pause whose run was capped at the work
+   budget left as the end: a larger task's clean wrap-up at CHF 0.23 of a CHF 0.32 work budget
+   ended the session, said "the budget is used" on three screens, and left the tagline task after
+   it (about CHF 0.06) for the next session. Now such a pause ends the session only when a call
+   was refused at its cap, it takes no new work, or the room left is less than the smallest task
+   after the larger one; then it names no budget stop unless the spend reached the work line. With
+   room left, the re-plan takes the tasks after it that fit. The work budget, the review reserve,
+   the wrap-up line and its card are unchanged; nothing passes the work budget.
+

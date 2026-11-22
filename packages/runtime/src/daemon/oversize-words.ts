@@ -142,9 +142,23 @@ export function comesAfterSentence(titles: readonly string[], larger: string): s
  * waits for your next session: "Build the shop" used the rest of this one.'; more: '"B" and 1
  * more wait for your next session: "Build the shop" used the rest of this one.'.
  */
-export function waitsForNextSessionSentence(titles: readonly string[], larger: string): string {
+export function waitsForNextSessionSentence(
+  titles: readonly string[],
+  larger: string,
+  /**
+   * l4-money-pause, run L4 (L4-money-102): what the larger task left of the session's work budget
+   * and, for one task, its estimate: '"B" (about CHF 0.06) waits for your next session: "Compare
+   * ..." left CHF 0.03 of this one.' (live check 4: "used the rest of this one" at CHF 0.23 of a
+   * CHF 0.32 work budget). "used the rest" only when it left less than a centime.
+   */
+  room?: { left: ChfAmount; estimate?: ChfAmount },
+): string {
   const one = titles.length === 1;
-  return `${namedUpTo(titles, 1)} ${one ? "waits" : "wait"} for your next session: ${quoted(larger)} used the rest of this one.`;
+  const left = room && room.left.chfMicro >= 5_000 ? room.left : null;
+  const est = one && left && room?.estimate ? ` (${about(room.estimate)})` : "";
+  return `${namedUpTo(titles, 1)}${est} ${one ? "waits" : "wait"} for your next session: ${quoted(larger)} ${
+    left ? `left ${plain(left)} of this one` : "used the rest of this one"
+  }.`;
 }
 
 /**

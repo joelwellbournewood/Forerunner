@@ -109,6 +109,12 @@ export interface ResultFacts {
    * left tasks out for it (W6-23: "more than this session's work budget of CHF 0.32").
    */
   workBudgetChfMicro?: number;
+  /**
+   * l4-money-pause, run L4 (L4-money-102): what was left of that work budget when the session
+   * ended, as its budget counts it ('"B" (about CHF 0.06) waits for your next session: "X" left CHF
+   * 0.03 of this one.'); absent, the work budget less the session's spend.
+   */
+  workLeftChfMicro?: number;
   /** Open tasks of the project after the session (not done, not cancelled). */
   openTasks: number;
   /** Reviewed pull requests the session merged, and those it left open for the person. */
@@ -465,11 +471,26 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
       // d1109-oversize-pause (OP-0): the tasks that came after a larger task that used the rest
       // of the session, named once per larger task: '"B" waits for your next session: "Build
       // the shop" used the rest of this one.'
-      const behind = new Map<string, string[]>();
+      // l4-money-pause, run L4 (L4-money-102): with what the larger task left of the work budget
+      // and the one task's estimate, never "used the rest" while the spend is under it.
+      const behind = new Map<string, (typeof f.leftOutForBudget)[number][]>();
       for (const t of f.leftOutForBudget)
         if (t.reason === "after_large" && t.after)
-          behind.set(t.after, [...(behind.get(t.after) ?? []), t.title]);
-      const after = [...behind].map(([big, titles]) => waitsForNextSessionSentence(titles, big));
+          behind.set(t.after, [...(behind.get(t.after) ?? []), t]);
+      const leftChf = Math.max(0, f.workLeftChfMicro ?? work - o.spentChfMicro);
+      const chf = (n: number) => ({ chfMicro: n, text: formatChf(n) });
+      const after = [...behind].map(([big, tasks]) =>
+        waitsForNextSessionSentence(
+          tasks.map((t) => t.title),
+          big,
+          work > 0
+            ? {
+                left: chf(leftChf),
+                ...(tasks[0] ? { estimate: chf(tasks[0].estimateChfMicro) } : {}),
+              }
+            : undefined,
+        ),
+      );
       why.push(...after);
       // S-7: work that asked to join and did not fit the session's promise.
       const next = f.leftForNextStart ?? [];

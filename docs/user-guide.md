@@ -809,9 +809,10 @@ the shop" until its work budget is used; "B" runs after it only if budget is lef
 adds '"B" comes after it: it runs if "Build the shop" leaves budget, else in your next session.'
 The session's log says the take once ('Took "Build the shop", larger than this session's work
 budget, with about CHF 2.80 left.'). It works until that budget is used, keeps its work and
-pauses with one card in the Inbox; the tasks after it run only if it leaves budget (if it fails
-at once they run in the same session), else the result says '"B" waits for your next session:
-"Build the shop" used the rest of this one.' A larger task the tasks before it leave less than a
+pauses with one card in the Inbox; the tasks after it run in the same session with what it
+leaves of the work budget (if it fails at once they run too), and a task too big for what is left
+waits, the result saying '"B" (about CHF 0.30) waits for your next session: "Build the shop" left
+CHF 0.04 of this one.' A larger task the tasks before it leave less than a
 fifth of the work budget for waits for the next session. **Your next Start goes on with it**: a
 task that paused at a session's budget is taken in its turn by the next session you start, from
 where it stopped, and its card closes ("Your session of 14:05 went on with it."); the card's
@@ -1355,7 +1356,7 @@ smaller than a single step's cost says so and pauses before that step. A run tha
 budget, or that wrapped up with work left, is paused: the critic does not review half-done work,
 it does not count as a failed try, and its report stays in the task. A run that wraps up with
 nothing left is reviewed as usual. "Left to do" counts only what the task's acceptance criteria
-still need: "Nothing for the acceptance criteria" is nothing, and an optional extra the agent
+still need: "Nothing for the acceptance criteria" or "nothing the criteria require" is nothing, and an optional extra the agent
 suggests is kept as a note, so finished work goes to its review instead of waiting on a card. The card and the task name the limit that stopped it: the
 task's budget, the specialist's limit, the session's budget, the project's budget, this month's
 cap or the share of your Claude subscription Forerunner may use. A stop at the session's budget,

@@ -2201,6 +2201,28 @@ export class SessionRunner {
         const transientRetried = new Set<string>();
         /** How often a credential stopped each task and the next one took over (U-078). */
         const movedOnCredential = new Map<string, number>();
+        /**
+         * l4-money-pause, run L4 (L4-money-102; option C, the owner's "the session keeps its
+         * promise and spare budget isn't wasted"): after a pause at the session's work budget,
+         * whether the session goes on: "go_on" while it takes new work and the room left fits the
+         * smallest task that waited behind a larger one (or none waited: the re-plan then takes
+         * what fits, if anything); "room" when it still takes new work but that room is too small
+         * for them (the session ends with no budget stop: its spend is under the work budget);
+         * "end" once it takes no new work (a call was refused at its cap, or its spend reached the
+         * work line). Before, every such pause ended the session as "the budget is used": a
+         * larger task's clean wrap-up at CHF 0.23 of a CHF 0.32 work budget left the tagline task
+         * after it (about CHF 0.06) for the next session (live check 4, LC-C7). A pause at an
+         * outer limit always ends it.
+         */
+        const roomAfterPause = (source: BudgetStopSource): "go_on" | "room" | "end" => {
+          if (source !== "session" || budget.noNewWork) return "end";
+          const behind = ((plan as SessionPlan | null)?.leftOutForBudget ?? []).filter(
+            (l) => l.reason === "after_large",
+          );
+          if (behind.length === 0) return "go_on";
+          const smallest = Math.min(...behind.map((l) => l.estimateUsdMicro));
+          return budget.workRemainingUsdMicro() >= smallest ? "go_on" : "room";
+        };
         const replan = async (): Promise<PlanItem[]> => {
           if (!project || !brief) return [];
           const queued = new Set(queue.map((i) => i.taskId));
@@ -2313,8 +2335,21 @@ export class SessionRunner {
           // fit what is left (D4): it goes in at its place with the room left, and the tasks
           // after it wait behind it (`after_large`), as at the start.
           const cut = cutPlanToBudget(next, room, workBudgetUsdMicro);
-          const cutLeftOut: LeftOutItem[] = [...(cut.leftOutForBudget ?? [])];
           const current = plan as SessionPlan;
+          // L4-money-102: a task that waited behind a larger one and still does not fit what
+          // that task left stays behind it (`after_large`), so the result says what it left
+          // ('"B" (about CHF 0.30) waits for your next session: "Build the shop" left CHF 0.04
+          // of this one.'), not that this session's budget was used.
+          const wasBehind = new Map(
+            (current.leftOutForBudget ?? [])
+              .filter((l) => l.reason === "after_large")
+              .map((l) => [l.taskId, l.after] as const),
+          );
+          const cutLeftOut: LeftOutItem[] = (cut.leftOutForBudget ?? []).map((l) =>
+            l.reason === "after_others" && wasBehind.has(l.taskId)
+              ? { ...l, reason: "after_large", after: wasBehind.get(l.taskId) }
+              : l,
+          );
           // What the cut took or left out again is said as it is now: a task that waited behind
           // a larger one and runs now is no longer left out, and one that no longer fits is
           // left out for that (OP-0: "Left for next time").
@@ -3573,18 +3608,24 @@ export class SessionRunner {
                 error: errorMessage(e),
               });
             }
-            if (
+            const after =
               result.outcome === "paused" &&
               result.budgetStop &&
               stopEndsSession(result.budgetStop.source)
-            ) {
+                ? roomAfterPause(result.budgetStop.source)
+                : "go_on";
+            if (after !== "go_on" && result.budgetStop) {
               // The session names the limit that ended it (review of budget-stop): before, it
-              // said "the session's budget is used" at 1% of its own budget.
-              stopReason = budgetStopReasonOf(result.budgetStop.source);
-              // The subscription's share is a fraction (0..1), not money: no amount is kept (the
-              // leftovers of wave 7: it was stored converted as if it were USD).
-              stopCapUsdMicro =
-                result.budgetStop.source === "plan" ? null : result.budgetStop.capUsdMicro;
+              // said "the session's budget is used" at 1% of its own budget. L4-money-102: a
+              // pause at the session's work budget that left room, too little for the tasks
+              // after it, is no budget stop (its result says what the larger task left).
+              if (after === "end") {
+                stopReason = budgetStopReasonOf(result.budgetStop.source);
+                // The subscription's share is a fraction (0..1), not money: no amount is kept
+                // (the leftovers of wave 7: it was stored converted as if it were USD).
+                stopCapUsdMicro =
+                  result.budgetStop.source === "plan" ? null : result.budgetStop.capUsdMicro;
+              }
               skipped.push(...queue.map((i) => i.taskId));
               queue.length = 0;
               break;
@@ -3997,7 +4038,11 @@ export class SessionRunner {
       ...(tasksChanged.length ? { tasksChanged } : {}),
       sessionCapChfMicro: usdToChfMicro(opts.budgetCapUsdMicro, rate),
       ...(plan?.workBudgetUsdMicro !== undefined
-        ? { workBudgetChfMicro: usdToChfMicro(plan.workBudgetUsdMicro, rate) }
+        ? {
+            workBudgetChfMicro: usdToChfMicro(plan.workBudgetUsdMicro, rate),
+            // L4-money-102: what was left of it at the end, as the session's budget counts it.
+            workLeftChfMicro: usdToChfMicro(budget.workRemainingUsdMicro(), rate),
+          }
         : {}),
       openTasks: endState.openTasks,
       mergedPrs: merges.filter((m) => m.status === "merged").length,

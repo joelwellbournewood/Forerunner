@@ -18750,7 +18750,7 @@ describe("d1109-oversize-pause, run C", () => {
     return t;
   };
 
-  it("OP-0: GET start-check names the task before the larger one and the one after it; POST /sessions runs them in that order and the result says B waits", async () => {
+  it("OP-0: GET start-check names the task before the larger one and the one after it; POST /sessions runs them in that order, B with what the larger one leaves", async () => {
     const { rt, client } = await composeWithRolePlayer({
       FORERUNNER_BENCH_LONG: "Build the shop",
       FORERUNNER_BENCH_USAGE: "Build the shop:100000",
@@ -18796,12 +18796,12 @@ describe("d1109-oversize-pause, run C", () => {
       const order = (await rt.store.event.list(sessionId))
         .filter((e) => e.type === "task.started")
         .map((e) => (e.payload as { taskId?: string }).taskId);
-      expect(order).toEqual([a.id, big.id]);
-      expect((await rt.store.task.mustGet(b.id)).status).toBe("ready");
+      // l4-money-pause (L4-money-102): B runs after the larger task with what its wrap-up left
+      // of the work budget (before: B stayed ready, "used the rest of this one").
+      expect(order).toEqual([a.id, big.id, b.id]);
+      expect((await rt.store.task.mustGet(b.id)).status).toBe("done");
       const ended = await client.session(sessionId);
-      expect(ended.summary ?? "").toContain(
-        '"Write the notes" waits for your next session: "Build the shop" used the rest of this one.',
-      );
+      expect(ended.summary ?? "").not.toContain("used the rest of this one");
     } finally {
       await rt.close();
     }
@@ -24347,4 +24347,97 @@ describe("l4-chat-depth, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+});
+
+describe("l4-money-pause, run L4", () => {
+  // Live check 4 (2026-11-17) on a paused or capped run (ADR 0112): what the person reads of it,
+  // through the routes the session page, the Sessions list and the Inbox use, with the daemon as
+  // composed with the bench's stand-in.
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /** The daemon with the stand-in, on a home of its own that the describe removes. */
+  async function open(env: Record<string, string>) {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4-money-"));
+    homes.push(home);
+    const daemon = { FORERUNNER_HOME: home };
+    return composeWithRolePlayer(env, {
+      env: daemon,
+      dirs: appDirs({ env: daemon }),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+    });
+  }
+  type Open = Awaited<ReturnType<typeof open>>;
+
+  /** A coder task of the project, ready, priced at `usd` (its own estimate). */
+  async function task(
+    a: Open,
+    projectId: string,
+    title: string,
+    usd: number,
+    priority: "high" | "medium" | "low" = "medium",
+  ) {
+    const t = await a.client.createTask(projectId, {
+      title,
+      outcome: `${title} is done`,
+      acceptanceCriteria: [],
+      priority,
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    await a.rt.store.task.patch(t.id, { est_cost_usd_micro: Math.round(usd * 1_000_000) });
+    return t;
+  }
+
+  /** POST /sessions as the Start dialog sends it; waits until the session ended. */
+  async function startAndEnd(a: Open, projectId: string, budgetUsdMicro: number) {
+    const started = await a.client.startSession({
+      agentId: a.rt.agent.id,
+      projectId,
+      trigger: "manual",
+      budgetUsdMicro,
+    });
+    const sessionId = started.session?.id ?? "";
+    expect(sessionId, JSON.stringify(started)).toBeTruthy();
+    await eventually(
+      async () =>
+        !["planned", "running", "paused"].includes((await a.client.session(sessionId)).status),
+      "the session to end (at least 10 s of real time)",
+      async () => `${(await a.client.session(sessionId)).status}`,
+      60_000,
+    );
+    await settleSessions(a.rt);
+    return sessionId;
+  }
+
+  it("L4-money-102: POST /sessions: the task after a larger one runs with what its wrap-up left; no session, row or line says the budget is used", async () => {
+    const a = await open({
+      FORERUNNER_BENCH_LONG: "Build the shop",
+      FORERUNNER_BENCH_USAGE: "Build the shop:100000",
+    });
+    try {
+      const project = await a.client.createProject({ name: "Bakery", goal: "A bakery page" });
+      const big = await task(a, project.id, "Build the shop", 8, "high");
+      const tagline = await task(a, project.id, "Write a tagline", 0.05);
+      const sessionId = await startAndEnd(a, project.id, 2_000_000);
+      const order = (await a.rt.store.event.list(sessionId))
+        .filter((e) => e.type === "task.started")
+        .map((e) => (e.payload as { taskId?: string }).taskId);
+      expect(order).toEqual([big.id, tagline.id]);
+      expect((await a.rt.store.task.mustGet(tagline.id)).status).toBe("done");
+      const session = await a.client.session(sessionId);
+      const used = /used the rest of this one|The session's budget is used|the budget is used/;
+      expect(JSON.stringify(session)).not.toMatch(used);
+      // The Sessions list: no row says it paused before a budget ran out and that it is used.
+      const rows = (await a.client.projectSessions(project.id)).rows;
+      for (const row of rows) expect(JSON.stringify(row)).not.toMatch(used);
+      const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "").join(" | ");
+      expect(lines).not.toMatch(used);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
 });

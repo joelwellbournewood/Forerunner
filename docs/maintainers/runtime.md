@@ -1302,7 +1302,18 @@ check reports `oversized.before` and `oversized.comesAfter` (the `after_large` t
 says 'after "A" it works with about CHF 2.80' (`before`), `comesAfterSentence` ('"B" comes after
 it: it runs if "Build the shop" leaves budget, else in your next session.', the dialog's amber
 note and chat's read-back through `oversizedWarning`), `waitsForNextSessionSentence` (the
-result's '"B" waits for your next session: "Build the shop" used the rest of this one.') and
+result's '"B" waits for your next session: "Build the shop" used the rest of this one.'; since
+l4-money-pause, run L4, L4-money-102, with what the larger task left of the work budget,
+`ResultFacts.workLeftChfMicro` from `budget.workRemainingUsdMicro()`, and the one task's estimate:
+'"B" (about CHF 0.06) waits for your next session: "Compare ..." left CHF 0.03 of this one.',
+"used the rest" only under half a centime). A pause at the session's work budget ends the session
+only when it cannot take more work (`roomAfterPause` in the runner): "end" once the budget takes
+no new work (a call refused at the session's cap, or the spend at the work line: the stop reason
+`budget_exceeded`), "room" when the room left is less than the smallest `after_large` task (the
+session ends with no budget stop: "Ended: 1 paused" and the sentence above), else "go_on": the
+loop goes on and the re-plan takes the `after_large` tasks that fit, keeping a task that still
+does not fit `after_large` behind it (before: every such pause ended the session as "the budget
+is used", at CHF 0.23 of a CHF 0.32 work budget in live check 4's LC-C7) and
 `oversizedPlanClause(title, alone, after)`. **Continue next time:** `continuableTasks(store,
 project)` (budget-card.ts) are the needs_human tasks whose open budget card `continuesAtStart`
 (source `session`, `session_budget` or `specialist_limit`, `no_progress` not true); the start's

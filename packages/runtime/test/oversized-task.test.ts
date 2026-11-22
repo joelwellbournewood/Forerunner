@@ -8,6 +8,7 @@ import { benchOptionsFromEnv, createRolePlayer } from "../../../testenv/src/benc
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { handoffOf, WRAP_UP_BRIEF_LINE } from "../src/session/budget-pause.ts";
+import { removeHomes, settleSessions } from "./helpers.ts";
 
 /**
  * d1109-oversize-start (U-089, OS-2; the owner's D4 of 2026-11-09: "it should get a warning, but
@@ -190,7 +191,9 @@ describe("d1109-oversize-start", () => {
       '"Build the shop in shop.md" paused before this session\'s budget ran out',
     );
     expect(card?.body).toBe("This session's budget was CHF 1.60.");
-    expect(String(ended.stopReason)).toMatch(/^budget_/);
+    // l4-money-pause (L4-money-102): its wrap-up left part of the work budget unspent, so the
+    // session ended with no budget stop (before: /^budget_/, "Stopped: the budget is used").
+    expect(String(ended.stopReason)).toBe("completed");
 
     // The plan row lists it with the room it was given and the reason that names it.
     const row = await w.rt.store.session.mustGet(sessionId);
@@ -314,7 +317,7 @@ describe("d1109-oversize-pause", () => {
   const checkOf = async (w: World, projectId: string) =>
     (await w.json(`/projects/${projectId}/start-check?budgetUsdMicro=2000000`)) as Json;
 
-  it("A, then the larger task at its place until its wrap-up; B comes after it and waits for the next session; the same order after a restart between the start check and the run", async () => {
+  it("A, then the larger task at its place until its wrap-up; B comes after it and runs with what it leaves; the same order after a restart between the start check and the run", async () => {
     const home = mkdtempSync(join(tmpdir(), "fr-oversize-pause-order-"));
     let w = await compose(home, clock);
     opened.push(w.rt);
@@ -354,19 +357,23 @@ describe("d1109-oversize-pause", () => {
       p: (e.payload ?? {}) as Json,
     }));
     const started = events.filter((e) => e.type === "task.started").map((e) => e.p.taskId);
-    // A ran and was reviewed first, then the larger task; B did not start.
-    expect(started.filter((id) => id !== undefined)).toEqual([a, big]);
+    // A ran and was reviewed first, then the larger task; B after it, with what the larger
+    // task's wrap-up left of the work budget (l4-money-pause, L4-money-102: before, B did not
+    // start and waited for the next session, "used the rest of this one").
+    const spent =
+      (await w.rt.store.task.mustGet(a)).actual_cost_usd_micro +
+      (await w.rt.store.task.mustGet(big)).actual_cost_usd_micro;
+    expect(1_600_000 - spent).toBeGreaterThan(50_000);
+    expect(started.filter((id) => id !== undefined)).toEqual([a, big, b]);
     expect((await w.rt.store.task.mustGet(a)).status).toBe("done");
     expect((await w.rt.store.task.mustGet(big)).status).toBe("needs_human");
-    expect((await w.rt.store.task.mustGet(b)).status).toBe("ready");
+    expect((await w.rt.store.task.mustGet(b)).status).toBe("done");
     const cards = (await w.rt.store.humanRequest.list({ task_id: big, status: "open" } as never))
       .length;
     expect(cards).toBe(1);
     const said = await personLines(w, sessionId);
     expect(said.filter((l) => l.startsWith("Took "))).toHaveLength(1);
-    expect(String(ended.summary)).toContain(
-      '"Write the notes in notes.md" waits for your next session: "Build the shop in shop.md" used the rest of this one.',
-    );
+    expect(String(ended.summary)).not.toContain("used the rest of this one");
     expect(String(ended.summary)).not.toMatch(
       /after the other tasks|after the work that fits|one task that large/,
     );
@@ -387,7 +394,7 @@ describe("d1109-oversize-pause", () => {
     expect(last.split("Finish the step you are on and start nothing new.").length - 1).toBe(1);
   }, 240_000);
 
-  it("with the larger task at the highest priority it runs first, and the others wait for what it leaves", async () => {
+  it("with the larger task at the highest priority it runs first, and the others take what it leaves", async () => {
     const home = mkdtempSync(join(tmpdir(), "fr-oversize-pause-first-"));
     const w = await compose(home, clock);
     opened.push(w.rt);
@@ -404,10 +411,11 @@ describe("d1109-oversize-pause", () => {
       (e) => e.type === "task.started",
     );
     expect(events.map((e) => (e.payload as Json).taskId)[0]).toBe(big);
-    expect((await w.rt.store.task.mustGet(a)).status).toBe("ready");
-    expect(String(ended.summary)).toContain(
-      '"Write the intro in intro.md" waits for your next session: "Build the shop in shop.md" used the rest of this one.',
-    );
+    // l4-money-pause (L4-money-102): the intro fits what the larger task's wrap-up left, so it
+    // runs in the same session (before: it stayed ready, "used the rest of this one").
+    expect(events.map((e) => (e.payload as Json).taskId)).toEqual([big, a]);
+    expect((await w.rt.store.task.mustGet(a)).status).toBe("done");
+    expect(String(ended.summary)).not.toContain("used the rest of this one");
   }, 240_000);
 });
 
@@ -431,7 +439,8 @@ describe("d1109-oversize-pause: the next Start continues it", () => {
     const projectId = await newProject(w, "Shop next");
     const shop = await addTask(w, projectId, "Build the shop in shop.md", "shop.md", 8);
     const first = await runSession(w, projectId);
-    expect(String(first.stopReason)).toMatch(/^budget_/);
+    // l4-money-pause (L4-money-102): its wrap-up left room, so no budget stop ended the session.
+    expect(String(first.stopReason)).toBe("completed");
     const card = (await w.json("/inbox")).requests as Json[];
     const open = card.find((r) => r.taskId === shop && r.status === "open");
     expect(open, JSON.stringify(card.map((r) => r.title))).toBeDefined();
@@ -529,4 +538,91 @@ describe("d1109-cred-screens, run C: the Start check says when a task's budget m
     const chf = (Math.round((90_000 * rate) / 10_000) / 100).toFixed(2);
     expect(String(lines[0]?.[1])).toContain(`its budget of CHF ${chf} may`);
   }, 60_000);
+});
+
+/**
+ * l4-money-pause, run L4 (L4-money-102, live check 4's LC-C7; option C, the owner's "the session
+ * keeps its promise and spare budget isn't wasted"): a larger task's clean wrap-up paused at the
+ * session's work budget with CHF 0.09 of it left, the session ended at once ("Stopped: the budget
+ * is used" beside "CHF 0.23 of CHF 0.40") and the tagline task after it (about CHF 0.06) waited
+ * for the next session, "used the rest of this one". A session ends at such a pause only when it
+ * cannot take more work: the hooks refused a call at its cap, it takes no new work, or the room
+ * left is less than the smallest task after the larger one.
+ */
+describe("l4-money-pause, run L4: a larger task's wrap-up leaves the rest of the session to the tasks after it (L4-money-102)", () => {
+  const clock = new SimulatedClock("2026-11-17T06:00:00Z");
+  const opened: RuntimeApp[] = [];
+  const homes: string[] = [];
+  afterAll(async () => {
+    for (const rt of opened) {
+      await settleSessions(rt);
+      await rt.close().catch(() => undefined);
+    }
+    removeHomes(homes);
+  });
+  const USED = [
+    "used the rest of this one",
+    "The session's budget is used",
+    "Stopped: the budget is used",
+  ];
+
+  it("the task after it runs in the same session when the wrap-up leaves room for it: B done, one card for the larger task, no 'budget is used'", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-l4-money-102-"));
+    homes.push(home);
+    const w = await compose(home, clock);
+    opened.push(w.rt);
+    const projectId = await newProject(w, "Bakery");
+    const big = await addTask(w, projectId, "Build the shop in shop.md", "shop.md", 8, "high");
+    const b = await addTask(w, projectId, "Write a tagline in tagline.md", "tagline.md", 0.05);
+    const ended = await runSession(w, projectId);
+    const sessionId = String(ended.id);
+    // The larger task left more than B's estimate of the work budget (USD 1.60) unspent.
+    const bigSpent = (await w.rt.store.task.mustGet(big)).actual_cost_usd_micro;
+    expect(1_600_000 - bigSpent).toBeGreaterThan(50_000);
+    const started = (await w.rt.store.event.list(sessionId))
+      .filter((e) => e.type === "task.started")
+      .map((e) => (e.payload as Json).taskId);
+    expect(started).toEqual([big, b]);
+    expect((await w.rt.store.task.mustGet(b)).status).toBe("done");
+    expect((await w.rt.store.task.mustGet(big)).status).toBe("needs_human");
+    expect(
+      (await w.rt.store.humanRequest.list({ task_id: big, status: "open" } as never)).length,
+    ).toBe(1);
+    expect(ended.stopReason).not.toBe("budget_exceeded");
+    // What the person reads: the session (its status, result and figures) and its log.
+    const view = JSON.stringify(await w.json(`/sessions/${sessionId}`));
+    for (const said of USED) expect(view).not.toContain(said);
+    const log = (await personLines(w, sessionId)).join(" | ");
+    for (const said of USED) expect(log).not.toContain(said);
+    // Nothing passed the work budget: what the session's runs spent is within it.
+    const runs = [
+      ...(await w.rt.store.run.forTask(big)),
+      ...(await w.rt.store.run.forTask(b)),
+    ].filter((r) => r.specialist !== "critic" && r.session_id === sessionId);
+    expect(runs.reduce((s, r) => s + r.cost_usd_micro, 0)).toBeLessThanOrEqual(1_600_000);
+  }, 240_000);
+
+  it("a task after it that does not fit what is left waits, and the result says what the larger task left: no 'used the rest', no 'budget is used'", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-l4-money-102-wait-"));
+    homes.push(home);
+    const w = await compose(home, clock);
+    opened.push(w.rt);
+    const projectId = await newProject(w, "Bakery two");
+    const big = await addTask(w, projectId, "Build the shop in shop.md", "shop.md", 8, "high");
+    // Fits the work budget (USD 1.60) alone, not what the larger task leaves of it.
+    const b = await addTask(w, projectId, "Write the menu in menu.md", "menu.md", 1.5);
+    const ended = await runSession(w, projectId);
+    const sessionId = String(ended.id);
+    const started = (await w.rt.store.event.list(sessionId))
+      .filter((e) => e.type === "task.started")
+      .map((e) => (e.payload as Json).taskId);
+    expect(started).toEqual([big]);
+    expect((await w.rt.store.task.mustGet(b)).status).toBe("ready");
+    expect(ended.stopReason).not.toBe("budget_exceeded");
+    expect(String(ended.summary)).toMatch(
+      /"Write the menu in menu\.md" \(about CHF \d+\.\d\d\) waits for your next session: "Build the shop in shop\.md" left CHF \d+\.\d\d of this one\./,
+    );
+    const view = JSON.stringify(await w.json(`/sessions/${sessionId}`));
+    for (const said of USED) expect(view).not.toContain(said);
+  }, 240_000);
 });
