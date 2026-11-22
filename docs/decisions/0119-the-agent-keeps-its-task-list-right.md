@@ -187,3 +187,13 @@ run, it should be able to do things like that."
   left undone carries that task's details word for word, and its brief and review say which task
   it continues. Before, run C's rule gave titles, criteria, status words and report lines only,
   and a step added for the person's booking form lost the fields and the address they gave.
+- Point 6 (dated note, words): the fence's reasons name a specialist as a person does ("the
+  writer", "the deployment specialist"), and say "the plan you approved" only for a project
+  whose plan from the brief the person approved ("no task of Word count is for the writer yet"
+  otherwise). Chat's read-back says why it asks first only at a level that would have made the
+  changes at once; at Advisor and Assisted every change is read back anyway.
+- Point 7 (dated note): Make one project moves the closed project's kept notes to the kept one,
+  which keeps one open suggestion card (the older ones close as replaced; Undo opens them again).
+- Point 9 (dated note, words): a left-out line is quoted at a word and without ids; a critic's
+  note is named as the critic's; Costs names the check's spend "checking the task list", not
+  "planning".
