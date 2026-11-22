@@ -676,14 +676,22 @@ describe("a task paused at the project's budget goes on only once that budget ch
       budgetUsdMicro: 2_000_000,
       projectBudgetUsdMicro: 7_500,
     });
-    expect(r.view.display).toMatchObject({ label: "Paused at the project's budget" });
+    // l4-money-pause (L4-money-111): its work is done and only its review waits (before:
+    // "Paused at the project's budget").
+    expect(r.view.display).toMatchObject({
+      label: "Review waits for room in the project's budget",
+    });
     expect(
       (await rt.caps.check({ humanId: rt.human.id, projectId: r.projectId }, 1, { phase: "work" }))
         .decision,
     ).toBe("allow");
     const before = await cardOf(r.taskId);
     expect(before.map((q) => q.status)).toEqual(["open"]);
-    expect(before[0]?.title).toBe('"Members chart" paused at the project\'s budget of CHF 0.01');
+    // l4-money-pause (L4-money-111): the work is done; only its review waits (before:
+    // '"Members chart" paused at the project's budget of CHF 0.01').
+    expect(before[0]?.title).toBe(
+      '"Members chart" is done; its review waits for room in the project\'s budget',
+    );
     const sessions = async () => (await rt.store.session.forProject(r.projectId)).length;
     expect(await sessions()).toBe(1);
 
@@ -848,8 +856,9 @@ describe("a review refused at the project's budget pauses the task (leftovers of
     const task = await rt.store.task.mustGet(r.taskId);
     expect(task.status).toBe("needs_human");
     expect(task.attempt).toBe(0);
+    // l4-money-pause (L4-money-111): the review waits (before: "Paused at the project's budget").
     expect(r.view.display).toMatchObject({
-      label: "Paused at the project's budget",
+      label: "Review waits for room in the project's budget",
       blocker: { kind: "card", cardKind: "budget" },
     });
     // The coder ran once; the critic's run was refused before its verdict: no review, no
@@ -862,7 +871,8 @@ describe("a review refused at the project's budget pauses the task (leftovers of
     // One card, the project's budget's: Cancel task and Open Settings; no "failed 4 times".
     const cards = await cardsOf(r.taskId);
     expect(cards.map((q) => [q.title, q.status])).toEqual([
-      ['"Review page" paused at the project\'s budget of CHF 0.01', "open"],
+      // L4-money-111 (before: '"Review page" paused at the project's budget of CHF 0.01').
+      ['"Review page" is done; its review waits for room in the project\'s budget', "open"],
     ]);
     // leftovers7-tailrun, wave 13 (TR-14): the coder finished; only the review waits. Before:
     // "It stopped before it could say where it stood; its work so far is kept."
