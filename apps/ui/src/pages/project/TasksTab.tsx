@@ -143,6 +143,10 @@ export function criticColumn(
       ? { label: "Failed review", tone: "warn" }
       : null;
   if (task.status === "cancelled" || !verdict) return null;
+  // l4-selftasks-112 (c) (live check 4, LC-C18): a task not under review (Ready again after a
+  // Redo, a draft, one that waits) shows no earlier run's verdict: before, a redone task read
+  // "accepted" while the person had just said that work was wrong.
+  if (task.status === "ready" || task.status === "draft" || task.status === "paused") return null;
   return {
     label: verdictLabel(verdict),
     tone: verdict === "accept" || verdict === "pass" ? "good" : "warn",
