@@ -587,7 +587,7 @@ describe("l4-selftasks-check, run L4: what the check left out is quoted (L4-self
     keepNotes(w.store, w.quote, [
       {
         source: "report",
-        taskId: w.tasks.create.id,
+        taskId: w.tasks.create?.id ?? "",
         taskTitle: "Create the page",
         specialist: "coder",
         lines: [
