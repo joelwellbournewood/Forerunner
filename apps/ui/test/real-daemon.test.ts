@@ -24467,4 +24467,28 @@ describe("l4-money-pause, run L4", () => {
       await a.rt.close();
     }
   }, 120_000);
+
+  it("L4-money-112: a task sent back once and then accepted over its estimate: the session review's line says what it noted, never 'sent back'", async () => {
+    const a = await open({ FORERUNNER_BENCH_CRITIC_REJECT: "Write the pairing list" });
+    try {
+      const project = await a.client.createProject({
+        name: "Swiss pairing",
+        goal: "A pairing list",
+      });
+      // A tiny estimate, so the send-back and its second try take it far over it.
+      await task(a, project.id, "Write the pairing list", 0.0001);
+      const sessionId = await startAndEnd(a, project.id, 2_000_000);
+      const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
+      const review = lines.find((l) => l.startsWith("Session review:")) ?? "";
+      expect(review, lines.join(" | ")).not.toBe("");
+      expect(review).not.toMatch(/sent back/);
+      // The project's reviews: the session check is a review with no task, and its verdict is
+      // the UI's to word ("noted"); the daemon's own summary never says "sent back".
+      const reviews = await a.client.reviews(project.id);
+      const check = reviews.reviews.find((r) => r.taskId === null);
+      expect(check?.summary ?? "").not.toMatch(/sent back/);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
 });

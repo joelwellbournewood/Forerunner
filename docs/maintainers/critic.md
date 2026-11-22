@@ -443,6 +443,14 @@ the project's.
 
 ### Session review (`session-review.ts`, H.6)
 
+l4-money-pause, run L4 (L4-money-112; C6L-19's L3-left-16): a session review sends nothing back.
+`reviseCause(findings)` gives the cause its `revise` found, its first finding above low in its own
+words; the runner puts it on `critic.session_review` as `noted`, and the session log reads
+'Session review: planned tasks cost CHF 0.11, over their estimate of CHF 0.07 by 51%, with one
+task tried twice (grade 85, 1 finding).' (`sessionReviewWords` in the runtime's
+`daemon/event-lines.ts`; "noted" without a cause), never a task review's "sent back for changes";
+the Reviews tab words a session check "accepted", "noted" or "needs you" and its findings "noted".
+
 `reviewSession({ store, sessionId, criticAgentId })` runs three deterministic checks against the
 store and persists a `Review` with `session_id` set and `task_id` null:
 

@@ -413,6 +413,34 @@ export function reviewLevel(tier: number): string {
   }
 }
 
+/**
+ * l4-money-pause, run L4 (L4-money-112, live check 4; C6L-19's L3-left-16): a session review sends
+ * nothing back, so it never reads "sent back for changes": accepted; needs you; the person's own
+ * wait (L3-run-8); or what it noted ("Session review: planned tasks cost CHF 0.11, over their
+ * estimate of CHF 0.07 by 51% (grade 85, 1 finding)."), "noted" when the event names nothing.
+ */
+export function sessionReviewWords(
+  verdict: string,
+  waitsFor?: string | null,
+  noted?: string | null,
+): string {
+  if (waitsFor === "answers") return "the work waits for your answers";
+  if (waitsFor === "decision") return "the work waits for your decision";
+  switch (verdict) {
+    case "accept":
+      return "accepted";
+    case "human":
+      return "needs you";
+    default: {
+      const what = (noted ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/[.\s]+$/, "");
+      return what ? what.charAt(0).toLowerCase() + what.slice(1) : "noted";
+    }
+  }
+}
+
 /** The critic's verdict as a person reads it. */
 export function verdictWords(verdict: string): string {
   switch (verdict) {

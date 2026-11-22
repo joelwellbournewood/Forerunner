@@ -106,6 +106,7 @@ import {
   retryWords,
   reviewLevel,
   skipReason,
+  sessionReviewWords,
   verdictWords,
 } from "./event-lines.ts";
 import {
@@ -867,13 +868,9 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
     case "critic.session_review": {
       // L3-run-8 (live check 3): a session whose work waits only for the person says what they
       // can do; nothing was sent back (before: "sent back for changes (grade 70, 2 findings)").
-      const waits =
-        s("waitsFor") === "answers"
-          ? "the work waits for your answers"
-          : s("waitsFor") === "decision"
-            ? "the work waits for your decision"
-            : null;
-      return `Session review: ${waits ?? verdictWords(s("verdict"))} (grade ${n("grade")}, ${count("findings", "finding")}).`;
+      // L4-money-112 (live check 4): a session review sends nothing back in any case: it says
+      // what it noted (before: "Session review: sent back for changes (grade 85, 1 finding).").
+      return `Session review: ${sessionReviewWords(s("verdict"), s("waitsFor"), s("noted"))} (grade ${n("grade")}, ${count("findings", "finding")}).`;
     }
     case "task.blocked_by_findings":
       return `Cannot close the task: ${s("warning")}`;

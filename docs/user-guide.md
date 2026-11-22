@@ -871,7 +871,10 @@ earlier version marked failed for want of a sandbox goes back to ready by itself
 A session where nothing was done because its tasks failed, were sent back or wait for you gets a
 lower grade from the critic's session review. When its work only waits for you, the review's
 line under Details says so ("Session review: the work waits for your answers (grade 70, 2
-findings)."): answer the card in the Inbox and the work goes on.
+findings)."): answer the card in the Inbox and the work goes on. A session review sends nothing
+back: when it notes something, such as the planned tasks costing more than their estimate, its
+line says what it noted, and under **More ▾ → Reviews → Session checks** it reads "noted" (or
+"accepted", "needs you"), its findings "noted".
 
 **Every session of a project** is listed under **More ▾ → Sessions** (also **All 3 sessions** on
 the Overview's Last result, and **All sessions** on every session page). The heading is the

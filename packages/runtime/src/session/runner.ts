@@ -1,4 +1,5 @@
 import { DEFAULT_CHF_PER_USD, formatChf, usdToChfMicro } from "@forerunner/billing";
+import { reviseCause } from "@forerunner/critic";
 import {
   type Clock,
   errorMessage,
@@ -4502,6 +4503,11 @@ export class SessionRunner {
             findings: sessionReview.findings.length,
             summary: sessionReview.summary,
             ...(waitsFor ? { waitsFor } : {}),
+            // L4-money-112: what a revise noted, for the line the person reads (its first finding
+            // above low, a fact of the store, never a model's words).
+            ...(sessionReview.verdict === "revise" && reviseCause(sessionReview.findings)
+              ? { noted: reviseCause(sessionReview.findings) }
+              : {}),
             ...(sessionReview.verdict === "human"
               ? { escalation: true, warning: "the session review needs the human" }
               : {}),

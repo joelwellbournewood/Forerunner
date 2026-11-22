@@ -430,3 +430,26 @@ describe("l3-money-engine, run L3", () => {
     ).toBe("Session review: needs you (grade 40, 1 finding).");
   });
 });
+
+describe("l4-money-pause, run L4: a session review sends nothing back (L4-money-112)", () => {
+  it("a revise names what it noted, never 'sent back' (live check 4: 'sent back for changes (grade 85, 1 finding)')", () => {
+    expect(
+      describeEvent("critic.session_review", { verdict: "revise", grade: 85, findings: 1 }),
+    ).toBe("Session review: noted (grade 85, 1 finding).");
+    expect(
+      describeEvent("critic.session_review", {
+        verdict: "revise",
+        grade: 85,
+        findings: 1,
+        noted:
+          "Planned tasks cost CHF 0.11, over their estimate of CHF 0.07 by 51%, with one task tried twice",
+      }),
+    ).toBe(
+      "Session review: planned tasks cost CHF 0.11, over their estimate of CHF 0.07 by 51%, with one task tried twice (grade 85, 1 finding).",
+    );
+    for (const verdict of ["revise", "escalate"])
+      expect(
+        describeEvent("critic.session_review", { verdict, grade: 70, findings: 2 }),
+      ).not.toMatch(/sent back/);
+  });
+});

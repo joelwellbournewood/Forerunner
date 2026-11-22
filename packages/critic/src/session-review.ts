@@ -862,3 +862,17 @@ export async function reviewSession(opts: ReviewSessionOptions): Promise<ReviewO
   }
   return { ...out, reviewId: review.id, findingIds, humanRequestId, patterns, lessonProposals };
 }
+
+/**
+ * l4-money-pause, run L4 (L4-money-112; C6L-19's L3-left-16): the cause a session review's
+ * `revise` found, in its own words: its first finding above low ("Planned tasks cost CHF 0.11,
+ * over their estimate of CHF 0.07 by 51%, with one task tried twice"), for the line the person
+ * reads; null when it found none. A session review sends nothing back, so its line names this
+ * cause, never a task review's "sent back for changes".
+ */
+export function reviseCause(
+  findings: readonly { severity: string; description: string }[],
+): string | null {
+  const f = findings.find((x) => x.severity !== "low" && x.description.trim() !== "");
+  return f ? f.description.replace(/\s+/g, " ").trim().slice(0, 200) : null;
+}
