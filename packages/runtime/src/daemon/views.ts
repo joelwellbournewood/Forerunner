@@ -105,8 +105,8 @@ import {
   plainLine,
   retryWords,
   reviewLevel,
-  skipReason,
   sessionReviewWords,
+  skipReason,
   verdictWords,
 } from "./event-lines.ts";
 import {

@@ -602,9 +602,7 @@ describe("d1116-budget-all", () => {
       const notes = (
         (await o.json("/notifications/recent?limit=200")) as unknown as { notifications: Json[] }
       ).notifications.filter((n) => n.kind === "request_blocking");
-      expect(notes.map((n) => String(n.title)).join(" | ")).toContain(
-        'is done; its review',
-      );
+      expect(notes.map((n) => String(n.title)).join(" | ")).toContain("is done; its review");
       expect(notes.map((n) => `${n.title} ${n.body}`).join(" | ")).not.toMatch(paused);
       // The session went on: the next task ran and was reviewed.
       expect(s.status).toBe("completed");

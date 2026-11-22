@@ -14,8 +14,8 @@ import {
   owedMergeWait,
 } from "../loop/merge-mode.ts";
 import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
-import { reviewRoomWords } from "../session/review-room-words.ts";
 import { CREDENTIAL_WAIT_REASON } from "../session/credential-wait.ts";
+import { reviewRoomWords } from "../session/review-room-words.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
 import { cancelWorkKind, cancelWorkLine, prNumberOf } from "./cancel-words.ts";

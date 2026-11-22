@@ -290,7 +290,9 @@ describe("l4-money-pause, run L4: the tasks after a larger one say what it left 
         left: amount(80_000),
         estimate: amount(60_000),
       }),
-    ).toBe('"B" and 1 more wait for your next session: "Build the shop" left CHF 0.08 of this one.');
+    ).toBe(
+      '"B" and 1 more wait for your next session: "Build the shop" left CHF 0.08 of this one.',
+    );
     expect(
       waitsForNextSessionSentence(["B"], "Build the shop", {
         left: amount(4_000),

@@ -12,9 +12,9 @@ import { ANSWER_CARD_KEYS, answerNote, budgetStopAnswer } from "../wiring/reques
 import type { BudgetStopSource, RunHandoff } from "./budget-pause.ts";
 import { unappliedAnswers } from "./findings.ts";
 import { moneyWords } from "./money-words.ts";
-import { reviewRoomWords } from "./review-room-words.ts";
 import type { PreparePort, PrepareResult } from "./prepared-work.ts";
 import { noteAboutTask, recordStart, type StartPort, startForPerson } from "./resume-work.ts";
+import { reviewRoomWords } from "./review-room-words.ts";
 import type { BudgetStop } from "./runner.ts";
 
 /**
