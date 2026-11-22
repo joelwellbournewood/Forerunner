@@ -418,6 +418,7 @@ import {
 } from "./identity.ts";
 import { type JoinDeps, joinRefusal } from "./join-preview.ts";
 import { oversizedWarning } from "./oversize-view.ts";
+import { isIntakeSession } from "./project-status.ts";
 import { ProjectPullRequests } from "./pull-requests.ts";
 import { changeNotAppliedWords } from "./request-words.ts";
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
@@ -5159,9 +5160,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         clock,
         humanId: human.id,
         currentStop: (sourceId) => taskBilling.currentStopOf(sourceId),
-        onGrant: async (_sourceId, projectIds) => {
+        onGrant: async (_sourceId, projectIds, apply) => {
           let goesOn = false;
           for (const projectId of projectIds) {
+            // L4-creds-11: an apply of this yes that Forerunner's close cut off already started
+            // the person's session (one began since the apply did): the kept start it went on
+            // from is dropped, and nothing starts twice.
+            if (apply?.again) {
+              const began = (await store.session.forProject(projectId, { limit: 20 })).some(
+                (s) => s.created_at >= apply.since && !isIntakeSession(s),
+              );
+              if (began) {
+                await dropKeptStart(store, projectId);
+                goesOn = true;
+                continue;
+              }
+            }
             const handle = liveSessions.forProject(projectId);
             if (handle) {
               const ready = await store.task.readyTasks(projectId, { limit: 50 }).catch(() => []);

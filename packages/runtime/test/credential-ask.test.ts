@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import type { HumanRequestView, InboxView, TaskView } from "../src/daemon/api-types.ts";
 import type { RuntimeApp } from "../src/daemon/compose.ts";
 import { BILLING_GRANT_AUDIT_TOOL, CREDENTIAL_ASK_KEY } from "../src/session/credential-ask.ts";
+import { updateSourceLimits } from "../src/wiring/billing-pick.ts";
 import { credWorld, seedProject, setPolicy, startSession, until } from "./cred-world.ts";
 import { removeHomes, settleSessions } from "./helpers.ts";
 
@@ -170,4 +171,77 @@ describe("d1109-cred-engine, run C: the ask card (CE-7)", () => {
     await settleSessions(rt);
     await rt.close();
   }, 90_000);
+});
+
+/**
+ * l4-cred-engine L4-creds-11 (C5L-5): applying the ask card's yes was not one step: the grant,
+ * the start of the person's waiting session, then the card's outcome. Forerunner closing after
+ * the start and before the outcome left the card unapplied and the kept start in place, so the
+ * next sync started the person's session a second time. Here the cut-off apply is left as it
+ * would be (the yes stored, the apply marked on the card, the grant written, the session
+ * started), and the runtime is composed again on the same home.
+ */
+describe("l4-cred-engine, run L4: the ask card's yes applied once across a restart", () => {
+  it("an apply cut off after the start: composed again, the person's session is not started a second time and the card gets its one outcome", async () => {
+    const clock = new SimulatedClock("2026-10-31T09:00:00Z");
+    const world = credWorld({ clock, prefix: "fr-ask-crash-" });
+    homes.push(world.home);
+    world.limitSubscription(RESET);
+    let { rt } = await world.compose();
+    await setPolicy(rt, "subscription_then_ask");
+    const { project } = await seedProject(rt, "Quote page", ["Style the page", "Write the copy"]);
+    await startSession(rt, project.id);
+    await settleSessions(rt);
+    const [card] = await askCards(rt);
+    expect(card).toBeTruthy();
+    const facts = (card?.change_card ?? {}) as { source_id?: string; stop_key?: string };
+    // The cut-off apply: the yes, the apply's mark, the grant, the person's session started.
+    await rt.store.humanRequest.answer(
+      card?.id ?? "",
+      card?.version ?? 0,
+      "Use API key",
+      rt.human.id,
+    );
+    const answered = await rt.store.humanRequest.mustGet(card?.id ?? "");
+    await rt.store.humanRequest.patch(answered.id, {
+      change_card: {
+        ...(answered.change_card as Record<string, unknown>),
+        applying: { stopKey: facts.stop_key, at: clock.nowIso() },
+      } as never,
+    });
+    await updateSourceLimits(rt.store, facts.source_id ?? "", (limits) => ({
+      ...limits,
+      grant: { to: "api_key", stopKey: facts.stop_key, by: "card", at: clock.nowIso() },
+    }));
+    const started = await rt.scheduler.requestStart({
+      agentId: rt.agent.id,
+      projectId: project.id,
+      trigger: "manual",
+      by: "person",
+      reason: "your yes: your API key does the work until your subscription can again",
+    });
+    expect(["started", "queued"]).toContain(started.result);
+    await settleSessions(rt);
+    const workSessions = async () =>
+      (await rt.store.session.forProject(project.id, { limit: 50 })).filter(
+        (s) => s.summary !== "conversation" && !(s.plan as { intake?: unknown } | null)?.intake,
+      );
+    const before = (await workSessions()).length;
+    expect(before).toBe(2);
+    await rt.close();
+
+    // Composed again: the answer is applied once, and no second start.
+    ({ rt } = await world.compose());
+    await rt.syncApprovals();
+    await settleSessions(rt);
+    expect((await workSessions()).length).toBe(before);
+    const row = await rt.store.humanRequest.mustGet(card?.id ?? "");
+    expect((row.change_card as { outcome?: unknown }).outcome).toBe("granted");
+    // Synced again: still one start.
+    await rt.syncApprovals();
+    await settleSessions(rt);
+    expect((await workSessions()).length).toBe(before);
+    await settleSessions(rt);
+    await rt.close();
+  }, 120_000);
 });

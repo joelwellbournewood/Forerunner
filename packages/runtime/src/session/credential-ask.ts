@@ -272,9 +272,16 @@ export interface AskAnswerDeps {
   /**
    * The grant is written: the waiting work goes on (a running session takes its waiting tasks
    * back; a session that ended to wait goes on now as the person's start). Returns whether a
-   * person's session goes on now.
+   * person's session goes on now. l4-cred-engine L4-creds-11: `since` is when this card's apply
+   * began (kept on the card before the call), and `again` says an earlier apply of it was cut off
+   * (Forerunner closed between the start and the card's outcome): a session of a project that
+   * began since then is the one this yes started, so it is not started twice.
    */
-  onGrant(sourceId: string, projectIds: readonly string[]): Promise<boolean>;
+  onGrant(
+    sourceId: string,
+    projectIds: readonly string[],
+    apply?: { since: string; again: boolean },
+  ): Promise<boolean>;
 }
 
 /**
@@ -310,6 +317,15 @@ export async function syncAskAnswers(
         await finish("waited", { session_goes_on: goesOn });
         continue;
       }
+      // L4-creds-11: the apply is marked on the card before anything moves, so an apply that
+      // Forerunner's close cut off is known at the next sync (and never starts a second session).
+      const earlier = card.applying as { stopKey?: unknown; at?: unknown } | undefined;
+      const again = earlier?.stopKey === stopKey && typeof earlier.at === "string";
+      const since = again ? (earlier.at as string) : deps.clock.nowIso();
+      if (!again)
+        await deps.store.humanRequest.patch(row.id, {
+          change_card: { ...card, applying: { stopKey, at: since } },
+        });
       await updateSourceLimits(deps.store, sourceId, (limits) => {
         const g = limits.grant as { stopKey?: unknown } | undefined;
         if (g?.stopKey === stopKey) return null;
@@ -332,10 +348,12 @@ export async function syncAskAnswers(
       const projects = [
         ...new Set(waitingOf((row2?.limits ?? {}) as JsonObject).map((w) => w.projectId)),
       ];
-      const sessionGoesOn = await deps.onGrant(sourceId, projects).catch((e: unknown) => {
-        logger.warn("the waiting work did not go on after the grant", { error: errorMessage(e) });
-        return false;
-      });
+      const sessionGoesOn = await deps
+        .onGrant(sourceId, projects, { since, again })
+        .catch((e: unknown) => {
+          logger.warn("the waiting work did not go on after the grant", { error: errorMessage(e) });
+          return false;
+        });
       out.granted++;
       await finish("granted", { session_goes_on: sessionGoesOn });
     } catch (e) {

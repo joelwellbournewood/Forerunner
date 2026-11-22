@@ -8107,6 +8107,11 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   driver sends `ANTHROPIC_BASE_URL` from `req.baseURL ?? deps.baseURL`, the default address
   left out as `ClaudeCodeProvider` leaves it out, and Headroom's `req.env` still wins while it is
   on. Before, only chat's Claude Code calls and the key's provider used the address.
+- **The ask card's yes is applied once** (L4-creds-11, C5L-5): `syncAskAnswers` marks the card
+  `applying: {stopKey, at}` before the grant and the start, and passes `{since, again}` to
+  `onGrant`; compose's `onGrant` treats a project with a session begun since an earlier cut-off
+  apply as already gone on (drops its kept start, starts nothing). The card's outcome then
+  replaces the mark.
 
 Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
 throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the
