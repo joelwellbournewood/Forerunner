@@ -2133,6 +2133,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     hooks,
     kill,
     clock,
+    // L4-creds-10: a subscription's task runs use the configured API address, as chat does.
+    ...(config?.anthropicApiBase ? { baseURL: config.anthropicApiBase } : {}),
     ...(opts.sdkQuery ? { queryImpl: opts.sdkQuery } : {}),
     ...(opts.sdkToolServer ? { toolServer: opts.sdkToolServer } : {}),
   });

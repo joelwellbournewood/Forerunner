@@ -133,7 +133,17 @@ export interface SdkDriverDeps {
   queryImpl?: QueryLike;
   /** Test seam: replaces the SDK's in-process tool server (`createSdkMcpServer` + `tool`). */
   toolServer?: SdkToolServerFactory;
+  /**
+   * config.json's `anthropicApiBase` (l4-cred-engine L4-creds-10): sent as `ANTHROPIC_BASE_URL`
+   * to every task run unless the run names its own (`req.baseURL`); the default address is not
+   * sent, as for chat's Claude Code provider. Before, a subscription's task runs went to the
+   * default API while chat used the configured address.
+   */
+  baseURL?: string;
 }
+
+/** Anthropic's own address: not sent as `ANTHROPIC_BASE_URL` (Claude Code's default). */
+const DEFAULT_ANTHROPIC_BASE = "https://api.anthropic.com";
 
 /**
  * One Forerunner tool as the Agent SDK's in-process tool server offers it to Claude Code
@@ -530,6 +540,12 @@ export class SdkAgentDriver {
       decided(preflight);
 
       const queryFn = this.deps.queryImpl ?? (await loadSdkQuery());
+      // The run's address, else the configured one off its default (L4-creds-10).
+      const configured =
+        this.deps.baseURL && this.deps.baseURL.replace(/\/$/, "") !== DEFAULT_ANTHROPIC_BASE
+          ? this.deps.baseURL
+          : undefined;
+      const baseURL = req.baseURL ?? configured;
       // The subscription's token only (refused above otherwise); the session's extra variables
       // (the Headroom proxy) never carry another way to authenticate.
       const env: Record<string, string | undefined> = {
@@ -537,7 +553,7 @@ export class SdkAgentDriver {
         CLAUDE_CODE_OAUTH_TOKEN: req.credential.value,
         // 'sites': Claude Code's own page reader off; pages go through Forerunner's reader.
         CLAUDE_CODE_DISABLE_WEB_FETCH: "1",
-        ...(req.baseURL ? { ANTHROPIC_BASE_URL: req.baseURL } : {}),
+        ...(baseURL ? { ANTHROPIC_BASE_URL: baseURL } : {}),
         ...withoutClaudeCodeAuth(req.env ?? {}),
       };
       const hooks = this.sdkHooks(ctx, req.tools, emit, wrap, req.webAccess, withhold);

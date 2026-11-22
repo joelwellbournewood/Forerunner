@@ -8102,6 +8102,11 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   wait (`waitSentence` from the card's facts, at the result's time, in the person's zone, then
   the goes-on rule), after Use API key "Went on with your API key.". A notification already sent
   is not reworded.
+- **The configured API address covers the subscription's task runs** (L4-creds-10, live check
+  4's L4-creds-16): `SdkDriverDeps.baseURL` is config.json's `anthropicApiBase` (compose); the
+  driver sends `ANTHROPIC_BASE_URL` from `req.baseURL ?? deps.baseURL`, the default address
+  left out as `ClaudeCodeProvider` leaves it out, and Headroom's `req.env` still wins while it is
+  on. Before, only chat's Claude Code calls and the key's provider used the address.
 
 Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
 throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the
@@ -8115,7 +8120,8 @@ the month's start and restarts), `credential-chat-failure.test.ts` (POST /chat u
 key_then_subscription with the refused sign-in's turn, and under subscription_then_key with the
 API's 500), `credential-stop-booking.test.ts` (Stop on chat's call served by the subscription
 while the key rests: the ledger row and Costs by credential are the subscription's),
-`credential-ask-words.test.ts` ("l4-cred-engine, run L4": the stored ask form after Wait and
+`credential-api-base.test.ts` (the task run's and chat's `ANTHROPIC_BASE_URL`, with and without a
+configured address), `credential-ask-words.test.ts` ("l4-cred-engine, run L4": the stored ask form after Wait and
 after Use API key, composed twice), `chat-depth-words.test.ts` (`failureReply` over every code), the UI's
 `settings-plan-allowance.test.tsx` and `chat-depth.test.tsx` (no Think it through under a failed
 reply) and the real-daemon describe "l4-cred-engine, run L4".

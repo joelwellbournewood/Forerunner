@@ -231,6 +231,8 @@ export function credWorld(opts: {
   key?: boolean;
   timezone?: string;
   prefix?: string;
+  /** config.json's `anthropicApiBase` (l4-cred-engine L4-creds-10); none: no config file. */
+  apiBase?: string;
 }): CredWorld {
   const { clock } = opts;
   const home = mkdtempSync(join(tmpdir(), opts.prefix ?? "fr-cred-world-"));
@@ -301,12 +303,28 @@ export function credWorld(opts: {
     fallback: async () => new Response("not here", { status: 404 }),
   });
   const compose = async () => {
+    const stateUrl = `sqlite:${join(dirs.data, "state.sqlite")}`;
     const rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
       dirs,
-      config: null,
+      config: opts.apiBase
+        ? {
+            version: 1,
+            profile: "default",
+            timezone: opts.timezone ?? "Europe/Zurich",
+            githubApiBase: "http://gh.test",
+            anthropicApiBase: opts.apiBase,
+            repos: [],
+            credentials: {
+              github: false,
+              anthropic: opts.key !== false,
+              anthropicSubscription: opts.subscription !== false,
+            },
+            stateUrl,
+          }
+        : null,
       clock,
-      stateUrl: `sqlite:${join(dirs.data, "state.sqlite")}`,
+      stateUrl,
       vault,
       fetchImpl,
       sdkQuery,
