@@ -610,3 +610,18 @@ review, or tier 2 raised by the effort slider) is never sized down, its first ca
 8,192 tokens out at least, so its floor is the first call's whole price at 8,192 tokens out. Priced
 at 2,048, a tier 3 review whose room lay between the two prices started, ran its checks and wrote
 a critic Run row before its first call was refused.
+
+## Amendment 2026-11-22 (l4-money-pause, run L4: a paused or capped run is read right)
+
+Live check 4 (2026-11-17, the real model) found three ways a pause was read wrong.
+
+1. **Nothing is nothing** (L4-money-101). The researcher's report after its wrap-up ended "Left to
+   do: nothing the criteria require." and the run was paused with "one thing left to do", asking
+   for CHF 0.40 more. Point 5's parse now reads a "nothing" with a relative clause that names what
+   needs it ("nothing [that] the criteria require", "nothing that the brief still needs") as
+   empty, and ends the patching one live phrasing at a time (W15-14, L3-research-1, LC-C7) with a
+   general rule: a one-clause Left-to-do line that starts with "nothing" or "none", names the
+   whole set of criteria, the brief or the task (never one criterion), names no work ("but",
+   "still", "fails" ...) and says no state of the work ("Nothing in the task works") is an empty
+   list. The wrap-up and the brief's line ask for "only the word nothing when they need nothing
+   more". The trigger, the line, the reserve and the save-only rule are unchanged.

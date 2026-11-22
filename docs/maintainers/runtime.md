@@ -2297,7 +2297,16 @@ budget-stop; the owner's decision of 2026-11-02).**
   l3-handoff-checks: a reason after a full stop, "Nothing is needed for the two criteria. Each
   listed page gives its address and was opened." (`AFTER`), what it is about said "to meet" or
   "to satisfy" the criteria, "No further work is required to meet the acceptance criteria.", and
-  "though" or "although" names work, as "but" does) and decides: a run is paused when it stopped
+  "though" or "although" names work, as "but" does; l4-money-pause, run L4, L4-money-101, live
+  check 4's LC-C7 "Left to do: nothing the criteria require.": a "nothing" with a relative clause
+  that names what needs it, "nothing [that] the [acceptance] criteria require", "nothing that the
+  brief still needs", "none the brief asks for" (`RELATIVE_HEAD`; its "still" belongs to the
+  clause, so "nothing the criteria require yet: the tests fail" stays an item), and the general
+  rule that ends the patching one phrasing at a time: a one-clause line that starts with
+  "nothing" or "none", names the whole set (`WHOLE_SET`, not `ONE_CRITERION`), names no work
+  (`NOT_NOTHING`) and says no state of the work ("Nothing in the task works", "Nothing has been
+  done for the task", "None of the criteria are met": `WORK_STATE`) is empty; the wrap-up and
+  the brief's line now ask for "only the word nothing when they need nothing more") and decides: a run is paused when it stopped
   at a budget of any level (`stoppedBy: "budget"`), or when it heard the wrap-up in this run and
   listed at least one item (`stoppedBy: "wrap_up"`); a run that ends normally without a wrap-up,
   or after one with nothing left, is reviewed as usual. The result is `TaskExecutionResult`

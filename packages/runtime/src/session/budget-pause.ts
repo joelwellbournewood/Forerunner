@@ -47,10 +47,12 @@ export interface RunHandoff {
  * organized and error free way"): it also says what a good wrap-up leaves, as `wrapUpText` does,
  * and that a caveat goes under "Where I stopped:" (L3-left-4). Before: "If Forerunner tells you to
  * wrap up, start nothing new and end your report with 'Where I stopped:' (what is done and where
- * the work stands) and 'Left to do:' (...)".
+ * the work stands) and 'Left to do:' (...)". l4-money-pause, run L4 (L4-money-101): it asks for only
+ * the word 'nothing' when the criteria need nothing more (before: "or 'nothing'", and live check
+ * 4's researcher wrote "nothing the criteria require.").
  */
 export const WRAP_UP_BRIEF_LINE =
-  "If Forerunner tells you to wrap up, finish the step you are on, start nothing new, and leave the files so the work can go on (what you changed builds and runs; a change you cannot finish is undone or kept out of use). Then end your report with 'Where I stopped:' (what is done, anything half done with its file, and any caveat or what you did not cover) and 'Left to do:' (only what the task's criteria still need, as a list with the next step first, or 'nothing'; no optional extras): the run that continues this task starts from them.";
+  "If Forerunner tells you to wrap up, finish the step you are on, start nothing new, and leave the files so the work can go on (what you changed builds and runs; a change you cannot finish is undone or kept out of use). Then end your report with 'Where I stopped:' (what is done, anything half done with its file, and any caveat or what you did not cover) and 'Left to do:' (only what the task's criteria still need, as a list with the next step first, or only the word 'nothing' when they need nothing more; no optional extras): the run that continues this task starts from them.";
 
 const MAX_STOPPED_CHARS = 600;
 const MAX_ITEMS = 20;
@@ -89,7 +91,50 @@ const NOTHING = new RegExp(
  */
 const NOT_NOTHING =
   /\b(?:but|except|however|(?:al)?though|yet|not|never|still|missing|incomplete|unfinished|fail(?:s|ed|ing)?|broken)\b|n't\b/i;
-const isNothing = (text: string) => NOTHING.test(text) && !NOT_NOTHING.test(text);
+/**
+ * l4-money-pause, run L4 (L4-money-101, live check 4's LC-C7: "Left to do: nothing the criteria
+ * require."): a "nothing" with a relative clause that names what needs it ("nothing [that] the
+ * [acceptance] criteria require", "nothing the brief still needs", "none the brief asks for",
+ * "nothing criterion 2 needs"). Its "still" or "yet" before the verb belongs to the clause, so
+ * `NOT_NOTHING` reads only what follows it ("nothing the criteria require yet: the tests fail" is
+ * work).
+ */
+const NOUN = String.raw`(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)`;
+const RELATIVE_HEAD = new RegExp(
+  String.raw`^(?:nothing|none)(?:\s+(?:more|left|else|further|remaining))?(?:\s+(?:that|which))?\s+(?:the\s+)?(?:task'?s\s+)?(?:(?:acceptance|two|three|four|five|\d+)\s+)?${NOUN}(?:\s*(?:#?\d+|\([a-z0-9]\)))?(?:\s+(?:still|yet))?\s+(?:requires?|needs?|asks?\s+for|calls?\s+for|demands?|wants?)\b`,
+  "i",
+);
+const RELATIVE_TAIL = new RegExp(String.raw`^(?:${REASON})?[\s.!)]*$`, "i");
+function isRelativeNothing(text: string): boolean {
+  const head = RELATIVE_HEAD.exec(text);
+  if (!head) return false;
+  const rest = text.slice(head[0].length);
+  return RELATIVE_TAIL.test(rest) && !NOT_NOTHING.test(rest);
+}
+/**
+ * The general rule (L4-money-101; it ends the patching one live phrasing at a time after W15-14
+ * and L3-research-1): a line that starts with "nothing" or "none", names the task's whole set of
+ * criteria (`WHOLE_SET`, never one criterion) and names no work (`NOT_NOTHING`) is an empty list,
+ * however it is worded, when it is one clause (a reason after punctuation is read by the forms
+ * above, so "Nothing to change in the brief; write the tests" stays work). A line that says what
+ * state the work is in ("Nothing in the task works", "Nothing has been done for the task", "None
+ * of the criteria are met") is not a "nothing left".
+ */
+const WORK_STATE =
+  /^none\s+of\b|\b(?:works?|runs?|pass(?:es)?|builds?|loads?|renders?|compiles?|exists?)\b|\b(?:has|have|had|is|are|was|were|been)\s+(?:\w+\s+)?(?:done|written|started|made|built|created|finished|completed|implemented|met|covered)\b/i;
+const ONE_CLAUSE = (text: string) =>
+  !/[:;,(–—]|\.\s|\s-\s/.test(text.replace(/[\s.!)]+$/, ""));
+const isWholeSetNothing = (text: string) =>
+  /^(?:nothing|none)\b/i.test(text) &&
+  ONE_CLAUSE(text) &&
+  WHOLE_SET.test(text) &&
+  !ONE_CRITERION.test(text) &&
+  !NOT_NOTHING.test(text) &&
+  !WORK_STATE.test(text);
+const isNothing = (text: string) =>
+  (NOTHING.test(text) && !NOT_NOTHING.test(text)) ||
+  isRelativeNothing(text) ||
+  isWholeSetNothing(text);
 /**
  * A criterion named on its own ("criterion 2", "criteria 1 and 3", "the first criterion"): a
  * "nothing" about it says nothing of the rest, and an item that names it is work.
