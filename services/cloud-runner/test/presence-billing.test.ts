@@ -227,6 +227,7 @@ describe("billing source for cloud sessions", () => {
         personal: true,
         probe,
         policy: never,
+        clock,
       });
       expect(choice).toMatchObject({ sourceId: api.id, kind: "api_key" });
       expect(choice.skipped).toEqual([
@@ -241,6 +242,9 @@ describe("billing source for cloud sessions", () => {
         runner: "cloud",
         purpose: "session",
         modelTier: DEFAULT_RUNNER_MODEL_TIER,
+        // l4-cred-engine L4-creds-3: the router reads the end of a share or monthly stop at the
+        // runner's clock (`RouteContext.nowMs` is required).
+        nowMs: clock.now(),
       });
       expect((pick.mock.contexts[0] as BillingRouter).policy).toBe(never);
     } finally {
