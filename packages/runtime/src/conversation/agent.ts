@@ -109,6 +109,7 @@ import {
   WHY_VALUES,
   type Why,
   WRAP_UP_STEP,
+  yesCovers,
 } from "./depth.ts";
 import {
   cardLine,
@@ -1866,8 +1867,14 @@ export class ConversationAgent {
       const f = await figuresOf(route);
       // A yes covers its own "at most" on its own model: a Go ahead after a restart, or after the
       // price or the model changed so that it no longer covers the pass, asks again with the new
-      // figures (nothing spends past a figure the person was not shown).
-      if (yes && ((yes.model && yes.model !== f.model) || yes.atMostUsdMicro < f.floorUsdMicro)) {
+      // figures (nothing spends past a figure the person was not shown). l4-chat-depth
+      // (L4-chat-201): judged as the person was shown it, in whole centimes (`yesCovers`): the Go
+      // ahead's own turn measures a floor a few tokens larger, which is the same figure.
+      if (
+        yes &&
+        ((yes.model && yes.model !== f.model) ||
+          !yesCovers(yes.atMostUsdMicro, f.floorUsdMicro, chf))
+      ) {
         offer = offerOf(f, question);
         return null;
       }
@@ -1884,7 +1891,7 @@ export class ConversationAgent {
         offer = offerOf(f, question);
         return null;
       }
-      if (budgetUsdMicro < f.floorUsdMicro) {
+      if (!yesCovers(budgetUsdMicro, f.floorUsdMicro, chf)) {
         offer = offerOf(f, question);
         return null;
       }

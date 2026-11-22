@@ -1201,3 +1201,109 @@ describe("d1109-chat-depth fixup: a failed task's card listed in full", () => {
     expect(w.requests().some((q) => isThorough(q as ModelRequest))).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// l4-chat-depth (run L4, live check 4): Thinking longer on the real model, every line true.
+
+/** A past pass on `depth`/`model` in another project of the one conversation session. */
+async function seedPass(
+  w: World,
+  o: { depth: string; model: string; costUsdMicro: number; durationMs?: number; n?: number },
+) {
+  const sessionId = await w.agent.conversationSessionId(w.alice, w.project);
+  for (let i = 0; i < (o.n ?? 1); i++)
+    await w.store.event.append(sessionId, "chat.reply", {
+      transcriptId: `seed-${o.depth}-${o.costUsdMicro}-${i}`,
+      text: "seed",
+      conversationProjectId: "elsewhere",
+      passes: [
+        {
+          depth: o.depth,
+          model: o.model,
+          effort: "medium",
+          durationMs: o.durationMs ?? 5_000,
+          costUsdMicro: o.costUsdMicro,
+        },
+      ],
+    } as never);
+}
+
+/** The chat.reply rows' offers, oldest first. */
+async function offerRows(w: World): Promise<Record<string, unknown>[]> {
+  const sessionId = await w.agent.conversationSessionId(w.alice, w.project);
+  const rows = await w.store.event.ofTypes(sessionId, ["chat.reply"], { limit: 100 });
+  return rows
+    .map((r) => (r.payload as { offer?: Record<string, unknown> | null }).offer)
+    .filter((o): o is Record<string, unknown> => !!o)
+    .reverse();
+}
+
+/** The CHF of "at most CHF 0.21" in a line. */
+const atMostChf = (line: string | undefined) =>
+  Number(/at most CHF (\d+\.\d{2})/.exec(line ?? "")?.[1]);
+
+describe("l4-chat-depth, run L4: a Go ahead runs the answer it offered (L4-chat-201)", () => {
+  it("after one cheap stronger answer elsewhere, 'use a stronger model: …' asks with no call; Go ahead makes exactly one fake-sonnet request within the line's 'at most', and no second ask row", async () => {
+    const w = await world({
+      replies: [textReply("It fails because the stylesheet is not linked.", { times: 3 })],
+    });
+    await seedPass(w, { depth: "stronger", model: "fake-sonnet", costUsdMicro: 1_000 });
+    const r = await w.chat(`use a stronger model: ${QUESTION}`);
+    expect(w.requests()).toHaveLength(0);
+    expect(r.reply).toMatch(
+      /^This needs a stronger model: about CHF \d+\.\d{2} \(at most CHF \d+\.\d{2}\) and 10 seconds\. Go ahead\?$/,
+    );
+    const atMost = atMostChf(r.reply);
+    // The stored "at most" is the CHF on the line (rounded up to the centime, at 0.8 CHF per USD).
+    const stored = (await offerRows(w)).at(-1) as { atMostUsdMicro: number };
+    expect(stored.atMostUsdMicro).toBe(Math.round((atMost * 1_000_000) / 0.8));
+    const go = await w.chat("Go ahead.", { offer: r.transcriptId });
+    const sonnet = w.requests().filter((q) => q.model === "fake-sonnet");
+    expect(sonnet, `Go ahead asked again: ${go.reply}`).toHaveLength(1);
+    expect(go.reply).toBe("It fails because the stylesheet is not linked.");
+    expect(go.footer).toMatch(/^Thought it through with Sonnet · \d+ s · /);
+    expect(go.offer).toBeNull();
+    expect(go.costUsdMicro).toBeLessThanOrEqual(stored.atMostUsdMicro);
+    expect(w.runs.at(-1)?.req.budget.limits.budgetUsdMicro).toBe(stored.atMostUsdMicro);
+    // One ask row only: the Go ahead wrote no second one.
+    expect(await offerRows(w)).toHaveLength(1);
+  });
+
+  it("a typed 'yes' under the same ask runs it too, and a second stronger question later works again", async () => {
+    const w = await world({ replies: [textReply("A stronger answer.", { times: 4 })] });
+    await seedPass(w, { depth: "stronger", model: "fake-sonnet", costUsdMicro: 1_000 });
+    const first = await w.chat(`use a stronger model: ${QUESTION}`);
+    expect(first.offer?.action).toBe("go_ahead");
+    const yes = await w.chat("yes");
+    expect(yes.footer, yes.reply).toMatch(/^Thought it through with Sonnet · /);
+    const second = await w.chat("use a stronger model: compare the two ways to style the page");
+    expect(second.offer?.action).toBe("go_ahead");
+    const go = await w.chat("Go ahead.", { offer: second.transcriptId });
+    expect(go.footer, go.reply).toMatch(/^Thought it through with Sonnet · /);
+    expect(w.requests().filter((q) => q.model === "fake-sonnet")).toHaveLength(2);
+  });
+
+  it("a real price change between the ask and Go ahead asks again with the new figures, and nothing runs until that yes", async () => {
+    let factor = 1;
+    const pricing = {
+      estimate: (i: number, o: number) => factor * flatPricing.estimate(i, o),
+      cost: flatPricing.cost,
+    };
+    const w = await world({
+      replies: [textReply("A stronger answer.")],
+      deps: { pricingFor: () => pricing },
+    });
+    const r = await w.chat(`use a stronger model: ${QUESTION}`);
+    // Four times the price: the pass's floor (three first calls) is above the "at most" shown
+    // (twice five first calls), so the yes no longer covers it.
+    factor = 4;
+    const again = await w.chat("Go ahead.", { offer: r.transcriptId });
+    expect(w.requests()).toHaveLength(0);
+    expect(again.offer?.action).toBe("go_ahead");
+    expect(again.reply).toMatch(/^This needs a stronger model: /);
+    expect(atMostChf(again.reply)).toBeGreaterThan(atMostChf(r.reply));
+    const go = await w.chat("Go ahead.", { offer: again.transcriptId });
+    expect(go.footer, go.reply).toMatch(/^Thought it through with Sonnet · /);
+    expect(w.requests().filter((q) => q.model === "fake-sonnet")).toHaveLength(1);
+  });
+});

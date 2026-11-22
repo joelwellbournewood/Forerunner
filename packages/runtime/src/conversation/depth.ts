@@ -162,14 +162,40 @@ export function chfToUsdMicroAt(chf: number, chfPerUsd: number): number {
   return Math.round((Math.max(0, chf) * 1_000_000) / (chfPerUsd > 0 ? chfPerUsd : 1));
 }
 
-/** The "at most" a yes covers: twice the estimate, rounded up to the centime, never below `floor`. */
+/**
+ * The USD micro amount of whole centimes at the day's rate, never more than the centimes say
+ * (its `centimesUp` is the same centimes): what a line that shows "CHF 0.21" covers.
+ */
+export function usdMicroOfCentimes(centimes: number, chfPerUsd: number): number {
+  const at = chfToUsdMicroAt(Math.max(0, centimes) / 100, chfPerUsd);
+  return centimesUp(at, chfPerUsd) > centimes ? at - 1 : at;
+}
+
+/**
+ * The "at most" a yes covers: twice the estimate, never below `floor`, rounded up to the centime
+ * (l4-chat-depth, L4-chat-201): the stored amount is the CHF on the line. Before, a floor above
+ * twice the estimate was stored unrounded, so the Go ahead's own turn (whose context the offered
+ * turn had grown) measured a floor above it and asked again, every time.
+ */
 export function atMostOf(
   estimateUsdMicro: number,
   floorUsdMicro: number,
   chfPerUsd: number,
 ): number {
-  const twice = chfToUsdMicroAt(centimesUp(2 * estimateUsdMicro, chfPerUsd) / 100, chfPerUsd);
-  return Math.max(twice, floorUsdMicro);
+  const centimes = Math.max(
+    centimesUp(2 * estimateUsdMicro, chfPerUsd),
+    centimesUp(floorUsdMicro, chfPerUsd),
+  );
+  return usdMicroOfCentimes(centimes, chfPerUsd);
+}
+
+/**
+ * Whether a yes for `atMostUsdMicro` still covers a pass whose floor is `floorUsdMicro`, judged
+ * as the person was shown it (L4-chat-201): in whole centimes, so a floor a few tokens larger on
+ * the Go ahead's own turn is the same figure, and only a real change of price asks again.
+ */
+export function yesCovers(atMostUsdMicro: number, floorUsdMicro: number, chfPerUsd: number) {
+  return centimesUp(floorUsdMicro, chfPerUsd) <= centimesUp(atMostUsdMicro, chfPerUsd);
 }
 
 /** A longer answer's time when none was measured yet (the five-call estimate's partner). */

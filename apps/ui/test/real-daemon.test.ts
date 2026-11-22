@@ -23484,3 +23484,108 @@ describe("l4-cred-engine, run L4", () => {
     }
   }, 120_000);
 });
+
+describe("l4-chat-depth, run L4", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /** The daemon on the bench's stand-in (the role-player), read through the UI client. */
+  async function open(prefix: string, env: Record<string, string> = {}, home?: string) {
+    const dir = home ?? mkdtempSync(join(tmpdir(), prefix));
+    if (!home) homes.push(dir);
+    const log = new ModelCallLog({ file: join(dir, "model-calls.jsonl") });
+    const provider = createRolePlayer(
+      benchOptionsFromEnv({ FORERUNNER_BENCH_DELAY_MS: "0", ...env }, log),
+    );
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: dir },
+      dirs: appDirs({ env: { FORERUNNER_HOME: dir } }),
+      config: null,
+      clock: new SystemClock(),
+      stateUrl: `sqlite:${join(dir, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const chat = (
+      projectId: string,
+      text: string,
+      extra: { offer?: string; depth?: "longer" } = {},
+    ) =>
+      client.chat({ humanId: me.id, agentId, projectId, projectTab: true, text, ...extra });
+    return { rt, client, me, agentId, chat, home: dir, log };
+  }
+
+  // L4-chat-201 (live check 4, L4-chat-12): after one stronger answer, every later Go ahead
+  // under "This needs a stronger model …" showed the same ask again, install-wide.
+  it("POST /chat: Go ahead under 'use a stronger model:' runs Sonnet once, and again after cheap stronger answers, with no ask line said twice", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-201-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      const sessionId =
+        (await a.rt.conversation?.conversationSessionId(a.agentId, project.id)) ?? "";
+      for (const [i, q] of [
+        'why does "Style the page" keep failing?',
+        "compare the two ways to style the page",
+      ].entries()) {
+        if (i === 1) {
+          // Earlier stronger answers on this model were cheap (as one was on the live model):
+          // twice their cost is below the pass's floor, so the floor sets the "at most".
+          const rows = await a.rt.store.event.ofTypes(sessionId, ["chat.reply"], { limit: 5 });
+          const model = (rows[0]?.payload as { passes?: { model: string }[] }).passes?.[0]?.model;
+          expect(model).toBeTruthy();
+          for (let n = 0; n < 3; n++)
+            await a.rt.store.event.append(sessionId, "chat.reply", {
+              transcriptId: `seed-${n}`,
+              text: "seed",
+              conversationProjectId: "elsewhere",
+              passes: [
+                {
+                  depth: "stronger",
+                  model,
+                  effort: "medium",
+                  durationMs: 5_000,
+                  costUsdMicro: 1_000,
+                },
+              ],
+            } as never);
+        }
+        const asked = await a.chat(project.id, `use a stronger model: ${q}`);
+        expect(asked.reply).toMatch(
+          /^This needs a stronger model: about CHF \d+\.\d{2} \(at most CHF \d+\.\d{2}\) and \d+ seconds\. Go ahead\?$/,
+        );
+        expect(asked.offer?.action).toBe("go_ahead");
+        const go = await a.chat(project.id, "Go ahead.", { offer: asked.transcriptId });
+        expect(go.footer, go.reply).toMatch(/^Thought it through with Sonnet · \d+ s · /);
+        // Never the same ask again under the answer. (On the cheap figures the stand-in's three
+        // calls reach the pass's wrap-up, so the strongest model may be offered under it.)
+        expect(go.offer?.line ?? "").not.toMatch(/^This needs a stronger model/);
+      }
+      const view = await a.client.conversation(project.id);
+      // Two asks, two answers under them: no ask line said twice.
+      const asks = view.turns.filter((t) => /Go ahead\?$/.test(t.reply?.text ?? ""));
+      expect(asks).toHaveLength(2);
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+});

@@ -4522,6 +4522,17 @@ step resets the live text", "Think it through never under a change", the yes aft
 line, Stop after a change, the CHF 1.00 amount, the pass budget whatever the medians and Answer
 now; `budget.test.ts` `SessionBudget.wrapUpNow`.
 
+**l4-chat-depth (run L4, 2026-11-22): Thinking longer on the real model, every line true.**
+- *How a yes is judged (L4-chat-201).* The stored "at most" is the CHF on the line: `atMostOf`
+  rounds the larger of twice the estimate and the floor up to the centime
+  (`usdMicroOfCentimes`). A Go ahead, a typed yes or Think it through's press asks again only
+  when the model changed or the floor, in whole centimes, is above what the line showed
+  (`yesCovers`); the pass then runs with the yes's "at most" capped by the room. Before, a floor
+  above twice the estimate was stored unrounded, and the Go ahead's own turn (its history one ask
+  longer) measured a floor a few hundred micro-USD above it: after one cheap stronger answer
+  anywhere on the install (the estimate is the median across the one conversation session), every
+  later Go ahead showed the same ask again and made no call (live check 4, LC-C14).
+
 **The history leaves out a quoted record's words (L3-left-6).** An earlier reply whose own words
 the injection scan flags (a reply that quoted a report, a card or a recall hit) is sent in the
 history as `QUOTED_RECORD_LEFT_OUT`, so the record's words reach no later call and the later
