@@ -8118,6 +8118,12 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   for the same stop is queued behind it, and no entry says it waits until a reset that has
   passed. The queued project's own status sentence ("Goes on after the session on ...") is not
   built (the report's not_done).
+- **Chat's room reads the plan's share** (L4-creds-6, C3-left-6): while chat answers on the
+  subscription (`routed.peek` of the chat model), compose's `chatRoom` adds the room the share
+  leaves (`(cap - share) x allowance` from `planUsageOf`, at API prices) as level `plan` beside
+  the month cap and the project's budget; the smallest binds (the month's on a tie). A longer
+  answer past it is not taken: "A closer look would pass the share of your Claude plan
+  Forerunner may use, so this is the quick answer."
 
 Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
 throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the

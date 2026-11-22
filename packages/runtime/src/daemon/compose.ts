@@ -5464,10 +5464,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         budget > 0
           ? await roomOf({ monthUsdMicro: Number.MAX_SAFE_INTEGER, projectUsdMicro: budget })
           : undefined;
-      if (monthRoom === undefined && projectRoom === undefined) return null;
-      return projectRoom !== undefined && (monthRoom === undefined || projectRoom < monthRoom)
-        ? { usdMicro: projectRoom, level: "project" as const }
-        : { usdMicro: monthRoom ?? 0, level: "month" as const };
+      // l4-cred-engine L4-creds-6 (C3-left-6): while chat answers on the subscription, the share
+      // of the plan Forerunner may use bounds a longer answer too (its API-price figures against
+      // what is left of the allowance's share), so the plan's cap line and ask line can show.
+      const planRoom = await (async () => {
+        if (!routed) return undefined;
+        const model = rungModelFor(routed, modelConfig.get().modeDefaults.text_chat.tier);
+        const now = await routed.peek(model).catch(() => null);
+        if (now?.kind !== "subscription") return undefined;
+        const usage = await planUsageOf(store, clock, now);
+        if (!usage.allowanceUsdMicro) return undefined;
+        return Math.max(0, Math.floor((usage.cap - (usage.share ?? 0)) * usage.allowanceUsdMicro));
+      })().catch(() => undefined);
+      const rooms = [
+        ...(monthRoom !== undefined ? [{ usdMicro: monthRoom, level: "month" as const }] : []),
+        ...(projectRoom !== undefined
+          ? [{ usdMicro: projectRoom, level: "project" as const }]
+          : []),
+        ...(planRoom !== undefined ? [{ usdMicro: planRoom, level: "plan" as const }] : []),
+      ];
+      if (!rooms.length) return null;
+      // The cap that binds: the smallest room (the month's on a tie, as before).
+      return rooms.reduce((a, b) => (b.usdMicro < a.usdMicro ? b : a));
     },
     ...(routed
       ? {
