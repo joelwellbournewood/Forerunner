@@ -20530,9 +20530,19 @@ describe("d1109-selftasks-run, run C", () => {
       // collapsed Details (review: the field had no real-daemon assertion).
       expect(card?.openDetails).toBe(true);
       // The session's log says what the check did; the tasks are as they were.
-      expect((await a.client.sessionEvents(sessionId)).map((e) => e.text)).toContain(
+      const logged = await a.client.sessionEvents(sessionId);
+      expect(logged.map((e) => e.text)).toContain(
         'Checked the task list after "Create the page in index.html": suggested 2 changes in the Inbox (less than CHF 0.01).',
       );
+      // l4-selftasks-108 (run L4): the check's line is read by default with its own cost, so the
+      // person-level lines add up to the session's spend (before: Details only, cost in words).
+      const checked = logged.find((e) => e.type === "session.task_checked");
+      expect(checked?.audience).toBe("person");
+      expect(checked?.cost.usdMicro ?? 0).toBeGreaterThan(0);
+      const personCost = logged
+        .filter((e) => e.audience === "person")
+        .reduce((sum, e) => sum + e.cost.usdMicro, 0);
+      expect(personCost).toBe((await a.client.session(sessionId)).spent.usdMicro);
       expect(await taskRows(a, w.project.id)).toEqual([
         ["Create the page in index.html", "done"],
         ["Send the logo", "needs_human"],

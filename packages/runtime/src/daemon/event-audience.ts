@@ -47,6 +47,15 @@ export const LEFT_FOR_NEXT_START_EVENT_TYPE = "session.left_for_next_start";
 export const CONTINUES_EVENT_TYPE = "session.continues";
 export const PROMISED_EVENT_TYPE = "session.promised";
 
+/**
+ * d1109-selftasks-run (ADR 0119): one task check at a boundary ('Checked the task list after
+ * "Create the page": no change (CHF 0.01).'). l4-selftasks-108 (ADR 0119 point 9, dated note of
+ * 2026-11-22; live check 4: the person-level lines added up to less than the session's spend):
+ * a person line with its cost on its row; a check that made no call (`called: false`, every
+ * line read like an instruction) stays a detail.
+ */
+export const TASK_CHECKED_EVENT = "session.task_checked";
+
 /** The types a person reads by default; every other type is a detail. */
 export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   "session.started",
@@ -62,6 +71,7 @@ export const PERSON_EVENT_TYPES: ReadonlySet<string> = new Set([
   JOINED_EVENT_TYPE,
   LEFT_FOR_NEXT_START_EVENT_TYPE,
   CONTINUES_EVENT_TYPE,
+  TASK_CHECKED_EVENT,
   "task.started",
   "task.files",
   "task.finished",
@@ -106,6 +116,8 @@ export function eventAudience(type: string, p: Record<string, unknown> = {}): Ev
   if (type === "billing.fallback" && p.repeat === true) return "detail";
   // C5-left-1 (CE-11): a stop's switch is told once per session; a later task's is a detail.
   if (type === "billing.switch" && p.repeat === true) return "detail";
+  // l4-selftasks-108: a task check that made no call (nothing to pay, nothing changed).
+  if (type === TASK_CHECKED_EVENT && p.called === false) return "detail";
   // A retry in the same session is told by what came of it (design §3.7: about eight lines per
   // task; the walk's failing task had twelve): the same specialist starting again is a detail,
   // another one taking over is not.

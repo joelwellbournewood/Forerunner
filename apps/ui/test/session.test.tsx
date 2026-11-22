@@ -472,3 +472,33 @@ describe("d1109-selftasks-chat, run C: each change line has its Undo where it is
     expect(screen.queryByTestId("change-undo")).not.toBeInTheDocument();
   });
 });
+
+describe("l4-selftasks-check, run L4: the task check's line is a person line (L4-selftasks-108)", () => {
+  it("with Details off the session page shows the check's line and its CHF beside it", async () => {
+    const harness = createHarness();
+    const base = harness.daemon.state.events[0];
+    if (!base) throw new Error("no fixture");
+    harness.daemon.state.events.push({
+      ...base,
+      id: "ev_checked",
+      seq: 300,
+      type: "session.task_checked",
+      text: 'Checked the task list after "Create the page": no change (CHF 0.03).',
+      payload: { called: true, costUsdMicro: 37_500 },
+      cost: { usdMicro: 37_500, chfMicro: 30_000 },
+      audience: "person",
+      level: "info",
+    });
+    renderApp("/sessions/sess_1", harness);
+    const log = await screen.findByTestId("event-log");
+    await waitFor(() =>
+      expect(log).toHaveTextContent(
+        'Checked the task list after "Create the page": no change (CHF 0.03).',
+      ),
+    );
+    const row = screen
+      .getAllByTestId("event-row")
+      .find((r) => r.textContent?.includes("Checked the task list"));
+    expect(row?.textContent).toContain("CHF 0.03");
+  });
+});

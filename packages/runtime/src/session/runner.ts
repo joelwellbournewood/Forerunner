@@ -19,6 +19,7 @@ import {
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import {
   REVIEW_RESUMED_EVENT,
+  TASK_CHECKED_EVENT,
   TASK_CONTINUES_EVENT,
   TOOK_LARGER_EVENT,
 } from "../daemon/event-audience.ts";
@@ -235,8 +236,11 @@ export const PROMISED_EVENT = "session.promised";
 export const JOINED_EVENT = "session.joined";
 /** S-7: work that asked to join and did not fit, at the session's end (`{ tasks }`). */
 export const LEFT_FOR_NEXT_START_EVENT = "session.left_for_next_start";
-/** d1109-selftasks-run (ADR 0119): one task check at a boundary; its Details line. */
-export const TASK_CHECKED_EVENT = "session.task_checked";
+/**
+ * d1109-selftasks-run (ADR 0119): one task check at a boundary. l4-selftasks-108: a person line
+ * with its cost on its row (`event-audience.ts`, where the constant now lives).
+ */
+export { TASK_CHECKED_EVENT };
 /** S-10: the session goes on with the person's earlier one (`{ continues, at }`). */
 export const CONTINUES_EVENT = "session.continues";
 
@@ -2413,29 +2417,42 @@ export class SessionRunner {
             });
             return null;
           });
+          // l4-selftasks-108 (ADR 0119 point 9, dated note of 2026-11-22): the check's cost is
+          // booked on its line's row, so the line gets its CHF like a task's and the person-level
+          // lines add up to the session's spend; `called` keeps a check with no call a detail.
           if (!done || done.keep) {
             taskListNotes.unshift(...notes);
             if (done?.called) taskChecks++;
             if (done?.line)
-              await emit(TASK_CHECKED_EVENT, {
-                sentence: done.line,
-                costUsdMicro: done.costUsdMicro,
-              });
+              await emit(
+                TASK_CHECKED_EVENT,
+                {
+                  sentence: done.line,
+                  costUsdMicro: done.costUsdMicro,
+                  called: done.called,
+                },
+                done.costUsdMicro,
+              );
             return false;
           }
           if (done.called) taskChecks++;
           // Notes kept from before are checked once: they leave the project now.
           if (notes.some((n) => fromProject.has(n))) await takeNotes(store, project.id);
           if (done.line)
-            await emit(TASK_CHECKED_EVENT, {
-              sentence: done.line,
-              costUsdMicro: done.costUsdMicro,
-              changed: done.applied.length,
-              ...(done.proposalId ? { proposed: true } : {}),
-              ...(done.refused.length
-                ? { refused: done.refused.map((r) => `${r.what}: ${r.reason}`) }
-                : {}),
-            });
+            await emit(
+              TASK_CHECKED_EVENT,
+              {
+                sentence: done.line,
+                costUsdMicro: done.costUsdMicro,
+                called: done.called,
+                changed: done.applied.length,
+                ...(done.proposalId ? { proposed: true } : {}),
+                ...(done.refused.length
+                  ? { refused: done.refused.map((r) => `${r.what}: ${r.reason}`) }
+                  : {}),
+              },
+              done.costUsdMicro,
+            );
           if (!done.applied.length) return false;
           tasksChanged.push(...done.facts);
           // The new tasks join only by the admit rule (D6, option C): a part of a promised task

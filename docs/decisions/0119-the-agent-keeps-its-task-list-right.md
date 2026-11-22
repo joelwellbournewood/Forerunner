@@ -149,3 +149,18 @@ own tasks, the autonomy level deciding when it asks first".
   ("check the tasks for errors"). Both go to the chat model, which calls fix_tasks when the
   person asks for a fix.
 - Two requests at once make one check: the second says the check runs and makes no call.
+
+## Amendment 2026-11-22 (l4-selftasks-check, run L4 sub-run L4b: live check 4)
+
+Live check 4 (2026-11-17, the real model) found the check paid for on harmless notes, hiding
+what it left out, refusing a second missing step and keeping a Yes that changed nothing. The
+owner's D7 (2026-11-09, verbatim): "I want it to be able to fix its tasks. Like as part of a
+run, it should be able to do things like that."
+
+- Point 3 (dated note): the evidence is exactly a report's "For the task list:" lines, a critic
+  finding the task did not cause (it ends "(not caused by this task)": the runtime measured it)
+  and notes kept from before. An ordinary critic note about the task's own work is no evidence:
+  it makes no check and is not kept. The check after the session's last task stays (point 8).
+- Point 9 (dated note): the check's line is a person-level line of the session log with its
+  cost on its own row (its CHF beside it, so the person-level lines add up to the session's
+  spend); a check that made no call (every line read like an instruction) stays under Details.
