@@ -23737,6 +23737,52 @@ describe("l4-selftasks-check, run L4", () => {
     }
   }, 120_000);
 
+  it("L4-selftasks-113: at Assisted the fix read-back's footer is the cost line alone; at Standard a change to the person's task says why it asks first", async () => {
+    // Live check 4 (L4-selftasks-18): 'Asks you first: "Build the contact page in contact.html"
+    // is a task you added or changed yourself. Checking the tasks cost CHF 0.01.' under every
+    // read-back at Assisted, a level that asks first anyway. POST /chat, then the conversation as
+    // GET /projects/:id/conversation returns it.
+    const a = await open("nothing", "");
+    try {
+      const footers: Record<number, string | null | undefined> = {};
+      for (const level of [1, 2]) {
+        const project = await a.client.createProject({
+          name: `Quote page ${level}`,
+          goal: "A page that quotes prices",
+          autonomyLevel: level,
+        });
+        // The person's own task (no author agent): the fence asks first for it.
+        await a.rt.store.task.insert({
+          project_id: project.id,
+          title: "Style the page",
+          outcome: "The page has its layout and colours",
+          acceptance_criteria: ["the layout is a grid", "the colours match the logo"],
+          risk_tier: 1,
+          status: "ready",
+          priority: 5,
+          reason: "Added by the person",
+          specialist: "coder",
+        } as never);
+        const reply = await a.client.chat({
+          humanId: (await a.client.me()).id,
+          agentId: (await a.client.agents())[0]?.id ?? "",
+          projectId: project.id,
+          projectTab: true,
+          text: 'fix the tasks: "Style the page" is two jobs, the layout and the colours.',
+          source: "text",
+        });
+        expect(reply.pendingConfirmation?.readback, `level ${level}`).toMatch(/^Split "Style/);
+        footers[level] = (await a.client.conversation(project.id)).turns.at(-1)?.reply?.footer;
+      }
+      expect(footers[1]).toMatch(/^Checking the tasks cost (less than CHF 0\.01|CHF \d+\.\d\d)\.$/);
+      expect(footers[2]).toMatch(
+        /^Asks you first: "Style the page" is a task you added or changed yourself\. Checking the tasks cost (less than CHF 0\.01|CHF \d+\.\d\d)\.$/,
+      );
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
   it("L4-money-302 and L4-selftasks-112 (a): GET /inbox's questions card quotes why the specialist asks, from the live reports", async () => {
     // Live check 4 (L4-l3-3, L4-session-7): the card quoted the reviewer's scope check line, a
     // commit message that repeats the task's title, and the FAQ's side remark. The card is filed

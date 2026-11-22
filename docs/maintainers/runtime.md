@@ -7897,6 +7897,11 @@ hiding what it left out. What changed, item by item:
   events view's `withoutIds` (`daemon/task-words.ts`) keeps the noun before a finding's or a
   review's id ("Earlier finding: …") and takes a bare id before a mark with its space (before:
   "Earlier finding : …").
+- **Why a read-back asks first, only where it is news** (L4-selftasks-113): chat's fix read-back
+  (`task-fix-tool.ts`) puts "Asks you first: <reason>." in its footer only when the ask-first
+  rule caused the read-back (`askFirst && makesFixesAtOnce(level) && !recordsRead`); at
+  Advisor and Assisted, or after records were read, the footer is the cost line alone. The
+  session's suggestion card keeps its reasons as steps of their own, after the changes.
 - **Specialists and plans in the person's words** (L4-selftasks-111): the fence's reasons name a
   specialist through `saidByName` ("the writer", "the deployment specialist", never
   "writer-marketing" or "ops-deploy"); "the plan you approved has no task for the writer" only

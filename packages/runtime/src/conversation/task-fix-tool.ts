@@ -237,7 +237,13 @@ export async function fixTasksInChat(input: ChatTaskFixInput): Promise<ChatTaskF
         const calls = await callsOf(store, now, f);
         if (calls.length) planned.push(calls);
       }
-      const reasons = fence.askFirst.filter((a) => !a.quote).map((a) => a.reason);
+      // l4-selftasks-113 (live check 4, L4-selftasks-18): why it asks first is said only where
+      // the ask-first rule caused the read-back: at a level that would make the changes at once
+      // and with no records read (before, every read-back at Assisted carried it).
+      const reasons =
+        askFirst && makesFixesAtOnce(level) && !turn.recordsRead
+          ? fence.askFirst.filter((a) => !a.quote).map((a) => a.reason)
+          : [];
       const ask = fixAsk(
         now.name,
         fence.changes.map((f) => proposalLine(f)),

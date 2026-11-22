@@ -739,3 +739,31 @@ describe("l4-selftasks-check, run L4: a change that changes nothing is left out 
     expect(await w.store.humanRequest.open({ humanId: w.human })).toEqual([]);
   });
 });
+
+// l4-selftasks-check, run L4 (L4-selftasks-113; live check 4, L4-selftasks-18): 'Asks you first:
+// "Build the contact page in contact.html" is a task you added or changed yourself. Checking the
+// tasks cost CHF 0.01.' under every read-back at Assisted, a level that asks first anyway.
+describe("l4-selftasks-check, run L4: why a read-back asks first is said only where the level would not ask (L4-selftasks-113)", () => {
+  const personsStyle = async (w: World) => {
+    const style = w.tasks.style as TaskRow;
+    await w.store.task.patch(style.id, { author_agent: null } as never);
+  };
+
+  it("at Assisted the footer under the read-back is the cost line alone", async () => {
+    const w = await setup({ level: 1, replies: [textReply(THREE)] });
+    await personsStyle(w);
+    const r = await w.chat("fix the tasks");
+    expect(r.pendingConfirmation?.readback).toBe(ASK_THREE);
+    expect(r.footer).toBe("Checking the tasks cost less than CHF 0.01.");
+  });
+
+  it("at Standard a change to the person's own task is read back with why it asks first", async () => {
+    const w = await setup({ level: 2, replies: [textReply(THREE)] });
+    await personsStyle(w);
+    const r = await w.chat("fix the tasks");
+    expect(r.pendingConfirmation?.readback).toBe(ASK_THREE);
+    expect(r.footer).toBe(
+      'Asks you first: "Style the page" is a task you added or changed yourself. Checking the tasks cost less than CHF 0.01.',
+    );
+  });
+});

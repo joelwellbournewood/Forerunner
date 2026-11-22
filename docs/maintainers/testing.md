@@ -1075,7 +1075,8 @@ before, "the person is never shown the flagged line"), controls report-101 and r
 label (`task-check <project id>`, `BenchRole` `task_check`) and answers from the runtime's own
 message (`testenv/src/bench/task-check-play.ts`): no change by default; '"X" is two jobs[, the a
 and the b]' splits X in turn with every criterion carried; "nothing checks <what>" adds "Check
-<what>" after the reporting task; '"a" is the same as "b"' drops a; '"a" must wait for "b"'
+<what>" after the reporting task (", for the <specialist>" at its end gives it to that registry
+specialist: l4-selftasks-111); '"a" is the same as "b"' drops a; '"a" must wait for "b"'
 orders it; '"a" is urgent' raises a's priority to high (an edit with no new title, for the
 read-back's words: d1109-selftasks-chat); '"a" is done when <what>' edits a's outcome to <what>
 and adds it to its criteria; "the person must <what>" makes the stand-in write its own entry in
