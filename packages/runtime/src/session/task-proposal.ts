@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { saidByName } from "@forerunner/critic";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type {
   HumanRequestRow,
@@ -13,8 +14,8 @@ import {
   TASK_PROPOSAL_OPTIONS,
 } from "../daemon/task-proposal-words.ts";
 import { PRIORITY_LABELS } from "../priority.ts";
-import type { CommandCallLike, FencedChange, FenceResult } from "./task-check.ts";
-import type { TaskListNote } from "./task-list-notes.ts";
+import type { CheckQuote, CommandCallLike, FencedChange, FenceResult } from "./task-check.ts";
+import { quoteFor, quoteOf, type TaskListNote } from "./task-list-notes.ts";
 
 /**
  * d1109-selftasks-run (ADR 0119 point 7; the owner, 2026-11-09: the agent changes its own tasks,
@@ -37,6 +38,9 @@ export interface ProposedChange {
   line: string;
   calls: CommandCallLike[];
 }
+
+/** The longest new outcome or criteria an edit's line quotes. */
+const EDIT_QUOTE_MAX = 120;
 
 /** A suggested change in the person's words (the card's list; the same words the commands say). */
 export function proposalLine(f: FencedChange): string {
@@ -62,10 +66,14 @@ export function proposalLine(f: FencedChange): string {
       // title alone is a rename. Before, any edit without a new title read 'Reword "X".', so a Yes
       // to a "reword" changed a priority (review of d1109-selftasks-chat; design section 3.9 and
       // section 5 rules 4 and 9). Chat's read-back and the suggestion card both list these words.
+      // l4-selftasks-112 (d): to what, cut at a word (before, 'what done looks like and the
+      // criteria.', and the person said yes without seeing the new words).
+      const said = (t: string, max: number) => `"${quoteOf(t, max)}"`;
       const parts: string[] = [];
       if (c.title) parts.push(`the title to ${q(c.title)}`);
-      if (c.outcome) parts.push("what done looks like");
-      if (c.acceptanceCriteria) parts.push("the criteria");
+      if (c.outcome) parts.push(`what done looks like to ${said(c.outcome, EDIT_QUOTE_MAX)}`);
+      if (c.acceptanceCriteria)
+        parts.push(`the criteria to ${said(c.acceptanceCriteria.join("; "), EDIT_QUOTE_MAX)}`);
       if (c.priority) parts.push(`priority to ${PRIORITY_LABELS[c.priority]}`);
       if (c.title && parts.length === 1) return `Rename ${q(c.task)} to ${q(c.title)}.`;
       if (!parts.length) return `Change ${q(c.task)}.`;
@@ -81,8 +89,16 @@ function fingerprintOf(lines: readonly string[]): string {
   return createHash("sha256").update(lines.join("\n")).digest("hex").slice(0, 16);
 }
 
-/** What showed the agent the changes, as the card's first sentence (data, quoted). */
-export function proposalBody(notes: readonly TaskListNote[], quotes: readonly string[]): string {
+/**
+ * What showed the agent the changes, as the card's first sentence (data, quoted). A quote is
+ * named by who wrote it (l4-selftasks-112 (d)): a line of a report, a note of the critic's, or
+ * the agent's check's own entry, never "a line of the coder's report" for the model's words; it
+ * shows the line's request (`requestPart`), cut at a word.
+ */
+export function proposalBody(
+  notes: readonly TaskListNote[],
+  quotes: readonly CheckQuote[],
+): string {
   const cut = (s: string) => (s.length > 100 ? `${s.slice(0, 99).replace(/\s+\S*$/, "")}…` : s);
   // Quoted once: the line's own double quotes become single ones and its end mark goes, so the
   // card reads 'says: "'Style the page' is two jobs".' and never '""Style…".".'.
@@ -94,17 +110,26 @@ export function proposalBody(notes: readonly TaskListNote[], quotes: readonly st
         .replace(/[.;:,!]+$/, ""),
     )}"`;
   const first = notes[0];
+  // l4-selftasks-111: a specialist as a person names it ("the writer's report"), and the
+  // critic's notes "say" (before: 'The critic's notes on "X" says:').
+  const by = (s: string | null | undefined) => saidByName(s) ?? "specialist";
   const whose = first
     ? first.source === "review"
       ? `the critic's notes on "${first.taskTitle}"`
-      : `the ${first.specialist ?? "specialist"}'s report on "${first.taskTitle}"`
+      : `the ${by(first.specialist)}'s report on "${first.taskTitle}"`
     : "the agent's check";
-  const why = quotes[0]
-    ? `A line of ${whose} reads like an instruction: ${quoted(quotes[0])}.`
+  const says = first?.source === "review" ? "say" : "says";
+  const said = quotes[0];
+  const why = said
+    ? said.by === "agent"
+      ? `The agent's check noted: "${quoteFor(said)}".`
+      : said.source === "review"
+        ? `A note of the critic's on "${said.taskTitle ?? first?.taskTitle ?? ""}" names an instruction: "${quoteFor(said)}".`
+        : `A line of the ${by(said.specialist ?? first?.specialist)}'s report on "${said.taskTitle ?? first?.taskTitle ?? ""}" reads like an instruction: "${quoteFor(said)}".`
     : (() => {
         const line = first?.lines.find((l) => !l.flagged)?.text;
         return line
-          ? `${whose.charAt(0).toUpperCase()}${whose.slice(1)} says: ${quoted(line)}.`
+          ? `${whose.charAt(0).toUpperCase()}${whose.slice(1)} ${says}: ${quoted(line)}.`
           : `${whose.charAt(0).toUpperCase()}${whose.slice(1)} found the task list needs changes.`;
       })();
   return `${why} Nothing changes until you say yes.`;
@@ -142,8 +167,12 @@ export async function fileTaskProposal(
   const { project, fence } = input;
   if (!fence.changes.length) return null;
   const changes: ProposedChange[] = [];
-  for (const f of fence.changes)
-    changes.push({ line: proposalLine(f), calls: await input.callsOf(f) });
+  for (const f of fence.changes) {
+    const calls = await input.callsOf(f);
+    // l4-selftasks-105: a change with no call (an edit that changes nothing) is not listed.
+    if (calls.length) changes.push({ line: proposalLine(f), calls });
+  }
+  if (!changes.length) return null;
   const fingerprint = fingerprintOf(changes.map((c) => c.line));
   if (input.sessionId) {
     const answered = await store.humanRequest.list(
@@ -173,14 +202,16 @@ export async function fileTaskProposal(
       logger.warn("an older suggestion was not withdrawn", { id: old.id, error: errorMessage(e) });
     }
   }
-  const quotes = fence.askFirst.map((a) => a.quote).filter((q): q is string => !!q);
+  // l4-selftasks-112 (d): the quotes as the fence names them (who wrote each), not the ask-first
+  // reasons' bare strings; the card keeps their words (`change_card.quotes`).
+  const quotes = fence.quotes.map((q) => q.text);
   const reasons = fence.askFirst.filter((a) => !a.quote).map((a) => a.reason);
   const row = await store.humanRequest.insert({
     human_id: input.humanId,
     project_id: project.id,
     session_id: input.sessionId,
     kind: "decision",
-    why: proposalBody(input.notes, quotes),
+    why: proposalBody(input.notes, fence.quotes),
     steps: [...changes.map((c) => c.line), ...reasons.map((r) => `Asks you first: ${r}.`)],
     options: [...TASK_PROPOSAL_OPTIONS],
     blocking: false,

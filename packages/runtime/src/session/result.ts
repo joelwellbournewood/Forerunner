@@ -171,7 +171,8 @@ export function tasksChangedLine(changes: readonly TaskChangeFact[]): string | n
 
 /** How a check ended, for its Details line. */
 export type TaskCheckEnd =
-  | { kind: "no_change" }
+  /** `noted`: l4-selftasks-103, the first line the check left out, as a clause (`quotedPhrase`). */
+  | { kind: "no_change"; noted?: string }
   | { kind: "changed"; count: number }
   | { kind: "suggested"; count: number }
   | { kind: "unreadable" }
@@ -189,7 +190,9 @@ export function taskCheckedLine(
 ): string {
   const what =
     end.kind === "no_change"
-      ? "no change"
+      ? end.noted
+        ? `no change; ${end.noted}`
+        : "no change"
       : end.kind === "changed"
         ? `changed ${end.count} ${plural(end.count, "task", "tasks")}`
         : end.kind === "suggested"
@@ -199,6 +202,21 @@ export function taskCheckedLine(
             : "the call did not answer, so nothing changed";
   const money = moneyWords(formatChf(costChfMicro), costChfMicro);
   return `Checked the task list${after ? ` after "${after}"` : ""}: ${what} (${money}).`;
+}
+
+/**
+ * l4-selftasks-104: what a check's fence and the commands refused, as one Details line ('Left
+ * out (and 1 more): the add of "Write thanks.html": "Write book.html" was not added.'), the
+ * words chat's `fixLeftOut` says; null when nothing was refused. Before, the refusals were only
+ * in the event's payload and the person never read them.
+ */
+export function taskCheckLeftOutLine(
+  refused: readonly { what: string; reason: string }[],
+): string | null {
+  const [one] = refused;
+  if (!one) return null;
+  const more = refused.length > 1 ? ` (and ${refused.length - 1} more)` : "";
+  return `Left out${more}: ${one.what.replace(/[.\s]+$/, "")}: ${one.reason.replace(/[.\s]+$/, "")}.`;
 }
 
 /** Merge outcomes that merge by themselves later (merge-in-app): not left for the person. */

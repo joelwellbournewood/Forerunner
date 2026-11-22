@@ -915,3 +915,66 @@ describe("w15-words, wave 15 run B", () => {
     });
   });
 });
+
+// l4-selftasks-check, run L4 (L4-selftasks-101; live check 4's LC-C30: the plan card said "about
+// CHF 0.08" for a task whose budget of CHF 0.08 then left no room for its review; the owner's
+// answer 8: "it should get a warning, but it should get done anyway").
+describe("l4-selftasks-check, run L4: the plan card warns of a review that may wait", () => {
+  it("a task whose budget is below its estimate with its review gets the Start dialog's line; one with room gets none", async () => {
+    const { planTaskViews } = await import("../src/daemon/plan-tasks.ts");
+    const views = await planTaskViews(
+      {
+        status: "open",
+        project_id: "p",
+        change_card: {
+          key: "intake:p",
+          proposal: {
+            plan: {
+              tasks: [
+                {
+                  key: "readme",
+                  title: "Write the README",
+                  outcome: "README.md says what the page is",
+                  acceptanceCriteria: ["README.md exists"],
+                  specialist: "coder",
+                  budgetUsdMicro: 100_000,
+                },
+                {
+                  key: "page",
+                  title: "Build the page",
+                  outcome: "index.html exists",
+                  acceptanceCriteria: ["index.html exists"],
+                  specialist: "coder",
+                  budgetUsdMicro: 2_000_000,
+                },
+              ],
+            },
+            firstSession: {
+              items: [
+                { key: "readme", estimateUsdMicro: 60_000 },
+                { key: "page", estimateUsdMicro: 300_000 },
+              ],
+            },
+          },
+        } as never,
+      },
+      {
+        has: () => true,
+        forTask: async () => null,
+        // The work and its review: the plan's figure plus a review part of 60,000.
+        estimate: {
+          project: { name: "Lakeside Bakery", small_project_mode: false },
+          of: (t) =>
+            t.budget_usd_micro > 0
+              ? Math.min(t.budget_usd_micro, t.est_cost_usd_micro + 60_000)
+              : t.est_cost_usd_micro + 60_000,
+        },
+        workBudget: { usdMicro: async () => 4_000_000, chfPerUsd: 0.8 },
+      },
+    );
+    expect(views?.map((v) => v.note)).toEqual([
+      '"Write the README": its budget of CHF 0.08 may leave too little for its review, which then waits for Continue.',
+      null,
+    ]);
+  });
+});

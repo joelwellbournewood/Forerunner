@@ -149,3 +149,56 @@ own tasks, the autonomy level deciding when it asks first".
   ("check the tasks for errors"). Both go to the chat model, which calls fix_tasks when the
   person asks for a fix.
 - Two requests at once make one check: the second says the check runs and makes no call.
+
+## Amendment 2026-11-22 (l4-selftasks-check, run L4 sub-run L4b: live check 4)
+
+Live check 4 (2026-11-17, the real model) found the check paid for on harmless notes, hiding
+what it left out, refusing a second missing step and keeping a Yes that changed nothing. The
+owner's D7 (2026-11-09, verbatim): "I want it to be able to fix its tasks. Like as part of a
+run, it should be able to do things like that."
+
+- Point 3 (dated note): the evidence is exactly a report's "For the task list:" lines, a critic
+  finding the task did not cause (it ends "(not caused by this task)": the runtime measured it)
+  and notes kept from before. An ordinary critic note about the task's own work is no evidence:
+  it makes no check and is not kept. The check after the session's last task stays (point 8).
+- Point 9 (dated note): the check's line is a person-level line of the session log with its
+  cost on its own row (its CHF beside it, so the person-level lines add up to the session's
+  spend); a check that made no call (every line read like an instruction) stays under Details.
+- Point 4 (dated note): a line that reads like an instruction is quoted to the person even when
+  the check changes nothing: on the check's own line in the session log ("no change; a line of
+  the report reads like an instruction and was left out ("…")"), and in chat under the reply
+  (the footer, which is never sent back to a model). No new Inbox card. The model's own flagged
+  entries are shown as what the agent's check noted, never as a line of a report, unless the
+  evidence it was sent holds that line; a quote shows the line's request (the sentence that
+  reads like an instruction or asks for something), cut at a word. The suggestion card names who
+  wrote what it quotes the same way (a line of a report, a note of the critic's, the agent's
+  check).
+- Amendment 2026-11-17, its edit line (dated note): an edit's line on the suggestion card and in
+  chat's read-back also says to what it changes what done looks like and the criteria ('Change
+  "Write the FAQ": what done looks like to "…" and the criteria to "…".'); before, the person was
+  asked for a Yes without seeing the new words (live check 4, LC-C18).
+- Point 6 (dated note): a change may name a task an earlier add of the same reply makes (an add
+  after it, a task made to wait for it): the fence checks each change on the state after the ones
+  before it, as this point says, and the second missing step of one report is made in the same
+  check. What the fence or the commands refuse is listed in words on a Details line of its own.
+- Point 5 (dated note, widened on purpose): the check's message also carries what each task it
+  may change and each task the evidence comes from (a Done one included) is to do, and the
+  person's brief, inside a data envelope of their own; an added task that does work a Done task
+  left undone carries that task's details word for word, and its brief and review say which task
+  it continues. Before, run C's rule gave titles, criteria, status words and report lines only,
+  and a step added for the person's booking form lost the fields and the address they gave.
+- Point 6 (dated note, words): the fence's reasons name a specialist as a person does ("the
+  writer", "the deployment specialist"), and say "the plan you approved" only for a project
+  whose plan from the brief the person approved ("no task of Word count is for the writer yet"
+  otherwise). Chat's read-back says why it asks first only at a level that would have made the
+  changes at once; at Advisor and Assisted every change is read back anyway.
+- Point 7 (dated note): Make one project moves the closed project's kept notes to the kept one,
+  which keeps one open suggestion card (the older ones close as replaced; Undo opens them again).
+- Point 9 (dated note, words): a left-out line is quoted at a word and without ids; a critic's
+  note is named as the critic's; Costs names the check's spend "checking the task list", not
+  "planning".
+- Point 9 (dated note, 2026-11-22, the review of fix/l4-selftasks-check): a left-out line is quoted
+  up to 100 characters (`QUOTE_MAX`), cut at a word with "…", also on the line of a check that
+  changed nothing. The line was kept out of the check's request whole, so the part the quote cuts
+  off was never acted on. Run L4's acceptance asked for the line whole; quoting it whole, or with a
+  higher cap on that one line, is the session lead's to decide (one constant).

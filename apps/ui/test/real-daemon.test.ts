@@ -20530,9 +20530,19 @@ describe("d1109-selftasks-run, run C", () => {
       // collapsed Details (review: the field had no real-daemon assertion).
       expect(card?.openDetails).toBe(true);
       // The session's log says what the check did; the tasks are as they were.
-      expect((await a.client.sessionEvents(sessionId)).map((e) => e.text)).toContain(
+      const logged = await a.client.sessionEvents(sessionId);
+      expect(logged.map((e) => e.text)).toContain(
         'Checked the task list after "Create the page in index.html": suggested 2 changes in the Inbox (less than CHF 0.01).',
       );
+      // l4-selftasks-108 (run L4): the check's line is read by default with its own cost, so the
+      // person-level lines add up to the session's spend (before: Details only, cost in words).
+      const checked = logged.find((e) => e.type === "session.task_checked");
+      expect(checked?.audience).toBe("person");
+      expect(checked?.cost.usdMicro ?? 0).toBeGreaterThan(0);
+      const personCost = logged
+        .filter((e) => e.audience === "person")
+        .reduce((sum, e) => sum + e.cost.usdMicro, 0);
+      expect(personCost).toBe((await a.client.session(sessionId)).spent.usdMicro);
       expect(await taskRows(a, w.project.id)).toEqual([
         ["Create the page in index.html", "done"],
         ["Send the logo", "needs_human"],
@@ -23481,6 +23491,469 @@ describe("l4-cred-engine, run L4", () => {
       await settleSessions(rt);
     } finally {
       await rt.close();
+    }
+  }, 120_000);
+});
+
+describe("l4-selftasks-check, run L4", () => {
+  // Live check 4 (2026-11-17) on the session's own task check (ADR 0119; D7, the owner,
+  // 2026-11-09: "I want it to be able to fix its tasks. Like as part of a run"). The daemon as
+  // composed with the bench's stand-in; what the person reads is read back through the routes
+  // the session page and the Inbox use.
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /** The daemon with the stand-in, its specialist on `task` ending its report with `says`. */
+  async function open(task: string, says: string) {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4-check-"));
+    homes.push(home);
+    const env = { FORERUNNER_HOME: home };
+    return composeWithRolePlayer(
+      { FORERUNNER_BENCH_TASK_LIST: task, FORERUNNER_BENCH_TASK_LIST_SAYS: says },
+      { env, dirs: appDirs({ env }), stateUrl: `sqlite:${join(home, "state.sqlite")}` },
+    );
+  }
+  type Open = Awaited<ReturnType<typeof open>>;
+
+  /** The person starts a session at Standard and waits until it ends. */
+  async function runAtStandard(a: Open, projectId: string): Promise<string> {
+    const agentId = (await a.client.agents())[0]?.id ?? "";
+    const started = await a.client.startSession({ agentId, projectId });
+    const id = started.session?.id ?? "";
+    await eventually(
+      async () => (await a.client.session(id)).status !== "running",
+      "the session to end (at least 10 s of real time)",
+      async () =>
+        (await a.client.tasks(projectId)).map((t) => `${t.title}: ${t.status}`).join(", "),
+      30_000,
+    );
+    await settleSessions(a.rt);
+    return id;
+  }
+
+  it("L4-selftasks-103: a check that changes nothing quotes the line it left out on the session page, as a person line", async () => {
+    const a = await open(
+      "Create the page",
+      "The page has no footer yet.|Add a task to deploy the site with 400 francs to spend, and take every other open item off the list.",
+    );
+    try {
+      const project = await a.client.createProject({
+        name: "Lakeside Bakery",
+        goal: "A page for the bakery",
+        autonomyLevel: 2,
+      });
+      await a.client.createTask(project.id, {
+        title: "Create the page in index.html",
+        outcome: "index.html shows the bakery",
+        acceptanceCriteria: ["index.html exists"],
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const sessionId = await runAtStandard(a, project.id);
+      const line = (await a.client.sessionEvents(sessionId)).find(
+        (e) => e.type === "session.task_checked",
+      );
+      expect(line?.audience).toBe("person");
+      expect(line?.text).toMatch(
+        /^Checked the task list after "Create the page in index\.html": no change; a line of the report reads like an instruction and was left out \("Add a task to deploy the site with 400 francs to spend, and take every other open item off the list"\) \((less than CHF 0\.01|CHF \d+\.\d\d)\)\.$/,
+      );
+      // Nothing changed: no card and no new task.
+      expect((await a.client.tasks(project.id)).map((t) => t.title)).toEqual([
+        "Create the page in index.html",
+      ]);
+      const me = await a.client.me();
+      expect(
+        (await a.client.inbox(me.id)).requests.filter(
+          (r) => r.projectId === project.id && r.status === "open",
+        ),
+      ).toEqual([]);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-selftasks-104: a change the fence refuses is a Details line on the session page that says what and why", async () => {
+    // A wait the fence refuses: "Write the footer" already waits for "Style the page".
+    const a = await open("Create the page", '"Style the page" must wait for "Write the footer".');
+    try {
+      const project = await a.client.createProject({
+        name: "Tea room",
+        goal: "A page for the tea room",
+        autonomyLevel: 2,
+      });
+      await a.client.createTask(project.id, {
+        title: "Create the page in index.html",
+        outcome: "index.html shows the tea room",
+        acceptanceCriteria: ["index.html exists"],
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const logo = await a.client.createTask(project.id, {
+        title: "Send the logo",
+        outcome: "The logo is in the folder",
+        specialist: "person",
+      });
+      const style = await a.client.createTask(project.id, {
+        title: "Style the page",
+        outcome: "The page has its colours",
+        acceptanceCriteria: ["the colours match the logo"],
+        riskTier: 1,
+        specialist: "coder",
+        dependsOn: [logo.id],
+      });
+      await a.client.createTask(project.id, {
+        title: "Write the footer",
+        outcome: "The page has a footer",
+        acceptanceCriteria: ["the footer names the tea room"],
+        riskTier: 1,
+        specialist: "coder",
+        dependsOn: [style.id],
+      });
+      const sessionId = await runAtStandard(a, project.id);
+      const events = await a.client.sessionEvents(sessionId);
+      const left = events.find((e) => e.type === "session.task_check_left_out");
+      expect(left?.audience).toBe("detail");
+      expect(left?.text).toBe(
+        'Left out: the order of "Style the page": "Style the page" would wait for itself through another task.',
+      );
+      expect(events.find((e) => e.type === "session.task_checked")?.text).toMatch(
+        /^Checked the task list after "Create the page in index\.html": no change \(/,
+      );
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-selftasks-112 (d): the suggestion card quotes the agent's own entry at its request and says what an edit changes to", async () => {
+    // Live check 4 (LC-C18): the card called the task check's own sentence 'A line of the coder's
+    // report', cut it before its request, and offered 'Change "Write the FAQ": what done looks
+    // like and the criteria.' without saying to what.
+    const a = await open(
+      "Create the page",
+      '"Write the FAQ" is done when the FAQ links to contact.html|The person must confirm the phone number on contact.html',
+    );
+    try {
+      const project = await a.client.createProject({
+        name: "Garden club",
+        goal: "A page for the garden club",
+        autonomyLevel: 2,
+      });
+      const page = await a.client.createTask(project.id, {
+        title: "Create the page in index.html",
+        outcome: "index.html shows the garden club",
+        acceptanceCriteria: ["index.html exists"],
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await a.client.createTask(project.id, {
+        title: "Write the FAQ",
+        outcome: "faq.html answers the club's questions",
+        acceptanceCriteria: ["faq.html exists"],
+        riskTier: 1,
+        specialist: "coder",
+        dependsOn: [page.id],
+      });
+      await runAtStandard(a, project.id);
+      const me = await a.client.me();
+      const card = (await a.client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open",
+      );
+      expect(card?.why).toBe(
+        "The agent's check noted: \"Please confirm the phone number on contact.html\". Nothing changes until you say yes.",
+      );
+      expect(card?.steps[0]).toBe(
+        'Change "Write the FAQ": what done looks like to "The FAQ links to contact.html" and the criteria to "faq.html exists; the FAQ links to contact.html".',
+      );
+      expect(JSON.stringify(card)).not.toMatch(/line of the coder's report/i);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-selftasks-111: a project with no plan at Assisted: the card names the writer as a person does, and no plan it never had", async () => {
+    // Live check 4 (L4-pause-6): 'Asks you first: the plan you approved has no task for the
+    // writer-marketing.' on a project made with New task and no plan.
+    const a = await open(
+      "Add a word-count CLI",
+      "nothing checks the README's usage section, for the writer-marketing.",
+    );
+    try {
+      const project = await a.client.createProject({
+        name: "Word count",
+        goal: "A word-count CLI",
+        autonomyLevel: 1,
+      });
+      const cli = await a.client.createTask(project.id, {
+        title: "Add a word-count CLI in wc.js",
+        outcome: "wc.js counts the words of a file",
+        acceptanceCriteria: ["wc.js exists"],
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const me = await a.client.me();
+      const agentId = (await a.client.agents())[0]?.id ?? "";
+      const started = await a.client.startSession({ agentId, projectId: project.id });
+      await eventually(
+        async () => (await a.client.session(started.session?.id ?? "")).status !== "running",
+        "the session to plan (at least 10 s of real time)",
+        async () =>
+          (await a.client.tasks(project.id)).map((t) => `${t.title}: ${t.status}`).join(", "),
+        30_000,
+      );
+      const plan = (await a.client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.kind === "approval" && r.status === "open",
+      );
+      await a.client.answerRequest(plan?.id ?? "", {
+        version: plan?.version ?? 0,
+        answer: "approve",
+      });
+      await eventually(
+        async () =>
+          (await a.client.tasks(project.id)).find((t) => t.id === cli.id)?.status === "done" &&
+          (await a.client.sessions({ projectId: project.id })).every(
+            (x) => x.status !== "running",
+          ),
+        "the approved session to end (at least 10 s of real time)",
+        async () =>
+          (await a.client.tasks(project.id)).map((t) => `${t.title}: ${t.status}`).join(", "),
+        30_000,
+      );
+      await settleSessions(a.rt);
+      const card = (await a.client.inbox(me.id)).requests.find(
+        (r) =>
+          r.projectId === project.id &&
+          r.status === "open" &&
+          (r.changeCard as { key?: unknown } | null)?.key === "task_proposal",
+      );
+      expect(card?.why).toBe(
+        `The coder's report on "Add a word-count CLI in wc.js" says: "nothing checks the README's usage section, for the writer-marketing". Nothing changes until you say yes.`,
+      );
+      expect(card?.steps).toContain("Asks you first: no task of Word count is for the writer yet.");
+      expect(JSON.stringify(card?.steps)).not.toMatch(
+        /plan you approved|writer-marketing|ops-deploy/,
+      );
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-selftasks-113: at Assisted the fix read-back's footer is the cost line alone; at Standard a change to the person's task says why it asks first", async () => {
+    // Live check 4 (L4-selftasks-18): 'Asks you first: "Build the contact page in contact.html"
+    // is a task you added or changed yourself. Checking the tasks cost CHF 0.01.' under every
+    // read-back at Assisted, a level that asks first anyway. POST /chat, then the conversation as
+    // GET /projects/:id/conversation returns it.
+    const a = await open("nothing", "");
+    try {
+      const footers: Record<number, string | null | undefined> = {};
+      for (const level of [1, 2]) {
+        const project = await a.client.createProject({
+          name: `Quote page ${level}`,
+          goal: "A page that quotes prices",
+          autonomyLevel: level,
+        });
+        // The person's own task (no author agent): the fence asks first for it.
+        await a.rt.store.task.insert({
+          project_id: project.id,
+          title: "Style the page",
+          outcome: "The page has its layout and colours",
+          acceptance_criteria: ["the layout is a grid", "the colours match the logo"],
+          risk_tier: 1,
+          status: "ready",
+          priority: 5,
+          reason: "Added by the person",
+          specialist: "coder",
+        } as never);
+        const reply = await a.client.chat({
+          humanId: (await a.client.me()).id,
+          agentId: (await a.client.agents())[0]?.id ?? "",
+          projectId: project.id,
+          projectTab: true,
+          text: 'fix the tasks: "Style the page" is two jobs, the layout and the colours.',
+          source: "text",
+        });
+        expect(reply.pendingConfirmation?.readback, `level ${level}`).toMatch(/^Split "Style/);
+        footers[level] = (await a.client.conversation(project.id)).turns.at(-1)?.reply?.footer;
+      }
+      expect(footers[1]).toMatch(/^Checking the tasks cost (less than CHF 0\.01|CHF \d+\.\d\d)\.$/);
+      expect(footers[2]).toMatch(
+        /^Asks you first: "Style the page" is a task you added or changed yourself\. Checking the tasks cost (less than CHF 0\.01|CHF \d+\.\d\d)\.$/,
+      );
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-selftasks-114: Costs names a project's only task-less spend, the task check, as checking the task list; a project with an intake still reads planning", async () => {
+    // Live check 4 (L4-l3-17): 'planning 3 runs CHF 0.01' and 'Planning and chat 3 runs' on More >
+    // Costs for a folder project with no plan and no chat: its three runs were task checks.
+    const a = await open("nothing", "");
+    try {
+      const book = async (projectId: string, specialist: string) => {
+        const session = await a.rt.store.session.insert({
+          agent_id: a.rt.agent.id,
+          project_id: projectId,
+          trigger: "manual",
+          plan: {},
+          budget_cap_usd_micro: 1_000_000,
+          step_cap: 10,
+          spent_usd_micro: 0,
+          steps: 0,
+          status: "planned",
+          summary: "",
+          handoff: {},
+          runner: "pc",
+          author_agent: a.rt.agent.id,
+        } as never);
+        const run = await a.rt.store.run.insert({
+          session_id: session.id,
+          specialist,
+          model: "fake",
+        } as never);
+        await a.rt.store.costLedger.record({
+          human_id: a.rt.human.id,
+          project_id: projectId,
+          run_id: run.id,
+          kind: "api",
+          usd_micro: 10_000,
+          chf_micro: 8_000,
+          model: "fake",
+        } as never);
+      };
+      const folder = await a.client.createProject({ name: "Folder", goal: "A folder project" });
+      for (let i = 0; i < 3; i++) await book(folder.id, "task-check");
+      const planned = await a.client.createProject({ name: "Planned", goal: "A planned project" });
+      await book(planned.id, "intake");
+      await book(planned.id, "task-check");
+      const labels = async (projectId: string) => {
+        const c = await a.client.costs({ projectId });
+        return {
+          bySpecialist: c.bySpecialist.map((b) => b.label),
+          byTask: c.byTask.map((b) => b.label),
+        };
+      };
+      expect(await labels(folder.id)).toEqual({
+        bySpecialist: ["checking the task list"],
+        byTask: ["Checking the task list"],
+      });
+      const other = await labels(planned.id);
+      expect(other.bySpecialist.sort()).toEqual(["checking the task list", "planning"]);
+      expect(other.byTask).toEqual(["Planning and chat"]);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-money-302 and L4-selftasks-112 (a): GET /inbox's questions card quotes why the specialist asks, from the live reports", async () => {
+    // Live check 4 (L4-l3-3, L4-session-7): the card quoted the reviewer's scope check line, a
+    // commit message that repeats the task's title, and the FAQ's side remark. The card is filed
+    // as the critic files it (`questionsReason` over the run's final report) and read through the
+    // UI's client.
+    const { filePersonQuestions, questionsReason, reportedQuestions } = await import(
+      "@forerunner/runtime/session/person-questions"
+    );
+    const live = JSON.parse(
+      readFileSync(
+        fileURLToPath(
+          new URL("../../../packages/runtime/test/fixtures/asking-live.json", import.meta.url),
+        ),
+        "utf8",
+      ),
+    ) as Record<"live4_launch_review" | "live4_faq", { report: string; task: string }>;
+    const a = await open("nothing", "");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "Pages" });
+      const me = await a.client.me();
+      const shown: Record<string, string | null | undefined> = {};
+      for (const name of ["live4_launch_review", "live4_faq"] as const) {
+        const created = await a.client.createTask(project.id, {
+          title: live[name].task,
+          outcome: "the work is done",
+        });
+        const task = await a.rt.store.task.mustGet(created.id);
+        const questions = reportedQuestions(live[name].report)?.questions ?? [];
+        const { request } = await filePersonQuestions(a.rt.store, {
+          task,
+          humanId: me.id,
+          agentId: null,
+          source: "critic",
+          questions,
+          context: questionsReason(live[name].report, questions) ?? undefined,
+        });
+        shown[name] = (await a.client.inbox(me.id)).requests.find(
+          (r) => r.id === request.id,
+        )?.body;
+      }
+      expect(shown.live4_launch_review).toBe(
+        'The specialist said: "notes/plan.md does not exist, and I am not allowed to write review.md, so I could not produce the deliverable."',
+      );
+      expect(shown.live4_faq).toContain("not added yet");
+      expect(shown.live4_faq).not.toContain("I also split");
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-selftasks-101: GET /inbox's plan card warns under a task whose own budget may leave too little for its review; a task with room says nothing", async () => {
+    // Live check 4 (LC-C30): the plan card said "about CHF 0.08" for a README task whose budget
+    // of CHF 0.08 (USD 0.10, as the live model's plan set it) then left no room for its review,
+    // and the task paused before it. The owner's answer 8: "it should get a warning, but it
+    // should get done anyway". The review of fix/l4-selftasks-check (blocking 2): the line was
+    // tested on planTaskViews with a hand-written estimator; here GET /inbox prices it with the
+    // daemon's own estimates and the project's session work budget, as the Inbox reads it.
+    const a = await open("nothing", "");
+    try {
+      const me = await a.client.me();
+      const brief = "Make a one-page website for the bakery that shows its opening hours.";
+      const project = await a.client.createProject({
+        name: "Lakeside Bakery",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await a.rt.intake.inFlight(project.id);
+      const card = async () =>
+        (await a.client.inbox(me.id)).requests.find(
+          (r) => r.projectId === project.id && r.status === "open" && r.planTasks,
+        );
+      const before = await card();
+      if (!before?.planTasks) throw new Error(`no plan card: ${JSON.stringify(before)}`);
+      // The stand-in's plan sets no task budget: no warning on any task.
+      expect(before.planTasks.map((t) => t.note ?? null)).toEqual(
+        before.planTasks.map(() => null),
+      );
+      // The plan as the live model wrote it (a short brief: the small plan's two tasks): the
+      // build task's own budget USD 0.10 (CHF 0.08), the check's USD 5.00, room for its work and
+      // its review.
+      const row = await a.rt.store.humanRequest.mustGet(before.id);
+      type PlanTask = { key?: string; title: string; budgetUsdMicro?: number };
+      const changeCard = structuredClone(row.change_card) as {
+        proposal: { plan: { milestones?: { tasks: PlanTask[] }[]; tasks?: PlanTask[] } };
+      };
+      const planned = [
+        ...(changeCard.proposal.plan.milestones ?? []).flatMap((m) => m.tasks),
+        ...(changeCard.proposal.plan.tasks ?? []),
+      ];
+      expect(planned.map((t) => [t.key, t.title])).toEqual([
+        ["build", "Build the page in index.html, styles.css and script.js"],
+        ["check", "Check that index.html, styles.css and script.js work together"],
+      ]);
+      const budgets: Record<string, number> = { build: 100_000, check: 5_000_000 };
+      for (const t of planned) t.budgetUsdMicro = budgets[t.key ?? ""] ?? 0;
+      await a.rt.store.humanRequest.patch(row.id, { change_card: changeCard as never });
+      const after = await card();
+      // The build task's figure with its review is above its budget: the Start dialog's line,
+      // in its words; the check has room and says nothing.
+      expect(after?.planTasks?.map((t) => [t.key, t.note ?? null])).toEqual([
+        [
+          "build",
+          '"Build the page in index.html, styles.css and script.js": its budget of CHF 0.08 may leave too little for its review, which then waits for Continue.',
+        ],
+        ["check", null],
+      ]);
+      const build = after?.planTasks?.find((t) => t.key === "build");
+      expect(build?.estimateUsdMicro ?? 0).toBeGreaterThan(0);
+    } finally {
+      await a.rt.close();
     }
   }, 120_000);
 });

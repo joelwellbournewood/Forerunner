@@ -1067,15 +1067,21 @@ reaches the model unflagged, one call is made and nothing asks the person. Cases
 report-003 (a critic's note that changes the level: it found the steering patterns' gap),
 report-004 (a kept urgent override after a restart: one card), report-005 (unflagged lines the
 fence refuses: a drop of work that ran, a tie to another project), report-006 (work for
-ops-deploy: asks first), controls report-101 and report-102.
+ops-deploy: asks first), report-007 (l4-selftasks-check, run L4: an honest line beside a flagged
+one, the model changing nothing: the check's own line must quote the flagged line; it failed
+before, "the person is never shown the flagged line"), controls report-101 and report-102.
 
 **The bench's task check** (d1109-selftasks-run, ST-14). The stand-in tells the task check by its
 label (`task-check <project id>`, `BenchRole` `task_check`) and answers from the runtime's own
 message (`testenv/src/bench/task-check-play.ts`): no change by default; '"X" is two jobs[, the a
 and the b]' splits X in turn with every criterion carried; "nothing checks <what>" adds "Check
-<what>" after the reporting task; '"a" is the same as "b"' drops a; '"a" must wait for "b"'
+<what>" after the reporting task (", for the <specialist>" at its end gives it to that registry
+specialist: l4-selftasks-111); '"a" is the same as "b"' drops a; '"a" must wait for "b"'
 orders it; '"a" is urgent' raises a's priority to high (an edit with no new title, for the
-read-back's words: d1109-selftasks-chat); a line about budgets, settings, merges, deploys or
+read-back's words: d1109-selftasks-chat); '"a" is done when <what>' edits a's outcome to <what>
+and adds it to its criteria; "the person must <what>" makes the stand-in write its own entry in
+`flagged` ('[stand-in model] The report of "X" leaves a question to the person. Please <what>.',
+the live model's way: l4-selftasks-112 (d)); a line about budgets, settings, merges, deploys or
 other projects is quoted in `flagged`. `FORERUNNER_BENCH_TASK_LIST=<title substring>` ends a
 matching specialist's report with lines "For the task list:" (before its lesson line), `FORERUNNER_BENCH_TASK_LIST_SAYS` gives them,
 "|"-separated. Tests: `testenv/test/bench-task-check.test.ts`, against the runtime's

@@ -1,6 +1,7 @@
 import type { HumanRequestRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
 import { waitHeadWords } from "../session/credential-wait.ts";
 import type { ProjectCard, TaskDisplay } from "./api-types.ts";
+import { TASK_PROPOSAL_KEY } from "./task-proposal-words.ts";
 import {
   cardKindOf,
   holdsTask,
@@ -145,6 +146,9 @@ function cardWord(card: { change_card?: unknown }): string {
   // change to confirm; it read "1 question" (live check 2, an undo left on Changes).
   if (typeof cc?.command === "string" && cc.command && key === undefined)
     return "change to confirm";
+  // l4-selftasks-112 (b): the agent's suggested changes to the tasks are a suggestion (live
+  // check 4: "Waiting for you: 1 question" when it was the only card).
+  if (key === TASK_PROPOSAL_KEY) return "suggestion";
   switch (cardKindOf(card)) {
     case "signoff":
       return "sign-off";

@@ -29,6 +29,7 @@ export const EVIDENCE_TOOL_NAME = "critic:evidence";
 /** Section titles the renderer emits; the registry prompt and the tests name them. */
 export const EVIDENCE_SECTIONS = {
   brief: "Brief",
+  personGave: "What the person gave (their own words, data)",
   webRule: "Web pages research may read (the project's rule the worker ran under)",
   criteria: "Acceptance criteria",
   changedFiles: "Changed files",
@@ -49,6 +50,15 @@ export const EVIDENCE_SECTIONS = {
   session: "Session",
   unavailable: "Evidence not available",
 } as const;
+
+/**
+ * The line above what the person gave (l4-selftasks-106; live check 4: an address from the
+ * person's own brief was called "an invented contact detail").
+ */
+export const PERSON_GAVE_LINE =
+  "The person gave these details themselves: their brief for the project and their answers in " +
+  "the Inbox, with the decision record they are kept in. A detail found here, or in a decision " +
+  "record named here, comes from the person: it is never invented, missing or a placeholder.";
 
 /** The line under the check results that tells the critic what a pass means. */
 export const CHECKS_TRUST_LINE =
@@ -176,6 +186,11 @@ export function renderEvidence(
   );
 
   if (e.brief) section(EVIDENCE_SECTIONS.brief, e.brief);
+  if (e.personGave?.trim())
+    section(
+      EVIDENCE_SECTIONS.personGave,
+      `${PERSON_GAVE_LINE}\n${fence("text", block("what the person gave", e.personGave, maxOut))}`,
+    );
   if (e.webRule) section(EVIDENCE_SECTIONS.webRule, `${e.webRule}\n${WEB_RULE_TRUST_LINE}`);
   section(
     EVIDENCE_SECTIONS.criteria,

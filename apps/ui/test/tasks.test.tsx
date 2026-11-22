@@ -2222,3 +2222,23 @@ describe("d1109-selftasks-chat, run C", () => {
     expect(await lineOf("t_mine")).toBeNull();
   });
 });
+
+// l4-selftasks-check, run L4 (L4-selftasks-112 (c); live check 4, LC-C18): a redone task, Ready
+// again, showed its last run's "accepted" in lower case in the Critic column while the person had
+// just said that work is wrong.
+describe("l4-selftasks-check, run L4: the Critic column of a task that is not under review", () => {
+  it("a Ready task whose last run the critic accepted shows '—'", async () => {
+    const harness = createHarness();
+    addTask(harness, "task_redone", "Write the FAQ", { status: "ready" });
+    harness.daemon.state.runs.push({
+      ...(RUNS[1] as (typeof RUNS)[number]),
+      id: "run_redone",
+      taskId: "task_redone",
+      verdict: "accept",
+      createdAt: "2026-11-09T04:30:00.000Z",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    const row = await rowOf("task_redone");
+    expect(within(row).getByTestId("task-critic").textContent).toBe("—");
+  });
+});

@@ -128,11 +128,71 @@ export function parseTaskListNotes(report: string): TaskListLine[] {
 }
 
 /**
- * A critic's finding that is a note, not an order (L-4, as the brief reads it): marked `info`,
- * or a problem the runtime measured that the task's files cannot have caused.
+ * A critic's finding that is evidence for the task check (ADR 0119 point 3): a problem the
+ * runtime measured that the task's files cannot have caused (`NOT_CAUSED_BY_TASK`, the "Tried
+ * ..." findings). l4-selftasks-102 (live check 4): before, every `info` finding counted too, so
+ * the critic's ordinary notes about the task's own work ("The worker did not measure contrast",
+ * "Sunday is left out ... a reasonable choice") paid for a planning call after nearly every
+ * reviewed task and were kept for the next session. The retry brief's 'not an order' rule
+ * (`isReviewNote` in executor.ts) is a different question and stays as it is.
  */
-export function isCriticNote(f: { severity: string; description: string }): boolean {
-  return f.severity === "info" || f.description.endsWith(NOT_CAUSED_BY_TASK);
+export function notCausedByTask(f: { description: string }): boolean {
+  return f.description.endsWith(NOT_CAUSED_BY_TASK);
+}
+
+/** A quoted line is at most this many characters (design §5: read at a glance). */
+export const QUOTE_MAX = 100;
+
+/** A sentence that asks for something: "Please …", an order's verb first, or a question. */
+const ASKS =
+  /^(?:please\b|(?:add|ask|change|confirm|create|delete|deploy|drop|give|ignore|keep|make|merge|move|put|raise|remove|run|say|send|set|skip|start|stop|tell|use|write)\b)|\?$/i;
+
+/**
+ * The part of a line a quote shows (l4-selftasks-112 (d)): the first sentence that reads like an
+ * instruction, else the first one that asks for something, else the whole line. A model's
+ * flagged entry often opens with what it read ("The critic could not verify the phone number on
+ * contact.html, which came from …") and asks only after a hundred characters ("Please confirm
+ * it, …"), so a quote cut from the start never reached the request.
+ */
+export function requestPart(text: string): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  const sentences = t.split(/(?<=[.!?])\s+(?=[A-Z"'(])/);
+  if (sentences.length < 2) return t;
+  return sentences.find((s) => readsLikeInstruction(s)) ?? sentences.find((s) => ASKS.test(s)) ?? t;
+}
+
+/**
+ * A line as the person reads it quoted (l4-selftasks-103, -110): whitespace folded, an id after
+ * "finding" or "review" taken out with its noun kept ("Earlier finding 01a1…: x" reads "Earlier
+ * finding: x"), its own double quotes single and its end mark dropped, so the sentence around it
+ * closes the quote; whole when it fits in `max`, else cut at a word with "…". Before, the line
+ * was cut at 100 characters mid-word with an id's hole ('"Earlier finding : the report …').
+ */
+export function quoteOf(text: string, max = QUOTE_MAX): string {
+  const t = text
+    .replace(
+      /\b(finding|review)[ :]*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+      "$1",
+    )
+    .replace(/\s+/g, " ")
+    .replace(/\s+([:;,.])/g, "$1")
+    .trim()
+    .replace(/"/g, "'")
+    .replace(/[.;:,!]+$/, "");
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[\s.;:,]+$/, "")}…`;
+}
+
+/**
+ * A left-out line as quoted to the person: a line of the evidence from its start (verbatim, as
+ * it was written; the injection suite's report channel checks the person is shown it), the
+ * model's own entry at its request (`requestPart`: it opens with what it read), both cut at a
+ * word (`quoteOf`).
+ */
+export function quoteFor(q: { text: string; by: "evidence" | "agent" }): string {
+  return quoteOf(q.by === "agent" ? requestPart(q.text) : q.text);
 }
 
 /** The critic's notes on a task that the task did not cause, as evidence lines. */
@@ -236,6 +296,42 @@ export async function takeNotes(
     return rest;
   });
   return taken;
+}
+
+/**
+ * l4-selftasks-106: the tasks the agent added for work a Done task left undone, each with the task
+ * it continues (`{ <new task id>: <done task id> }`); their brief and review quote what that task
+ * was to do.
+ */
+export const CONTINUES_KEY = "task_check_continues";
+const CONTINUES_MAX = 200;
+
+/** The task a task continues, or null (read-only). */
+export function continuesOf(
+  project: { summary_cache?: JsonValue } | null | undefined,
+  taskId: string,
+): string | null {
+  const map = ((project?.summary_cache ?? {}) as JsonObject)[CONTINUES_KEY];
+  if (!map || typeof map !== "object" || Array.isArray(map)) return null;
+  const v = (map as JsonObject)[taskId];
+  return typeof v === "string" ? v : null;
+}
+
+/** Record that `taskId` continues the Done task `sourceId`. */
+export async function markContinues(
+  store: Pick<StateStore, "project">,
+  projectId: string,
+  taskId: string,
+  sourceId: string,
+): Promise<void> {
+  await changeCache(store, projectId, (cache) => {
+    const now = cache[CONTINUES_KEY];
+    const map =
+      now && typeof now === "object" && !Array.isArray(now) ? { ...(now as JsonObject) } : {};
+    map[taskId] = sourceId;
+    const entries = Object.entries(map).slice(-CONTINUES_MAX);
+    return { ...cache, [CONTINUES_KEY]: Object.fromEntries(entries) };
+  });
 }
 
 /** The tasks the agent added or rewrote from a report (read-only). */

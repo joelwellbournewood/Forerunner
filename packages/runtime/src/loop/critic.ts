@@ -61,6 +61,7 @@ import {
   wentAheadWithout,
 } from "../session/person-questions.ts";
 import { withReviewWait } from "../session/review-refusal.ts";
+import { continuesLine, personContextOf } from "../session/task-context.ts";
 import { keptSourcesOf, type WebSource, webSourceEvidence } from "../session/web-sources.ts";
 import {
   type CriticPort,
@@ -478,11 +479,16 @@ export class CriticLoop implements CriticPort {
     // decided before the review files anything, so no sign-off is filed only to be withdrawn
     // (W15-28: two notifications for one card).
     const asksPerson = reportedQuestions(report);
+    // l4-selftasks-106: what the person gave (their brief and answers) and, for a step the agent
+    // added for a Done task's undone work, what that task was to do; both as data.
+    const personGave = await personContextOf(store, task).catch(() => null);
+    const continues = await continuesLine(store, task).catch(() => null);
     const evidence: ReviewEvidence = {
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
         : [outcomeCriterion(task.outcome)],
-      brief: `${task.title}: ${task.outcome}`,
+      brief: [`${task.title}: ${task.outcome}`, ...(continues ? [continues] : [])].join("\n"),
+      ...(personGave ? { personGave } : {}),
       // W15-25: the site rule the run read pages under, which the critic judges a refusal by.
       ...(result.webRule ? { webRule: result.webRule } : {}),
       finalReport: report,

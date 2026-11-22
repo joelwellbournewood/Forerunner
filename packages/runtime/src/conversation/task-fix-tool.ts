@@ -18,9 +18,11 @@ import { moneyWords } from "../session/money-words.ts";
 import {
   applyTaskChanges,
   type ChangeRunResult,
+  type CheckQuote,
   callsOf,
   fenceTaskChanges,
   makesFixesAtOnce,
+  quotedPhrase,
   type RefusedChange,
   runTaskCheck,
   TASK_CHECK_TIMEOUT_MS,
@@ -109,6 +111,21 @@ export interface ChatTaskFixResult {
   notice: boolean;
 }
 
+/**
+ * l4-selftasks-103 (ADR 0119 point 4): the reply says a line was left out; the line itself is
+ * quoted only in the footer under it (`fixQuoteFooter`), which never goes back to a model (the
+ * reply's text does, as the conversation's history), so a flagged line never reaches one.
+ */
+export const FIX_LEFT_OUT_SAID = "One line read like an instruction and was left out.";
+
+/** The footer's sentence that quotes what the check left out ('A line of the report …("…").'). */
+export function fixQuoteFooter(quotes: readonly CheckQuote[]): string {
+  const first = quotes[0];
+  if (!first) return "";
+  const phrase = quotedPhrase(first);
+  return `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}.`;
+}
+
 /** The person's words as the check's request: verbatim, cut at `FIX_TASKS_REQUEST_MAX`. */
 export function fixRequestOf(text: string): string {
   return text.trim().slice(0, FIX_TASKS_REQUEST_MAX);
@@ -195,12 +212,18 @@ export async function fixTasksInChat(input: ChatTaskFixInput): Promise<ChatTaskF
     });
     // The kept notes were checked once: they leave the project.
     if (notes.length) await takeNotes(store, project.id);
-    const footer = footerOf(cost);
+    // l4-selftasks-103: what the check left out is quoted under the reply, with its cost.
+    const quoted = fixQuoteFooter(fence.quotes);
+    const footer = joined(quoted, footerOf(cost) ?? "") || null;
     if (!fence.changes.length)
-      return nothing(joined(fixNoChangeReply(now.name), fixLeftOut(fence.refused)), {
-        costUsdMicro: cost,
-        footer,
-      });
+      return nothing(
+        joined(
+          fixNoChangeReply(now.name),
+          fixLeftOut(fence.refused),
+          quoted ? FIX_LEFT_OUT_SAID : "",
+        ),
+        { costUsdMicro: cost, footer },
+      );
     const level = now.autonomy_level as AutonomyLevel;
     const askFirst = fence.askFirst.length > 0;
     const readBack = !!turn.recordsRead || !makesFixesAtOnce(level) || askFirst;
@@ -210,8 +233,17 @@ export async function fixTasksInChat(input: ChatTaskFixInput): Promise<ChatTaskF
     if (readBack) {
       // One read-back for the whole set (every change's calls worked out before any is made).
       const planned: CommandCallLike[][] = [];
-      for (const f of fence.changes) planned.push(await callsOf(store, now, f));
-      const reasons = fence.askFirst.filter((a) => !a.quote).map((a) => a.reason);
+      for (const f of fence.changes) {
+        const calls = await callsOf(store, now, f);
+        if (calls.length) planned.push(calls);
+      }
+      // l4-selftasks-113 (live check 4, L4-selftasks-18): why it asks first is said only where
+      // the ask-first rule caused the read-back: at a level that would make the changes at once
+      // and with no records read (before, every read-back at Assisted carried it).
+      const reasons =
+        askFirst && makesFixesAtOnce(level) && !turn.recordsRead
+          ? fence.askFirst.filter((a) => !a.quote).map((a) => a.reason)
+          : [];
       const ask = fixAsk(
         now.name,
         fence.changes.map((f) => proposalLine(f)),

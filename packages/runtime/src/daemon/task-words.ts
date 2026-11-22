@@ -182,9 +182,20 @@ export function shortTitle(title: string, max = 40): string {
 const IDS =
   /\s*\((?:request|run|session|task)[ :]\s*(?:[0-9a-f]{8}[0-9a-f-]*|[0-9a-f]{4,}(?:…|\.{3}))[^)]*\)|\b(?:request|run|session|task)[ :]?[0-9a-f]{8}-[0-9a-f-]{27,}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
+/**
+ * An id after "finding" or "review": the noun stays, the id goes (l4-selftasks-110: "Earlier
+ * finding 01a1…: x" read "Earlier finding : x"). A bare id before a mark takes its space with it.
+ */
+const NOUN_IDS =
+  /\b(finding|review)[ :]*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const ID_BEFORE_MARK =
+  /\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=[:;,.])/gi;
+
 /** A text without the ids a person never reads (design §5 rule 3), whitespace folded. */
 export function withoutIds(text: string): string {
   return text
+    .replace(NOUN_IDS, "$1")
+    .replace(ID_BEFORE_MARK, "")
     .replace(IDS, "")
     .replace(/[ \t]+/g, " ")
     .trim();

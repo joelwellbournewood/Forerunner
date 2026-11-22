@@ -117,3 +117,14 @@ never becomes accept; it says nothing about medium.
 - **Dropping the fixtures from the coder evidence** to keep it small. Rejected: the starting
   files are what a modification is read against, the sets are small, and the e2e marker
   script was checked against fixture content (no marker line occurs in a fixture).
+
+## Amendment 2026-11-22 (l4-selftasks-check, run L4; critic 1.4.0)
+
+The evidence of a task review gains "What the person gave (their own words, data)" right after
+the brief: the person's brief for the project and their answers to the questions on the task and
+on what it waited for, with the decision record they are kept in. Live check 4 found the critic
+calling an address from the person's own brief "invented" and one they typed in the Inbox "not
+found in any project file", while the closing section said every section above was complete. A
+detail found there, or in a decision record it names, comes from the person and is never a
+finding for being invented, missing or a placeholder. The live calibration subset is re-run on
+1.4.0 in phase F.

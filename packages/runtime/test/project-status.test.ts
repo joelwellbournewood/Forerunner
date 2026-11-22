@@ -103,6 +103,30 @@ describe("project status sentence (design §2)", () => {
     });
   });
 
+  // l4-selftasks-check, run L4 (L4-selftasks-112 (b); live check 4: "Waiting for you: 1
+  // question" when the only card was the agent's suggested changes to the tasks).
+  it("l4-selftasks-check, run L4: the agent's suggestion card is counted as a suggestion, never a question", async () => {
+    await task("Write the README", "ready");
+    const suggest = () =>
+      store.humanRequest.insert({
+        human_id: human,
+        project_id: project,
+        task_id: null,
+        kind: "decision",
+        why: 'The coder\'s report on "Create the page" says: "\'Style the page\' is two jobs". Nothing changes until you say yes.',
+        steps: ['Split "Style the page" into "A" and "B".'],
+        options: ["Make these changes", "Keep the tasks"],
+        blocking: false,
+        risk: "low",
+        change_card: { key: "task_proposal", project_id: project },
+        author_agent: agent,
+      });
+    await suggest();
+    expect((await card()).statusLine?.text).toBe("Waiting for you: 1 suggestion");
+    await suggest();
+    expect((await card()).statusLine?.text).toBe("Waiting for you: 2 suggestions");
+  });
+
   it("1. an open card names its task; two read 'Waiting for you: 2 questions'", async () => {
     const a = await task("Decide where the page is published", "needs_human");
     await task("Write the README", "ready");

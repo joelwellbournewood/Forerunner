@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { SUBMIT_REVIEW_TOOL } from "@forerunner/critic";
+import { EVIDENCE_SECTIONS, PERSON_GAVE_LINE, SUBMIT_REVIEW_TOOL } from "@forerunner/critic";
 import { join } from "@forerunner/platform";
 import { FakeProvider } from "@forerunner/testenv";
 import { describe, expect, it } from "vitest";
@@ -16,6 +16,7 @@ import {
   fileBlockedByFindingsRequest,
   syncBlockedByFindings,
 } from "../src/session/findings.ts";
+import { personQuestionsKey } from "../src/session/person-questions.ts";
 import type { TaskExecutor } from "../src/session/runner.ts";
 import { closingReply, doneExecutor, flatPricing, loopWorld, submitReply } from "./loop-helpers.ts";
 
@@ -754,6 +755,81 @@ describe("d1109-chat-recall, run C: the resolved finding's lesson (L3-left-7)", 
     const lesson = lessons.find((l) => l.tags.includes("critic-finding"));
     expect(lesson?.text).toBe(
       'Critic finding resolved on "Add clamp" (coder): [medium] Docs not updated',
+    );
+    await w.close();
+  });
+});
+
+/**
+ * l4-selftasks-check, run L4 (L4-selftasks-106; live check 4: 'The form action
+ * mailto:book@willowtea.example is an invented contact detail' about an address in the person's
+ * own brief, and '[high] hello@lakesidebakery.example is not found in any project file' about one
+ * the person typed in the Inbox). The critic's review request carries what the person gave, as
+ * data, with the decision record the answers are kept in.
+ */
+describe("l4-selftasks-check, run L4: the critic is told what the person gave (L4-selftasks-106)", () => {
+  it("the review request of a task holds the person's brief and their answers on the task it waited for, with the decision record", async () => {
+    const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
+    const p = await w.store.project.mustGet(w.project);
+    await w.store.project.update(p.id, p.version, {
+      summary_cache: {
+        brief: "A tea room page with a booking form that mails book@willowtea.example.",
+      },
+    });
+    const contact = await w.addTask("Give the contact address", {
+      risk_tier: 0,
+      status: "done",
+      specialist: "person",
+    });
+    const card = await w.store.humanRequest.insert({
+      human_id: w.human,
+      project_id: w.project,
+      task_id: contact.id,
+      kind: "info",
+      why: "Which address should the page show?",
+      steps: ["Which address should the page show?"],
+      options: [],
+      blocking: false,
+      risk: "low",
+      change_card: {
+        key: personQuestionsKey(contact.id),
+        task_id: contact.id,
+        task_title: contact.title,
+        questions: ["Which address should the page show?"],
+        doc: "docs/decisions/0001-plain-static-page.md",
+      },
+    } as never);
+    await w.store.humanRequest.answer(
+      card.id,
+      card.version,
+      "hello@lakesidebakery.example" as never,
+      w.human,
+    );
+    const page = await w.addTask("Write book.html", {
+      risk_tier: 1,
+      depends_on: [contact.id],
+    });
+    await w.start(w.runner(doneExecutor(w)));
+    const call = w.provider.calls.find(
+      (c) =>
+        c.request.tools?.some((t) => t.name === SUBMIT_REVIEW_TOOL) &&
+        JSON.stringify(c.request.messages).includes(page.id),
+    );
+    const sent = String(call?.request.messages[0]?.content ?? "");
+    expect(sent).toContain(`## ${EVIDENCE_SECTIONS.personGave}\n${PERSON_GAVE_LINE}`);
+    expect(sent).toContain("book@willowtea.example");
+    expect(sent).toContain("hello@lakesidebakery.example");
+    expect(sent).toContain(
+      `The person's answers to the questions on "Give the contact address" (recorded in docs/decisions/0001-plain-static-page.md):`,
+    );
+    // The section comes right after the brief and before the criteria.
+    expect(sent.indexOf(EVIDENCE_SECTIONS.personGave)).toBeGreaterThan(sent.indexOf("## Brief"));
+    expect(sent.indexOf(EVIDENCE_SECTIONS.personGave)).toBeLessThan(
+      sent.indexOf("## Acceptance criteria"),
+    );
+    // The critic's prompt says what the section means (critic.md 1.4.0).
+    expect(call?.request.system ?? "").toContain(
+      "is the person's: never invented, missing or a placeholder.",
     );
     await w.close();
   });

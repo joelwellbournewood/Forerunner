@@ -12,9 +12,14 @@ import { firstUserText } from "./roles.ts";
  * - a line `"<task>" is two jobs[, the <a> and the <b>]` splits that task in two, in turn, its
  *   criteria shared out in order (the split carries every one);
  * - a line `nothing checks <what>` adds the step "Check <what>" after the reporting task, before
- *   the changeable tasks that wait for it;
+ *   the changeable tasks that wait for it; `nothing checks <what>, for the <specialist>` gives
+ *   the step to that specialist (l4-selftasks-111);
  * - `"<a>" is the same as "<b>"` drops a; `"<a>" must wait for "<b>"` orders a after b;
  * - `"<a>" is urgent` raises a's priority to high (an edit with no new title);
+ * - `"<a>" is done when <what>` sets what done looks like for a to <what> and adds it to its
+ *   criteria (an edit of outcome and criteria, l4-selftasks-112 (d));
+ * - `the person must <what>` is a question for the person: the stand-in writes its own entry in
+ *   `flagged` ("… Please <what>."), as the live model did (l4-selftasks-112 (d), LC-C18);
  * - a line that asks for budgets, settings, merges, deploys or other projects is quoted in
  *   `flagged` and changes nothing (the runtime's fence decides in any case).
  *
@@ -193,17 +198,21 @@ export function taskCheckReply(req: ModelRequest): string {
         added++;
         continue;
       }
-      const missing = /nothing checks ((?:that )?(.+?))\.?$/i.exec(line);
+      const missing = /nothing checks ((?:that )?(.+?))(?:,? for the ([a-z][a-z0-9-]*))?\.?$/i.exec(
+        line,
+      );
       if (missing && added < 6) {
         const said = (missing[1] as string).trim();
         const what = (missing[2] as string).trim();
         const title = cut(`Check ${said}`, 120);
         if (byTitle.has(title) || done.has(title)) continue;
         done.add(title);
+        const named = missing[3] && seen.specialists.includes(missing[3]) ? missing[3] : null;
         const specialist =
-          note.specialist && seen.specialists.includes(note.specialist)
+          named ??
+          (note.specialist && seen.specialists.includes(note.specialist)
             ? note.specialist
-            : (seen.specialists[0] ?? "coder");
+            : (seen.specialists[0] ?? "coder"));
         const before = seen.tasks
           .filter((t) => t.waitsFor.includes(note.taskTitle) && CHANGEABLE.test(t.status))
           .map((t) => t.title);
@@ -242,6 +251,29 @@ export function taskCheckReply(req: ModelRequest): string {
           priority: "high",
           why: why("The person says it is urgent."),
         });
+        continue;
+      }
+      // l4-selftasks-check, run L4 (L4-selftasks-112 (d)): an edit of what done looks like.
+      const doneWhen = /^"([^"]+)" is done when (.+?)\.?$/i.exec(line);
+      const doneTask = doneWhen ? changeable(doneWhen[1] as string) : null;
+      if (doneWhen && doneTask && !done.has(`done:${doneTask.title}`)) {
+        done.add(`done:${doneTask.title}`);
+        const what = (doneWhen[2] as string).trim();
+        changes.push({
+          kind: "edit",
+          task: doneTask.title,
+          outcome: `${what.charAt(0).toUpperCase()}${what.slice(1)}`,
+          acceptanceCriteria: [...doneTask.criteria, what],
+          why: why(`The report says when "${cut(doneTask.title, 60)}" is done.`),
+        });
+        continue;
+      }
+      // The live model's own entry in `flagged` for a question it left to the person.
+      const ask = /^the person must (.+?)\.?$/i.exec(line);
+      if (ask) {
+        flagged.push(
+          `${STAND_IN} The report of "${note.taskTitle}" leaves a question to the person. Please ${(ask[1] as string).trim()}.`,
+        );
         continue;
       }
       const wait = /"([^"]+)" must wait for "([^"]+)"/i.exec(line);

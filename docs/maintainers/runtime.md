@@ -1948,7 +1948,15 @@ a sign-off without the questions. One card, three ways in:
   placeholder): the report's sentence that shares most words with the first question (the next
   question's when the first shares none), a sentence under "Not done / risks" or one that says
   something is missing, a placeholder or assumed weighing more; else the report's first
-  sentences (`quotedWords`), else the critic's summary. `ask_person` stores its `why`. The card
+  sentences (`quotedWords`), else the critic's summary. Since run L4 (L4-money-302,
+  L4-selftasks-112 (a), live check 4): words a sentence quotes do not count (`unquoted`: a
+  quoted commit message repeated the task's title and won; double quotes always, single ones
+  only around a phrase, so "doesn't" stays), words match by stem ("joining" is "join"), the
+  reason words include "does not exist", "not allowed", "could not", "cannot" and "not found"
+  (`COULD_NOT`), a Summary's sentence gets no reason bonus, the report's lead sentence weighs one
+  more when it says the work could not be done, and on a tie an open section's sentence wins.
+  Fixtures: `asking-live.json` `live4_launch_review` and `live4_faq`. `ask_person` stores its
+  `why`. The card
   quotes it through `specialistReason` (`daemon/request-words.ts`, also the failed-task card's
   "The <specialist> said: …"): no markdown and no findings tag before it (run L3, live check 3,
   L3-research-3: a reviewer's "- **blocker**: `notes/plan.md` is missing." read 'The specialist
@@ -2167,7 +2175,7 @@ carrying the task's id, awaited in every branch, so the figure equals
 capped at the task's left (`TaskReviewRequest.budgetUsdMicro`: the budget less the figure, read
 fresh; its refusal maps to `task_budget` through `reviewStopSource(level, capSource)`), and a
 review whose left is below one critic call's floor (`CriticPort.reviewCallUsdMicro(task).floorUsdMicro`)
-is refused before it starts, with the floor as the card's estimate. Each work run keeps the room
+is refused before it starts, with the floor as the card's estimate (the floor: its first call's whole price at 2,048 tokens out, run L4). Each work run keeps the room
 its review needs (`workRunCapOf(task, specialistLimit, reviewRoom)`: R + W, R from
 `PlanItem.reviewRoomUsdMicro`, the runner's `reviewRoomOf` = `planner.reviewPartOf(task)` plus the
 port's `worstUsdMicro`, kept only when it is at most half of what is left); `runCapSource` comes
@@ -7135,13 +7143,17 @@ and `plainPlurals`).
 ### Costs view (design §5 rule 3)
 
 `costView` (`GET /costs`) keeps the ledger's sums and adds what a person reads (`costFacts`): a
-task's row is labelled with its title ("Planning and chat" for spend that names no task), a
+task's row is labelled with its title ("Planning and chat" for spend that names no task;
+"Checking the task list" when the session's task check is all of it, `costFacts.taskless`,
+l4-selftasks-114, live check 4: a folder project with three task checks read "Planning and
+chat 3 runs"), a
 project's with its name, the work by the specialist that ran it (the ledger's `specialist`
 column is not filled; each entry names its run, and the run its specialist; the critic's runs
 are "the critic"), and `accepted`, the runs the critic accepted (a task's last work run before
 each accepting review; per task, per specialist and per model). `runs` counts runs, not the
 ledger's entries (one per model call): a task's work runs, a model's runs; the planning run is
-"planning" and, like the critic's reviews, has no accepted count. Without a period asked for,
+"planning", the task check's "checking the task list" (before, "planning" too), and, like the
+critic's reviews, neither has an accepted count. Without a period asked for,
 `from` and `to` are the first and the last entry's time, which the Costs tab says in words
 ("1 Nov to 3 Nov"). A specialist reads as the session log names it ("the writer", `saidByName`,
 not "writer-marketing"), and a model's `runs` are its work runs when it did any, so its accepted
@@ -7754,8 +7766,8 @@ and fixes it as the autonomy level allows. The pieces:
   report with "For the task list:" and one line per point; rung 2 of the retry ladder points to
   it (`RUNG_TWO_SCOPE`); a check's own new task carries `AGENT_WROTE_TASK_LINE`.
 - **The evidence** (`session/task-list-notes.ts`): `parseTaskListNotes` (the last heading, at
-  most 5 lines of at most 300 characters), `reviewNoteLines` (the critic's notes the task did not
-  cause, `isCriticNote`), `readsLikeInstruction` (the injection scan for `agent_output` plus the
+  most 5 lines of at most 300 characters), `reviewNoteLines` (the critic's findings the task did
+  not cause, `notCausedByTask`; run L4), `readsLikeInstruction` (the injection scan for `agent_output` plus the
   steering patterns: budgets and money, settings, the autonomy level by any form of its name,
   review levels in either order, other projects, starting, merging, deploying, dropping every
   task, a new role); a flagged line is kept with `flagged: true`, never sent to a model, and
@@ -7849,6 +7861,115 @@ Stopped / Cancelled / Made ready (again) / Marked … by the agent") as one plai
 (`plainReason`, at most 200 characters); every other reason gives none, so the field is absent.
 `taskView` sets it, so the list, GET /tasks/:id and every task answer carry it. Tests:
 `test/agent-change-line.test.ts`.
+
+### The task check on real evidence (l4-selftasks-check, run L4, ADR 0119 amended 2026-11-22)
+
+Live check 4 (2026-11-17) found the session's task check paid for, refusing good changes and
+hiding what it left out. What changed, item by item:
+
+- **Evidence** (L4-selftasks-102): `notCausedByTask` (`session/task-list-notes.ts`) replaces
+  `isCriticNote` in the runner's review-note collection: only a finding ending
+  `NOT_CAUSED_BY_TASK` (the runtime-measured "Tried ..." findings) is evidence. An `info` note
+  about the task's own work ("The worker did not measure contrast") makes no check and is never
+  kept. The executor's `isReviewNote` (the retry brief's "not an order" rule) is unchanged. The
+  check after the session's last task stays (ADR 0119 point 8). The rule "Change only tasks shown
+  as Draft, Ready, Waiting for, Stuck or Waiting for Docker" matches `CHANGEABLE` (draft and
+  ready): Waiting for, Stuck and Waiting for Docker are stored `ready` (`taskDisplay`).
+
+- **The check's line is a person line** (L4-selftasks-108): `TASK_CHECKED_EVENT` lives in
+  `daemon/event-audience.ts` (the runner re-exports it) and is in `PERSON_EVENT_TYPES`; a check
+  that made no call (`called: false`) stays a detail. The runner books the check's cost on the
+  line's own row (`emit`'s cost), so the session page shows its CHF and the person-level lines
+  add up to the session's spend.
+- **What it left out is quoted** (L4-selftasks-103, ADR 0119 point 4): `FenceResult.quotes`
+  (`CheckQuote`: the scanner-flagged evidence lines first, verbatim, then the model's `flagged`
+  entries marked `by: "agent"`) is kept whether or not the set changes anything. A check with no
+  change writes `quotedPhrase(first)` into its line ('Checked the task list after "X": no change;
+  a line of the report reads like an instruction and was left out ("…") (CHF 0.01).'; a model's
+  entry reads 'the agent's check noted: "…"', never "a line of the report"); the event's
+  payload carries `flagged`. In chat (`task-fix-tool.ts`) the reply says only
+  `FIX_LEFT_OUT_SAID`; the quote is in the footer (`fixQuoteFooter`), which is never part of the
+  history a later turn sends, so a flagged line reaches no model. A chat read-back's Inbox card
+  does not quote it: the read-back card is listed in the chat's facts unenveloped. Quotes are
+  cut by `quoteOf` (`session/task-list-notes.ts`: whole up to 100 characters, else at a word with
+  "…") around the sentence that reads like an instruction, else the first one that asks
+  ("Please …", an order's verb first, a question: `requestPart`) for the model's own entries.
+- **The left-out line when nothing reached the model** (L4-selftasks-110): `checkAtBoundary`'s
+  line for a set of only flagged lines quotes the first through `quoteOf(requestPart())` and
+  names a critic's note as one ('Left out of the task check: a note of the critic's that names
+  an instruction ("…").'; a report's line stays 'a line that reads like an instruction'). The
+  events view's `withoutIds` (`daemon/task-words.ts`) keeps the noun before a finding's or a
+  review's id ("Earlier finding: …") and takes a bare id before a mark with its space (before:
+  "Earlier finding : …").
+- **Why a read-back asks first, only where it is news** (L4-selftasks-113): chat's fix read-back
+  (`task-fix-tool.ts`) puts "Asks you first: <reason>." in its footer only when the ask-first
+  rule caused the read-back (`askFirst && makesFixesAtOnce(level) && !recordsRead`); at
+  Advisor and Assisted, or after records were read, the footer is the cost line alone. The
+  session's suggestion card keeps its reasons as steps of their own, after the changes.
+- **Specialists and plans in the person's words** (L4-selftasks-111): the fence's reasons name a
+  specialist through `saidByName` ("the writer", "the deployment specialist", never
+  "writer-marketing" or "ops-deploy"); "the plan you approved has no task for the writer" only
+  when the project's intake card was answered approved (`intakeKey`, outcome `approved`), else
+  "no task of <project> is for the writer yet"; a split's first part 'keeps the specialist of
+  "X"'. `proposalBody` names a report by `saidByName` and says 'The critic's notes on "X" say:'.
+  Quotes go through `quoteFor` (`task-list-notes.ts`): a line of the evidence from its start (the
+  injection suite's report channel checks the person is shown it), the model's own entry at its
+  request.
+- **The suggestion card names who wrote what it quotes** (L4-selftasks-112 (d)): the fence marks
+  a model's `flagged` entry `by: "evidence"` (with the note's task and specialist) only when the
+  evidence it was sent holds it; else `by: "agent"`. `fileTaskProposal` passes `fence.quotes` to
+  `proposalBody`: 'A line of the coder's report on "X" reads like an instruction: "…".', 'A note
+  of the critic's on "X" names an instruction: "…".' or 'The agent's check noted: "…".', the
+  quote at its request (`requestPart`). `change_card.quotes` keeps the quotes' words. An edit's
+  line (`proposalLine`, also chat's read-back) says to what: 'Change "Write the FAQ": what done
+  looks like to "…" and the criteria to "a; b".' (each cut at 120 characters at a word).
+
+- **Chained adds** (L4-selftasks-104): the fence keeps the set's accepted adds in a pending map
+  (title to its index), so an add after, or an order waiting for, a task an earlier add of the
+  same reply makes is let through (`FencedChange.refs`); an add whose title is a live task, an
+  add before a pending one, and a change naming a refused add ('"Write book.html" was not
+  added') are refused in words; an order of a pending task folds into its add; the cycle check
+  runs over both. `applyTaskChanges` fills each ref with the id the earlier add made just before
+  the change runs (`fillRefs`). The card path keeps the titles: `task.create` resolves them when
+  it runs, a `task.dependencies` that names a new task is left out at the Yes with its reason.
+  What the fence and the commands refused is a Details line of its own
+  (`session.task_check_left_out`, `taskCheckLeftOutLine`: 'Left out (and 1 more): the add of
+  "X": ….'), the words chat's `fixLeftOut` says.
+
+- **An edit that changes nothing** (L4-selftasks-105 (a)): the fence keeps only the fields of an
+  edit that differ from the task (`edited`: title and outcome trimmed, criteria trimmed with
+  empty lines dropped, priority by its stored value, as `task.update` compares them) and drops an
+  edit with nothing left quietly (no read-back line, no call, not refused). Backstop: `callsOf`
+  returns no call for an empty edit, and `applyTaskChanges`, `fileTaskProposal` and chat's
+  read-back skip a change with no call, so a composed set never carries a step `task.update`
+  refuses ("Nothing to change on …", which rolled back the whole set). The chat reply when a
+  composed set is refused is l4-selftasks-chat's (L4-selftasks-105 (b)).
+
+- **A small task's review fits its own budget** (L4-selftasks-101 with L4-money-303; the owner's
+  answer of 2026-11-16, D-L4-8): the runner's floor check before a review
+  (`CriticPort.reviewCallUsdMicro(task).floorUsdMicro`) is now the first call's whole price at
+  2,048 tokens out, so below it no review and none of its checks starts, and above it the review's
+  calls are sized to the room left of the task's budget (critic.md). The plan card's task line
+  carries `reviewMayWaitLine` (the Start dialog's words) in its `note` when a task's own budget is
+  below its estimate with its review (`daemon/plan-tasks.ts`). Raising a model-proposed budget at
+  the plan's apply is not built (see the area's report).
+- **The person's details reach the check and the critic** (L4-selftasks-106, prompt
+  `task-check@1.2.0`): `TaskCheckTask.outcome` (redacted, at most 600 characters) for every task
+  the check may change and every task the evidence comes from (a Done one too), and the person's
+  brief (`summary_cache.brief`, at most 1,500 characters), in a data envelope of their own before
+  the evidence ("What the tasks are to do, in the plan's words, and the person's brief"). Two
+  rule lines: a change may name a task an earlier add of the same reply makes; an added task that
+  does work a Done task left undone carries that task's details word for word. Backstop:
+  `applyTaskChanges` records an add whose source is a Done task (`markContinues`,
+  `summary_cache.task_check_continues`); its brief (`taskContextBlock`) and its review
+  (`loop/critic.ts`) carry `continuesLine`. The critic's review request carries `personGave`
+  (`personContextOf`: the brief and the answers on the task and on what it waited for, with their
+  decision record) as data; see critic.md.
+
+Tests: `session-task-list.test.ts` and `chat-fix-tasks.test.ts` (describes "l4-selftasks-check,
+run L4"), `session.test.tsx` and real-daemon.test.ts' describe "l4-selftasks-check, run L4",
+and the injection suite's `report-007` (no change beside a flagged line: the check's own line
+quotes it).
 
 ### One credential policy for every call (d1109-cred-engine, [ADR 0120](../decisions/0120-which-claude-does-the-work.md))
 

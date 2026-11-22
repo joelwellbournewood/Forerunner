@@ -19,6 +19,8 @@ import {
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import {
   REVIEW_RESUMED_EVENT,
+  TASK_CHECK_LEFT_OUT_EVENT,
+  TASK_CHECKED_EVENT,
   TASK_CONTINUES_EVENT,
   TOOK_LARGER_EVENT,
 } from "../daemon/event-audience.ts";
@@ -152,6 +154,7 @@ import {
   sessionResultLines,
   sessionUpdateLine,
   type TaskChangeFact,
+  taskCheckLeftOutLine,
   waitingOf,
 } from "./result.ts";
 import {
@@ -185,9 +188,9 @@ import {
   type TaskCheckRunnerPort,
 } from "./task-check.ts";
 import {
-  isCriticNote,
   keepNotes,
   keptNotesOf,
+  notCausedByTask,
   reviewNoteLines,
   type TaskListLine,
   type TaskListNote,
@@ -235,8 +238,11 @@ export const PROMISED_EVENT = "session.promised";
 export const JOINED_EVENT = "session.joined";
 /** S-7: work that asked to join and did not fit, at the session's end (`{ tasks }`). */
 export const LEFT_FOR_NEXT_START_EVENT = "session.left_for_next_start";
-/** d1109-selftasks-run (ADR 0119): one task check at a boundary; its Details line. */
-export const TASK_CHECKED_EVENT = "session.task_checked";
+/**
+ * d1109-selftasks-run (ADR 0119): one task check at a boundary. l4-selftasks-108: a person line
+ * with its cost on its row (`event-audience.ts`, where the constant now lives).
+ */
+export { TASK_CHECKED_EVENT };
 /** S-10: the session goes on with the person's earlier one (`{ continues, at }`). */
 export const CONTINUES_EVENT = "session.continues";
 
@@ -2413,28 +2419,50 @@ export class SessionRunner {
             });
             return null;
           });
+          // l4-selftasks-108 (ADR 0119 point 9, dated note of 2026-11-22): the check's cost is
+          // booked on its line's row, so the line gets its CHF like a task's and the person-level
+          // lines add up to the session's spend; `called` keeps a check with no call a detail.
           if (!done || done.keep) {
             taskListNotes.unshift(...notes);
             if (done?.called) taskChecks++;
             if (done?.line)
-              await emit(TASK_CHECKED_EVENT, {
-                sentence: done.line,
-                costUsdMicro: done.costUsdMicro,
-              });
+              await emit(
+                TASK_CHECKED_EVENT,
+                {
+                  sentence: done.line,
+                  costUsdMicro: done.costUsdMicro,
+                  called: done.called,
+                },
+                done.costUsdMicro,
+              );
             return false;
           }
           if (done.called) taskChecks++;
           // Notes kept from before are checked once: they leave the project now.
           if (notes.some((n) => fromProject.has(n))) await takeNotes(store, project.id);
           if (done.line)
-            await emit(TASK_CHECKED_EVENT, {
-              sentence: done.line,
-              costUsdMicro: done.costUsdMicro,
-              changed: done.applied.length,
-              ...(done.proposalId ? { proposed: true } : {}),
-              ...(done.refused.length
-                ? { refused: done.refused.map((r) => `${r.what}: ${r.reason}`) }
-                : {}),
+            await emit(
+              TASK_CHECKED_EVENT,
+              {
+                sentence: done.line,
+                costUsdMicro: done.costUsdMicro,
+                called: done.called,
+                changed: done.applied.length,
+                // l4-selftasks-103: what it left out, quoted on its line (data; never sent on).
+                ...(done.quotes.length ? { flagged: done.quotes.map((q) => q.text) } : {}),
+                ...(done.proposalId ? { proposed: true } : {}),
+                ...(done.refused.length
+                  ? { refused: done.refused.map((r) => `${r.what}: ${r.reason}`) }
+                  : {}),
+              },
+              done.costUsdMicro,
+            );
+          // l4-selftasks-104: what the fence and the commands refused, as a Details line.
+          const leftOut = taskCheckLeftOutLine(done.refused);
+          if (done.line && leftOut)
+            await emit(TASK_CHECK_LEFT_OUT_EVENT, {
+              sentence: leftOut,
+              refused: done.refused.map((r) => `${r.what}: ${r.reason}`),
             });
           if (!done.applied.length) return false;
           tasksChanged.push(...done.facts);
@@ -3332,8 +3360,10 @@ export class SessionRunner {
                 retry: reviewed.retry,
                 attempt: reviewed.attempt,
               });
-              // d1109-selftasks-run: the critic's notes the task did not cause, for the next
+              // d1109-selftasks-run: the critic's findings the task did not cause, for the next
               // boundary's task check (data, flagged where they read like an instruction).
+              // l4-selftasks-102: only those (ADR 0119 point 3); an ordinary note about the
+              // task's own work is no evidence and pays for no check.
               if (reviewed.reviewId && this.deps.taskCheck) {
                 const notes = reviewNoteLines(
                   (
@@ -3341,7 +3371,7 @@ export class SessionRunner {
                       limit: 50,
                     })
                   )
-                    .filter(isCriticNote)
+                    .filter(notCausedByTask)
                     .map((f) => f.description),
                 );
                 if (notes.length)
