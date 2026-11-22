@@ -24491,23 +24491,33 @@ describe("l4-money-pause, run L4", () => {
   }, 120_000);
 
   it("L4-money-112: a task sent back once and then accepted over its estimate: the session review's line says what it noted, never 'sent back'", async () => {
-    const a = await open({ FORERUNNER_BENCH_CRITIC_REJECT: "Write the pairing list" });
+    // Review of L4-money-112: the work's calls are made dear (60,000 output tokens a call), so
+    // the send-back and its second try take the task far over its estimate and the session
+    // review is a revise (before, the case's review was "accepted (grade 100, 0 findings)" and it
+    // passed without the fix).
+    const a = await open({
+      FORERUNNER_BENCH_CRITIC_REJECT: "Write the pairing list",
+      FORERUNNER_BENCH_USAGE: "Write the pairing list:60000",
+    });
     try {
       const project = await a.client.createProject({
         name: "Swiss pairing",
         goal: "A pairing list",
       });
-      // A tiny estimate, so the send-back and its second try take it far over it.
-      await task(a, project.id, "Write the pairing list", 0.0001);
+      const t = await task(a, project.id, "Write the pairing list", 0.0001);
       const sessionId = await startAndEnd(a, project.id, 2_000_000);
+      expect((await a.rt.store.task.mustGet(t.id)).status).toBe("done");
       const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
       const review = lines.find((l) => l.startsWith("Session review:")) ?? "";
-      expect(review, lines.join(" | ")).not.toBe("");
-      expect(review).not.toMatch(/sent back/);
+      expect(review, lines.join(" | ")).toBe(
+        "Session review: planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice (grade 85, 1 finding).",
+      );
       // The project's reviews: the session check is a review with no task, and its verdict is
       // the UI's to word ("noted"); the daemon's own summary never says "sent back".
       const reviews = await a.client.reviews(project.id);
       const check = reviews.reviews.find((r) => r.taskId === null);
+      expect(check, JSON.stringify(reviews.reviews)).toBeDefined();
+      expect(check?.verdict).toBe("revise");
       expect(check?.summary ?? "").not.toMatch(/sent back/);
     } finally {
       await a.rt.close();
