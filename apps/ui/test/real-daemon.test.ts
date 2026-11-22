@@ -23794,4 +23794,33 @@ describe("l4-chat-depth, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+  // L4-chat-211 (live check 4): the Changes row read "from CHF 0.00, so chat asks before every
+  // longer answer to CHF 0.10": the setting's meaning sat inside its value.
+  it("settings.set chat_ask_above 0, then 0.10 with its tap: GET /changes reads the amounts alone; 0 says what it means after them", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-211-");
+    try {
+      const say = async (value: number) => {
+        const r = await a.client.executeCommands({
+          commands: [{ name: "settings.set", params: { key: "chat_ask_above", value } }],
+          wordsUsed: "Chat asks first (Settings)",
+          source: "ui",
+        });
+        return r.status === "pending" && r.pendingId
+          ? a.client.confirmCommand(r.pendingId, { answer: "tap" })
+          : r;
+      };
+      expect((await say(0)).status).toBe("done");
+      expect((await say(0.1)).status).toBe("done");
+      const rows = (await a.client.changes({ limit: 10 }))
+        .map((r) => r.sentence)
+        .filter((s) => s.includes("chat asks first"));
+      expect(rows).toEqual([
+        "Set the amount above which chat asks first from CHF 0.00 to CHF 0.10. Undo.",
+        "Set the amount above which chat asks first from CHF 0.10 to CHF 0.00: chat asks before every longer answer. Undo.",
+      ]);
+      expect(rows.join("\n")).not.toContain(", so chat asks");
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });

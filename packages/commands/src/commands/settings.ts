@@ -717,6 +717,10 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     description:
       "The CHF above which one chat answer asks first before it thinks longer (a stronger model always asks first). 0: chat asks before every longer answer. Unset: CHF 0.10.",
     display: chatAskAboveWords,
+    // l4-chat-depth (L4-chat-211): what 0 means, after the amounts ("... to CHF 0.00: chat asks
+    // before every longer answer."), never inside a value.
+    effect: (value) =>
+      typeof value === "number" && value <= 0 ? "chat asks before every longer answer" : "",
     examples: [0.1, 0],
   },
   // d1109-cred-engine (CE-1, CE-13, ADR 0120; the owner's answer 4 of 2026-11-09: "it should
@@ -749,15 +753,16 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
 export const CHAT_ASK_ABOVE_DEFAULT_CHF = 0.1;
 
 /**
- * `chat_ask_above` in words, after its label ("the amount above which chat asks first"): "CHF
- * 0.10", or "CHF 0.00, so chat asks before every longer answer". fixup-d1109-chat-depth: before,
- * "asks first above CHF 0.10", so a sentence said "asks first" twice ("Set the amount above which
- * chat asks first to asks first above CHF 0.10?").
+ * `chat_ask_above` in words, after its label ("the amount above which chat asks first"): the
+ * amount alone, "CHF 0.10", "CHF 0.00". fixup-d1109-chat-depth: before, "asks first above CHF
+ * 0.10", so a sentence said "asks first" twice. l4-chat-depth (L4-chat-211): what 0 means is the
+ * key's effect, after the amounts; before, it sat in the value, so the change back read "from CHF
+ * 0.00, so chat asks before every longer answer to CHF 0.10".
  */
 export function chatAskAboveWords(value: unknown): string {
   const chf =
     typeof value === "number" && Number.isFinite(value) ? value : CHAT_ASK_ABOVE_DEFAULT_CHF;
-  return chf <= 0 ? "CHF 0.00, so chat asks before every longer answer" : `CHF ${chf.toFixed(2)}`;
+  return `CHF ${Math.max(0, chf).toFixed(2)}`;
 }
 
 /** The risk of setting `value` on the key: its `riskFor` when it has one, else its `risk`. */

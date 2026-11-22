@@ -1631,8 +1631,9 @@ your agents may reach beyond their built-in tools.
   are connected (with **Connect Claude** when Claude is not, and the setup assistant), the
   budget per session of each project, the monthly cap, **Chat asks first** before a stronger
   model or an answer over your amount (CHF 0.10 at first; below it Chat thinks longer when it
-  helps, on the same model; 0 makes it ask before every longer answer; a lower amount applies at
-  once, a higher one asks your Yes), the default autonomy by name ("Standard:
+  helps, on the same model; 0 makes it ask before every longer answer, and the Changes row says so
+  after the amounts: "from CHF 0.10 to CHF 0.00: chat asks before every longer answer"; a lower
+  amount applies at once, a higher one asks your Yes), the default autonomy by name ("Standard:
   routine, reversible actions run; the rest asks you"), quiet hours, and **Sandbox (Docker)**
   (whether full-review tasks can run, the step to take, the sandbox download). Everything else is
   under **Advanced** (collapsed; click it to open): the subscription allowance, which Claude

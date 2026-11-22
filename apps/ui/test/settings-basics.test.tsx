@@ -250,3 +250,37 @@ describe("d1109-chat-depth, run C: Settings, Basics, Chat asks first", () => {
     });
   });
 });
+
+// l4-chat-depth (L4-chat-211, live check 4): the Changes row read "from CHF 0.00, so chat asks
+// before every longer answer to CHF 0.10": the setting's meaning sat inside its value.
+describe("l4-chat-depth, run L4: Chat asks first on the Changes page (L4-chat-211)", () => {
+  it("0 from the dialog reads 'from CHF 0.10 to CHF 0.00: chat asks before every longer answer.' on Changes; no value carries the meaning", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const view = renderApp("/settings", harness);
+    const row = (
+      await within(await screen.findByTestId("settings-basics")).findAllByTestId("setting-row")
+    ).find((r) => r.dataset.key === "human.chat_ask_above") as HTMLElement;
+    await user.click(within(row).getByTestId("setting-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    const input = within(dialog).getByTestId("setting-value");
+    await user.clear(input);
+    await user.type(input, "0");
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
+    view.unmount();
+    renderApp("/changes", harness);
+    await waitFor(() =>
+      expect(screen.getAllByTestId("change-sentence").map((s) => s.textContent ?? "")).toContain(
+        // The page shows Undo as its own button, so the sentence ends at the period.
+        "Set the amount above which chat asks first from CHF 0.10 to CHF 0.00: chat asks before every longer answer.",
+      ),
+    );
+    expect(
+      screen
+        .getAllByTestId("change-sentence")
+        .map((s) => s.textContent ?? "")
+        .join("\n"),
+    ).not.toContain(", so chat asks");
+  });
+});

@@ -6312,6 +6312,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     start_by_itself: "medium",
     // d1109-cred-engine CE-13: medium, as SETTING_SPECS.credential_policy (more money asks a yes).
     credential_policy: "medium",
+    // l4-chat-depth (L4-chat-211): medium, as SETTING_SPECS.chat_ask_above (a higher amount
+    // asks a yes; a lower one acts at once). Before, it was missing here, so the fake refused
+    // "unknown setting chat_ask_above" and its own branch below never ran.
+    chat_ask_above: "medium",
   };
   /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
   const settingSlot = (key: string, projectId: string | null) =>
@@ -6983,8 +6987,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           );
         const had = state.settingValues.chat_ask_above;
         const before = typeof had === "number" ? had : 0.1;
-        const words = (v: number) =>
-          v <= 0 ? "CHF 0.00, so chat asks before every longer answer" : `CHF ${v.toFixed(2)}`;
+        // l4-chat-depth (L4-chat-211): the amount alone; what 0 means after the amounts.
+        const words = (v: number) => `CHF ${Math.max(0, v).toFixed(2)}`;
+        const means = value <= 0 ? ": chat asks before every longer answer" : "";
         const what = "the amount above which chat asks first";
         if (before === value && had !== undefined)
           return refuse(`The amount above which chat asks first is already ${words(before)}.`);
@@ -7001,7 +7006,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               newValue: words(value),
               ask: `Set ${what} to ${words(value)}?`,
               scope: "global",
-              sentence: `Set ${what} from ${words(before)} to ${words(value)}. Undo.`,
+              sentence: `Set ${what} from ${words(before)} to ${words(value)}${means}. Undo.`,
               projectId: null,
               projectName: null,
               usesActiveProject: false,
