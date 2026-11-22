@@ -25,7 +25,7 @@ import { z } from "zod";
 import type { ToolResult, ToolSpec } from "../agent/tools.ts";
 import { changeRowViews } from "../daemon/change-rows.ts";
 import { decisionViews } from "../daemon/decision-views.ts";
-import { sessionRowView, sessionSpends } from "../daemon/session-list.ts";
+import { outcomeOfHandoff, sessionRowView, sessionSpends } from "../daemon/session-list.ts";
 import {
   loadTaskDisplayContext,
   runOrder,
@@ -33,12 +33,12 @@ import {
   taskDisplay,
 } from "../daemon/task-display.ts";
 import { withoutIds, withoutNoActionGiven } from "../daemon/task-words.ts";
-import { requestViews, taskView } from "../daemon/views.ts";
+import { requestViews, stillBlocked, taskView } from "../daemon/views.ts";
 import { wrapUntrusted } from "../injection/scan.ts";
 import { mergeModeOf } from "../loop/merge-mode.ts";
 import type { MemoryPort } from "../loop/ports.ts";
 import { moneyWords } from "../session/money-words.ts";
-import { isChatOnlyCard } from "../wiring/request-answers.ts";
+import { ANSWER_CARD_KEYS, isChatOnlyCard } from "../wiring/request-answers.ts";
 import { decisionPairs } from "../wiring/state-ports.ts";
 import { mergeStandOf } from "./project-facts.ts";
 import {
@@ -168,7 +168,7 @@ export interface RecordSource {
 /**
  * What one chat turn's lookups share (per turn, never across turns): each kind's candidates,
  * read once; the references of the last search (r1 to r8), which name hits of this turn only;
- * the records opened, for the reply's sources.
+ * the records opened, and every hit the turn's searches showed, for the reply's sources.
  */
 export class RecallScope {
   readonly candidates = new Map<
@@ -177,6 +177,12 @@ export class RecallScope {
   >();
   refs = new Map<string, RecallRecord>();
   readonly opened: RecallRecord[] = [];
+  /**
+   * Every hit this turn's searches showed, in the order shown, with whether it was strong
+   * (l4-chat-answers, L4-chat-108): a reply that rests on a hit line without opening it names
+   * it too. Kept across the turn's searches (`refs` is replaced by each).
+   */
+  readonly seen: { record: RecallRecord; strong: boolean }[] = [];
   /** Store reads made (the tests count them). */
   reads = 0;
 }
@@ -423,9 +429,12 @@ async function sessionHits(
       const view = await sessionRowView(store, row, {
         ...(spend ? { spend } : {}),
         chfPerUsd: c.chf,
+        // L4-chat-106: what still waits now, as the Sessions list and the session page say it
+        // (a card answered since is no longer "1 task needs you").
+        blockedNow: (handoff) => stillBlocked(store, handoff),
       });
-      const ended = view.endedWords ? ` How it ended: ${view.endedWords}.` : "";
-      const summary = `${view.gist}${ended} It cost ${view.spentWords}.`;
+      const ended = howItEnded(view);
+      const summary = `${sessionDid(row, view)}${ended ? ` How it ended: ${ended}.` : ""} It cost ${view.spentWords}.`;
       const result = row.summary?.trim() ?? "";
       const at = view.startedAt ?? row.created_at;
       out.push({
@@ -451,20 +460,50 @@ async function sessionHits(
   return { records: out, bound };
 }
 
-function sessionText(
-  row: SessionRow,
-  view: Awaited<ReturnType<typeof sessionRowView>>,
-  c: KindContext,
-): string {
+type SessionRowViewOf = Awaited<ReturnType<typeof sessionRowView>>;
+
+/** A session hit's sentence with the failed tasks named, at most this long. */
+const SESSION_DID_MAX = 200;
+
+/**
+ * What a session did for recall's hit and recall_open (l4-chat-answers, L4-chat-106): the
+ * Sessions list's sentence (`sessionGist`, which names only the done tasks when any were done),
+ * then the tasks that failed in the same session: 'Did 1 task: "Make the events calendar";
+ * "Write the welcome page" failed.', or the counts ("Tasks: 1 done, 1 failed.") when the names do
+ * not fit. Live check 4: the hit left the failed task out, and the thorough pass then called the
+ * earlier true answer ("the welcome page failed") unconfirmed. The list's own sentence stays.
+ */
+function sessionDid(row: SessionRow, view: SessionRowViewOf): string {
+  if (view.working || view.planning || !view.tasks.done || !view.tasks.failed) return view.gist;
+  const failed = (outcomeOfHandoff(row.handoff)?.failed ?? [])
+    .map((t) => shown(t.title ?? ""))
+    .filter(Boolean);
+  const named = failed.length
+    ? `${view.gist.replace(/[.\s]+$/, "")}; ${listWords(failed.map(q))} failed.`
+    : "";
+  return named && named.length <= SESSION_DID_MAX
+    ? named
+    : `${view.gist} Tasks: ${view.countsWords}.`;
+}
+
+/**
+ * How a session ended, for "How it ended: ..." (L4-chat-106): the Sessions list's words without
+ * their own "Ended: " ("How it ended: Ended: 1 task needs you." said it twice), and nothing for a
+ * plain "Done" beside a task that failed ("failed. How it ended: Done." read as a contradiction).
+ */
+function howItEnded(view: SessionRowViewOf): string | null {
+  const words = view.endedWords?.replace(/^Ended:\s*/, "") ?? null;
+  if (!words || (words === "Done" && view.tasks.failed > 0)) return null;
+  return words;
+}
+
+function sessionText(row: SessionRow, view: SessionRowViewOf, c: KindContext): string {
+  const ended = howItEnded(view);
   const lines = [
     `The session of ${timeWords(view.startedAt ?? row.created_at, c.deps.timeZone, c.today)} on ${c.projects.find((p) => p.id === row.project_id)?.name ?? "a project"}.`,
-    `What it did: ${view.gist}`,
+    `What it did: ${sessionDid(row, view)}`,
     view.countsWords ? `Tasks: ${view.countsWords}.` : "",
-    view.endedWords
-      ? `How it ended: ${view.endedWords}.`
-      : view.working
-        ? "It is working now."
-        : "",
+    ended ? `How it ended: ${ended}.` : view.working ? "It is working now." : "",
     `It cost ${view.spentWords}.`,
     view.startedBy ? `It ${view.startedBy}.` : "",
     row.summary?.trim() && !view.gist.includes(row.summary.trim())
@@ -662,6 +701,27 @@ async function taskText(
     .join("\n");
 }
 
+/** The questions on a hit line at most this long (the hit's 160-character snippet holds more). */
+const ASKED_MAX = 120;
+
+/**
+ * "It asked: Which recipes go on the first page?" for a questions card (the person's or the
+ * specialist's, `person_questions:`), whose Inbox title ('"X" needs your answers') does not carry
+ * what it asked; several questions are joined with " | " as recall_open joins them, cut with "…"
+ * at `ASKED_MAX`. Null for every other card: its title is its question (L4-chat-107).
+ */
+function askedOf(r: Pick<HumanRequestRow, "steps" | "change_card">, title: string): string | null {
+  const key = (r.change_card as { key?: unknown } | null)?.key;
+  if (typeof key !== "string" || !key.startsWith(ANSWER_CARD_KEYS.personQuestionsPrefix))
+    return null;
+  const questions = r.steps
+    .map((s) => shown(withoutNoActionGiven(String(s))))
+    .filter((s) => s && !title.includes(s));
+  if (!questions.length) return null;
+  const words = cut(questions.join(" | "), ASKED_MAX);
+  return `It asked: ${words}${/[?.!…]$/.test(words) ? "" : "."}`;
+}
+
 async function cardHits(
   c: KindContext,
 ): Promise<{ records: RecallRecord[]; bound: string | null }> {
@@ -707,6 +767,8 @@ async function cardHits(
     const said = answered
       ? (v.outcome ?? (answer ? `You answered: ${answer}.` : "Answered."))
       : "Waiting for your answer in the Inbox.";
+    const asked = askedOf(r, title);
+    const answerLine = answered && answer && !said.includes(answer) ? `Answer: ${answer}.` : "";
     out.push({
       kind: "cards",
       key: `card:${r.id}`,
@@ -717,7 +779,12 @@ async function cardHits(
       // The card's question and the questions it asked match as its title does (its title is
       // the Inbox's: '"X" needs your answers'); never shown as earlier titles.
       earlier: [...new Set([r.why, ...r.steps].map(oneLine))].filter((t) => t && t !== title),
-      detail: `${said}${answered && answer && !said.includes(answer) ? ` Answer: ${answer}.` : ""}`,
+      // L4-chat-107: a questions card's title does not carry its questions, so the hit line
+      // starts with them, then the answer, then what came of it (live check 4: chat said the
+      // records do not say what the writer asked, which only recall_open showed).
+      detail: asked
+        ? [asked, answerLine, said].filter(Boolean).join(" ")
+        : `${said}${answerLine ? ` ${answerLine}` : ""}`,
       body: [
         said,
         answered && answer && !said.includes(answer) ? `Answer: ${answer}.` : "",
@@ -1522,6 +1589,11 @@ export function recallTools(deps: RecallDeps): ToolSpec[] {
         projectId: deps.projectId,
       }).slice(0, RECALL_MAX_HITS);
       deps.scope.refs = new Map(ranked.map((h, i) => [`r${i + 1}`, h.record]));
+      for (const h of ranked) {
+        const was = deps.scope.seen.find((x) => x.record.key === h.record.key);
+        if (!was) deps.scope.seen.push({ record: h.record, strong: h.strong });
+        else if (h.strong) was.strong = true;
+      }
       const lines = ranked.map((h, i) => {
         const r = h.record;
         const head = `r${i + 1} [${KIND_WORD[r.kind]}, ${dateWords(r.at, deps.timeZone, today)}, ${r.projectName ?? "no project"}, ${h.strong ? "strong" : "weak"}] ${cut(r.title, 100)}`;
@@ -1609,31 +1681,63 @@ export function recallTools(deps: RecallDeps): ToolSpec[] {
 export const RECALL_TOOL_NAMES = ["recall", "recall_open"] as const;
 
 /**
- * The records a reply names among those it opened in this turn (the reply's sources, design
- * §5 rule 10: one click to the record), at most three: a record is named when the reply carries
- * its title (or a task's earlier title), or its date in words with its kind.
+ * The records a reply names among this turn's lookups (the reply's sources, design §5 rule 10:
+ * one click to the record), at most three, none twice: first those it opened, named by their
+ * title (or a task's earlier title) or their date in words; then the hits its searches showed
+ * and it did not open (l4-chat-answers, L4-chat-108: 9 of 11 recall turns of live check 4
+ * answered from the hit line and had no From line), named by title, or by date alone only when
+ * the hit was strong and alone on its day (a weak hit, or one of two that day, is not what the
+ * reply rests on).
  */
 export function namedSources(
   reply: string,
-  opened: readonly RecallRecord[],
+  scope: Pick<RecallScope, "opened" | "seen">,
   timeZone: string,
   nowMs: number,
 ): RecordSource[] {
   const today = localDate(nowMs, timeZone);
   const said = norm(reply);
   const out: RecordSource[] = [];
-  for (const r of opened) {
-    const date = dayWords(localDate(Date.parse(r.at), timeZone), today);
-    const title = r.title.replace(
+  const keys = new Set<string>();
+  const titleOf = (r: RecallRecord) =>
+    r.title.replace(
       / \((?:first|second|third|fourth|fifth|number \d+) of \d+ with this title\)$/,
       "",
     );
-    const names = [title, ...r.earlier].map(norm).filter((n) => n.length >= 4);
-    const byName = names.some((n) => said.includes(n));
-    const byDate = said.includes(norm(date));
-    if (byName || byDate)
-      out.push({ kind: KIND_WORD[r.kind], title: cut(title, 80), date, link: r.link });
-    if (out.length >= 3) break;
-  }
+  const namesOf = (r: RecallRecord) =>
+    [titleOf(r), ...r.earlier].map(norm).filter((n) => n.length >= 4);
+  // The reply with the names already matched taken out: a task's title inside a card's title
+  // ('"Ask for the opening hours" needs your answers') does not name the task as well.
+  let rest = said;
+  const matches = (r: RecallRecord, dateCounts: boolean, text: string) => {
+    const date = dayWords(localDate(Date.parse(r.at), timeZone), today);
+    const names = namesOf(r);
+    if (!names.some((n) => text.includes(n)) && !(dateCounts && said.includes(norm(date))))
+      return false;
+    for (const n of names) rest = rest.split(n).join(" ");
+    return true;
+  };
+  const push = (r: RecallRecord) => {
+    if (keys.has(r.key) || out.length >= 3) return;
+    keys.add(r.key);
+    const date = dayWords(localDate(Date.parse(r.at), timeZone), today);
+    out.push({ kind: KIND_WORD[r.kind], title: cut(titleOf(r), 80), date, link: r.link });
+  };
+  for (const r of scope.opened) if (matches(r, true, said)) push(r);
+  // A date names a hit not opened only when it was strong and no other hit of this turn has
+  // that day (two sessions of Thu 12 Nov: the reply's "Thu 12 Nov" names the one it opened).
+  const dayOf = (r: RecallRecord) => localDate(Date.parse(r.at), timeZone);
+  const perDay = new Map<string, number>();
+  for (const h of scope.seen) perDay.set(dayOf(h.record), (perDay.get(dayOf(h.record)) ?? 0) + 1);
+  const unopened = scope.seen.filter((h) => !scope.opened.includes(h.record));
+  // The longest names are matched first, then the hits are listed in the order they were shown.
+  const longest = (h: (typeof unopened)[number]) =>
+    Math.max(0, ...namesOf(h.record).map((n) => n.length));
+  const found = new Set(
+    [...unopened]
+      .sort((x, y) => longest(y) - longest(x))
+      .filter((h) => matches(h.record, h.strong && perDay.get(dayOf(h.record)) === 1, rest)),
+  );
+  for (const h of unopened) if (found.has(h)) push(h.record);
   return out;
 }

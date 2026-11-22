@@ -4416,6 +4416,21 @@ agent wraps each command tool with `withStep`, C2-left-6). The
 records a reply names among those it opened are kept on its `chat.reply` row as
 `sources.records` (`namedSources`, at most three, `{kind, title, date, link}`), read by
 `readTranscript` and served as `ChatReplyView.sources` and `ConversationTurnView.reply.sources`.
+l4-chat-answers (run L4, L4-chat-108): then the hits the turn's searches showed and the reply did
+not open (`RecallScope.seen`, kept across the turn's searches, each with whether it was strong),
+named by title or an earlier title, by date alone only when the hit was strong and no other hit
+of the turn has that day; a name found only inside an already named source's title does not
+count (a task's title inside its card's '"X" needs your answers'); at most three, none twice
+(test `chat-recall.test.ts` "l4-chat-answers, run L4"; the real daemon's "... a reply from
+recall's hit line (no recall_open) ..."). Live check 4: 9 of 11 recall turns answered from the hit
+line and had no From line. L4-chat-106: a session's hit names the tasks that failed beside those
+it did ('Did 1 task: "Make the events calendar"; "Write the welcome page" failed.', `sessionDid`;
+the counts when the names pass 200 characters), reads what still waits now (`stillBlocked`), and
+says "How it ended: 1 task needs you." (`howItEnded`: no second "Ended:", nothing for "Done"
+beside a failure); recall_open's "What it did" and "How it ended" say the same. The Sessions
+list's own sentence (`sessionGist`) is unchanged. L4-chat-107: a questions card's hit (key
+`person_questions:`) starts with "It asked: <questions joined by | , cut at 120>", then "Answer:
+…", then what came of it (`askedOf`); every other card's title is its question.
 A session's title is "The session of Sun 15 Nov", with its start time ("… at 18:22") when
 another of the project's sessions started that day, so hits and sources tell them apart. A
 link is the app's own path; a line of the conversation outside any project has none (that

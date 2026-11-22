@@ -451,7 +451,11 @@ them as you left them; an open file or task stays on its own tab.
   and earlier lines of your conversations ("what did I say about the logo?", in English or
   German). Give it a time ("last week", "on 3 Nov") and it looks in those days of your own
   calendar. It names what it found by its title and date ("in the session of 3 Nov"), never by an
-  id; when nothing matches it says what it looked through. Questions about now ("what is left?") are
+  id; when nothing matches it says what it looked through. It looks a thing up before it says it
+  is not there, and never asks whether to look. A session it finds names the tasks that failed
+  in it as well as those it did; a card that asked you questions shows what it asked and your
+  answer. Under the answer, **From:** links the records it rests on (at most three), also those it
+  only saw in its search. Questions about now ("what is left?") are
   answered at once, without a lookup. Inbox Updates, notifications and the session log's lines
   are not searched: ask about the session, task or card they are about. What a lookup returns is
   data to Chat, like a report: a change it proposes after a lookup waits for your **Yes**.

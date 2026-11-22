@@ -24614,4 +24614,88 @@ describe("l4-chat-answers, run L4", () => {
       await b.rt.close();
     }
   }, 60_000);
+
+  // L4-chat-108 (live check 4, L4-chat-3): 9 of 11 recall turns answered from the hit line and
+  // had no From line, since only records opened with recall_open became sources. The stand-in's
+  // "answers without looking" mode answers from the strong hit's line and opens nothing.
+  it("POST /chat/stream on a reply from recall's hit line (no recall_open): reply.sources holds the card, and GET /projects/:id/conversation keeps it after a restart", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-108-", { FORERUNNER_BENCH_CHAT_NOLOOK: "1" });
+    let projectId = "";
+    let source: Record<string, unknown> = {};
+    let sources: unknown[] = [];
+    try {
+      const project = await a.client.createProject({ name: "Bakery", goal: "A page" });
+      projectId = project.id;
+      const t = await a.rt.store.task.insert({
+        project_id: project.id,
+        title: "Ask for the opening hours",
+        outcome: "The opening hours are known.",
+        status: "done",
+        specialist: "person",
+      } as never);
+      const card = await a.rt.store.humanRequest.insert({
+        human_id: a.rt.human.id,
+        project_id: project.id,
+        task_id: t.id,
+        kind: "decision",
+        why: "What are the opening hours?",
+        steps: ["What are the opening hours?"],
+        options: ["Cancel the task"],
+        risk: "low",
+        change_card: { key: `person_questions:${t.id}`, outcome: "answered" },
+      } as never);
+      const answered = await a.rt.store.humanRequest.answer(
+        card.id,
+        card.version,
+        {
+          answers: [{ question: "What are the opening hours?", answer: "Mon to Fri 9 to 18" }],
+        } as never,
+        a.rt.human.id,
+      );
+      const day = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/Zurich",
+        day: "numeric",
+        month: "short",
+      }).format(new Date(answered.answered_at ?? ""));
+      const reply = await streamChat(a.client, {
+        humanId: a.me.id,
+        agentId: a.agentId,
+        projectId: project.id,
+        projectTab: true,
+        text: "what did I answer about the opening hours?",
+        source: "text",
+      });
+      // L4-chat-107: the hit line it answered from holds the question and the answer.
+      expect(reply.reply).toContain("It asked: What are the opening hours?");
+      expect(reply.reply).toContain("Mon to Fri 9 to 18");
+      // No record was opened: the lookup, then the answer from its hit line.
+      const tools = JSON.stringify(a.requests.at(-1)?.messages ?? []);
+      expect(tools).toContain('"recall"');
+      expect(tools).not.toContain("recall_open");
+      source = {
+        kind: "card",
+        title: '"Ask for the opening hours" needs your answers',
+        date: day,
+        link: `/inbox?answered=${card.id}`,
+      };
+      // The card first; the stand-in quotes the whole hit line, whose outcome names the task
+      // ('"Ask for the opening hours" is done.'), so the task hit is a source too.
+      expect(reply.sources?.[0]).toEqual(source);
+      sources = reply.sources ?? [];
+      expect((await a.client.conversation(project.id)).turns.at(-1)?.reply?.sources).toEqual(
+        sources,
+      );
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+    const b = await open("", { FORERUNNER_BENCH_CHAT_NOLOOK: "1" }, a.home);
+    try {
+      const view = await b.client.conversation(projectId);
+      expect(view.turns.at(-1)?.reply?.sources).toEqual(sources);
+      expect(view.turns.at(-1)?.reply?.sources?.[0]).toEqual(source);
+    } finally {
+      await b.rt.close();
+    }
+  }, 60_000);
 });

@@ -355,7 +355,9 @@ export interface ChatSources {
   lessons: string[];
   /**
    * The records the reply names among those recall_open opened in the turn (d1109-chat-recall),
-   * at most three, each with where the person opens it; d1109-chat-depth draws the From line.
+   * then among the hits recall showed and it did not open (l4-chat-answers, L4-chat-108: by
+   * title, or by date only for a strong hit), at most three, each with where the person opens
+   * it; d1109-chat-depth draws the From line.
    */
   records?: RecordSource[];
 }
@@ -2516,8 +2518,9 @@ export class ConversationAgent {
       : capLevel && result
         ? { line: capWords(capLevel), action: null }
         : null;
-    // d1109-chat-recall: the records the reply rests on, among those it opened (at most three).
-    const records = namedSources(reply, recallScope.opened, zone, clock.now());
+    // d1109-chat-recall: the records the reply rests on, among those it opened (at most three);
+    // l4-chat-answers (L4-chat-108): then among the hits it read without opening them.
+    const records = namedSources(reply, recallScope, zone, clock.now());
     if (ttft !== null && !deep && ttft > textChat.targetMs)
       this.logger.warn("chat first token over target", {
         ttftMs: ttft,
