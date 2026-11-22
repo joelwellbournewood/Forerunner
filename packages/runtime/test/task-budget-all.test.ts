@@ -281,6 +281,27 @@ async function cardsOf(w: Opened, taskId: string): Promise<Json[]> {
   );
 }
 
+/**
+ * l4-selftasks-101: the review's floor for `taskId` (its first call's whole price at the smallest
+ * output), and the budget that leaves `below` less than it after the work's `workUsdMicro`.
+ */
+async function budgetBelowFloor(
+  w: Opened,
+  taskId: string,
+  workUsdMicro: number,
+  below: number,
+): Promise<{ floor: number; budget: number }> {
+  const price = await w.rt.critic?.reviewCallUsdMicro?.(
+    await w.rt.store.task.mustGet(taskId),
+    "coder",
+  );
+  const floor = price?.floorUsdMicro ?? 0;
+  const budget = workUsdMicro + floor - below;
+  await w.rt.store.task.patch(taskId, { budget_usd_micro: budget } as never);
+  return { floor, budget };
+}
+const chfOf = (usd: number) => `CHF ${((usd * 0.8) / 1e6).toFixed(2)}`;
+
 /** The session's log lines. */
 async function linesOf(w: Opened, sessionId: string): Promise<string[]> {
   const events = (await w.json(`/sessions/${sessionId}/events`)) as unknown as Json[];
@@ -498,9 +519,10 @@ describe("d1116-budget-all", () => {
   it("BA-3: a review its task's budget cannot pay a first call for is not started: the task pauses at its budget with its work kept and one card, and the session goes on with the next task", async () => {
     const FOOTER = "Write the footer";
     const HEADER = "Write the header";
-    // The footer's work bills USD 0.01 (two calls of 1,000 tokens in and 300 out): of its
-    // budget of USD 0.075 (CHF 0.06), 65,000 is left, below the light review's output cap of
-    // 8,192 tokens on Sonnet 5.5 (USD 0.08192).
+    // The footer's work bills USD 0.01 (two calls of 1,000 tokens in and 300 out); its budget
+    // leaves 1,000 less than the review's floor after it: the first call's whole price at its
+    // smallest output (l4-selftasks-101: 2,048 tokens out plus the critic's prompt and a typical
+    // task's evidence in; before, the floor was 8,192 tokens out alone and the budget USD 0.075).
     const w = world([
       ...codes(FOOTER, "footer.html", [
         { input_tokens: 1_000, output_tokens: 300 },
@@ -515,6 +537,7 @@ describe("d1116-budget-all", () => {
         file: "footer.html",
       });
       const header = await addTask(o, projectId, HEADER, { file: "header.html" });
+      const { budget } = await budgetBelowFloor(o, taskId, 10_000, 1_000);
       const sessionId = await start(o, projectId);
       const s = await ended(o, sessionId);
       await settleSessions(o.rt);
@@ -527,15 +550,15 @@ describe("d1116-budget-all", () => {
       const task = await o.rt.store.task.mustGet(taskId);
       expect(task.actual_cost_usd_micro).toBe(10_000);
       expect(task.status).toBe("needs_human");
-      expect(task.reason).toBe('"Write the footer" paused at its budget of CHF 0.06.');
+      expect(task.reason).toBe(`"Write the footer" paused at its budget of ${chfOf(budget)}.`);
       const lines = await linesOf(o, sessionId);
       expect(lines).toContain(
-        '"Write the footer" paused before its review: its own budget of CHF 0.06 has no room for it.',
+        `"Write the footer" paused before its review: its own budget of ${chfOf(budget)} has no room for it.`,
       );
       expect(lines.join(" | ")).not.toMatch(/this session's budget/);
       const cards = await cardsOf(o, taskId);
       expect(cards).toHaveLength(1);
-      expect(cards[0]?.title).toBe('"Write the footer" paused at its budget of CHF 0.06');
+      expect(cards[0]?.title).toBe(`"Write the footer" paused at its budget of ${chfOf(budget)}`);
       expect(cards[0]?.body).toBe("The work is done; its review waits for room in the budget.");
       expect(cards[0]?.options).toEqual([
         expect.stringMatching(/^Continue \(CHF \d+\.\d{2} more\)$/),
@@ -566,11 +589,13 @@ describe("d1116-budget-all", () => {
     }
   }, 120_000);
 
-  it("BA-3: a review is capped at what is left of its task's budget: its first call, refused by the precheck, is never made, and the task pauses at its budget", async () => {
+  // l4-selftasks-101 (live check 4, LC-C30; D-L4-8 changes C4b's per-call floor): before, the
+  // review's first call asked for 8,192 tokens out whatever was left, so 85,000 left was refused
+  // by the precheck and the task paused; now each call is sized to the room and the review fits.
+  it("BA-3: a review is capped at what is left of its task's budget: each call is sized to the room (2,048 to 8,192 tokens out), the review is made and the task never passes its budget", async () => {
     const TITLE = "Write the contact page";
-    // The work bills USD 0.0525 of the budget of USD 0.1375 (CHF 0.11): 85,000 is left, above
-    // the review's floor (81,920) but below its first call's worst case (the critic's whole
-    // input plus 8,192 tokens out).
+    // The work bills USD 0.0525 of the budget of USD 0.1375 (CHF 0.11): 85,000 is left, below
+    // the first call's worst case at 8,192 tokens out but above it at the room's size.
     const w = world(
       codes(TITLE, "contact.html", [
         { input_tokens: 2_000, output_tokens: 1_000 },
@@ -597,23 +622,20 @@ describe("d1116-budget-all", () => {
         (c) => c.agentId === o.rt.criticAgent.id && c.taskId === taskId,
       );
       expect(criticTokens.map((c) => c.budgetUsdMicro)).toEqual([85_000]);
-      // Its first call was refused before it was made: no critic request, no critic ledger row.
-      expect(w.seen.filter((r) => isCritic(r) && text(r).includes(TITLE))).toEqual([]);
-      const review = (await o.rt.store.run.forTask(taskId)).find((r) => r.specialist === "critic");
-      expect(review?.outcome).toBe("budget_exceeded");
-      expect(review?.cost_usd_micro).toBe(0);
+      // Its calls asked for what fits the room, never the whole 8,192 and never below 2,048.
+      const calls = w.seen.filter((r) => isCritic(r) && text(r).includes(TITLE));
+      expect(calls.length).toBeGreaterThan(0);
+      for (const c of calls) {
+        expect(c.max_tokens).toBeGreaterThanOrEqual(2_048);
+        expect(c.max_tokens).toBeLessThan(8_192);
+      }
       const task = await o.rt.store.task.mustGet(taskId);
-      expect(task.actual_cost_usd_micro).toBe(52_500);
+      expect(task.status).toBe("done");
       expect(task.actual_cost_usd_micro).toBeLessThanOrEqual(137_500);
-      expect(task.status).toBe("needs_human");
-      expect(task.reason).toBe('"Write the contact page" paused at its budget of CHF 0.11.');
-      expect(await linesOf(o, sessionId)).toContain(
-        '"Write the contact page" paused before its review: its own budget of CHF 0.11 has no room for it.',
+      expect(task.actual_cost_usd_micro).toBe(
+        (await o.rt.store.costLedger.sum({ taskId })).usd_micro,
       );
-      const cards = await cardsOf(o, taskId);
-      expect(cards.map((c) => c.body)).toEqual([
-        "The work is done; its review waits for room in the budget.",
-      ]);
+      expect(await cardsOf(o, taskId)).toEqual([]);
     } finally {
       await settleSessions(o.rt);
       await o.rt.close();
@@ -703,17 +725,19 @@ describe("d1116-budget-all", () => {
     const h = home();
     let o = await w.open(h);
     try {
+      // l4-selftasks-101: the budget leaves 1,000 less than the review's floor after the work.
       const { projectId, taskId } = await projectWithTask(o, TITLE, {
         budgetUsdMicro: 75_000,
         file: "footer.html",
       });
+      const { floor } = await budgetBelowFloor(o, taskId, 10_000, 1_000);
       const first = await start(o, projectId);
       await ended(o, first);
       await settleSessions(o.rt);
       expect((await o.rt.store.task.mustGet(taskId)).status).toBe("needs_human");
       const [card] = await cardsOf(o, taskId);
       expect(card?.body).toBe("The work is done; its review waits for room in the budget.");
-      // The card stores what the review needs beyond the 65,000 left: the review part and one
+      // The card stores what the review needs beyond what is left: the review part and one
       // call's worst case.
       const stored = (await o.rt.store.humanRequest.mustGet(String(card?.id))).change_card as Json;
       const task = await o.rt.store.task.mustGet(taskId);
@@ -725,7 +749,7 @@ describe("d1116-budget-all", () => {
           outcome: task.outcome,
           acceptance_criteria: task.acceptance_criteria,
         }).reviewUsdMicro ?? 0;
-      expect(stored.needs_usd_micro).toBe(review + (price?.worstUsdMicro ?? 0) - 65_000);
+      expect(stored.needs_usd_micro).toBe(review + (price?.worstUsdMicro ?? 0) - (floor - 1_000));
       // Composed again between the pause and Continue (with its services: Continue is the
       // person's start, on the daemon's scheduler).
       await o.rt.close();
@@ -819,6 +843,108 @@ describe("d1116-budget-all", () => {
       expect((cards[0]?.options as string[]) ?? []).toEqual([
         expect.stringMatching(/^Continue \(CHF \d+\.\d{2} more\)$/),
         "Cancel task",
+      ]);
+    } finally {
+      await settleSessions(o.rt);
+      await o.rt.close();
+    }
+  }, 120_000);
+});
+
+/**
+ * l4-selftasks-check, run L4 (L4-selftasks-101 with L4-money-303; live check 4's LC-C30: the
+ * README task, budget CHF 0.08, did its work for CHF 0.02 and then "paused before its review: its
+ * own budget of CHF 0.08 has no room for it"; the owner, 2026-11-16: a task's budget counts
+ * "critics reviews, and fixes"). Through the composed runtime on the Messages API stand-in.
+ */
+describe("l4-selftasks-check, run L4", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+  const home = () => {
+    const h = mkdtempSync(join(tmpdir(), "fr-l4-review-room-"));
+    homes.push(h);
+    return h;
+  };
+
+  it("L4-selftasks-101: a small task whose work used a quarter of its budget is reviewed within what is left: a critic Run row, Done, no budget card, each call sized to the room", async () => {
+    const TITLE = "Write the README";
+    // The work bills USD 0.024 (two calls of 2,000 tokens in and 800 out) of USD 0.10.
+    const w = world(
+      codes(TITLE, "README.md", [
+        { input_tokens: 2_000, output_tokens: 800 },
+        { input_tokens: 2_000, output_tokens: 800 },
+      ]),
+    );
+    const o = await w.open(home());
+    try {
+      const { projectId, taskId } = await projectWithTask(o, TITLE, {
+        budgetUsdMicro: 100_000,
+        file: "README.md",
+      });
+      const sessionId = await start(o, projectId);
+      const s = await ended(o, sessionId);
+      await settleSessions(o.rt);
+      const task = await o.rt.store.task.mustGet(taskId);
+      expect(task.status).toBe("done");
+      const runs = await o.rt.store.run.forTask(taskId);
+      expect(runs.filter((r) => r.specialist === "critic").length).toBeGreaterThan(0);
+      expect(task.actual_cost_usd_micro).toBeLessThanOrEqual(100_000);
+      expect(await cardsOf(o, taskId)).toEqual([]);
+      expect(s.status).toBe("completed");
+      const calls = w.seen.filter((r) => isCritic(r) && text(r).includes(TITLE));
+      for (const c of calls) {
+        expect(c.max_tokens).toBeGreaterThanOrEqual(2_048);
+        expect(c.max_tokens).toBeLessThanOrEqual(8_192);
+      }
+      expect(calls[0]?.max_tokens).toBeLessThan(8_192);
+      // The row reads its one figure against the budget, in CHF.
+      const rows = (await o.json(`/projects/${projectId}/tasks`)) as unknown as Json[];
+      const row = rows.find((t) => t.id === taskId) as Json;
+      expect((row.spent as Json).usdMicro).toBe(task.actual_cost_usd_micro);
+    } finally {
+      await settleSessions(o.rt);
+      await o.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-money-303: left above the price of the smallest output but below the first call's whole price: no check runs, no critic call or Run row, one review-waits card", async () => {
+    const TITLE = "Write the opening times";
+    const w = world(
+      codes(TITLE, "times.html", [
+        { input_tokens: 2_500, output_tokens: 2_000 },
+        { input_tokens: 2_500, output_tokens: 2_000 },
+      ]),
+    );
+    const o = await w.open(home());
+    try {
+      const { projectId, taskId } = await projectWithTask(o, TITLE, {
+        budgetUsdMicro: 75_000,
+        file: "times.html",
+      });
+      // The work bills 50,000; what is left lies between the price of 2,048 tokens out alone
+      // (20,480 on Sonnet 5.5) and the first call's whole price (the floor).
+      const price = await o.rt.critic?.reviewCallUsdMicro?.(
+        await o.rt.store.task.mustGet(taskId),
+        "coder",
+      );
+      const floor = price?.floorUsdMicro ?? 0;
+      const left = Math.round((20_480 + floor) / 2);
+      expect(left).toBeGreaterThan(20_480);
+      expect(left).toBeLessThan(floor);
+      await o.rt.store.task.patch(taskId, { budget_usd_micro: 50_000 + left } as never);
+      const sessionId = await start(o, projectId);
+      await ended(o, sessionId);
+      await settleSessions(o.rt);
+      expect(w.seen.filter((r) => isCritic(r) && text(r).includes(TITLE))).toEqual([]);
+      expect(
+        (await o.rt.store.run.forTask(taskId)).filter((r) => r.specialist === "critic"),
+      ).toEqual([]);
+      const task = await o.rt.store.task.mustGet(taskId);
+      expect(task.status).toBe("needs_human");
+      expect(task.actual_cost_usd_micro).toBe(50_000);
+      const cards = await cardsOf(o, taskId);
+      expect(cards.map((c) => c.body)).toEqual([
+        "The work is done; its review waits for room in the budget.",
       ]);
     } finally {
       await settleSessions(o.rt);

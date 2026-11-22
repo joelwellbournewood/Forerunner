@@ -5,7 +5,7 @@ import { PERSON_SPECIALIST } from "../session/person-questions.ts";
 import { type ShapedPlan, shapeProjectPlan } from "../session/project-plan.ts";
 import { webAccessOf } from "../wiring/web-access.ts";
 import type { CredentialRunsOn, HumanRequestView } from "./api-types.ts";
-import { oversizedPlanNote } from "./oversize-words.ts";
+import { oversizedPlanNote, reviewMayWaitLine } from "./oversize-words.ts";
 
 /**
  * An open plan card's tasks as this install would run them now (U-078, the credential chooser;
@@ -169,6 +169,26 @@ export async function planTaskViews(
     workUsd !== null && figure !== null && figure > workUsd
       ? oversizedPlanNote({ chfMicro: workChf, text: formatChf(workChf) })
       : null;
+  // l4-selftasks-101 (live check 4, LC-C30; the owner's answer 8: "it should get a warning, but
+  // it should get done anyway"): a task whose own budget the plan sets below its estimate with
+  // its review (the figure before the budget caps it) gets the Start dialog's line on the card.
+  const reviewMayWaitOf = (key: string | null, title: string): string | null => {
+    const t = key !== null ? shaped?.get(key) : undefined;
+    const figure = key !== null ? figures.get(key) : undefined;
+    if (!t || !deps.estimate || !deps.workBudget || !(t.budgetUsdMicro > 0)) return null;
+    const whole = deps.estimate.of({
+      specialist: t.specialist,
+      risk_tier: t.riskTier,
+      est_cost_usd_micro: figure ?? 0,
+      budget_usd_micro: 0,
+      actual_cost_usd_micro: 0,
+      outcome: t.outcome,
+      acceptance_criteria: t.acceptanceCriteria,
+    });
+    if (whole < t.budgetUsdMicro) return null;
+    const chfMicro = usdToChfMicro(t.budgetUsdMicro, deps.workBudget.chfPerUsd);
+    return reviewMayWaitLine(title, { chfMicro, text: formatChf(chfMicro) });
+  };
   const out: PlanTaskView[] = [];
   for (const t of tasks) {
     const title = str(t.title);
@@ -200,7 +220,10 @@ export async function planTaskViews(
             })
             .catch(() => null)
         : null,
-      note: planTaskNote(known, deps),
+      note:
+        [planTaskNote(known, deps), person ? null : reviewMayWaitOf(str(t.key), title)]
+          .filter((n): n is string => !!n)
+          .join(" ") || null,
       ...(oversized ? { oversized } : {}),
     });
   }

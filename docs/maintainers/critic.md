@@ -238,7 +238,13 @@ runtime's card stores. `CriticService.reviewCallUsdMicro(tier, projectSettings)`
 review call as the review will make it (`ReviewCallPrice`): `worstUsdMicro`, its model at its
 output cap (`deps.maxTokensPerCall ?? REVIEW_TOKENS_PER_CALL`, `MAX_EFFORT_TOKENS_CEILING` at
 effort max) with the system prompt plus `REVIEW_EVIDENCE_ALLOWANCE_TOKENS` (8,000) of input;
-`floorUsdMicro`, the 8,192-token output floor a call may not start below; the runtime's critic
+`floorUsdMicro`, the first call's whole price at the smallest output (the same input with
+`REVIEW_MIN_TOKENS_PER_CALL`, 2,048 tokens, out; l4-selftasks-101 and L4-money-303, run L4: before,
+the 8,192-token output alone, so a task with less than USD 0.08 left after its work was never
+reviewed and one just above it ran its checks before the first call was refused); a review its
+task's budget caps below one call's worst case asks for 2,048 to 8,192 tokens out per call, sized
+to the room (`maxTokensPerCall` 2,048 with `maxTokensCeiling` 8,192; the hooks' precheck stays the
+backstop), every other review the usual cap; the runtime's critic
 port exposes it as `CriticPort.reviewCallUsdMicro(task, specialist)` for the room a work run
 keeps and the floor below which a review does not start (test `test/review-price.test.ts`). A refusal after the verdict was captured still
 completes the review (`REFUSALS_AFTER_VERDICT`); session reviews, promotion reviews and

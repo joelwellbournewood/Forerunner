@@ -1260,7 +1260,10 @@ describe("CriticService: a max-effort review finishes inside its budget (D.15 li
   it("a captured verdict is not reported as budget_exceeded when the call after it is refused", async () => {
     // Measure the first call's estimate, then give a run cap that covers it and not the
     // closing call: the closing call is refused, the verdict already stands.
-    const probe = await world({ replies: [submitReply(), closingReply()] });
+    // l4-selftasks-101: with the output cap fixed (`maxTokensPerCall`), as before; a review its
+    // task's budget caps is otherwise sized to the room, and its closing call would fit.
+    const fixed = { maxTokensPerCall: 8192 };
+    const probe = await world({ replies: [submitReply(), closingReply()], deps: fixed });
     let first = 0;
     try {
       await probe.critic.review(
@@ -1275,7 +1278,7 @@ describe("CriticService: a max-effort review finishes inside its budget (D.15 li
       await probe.close();
     }
     expect(first).toBeGreaterThan(8192);
-    const w = await world({ replies: [submitReply({ grade: 91 }), closingReply()] });
+    const w = await world({ replies: [submitReply({ grade: 91 }), closingReply()], deps: fixed });
     try {
       const events: RunEvent[] = [];
       const out = await w.critic.review(

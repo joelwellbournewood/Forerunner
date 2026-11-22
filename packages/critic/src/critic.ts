@@ -134,6 +134,17 @@ import type {
 export const REVIEW_TOKENS_PER_CALL = 8192;
 
 /**
+ * l4-selftasks-101 (live check 4, LC-C30; the owner's answer of 2026-11-16: a task's budget
+ * counts "critics reviews, and fixes"; the session lead's D-L4-8): a review capped by its task's
+ * budget sizes each call's `max_tokens` to the room left, from `REVIEW_TOKENS_PER_CALL` down to
+ * this minimum (`RunRequest.maxTokensCeiling` with this as the floor). Before, every call asked
+ * for 8,192 tokens out (USD 0.082 on Sonnet), so a task with less than that left after its work
+ * could never be reviewed although light reviews cost USD 0.03 live. The hooks' precheck stays
+ * the backstop: no call passes the task's budget.
+ */
+export const REVIEW_MIN_TOKENS_PER_CALL = 2048;
+
+/**
  * At effort `max` the first call's `max_tokens` grows from `REVIEW_TOKENS_PER_CALL` up to this
  * ceiling, as far as the room left for the review pays for it at the loop's full-cap price
  * (`RunRequest.maxTokensCeiling`: run, session below its 80% line, human and project caps,
@@ -161,8 +172,11 @@ export interface ReviewCallPrice {
    */
   worstUsdMicro: number;
   /**
-   * The price of the review's output cap alone (`REVIEW_TOKENS_PER_CALL`, at every effort): a
-   * lower bound of its first call. Below it the review is not started.
+   * The first call's whole price at the smallest output a review sized to its room asks for
+   * (l4-selftasks-101): the system prompt plus `REVIEW_EVIDENCE_ALLOWANCE_TOKENS` of input and
+   * `REVIEW_MIN_TOKENS_PER_CALL` out (the call's fixed cap when `maxTokensPerCall` is set). Below
+   * it the review is not started, and none of its checks runs (L4-money-303: before, the floor
+   * was the output cap alone, so the checks ran and the first call was then refused).
    */
   floorUsdMicro: number;
   /** The review runs at effort max (its first call's cap grows to `MAX_EFFORT_TOKENS_CEILING`). */
@@ -464,9 +478,10 @@ export class CriticService {
     const out = this.deps.maxTokensPerCall ?? REVIEW_TOKENS_PER_CALL;
     const maxEffort = pick.effort === "max";
     const cap = maxEffort ? Math.max(out, MAX_EFFORT_TOKENS_CEILING) : out;
+    const least = this.deps.maxTokensPerCall ?? REVIEW_MIN_TOKENS_PER_CALL;
     return {
       worstUsdMicro: pricing.estimate(system + REVIEW_EVIDENCE_ALLOWANCE_TOKENS, cap),
-      floorUsdMicro: pricing.estimate(0, out),
+      floorUsdMicro: pricing.estimate(system + REVIEW_EVIDENCE_ALLOWANCE_TOKENS, least),
       maxEffort,
     };
   }
@@ -575,6 +590,23 @@ export class CriticService {
     // Effort max (tier 3 on Opus, or tier 2 raised by the slider): the verdict ends the run and
     // the first call's cap is sized from the review's budget. Every other effort is unchanged.
     const maxEffort = pick.effort === "max";
+    // l4-selftasks-101: a task's own budget caps this review (`ReviewContext.budgetUsdMicro`) below
+    // one call's worst case at the usual cap: its calls are sized to the room. A review its task's
+    // budget does not hold back asks for the usual cap as before (a session's or a project's
+    // budget then refuses it as it always did).
+    const sizedToRoom =
+      !maxEffort &&
+      this.deps.maxTokensPerCall === undefined &&
+      ctx.budgetUsdMicro !== undefined &&
+      ctx.budgetUsdMicro < parent.budgetUsdMicro &&
+      ctx.budgetUsdMicro <
+        this.deps
+          .pricing(runModel)
+          .estimate(
+            provider.countTokens(`${this.deps.prompt.prompt}${SYSTEM_SUFFIX}`) +
+              REVIEW_EVIDENCE_ALLOWANCE_TOKENS,
+            REVIEW_TOKENS_PER_CALL,
+          );
     const tools = new ToolRegistry().register(
       submitReviewTool(
         (r) => {
@@ -611,8 +643,16 @@ export class CriticService {
         timeoutMs: pick.timeoutMs,
         maxTurns: this.deps.maxTurns ?? (readTools.length ? READING_REVIEW_TURNS : 3),
         ...(readRoot ? { cwd: readRoot } : {}),
-        maxTokensPerCall: this.deps.maxTokensPerCall ?? REVIEW_TOKENS_PER_CALL,
-        ...(maxEffort ? { maxTokensCeiling: MAX_EFFORT_TOKENS_CEILING } : {}),
+        // l4-selftasks-101: a review its task's budget caps sizes each call to the room, between
+        // the minimum and the usual cap; every other review asks for the usual cap.
+        maxTokensPerCall:
+          this.deps.maxTokensPerCall ??
+          (sizedToRoom ? REVIEW_MIN_TOKENS_PER_CALL : REVIEW_TOKENS_PER_CALL),
+        ...(maxEffort
+          ? { maxTokensCeiling: MAX_EFFORT_TOKENS_CEILING }
+          : sizedToRoom
+            ? { maxTokensCeiling: REVIEW_TOKENS_PER_CALL }
+            : {}),
         effort: pick.effort,
         phase: "review",
         label: `critic tier ${tier} on ${label}`,

@@ -592,3 +592,15 @@ the estimates', the state suite's `byTaskOf` and the UI's "d1116-budget-all, run
 A run its Claude credential stopped keeps its work like a paused one, and the run that continues
 it is briefed from it ("## Where the last run stopped", `whereTheCredentialStopped`), never as a
 failed attempt.
+
+## Amendment 2026-11-22 (l4-selftasks-check, run L4: a small task's review fits its own budget)
+
+The owner, 2026-11-16: a task's budget counts "critics reviews, and fixes". Live check 4 (LC-C30)
+found a README task with a budget of CHF 0.08 doing its work for CHF 0.02 and then pausing before
+its review, because every review call asked for 8,192 tokens out (USD 0.08 on Sonnet) whatever
+was left. With the session lead's D-L4-8: a review its task's budget caps sizes each call to the
+room, from 8,192 down to 2,048 tokens out; the floor below which a review is not started (and none
+of its checks runs) is its first call's whole price at 2,048 tokens out. Nothing passes the task's
+budget, the session's budget, its wrap-up line, the monthly cap or the plan share: the hooks'
+precheck stays the backstop. The plan card warns, in the Start dialog's words, for a task whose own
+budget is below its estimate with its review.

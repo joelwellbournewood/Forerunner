@@ -2167,7 +2167,7 @@ carrying the task's id, awaited in every branch, so the figure equals
 capped at the task's left (`TaskReviewRequest.budgetUsdMicro`: the budget less the figure, read
 fresh; its refusal maps to `task_budget` through `reviewStopSource(level, capSource)`), and a
 review whose left is below one critic call's floor (`CriticPort.reviewCallUsdMicro(task).floorUsdMicro`)
-is refused before it starts, with the floor as the card's estimate. Each work run keeps the room
+is refused before it starts, with the floor as the card's estimate (the floor: its first call's whole price at 2,048 tokens out, run L4). Each work run keeps the room
 its review needs (`workRunCapOf(task, specialistLimit, reviewRoom)`: R + W, R from
 `PlanItem.reviewRoomUsdMicro`, the runner's `reviewRoomOf` = `planner.reviewPartOf(task)` plus the
 port's `worstUsdMicro`, kept only when it is at most half of what is left); `runCapSource` comes
@@ -7903,6 +7903,14 @@ hiding what it left out. What changed, item by item:
   refuses ("Nothing to change on …", which rolled back the whole set). The chat reply when a
   composed set is refused is l4-selftasks-chat's (L4-selftasks-105 (b)).
 
+- **A small task's review fits its own budget** (L4-selftasks-101 with L4-money-303; the owner's
+  answer of 2026-11-16, D-L4-8): the runner's floor check before a review
+  (`CriticPort.reviewCallUsdMicro(task).floorUsdMicro`) is now the first call's whole price at
+  2,048 tokens out, so below it no review and none of its checks starts, and above it the review's
+  calls are sized to the room left of the task's budget (critic.md). The plan card's task line
+  carries `reviewMayWaitLine` (the Start dialog's words) in its `note` when a task's own budget is
+  below its estimate with its review (`daemon/plan-tasks.ts`). Raising a model-proposed budget at
+  the plan's apply is not built (see the area's report).
 - **The person's details reach the check and the critic** (L4-selftasks-106, prompt
   `task-check@1.2.0`): `TaskCheckTask.outcome` (redacted, at most 600 characters) for every task
   the check may change and every task the evidence comes from (a Done one too), and the person's
