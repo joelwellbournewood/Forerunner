@@ -122,8 +122,7 @@ function isRelativeNothing(text: string): boolean {
  */
 const WORK_STATE =
   /^none\s+of\b|\b(?:works?|runs?|pass(?:es)?|builds?|loads?|renders?|compiles?|exists?)\b|\b(?:has|have|had|is|are|was|were|been)\s+(?:\w+\s+)?(?:done|written|started|made|built|created|finished|completed|implemented|met|covered)\b/i;
-const ONE_CLAUSE = (text: string) =>
-  !/[:;,(–—]|\.\s|\s-\s/.test(text.replace(/[\s.!)]+$/, ""));
+const ONE_CLAUSE = (text: string) => !/[:;,(–—]|\.\s|\s-\s/.test(text.replace(/[\s.!)]+$/, ""));
 const isWholeSetNothing = (text: string) =>
   /^(?:nothing|none)\b/i.test(text) &&
   ONE_CLAUSE(text) &&

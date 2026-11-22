@@ -621,6 +621,8 @@ export type PausedTask = NamedTask & {
   checksFail?: string[];
   /** OP-7 (its card's `no_progress`): it paused again without getting further. */
   noProgress?: boolean;
+  /** L4-money-111 (its card's `review_waits`): the work is done; only its review waits. */
+  reviewWaits?: boolean;
 };
 
 /** "test", "test and lint", "test, lint and 1 more": at most two check names. */
@@ -646,7 +648,12 @@ export function pausedSentences(paused: readonly PausedTask[], told?: ToldByCard
   // L3-research-2: a run that heard the wrap-up paused before its limit ran out, as the log's
   // line for it says ("paused before its budget of CHF 0.15 ran out: it spent CHF 0.09"); "paused
   // at its budget of CHF 0.15" beside it read as all of it spent.
-  const how = one.before ? `paused before ${one.limit} ran out` : `paused at ${one.limit}`;
+  // L4-money-111: a task whose review waits for room is done, not paused at its budget.
+  const how = one.reviewWaits
+    ? `is done; its review waits for room in ${one.limit}`
+    : one.before
+      ? `paused before ${one.limit} ran out`
+      : `paused at ${one.limit}`;
   if (shown.length === 1) {
     // d1109-oversize-pause (OP-7): a pause that got no further asks; never "goes on by itself".
     if (one.noProgress)

@@ -3263,7 +3263,8 @@ export class SessionRunner {
                 specialist: result.specialist ?? runItem.specialist,
                 stoppedBy: "budget",
               };
-              const title = budgetStopTitle(now, stop, rate);
+              // L4-money-111: the work is done; the title says only the review waits.
+              const title = budgetStopTitle(now, stop, rate, { reviewWaits: true });
               const waiting = await store.task.transition(
                 now.id,
                 now.version,
@@ -3949,6 +3950,8 @@ export class SessionRunner {
                 ...(card.stopped_by === "wrap_up" && card.review_waits !== true
                   ? { before: true }
                   : {}),
+                // L4-money-111: the work is done and only its review waits for room.
+                ...(card.review_waits === true ? { reviewWaits: true } : {}),
                 // d1109-oversize-pause (OP-7, OP-8): from the card, the one place of the fact.
                 ...failedChecksOf(card),
                 ...(card.no_progress === true ? { noProgress: true } : {}),

@@ -556,7 +556,11 @@ describe("d1116-budget-all", () => {
       const task = await o.rt.store.task.mustGet(taskId);
       expect(task.actual_cost_usd_micro).toBe(10_000);
       expect(task.status).toBe("needs_human");
-      expect(task.reason).toBe(`"Write the footer" paused at its budget of ${chfOf(budget)}.`);
+      // l4-money-pause (L4-money-111, live check 4): the work is done and only its review waits
+      // (before: '"Write the footer" paused at its budget of CHF 0.06.' beside "The work is done").
+      expect(task.reason).toBe(
+        '"Write the footer" is done; its review waits for room in its budget.',
+      );
       const lines = await linesOf(o, sessionId);
       expect(lines).toContain(
         `"Write the footer" paused before its review: its own budget of ${chfOf(budget)} has no room for it.`,
@@ -564,8 +568,12 @@ describe("d1116-budget-all", () => {
       expect(lines.join(" | ")).not.toMatch(/this session's budget/);
       const cards = await cardsOf(o, taskId);
       expect(cards).toHaveLength(1);
-      expect(cards[0]?.title).toBe(`"Write the footer" paused at its budget of ${chfOf(budget)}`);
+      expect(cards[0]?.title).toBe(
+        '"Write the footer" is done; its review waits for room in its budget',
+      );
       expect(cards[0]?.body).toBe("The work is done; its review waits for room in the budget.");
+      const paused = new RegExp(`paused at its budget of ${chfOf(budget).replace(".", "\\.")}`);
+      expect(JSON.stringify(cards)).not.toMatch(paused);
       expect(cards[0]?.options).toEqual([
         expect.stringMatching(/^Continue \(CHF \d+\.\d{2} more\)$/),
         "Cancel task",
@@ -582,6 +590,22 @@ describe("d1116-budget-all", () => {
       expect(row?.display?.detail).toBe(
         "The work is done; its review waits for room in the budget.",
       );
+      // L4-money-111: the row's label says the review waits (before: "Paused at its budget").
+      expect((row?.display as { label?: string } | undefined)?.label).toBe(
+        "Review waits for room in its budget",
+      );
+      // The session's result and the card's notification say it too.
+      expect(String(s.summary)).toContain(
+        `"Write the footer" is done; its review waits for room in its budget of ${chfOf(budget)}: continue or cancel it in the Inbox.`,
+      );
+      expect(String(s.summary)).not.toMatch(paused);
+      const notes = (
+        (await o.json("/notifications/recent?limit=200")) as unknown as { notifications: Json[] }
+      ).notifications.filter((n) => n.kind === "request_blocking");
+      expect(notes.map((n) => String(n.title)).join(" | ")).toContain(
+        'is done; its review',
+      );
+      expect(notes.map((n) => `${n.title} ${n.body}`).join(" | ")).not.toMatch(paused);
       // The session went on: the next task ran and was reviewed.
       expect(s.status).toBe("completed");
       const next = await o.rt.store.task.mustGet(header);

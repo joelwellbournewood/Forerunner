@@ -3150,7 +3150,15 @@ does (ADR 0112 point 6): `needs_human` with `budgetStopTitle`, one card (`fileBu
 the limit from the refusal's level: `reviewStopSource`, the critic's own run cap being the
 session's; `reviewWaits: true` puts `review_waits` on it, so its body says "The work is done; its
 review waits for room in the budget." instead of the run pause's "It stopped before it could say
-where it stood", `pausedWorkSentence`, TR-14), the line `REVIEW_PAUSED_EVENT` ('"X" paused before its review: the project's budget
+where it stood", `pausedWorkSentence`, TR-14; l4-money-pause, run L4, L4-money-111: its title,
+the task's reason, the notification and the result say the work is done, '"X" is done; its review
+waits for room in its budget' (`budgetStopTitle(..., { reviewWaits: true })`, the room by source
+from `session/review-room-words.ts`: "in this session's budget", "in the project's budget", "under
+this month's cap"), `PausedTask.reviewWaits` gives the result's '"X" is done; its review waits for
+room in its budget of CHF 0.15: continue or cancel it in the Inbox.', the row reads "Review waits
+for room in its budget" (`budgetPauseLabelOf`) and the session's task list "Done; its review waits
+for room in ..."; before, all of them said "paused at its budget of CHF 0.15" at CHF 0.08 spent),
+the line `REVIEW_PAUSED_EVENT` ('"X" paused before its review: the project's budget
 of CHF 0.01 has no room for it.', `reviewPausedWords`), and a stop at the session's budget or an
 outer limit ends the session there; no try is counted and no ladder card is filed. A
 credential's refusal gives the task back to ready (`restoreStatus`, attempt unchanged) with the

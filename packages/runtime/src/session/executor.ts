@@ -1497,9 +1497,7 @@ export class LoopTaskExecutor implements TaskExecutor {
           text: budgetLineWords(
             ev,
             (n) => this.chfText(n),
-            runCapSource === "task_budget"
-              ? work.roomUsdMicro
-              : (outerLimit?.roomUsdMicro ?? 0),
+            runCapSource === "task_budget" ? work.roomUsdMicro : (outerLimit?.roomUsdMicro ?? 0),
             // L4-money-103: a run capped at what is left of an outer limit says so.
             runCapSource === "project" || runCapSource === "month" ? runCapSource : undefined,
           ),

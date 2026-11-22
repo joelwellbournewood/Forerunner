@@ -12,6 +12,7 @@ import { ANSWER_CARD_KEYS, answerNote, budgetStopAnswer } from "../wiring/reques
 import type { BudgetStopSource, RunHandoff } from "./budget-pause.ts";
 import { unappliedAnswers } from "./findings.ts";
 import { moneyWords } from "./money-words.ts";
+import { reviewRoomWords } from "./review-room-words.ts";
 import type { PreparePort, PrepareResult } from "./prepared-work.ts";
 import { noteAboutTask, recordStart, type StartPort, startForPerson } from "./resume-work.ts";
 import type { BudgetStop } from "./runner.ts";
@@ -127,9 +128,18 @@ export function budgetStopTitle(
   task: Pick<TaskRow, "title">,
   stop: Pick<BudgetStop, "capUsdMicro" | "source" | "specialist" | "stoppedBy">,
   rate: number,
+  /**
+   * l4-money-pause, run L4 (L4-money-111, live check 4): the specialist finished and only its
+   * review waits for room (TR-14): '"X" is done; its review waits for room in its budget'.
+   * Before, the card, the task's reason, the notification and the result read '"X" paused at its
+   * budget of CHF 0.15' beside "The work is done" at CHF 0.08 spent.
+   */
+  opts: { reviewWaits?: boolean } = {},
 ): string {
   const title = `"${task.title.replace(/\s+/g, " ").trim()}"`;
   const chf = chfText(stop.capUsdMicro, rate);
+  if (opts.reviewWaits)
+    return `${title} is done; its review waits for ${reviewRoomWords(stop.source)}`;
   if (stop.stoppedBy === "wrap_up")
     switch (stop.source) {
       case "task_budget":
@@ -254,7 +264,7 @@ export async function fileBudgetStopCard(
         ...(needs !== undefined ? { needsUsdMicro: needs } : {}),
       })
     : null;
-  const title = budgetStopTitle(task, stop, rate);
+  const title = budgetStopTitle(task, stop, rate, { reviewWaits: input.reviewWaits === true });
   const left = cardHandoff(input.handoff);
   const request = await store.humanRequest.insert({
     human_id: input.humanId,

@@ -14,6 +14,7 @@ import {
   owedMergeWait,
 } from "../loop/merge-mode.ts";
 import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
+import { reviewRoomWords } from "../session/review-room-words.ts";
 import { CREDENTIAL_WAIT_REASON } from "../session/credential-wait.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
@@ -417,6 +418,11 @@ export function budgetPauseLabelOf(card: unknown): string {
   const c = (card ?? {}) as Record<string, unknown>;
   // C2-left-1 (run C3): a pause that got no further reads as its card does, wherever it stopped.
   if (c.no_progress === true) return "Paused again without getting further";
+  // L4-money-111: the work is done and only its review waits (before: "Paused at its budget").
+  if (c.review_waits === true) {
+    const where = reviewRoomWords(c.source).replace(/^room/, "");
+    return `Review waits for room${where.replace(/ this session's/, " the session's")}`;
+  }
   if (c.stopped_by === "wrap_up" && c.review_waits !== true)
     switch (c.source) {
       case "session":
