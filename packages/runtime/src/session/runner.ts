@@ -185,9 +185,9 @@ import {
   type TaskCheckRunnerPort,
 } from "./task-check.ts";
 import {
-  isCriticNote,
   keepNotes,
   keptNotesOf,
+  notCausedByTask,
   reviewNoteLines,
   type TaskListLine,
   type TaskListNote,
@@ -3332,8 +3332,10 @@ export class SessionRunner {
                 retry: reviewed.retry,
                 attempt: reviewed.attempt,
               });
-              // d1109-selftasks-run: the critic's notes the task did not cause, for the next
+              // d1109-selftasks-run: the critic's findings the task did not cause, for the next
               // boundary's task check (data, flagged where they read like an instruction).
+              // l4-selftasks-102: only those (ADR 0119 point 3); an ordinary note about the
+              // task's own work is no evidence and pays for no check.
               if (reviewed.reviewId && this.deps.taskCheck) {
                 const notes = reviewNoteLines(
                   (
@@ -3341,7 +3343,7 @@ export class SessionRunner {
                       limit: 50,
                     })
                   )
-                    .filter(isCriticNote)
+                    .filter(notCausedByTask)
                     .map((f) => f.description),
                 );
                 if (notes.length)

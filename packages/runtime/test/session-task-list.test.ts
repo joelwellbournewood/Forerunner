@@ -10,6 +10,7 @@ import { describeEvent } from "../src/daemon/views.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
+import type { CriticPort, TaskReviewOutcome } from "../src/loop/ports.ts";
 import { LiveSessions } from "../src/session/live-sessions.ts";
 import {
   type SessionResult,
@@ -90,7 +91,14 @@ afterEach(async () => {
   removeHomes(homes.splice(0));
 });
 
-async function world(opts: { level?: 0 | 1 | 2; settings?: Record<string, unknown> } = {}) {
+async function world(
+  opts: {
+    level?: 0 | 1 | 2;
+    settings?: Record<string, unknown>;
+    /** l4-selftasks-check: a scripted critic (its findings are written as a review would). */
+    critic?: (store: StateStore, agentId: string) => CriticPort;
+  } = {},
+) {
   const home = mkdtempSync(join(tmpdir(), "fr-tasklist-"));
   homes.push(home);
   const h = harness();
@@ -221,6 +229,7 @@ async function world(opts: { level?: 0 | 1 | 2; settings?: Record<string, unknow
       live,
       chfPerUsd: () => 1,
       taskCheck: port(),
+      ...(opts.critic ? { critic: opts.critic(store, seeded.agent) } : {}),
     });
   const start = (budgetUsd: number, over: { autonomy?: 0 | 1 | 2; planApproved?: boolean } = {}) =>
     runner().start({
@@ -555,5 +564,139 @@ describe("d1109-selftasks-run, run C: notes kept across a restart (ST-10)", () =
     await w.add("T6", 0.1);
     await w.start(3);
     expect(w.checkCalls.length).toBe(4);
+  });
+});
+
+/**
+ * l4-selftasks-check, run L4 (U-095; D7, the owner, 2026-11-09: "I want it to be able to fix its
+ * tasks. Like as part of a run"; ADR 0119 point 3: the check's evidence is a report's "For the
+ * task list:" lines, a critic finding the task did not cause and kept notes). A scripted critic
+ * writes its review and findings as the real one does; the task check, the fence and the commands
+ * are the real ones; what the person reads is read through the daemon's event lines.
+ */
+/** A critic that accepts every task with the given findings (severity, description). */
+function acceptsWith(
+  findings: (
+    title: string,
+  ) => { severity: "info" | "low" | "medium" | "high"; description: string }[],
+) {
+  return (store: StateStore, agentId: string): CriticPort => ({
+    async reviewTask(req) {
+      const task = await store.task.mustGet(req.task.id);
+      const review = await store.review.insert({
+        task_id: task.id,
+        critic_model: "fake-sonnet",
+        tier: 1,
+        grade: 90,
+        confidence: 0.9,
+        verdict: "accept",
+        evidence: [],
+        summary: "Accepted.",
+        author_agent: agentId,
+      });
+      for (const [i, f] of findings(task.title).entries())
+        await store.finding.insert({
+          review_id: review.id,
+          task_id: task.id,
+          severity: f.severity,
+          description: f.description,
+          required_action: "",
+          status: "resolved",
+          fingerprint: `fp-${task.id}-${i}`,
+          author_agent: agentId,
+        } as never);
+      const done = await store.task.transition(task.id, task.version, "done", "accepted", {
+        agentId,
+      });
+      return {
+        reviewId: review.id,
+        tier: 1,
+        verdict: "accept",
+        grade: 90,
+        confidence: 0.9,
+        summary: "Accepted.",
+        findings: [],
+        openFindings: 0,
+        decision: "accepted",
+        attempt: done.attempt,
+        costUsdMicro: 0,
+        resolvedFindingIds: [],
+        lessonProposals: [],
+        quarantinedLessons: [],
+        task: done,
+      } as TaskReviewOutcome;
+    },
+    async reviewSession() {
+      throw new Error("not under test");
+    },
+  });
+}
+
+describe("l4-selftasks-check, run L4: the check runs only on real evidence (L4-selftasks-102)", () => {
+  it("a critic note about the task's own work is no evidence: three accepted tasks with one info note each and no heading make no check, no line and keep no notes", async () => {
+    const w = await world({
+      critic: acceptsWith((title) => [
+        { severity: "info", description: `The worker did not measure contrast on "${title}".` },
+      ]),
+    });
+    await w.plan();
+    const r = await w.start(3);
+    expect(w.ran).toEqual(["Create the page", "Style the page", "Publish"]);
+    expect(w.checkCalls.length).toBe(0);
+    const seen = await w.lines(r);
+    expect(seen.filter((l) => l.type === "session.task_checked")).toEqual([]);
+    expect(seen.map((l) => l.line).join(" | ")).not.toContain("Checked the task list");
+    const runs = await w.store.run.list({ session_id: r.sessionId } as never);
+    expect(runs.filter((x) => x.specialist === "task-check")).toEqual([]);
+    expect(keptNotesOf(await w.store.project.mustGet(w.seeded.project))).toEqual([]);
+  });
+
+  it("a finding the task did not cause is evidence: exactly one check, and its message quotes it", async () => {
+    const w = await world({
+      critic: acceptsWith((title) =>
+        title === "Create the page"
+          ? [
+              {
+                severity: "info",
+                description:
+                  "Tried node --check: npm is missing on this computer (not caused by this task)",
+              },
+              { severity: "info", description: "The worker did not measure contrast." },
+            ]
+          : [],
+      ),
+    });
+    await w.plan();
+    await w.start(3);
+    expect(w.checkCalls.length).toBe(1);
+  });
+
+  it("the check after the session's last task stays: a one-task plan whose report says a page was left undone gets its check, and the added task runs in the same session", async () => {
+    const w = await world();
+    await w.add("Write index.html and book.html", 0.3);
+    w.scripts.set("Write index.html and book.html", {
+      cost: 0.2,
+      report: "Wrote index.html.\nFor the task list: book.html was left undone.",
+    });
+    w.scripts.set("Write book.html", { cost: 0.1 });
+    w.replies.push(
+      JSON.stringify({
+        changes: [
+          {
+            kind: "add",
+            title: "Write book.html",
+            outcome: "book.html is written",
+            acceptanceCriteria: ["book.html exists"],
+            specialist: "coder",
+            why: "The report says book.html was left undone.",
+          },
+        ],
+        flagged: [],
+        why: "One step is missing.",
+      }),
+    );
+    await w.start(3);
+    expect(w.checkCalls.length).toBe(1);
+    expect(w.ran).toEqual(["Write index.html and book.html", "Write book.html"]);
   });
 });

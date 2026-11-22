@@ -128,11 +128,16 @@ export function parseTaskListNotes(report: string): TaskListLine[] {
 }
 
 /**
- * A critic's finding that is a note, not an order (L-4, as the brief reads it): marked `info`,
- * or a problem the runtime measured that the task's files cannot have caused.
+ * A critic's finding that is evidence for the task check (ADR 0119 point 3): a problem the
+ * runtime measured that the task's files cannot have caused (`NOT_CAUSED_BY_TASK`, the "Tried
+ * ..." findings). l4-selftasks-102 (live check 4): before, every `info` finding counted too, so
+ * the critic's ordinary notes about the task's own work ("The worker did not measure contrast",
+ * "Sunday is left out ... a reasonable choice") paid for a planning call after nearly every
+ * reviewed task and were kept for the next session. The retry brief's 'not an order' rule
+ * (`isReviewNote` in executor.ts) is a different question and stays as it is.
  */
-export function isCriticNote(f: { severity: string; description: string }): boolean {
-  return f.severity === "info" || f.description.endsWith(NOT_CAUSED_BY_TASK);
+export function notCausedByTask(f: { description: string }): boolean {
+  return f.description.endsWith(NOT_CAUSED_BY_TASK);
 }
 
 /** The critic's notes on a task that the task did not cause, as evidence lines. */

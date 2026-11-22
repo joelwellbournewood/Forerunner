@@ -7754,8 +7754,8 @@ and fixes it as the autonomy level allows. The pieces:
   report with "For the task list:" and one line per point; rung 2 of the retry ladder points to
   it (`RUNG_TWO_SCOPE`); a check's own new task carries `AGENT_WROTE_TASK_LINE`.
 - **The evidence** (`session/task-list-notes.ts`): `parseTaskListNotes` (the last heading, at
-  most 5 lines of at most 300 characters), `reviewNoteLines` (the critic's notes the task did not
-  cause, `isCriticNote`), `readsLikeInstruction` (the injection scan for `agent_output` plus the
+  most 5 lines of at most 300 characters), `reviewNoteLines` (the critic's findings the task did
+  not cause, `notCausedByTask`; run L4), `readsLikeInstruction` (the injection scan for `agent_output` plus the
   steering patterns: budgets and money, settings, the autonomy level by any form of its name,
   review levels in either order, other projects, starting, merging, deploying, dropping every
   task, a new role); a flagged line is kept with `flagged: true`, never sent to a model, and
@@ -7849,6 +7849,22 @@ Stopped / Cancelled / Made ready (again) / Marked … by the agent") as one plai
 (`plainReason`, at most 200 characters); every other reason gives none, so the field is absent.
 `taskView` sets it, so the list, GET /tasks/:id and every task answer carry it. Tests:
 `test/agent-change-line.test.ts`.
+
+### The task check on real evidence (l4-selftasks-check, run L4, ADR 0119 amended 2026-11-22)
+
+Live check 4 (2026-11-17) found the session's task check paid for, refusing good changes and
+hiding what it left out. What changed, item by item:
+
+- **Evidence** (L4-selftasks-102): `notCausedByTask` (`session/task-list-notes.ts`) replaces
+  `isCriticNote` in the runner's review-note collection: only a finding ending
+  `NOT_CAUSED_BY_TASK` (the runtime-measured "Tried ..." findings) is evidence. An `info` note
+  about the task's own work ("The worker did not measure contrast") makes no check and is never
+  kept. The executor's `isReviewNote` (the retry brief's "not an order" rule) is unchanged. The
+  check after the session's last task stays (ADR 0119 point 8). The rule "Change only tasks shown
+  as Draft, Ready, Waiting for, Stuck or Waiting for Docker" matches `CHANGEABLE` (draft and
+  ready): Waiting for, Stuck and Waiting for Docker are stored `ready` (`taskDisplay`).
+
+Tests: `session-task-list.test.ts` (describe "l4-selftasks-check, run L4").
 
 ### One credential policy for every call (d1109-cred-engine, [ADR 0120](../decisions/0120-which-claude-does-the-work.md))
 
