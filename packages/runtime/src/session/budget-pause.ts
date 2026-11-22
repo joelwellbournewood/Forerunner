@@ -74,15 +74,56 @@ const MAX_ITEM_CHARS = 200;
  * ("Nothing is needed for the two criteria. Each listed page ... was opened."), what it is about
  * may be "to meet" or "to satisfy" the criteria, and "No further work is required to meet the
  * acceptance criteria." names what there is no more of.
+ *
+ * l4c-workstate, run L4 (the review of l4-money-pause): only a line that clearly says nothing is
+ * left reads as empty; when unsure, a line is work left. So the words between "for", "in" or "to
+ * meet" and what the line is about are a closed list (`ABOUT_WORD`: "the", "this", "the task's",
+ * "acceptance", "the scope of" ...; before, any words: "Nothing in the code works for the task"
+ * read as nothing), and a reason after punctuation counts only when it says the work is done and
+ * names none left (`reasonSaysDone`; before, any reason: "Nothing for the criteria: tests and
+ * docs remain" read as nothing).
  */
-const ABOUT = String.raw`\s+(?:for|in|by|under|within|to\s+(?:meet|satisfy|fulfil+|cover|pass))\s[^.;:]*?\b(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)(?:\s*(?:#?\d+|\([a-z0-9]\))(?:\s*(?:,|and|&)\s*(?:#?\d+|\([a-z0-9]\)))*)?`;
+const ABOUT_WORD = String.raw`(?:the|this|that|these|its|their|our|my|your|all|every|each|both|any|whole|full|entire|original|stated|listed|given|agreed|acceptance|first|second|third|fourth|fifth|last|other|remaining|task'?s|brief'?s|project'?s|two|three|four|five|six|\d+|of|scope\s+of)`;
+const NOUN = `(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)`;
+const ABOUT = String.raw`\s+(?:for|in|by|under|within|to\s+(?:meet|satisfy|fulfil+|cover|pass))\s+(?:${ABOUT_WORD}\s+)*${NOUN}(?:\s*(?:#?\d+|\([a-z0-9]\))(?:\s*(?:,|and|&)\s*(?:#?\d+|\([a-z0-9]\)))*)?`;
 /** What starts a reason: punctuation, or a full stop and the next sentence. */
 const AFTER = String.raw`\s*(?:[:;,(\u2013\u2014-]|\.\s)`;
 const REASON = String.raw`${AFTER}\s*[\s\S]*`;
+/** Its two groups: the reason after what it is about, or the reason right after the "nothing". */
 const NOTHING = new RegExp(
-  String.raw`^(?:nothing|none|no(?:thing)? (?:more|left|else|further)(?:\s+(?:work|changes?|steps?|items?|actions?|tasks?))?|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:${ABOUT}(?:${REASON})?|${AFTER}\s*[\s\S]*?\b(?:criteri(?:a|on)|complete[ds]?|done|finished|met)\b[\s\S]*)?[\s.!)]*$`,
+  String.raw`^(?:nothing|none|no(?:thing)? (?:more|left|else|further)(?:\s+(?:work|changes?|steps?|items?|actions?|tasks?))?|n\/a|-)(?:\s+(?:(?:is|are)\s+)?(?:left|else|more|further|remaining|outstanding|required|needed|to do))*(?:${ABOUT}(${REASON})?|(${AFTER}\s*[\s\S]*?\b(?:criteri(?:a|on)|complete[ds]?|done|finished|met)\b[\s\S]*))?[\s.!)]*$`,
   "i",
 );
+/**
+ * l4c-workstate: a reason that says the work is done ("both are met", "hosts.md covers each of
+ * them", "each listed page gives its address and was opened", "the file lists every page it
+ * names"). A reason without one of these words (a list of work: "tests and docs"), with work
+ * still to come ("the tests remain", "the deploy is pending", "the README is left", "then deploy
+ * it", "the tests need to pass"), or one that starts a part with an order ("write the tests
+ * until they pass") keeps the line an item. "nothing remains" or "none is left" inside it still
+ * says done.
+ */
+const DONE_WORD =
+  /\b(?:met|meets?|covered|covers?|complete[ds]?|done|finished|satisfie[sd]|fulfil+(?:ed|s)?|written|opened|answered|delivered|included|includes|gives|lists|passe[sd]|pass|cited|checked|tested|verified|in\s+place)\b/i;
+const STILL_TO_COME =
+  /(?<!\b(?:nothing|none)(?:\s+(?:is|are|else|more))?\s+)\b(?:left|remain(?:s|ing)?|pending|outstanding|to[\s-]do|todo|tbd)\b|\b(?:need(?:s|ed)?\s+to|should|must|ha(?:ve|s)\s+to|then|untested|unverified|unchecked|undone)\b/i;
+const ORDER =
+  /^(?:write|add|fix|test|run|deploy|update|create|finish|complete|check|review|verify|build|implement|commit|push|merge|document|remove|rename|move|wire|install|configure|fetch|read|rewrite|draft|make|redo|retry|try|replace|change|edit|refactor|clean|cite|confirm|ask|send|upload|publish|open|do)\b/i;
+function reasonSaysDone(reason: string): boolean {
+  const said = reason.replace(/^[\s:;,(\u2013\u2014.-]+/, "").trim();
+  if (!said) return true;
+  const parts = said.split(/[.;:,]\s*|\s+(?:and|then)\s+/).map((p) => p.trim());
+  return (
+    DONE_WORD.test(said) &&
+    !STILL_TO_COME.test(said) &&
+    !NOT_NOTHING.test(said) &&
+    !parts.some((p) => ORDER.test(p))
+  );
+}
+function isNothingForm(text: string): boolean {
+  const m = NOTHING.exec(text);
+  return !!m && !NOT_NOTHING.test(text) && reasonSaysDone(m[1] ?? m[2] ?? "");
+}
 /**
  * A "nothing" that goes on to name work ("Nothing - but the README is incomplete", "Nothing:
  * the criteria are not met yet", "... except the tests still fail", "..., though the tests need
@@ -97,9 +138,9 @@ const NOT_NOTHING =
  * [acceptance] criteria require", "nothing the brief still needs", "none the brief asks for",
  * "nothing criterion 2 needs"). Its "still" or "yet" before the verb belongs to the clause, so
  * `NOT_NOTHING` reads only what follows it ("nothing the criteria require yet: the tests fail" is
- * work).
+ * work). A reason after it counts only when it says done (`reasonSaysDone`, l4c-workstate:
+ * "Nothing the criteria need: tests and docs" is work).
  */
-const NOUN = String.raw`(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)`;
 const RELATIVE_HEAD = new RegExp(
   String.raw`^(?:nothing|none)(?:\s+(?:more|left|else|further|remaining))?(?:\s+(?:that|which))?\s+(?:the\s+)?(?:task'?s\s+)?(?:(?:acceptance|two|three|four|five|\d+)\s+)?${NOUN}(?:\s*(?:#?\d+|\([a-z0-9]\)))?(?:\s+(?:still|yet))?\s+(?:requires?|needs?|asks?\s+for|calls?\s+for|demands?|wants?)\b`,
   "i",
@@ -109,31 +150,41 @@ function isRelativeNothing(text: string): boolean {
   const head = RELATIVE_HEAD.exec(text);
   if (!head) return false;
   const rest = text.slice(head[0].length);
-  return RELATIVE_TAIL.test(rest) && !NOT_NOTHING.test(rest);
+  return RELATIVE_TAIL.test(rest) && !NOT_NOTHING.test(rest) && reasonSaysDone(rest);
 }
 /**
  * The general rule (L4-money-101; it ends the patching one live phrasing at a time after W15-14
- * and L3-research-1): a line that starts with "nothing" or "none", names the task's whole set of
- * criteria (`WHOLE_SET`, never one criterion) and names no work (`NOT_NOTHING`) is an empty list,
- * however it is worded, when it is one clause (a reason after punctuation is read by the forms
- * above, so "Nothing to change in the brief; write the tests" stays work). A line that says what
- * state the work is in ("Nothing in the task works", "Nothing has been done for the task", "None
- * of the criteria are met") is not a "nothing left".
+ * and L3-research-1): a one-clause line that starts with "nothing" or "none", names the task's
+ * whole set of criteria (`WHOLE_SET`, never one criterion) and names no work (`NOT_NOTHING`) is
+ * an empty list however it combines what it is about and that nothing of it is left (a reason
+ * after punctuation is read by the forms above).
+ *
+ * l4c-workstate, run L4 (the review of l4-money-pause): it is a closed form, no longer anything
+ * that names the whole set less a list of work states. Before, `WORK_STATE` knew a few verbs, so
+ * "Nothing the task requires has been tested", "Nothing the brief asks for is tested" and
+ * "Nothing the criteria require is in the repository" read as nothing, and the task went to
+ * review instead of pausing. Now the line is "nothing" or "none", then words that say left
+ * (`LEFT`: "else", "more", "is left", "is needed", "to do" ...), then what it is about: a
+ * preposition and the whole set ("for", "in", "by", "against", "on", "within", "to meet", "listed
+ * in" ... and `ABOUT_WORD`s before the noun) or a relative clause ("[that] the brief lists", "the
+ * criteria have asked for"), then at most one more `LEFT` or "remains", and nothing else. Any
+ * other word ("tested", "ready", "pending", "in the repository", "untested") makes it work left.
  */
-const WORK_STATE =
-  /^none\s+of\b|\b(?:works?|runs?|pass(?:es)?|builds?|loads?|renders?|compiles?|exists?)\b|\b(?:has|have|had|is|are|was|were|been)\s+(?:\w+\s+)?(?:done|written|started|made|built|created|finished|completed|implemented|met|covered)\b/i;
-const ONE_CLAUSE = (text: string) => !/[:;,(–—]|\.\s|\s-\s/.test(text.replace(/[\s.!)]+$/, ""));
+const LEFT = String.raw`\s+(?:(?:is|are)\s+)?(?:left(?:\s+to\s+(?:be\s+)?do(?:ne)?)?|else|more|further|remaining|outstanding|required|needed|to\s+(?:be\s+)?do(?:ne)?)`;
+const WHOLE_NOUN = String.raw`${NOUN}(?:'s\s+(?:criteria|requirements|scope|deliverables)|\s+(?:criteria|requirements|scope|deliverables))?`;
+const NAMED_BY = String.raw`(?:listed|named|stated|specified|set\s+out|mentioned|given|described|asked\s+for|called\s+for|required|needed|wanted|expected)`;
+const ASKS = String.raw`(?:(?:has|have|had|would|will|does|do|did)\s+)?(?:requires?|required|needs?|needed|asks?\s+for|asked\s+for|calls?\s+for|called\s+for|demands?|demanded|wants?|wanted|expects?|expected|lists?|listed|names?|named|specif(?:y|ies|ied)|mentions?|mentioned|sets?\s+out|includes?|included|covers?|describes?|described)`;
+const SAYS_ONLY_NOTHING_LEFT = new RegExp(
+  String.raw`^(?:nothing|none)(?:${LEFT})*(?:(?:\s+${NAMED_BY})?\s+(?:for|in|by|under|within|against|on|from|to\s+(?:meet|satisfy|fulfil+|cover|pass|complete|finish))\s+(?:${ABOUT_WORD}\s+)*${WHOLE_NOUN}|(?:\s+(?:that|which))?\s+(?:${ABOUT_WORD}\s+)*${WHOLE_NOUN}\s+${ASKS})(?:${LEFT}|\s+remains?(?:\s+to\s+(?:be\s+)?do(?:ne)?)?)?(?:\s+(?:here|now|at\s+all|any\s*more))?[\s.!)]*$`,
+  "i",
+);
 const isWholeSetNothing = (text: string) =>
-  /^(?:nothing|none)\b/i.test(text) &&
-  ONE_CLAUSE(text) &&
+  SAYS_ONLY_NOTHING_LEFT.test(text) &&
   WHOLE_SET.test(text) &&
   !ONE_CRITERION.test(text) &&
-  !NOT_NOTHING.test(text) &&
-  !WORK_STATE.test(text);
+  !NOT_NOTHING.test(text);
 const isNothing = (text: string) =>
-  (NOTHING.test(text) && !NOT_NOTHING.test(text)) ||
-  isRelativeNothing(text) ||
-  isWholeSetNothing(text);
+  isNothingForm(text) || isRelativeNothing(text) || isWholeSetNothing(text);
 /**
  * A criterion named on its own ("criterion 2", "criteria 1 and 3", "the first criterion"): a
  * "nothing" about it says nothing of the rest, and an item that names it is work.

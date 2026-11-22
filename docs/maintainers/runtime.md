@@ -2349,10 +2349,25 @@ budget-stop; the owner's decision of 2026-11-02).**
   brief still needs", "none the brief asks for" (`RELATIVE_HEAD`; its "still" belongs to the
   clause, so "nothing the criteria require yet: the tests fail" stays an item), and the general
   rule that ends the patching one phrasing at a time: a one-clause line that starts with
-  "nothing" or "none", names the whole set (`WHOLE_SET`, not `ONE_CRITERION`), names no work
-  (`NOT_NOTHING`) and says no state of the work ("Nothing in the task works", "Nothing has been
-  done for the task", "None of the criteria are met": `WORK_STATE`) is empty; the wrap-up and
-  the brief's line now ask for "only the word nothing when they need nothing more") and decides: a run is paused when it stopped
+  "nothing" or "none", names the whole set (`WHOLE_SET`, not `ONE_CRITERION`) and names no work
+  (`NOT_NOTHING`) is empty; the wrap-up and the brief's line now ask for "only the word nothing
+  when they need nothing more"; l4c-workstate, run L4, the review of l4-money-pause: only a line
+  that clearly says nothing is left is empty, and when unsure a line is work left. The general
+  rule is a closed form (`SAYS_ONLY_NOTHING_LEFT`): "nothing" or "none", words that say left
+  (`LEFT`: "else", "more", "is left", "is needed", "to do" ...), what it is about (a preposition
+  and the whole set, "for", "in", "against", "within", "to meet", "listed in" ..., or a relative
+  clause, "[that] the brief lists", "the criteria have asked for"), then at most one more `LEFT`
+  or "remains", and nothing else; it replaced `WORK_STATE`, a list of a few work verbs, under which
+  "Nothing the task requires has been tested", "Nothing the brief asks for is tested" and
+  "Nothing the criteria require is in the repository" read as empty and the task went to review
+  instead of pausing. The words between the preposition and the noun in `ABOUT` are a closed list
+  too (`ABOUT_WORD`: "the", "this", "the task's", "acceptance", "the scope of" ...; before, any
+  words, so "Nothing in the code works for the task" read as empty), and a reason after
+  punctuation, in `NOTHING` and `RELATIVE_HEAD` alike, counts only when it says done
+  (`reasonSaysDone`: a word such as "met", "covers", "written", "opened"; no work still to come,
+  "remain", "pending", "left", "to do", "need to", "then"; no part that starts with an order,
+  "write ..."), so "Nothing for the criteria: tests and docs remain" and "Nothing the criteria
+  need: tests and docs" are items) and decides: a run is paused when it stopped
   at a budget of any level (`stoppedBy: "budget"`), or when it heard the wrap-up in this run and
   listed at least one item (`stoppedBy: "wrap_up"`); a run that ends normally without a wrap-up,
   or after one with nothing left, is reviewed as usual. The result is `TaskExecutionResult`

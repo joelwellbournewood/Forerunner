@@ -2460,6 +2460,204 @@ describe("l4-money-pause, run L4: a 'nothing' the criteria need is nothing (L4-m
 });
 
 /**
+ * l4c-workstate, run L4 (the review of l4-money-pause, its first non-blocking finding):
+ * L4-money-101's general rule read a Left-to-do line that says the work is NOT done as an empty
+ * list, because it named the whole set and its list of work states (WORK_STATE) knew only a few
+ * verbs. The reviewer's probe of `parseHandoff` on d526f40 turned each of the seven lines below
+ * into [], where the base kept them as work; such a task went to review instead of pausing, and
+ * its Continue never came. Only a line that clearly says nothing is left reads as empty: when
+ * unsure, a line is work left.
+ */
+describe("l4c-workstate, run L4: a line that says work remains is work, never 'nothing left'", () => {
+  const left = (lines: string[]) =>
+    parseHandoff(["Where I stopped: here.", "", "Left to do:", ...lines].join("\n"));
+  const work = (lines: string[]) => {
+    for (const line of lines) expect(left([`- ${line}`]).leftToDo, line).toEqual([line]);
+  };
+
+  it("the reviewer's seven lines are work left", () => {
+    work([
+      "Nothing the task requires has been tested",
+      "Nothing the brief asks for is tested",
+      "Nothing for the task's criteria is verified",
+      "Nothing that the criteria require is checked",
+      "Nothing the task needs is deployed",
+      "Nothing the criteria require is in the repository",
+      "Nothing in the scope is tested",
+    ]);
+  });
+
+  it("their siblings: a state of the work, a negation, 'not yet', 'still', 'remains', 'is missing', 'was not', 'pending'", () => {
+    work([
+      // A state of the work in other verbs.
+      "Nothing the task needs has been reviewed",
+      "Nothing the brief needs was saved",
+      "Nothing the brief requires was committed",
+      "Nothing the criteria need is in place",
+      "Nothing the task needs is ready",
+      "Nothing in the brief has a test",
+      "Nothing for the criteria was verified",
+      "Nothing in the task is covered by tests",
+      // Negations and 'not yet'.
+      "Nothing the brief requires was not built",
+      "Nothing the task needs isn't broken",
+      "Nothing the criteria require is not yet written",
+      "Nothing the criteria require is tested yet",
+      // 'still', 'remains', 'is missing', 'pending'.
+      "Nothing the brief asks for still works",
+      "Nothing the criteria require remains untested",
+      "Nothing the criteria require is missing",
+      "Nothing for the task is pending",
+      "Nothing the brief requires is pending review",
+      "None of the task is tested",
+    ]);
+  });
+
+  it("a state of the work between the 'nothing' and what it is about is work left (W15-14's form)", () => {
+    // Before, any words could stand between "for", "in" or "to meet" and the criteria, the brief
+    // or the task (the read predates L4-money-101).
+    work([
+      "Nothing for the tests has been written for the brief",
+      "Nothing in the code works for the task",
+      "Nothing in the repository is ready for the task",
+      "Nothing in the page is checked against the criteria",
+      "Nothing for the deploy is done to meet the criteria",
+    ]);
+  });
+
+  it("a list or a sentence of work after a colon, a semicolon or a comma is work left", () => {
+    work([
+      "Nothing for the criteria: tests, docs and the deploy",
+      "Nothing for the criteria: tests and docs remain",
+      "Nothing the criteria need: tests and docs",
+      "Nothing for the brief: write the tests and the README",
+      "Nothing for the brief: write the tests until they pass",
+      "Nothing for the task: tests pending",
+      "Nothing for the criteria; the deploy is pending",
+      "Nothing the brief requires, the tests are to do",
+      "Nothing for the criteria: hosts.md is written, the tests remain",
+      "Nothing: the criteria need tests and docs",
+      "Nothing: criteria 2 and 3 remain",
+      "None for the task: 1) the tests 2) the README",
+      "Nothing is done for the task; the whole suite remains",
+    ]);
+    // A line of work after it stays work beside it, and a note stays a note only beside a
+    // "nothing" that says the whole set needs nothing more.
+    expect(
+      left(["- Nothing the task requires has been tested", "- The list isn't exhaustive."]),
+    ).toEqual({
+      stopped: "here.",
+      leftToDo: ["Nothing the task requires has been tested", "The list isn't exhaustive."],
+    });
+  });
+
+  it("a line that says only that nothing is left is still nothing, however it names the whole set", () => {
+    for (const line of [
+      // The forms before (W15-14, L3-research-1, L4-money-101).
+      "Nothing the criteria require.",
+      "nothing that the brief still needs.",
+      "Nothing more is needed by the criteria",
+      "Nothing for the task's acceptance criteria.",
+      "Nothing is needed for the two criteria: each listed page gives its address and was opened.",
+      "Nothing the three criteria need: hosts.md covers each of them.",
+      "None required by the brief (the file lists every page it names).",
+      "Nothing left: the task is complete.",
+      "Nothing for each of the criteria.",
+      "Nothing to meet the task's acceptance criteria.",
+      "Nothing: the criteria are met and nothing remains.",
+      // The bench stand-in's note line (FORERUNNER_BENCH_LEFT_NOTE).
+      "Nothing is needed for the criteria: notes.md is written and each part of it was checked.",
+      // The general rule: what it is about, then only that nothing of it is left.
+      "Nothing the criteria require is left",
+      "Nothing the task's criteria require remains",
+      "Nothing the brief lists is outstanding",
+      "Nothing outstanding against the criteria",
+      "Nothing the acceptance criteria have asked for",
+      "Nothing within the brief's scope",
+      "Nothing on the task is left to do",
+      "Nothing the brief names is needed",
+      "Nothing listed in the brief is left to be done",
+      "Nothing else the task's requirements call for",
+    ])
+      expect(left([`- ${line}`]).leftToDo, line).toEqual([]);
+  });
+
+  describe("through the composed runtime", () => {
+    const clock = new SimulatedClock("2026-11-22T06:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-l4c-workstate-"));
+    const title = "Write the Swiss pairing rules";
+    /** A report after the wrap-up whose one item says nothing the task needs is tested. */
+    const REPORT = [
+      "Wrote `pairing.js` with the Swiss pairing rules and the table of results.",
+      "",
+      "Where I stopped: `pairing.js` is written. I did not run it and wrote no tests.",
+      "",
+      "Left to do:",
+      "- Nothing the task requires has been tested",
+    ].join("\n");
+    const calls: ModelRequest[] = [];
+    const fake = new FakeProvider({
+      clock,
+      latency: "none",
+      onNoMatch: "echo",
+      replies: [
+        submitReply({}, { times: Number.POSITIVE_INFINITY }),
+        closingReply(),
+        ...works(title, 30_000, REPORT),
+      ],
+    });
+    const stream = fake.stream.bind(fake);
+    fake.stream = (r) => {
+      calls.push({ ...r, messages: structuredClone(r.messages) });
+      return stream(r);
+    };
+    let rt: RuntimeApp;
+    let req: Req;
+    beforeAll(async () => {
+      ({ rt, req } = await compose(home, clock, fake));
+    }, 120_000);
+    afterAll(async () => {
+      if (rt) {
+        await settleSessions(rt);
+        await rt.close();
+      }
+      removeHomes([home]);
+    });
+
+    it("a run whose Left to do says nothing is tested pauses with one thing left and its Continue card; it is not reviewed", async () => {
+      const r = await runOne(req, rt, title, { budgetUsdMicro: 190_000 });
+      expect(calls.filter(coderOn(title)).find(heardWrapUp)).toBeDefined();
+      const task = await rt.store.task.mustGet(r.taskId);
+      expect(task.status).toBe("needs_human");
+      expect(await rt.store.review.latestForTask(r.taskId)).toBeUndefined();
+      expect(r.runs.map((x) => x.outcome)).toEqual(["paused"]);
+      expect(handoffOf(r.runs[0]?.artifacts)).toEqual({
+        stopped: "`pairing.js` is written. I did not run it and wrote no tests.",
+        leftToDo: ["Nothing the task requires has been tested"],
+        stoppedBy: "wrap_up",
+      });
+      expect(r.view.display).toMatchObject({ label: "Paused before its budget ran out" });
+      const said = lines(r.events);
+      expect(
+        said.filter((l) => l.startsWith(`"${title}" paused before its budget`)),
+        said.join(" | "),
+      ).toEqual([
+        '"Write the Swiss pairing rules" paused before its budget of CHF 0.15 ran out: it spent CHF 0.10 and listed one thing left to do; CHF 0.04 is kept for its review.',
+      ]);
+      const cards = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.filter(
+        (q) => q.taskId === r.taskId,
+      );
+      expect(cards.map((q) => [q.title, q.options])).toEqual([
+        [
+          '"Write the Swiss pairing rules" paused before its budget ran out',
+          ["Continue (CHF 0.16 more)", "Cancel task"],
+        ],
+      ]);
+    }, 60_000);
+  });
+});
+
+/**
  * l4-money-pause, run L4 (L4-money-103, live check 4's L3-run-10): under a project budget of
  * CHF 0.06 the writer's start line said "This run may spend CHF 1.20: before a step that could
  * take it past CHF 0.96 it is told to wrap up ..."; the project's budget then stopped it with no

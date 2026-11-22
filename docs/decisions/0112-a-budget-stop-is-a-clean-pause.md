@@ -653,3 +653,34 @@ CHF 0.04 for its review: it is told to wrap up before a step that could pass CHF
 CHF 0.04 to finish." The first wording ("what is left of the project's budget less the CHF 0.04
 kept for its review: before a step that could take it past ...") ran to about 210 characters and
 the session page cut it before its reserve.
+
+## Amendment 2026-11-22 (l4c-workstate, run L4: a line that says work remains is work)
+
+The review of l4-money-pause probed point 1's general rule and found that it read a Left-to-do
+line that says the work is not done as an empty list: "Nothing the task requires has been tested",
+"Nothing the brief asks for is tested", "Nothing the criteria require is in the repository" and
+four more. Such a line named the whole set, and the rule's list of work states knew only a few
+verbs, so the task went to its review instead of pausing, and its Continue card never came. The
+same probe found two older siblings of the same kind: a reason after punctuation was never read
+("Nothing for the criteria: tests and docs remain" was nothing since L3-research-1), and any words
+could stand between "for", "in" or "to meet" and what the line is about ("Nothing in the code
+works for the task" was nothing since W15-14).
+
+Point 5's parse now leans to the safe side: only a line that clearly says nothing is left is an
+empty list, and when unsure a line is work left. Ending a task early closes its Continue; a pause
+only asks the person once more. So:
+
+1. The general rule is a closed form, not a whole-set line less a list of work states: "nothing"
+   or "none", words that say left ("else", "more", "is left", "is needed", "to do"), what it is
+   about (a preposition and the whole set, or a relative clause such as "the brief lists"), at
+   most one more of those words or "remains", and nothing else. Any other word ("tested", "ready",
+   "pending", "in the repository", "untested") makes the line work.
+2. The words between the preposition and what a line is about are a closed list ("the", "this",
+   "the task's", "acceptance", "the scope of" ...).
+3. A reason after punctuation counts only when it says the work is done ("both are met",
+   "hosts.md covers each of them", "the file is written") and names none still to come ("remain",
+   "pending", "left", "to do", "need to", "then") and no order ("write the tests").
+
+Every phrasing the earlier points read as nothing (W15-14, L3-research-1, L4-money-101's live
+line, the bench stand-in's note line) still is. The trigger, the line, the reserve and the
+save-only rule are unchanged.

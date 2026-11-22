@@ -1384,7 +1384,9 @@ budget, or that wrapped up with work left, is paused: the critic does not review
 it does not count as a failed try, and its report stays in the task. A run that wraps up with
 nothing left is reviewed as usual. "Left to do" counts only what the task's acceptance criteria
 still need: "Nothing for the acceptance criteria" or "nothing the criteria require" is nothing, and an optional extra the agent
-suggests is kept as a note, so finished work goes to its review instead of waiting on a card. The card and the task name the limit that stopped it: the
+suggests is kept as a note, so finished work goes to its review instead of waiting on a card. A
+line that says the work is not done ("Nothing the task requires has been tested", "Nothing for
+the criteria: tests and docs remain") is work left: the task pauses and its card offers Continue. The card and the task name the limit that stopped it: the
 task's budget, the specialist's limit, the session's budget, the project's budget, this month's
 cap or the share of your Claude subscription Forerunner may use. A stop at the session's budget,
 the project's budget, the month's cap or the subscription's share ends the session, and the
