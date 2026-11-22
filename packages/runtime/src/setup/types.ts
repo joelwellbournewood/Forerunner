@@ -108,6 +108,12 @@ export const PlanAllowanceView = z.object({
   overridden: z.boolean(),
   /** The share of the allowance at which subscription work stops (the row's `planShareCap`). */
   stopShare: z.number(),
+  /**
+   * After a save that ended the share's stop (l4-cred-engine L4-creds-1, CE-6): what the work that
+   * waited for it does now ("Your subscription's allowance is raised: your session of 14:05 goes
+   * on now."); null or absent otherwise.
+   */
+  changeLine: z.string().nullable().optional(),
 });
 export type PlanAllowanceView = z.infer<typeof PlanAllowanceView>;
 

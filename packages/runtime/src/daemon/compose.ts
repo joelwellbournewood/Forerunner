@@ -257,7 +257,7 @@ import {
   waitSentence,
   waitThenStartSentence,
 } from "../session/credential-wait.ts";
-import { switchNotificationWords } from "../session/credential-words.ts";
+import { allowanceRaisedLine, switchNotificationWords } from "../session/credential-words.ts";
 import { DependentBranches } from "../session/dependent-branches.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
@@ -966,6 +966,13 @@ export interface RuntimeApp {
     waits: {
       wake(): Promise<number>;
       credentialSaved(kind: "api_key" | "subscription"): Promise<number>;
+      /**
+       * l4-cred-engine L4-creds-1 (CE-6): the person raised the subscription's allowance in
+       * Settings. When that ended the share's stop, the work that waited for it goes on as the
+       * wake decides (the person's waiting session now, or at the end of their quiet hours;
+       * other work at their next Start), and the change line says which; null otherwise.
+       */
+      allowanceRaised(): Promise<string | null>;
       /**
        * R-startcred: when no ready task of the project can run now because its credential rests
        * or was refused, the wait's sentence and where to save a new credential; else null. Only
@@ -4253,7 +4260,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       (await keptContinuationOf(store, projectId)) ?? (await keptStartOf(store, projectId));
     if (!found) return null;
     const source = await store.billingSource.get(found.sourceId).catch(() => undefined);
-    const until = source ? restingUntilOf({ limits: source.limits as never }, clock.now()) : null;
+    // l4-cred-engine L4-creds-1: the share's stop and a key's monthly cap end at the month's
+    // start (UTC), as the run indicator says (CS-7); before, "once its Claude credential is back".
+    const until = source
+      ? (restingUntilOf({ limits: source.limits as never }, clock.now()) ??
+        (await monthStopOf(store, source as never, clock.now()).catch(() => null))?.until ??
+        null)
+      : null;
     let at = until ?? null;
     if (found.kept.by === "continuation" && at) {
       const ends = quietHours.endsAt(Date.parse(at));
@@ -4673,6 +4686,44 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       if (kind === "subscription") subscriptionSaved = true;
       await taskBilling.credentialSaved(kind);
       return credentialWaits.wake();
+    },
+    allowanceRaised: async () => {
+      const sub = (await store.billingSource.list({ human_id: human.id }, { limit: 100 })).find(
+        (s) => s.kind === "subscription",
+      );
+      if (!sub) return null;
+      const entries = waitingOf(sub.limits);
+      // Only a stop that ended now: the subscription stopped by nothing else (a usage limit, a
+      // refusal) and its share under the cap again.
+      if (!entries.length || (await taskBilling.currentStopOf(sub.id).catch(() => null)))
+        return null;
+      await quietHours.refresh();
+      const nowMs = clock.now();
+      const kept = entries.find((w) => w.kept?.by === "continuation");
+      const words = { timezone: human.timezone, nowMs };
+      let line: string | null;
+      if (kept?.kept) {
+        const earlier = kept.kept.continues
+          ? await store.session.get(kept.kept.continues).catch(() => undefined)
+          : undefined;
+        line = allowanceRaisedLine(
+          {
+            session: { startedAt: earlier?.started_at ?? null },
+            quietUntil: quietHours.endsAt(nowMs) ?? null,
+          },
+          words,
+        );
+      } else {
+        let readyTasks = 0;
+        for (const w of entries)
+          readyTasks += (
+            await store.task.forProject(w.projectId, { status: "ready" }, { limit: 500 })
+          ).filter((t) => t.reason === CREDENTIAL_WAIT_REASON).length;
+        line = allowanceRaisedLine({ readyTasks }, words);
+      }
+      // The wake does what the line says: the waiting session goes on (S-10), nothing else.
+      await credentialWaits.wake();
+      return line;
     },
     now: async (projectId) => {
       const found = await credentialWaitNow(projectId);

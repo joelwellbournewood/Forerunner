@@ -52,6 +52,7 @@ import { GitHubHost } from "../../../packages/capabilities/src/githost/github.ts
 import { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
 import { ZERO_REFUSED } from "../../../packages/commands/src/commands/budget.ts";
 import { saidByName } from "../../../packages/critic/src/followup.ts";
+import { providerReply } from "../../../packages/runtime/test/cred-world.ts";
 import {
   AcceptingCriticProvider,
   removeHomes,
@@ -23228,6 +23229,160 @@ describe("d1109-selftasks-chat, run C", () => {
       await settleSessions(b.rt);
     } finally {
       await b.rt.close();
+    }
+  }, 120_000);
+});
+
+describe("l4-cred-engine, run L4", () => {
+  const oauth = ["sk-ant-oat01-", "l4credeng", "4".repeat(40)].join(""); // not-a-secret
+  const apiKey = ["sk-ant-api03-", "l4credeng", "5".repeat(40)].join(""); // not-a-secret
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /** The daemon as `fr daemon` composes it, no injected provider, read through the UI client. */
+  async function daemon(
+    clock: SimulatedClock,
+    sdkQuery: NonNullable<ComposeOptions["sdkQuery"]>,
+    prefix: string,
+  ) {
+    const home = mkdtempSync(join(tmpdir(), prefix));
+    homes.push(home);
+    const onKey = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
+    const standIn = messagesApiStandIn({ model: new AcceptingCriticProvider(onKey), clock });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      sdkQuery,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const keyCalls = () =>
+      standIn.requests.filter((r) => r.method === "POST" && r.path === "/v1/messages");
+    return { rt, client, keyCalls };
+  }
+
+  // L4-creds-1 (CE-6; the owner's D5: "Running out includes a usage limit, a plan-share cap and a
+  // monthly cap"): the share reached mid-run is a stop under 'then wait', and Settings' raise of
+  // the allowance (POST /settings/plan-allowance) ends it with its change line.
+  it("L4-creds-1: the share reached mid-run waits under 'then wait'; raising the allowance says the session goes on, and it does", async () => {
+    const clock = new SimulatedClock("2026-11-17T09:00:00Z");
+    let overShare = true;
+    const sdkQuery: NonNullable<ComposeOptions["sdkQuery"]> = ({ prompt, options }) => {
+      // The critic's review and chat are one-turn provider calls (cred-world's reply).
+      const o = (options ?? {}) as {
+        maxTurns?: number;
+        tools?: unknown[];
+        systemPrompt?: { prompt?: string };
+      };
+      if (o.maxTurns === 1 && Array.isArray(o.tools) && o.tools.length === 0) {
+        const system = o.systemPrompt?.prompt ?? "";
+        return providerReply({
+          prompt: String(prompt),
+          provider: true,
+          review: system.includes("submit_review"),
+          system,
+        });
+      }
+      const big = overShare;
+      overShare = false;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        yield {
+          type: "assistant",
+          message: {
+            id: big ? "m-big" : "m-small",
+            model: "claude-sonnet-5-5",
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: big
+              ? { input_tokens: 2_000, output_tokens: 1_000 }
+              : { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        if (big)
+          yield {
+            type: "assistant",
+            message: {
+              id: "m-after",
+              model: "claude-sonnet-5-5",
+              content: [{ type: "text", text: "Still writing." }],
+              usage: { input_tokens: 10, output_tokens: 5 },
+            },
+          };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+    const { rt, client, keyCalls } = await daemon(clock, sdkQuery, "fr-ui-real-l4share-");
+    try {
+      // USD 0.01 a month: the first call passes Forerunner's share of it.
+      await client.setPlanAllowance(0.01);
+      const project = await client.createProject({ name: "Pond notes", goal: "Pond notes" });
+      await client.createTask(project.id, {
+        title: "Write notes/pond.md",
+        outcome: "The notes are written",
+        acceptanceCriteria: ["it is done"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 0,
+      });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end to wait (at least 10 s of real time)",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      // No budget card that waits until the 1st; the row says the share's wait; nothing on the key.
+      const me = await client.me();
+      const open = (await client.inbox(me.id)).requests.filter((r) => r.status === "open");
+      expect(open.map((r) => r.title)).toEqual([]);
+      expect((await client.tasks(project.id)).map((t) => t.display?.label)).toEqual([
+        "Waits until Tue 1 Dec (your subscription's share)",
+      ]);
+      expect(keyCalls()).toHaveLength(0);
+      // A while later the person raises the allowance in Settings.
+      await clock.advance(10 * 60_000);
+      const raised = await client.setPlanAllowance(160);
+      expect(raised.changeLine).toBe(
+        "Your subscription's allowance is raised: your session of 10:00 goes on now.",
+      );
+      await eventually(
+        async () => (await client.tasks(project.id)).every((t) => t.status === "done"),
+        "the waiting session to go on and finish the task (at least 10 s of real time)",
+        async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+        20_000,
+      );
+      expect(keyCalls()).toHaveLength(0);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
     }
   }, 120_000);
 });

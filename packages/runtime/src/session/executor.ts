@@ -4,6 +4,7 @@ import {
   BUILTIN_PRICING,
   DEFAULT_CHF_PER_USD,
   formatChf,
+  nextMonthStartIso,
   type PricingTable,
   usdToChfMicro,
 } from "@forerunner/billing";
@@ -1752,12 +1753,23 @@ export class LoopTaskExecutor implements TaskExecutor {
     // refusal. Known before the Run row is written, so the row never reads "Failed" for it (the
     // leftovers of wave 7: the task's drawer listed such a run as failed while the task went
     // back to ready).
+    // l4-cred-engine L4-creds-1 (CE-6, the owner's D5: "Running out includes a usage limit, a
+    // plan-share cap and a monthly cap"): the subscription's share Forerunner may use, reached in
+    // the middle of the run (the hooks' plan level refused the next call), is a stop of that
+    // credential like its usage limit: the person's policy decides what comes next. Before, it
+    // was a budget pause with a card that waited until the 1st, whatever the person chose.
+    const shareStop =
+      result.outcome === "budget_exceeded" &&
+      stopSourceOf(result.error, runCapSource) === "plan" &&
+      choice.pick?.source.kind === "subscription";
     const credentialStop =
       result.error?.code === USAGE_LIMIT_CODE
         ? ("limit" as const)
         : result.error?.code === "provider_auth" && choice.pick
           ? ("refused" as const)
-          : null;
+          : shareStop
+            ? ("share" as const)
+            : null;
     // The live writes of each call's cost come first, so the run's own total is the last word.
     await liveRunWrites;
     try {
@@ -1776,7 +1788,7 @@ export class LoopTaskExecutor implements TaskExecutor {
         outcome:
           handoff?.stoppedBy === "wrap_up"
             ? "paused"
-            : credentialStop === "limit"
+            : credentialStop === "limit" || credentialStop === "share"
               ? "usage_limit"
               : credentialStop === "refused"
                 ? "credential_refused"
@@ -1791,11 +1803,15 @@ export class LoopTaskExecutor implements TaskExecutor {
         artifacts: [
           ...(switched ? [switchArtifact(switched)] : []),
           ...result.artifacts,
-          ...(handoff
-            ? [...reportArtifact, ...errorArtifact, handoffArtifact(handoff)]
-            : errorArtifact.length
-              ? errorArtifact
-              : reportArtifact),
+          // L4-creds-1: the share's stop keeps the run's report and handoff for the run that
+          // continues it (`credentialStopOfRun` reads the marker: CE-5's brief), never an error.
+          ...(credentialStop === "share" && handoff
+            ? [...reportArtifact, handoffArtifact(handoff), { credentialStop: "share" }]
+            : handoff
+              ? [...reportArtifact, ...errorArtifact, handoffArtifact(handoff)]
+              : errorArtifact.length
+                ? errorArtifact
+                : reportArtifact),
         ],
       });
     } catch (e) {
@@ -1824,6 +1840,8 @@ export class LoopTaskExecutor implements TaskExecutor {
           .catch((e: unknown) =>
             this.logger.warn("the refused credential was not marked", { error: errorMessage(e) }),
           );
+      // The share's stop lasts until the month's start (UTC), or a raised allowance.
+      if (credentialStop === "share") until = nextMonthStartIso(this.deps.clock.now());
       const found = await this.nextCredential(ctx, tier, needs);
       // A pick that could not say (no billing port): the task waits for this credential.
       const next =
@@ -1834,7 +1852,7 @@ export class LoopTaskExecutor implements TaskExecutor {
                 reason: credentialStop,
                 sourceId: source?.id ?? "",
                 kind: source?.kind ?? "api_key",
-                until: credentialStop === "limit" ? (until ?? null) : null,
+                until: credentialStop === "refused" ? null : (until ?? null),
               } satisfies CredentialWait,
             };
       if (next.wait) {

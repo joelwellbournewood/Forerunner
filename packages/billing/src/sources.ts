@@ -32,6 +32,12 @@ export interface BillingSourceLimits {
    */
   planUsdMicro?: number;
   /**
+   * ISO time the person last set the allowance in Settings (l4-cred-engine L4-creds-1): the
+   * shares this month's rows carry from before were worked out with the old allowance, so only
+   * the rows since then count as reported (a raised allowance ends the share's stop).
+   */
+  planAllowanceSetAt?: string;
+  /**
    * True when the cloud runner that would use this subscription is the owner's personal
    * runner. Only then may a subscription be used off the owner's PC (spec, Security).
    */

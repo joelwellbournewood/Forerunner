@@ -1135,6 +1135,15 @@ A waiting task's row says why and until when: "Waits until 15:40 (your subscript
 answer: use your API key?" with **Answer**. The project's status line says it once ("Waiting for
 you: use your API key?").
 
+Reaching the share of your subscription that Forerunner may use in the middle of a task is
+running out too, and your choice decides what happens, as for a usage limit: the work goes on
+with your API key from where it stopped, one card asks you first, or the work waits until the
+1st of the month (a session you started then goes on by itself). The task keeps what it did and
+is not counted as a failed try. If you raise Settings → **Claude subscription allowance** above
+what was used, the stop ends at once, and the saved line says what happens now ("Your
+subscription's allowance is raised: your session of 14:05 goes on now.", or "... 2 tasks are
+ready again for your next Start.").
+
 When work moves onto your API key (your choice, or your yes), the session log says it once:
 '"Style the page" goes on with your API key from where it stopped: your subscription is at its
 limit until 15:40.' (after your yes: '..., and you said yes.'); later tasks of the same stop are
@@ -1148,6 +1157,10 @@ subscription: CHF 2.10 (estimate, 12% of its allowance)").
 While chat waits for your subscription it says so and offers **Use API key** for that one question
 ("Answers this question on your API key: about CHF 0.02."); the press asks it again once, on the
 key, and the answer's note says so. It gives no standing yes: the next question waits again.
+
+An expired or signed-out Claude sign-in is read as a refusal however Claude Code reports it:
+the task is never marked Failed for it, chat does not ask the refused sign-in again, and Costs
+lists no model for the refused call.
 
 If Anthropic refuses your API key or your Claude sign-in (a revoked key, an expired sign-in),
 one card says so in the Inbox ("Anthropic refused your API key. Save a new one in Settings."),

@@ -380,6 +380,12 @@ export interface FakeDaemonOptions {
   /** FORERUNNER_PLAN_USD_MONTHLY decides the subscription allowance (U-052). Default false. */
   planAllowanceOverridden?: boolean;
   /**
+   * l4-cred-engine, run L4 (L4-creds-1, CE-6): the change line a save answers with when the
+   * raise ended the subscription's share stop ("Your subscription's allowance is raised: ...").
+   * Default null (nothing waited for the share).
+   */
+  planAllowanceChangeLine?: string | null;
+  /**
    * Settings -> Claude: which to use first (U-078): the credentials `GET /settings/billing-order`
    * lists (each source's fields over a usable default), and the order chosen at start (none by
    * default). Default: a subscription and an API key, both usable.
@@ -8215,7 +8221,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     allowance.usdMonthly = Math.round((chfMonthly / allowanceRate) * 100) / 100;
     allowance.origin = "config";
-    return c.json(allowanceView());
+    // l4-cred-engine, run L4 (L4-creds-1): what the work that waited for the share does now.
+    return c.json({ ...allowanceView(), changeLine: options.planAllowanceChangeLine ?? null });
   });
   // Settings -> Claude: which to use first (U-078), mirroring
   // packages/runtime/src/daemon/billing-order-routes.ts: the rows in the person's order (else

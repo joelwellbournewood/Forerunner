@@ -365,6 +365,32 @@ export function chatSwitchNote(
   return `Answered with ${yourCredential(to)}: ${shortStoppedPhrase(wait, until)}.`;
 }
 
+// ── CE-6 (l4-cred-engine L4-creds-1): a raised allowance ends the share's stop ─────────────────
+
+/**
+ * The line Settings shows after the person raised the subscription's allowance and the share's
+ * stop ended: their session that waited goes on now (or at the end of their quiet hours), or the
+ * tasks that waited are ready for their next Start. Null when nothing waited for the share.
+ */
+export function allowanceRaisedLine(
+  input:
+    | { session: { startedAt: string | null }; quietUntil: string | null }
+    | { readyTasks: number },
+  words: { timezone?: string; nowMs: number },
+): string | null {
+  const head = "Your subscription's allowance is raised";
+  if ("session" in input) {
+    const of = input.session.startedAt
+      ? ` of ${clockTime(input.session.startedAt, words.timezone, words.nowMs)}`
+      : "";
+    return input.quietUntil
+      ? `${head}: your session${of} goes on at ${clockTime(input.quietUntil, words.timezone, words.nowMs)}, after your quiet hours.`
+      : `${head}: your session${of} goes on now.`;
+  }
+  if (input.readyTasks <= 0) return null;
+  return `${head}: ${input.readyTasks === 1 ? "1 task is" : `${input.readyTasks} tasks are`} ready again for your next Start.`;
+}
+
 // ── CE-13: the setting ───────────────────────────────────────────────────────────────────────
 
 /** settings.set billing_order or mid_session_limit (and their Undo) once the policy is stored. */

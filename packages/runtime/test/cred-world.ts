@@ -43,7 +43,7 @@ export type SdkMessage = Record<string, unknown>;
 const ev = (event: Record<string, unknown>): SdkMessage => ({ type: "stream_event", event });
 
 /** A provider call's reply as Claude Code streams it (`includePartialMessages`). */
-async function* providerReply(call: SdkCall): AsyncIterable<SdkMessage> {
+export async function* providerReply(call: SdkCall): AsyncIterable<SdkMessage> {
   yield { type: "system", subtype: "init", session_id: "cc-world" };
   yield ev({
     type: "message_start",

@@ -159,8 +159,9 @@ export async function seedBillingSources(
  * The daemon's probe: a source is available when the vault holds its credential (the fake
  * source needs none); a subscription reports the plan share this month, which is the larger
  * of the share the month's ledger rows carry (`MAX(plan_usage_share)`, what the last run or a
- * probe reported) and the month's API-equivalent spend over the source's allowance
- * (`limits.planUsdMicro`) when it has one; an API-style source reports the month's spend so
+ * probe reported; only the rows since the allowance was last set in Settings, L4-creds-1) and
+ * the month's API-equivalent spend over the source's allowance (`limits.planUsdMicro`) when it
+ * has one; an API-style source reports the month's spend so
  * the router can apply `limits.monthlyUsdMicro`.
  */
 export class VaultLedgerProbe implements BillingSourceProbe {
@@ -471,7 +472,20 @@ export async function planUsageOf(
     typeof source.limits.planUsdMicro === "number" && source.limits.planUsdMicro > 0
       ? source.limits.planUsdMicro
       : null;
-  const reported = typeof sum.plan_usage_share === "number" ? sum.plan_usage_share : null;
+  // l4-cred-engine L4-creds-1 (CE-6, U-052): the shares the rows carry were worked out with the
+  // allowance of their day, so once the person sets the allowance again (Settings,
+  // `limits.planAllowanceSetAt`) only the rows since then count as reported; the month's spend
+  // over the allowance in force now still counts whole. Before, the largest share of the month
+  // held the share's stop until the month's end whatever the person raised the allowance to.
+  const setAt = source.limits.planAllowanceSetAt;
+  const window = monthWindow(clock.now());
+  const since =
+    typeof setAt === "string" && setAt > window.from && setAt < window.to ? setAt : null;
+  const reportedSum = since
+    ? await store.costLedger.sum({ billingSourceId: source.id, from: since, to: window.to })
+    : sum;
+  const reported =
+    typeof reportedSum.plan_usage_share === "number" ? reportedSum.plan_usage_share : null;
   const estimated = allowance ? sum.usd_micro / allowance : null;
   const share =
     reported === null && estimated === null
@@ -1105,11 +1119,19 @@ export class RouterTaskBilling implements TaskBillingPort {
       const refusedIn = (limits: JsonObject) =>
         refusedNow({ limits: limits as BillingSource["limits"] }, current) !== null;
       const refused = refusedIn(listed.limits as JsonObject);
+      // l4-cred-engine L4-creds-1: the share's stop and a key's monthly cap hold their waits too
+      // until the month's start or a raised allowance or cap (as the pick holds them, CE-2).
+      // Before, a wait on the share was taken at every wake: the person's waiting session went
+      // on, met the share at its pick and waited again, a new session each time.
+      const monthStop = (await this.currentStopOf(listed.id).catch(() => null))?.reason;
+      const monthStopped = monthStop === "share" || monthStop === "key_month";
       // A source that cannot serve: the projects whose work another credential serves now
       // (async, so asked before the write).
       const servedElsewhere = new Set<string>();
       const stuck =
-        refused || !!restingUntilOf({ limits: listed.limits as BillingSource["limits"] }, now);
+        refused ||
+        monthStopped ||
+        !!restingUntilOf({ limits: listed.limits as BillingSource["limits"] }, now);
       if (stuck && servesNow)
         for (const w of waitingOf(listed.limits))
           if (await servesNow(w.projectId).catch(() => false)) servedElsewhere.add(w.projectId);
@@ -1118,7 +1140,9 @@ export class RouterTaskBilling implements TaskBillingPort {
         stale = typeof limits.refusedAt === "string" && !refusedHere;
         const waiting = waitingOf(limits);
         const free =
-          !refusedHere && !restingUntilOf({ limits: limits as BillingSource["limits"] }, now);
+          !refusedHere &&
+          !monthStopped &&
+          !restingUntilOf({ limits: limits as BillingSource["limits"] }, now);
         taken = free ? waiting : waiting.filter((w) => servedElsewhere.has(w.projectId));
         const kept = free ? [] : waiting.filter((w) => !servedElsewhere.has(w.projectId));
         nothingWaits = refusedHere && taken.length > 0 && kept.length === 0;

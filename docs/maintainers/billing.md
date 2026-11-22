@@ -363,6 +363,17 @@ next source serves. A grant for the current stop key lets the granted kind serve
 `asking`, `grant`, `switchNotified`, `refusedCard` and `refusedCategory`; none holds a credential.
 Tests: `policy.test.ts`, `router.test.ts` ("d1109-cred-engine, run C").
 
+**The share reached mid-run** (l4-cred-engine L4-creds-1, CE-6, 2026-11-22): the hooks' plan level
+still refuses the call that would pass the share (caps unchanged); the executor reads that refusal
+as the subscription's stop `share`, so the policy decides (next: the key from the kept work; ask:
+one card; wait: the person's session goes on at the month's start UTC). `limits.planAllowanceSetAt`
+(append-only) is the time the person last set the allowance in Settings: the probe's reported
+share counts only the rows booked since then (theirs were worked out with the old allowance), so
+a raised allowance ends the stop at once; the month's spend over the allowance in force still
+counts whole. The runtime's `takeReady` keeps a wait on the share or a key's monthly cap until the
+stop ends, as the pick does (before, every wake took it and the waiting session went on into the
+same stop).
+
 `CREDENTIAL_POLICY_LABELS`, `credentialPolicyLabel` and `credentialPolicyEffectWords` are the
 presets' names and one-line effects (d1109-cred-screens: the Settings section, the Changes row and
 the read-back use the same words; `@forerunner/billing/policy` is imported by the UI's fake daemon,

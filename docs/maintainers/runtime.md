@@ -8046,6 +8046,22 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   gets no pre-call estimate and is booked only if it ever carries usage, under the run's model;
   a `<synthetic>` key in the result's `modelUsage` is the run's model. Before, Costs listed
   "<synthetic>" with zero tokens.
+- **The share reached mid-run is a credential stop** (L4-creds-1, CE-6; the owner's D5: "Running
+  out includes a usage limit, a plan-share cap and a monthly cap"): the executor reads a run's
+  `budget_exceeded` at level `plan` on the subscription as the stop `share` (the Run row
+  `usage_limit` with the artifact `{credentialStop: "share"}`, its report and handoff kept for
+  CE-5's brief, no attempt counted, no budget card). The policy then decides as for a usage
+  limit: under next the task goes on at once on the key from its kept work, under ask one card
+  for the stop, under wait the person's session ends to wait and goes on at the month's start UTC
+  (or at the end of their quiet hours). `billing.waits.allowanceRaised()` (Settings' `POST
+  /settings/plan-allowance`, `PlanAllowanceView.changeLine`, `allowanceRaisedLine`): when a raise
+  ended the stop, the waiting session goes on through the wake and the line says so ("Your
+  subscription's allowance is raised: your session of 14:05 goes on now.", with quiet hours "...
+  goes on at 07:00, after your quiet hours."), else "Your subscription's allowance is raised: 2
+  tasks are ready again for your next Start."; null when nothing waited. `continuations.waiting`
+  names the month's start for the share and a key's monthly cap (`monthStopOf`). The budget
+  card's 'plan' path stays for a critic's review that meets the share (runner's review pause) and
+  for cards stored before.
 
 Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
 throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the
@@ -8053,7 +8069,10 @@ throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in tab
 `cred-world.ts` at the routes: one refused card, no failed-task card or notification, the task
 waits, Settings reads refused, chat holds with no new call, no `<synthetic>` in Costs; the usage
 limit and Claude Code's spending limit after the throw; a run and a chat question meeting the
-refusal together), `sdk-contract.test.ts` (the real SDK against a local 401).
+refusal together), `sdk-contract.test.ts` (the real SDK against a local 401),
+`credential-share-midrun.test.ts` (the share reached mid-run under next, ask and wait, the raise,
+the month's start and restarts), the UI's `settings-plan-allowance.test.tsx` and the real-daemon
+describe "l4-cred-engine, run L4".
 
 ## How to change it
 
