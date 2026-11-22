@@ -25029,12 +25029,29 @@ describe("l4-cred-screens, run L4", () => {
   /** 10:40 UTC, 11:40 in Zurich (the person's zone). */
   const resetAt = "2026-03-05T10:40:00.000Z";
 
-  /** Claude Code at its limit on its first `atLimit` calls, then it serves. */
+  /**
+   * Claude Code at its limit on its first `atLimit` calls, then it serves: a task run writes its
+   * report; a one-turn provider call (the critic's review, chat) answers as cred-world's does.
+   */
   const claudeCode =
     (calls: string[], atLimit = 1): NonNullable<ComposeOptions["sdkQuery"]> =>
-    ({ prompt }) => {
+    ({ prompt, options }) => {
       calls.push(prompt);
       const limited = calls.length <= atLimit;
+      const o = (options ?? {}) as {
+        maxTurns?: number;
+        tools?: unknown[];
+        systemPrompt?: { prompt?: string };
+      };
+      if (!limited && o.maxTurns === 1 && Array.isArray(o.tools) && o.tools.length === 0) {
+        const system = o.systemPrompt?.prompt ?? "";
+        return providerReply({
+          prompt: String(prompt),
+          provider: true,
+          review: system.includes("submit_review"),
+          system,
+        }) as never;
+      }
       return (async function* () {
         yield { type: "system", subtype: "init", session_id: "sdk" };
         if (limited) {
@@ -25244,9 +25261,7 @@ describe("l4-cred-screens, run L4", () => {
         (card?.planTasks ?? []).reduce((s, t) => s + (t.estimateUsdMicro ?? 0), 0),
         check.workBudget.usdMicro,
       );
-      expect(Math.abs(Number(figure?.slice(4)) - (planned * rate) / 1_000_000)).toBeLessThan(
-        0.011,
-      );
+      expect(Math.abs(Number(figure?.slice(4)) - (planned * rate) / 1_000_000)).toBeLessThan(0.011);
     } finally {
       await settleSessions(rt);
       await rt.close();
@@ -25324,4 +25339,46 @@ describe("l4-cred-screens, run L4", () => {
       await second.rt.close();
     }
   }, 120_000);
+
+  // L4-creds-17 (live check 4, LC-C26: under "API key first, then subscription" with the key at
+  // its limit the Start dialog said nothing of which Claude does the work): the 'next' branch
+  // names the stop in either direction, and Start runs on the subscription.
+  it("L4-creds-17: key first with the key resting: the dialog's line names the key's limit and the subscription, and Start runs on the subscription", async () => {
+    const calls: string[] = [];
+    const { rt, client, keyCalls } = await composeL4({ sdkQuery: claudeCode(calls, 0) });
+    try {
+      await setPolicyL4(client, "key_then_subscription");
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addTask(client, project.id, "Style the page");
+      await restSource(rt, "api_key", resetAt);
+      const check = await client.startCheck(project.id);
+      expect(check.credential?.line).toMatch(
+        /^Your API key is at its limit until 11:40, so this runs on your subscription \((about CHF \d+\.\d\d|less than CHF 0\.01)\)\.$/,
+      );
+      expect(check.blocked).toBeNull();
+      expect(check.credential?.runOut).toBeNull();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () => (await client.tasks(project.id)).every((t) => t.status === "done"),
+        "the task to run on the subscription (at least 10 s of real time)",
+        async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+        20_000,
+      );
+      expect(keyCalls()).toHaveLength(0);
+      const runs = await rt.store.run.list({ session_id: sessionId } as never, { limit: 20 });
+      const work = runs.filter((r) => r.specialist !== "critic");
+      expect(work.length).toBeGreaterThan(0);
+      for (const r of work) {
+        const source = r.billing_source_id
+          ? await rt.store.billingSource.get(r.billing_source_id)
+          : undefined;
+        expect(source?.kind).toBe("subscription");
+      }
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
 });

@@ -366,3 +366,24 @@ describe("l4-cred-screens, run L4: the plan sentence stays beside the stop line 
     expect(within(dialog).queryByTestId("start-session-plan")).toBeNull();
   });
 });
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-17, live check 4's LC-C26): under "API key first, then
+ * subscription" with the key at its limit, the dialog's line names the stop and the subscription
+ * that runs it, in the daemon's words, with the plain Start.
+ */
+describe("l4-cred-screens, run L4: the key-first direction in the Start dialog (L4-creds-17)", () => {
+  it("shows 'Your API key is at its limit until 11:40, so this runs on your subscription (...)' under the plan, with Start", async () => {
+    const harness = createHarness();
+    harness.daemon.state.startCredential.proj_atlas = {
+      line: "Your API key is at its limit until 11:40, so this runs on your subscription (about CHF 0.07).",
+      runOut: null,
+    };
+    const { dialog } = await openDialog(harness);
+    expect(await within(dialog).findByTestId("start-session-credential")).toHaveTextContent(
+      /^Your API key is at its limit until 11:40, so this runs on your subscription \(about CHF 0\.07\)\.$/,
+    );
+    expect(within(dialog).getByTestId("start-session-plan")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("confirm-start-session")).toHaveTextContent(/^Start$/);
+  });
+});

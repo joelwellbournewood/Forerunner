@@ -611,3 +611,33 @@ describe("l4-cred-screens, run L4: the needs form (L4-creds-16)", () => {
     }
   });
 });
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-17, live check 4's LC-C26): under "API key first, then
+ * subscription" with the key out, the Start dialog names the stop in that direction, and no line
+ * says the subscription costs money.
+ */
+describe("l4-cred-screens, run L4: the key-first direction (L4-creds-17)", () => {
+  it("the dialog's run-out line with the key first, and the plan card without '(costs money)'", () => {
+    expect(startRunOutLine("api_key", limit, "about CHF 0.07", opts)).toBe(
+      "Your API key is at its limit until 15:40, so this runs on your subscription (about CHF 0.07).",
+    );
+    const keyFirst = ruleOf("key_then_subscription");
+    const line = planCardLine(keyFirst, both, { kind: "api_key", stop: limit }, opts);
+    expect(line).toBe(
+      "Your API key is at its limit until 15:40: your subscription does the work meanwhile.",
+    );
+    expect(line).not.toContain("costs money");
+    expect(
+      planCardLine(
+        keyFirst,
+        both,
+        { kind: "api_key", stop: limit },
+        {
+          ...opts,
+          about: "about CHF 0.07",
+        },
+      ),
+    ).toBe("Your API key is at its limit until 15:40: your subscription does the work meanwhile.");
+  });
+});

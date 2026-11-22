@@ -130,10 +130,24 @@ export async function startCredential(
     const left = await deps.monthLeftUsdMicro();
     return left === null || left > 0;
   };
+  // l4-cred-screens (L4-creds-17, live check 4's LC-C26): under 'next' the other credential takes
+  // over in either direction: the API key after the subscription (and the month has room), or the
+  // subscription after the key, when the rule lets it serve and it has no stop of its own. Before,
+  // `serves` was written for the subscription first only, so with the key first and resting the
+  // dialog said nothing of which Claude does the work.
+  const nextServes = async (): Promise<boolean> => {
+    if (first.kind === "subscription") return serves();
+    if (!policy.rule.kinds.includes("subscription")) return false;
+    const sub = (await deps.store.billingSource.list({ human_id: deps.humanId }, { limit: 100 }))
+      .filter((r) => r.kind === "subscription" && r.enabled)
+      .sort((a, b) => a.priority - b.priority)[0];
+    if (!sub) return false;
+    return !(await deps.billing?.currentStopOf(sub.id).catch(() => ({ stopKey: "?" })));
+  };
   if (policy.rule.whenStopped === "next")
     return {
       view: {
-        line: (await serves()) ? startRunOutLine(first.kind, stop, about, opts) : null,
+        line: (await nextServes()) ? startRunOutLine(first.kind, stop, about, opts) : null,
         runOut: null,
       },
       offer: null,

@@ -214,3 +214,8 @@ answer 3 ("For all work.": the yes covers all work until the stop ends) and his 
    API key: only it can read web pages here." with what holds the key and what then; the status
    line "Waiting for your API key (only it can read web pages here)"; the bar's waiting entry
    "Only your API key can read web pages here." beside its words.
+4. **The other credential takes over in either direction (L4-creds-17).** Under "next" the Start
+   dialog's line names the stop and the credential that runs the start, also with the key first
+   ("Your API key is at its limit until 11:57, so this runs on your subscription (about CHF
+   0.07)."; `nextServes` in credential-start.ts). The plan card says "(costs money)" only after
+   the API key.

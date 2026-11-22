@@ -1187,6 +1187,12 @@ status head (`line`) and the bar's `why`; compose's `waitingContinuations` sets 
 `explain` from it and server.ts' `startsWaitOf` uses the needs head for the waiting
 continuation's status line.
 
+**Key first, key out (L4-creds-17).** `startCredential`'s 'next' branch asks `nextServes`: with
+the subscription first, today's `serves` (the key enabled, no stop, the month has room); with the
+key first, the subscription enabled, in the rule's kinds and without a stop of its own. The line
+is `startRunOutLine(first.kind, ...)`. `serves` alone still decides "Use API key" under ask and
+wait. `planCardLine` adds the cost clause only when the other credential is the API key.
+
 **Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
 left the row `running`, its run `running` and its task held under a claim nobody renews; the
 one-session rule then refused every later start ("agent Alice already has an active session

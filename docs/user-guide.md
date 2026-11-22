@@ -1172,6 +1172,10 @@ page says so with **Answer**, and the card names what the waiting work costs on 
 CHF 0.40"). If your choice moves work onto the key by itself, you get one notification for that
 stop with its cost.
 
+Under "API key first, then subscription" with your key at its limit, the Start dialog says so and
+that the session runs on your subscription ("Your API key is at its limit until 11:57, so this
+runs on your subscription (about CHF 0.07)."), and **Start** runs it there.
+
 The card, the Start dialog's **Use API key** and the plan card's last line give one figure for
 the same waiting work: the tasks that wait, the ones that follow them, and the critic's reviews of
 each, never more than the session's work budget. The dialog still names the tasks it runs above
