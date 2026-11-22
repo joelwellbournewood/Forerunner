@@ -96,8 +96,10 @@ import {
 } from "./budget-pause.ts";
 import { fileCannotRunCard, plainStopReason } from "./cannot-run-card.ts";
 import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
+import { CREDENTIAL_ASK_KEY } from "./credential-ask.ts";
 import { type SessionSwitchRow, sessionSwitches } from "./credential-switch.ts";
 import {
+  CREDENTIAL_REFUSED_KEY,
   CREDENTIAL_WAIT_REASON,
   CREDENTIAL_WAIT_STOP,
   type CredentialWait,
@@ -3983,10 +3985,26 @@ export class SessionRunner {
     // Update and the session-end notification leave out what a card says (the session page and
     // the Overview keep the whole result). Before, one failed task was told by its card, by the
     // session end's '"X" needs your decision' and by an Update under the card (phase E, #87).
+    // l4-cred-engine L4-creds-3: the person's open card of the credential stop the session waits
+    // for (Anthropic refused it, or the stop's ask card; neither has a project) tells the wait.
+    const credentialCard = credentialWait
+      ? (
+          await store.humanRequest
+            .open({ humanId: agent.owner_human_id }, { limit: 200 })
+            .catch(() => [])
+        ).some((r) => {
+          const card = (r.change_card ?? {}) as { key?: unknown; source_id?: unknown };
+          return (
+            (card.key === CREDENTIAL_REFUSED_KEY || card.key === CREDENTIAL_ASK_KEY) &&
+            card.source_id === credentialWait?.sourceId
+          );
+        })
+      : false;
     const news = sessionResultLines(resultFacts, {
       tasks: carded,
       docker: openCards.some(isDockerCard),
       plan: true,
+      ...(credentialCard ? { credential: true } : {}),
     }).filter((l) => l.trim().length > 0);
     // Project docs (spec G.5): the PM's status update into docs/status.md, on Forerunner's own
     // status branch and pull request, never on a task's reviewed one (ADR 0106); in a project's

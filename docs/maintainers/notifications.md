@@ -283,6 +283,30 @@ stopped by you" back to them. Now:
   (Stop now: the session page says "Stopped by you"; `KillSwitch.onStop` already skips
   `by === "you"`), `stop_all` and `quit` (the kill switch's urgent notification is the one).
   A budget stop is always told (`budget_stop`, urgent).
+- **A credential card says what the card says** (l4-cred-engine L4-creds-3, 2026-11-22): compose's
+  humanRequest insert hook reads the card's context as the Inbox does (`requestContexts` in
+  `daemon/views.ts`: the person's time zone and the ask card's filing time, a refused card's
+  category and the person's rule), so `requestOpened`'s title and body equal the card's ("Use
+  your API key until 08:26?" in the person's zone; before, 07:26 in UTC). A card with nothing to
+  answer (no choice, `reply: "none"`) and one link ends on its own sentence and opens that link
+  (a refused key's card: the setup assistant), never "Answer it in the Inbox.". The ask card's
+  words take "now" from its `filed_at`, never from the clock of the reader.
+- **The refused and ask cards speak for the credential wait.** `ToldByCards.credential` is set
+  when the person has an open refused card or ask card for the source the session's wait names
+  (cards of no project: the query is the person's); the "credential wait" result line is then
+  left out of `news`, so a session whose only news is that wait sends no `session_ended` and no
+  Update. The session page and the Overview keep the whole result.
+- **Once per body:** `sessionEnded` adds "Answer it in the Inbox." only when the rest does not
+  already point there ("The card is in the Inbox."); `fit` counts names a list already counted
+  ('"A", "B" and 2 more' cut to one name reads '"A" and 3 more', never '... and 1 more and 2
+  more').
+
+Tests: `test/notifications-credential-cards.test.ts` (the words above, with and without the
+zone), `test/credential-notify-once.test.ts` (composed on `cred-world.ts`: a refused key with one
+ready task is one notification with the card's sentence and the setup link, no session end, no
+Update; a held chat question names the reset in a zone changed in Settings), and the UI's
+real-daemon describe "l4-cred-engine, run L4" (the ask card's notification in Zurich time on a
+machine in UTC).
 
 Tests: `test/notifications-hear-once.test.ts` composes the daemon with the bench's
 role-playing stand-in and its failure injection and reads `GET /notifications/recent`,

@@ -8062,6 +8062,12 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   names the month's start for the share and a key's monthly cap (`monthStopOf`). The budget
   card's 'plan' path stays for a critic's review that meets the share (runner's review pause) and
   for cards stored before.
+- **Heard once, in the person's zone** (L4-creds-3): the notification of a card is built from the
+  Inbox's context (`notifications.md`, "Hearing once"); `ToldByCards.credential` leaves the
+  credential wait out of the session's news while its refused or ask card is open. The person's
+  time zone and monthly cap are read at each use (`zoneNow()` in compose for every wait
+  sentence, chat's `credentialHold` reads the person row per question), never the row composed
+  at start; `RouteContext.nowMs` is required.
 
 Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
 throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the

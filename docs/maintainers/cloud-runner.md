@@ -49,7 +49,7 @@ U.8 (sessions carry `runner: "cloud"` and the runner's device id).
 | `src/vault-unlock.ts` | the unlock protocol: `RunnerVaultUnlock` (runner side), `answerUnlockChallenge` (node device side for scripts and tests), the audit tool names; the constants, `shouldAutoAnswer` and the WebCrypto `wrapVaultKey` come from `@forerunner/vault/runner-unlock` (ADR 0068) |
 | `src/presence.ts` | `PcPresence`: the PC-wins rule over `device.last_seen` and `session.runner` |
 | `src/inbox-trigger.ts` | `InboxTrigger`: a peer's unread message or the human's answer to a session's question asks for a `message` session (the PC rule applies) |
-| `src/billing.ts` | `pickRunnerBillingSource`: the human's source for cloud sessions, decided by `BillingRouter` from `@forerunner/billing`; `runnerRoutingPolicy`, `VaultCredentialProbe` |
+| `src/billing.ts` | `pickRunnerBillingSource`: the human's source for cloud sessions, decided by `BillingRouter` from `@forerunner/billing` with the runner's clock (`clock`, the router's required `nowMs`, l4-cred-engine 2026-11-22); `runnerRoutingPolicy`, `VaultCredentialProbe` |
 | `src/remote.ts` | `RemoteCommandWatcher`: `remote_command` rows with target `cloud` (kill, stop, start, pause refused), from the runner's human's devices only |
 | `src/email-watch.ts` | `EmailWatch`: the email module composed around the agent's mailbox; the completion hook |
 | `src/health.ts` | `createHealthApp` (the Hono app) and `startHealthServer` (`@hono/node-server`, loopback only), the readiness file |

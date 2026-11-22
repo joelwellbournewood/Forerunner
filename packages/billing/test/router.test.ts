@@ -16,8 +16,21 @@ const ctx = (over: Partial<RouteContext> = {}): RouteContext => ({
   runner: "pc",
   purpose: "session",
   modelTier: "sonnet",
+  nowMs: Date.now(),
   ...over,
 });
+
+// l4-cred-engine L4-creds-3: a route without the caller's clock does not type-check (credential
+// code never falls back to the system clock).
+// @ts-expect-error nowMs is required
+const _noClock: RouteContext = {
+  humanId: "alice",
+  agentId: "agent-alice",
+  runner: "pc",
+  purpose: "session",
+  modelTier: "sonnet",
+};
+void _noClock;
 
 const aliceSub = makeBillingSource({
   id: "alice-sub",

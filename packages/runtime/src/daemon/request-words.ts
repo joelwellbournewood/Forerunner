@@ -1373,6 +1373,12 @@ const CREDENTIAL_REFUSED_KEY = "credential:refused";
  */
 const CREDENTIAL_ASK_KEY = "credential:ask";
 
+/** When the card was filed (its `filed_at`), in epoch ms; undefined when it names none. */
+function filedAtMs(card: JsonObject): number | undefined {
+  const t = typeof card.filed_at === "string" ? Date.parse(card.filed_at) : Number.NaN;
+  return Number.isFinite(t) ? t : undefined;
+}
+
 /**
  * CE-7's ask card: "Use your API key until 15:40?", what the waiting work costs on the key, and
  * its two options with what each does; once answered or closed, its Done or Closed line.
@@ -1391,7 +1397,9 @@ function askCard(
       until: str(card.until),
     },
     ...(ask?.timezone ? { timezone: ask.timezone } : {}),
-    nowMs: ask?.nowMs ?? Date.now(),
+    // L4-creds-3: the card's time is said as of when it was filed (its day decides whether the
+    // date is named), never from the clock of whoever reads it.
+    nowMs: ask?.nowMs ?? filedAtMs(card) ?? 0,
     // d1109-cred-screens (CS-8): under a centime "less than CHF 0.01" (never "CHF 0.00").
     estimateChf: moneyWords(
       chfText(

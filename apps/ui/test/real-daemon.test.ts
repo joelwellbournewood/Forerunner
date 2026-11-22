@@ -23280,8 +23280,102 @@ describe("l4-cred-engine, run L4", () => {
     );
     const keyCalls = () =>
       standIn.requests.filter((r) => r.method === "POST" && r.path === "/v1/messages");
-    return { rt, client, keyCalls };
+    /** A route the UI client does not call (GET /notifications/recent), read as the shell does. */
+    const raw = async <T>(path: string): Promise<T> =>
+      (await (
+        await app.request(path, { headers: { authorization: `Bearer ${token}` } })
+      ).json()) as T;
+    return { rt, client, keyCalls, raw };
   }
+
+  /** The critic's review and chat are one-turn provider calls (cred-world's reply). */
+  const providerCall = (prompt: unknown, options: unknown) => {
+    const o = (options ?? {}) as {
+      maxTurns?: number;
+      tools?: unknown[];
+      systemPrompt?: { prompt?: string };
+    };
+    if (!(o.maxTurns === 1 && Array.isArray(o.tools) && o.tools.length === 0)) return null;
+    const system = o.systemPrompt?.prompt ?? "";
+    return providerReply({
+      prompt: String(prompt),
+      provider: true,
+      review: system.includes("submit_review"),
+      system,
+    });
+  };
+
+  // L4-creds-3 (live check 4, LC-C24: "Use your API key until 07:26?" while every screen said
+  // 08:26): the ask card's notification is built from the context the Inbox reads, in the
+  // person's zone, whatever zone the machine runs in.
+  it("L4-creds-3: the ask card's notification says its title and its reset in the person's zone", async () => {
+    const before = process.env.TZ;
+    // The machine's own zone is UTC (a CI runner, a fresh install): the person's is Zurich.
+    process.env.TZ = "UTC";
+    const clock = new SimulatedClock("2026-11-17T06:00:00Z");
+    const resetMs = Date.parse("2026-11-17T07:26:00Z");
+    const sdkQuery: NonNullable<ComposeOptions["sdkQuery"]> = ({ prompt, options }) =>
+      providerCall(prompt, options) ??
+      (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        yield {
+          type: "rate_limit_event",
+          rate_limit_info: { status: "rejected", resetsAt: resetMs / 1000 },
+        };
+        yield {
+          type: "assistant",
+          error: "rate_limit",
+          message: { content: [{ type: "text", text: "You've hit your limit" }] },
+        };
+        yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+        throw new Error("Claude Code returned an error result: You've hit your limit");
+      })();
+    const { rt, client, raw } = await daemon(clock, sdkQuery, "fr-ui-real-l4notify-");
+    try {
+      const me = await client.me();
+      await rt.store.human.patch(me.id, {
+        notify_prefs: { credential_policy: "subscription_then_ask" } as never,
+      });
+      const project = await client.createProject({ name: "Quote page", goal: "A quote page" });
+      await client.createTask(project.id, {
+        title: "Style the page",
+        outcome: "The page is styled",
+        acceptanceCriteria: ["it is done"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 0,
+      });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end at the limit (at least 10 s of real time)",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.status === "open" && (r.title ?? "").startsWith("Use your API key"),
+      );
+      expect(card?.title).toBe("Use your API key until 08:26?");
+      const { notifications } = await raw<{
+        notifications: { kind: string; title: string; body: string }[];
+      }>("/notifications/recent?limit=50");
+      const asked = notifications.filter((n) => n.kind === "request_blocking");
+      expect(asked.map((n) => n.title)).toEqual([card?.title]);
+      expect(asked[0]?.body).toContain("until 08:26");
+      expect(asked[0]?.body).not.toContain("07:26");
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+      if (before === undefined) delete process.env.TZ;
+      else process.env.TZ = before;
+    }
+  }, 120_000);
 
   // L4-creds-1 (CE-6; the owner's D5: "Running out includes a usage limit, a plan-share cap and a
   // monthly cap"): the share reached mid-run is a stop under 'then wait', and Settings' raise of

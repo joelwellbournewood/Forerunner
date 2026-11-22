@@ -374,6 +374,9 @@ counts whole. The runtime's `takeReady` keeps a wait on the share or a key's mon
 stop ends, as the pick does (before, every wake took it and the waiting session went on into the
 same stop).
 
+`RouteContext.nowMs` is required (l4-cred-engine L4-creds-3): the router never reads the system
+clock (before, `ctx.nowMs ?? Date.now()`); the runtime's `RouterTaskBilling` passes its Clock.
+
 `CREDENTIAL_POLICY_LABELS`, `credentialPolicyLabel` and `credentialPolicyEffectWords` are the
 presets' names and one-line effects (d1109-cred-screens: the Settings section, the Changes row and
 the read-back use the same words; `@forerunner/billing/policy` is imported by the UI's fake daemon,

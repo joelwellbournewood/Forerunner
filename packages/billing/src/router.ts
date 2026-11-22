@@ -61,8 +61,11 @@ export interface RouteContext {
   heldNow?: readonly string[];
   /** The kinds the person's policy lets serve (key_only leaves the subscription out). */
   kinds?: readonly BillingSourceKind[];
-  /** Now, for the end of a share or monthly stop (the next month's start UTC). */
-  nowMs?: number;
+  /**
+   * Now, from the caller's Clock, for the end of a share or monthly stop (the next month's start
+   * UTC). Required (l4-cred-engine L4-creds-3): credential code never reads the system clock.
+   */
+  nowMs: number;
 }
 
 /** What a held pick waits for (CE-2): `details.waitFor` of the `unavailable` it throws. */
@@ -220,7 +223,7 @@ export class BillingRouter {
       until: string | null;
       stopKey: string;
     }[] = [];
-    const nowMs = ctx.nowMs ?? Date.now();
+    const nowMs = ctx.nowMs;
     const heldNow = new Set(ctx.heldNow ?? []);
     for (const source of all) {
       // Invariant, not policy: never another human's source.

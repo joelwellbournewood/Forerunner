@@ -435,7 +435,7 @@ import { ShellPresence } from "./shells.ts";
 import { busyHere, startBlocked as startBlockedReason } from "./start-blocked.ts";
 import { credentialWaitRow, monthStopOf } from "./task-display.ts";
 import { fileTools } from "./tools.ts";
-import { requestViews } from "./views.ts";
+import { requestContexts, requestViews } from "./views.ts";
 
 /**
  * Composition root for one install: opens the store and the vault, picks the model provider,
@@ -1637,6 +1637,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     throw e;
   }
   logger.info("install identity", { humanId: human.id, source: identity.source });
+  /**
+   * l4-cred-engine L4-creds-3: the person's time zone as stored now, for a sentence that names a
+   * time (a zone changed in Settings applies at once; the composed row keeps the one at start).
+   */
+  const zoneNow = async (): Promise<string | undefined> =>
+    (await store.human.get(human.id).catch(() => undefined))?.timezone ?? human.timezone;
   if (identity.staleConfigHumanId) {
     // The recorded id named nobody in this store (the install moved, or the row is gone with a
     // lost data folder): the configured email decided, or, on a store that held nobody, the
@@ -3447,13 +3453,24 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // The notification names the project and the task (design §5, "Notification"). The
       // names are read before the insert returns, so the notification is recorded by then, as
       // it was before it named them.
-      const names = { projectName: null as string | null, taskTitle: null as string | null };
+      // l4-cred-engine L4-creds-3: the context the Inbox reads for the card (`requestContexts`,
+      // read now: the person's time zone, a refused card's category and rule, an ask card's
+      // filing time), so the notification says what the card says; before, only the names,
+      // and an ask card's reset was said in UTC.
+      let names: Parameters<typeof notifications.requestOpened>[2] = {
+        projectName: null,
+        taskTitle: null,
+      };
       try {
-        if (row.project_id)
-          names.projectName = (await store.project.get(row.project_id))?.name ?? null;
-        if (row.task_id) names.taskTitle = (await store.task.get(row.task_id))?.title ?? null;
+        names = (await requestContexts(store, [row])).get(row.id) ?? names;
       } catch {
-        // without the names the notification still goes, titled by the card alone
+        try {
+          if (row.project_id)
+            names.projectName = (await store.project.get(row.project_id))?.name ?? null;
+          if (row.task_id) names.taskTitle = (await store.task.get(row.task_id))?.title ?? null;
+        } catch {
+          // without the names the notification still goes, titled by the card alone
+        }
       }
       notifyLater(notifications.requestOpened(row, human.id, names), `request ${row.id}`);
       events.emit("inbox", {});
@@ -3558,7 +3575,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     const reason =
       p.stop === "refused" || p.stop === "share" || p.stop === "key_month" ? p.stop : "limit";
     const until =
-      typeof p.until === "string" ? clockTime(p.until, human.timezone, clock.now()) : null;
+      typeof p.until === "string" ? clockTime(p.until, await zoneNow(), clock.now()) : null;
     await store.auditLog.append({
       tool: SWITCH_NOTICE_AUDIT_TOOL,
       allowed: true,
@@ -4188,7 +4205,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ? {
             ...choice,
             // W15-66: creating the task keeps no wait, so nothing starts by itself (TR-2).
-            line: waitThenStartSentence(wait, { timezone: human.timezone, nowMs: clock.now() }),
+            line: waitThenStartSentence(wait, { timezone: await zoneNow(), nowMs: clock.now() }),
           }
         : choice;
     };
@@ -4272,7 +4289,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const ends = quietHours.endsAt(Date.parse(at));
       if (ends) at = ends;
     }
-    const words = { timezone: human.timezone, nowMs: clock.now() };
+    const words = { timezone: await zoneNow(), nowMs: clock.now() };
     const when = at
       ? `at ${clockTime(at, words.timezone, words.nowMs)}`
       : "once its Claude credential is back";
@@ -4374,8 +4391,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             if (until) {
               const ends = quietHours.endsAt(Date.parse(until));
               wait = ends
-                ? { kind: "quiet", at: clockTime(ends, human.timezone, nowMs) }
-                : { kind: "limit", at: clockTime(until, human.timezone, nowMs) };
+                ? { kind: "quiet", at: clockTime(ends, await zoneNow(), nowMs) }
+                : { kind: "limit", at: clockTime(until, await zoneNow(), nowMs) };
             } else {
               // d1109-cred-screens (CS-7): the share and a key's monthly cap end at the month's
               // start (UTC), said in the person's clock, or the end of their quiet hours if later.
@@ -4384,7 +4401,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
                 const ends = quietHours.endsAt(Date.parse(month.until));
                 wait = {
                   kind: month.reason,
-                  at: clockTime(ends ?? month.until, human.timezone, nowMs),
+                  at: clockTime(ends ?? month.until, await zoneNow(), nowMs),
                 };
               }
             }
@@ -4700,7 +4717,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       await quietHours.refresh();
       const nowMs = clock.now();
       const kept = entries.find((w) => w.kept?.by === "continuation");
-      const words = { timezone: human.timezone, nowMs };
+      const words = { timezone: await zoneNow(), nowMs };
       let line: string | null;
       if (kept?.kept) {
         const earlier = kept.kept.continues
@@ -4735,7 +4752,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // wait a Start or a session already kept on its source starts by itself, and says so; a
       // reset nobody kept a wait for says what Start does, and Start stays pressable: it keeps
       // one person start for the reset ("Start at 15:40", `continuations.keepStart`, S-10).
-      const words = { timezone: human.timezone, nowMs: clock.now() };
+      const words = { timezone: await zoneNow(), nowMs: clock.now() };
       const source = await store.billingSource.get(wait.sourceId).catch(() => undefined);
       // S-10: only a kept continuation or person start goes on by itself; a Start pressed now is
       // kept for the reset.
@@ -5425,8 +5442,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           // d1109-cred-engine CE-9 (ADR 0120): chat follows the person's credential policy too.
           credentialHold: async ({ oneOff }: { oneOff: boolean }) => {
             const model = rungModelFor(routed, modelConfig.get().modeDefaults.text_chat.tier);
+            // L4-creds-3: the person's time zone and monthly cap are read now, never the ones
+            // the daemon was composed with (a zone changed in Settings applies at once).
+            const person = (await store.human.get(human.id).catch(() => undefined)) ?? human;
             const untilOf = (until: string | null) =>
-              until ? clockTime(until, human.timezone, clock.now()) : null;
+              until ? clockTime(until, person.timezone, clock.now()) : null;
             const held = await routed.holdNow(model);
             if (held) {
               // The person's press: this one question answers on the credential that serves.
@@ -5445,7 +5465,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
                   ONE_OFF_CHAT_INPUT_TOKENS,
                   ONE_OFF_CHAT_OUTPUT_TOKENS,
                 );
-                const cap = human.monthly_cap_usd_micro ?? 0;
+                const cap = person.monthly_cap_usd_micro ?? 0;
                 const room =
                   cap > 0
                     ? await checker.room(
