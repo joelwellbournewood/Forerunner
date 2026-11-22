@@ -298,7 +298,9 @@ describe("the app icon (the owner's design of 2026-11-18)", () => {
       it("every PNG (the Windows tiles and the store logo too) shows the kite", () => {
         const problems = readdirSync(dir)
           .filter((f) => f.endsWith(".png"))
-          .flatMap((f) => designProblems(`${app.name} icons/${f}`, decodePng(readFileSync(join(dir, f)), f)));
+          .flatMap((f) =>
+            designProblems(`${app.name} icons/${f}`, decodePng(readFileSync(join(dir, f)), f)),
+          );
         expect(problems).toEqual([]);
       });
     });
@@ -334,7 +336,7 @@ describe("the app icon (the owner's design of 2026-11-18)", () => {
     it("index.html links an SVG favicon that is the master itself", () => {
       const html = readFileSync(join(ui, "index.html"), "utf8");
       const link = html.match(/<link\b[^>]*\brel="icon"[^>]*>/)?.[0];
-      expect(link, "a <link rel=\"icon\"> in apps/ui/index.html").toBeDefined();
+      expect(link, 'a <link rel="icon"> in apps/ui/index.html').toBeDefined();
       expect(link).toMatch(/\btype="image\/svg\+xml"/);
       const href = link?.match(/\bhref="\/([^"]+)"/)?.[1];
       expect(href, "a root-relative href (Vite serves public/ at the root)").toBe("favicon.svg");
