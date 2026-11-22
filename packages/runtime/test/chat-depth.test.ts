@@ -1537,3 +1537,87 @@ describe("l4-chat-depth, run L4: the paid closer look is told what it is (L4-cha
     );
   });
 });
+
+/** `n` earlier turns of this project's conversation, written as the agent writes them. */
+async function seedTurns(w: World, n: number, reply = (i: number) => `Answer ${i}.`) {
+  const sessionId = await w.agent.conversationSessionId(w.alice, w.project);
+  for (let i = 0; i < n; i++) {
+    const transcriptId = `seed-turn-${String(i).padStart(3, "0")}`;
+    await w.store.event.append(sessionId, "chat.human", {
+      transcriptId,
+      text: `Question ${i}?`,
+      source: "text",
+      conversationProjectId: w.project,
+    } as never);
+    await w.store.event.append(sessionId, "chat.reply", {
+      transcriptId,
+      text: reply(i),
+      actions: [],
+      conversationProjectId: w.project,
+    } as never);
+  }
+}
+
+describe("l4-chat-depth, run L4: the history is read from the prompt cache (L4-chat-205)", () => {
+  const cached = (text = "Two are left.") =>
+    new FakeProvider({
+      replies: [textReply(text, { times: 4 })],
+      latency: "none",
+      promptCache: { minTokens: 1 },
+    });
+
+  it("past 12 turns, two quick lines within five minutes: the second request starts with the first's history and reads it from the cache", async () => {
+    const w = await world({ provider: cached() });
+    await seedTurns(w, 13);
+    await w.chat("what is left?");
+    await w.chat("and the FAQ?");
+    const [first, second] = w.requests();
+    expect(second?.messages[0]).toEqual(first?.messages[0]);
+    const firstHistory = (first?.messages.length ?? 1) - 1;
+    for (let i = 0; i < firstHistory; i++)
+      expect(second?.messages[i], `history message ${i}`).toEqual(first?.messages[i]);
+    // The cache read covers the first request's history (its tools, system and messages).
+    const firstWrote =
+      (w.runs[0]?.result?.usage.cache_creation_input_tokens ?? 0) +
+      (w.runs[0]?.result?.usage.cache_read_input_tokens ?? 0);
+    expect(w.runs[1]?.result?.usage.cache_read_input_tokens ?? 0).toBeGreaterThanOrEqual(
+      firstWrote - 16,
+    );
+    // Never more than the history's token budget.
+    const sent =
+      second?.messages
+        .slice(0, -1)
+        .map((m) => String(m.content))
+        .join("\n") ?? "";
+    expect(w.provider.countTokens(sent)).toBeLessThanOrEqual(3000);
+  });
+
+  it("under 12 turns whose long replies pass the token budget: the window drops turns in blocks, so the next line keeps the same start", async () => {
+    const long = (i: number) => `Answer ${i}: ${"the page is styled and checked. ".repeat(60)}`;
+    // Each answer adds as much as a seeded one, so the oldest turns no longer fit as it grows.
+    const w = await world({ provider: cached(long(99)) });
+    await seedTurns(w, 8, long);
+    await w.chat("what is left?");
+    await w.chat("and the FAQ?");
+    const [first, second] = w.requests();
+    expect(second?.messages[0]).toEqual(first?.messages[0]);
+    for (const r of [first, second]) {
+      const sent =
+        r?.messages
+          .slice(0, -1)
+          .map((m) => String(m.content))
+          .join("\n") ?? "";
+      expect(w.provider.countTokens(sent)).toBeLessThanOrEqual(3000);
+    }
+  });
+
+  it("the window is the same after the agent is composed again on the same store", async () => {
+    const w = await world({ provider: cached() });
+    await seedTurns(w, 14);
+    await w.chat("what is left?");
+    w.restart();
+    await w.chat("and the FAQ?");
+    const [first, second] = w.requests();
+    expect(second?.messages[0]).toEqual(first?.messages[0]);
+  });
+});

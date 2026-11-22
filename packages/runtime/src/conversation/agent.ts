@@ -145,6 +145,7 @@ import { type ChatTaskFixResult, fixTasksInChat, fixTasksTool } from "./task-fix
 import {
   DEFAULT_CHAT_HISTORY_TOKENS,
   historyMessages,
+  nextTurnNumber,
   readTranscript,
   TRANSCRIPT_SHOW_LIMIT,
   type TranscriptTurn,
@@ -1092,6 +1093,9 @@ export class ConversationAgent {
       text: req.text,
       source: req.source ?? "text",
       conversationProjectId: conversationProject,
+      // l4-chat-depth (L4-chat-205): the turn's number from the conversation's start, so the
+      // history's stepped window is the same function of the rows after 100 turns and a restart.
+      turn: nextTurnNumber(earlier),
     } as never);
     // d1109-chat-depth: the turn is in flight from here (its line is written) to its reply; Stop
     // aborts its controller, which every run of the turn gets as its signal (voice's barge-in too).

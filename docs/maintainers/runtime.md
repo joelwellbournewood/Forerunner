@@ -4648,10 +4648,17 @@ in one project cancelled a task in another. Now:
   the Chat tab and Talk show the same lines. The agent reads as many turns as the view shows
   (`TRANSCRIPT_SHOW_LIMIT`), so a card shown with Yes and No is the one a "yes" answers (before,
   it looked 12 turns back, and after a restart a card further up answered "Yes to what?").
-- **History.** A model turn sends the last `HISTORY_TURNS` (12) turns of its conversation as
-  alternating user and assistant messages within `historyMaxTokens` (default
-  `DEFAULT_CHAT_HISTORY_TOKENS`, 3,000, counted with the provider's counter; the oldest go
-  first), then the turn's own message: the line, then the volatile facts and blocks. The line is
+- **History.** A model turn sends a window of its conversation's turns as alternating user and
+  assistant messages within `historyMaxTokens` (default `DEFAULT_CHAT_HISTORY_TOKENS`, 3,000,
+  counted with the provider's counter). l4-chat-depth (L4-chat-205): the window moves in steps of
+  `HISTORY_STEP_TURNS` (6) by each turn's number from the conversation's start (kept on its
+  `chat.human` row as `turn`, `nextTurnNumber`; rows written before count from the first
+  numbered one): it starts at turn floor((n - 12) / 6) * 6, so it holds 12 to 17 turns and its
+  first message stays the same for six turns, after a restart too and past the 100 turns the
+  conversation reads; over the budget it drops whole steps from that start, and only the newest
+  step alone is cut one turn at a time. Before, it slid by one turn and the cap dropped one turn
+  per call, so past 12 turns every line wrote its whole history to the cache again (live check
+  4, LC-C15: 0 identical leading messages between two lines). Then the turn's own message: the line, then the volatile facts and blocks. The line is
   the message's stable start (`ChatMessage.stableChars`): the Anthropic adapter sends it as its
   own text block with the cache breakpoint (`stableSplit`, `cacheHistory`), so the entry the
   turn writes ends at the line, and the next turn, whose history replays the line alone, reads
