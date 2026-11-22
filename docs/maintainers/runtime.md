@@ -8094,6 +8094,14 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   kept) to `startBlockedReason` as the dialog's check does, so "start a session" gets the
   dialog's sentence ("Nothing can run until you save a new API key in Settings.") with no
   read-back. A resting credential keeps the dialog's "Start at 15:40" and is no refusal there.
+- **A stored ask form reads as it is now** (L4-creds-7, live check 4's L4-creds-6):
+  `resultAfterWait` (every reader of a stored result: the session page, the Overview's Last
+  result and Read aloud, the Inbox's Update) first reads CE-7's ask form ("Waits for your
+  answer: use your API key? The card is in the Inbox.") against the stop's latest ask card filed
+  before the result: while it is open the words stay; once answered Wait they become the plain
+  wait (`waitSentence` from the card's facts, at the result's time, in the person's zone, then
+  the goes-on rule), after Use API key "Went on with your API key.". A notification already sent
+  is not reworded.
 
 Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
 throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the
@@ -8107,7 +8115,8 @@ the month's start and restarts), `credential-chat-failure.test.ts` (POST /chat u
 key_then_subscription with the refused sign-in's turn, and under subscription_then_key with the
 API's 500), `credential-stop-booking.test.ts` (Stop on chat's call served by the subscription
 while the key rests: the ledger row and Costs by credential are the subscription's),
-`chat-depth-words.test.ts` (`failureReply` over every code), the UI's
+`credential-ask-words.test.ts` ("l4-cred-engine, run L4": the stored ask form after Wait and
+after Use API key, composed twice), `chat-depth-words.test.ts` (`failureReply` over every code), the UI's
 `settings-plan-allowance.test.tsx` and `chat-depth.test.tsx` (no Think it through under a failed
 reply) and the real-daemon describe "l4-cred-engine, run L4".
 
