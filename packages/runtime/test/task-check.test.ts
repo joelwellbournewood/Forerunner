@@ -469,7 +469,8 @@ describe("d1109-selftasks-run, run C: the fence (ST-8)", () => {
       "a task-list change cannot set budget usd micro",
       "a task-list change cannot set risk tier",
       "it is none of the five kinds of change",
-      `the first part keeps "Style the page"'s specialist`,
+      // l4-selftasks-111: no possessive after a quoted name.
+      `the first part keeps the specialist of "Style the page"`,
     ]);
     expect(f.changes).toEqual([]);
   });
@@ -589,13 +590,14 @@ describe("d1109-selftasks-run, run C: the fence (ST-8)", () => {
   it("asks first for a deploy, migration or person task", async () => {
     const w = await world();
     for (const [specialist, reason] of [
+      // l4-selftasks-111: the specialist as a person names it, never its registry id.
       [
         "ops-deploy",
-        "it would add work for the ops-deploy (a deploy or a migration needs your yes)",
+        "it would add work for the deployment specialist (a deploy or a migration needs your yes)",
       ],
       [
         "migration-specialist",
-        "it would add work for the migration-specialist (a deploy or a migration needs your yes)",
+        "it would add work for the migration specialist (a deploy or a migration needs your yes)",
       ],
       ["person", "it would add a question for you"],
     ] as const) {
@@ -680,9 +682,9 @@ describe("d1109-selftasks-run, run C: the fence (ST-8)", () => {
       ],
       { notes },
     );
-    expect(g.askFirst).toEqual([
-      { reason: "the plan you approved has no task for the writer-marketing" },
-    ]);
+    // l4-selftasks-111 (live check 4, L4-pause-6): a project with no approved plan has no
+    // "plan you approved"; the specialist as a person names it.
+    expect(g.askFirst).toEqual([{ reason: "no task of Quote page is for the writer yet" }]);
   });
 
   it("a set with nothing left is no change", async () => {

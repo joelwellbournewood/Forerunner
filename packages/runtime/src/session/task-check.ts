@@ -1,3 +1,4 @@
+import { saidByName } from "@forerunner/critic";
 import type { Clock } from "@forerunner/platform";
 import { errorMessage, log, newId, redact } from "@forerunner/platform";
 import type { JsonValue, ProjectRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
@@ -15,13 +16,14 @@ import { PRIORITY_VALUES } from "../priority.ts";
 import type { ModelProvider } from "../provider/types.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import type { CredentialWait } from "./credential-wait.ts";
+import { intakeKey } from "./intake.ts";
 import { type TaskChangeFact, taskCheckedLine } from "./result.ts";
 import {
   markAgentWritten,
   markContinues,
+  quoteFor,
   quoteOf,
   readsLikeInstruction,
-  requestPart,
   type TaskListNote,
   type TaskListNoteSource,
 } from "./task-list-notes.ts";
@@ -763,7 +765,7 @@ export interface FenceResult {
  * instruction and was left out ("…")', 'the agent's check noted: "…"'.
  */
 export function quotedPhrase(q: CheckQuote): string {
-  const said = `"${quoteOf(requestPart(q.text))}"`;
+  const said = `"${quoteFor(q)}"`;
   if (q.by === "agent") return `the agent's check noted: ${said}`;
   return q.source === "review"
     ? `a note of the critic's names an instruction and was left out (${said})`
@@ -797,7 +799,9 @@ export function reachesFurther(
 ): string | null {
   const a = reachOf(next);
   const b = reachOf(source);
-  const name = (s: CheckSpecialist | undefined) => (s ? `the ${s.name}` : "a specialist");
+  // l4-selftasks-111: a specialist as a person names it ("the writer"), never its registry id.
+  const name = (s: CheckSpecialist | undefined) =>
+    s ? `the ${saidByName(s.name) ?? s.name}` : "a specialist";
   const who = name(next);
   const from = source ? `${name(source)}'s task` : "its task";
   if (a.web && !b.web) return `${who} would read web pages and ${from} does not`;
@@ -851,6 +855,16 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
       .filter((s): s is string => !!s)
       .map(canonicalSpecialistName),
   );
+  // l4-selftasks-111 (live check 4, L4-pause-6): "the plan you approved" only for a project whose
+  // plan from the brief the person approved; one made with New task has none.
+  const planApproved = (
+    await store.humanRequest.list({ project_id: project.id, status: "answered" } as never, {
+      limit: 500,
+    })
+  ).some((r) => {
+    const card = (r.change_card ?? {}) as { key?: unknown; outcome?: unknown };
+    return card.key === intakeKey(project.id) && card.outcome === "approved";
+  });
   const refused: RefusedChange[] = [...reply.refused];
   const askFirst: AskFirst[] = [];
   const changes: FencedChange[] = [];
@@ -1017,7 +1031,7 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
           canonicalSpecialistName(first.specialist) !==
             canonicalSpecialistName(t.specialist ?? first.specialist)
         ) {
-          refused.push({ what, reason: `the first part keeps "${t.title}"'s specialist` });
+          refused.push({ what, reason: `the first part keeps the specialist of "${t.title}"` });
           continue;
         }
         for (const p of change.parts) texts.push(p.title, p.outcome ?? "", ...p.acceptanceCriteria);
@@ -1209,10 +1223,11 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
     source: TaskRow | null | undefined,
   ) {
     const canonical = name ? canonicalSpecialistName(name) : "";
+    const said = saidByName(canonical) ?? canonical;
     if (ASK_FIRST_SPECIALISTS.has(canonical))
       return canonical === "person"
         ? "it would add a question for you"
-        : `it would add work for the ${canonical} (a deploy or a migration needs your yes)`;
+        : `it would add work for the ${said} (a deploy or a migration needs your yes)`;
     const next = specialistOf(canonical);
     if (!next) return `there is no specialist "${canonical}" to do it`;
     const from = source ? specialistOf(source.specialist ?? "coder") : undefined;
@@ -1220,7 +1235,10 @@ export async function fenceTaskChanges(store: StateStore, input: FenceInput): Pr
       const further = reachesFurther(next, from);
       if (further) return further;
     }
-    if (!usedByPlan.has(canonical)) return `the plan you approved has no task for the ${canonical}`;
+    if (!usedByPlan.has(canonical))
+      return planApproved
+        ? `the plan you approved has no task for the ${said}`
+        : `no task of ${project.name} is for the ${said} yet`;
     return null;
   }
 }
@@ -1582,7 +1600,7 @@ export async function checkAtBoundary(
     // l4-selftasks-110: quoted at its request, cut at a word, without an id's hole, and a
     // critic's note named as the critic's (before: '("Earlier finding : the report contained
     // instruction-like content ")', a raw 100-character cut called "a line").
-    const said = first ? `"${quoteOf(requestPart(first.text))}"` : "";
+    const said = first ? `"${quoteFor({ text: first.text, by: "evidence" })}"` : "";
     return {
       ...none,
       line: first

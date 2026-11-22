@@ -554,15 +554,17 @@ describe("d1109-selftasks-run, run C: the report channel", () => {
   });
 
   it("a line that reads like an instruction never reaches the model; alone, no call is made and the session's log quotes it", () => {
-    for (const id of ["report-001", "report-003"]) {
+    // l4-selftasks-110: a critic's note (report-003, where "review") is named as the critic's.
+    for (const [id, said] of [
+      ["report-001", "a line that reads like an instruction"],
+      ["report-003", "a note of the critic's that names an instruction"],
+    ] as const) {
       const r = byId().get(id);
       expect(r?.report?.called, id).toBe(false);
       expect(r?.modelCalls, id).toBe(0);
       expect(r?.report?.sentToModel, id).toBe(false);
       expect(r?.reportedBy, id).toEqual(["notes.scan", "details"]);
-      expect(r?.report?.line, id).toMatch(
-        /^Left out of the task check: a line that reads like an instruction \("/,
-      );
+      expect(r?.report?.line, id).toMatch(new RegExp(`^Left out of the task check: ${said} \\("`));
       expect(r?.report?.changed, id).toEqual([]);
     }
   });
@@ -600,7 +602,7 @@ describe("d1109-selftasks-run, run C: the report channel", () => {
     const deploy = byId().get("report-006");
     expect(deploy?.attempts.map((a) => a.outcome)).toEqual(["read_back"]);
     expect(deploy?.report?.card).toContain(
-      "Asks you first: it would add work for the ops-deploy (a deploy or a migration needs your yes).",
+      "Asks you first: it would add work for the deployment specialist (a deploy or a migration needs your yes).",
     );
     for (const r of [sneaky, deploy]) {
       expect(r?.report?.changed, r?.id).toEqual([]);

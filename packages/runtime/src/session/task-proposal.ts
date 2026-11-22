@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { saidByName } from "@forerunner/critic";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type {
   HumanRequestRow,
@@ -14,7 +15,7 @@ import {
 } from "../daemon/task-proposal-words.ts";
 import { PRIORITY_LABELS } from "../priority.ts";
 import type { CheckQuote, CommandCallLike, FencedChange, FenceResult } from "./task-check.ts";
-import { quoteOf, requestPart, type TaskListNote } from "./task-list-notes.ts";
+import { quoteFor, quoteOf, type TaskListNote } from "./task-list-notes.ts";
 
 /**
  * d1109-selftasks-run (ADR 0119 point 7; the owner, 2026-11-09: the agent changes its own tasks,
@@ -109,22 +110,26 @@ export function proposalBody(
         .replace(/[.;:,!]+$/, ""),
     )}"`;
   const first = notes[0];
+  // l4-selftasks-111: a specialist as a person names it ("the writer's report"), and the
+  // critic's notes "say" (before: 'The critic's notes on "X" says:').
+  const by = (s: string | null | undefined) => saidByName(s) ?? "specialist";
   const whose = first
     ? first.source === "review"
       ? `the critic's notes on "${first.taskTitle}"`
-      : `the ${first.specialist ?? "specialist"}'s report on "${first.taskTitle}"`
+      : `the ${by(first.specialist)}'s report on "${first.taskTitle}"`
     : "the agent's check";
+  const says = first?.source === "review" ? "say" : "says";
   const said = quotes[0];
   const why = said
     ? said.by === "agent"
-      ? `The agent's check noted: "${quoteOf(requestPart(said.text))}".`
+      ? `The agent's check noted: "${quoteFor(said)}".`
       : said.source === "review"
-        ? `A note of the critic's on "${said.taskTitle ?? first?.taskTitle ?? ""}" names an instruction: "${quoteOf(requestPart(said.text))}".`
-        : `A line of the ${said.specialist ?? first?.specialist ?? "specialist"}'s report on "${said.taskTitle ?? first?.taskTitle ?? ""}" reads like an instruction: "${quoteOf(requestPart(said.text))}".`
+        ? `A note of the critic's on "${said.taskTitle ?? first?.taskTitle ?? ""}" names an instruction: "${quoteFor(said)}".`
+        : `A line of the ${by(said.specialist ?? first?.specialist)}'s report on "${said.taskTitle ?? first?.taskTitle ?? ""}" reads like an instruction: "${quoteFor(said)}".`
     : (() => {
         const line = first?.lines.find((l) => !l.flagged)?.text;
         return line
-          ? `${whose.charAt(0).toUpperCase()}${whose.slice(1)} says: ${quoted(line)}.`
+          ? `${whose.charAt(0).toUpperCase()}${whose.slice(1)} ${says}: ${quoted(line)}.`
           : `${whose.charAt(0).toUpperCase()}${whose.slice(1)} found the task list needs changes.`;
       })();
   return `${why} Nothing changes until you say yes.`;

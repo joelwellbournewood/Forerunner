@@ -12,7 +12,8 @@ import { firstUserText } from "./roles.ts";
  * - a line `"<task>" is two jobs[, the <a> and the <b>]` splits that task in two, in turn, its
  *   criteria shared out in order (the split carries every one);
  * - a line `nothing checks <what>` adds the step "Check <what>" after the reporting task, before
- *   the changeable tasks that wait for it;
+ *   the changeable tasks that wait for it; `nothing checks <what>, for the <specialist>` gives
+ *   the step to that specialist (l4-selftasks-111);
  * - `"<a>" is the same as "<b>"` drops a; `"<a>" must wait for "<b>"` orders a after b;
  * - `"<a>" is urgent` raises a's priority to high (an edit with no new title);
  * - `"<a>" is done when <what>` sets what done looks like for a to <what> and adds it to its
@@ -197,17 +198,21 @@ export function taskCheckReply(req: ModelRequest): string {
         added++;
         continue;
       }
-      const missing = /nothing checks ((?:that )?(.+?))\.?$/i.exec(line);
+      const missing = /nothing checks ((?:that )?(.+?))(?:,? for the ([a-z][a-z0-9-]*))?\.?$/i.exec(
+        line,
+      );
       if (missing && added < 6) {
         const said = (missing[1] as string).trim();
         const what = (missing[2] as string).trim();
         const title = cut(`Check ${said}`, 120);
         if (byTitle.has(title) || done.has(title)) continue;
         done.add(title);
+        const named = missing[3] && seen.specialists.includes(missing[3]) ? missing[3] : null;
         const specialist =
-          note.specialist && seen.specialists.includes(note.specialist)
+          named ??
+          (note.specialist && seen.specialists.includes(note.specialist)
             ? note.specialist
-            : (seen.specialists[0] ?? "coder");
+            : (seen.specialists[0] ?? "coder"));
         const before = seen.tasks
           .filter((t) => t.waitsFor.includes(note.taskTitle) && CHANGEABLE.test(t.status))
           .map((t) => t.title);

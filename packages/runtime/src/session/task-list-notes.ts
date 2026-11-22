@@ -185,6 +185,16 @@ export function quoteOf(text: string, max = QUOTE_MAX): string {
   return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[\s.;:,]+$/, "")}…`;
 }
 
+/**
+ * A left-out line as quoted to the person: a line of the evidence from its start (verbatim, as
+ * it was written; the injection suite's report channel checks the person is shown it), the
+ * model's own entry at its request (`requestPart`: it opens with what it read), both cut at a
+ * word (`quoteOf`).
+ */
+export function quoteFor(q: { text: string; by: "evidence" | "agent" }): string {
+  return quoteOf(q.by === "agent" ? requestPart(q.text) : q.text);
+}
+
 /** The critic's notes on a task that the task did not cause, as evidence lines. */
 export function reviewNoteLines(notes: readonly string[]): TaskListLine[] {
   return notes

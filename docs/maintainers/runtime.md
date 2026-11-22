@@ -7889,7 +7889,7 @@ hiding what it left out. What changed, item by item:
   does not quote it: the read-back card is listed in the chat's facts unenveloped. Quotes are
   cut by `quoteOf` (`session/task-list-notes.ts`: whole up to 100 characters, else at a word with
   "…") around the sentence that reads like an instruction, else the first one that asks
-  ("Please …", an order's verb first, a question: `requestPart`).
+  ("Please …", an order's verb first, a question: `requestPart`) for the model's own entries.
 - **The left-out line when nothing reached the model** (L4-selftasks-110): `checkAtBoundary`'s
   line for a set of only flagged lines quotes the first through `quoteOf(requestPart())` and
   names a critic's note as one ('Left out of the task check: a note of the critic's that names
@@ -7897,6 +7897,15 @@ hiding what it left out. What changed, item by item:
   events view's `withoutIds` (`daemon/task-words.ts`) keeps the noun before a finding's or a
   review's id ("Earlier finding: …") and takes a bare id before a mark with its space (before:
   "Earlier finding : …").
+- **Specialists and plans in the person's words** (L4-selftasks-111): the fence's reasons name a
+  specialist through `saidByName` ("the writer", "the deployment specialist", never
+  "writer-marketing" or "ops-deploy"); "the plan you approved has no task for the writer" only
+  when the project's intake card was answered approved (`intakeKey`, outcome `approved`), else
+  "no task of <project> is for the writer yet"; a split's first part 'keeps the specialist of
+  "X"'. `proposalBody` names a report by `saidByName` and says 'The critic's notes on "X" say:'.
+  Quotes go through `quoteFor` (`task-list-notes.ts`): a line of the evidence from its start (the
+  injection suite's report channel checks the person is shown it), the model's own entry at its
+  request.
 - **The suggestion card names who wrote what it quotes** (L4-selftasks-112 (d)): the fence marks
   a model's `flagged` entry `by: "evidence"` (with the note's task and specialist) only when the
   evidence it was sent holds it; else `by: "agent"`. `fileTaskProposal` passes `fence.quotes` to

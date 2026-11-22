@@ -109,6 +109,25 @@ describe("the suggestion card's words (d1109-selftasks-run)", () => {
     expect(body).not.toMatch(/report/);
   });
 
+  // l4-selftasks-check, run L4 (L4-selftasks-111; live check 4, L4-pause-6): 'The critic's
+  // notes on "Add a word-count CLI ..." says: ...' and a registry id for the specialist.
+  it("l4-selftasks-check, run L4: the critic's notes say; a specialist is named as a person names it", () => {
+    const base = {
+      taskId: "t1",
+      taskTitle: "Add a word-count CLI",
+      at: "2026-03-05T08:00:00.000Z",
+      lines: [{ text: "Nothing checks the CLI's help text.", flagged: false }],
+    };
+    expect(proposalBody([{ ...base, source: "review" as const, specialist: "coder" }], [])).toBe(
+      `The critic's notes on "Add a word-count CLI" say: "Nothing checks the CLI's help text". Nothing changes until you say yes.`,
+    );
+    expect(
+      proposalBody([{ ...base, source: "report" as const, specialist: "writer-marketing" }], []),
+    ).toBe(
+      `The writer's report on "Add a word-count CLI" says: "Nothing checks the CLI's help text". Nothing changes until you say yes.`,
+    );
+  });
+
   it("l4-selftasks-check, run L4: a quote of a critic's note names the critic", () => {
     const note = {
       source: "review" as const,

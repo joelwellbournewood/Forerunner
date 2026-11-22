@@ -23670,6 +23670,73 @@ describe("l4-selftasks-check, run L4", () => {
     }
   }, 120_000);
 
+  it("L4-selftasks-111: a project with no plan at Assisted: the card names the writer as a person does, and no plan it never had", async () => {
+    // Live check 4 (L4-pause-6): 'Asks you first: the plan you approved has no task for the
+    // writer-marketing.' on a project made with New task and no plan.
+    const a = await open(
+      "Add a word-count CLI",
+      "nothing checks the README's usage section, for the writer-marketing.",
+    );
+    try {
+      const project = await a.client.createProject({
+        name: "Word count",
+        goal: "A word-count CLI",
+        autonomyLevel: 1,
+      });
+      const cli = await a.client.createTask(project.id, {
+        title: "Add a word-count CLI in wc.js",
+        outcome: "wc.js counts the words of a file",
+        acceptanceCriteria: ["wc.js exists"],
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const me = await a.client.me();
+      const agentId = (await a.client.agents())[0]?.id ?? "";
+      const started = await a.client.startSession({ agentId, projectId: project.id });
+      await eventually(
+        async () => (await a.client.session(started.session?.id ?? "")).status !== "running",
+        "the session to plan (at least 10 s of real time)",
+        async () =>
+          (await a.client.tasks(project.id)).map((t) => `${t.title}: ${t.status}`).join(", "),
+        30_000,
+      );
+      const plan = (await a.client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.kind === "approval" && r.status === "open",
+      );
+      await a.client.answerRequest(plan?.id ?? "", {
+        version: plan?.version ?? 0,
+        answer: "approve",
+      });
+      await eventually(
+        async () =>
+          (await a.client.tasks(project.id)).find((t) => t.id === cli.id)?.status === "done" &&
+          (await a.client.sessions({ projectId: project.id })).every(
+            (x) => x.status !== "running",
+          ),
+        "the approved session to end (at least 10 s of real time)",
+        async () =>
+          (await a.client.tasks(project.id)).map((t) => `${t.title}: ${t.status}`).join(", "),
+        30_000,
+      );
+      await settleSessions(a.rt);
+      const card = (await a.client.inbox(me.id)).requests.find(
+        (r) =>
+          r.projectId === project.id &&
+          r.status === "open" &&
+          (r.changeCard as { key?: unknown } | null)?.key === "task_proposal",
+      );
+      expect(card?.why).toBe(
+        `The coder's report on "Add a word-count CLI in wc.js" says: "nothing checks the README's usage section, for the writer-marketing". Nothing changes until you say yes.`,
+      );
+      expect(card?.steps).toContain("Asks you first: no task of Word count is for the writer yet.");
+      expect(JSON.stringify(card?.steps)).not.toMatch(
+        /plan you approved|writer-marketing|ops-deploy/,
+      );
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
   it("L4-money-302 and L4-selftasks-112 (a): GET /inbox's questions card quotes why the specialist asks, from the live reports", async () => {
     // Live check 4 (L4-l3-3, L4-session-7): the card quoted the reviewer's scope check line, a
     // commit message that repeats the task's title, and the FAQ's side remark. The card is filed
