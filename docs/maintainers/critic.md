@@ -241,7 +241,9 @@ effort max) with the system prompt plus `REVIEW_EVIDENCE_ALLOWANCE_TOKENS` (8,00
 `floorUsdMicro`, the first call's whole price at the smallest output (the same input with
 `REVIEW_MIN_TOKENS_PER_CALL`, 2,048 tokens, out; l4-selftasks-101 and L4-money-303, run L4: before,
 the 8,192-token output alone, so a task with less than USD 0.08 left after its work was never
-reviewed and one just above it ran its checks before the first call was refused); a review its
+reviewed and one just above it ran its checks before the first call was refused; at effort max,
+whose review is never sized down, the same input with the output cap, 8,192 tokens, out, so a tier
+3 review whose room lies between the two prices is not started either, fixup of run L4); a review its
 task's budget caps below one call's worst case asks for 2,048 to 8,192 tokens out per call, sized
 to the room (`maxTokensPerCall` 2,048 with `maxTokensCeiling` 8,192; the hooks' precheck stays the
 backstop), every other review the usual cap; the runtime's critic

@@ -604,3 +604,9 @@ of its checks runs) is its first call's whole price at 2,048 tokens out. Nothing
 budget, the session's budget, its wrap-up line, the monthly cap or the plan share: the hooks'
 precheck stays the backstop. The plan card warns, in the Start dialog's words, for a task whose own
 budget is below its estimate with its review.
+
+Dated note, 2026-11-22 (the review of fix/l4-selftasks-check): a review at effort max (a tier 3
+review, or tier 2 raised by the effort slider) is never sized down, its first call asking for
+8,192 tokens out at least, so its floor is the first call's whole price at 8,192 tokens out. Priced
+at 2,048, a tier 3 review whose room lay between the two prices started, ran its checks and wrote
+a critic Run row before its first call was refused.

@@ -174,9 +174,10 @@ export interface ReviewCallPrice {
   /**
    * The first call's whole price at the smallest output a review sized to its room asks for
    * (l4-selftasks-101): the system prompt plus `REVIEW_EVIDENCE_ALLOWANCE_TOKENS` of input and
-   * `REVIEW_MIN_TOKENS_PER_CALL` out (the call's fixed cap when `maxTokensPerCall` is set). Below
-   * it the review is not started, and none of its checks runs (L4-money-303: before, the floor
-   * was the output cap alone, so the checks ran and the first call was then refused).
+   * `REVIEW_MIN_TOKENS_PER_CALL` out (the call's fixed cap when `maxTokensPerCall` is set; at
+   * effort max the output cap, `REVIEW_TOKENS_PER_CALL`, as such a review is never sized down).
+   * Below it the review is not started, and none of its checks runs (L4-money-303: before, the
+   * floor was the output cap alone, so the checks ran and the first call was then refused).
    */
   floorUsdMicro: number;
   /** The review runs at effort max (its first call's cap grows to `MAX_EFFORT_TOKENS_CEILING`). */
@@ -478,7 +479,10 @@ export class CriticService {
     const out = this.deps.maxTokensPerCall ?? REVIEW_TOKENS_PER_CALL;
     const maxEffort = pick.effort === "max";
     const cap = maxEffort ? Math.max(out, MAX_EFFORT_TOKENS_CEILING) : out;
-    const least = this.deps.maxTokensPerCall ?? REVIEW_MIN_TOKENS_PER_CALL;
+    // The least a first call asks for: a review at effort max is never sized down (its calls ask
+    // for `out`, growing to the ceiling as the room pays), so its floor is priced at `out`; every
+    // other review its task's budget caps may go down to REVIEW_MIN_TOKENS_PER_CALL.
+    const least = maxEffort ? out : (this.deps.maxTokensPerCall ?? REVIEW_MIN_TOKENS_PER_CALL);
     return {
       worstUsdMicro: pricing.estimate(system + REVIEW_EVIDENCE_ALLOWANCE_TOKENS, cap),
       floorUsdMicro: pricing.estimate(system + REVIEW_EVIDENCE_ALLOWANCE_TOKENS, least),

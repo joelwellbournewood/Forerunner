@@ -4,6 +4,7 @@ import {
   MAX_EFFORT_TOKENS_CEILING,
   REVIEW_EVIDENCE_ALLOWANCE_TOKENS,
   REVIEW_MIN_TOKENS_PER_CALL,
+  REVIEW_TOKENS_PER_CALL,
   SYSTEM_SUFFIX,
 } from "../src/critic.ts";
 import { CRITIC_PROMPT, world } from "./helpers.ts";
@@ -42,7 +43,12 @@ describe("d1116-budget-all, run C: CriticService.reviewCallUsdMicro (BA-4)", () 
     }
   });
 
-  it("at effort max on Opus 5.5 (a tier 3 review): the worst case prices the ceiling of 24,000 tokens out; the floor is the same input with 2,048 tokens out", async () => {
+  // The review of fix/l4-selftasks-check (non-blocking 2, the max-effort sibling of L4-money-303):
+  // a review at effort max is never sized down (its first call asks for at least
+  // REVIEW_TOKENS_PER_CALL, growing to the ceiling as the room pays), so its floor is the first
+  // call's whole price at 8,192 tokens out. At 2,048 a review whose room lay between the two
+  // prices started, ran its checks, and its first call was then refused.
+  it("at effort max on Opus 5.5 (a tier 3 review): the worst case prices the ceiling of 24,000 tokens out; the floor is the same input with 8,192 tokens out, the least its first call asks for", async () => {
     const w = await world({ deps: { pricing: priced } });
     try {
       const S = w.provider.countTokens(`${CRITIC_PROMPT.prompt}${SYSTEM_SUFFIX}`);
@@ -50,7 +56,21 @@ describe("d1116-budget-all, run C: CriticService.reviewCallUsdMicro (BA-4)", () 
       expect(price.maxEffort).toBe(true);
       expect(MAX_EFFORT_TOKENS_CEILING * 20).toBe(480_000);
       expect(price.worstUsdMicro).toBe((S + 8_000) * 4 + 480_000);
-      expect(price.floorUsdMicro).toBe((S + 8_000) * 4 + REVIEW_MIN_TOKENS_PER_CALL * 20);
+      expect(REVIEW_TOKENS_PER_CALL).toBe(8_192);
+      expect(price.floorUsdMicro).toBe((S + 8_000) * 4 + REVIEW_TOKENS_PER_CALL * 20);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a fixed output cap per call (CriticDeps.maxTokensPerCall) is the floor's output at every effort", async () => {
+    const w = await world({ deps: { pricing: priced, maxTokensPerCall: 4_000 } });
+    try {
+      const S = w.provider.countTokens(`${CRITIC_PROMPT.prompt}${SYSTEM_SUFFIX}`);
+      expect(w.critic.reviewCallUsdMicro(1, null).floorUsdMicro).toBe((S + 8_000) * 2 + 40_000);
+      expect(w.critic.reviewCallUsdMicro(3, { critic_ceiling: "opus" }).floorUsdMicro).toBe(
+        (S + 8_000) * 4 + 80_000,
+      );
     } finally {
       await w.close();
     }

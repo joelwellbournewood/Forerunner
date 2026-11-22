@@ -15,6 +15,7 @@ import { composeRuntime } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import type { ModelRequest } from "../src/provider/types.ts";
 import { SECRET_NAMES } from "../src/setup/wizard.ts";
+import { pricingFor } from "../src/wiring/billing-ports.ts";
 import { removeHomes, settleSessions } from "./helpers.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
@@ -164,8 +165,12 @@ function world(replies: ScriptedReply[]) {
     return g;
   };
   const standIn = messagesApiStandIn({ model, clock });
-  /** `services`: the daemon's services run (the scheduler a Continue starts its session on). */
-  const open = async (home: string, opts: { services?: boolean } = {}) => {
+  /**
+   * `services`: the daemon's services run (the scheduler a Continue starts its session on).
+   * `everyTier`: the composition's test-only pin of the process sandbox for every risk tier, so
+   * a tier 2 or 3 task runs and is reviewed here without a container engine.
+   */
+  const open = async (home: string, opts: { services?: boolean; everyTier?: boolean } = {}) => {
     const rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
       dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
@@ -181,6 +186,7 @@ function world(replies: ScriptedReply[]) {
       appVersion: "0.1.0-test",
       sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
       startServices: opts.services === true,
+      ...(opts.everyTier ? { sandboxProcessForEveryTier: true } : {}),
     });
     const { app, token } = createDaemonApp(rt);
     const req = (path: string, init: RequestInit = {}) =>
@@ -946,6 +952,66 @@ describe("l4-selftasks-check, run L4", () => {
       expect(cards.map((c) => c.body)).toEqual([
         "The work is done; its review waits for room in the budget.",
       ]);
+    } finally {
+      await settleSessions(o.rt);
+      await o.rt.close();
+    }
+  }, 120_000);
+
+  // The review of fix/l4-selftasks-check (non-blocking 2): a tier 3 review runs at effort max and
+  // is never sized down, so its first call asks for at least 8,192 tokens out. Its floor was the
+  // first call's price at 2,048 out, so with room between the two prices the review started (its
+  // checks ran, a critic Run row was written) and its first call was then refused: L4-money-303's
+  // symptom at effort max. Tier 3 runs here on the composition's test-only process pin.
+  it("L4-money-303 at effort max: a tier 3 task whose left lies above the price at 2,048 tokens out but below its first call's at 8,192: no review starts, no critic Run row, one review-waits card", async () => {
+    const TITLE = "Write the payment page";
+    // The work bills 100,000: two calls of 2,500 tokens in and 2,000 out on the tier 3 coder's
+    // model (Opus 5.5 prices, USD 4 / 20 per million tokens).
+    const WORK = 100_000;
+    const w = world(
+      codes(TITLE, "pay.html", [
+        { input_tokens: 2_500, output_tokens: 2_000 },
+        { input_tokens: 2_500, output_tokens: 2_000 },
+      ]),
+    );
+    const o = await w.open(home(), { everyTier: true });
+    try {
+      const { projectId, taskId } = await projectWithTask(o, TITLE, {
+        budgetUsdMicro: 10_000_000,
+        file: "pay.html",
+        riskTier: 3,
+      });
+      const price = await o.rt.critic.reviewCallUsdMicro(
+        await o.rt.store.task.mustGet(taskId),
+        "coder",
+      );
+      expect(price.maxEffort).toBe(true);
+      // The review's model and its prices, as the critic prices a call: the worst case is the
+      // input (system prompt and evidence allowance) with 24,000 tokens out.
+      const project = await o.rt.store.project.mustGet(projectId);
+      const pricing = pricingFor(
+        o.rt.critic.service.modelFor(3, { projectSettings: project.settings } as never).model,
+      );
+      const input = price.worstUsdMicro - pricing.estimate(0, 24_000);
+      const at2048 = input + pricing.estimate(0, 2_048);
+      const at8192 = input + pricing.estimate(0, 8_192);
+      const left = at2048 + Math.round((at8192 - at2048) / 4);
+      await o.rt.store.task.patch(taskId, { budget_usd_micro: WORK + left } as never);
+      const sessionId = await start(o, projectId);
+      await ended(o, sessionId);
+      await settleSessions(o.rt);
+      const task = await o.rt.store.task.mustGet(taskId);
+      expect(task.actual_cost_usd_micro).toBe(WORK);
+      expect(w.seen.filter((r) => isCritic(r) && text(r).includes(TITLE))).toEqual([]);
+      expect(
+        (await o.rt.store.run.forTask(taskId)).filter((r) => r.specialist === "critic"),
+      ).toEqual([]);
+      expect(task.status).toBe("needs_human");
+      expect((await cardsOf(o, taskId)).map((c) => c.body)).toEqual([
+        "The work is done; its review waits for room in the budget.",
+      ]);
+      // The floor the runner read: the first call's whole price at 8,192 tokens out.
+      expect(price.floorUsdMicro).toBe(at8192);
     } finally {
       await settleSessions(o.rt);
       await o.rt.close();
