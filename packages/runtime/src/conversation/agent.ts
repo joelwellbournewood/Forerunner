@@ -1140,6 +1140,12 @@ export class ConversationAgent {
       deviceId: req.deviceId ?? null,
       // "make this a task": the person's own line before this one, in this conversation.
       ...(lastLine(earlier) ? { lastMessage: lastLine(earlier) } : {}),
+      // l4-chat-answers (L4-selftasks-119, L4-chat-104): "there", "it", "that project" mean the
+      // project this conversation switched to (the active one the registry recorded since);
+      // with no switch here the parser asks which project, never reads the word as a name.
+      ...(recorded && earlier.some((t) => t.reply?.actions.some((a) => a.kind === "project.switch"))
+        ? { namedProjectId: recorded }
+        : {}),
     };
     /** Set when a stop cancelled the pending card on its way to the registry (spec O.9). */
     let cancelledForStop = false;

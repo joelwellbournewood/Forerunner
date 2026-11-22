@@ -24504,4 +24504,35 @@ describe("l4-chat-answers, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+  // L4-selftasks-119 (live check 4, L4-github-4): in Notes' Chat, "add a task to Site: …" added
+  // 'Site: write the shop page' to Notes, and after "switch to Site", "add a task there: …" added
+  // 'There: write the about page' to Notes.
+  it("POST /chat in Notes' Chat tab: 'add a task to Site: …' adds to Site; after 'switch to Site', 'add a task there: …' adds to Site too; nothing lands in Notes and no title starts 'There:'", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-119-");
+    try {
+      const notes = await a.client.createProject({ name: "Notes", goal: "A notes page" });
+      const site = await a.client.createProject({ name: "Site", goal: "A shop site" });
+      const titles = async (id: string) => (await a.client.tasks(id)).map((t) => t.title);
+      // Before any switch, "there" names no project: chat asks which.
+      const asked = await a.chat(notes.id, "add a task there: write the about page");
+      expect(asked.reply).toBe("Which project: Notes or Site? Options: Notes, Site.");
+      expect(await titles(notes.id)).toEqual([]);
+      const added = await a.chat(notes.id, "add a task to Site: write the shop page");
+      expect(added.reply).toContain('"Write the shop page" to Site');
+      expect(await titles(site.id)).toEqual(["Write the shop page"]);
+      expect(await titles(notes.id)).toEqual([]);
+      await a.chat(notes.id, "switch to Site");
+      const there = await a.chat(notes.id, "add a task there: write the about page");
+      expect(there.reply).toContain('"Write the about page" to Site');
+      expect(await titles(site.id)).toEqual(["Write the shop page", "Write the about page"]);
+      expect(await titles(notes.id)).toEqual([]);
+      // Today's reading stays without a separator.
+      await a.chat(notes.id, "add a task to write the README");
+      expect(await titles(notes.id)).toEqual(["Write the README"]);
+      expect(a.chatCalls()).toHaveLength(0);
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });

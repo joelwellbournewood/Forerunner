@@ -331,6 +331,11 @@ export interface CommandTurn {
   /** The previous chat message, for "make this a task" (looked up from the log when absent). */
   lastMessage?: string;
   /**
+   * l4-chat-answers (L4-selftasks-119, L4-chat-104): the project this conversation last switched
+   * to, which "there", "it" or "that project" mean in the parser ("add a task there: …").
+   */
+  namedProjectId?: string | null;
+  /**
    * d1109-chat-guard (ADR 0114): this turn read a record. Set by the chat when the facts list a
    * card in full in words Forerunner did not write or carry a flagged excerpt, lesson or task
    * line, and by `noteRecordsRead` when a tool's result carries the untrusted mark (a read

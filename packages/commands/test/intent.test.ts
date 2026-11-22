@@ -751,3 +751,76 @@ describe("d1109-selftasks-chat, run C: 'review' and 'go through' the tasks are n
       expect(fixTasksAskOf(line), line).toEqual({});
   });
 });
+
+/**
+ * l4-chat-answers, run L4 (live check 4: L4-selftasks-119, L4-chat-104). In Notes' Chat, "add a
+ * task to Site: write the shop page" added "Site: write the shop page" to Notes, and after
+ * "switch to Site", "add a task there: …" added "There: …" to Notes; "open it" switched to Site
+ * because "site" holds "it".
+ */
+describe("l4-chat-answers, run L4: the project a line names", () => {
+  const notes = { id: "p-notes", name: "Notes" };
+  const site = { id: "p-site", name: "Site" };
+  const two = (over: Partial<IntentContext> = {}) =>
+    ctx({ activeProjectId: notes.id, projects: [notes, site], ...over });
+  const created = async (line: string, c: IntentContext) => {
+    const r = await parser.parse(line, c);
+    return { params: r.commands[0]?.params as Record<string, unknown> | undefined, r };
+  };
+
+  it("'add a task to Site: …' adds to Site with the words after the colon as its title (L4-selftasks-119)", async () => {
+    for (const line of [
+      "add a task to Site: write the shop page",
+      "add a task to the Site project: write the shop page",
+      "add a task in Site - write the shop page",
+      "add a task for Site: write the shop page",
+      "neue Aufgabe für Site: write the shop page",
+    ]) {
+      const { params, r } = await created(line, two());
+      expect(r.commands.map((c) => c.name), line).toEqual(["task.create"]);
+      expect(params, line).toMatchObject({ title: "Write the shop page", project: site.id });
+    }
+  });
+
+  it("'add a task there: …' adds to the project this conversation switched to, or asks which; 'there' is never a title (L4-selftasks-119)", async () => {
+    const { params } = await created(
+      "add a task there: write the shop page",
+      two({ namedProjectId: site.id }),
+    );
+    expect(params).toMatchObject({ title: "Write the shop page", project: site.id });
+    const asked = await parser.parse("add a task there: write the shop page", two());
+    expect(asked.commands).toEqual([]);
+    expect(asked.question).toEqual({
+      text: "Which project: Notes or Site?",
+      options: ["Notes", "Site"],
+    });
+    const de = await created("neue Aufgabe dort: Shop-Seite schreiben", two({ namedProjectId: site.id }));
+    expect(de.params).toMatchObject({ title: "Shop-Seite schreiben", project: site.id });
+    // "here" is the project the line is said in: no project param, the tab's own.
+    const here = await created("add a task here: write the shop page", two());
+    expect(here.params?.project).toBeUndefined();
+    expect(here.params?.title).toBe("Write the shop page");
+    expect(taskTitleOf("there: write the shop page")).toBe("Write the shop page");
+  });
+
+  it("without a separator today's reading stays; 'to' + an unknown name asks; 'for' + words that name no project is the task (L4-selftasks-119)", async () => {
+    const plain = await created("add a task to write the README", two());
+    expect(plain.params).toMatchObject({ title: "Write the README" });
+    expect(plain.params?.project).toBeUndefined();
+    const unknown = await parser.parse("add a task to Shop: write the page", two());
+    expect(unknown.question?.text).toBe("Which project: Notes or Site?");
+    const forFaq = await created("add a task for the FAQ: list the opening hours", two());
+    expect(forFaq.params?.project).toBeUndefined();
+    expect(forFaq.params?.title).toBe("For the FAQ: list the opening hours");
+  });
+
+  it("'open it' is never Site by the 'it' in its name; it opens the project this conversation switched to, or asks (L4-chat-104)", async () => {
+    const asked = await parser.parse("open it", two());
+    expect(asked.commands).toEqual([]);
+    expect(asked.question?.text).toBe("Which project?");
+    const named = await parser.parse("open it", two({ namedProjectId: site.id }));
+    expect(named.commands).toEqual([{ name: "project.switch", params: { project: site.id } }]);
+    const byName = await parser.parse("open Site", two());
+    expect(byName.commands).toEqual([{ name: "project.switch", params: { project: site.id } }]);
+  });
+});

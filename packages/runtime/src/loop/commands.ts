@@ -230,6 +230,7 @@ export class CommandLoop implements ConversationCommands {
       activeProjectId: turn.activeProjectId,
       projects: projects.map((p) => ({ id: p.id, name: p.name })),
       ...(lastMessage ? { lastMessage } : {}),
+      ...(turn.namedProjectId ? { namedProjectId: turn.namedProjectId } : {}),
     });
     return {
       commands: parsed.commands.map((c) => ({ name: c.name, params: c.params })),

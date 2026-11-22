@@ -46,6 +46,30 @@ export interface IntentContext {
   projects: IntentProject[];
   /** The previous chat message, for "make this a task". */
   lastMessage?: string;
+  /**
+   * l4-chat-answers (L4-selftasks-119, L4-chat-104): the project this conversation last switched
+   * to, which "there", "it" or "that project" mean ("add a task there: …", "open it"); null or
+   * absent when the conversation named none, and the parser asks which project.
+   */
+  namedProjectId?: string | null;
+}
+
+/**
+ * Words that point at a project already said instead of naming one ("there", "it", "that
+ * project", "dort"): never matched against project names (live check 4: "open it" switched to
+ * Site because "site" holds "it"), and never words of a task's title ('Added "There: …"').
+ */
+const PROJECT_PRONOUN_RE =
+  /^(?:there|it|that|that\s+one|that\s+project|the\s+same\s+project|the\s+other\s+project|dort|da|dorthin|es|das|dem|das\s+projekt|dem\s+projekt)$/i;
+
+/** Words for the project the line is said in ("here", "this project", "hier"). */
+const HERE_RE = /^(?:here|this|this\s+one|this\s+project|hier|dieses?|diesem|dieses\s+projekt|diesem\s+projekt)$/i;
+
+const said = (words: string) => words.trim().replace(/[.!?,]+$/, "");
+
+/** Whether a project's place in a line is a pronoun ("there", "it", "that project", "dort"). */
+export function isProjectPronoun(words: string): boolean {
+  return PROJECT_PRONOUN_RE.test(said(words)) || HERE_RE.test(said(words));
 }
 
 export interface ModelIntentResult {
@@ -390,6 +414,9 @@ export function taskTitleOf(said: string): string {
     const next = t
       .replace(/^(?:please|pls|bitte|(?:can|could|would|will)\s+you(?:\s+please)?)[\s,]+/i, "")
       .replace(/^(?:to|zu)\s+/i, "")
+      // l4-chat-answers (L4-selftasks-119): a pointer to a project is no word of a title
+      // ('Added "There: write the about page"').
+      .replace(/^(?:there|here|dort|hier)\s*[:,-]\s*/i, "")
       .trim();
     if (next === t) break;
     t = next;
@@ -431,7 +458,7 @@ export class IntentParser {
     const whole =
       this.matchLesson(clean(trimmed)) ??
       this.matchNote(clean(trimmed)) ??
-      this.matchAddTask(clean(trimmed)) ??
+      this.matchAddTask(clean(trimmed), ctx) ??
       this.matchTask(clean(trimmed), ctx) ??
       this.matchStopAfterTask(clean(trimmed)) ??
       this.matchDependency(clean(trimmed));
@@ -648,6 +675,22 @@ export class IntentParser {
       /^zu\s+(?:dem\s+|der\s+)?(.+?)\s+wechseln$/i.exec(c);
     const m = en ?? de;
     if (!m?.[1]) return null;
+    // l4-chat-answers (L4-chat-104): "open it", "switch to that project" mean the project this
+    // conversation switched to, else ask which; a pronoun is never matched against names (live
+    // check 4: "open it" switched to Site, whose name holds "it").
+    if (isProjectPronoun(m[1])) {
+      const named = ctx.namedProjectId
+        ? ctx.projects.find((p) => p.id === ctx.namedProjectId)
+        : undefined;
+      if (named && PROJECT_PRONOUN_RE.test(said(m[1])))
+        return {
+          command: { name: "project.switch", params: { project: named.id } },
+          project: named.id,
+        };
+      return {
+        question: { text: "Which project?", options: ctx.projects.slice(0, 6).map((p) => p.name) },
+      };
+    }
     return this.project(m[1], ctx);
   }
 
@@ -715,23 +758,91 @@ export class IntentParser {
    * 'Added "to write a README that explains how to open the page and what each section of t…"'):
    * the full words stay its outcome.
    */
-  private matchAddTask(c: string): Match | null {
+  private matchAddTask(c: string, ctx?: IntentContext): Match | null {
+    // l4-chat-answers (L4-selftasks-119): a target project before a colon, comma or dash: "add a
+    // task to Site: …", "add a task there: …", "neue Aufgabe für Site: …". Without the separator
+    // today's reading stays ("add a task to write the README" is a title).
+    const target =
+      /^(?:(?:add|create|make)\s+(?:a\s+)?(?:new\s+)?task|new\s+task)(?:\s+(to|in|into|for)\s+(?:the\s+)?(.+?)|\s+(there|here))\s*[:,-]\s*(.+)$/is.exec(
+        c,
+      ) ??
+      /^(?:neue|erstelle\s+(?:eine\s+)?)\s*aufgabe(?:\s+(zu|zum|zur|in|im|für)\s+(?:dem\s+|der\s+)?(.+?)|\s+(dort|hier|da))\s*[:,-]\s*(.+)$/is.exec(
+        c,
+      );
+    if (target?.[4]?.trim()) {
+      const where = said(target[2] ?? target[3] ?? "").replace(/\s+(?:project|projekt)$/i, "");
+      const comma = /^[^:–-]*,/.test(c.slice(0, c.length - target[4].length));
+      const resolved = this.addTarget(where, target[1] ?? "", ctx, comma);
+      if (resolved !== "words") {
+        if (resolved && typeof resolved === "object") return { question: resolved };
+        const task = this.addTaskOf(target[4].trim(), resolved);
+        if (task) return task;
+      }
+    }
     const m =
       /^(?:(?:add|create|make)\s+(?:a\s+)?(?:new\s+)?task|new\s+task|(?:neue|erstelle\s+(?:eine\s+)?)\s*aufgabe)\s*[:,-]?\s+(.+)$/is.exec(
         c,
       );
-    const said = m?.[1]?.trim();
-    if (!said) return null;
+    const words = m?.[1]?.trim();
+    if (!words) return null;
+    return this.addTaskOf(words, null);
+  }
+
+  /**
+   * Where "add a task <prep> <where>: …" adds (L4-selftasks-119): the tab's own project for
+   * "here" (null), the project this conversation switched to for a pronoun ("there", "it"),
+   * else the project the words name. A pronoun with no project said, or a name that matches no
+   * project or several, asks "Which project: …?"; "for <words>" that names no project is the
+   * task's own words ("add a task for the FAQ: …").
+   */
+  private addTarget(
+    where: string,
+    prep: string,
+    ctx: IntentContext | undefined,
+    comma = false,
+  ): string | null | IntentQuestion | "words" {
+    if (!ctx) return "words";
+    if (HERE_RE.test(where)) return null;
+    const ask = (from: readonly IntentProject[]): IntentQuestion => {
+      const names = (from.length ? from : ctx.projects).slice(0, 6).map((p) => p.name);
+      const list =
+        names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : (names[0] ?? "");
+      return { text: list ? `Which project: ${list}?` : "Which project?", options: names };
+    };
+    if (PROJECT_PRONOUN_RE.test(where)) {
+      const named = ctx.namedProjectId
+        ? ctx.projects.find((p) => p.id === ctx.namedProjectId)
+        : undefined;
+      return named ? named.id : ask([]);
+    }
+    const matches = matchProjects(ctx.projects, where);
+    if (matches.length === 1) return (matches[0] as IntentProject).id;
+    // Words that name no project stay the task's own words when they cannot be a project's
+    // name: after "for" ("for the FAQ: …"), before a comma ("to write a README that …, with
+    // screenshots"), or longer than a name is said (more than three words).
+    if (/^(?:for|für)$/i.test(prep) || comma || where.split(/\s+/).length > 3) return "words";
+    return ask(matches);
+  }
+
+  /** The task.create of an "add a task" line's words, in `project` when one is given. */
+  private addTaskOf(words: string, project: string | null): Match | null {
     // "…, priority high", "… (high priority)", "…, Priorität hoch" (U-041): the level is a
     // parameter, not part of the title.
-    const { text, priority } = priorityPhrase(said);
+    const { text, priority } = priorityPhrase(words);
     const title = taskTitleOf(text);
     if (title.length < 3) return null;
     return {
       command: {
         name: "task.create",
-        params: { title, outcome: text, status: "ready", ...(priority ? { priority } : {}) },
+        params: {
+          title,
+          outcome: text,
+          status: "ready",
+          ...(priority ? { priority } : {}),
+          ...(project ? { project } : {}),
+        },
       },
+      ...(project ? { project } : {}),
     };
   }
 
