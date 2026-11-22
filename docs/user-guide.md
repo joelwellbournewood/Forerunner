@@ -1165,7 +1165,8 @@ lists no model for the refused call.
 While the only credential that may answer is refused, chat says so and what to do ("Anthropic
 refused your API key, so I have not answered. Save a new key in Settings; until then I can still
 add and change tasks."), and "start a session" gets the Start dialog's sentence ("Nothing can run
-until you save a new API key in Settings.") instead of a question it could not keep. When an
+until you save a new API key in Settings.") instead of a question it could not keep, also when
+the session you started met the refusal and waits to go on. When an
 answer fails for another reason, chat says so in one sentence with **Ask again** ("Claude did not
 answer this time; ask again in a moment."); a failed answer never shows "Answered with ..." or
 **Think it through**, and a call you stop is counted on the credential that made it.

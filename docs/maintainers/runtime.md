@@ -8090,10 +8090,17 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   API key, so I have not answered. Save a new key in Settings; until then I can still add and
   change tasks."; a sign-in: "Sign in again in Settings"; a limit, the share or a monthly cap:
   "... so I have not answered. I can still add and change tasks."). Chat's `startBlocked` port
-  passes a refused credential's wait (`credentialWaits.now`: a save link, not startable, not
-  kept) to `startBlockedReason` as the dialog's check does, so "start a session" gets the
-  dialog's sentence ("Nothing can run until you save a new API key in Settings.") with no
-  read-back. A resting credential keeps the dialog's "Start at 15:40" and is no refusal there.
+  passes a refused credential's wait (`credentialWaits.now`: a save link, not startable) to
+  `startBlockedReason` as the dialog's check does, so "start a session" gets the dialog's
+  sentence ("Nothing can run until you save a new API key in Settings.", a sign-in: "... a new
+  Claude sign-in ...") with no read-back. A resting credential keeps the dialog's "Start at
+  15:40" and is no refusal there. Fix-up of the review: the refused wait is passed also while
+  the person's session is kept to go on (`kept`, the usual case: the Start they pressed met the
+  refusal), and `session.start` asks `startBlocked` before `startWaits` (commands.md); before,
+  chat said 'Your session of 10:00 goes on by itself once its Claude credential is back.' beside
+  the dialog's refusal. Test: `credential-chat-refused.test.ts` (Start by `POST /sessions`, then
+  chat, also after composing again; the refused sign-in's sibling). `POST /sessions` keeps its
+  own order (the continuation's sentence first, l4-cred-screens' validation status).
 - **A stored ask form reads as it is now** (L4-creds-7, live check 4's L4-creds-6):
   `resultAfterWait` (every reader of a stored result: the session page, the Overview's Last
   result and Read aloud, the Inbox's Update) first reads CE-7's ask form ("Waits for your

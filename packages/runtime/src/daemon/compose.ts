@@ -4908,12 +4908,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           // l4-cred-engine L4-creds-8: a refused credential refuses chat's start as it refuses
           // the dialog's (its sentence, no read-back); before, chat read the start back and
           // "started" it while Start was off. A resting credential keeps the dialog's Start
-          // ("Start at 15:40"), so it is not a refusal here.
+          // ("Start at 15:40") or its session goes on by itself (`startWaits`), so it is not a
+          // refusal here: only a refused one is (its wait carries the link that replaces it).
+          // fixup-l4-cred-engine: also while the person's session is kept to go on (`kept`),
+          // the usual case: the Start they pressed met the refusal. Before, chat then said 'Your
+          // session of 10:00 goes on by itself once its Claude credential is back.' while the
+          // dialog said 'Nothing can run until you save a new API key in Settings.'.
           credentialWait:
             check.runnable.length > 0 || check.oversized
               ? await credentialWaits
                   .now(project.id)
-                  .then((w) => (w?.save && !w.startable && !w.kept ? w : null))
+                  .then((w) => (w?.save && !w.startable ? w : null))
                   .catch(() => null)
               : null,
         });
