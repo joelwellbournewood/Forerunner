@@ -77,13 +77,44 @@ export function todayLine(timeZone: string, nowMs: number): string {
 const quote = (s: string) => `"${s.replace(/\s+/g, " ").trim()}"`;
 
 /** One task's line: title, status in words, what it waits for, why it failed or stopped, the critic. */
+/**
+ * Each task's earlier titles (task.update's renames in the change log, newest 1,000 changes), by
+ * task id: what recall's task hits, task_get and (l4-chat-answers) the facts' task lines name.
+ */
+export async function earlierTitlesOf(
+  store: Pick<StateStore, "changeLog">,
+  projectId: string,
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  for (const r of await store.changeLog.forProject(projectId, { limit: 1000 })) {
+    const before = r.before as { task_id?: unknown; title?: unknown } | null;
+    const after = r.after as { title?: unknown } | null;
+    if (!before || typeof before.task_id !== "string" || typeof before.title !== "string") continue;
+    if (
+      typeof after?.title !== "string" ||
+      after.title === before.title ||
+      r.undo_state === "undone"
+    )
+      continue;
+    const list = out.get(before.task_id) ?? [];
+    if (!list.includes(before.title)) list.push(before.title);
+    out.set(before.task_id, list);
+  }
+  return out;
+}
+
 async function taskLine(
   store: Pick<StateStore, "review" | "finding">,
   t: TaskRow,
   label: string,
   titleOf: (id: string) => string | undefined,
+  earlier: readonly string[] = [],
 ): Promise<string> {
-  const parts = [`- ${quote(t.title)}: ${label}`];
+  // l4-chat-answers (L4-chat-101): a renamed task names its earlier title, so "what happened to
+  // the README task?" is answered from the facts after "Write the README" became "Write the
+  // guide" (live check 4: "There is no README task").
+  const was = earlier.length ? ` (earlier ${earlier.slice(0, 2).map(quote).join(", ")})` : "";
+  const parts = [`- ${quote(t.title)}${was}: ${label}`];
   const waits = t.depends_on
     .map((id) => titleOf(id))
     .filter((x): x is string => !!x)
@@ -125,10 +156,19 @@ export async function tasksBlock(
   const ctx = await loadTaskDisplayContext(store, rows, opts.sandboxReady ?? null);
   const ordered = runOrder(rows);
   const titles = new Map(rows.map((t) => [t.id, t.title]));
+  const earlier = await earlierTitlesOf(store, projectId);
   const max = opts.max ?? CONTEXT_TASKS_MAX;
   const lines: string[] = [];
   for (const t of ordered.slice(0, max))
-    lines.push(await taskLine(store, t, taskDisplay(t, ctx).label, (id) => titles.get(id)));
+    lines.push(
+      await taskLine(
+        store,
+        t,
+        taskDisplay(t, ctx).label,
+        (id) => titles.get(id),
+        earlier.get(t.id),
+      ),
+    );
   const counts = new Map<string, number>();
   for (const t of rows) counts.set(t.status, (counts.get(t.status) ?? 0) + 1);
   const done = counts.get("done") ?? 0;

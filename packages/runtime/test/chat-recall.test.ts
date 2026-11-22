@@ -87,7 +87,13 @@ interface World {
 const NOW = "2026-11-11T09:00:00.000Z"; // Wed 11 Nov 2026, 10:00 in Zurich
 
 async function setup(
-  opts: { agentDeps?: Partial<ConversationDeps>; seed?: boolean; memory?: boolean } = {},
+  opts: {
+    agentDeps?: Partial<ConversationDeps>;
+    seed?: boolean;
+    memory?: boolean;
+    /** More records after the seed, while the clock still stands before NOW. */
+    more?: (w: World) => Promise<unknown>;
+  } = {},
 ): Promise<World> {
   const h = harness();
   await h.clock.set("2026-10-26T08:00:00.000Z");
@@ -199,6 +205,7 @@ async function setup(
     },
   };
   if (opts.seed !== false) await seed(w);
+  if (opts.more) await opts.more(w);
   await h.clock.set(NOW);
   return w;
 }
@@ -1521,6 +1528,117 @@ describe("d1109-chat-recall, run C: the review's fix-up", () => {
       kind: "conversation",
       link: `/projects/${w.quote}/chat`,
     });
+    await w.store.close();
+  });
+});
+
+/**
+ * l4-chat-answers, run L4 (live check 4, L4-chat-101): the fast model said a recorded thing does
+ * not exist ("There is no README task in Quote Page" for a task renamed since) or offered to look
+ * ("I haven't searched the records yet. Should I look …?") instead of looking it up; LC-C10 named
+ * the record with its date in 3 of 12 questions. A reply that says it is not there, in a turn that
+ * offered recall and called neither recall tool, gets one nudge to look it up (the "absent" claim);
+ * the facts' task line names a task's earlier title.
+ */
+describe("l4-chat-answers, run L4", () => {
+  const ABSENT_NUDGE =
+    "You said it is not there without looking it up. Call recall now with the person's words and other words for it (an earlier name, another language), then answer from what it returns. Never ask whether to look.";
+  const rowOf = async (w: World) => {
+    const sessionId = await w.agent.conversationSessionId(w.alice, w.quote);
+    return (await w.store.event.list(sessionId, 0, 500))
+      .filter((e) => e.type === "chat.reply")
+      .at(-1)?.payload as Record<string, unknown>;
+  };
+
+  it("'what happened to the README task?' answered without a lookup is nudged once; the model looks it up and names 'Write the guide' with its merge date (L4-chat-101)", async () => {
+    const w = await setup();
+    const ABSENT =
+      "There is no README task in Quote Page. I haven't searched the records yet. Should I look through the earlier records for it?";
+    w.reply([
+      textReply(ABSENT),
+      toolReply("recall", { words: "README", also: ["guide"] }),
+      textReply('"Write the guide" (earlier "Write the README") was merged on Wed 4 Nov.'),
+    ]);
+    const res = await w.chat("what happened to the README task?");
+    expect(w.provider.calls).toHaveLength(3);
+    // The facts name the earlier title (the first message holds it before any lookup).
+    expect(text(w.provider.calls[0]?.request.messages.at(-1)?.content)).toContain(
+      '- "Write the guide" (earlier "Write the README"): ',
+    );
+    // The nudge, word for word, after the reply that said it is not there.
+    expect(w.provider.calls[1]?.request.messages.at(-1)).toEqual({
+      role: "user",
+      content: [{ type: "text", text: ABSENT_NUDGE }],
+    });
+    expect(w.steps).toContain("Looking through everything recorded…");
+    // What recall gave the model holds the record with its merge date.
+    const found = inner(w.results(2)[0]);
+    expect(found).toContain(
+      'r1 [task, Mon 2 Nov, Quote Page, strong] Write the guide: Merged. Earlier called "Write the README". Its pull request was merged on 4 Nov.',
+    );
+    expect(res.reply).toBe(
+      '"Write the guide" (earlier "Write the README") was merged on Wed 4 Nov.',
+    );
+    for (const said of ["There is no README", "Should I look", "I haven't searched"])
+      expect(res.reply).not.toContain(said);
+    expect((await rowOf(w)).claimGuard).toEqual({
+      kind: "absent",
+      phrase: "There is no README task",
+      nudged: true,
+      replaced: false,
+    });
+    await w.store.close();
+  });
+
+  it("'which licence did we choose?' answered 'I can't see …' is looked up after the nudge: the card of 9 Nov with MIT reaches the model (L4-chat-101)", async () => {
+    // A card answered on Mon 9 Nov (after the seed's records).
+    const w = await setup({
+      more: (x) =>
+        answeredCard(
+          x,
+          "2026-11-09T10:00:00.000Z",
+          x.quote,
+          "Which licence should the page use?",
+          ["MIT", "GPL"],
+          { choice: "MIT" },
+        ),
+    });
+    w.reply([
+      textReply(
+        "I can't see a licence choice in what I have for Quote Page. Should I look through the earlier notes and decisions for it?",
+      ),
+      toolReply("recall", { words: "licence", also: ["license", "MIT"] }),
+      textReply("MIT, from the card you answered on Mon 9 Nov."),
+    ]);
+    const res = await w.chat("which licence did we choose?");
+    expect(w.provider.calls).toHaveLength(3);
+    expect(text(w.provider.calls[1]?.request.messages.at(-1)?.content)).toBe(ABSENT_NUDGE);
+    const found = inner(w.results(2)[0]);
+    expect(found).toContain("Which licence should the page use?");
+    expect(found).toContain("MIT");
+    expect(found).toContain("Mon 9 Nov");
+    expect(res.reply).toBe("MIT, from the card you answered on Mon 9 Nov.");
+    await w.store.close();
+  });
+
+  it("'what is left?' is answered in one call with no lookup; an absence said after a lookup stands (L4-chat-101)", async () => {
+    const w = await setup();
+    w.reply([
+      textReply('Two tasks are left: "Style the page" failed and "Check the page" is ready.'),
+    ]);
+    const left = await w.chat("what is left?");
+    expect(w.provider.calls).toHaveLength(1);
+    expect(left.reply).toBe(
+      'Two tasks are left: "Style the page" failed and "Check the page" is ready.',
+    );
+    w.reply([
+      toolReply("recall", { words: "pizza oven" }),
+      textReply("I found no record of a pizza oven in Quote Page or Bakery."),
+    ]);
+    const none = await w.chat("did we ever talk about a pizza oven?");
+    expect(w.provider.calls).toHaveLength(2);
+    expect(none.reply).toBe("I found no record of a pizza oven in Quote Page or Bakery.");
+    expect((await rowOf(w)).claimGuard).toBeUndefined();
     await w.store.close();
   });
 });

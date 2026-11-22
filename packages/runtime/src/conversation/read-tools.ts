@@ -7,6 +7,7 @@ import type { ToolResult, ToolSpec } from "../agent/tools.ts";
 import {
   cancelledPullRequests,
   donePullRequests,
+  earlierTitlesOf,
   lastSessionBlock,
   prList,
   repositoryNameOf,
@@ -153,29 +154,6 @@ function sameTitleWords(title: string, tasks: readonly TaskRow[]): string {
   const first = tags[0] ?? "";
   const example = first.startsWith("#") ? `${title} ${first}` : `${title} (${first})`;
   return `${count} tasks are called "${title}": ${list}. Say which, for example "${example}".`;
-}
-
-/** Each task's earlier titles (task.update's renames in the change log), by task id. */
-async function earlierTitlesOf(
-  store: StateStore,
-  projectId: string,
-): Promise<Map<string, string[]>> {
-  const out = new Map<string, string[]>();
-  for (const r of await store.changeLog.forProject(projectId, { limit: RECALL_BOUNDS.changes })) {
-    const before = r.before as { task_id?: unknown; title?: unknown } | null;
-    const after = r.after as { title?: unknown } | null;
-    if (!before || typeof before.task_id !== "string" || typeof before.title !== "string") continue;
-    if (
-      typeof after?.title !== "string" ||
-      after.title === before.title ||
-      r.undo_state === "undone"
-    )
-      continue;
-    const list = out.get(before.task_id) ?? [];
-    if (!list.includes(before.title)) list.push(before.title);
-    out.set(before.task_id, list);
-  }
-  return out;
 }
 
 /**

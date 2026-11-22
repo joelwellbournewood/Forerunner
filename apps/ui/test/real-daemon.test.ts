@@ -24469,4 +24469,39 @@ describe("l4-chat-answers, run L4", () => {
       await b.rt.close();
     }
   }, 60_000);
+  // L4-chat-101 (live check 4, L4-chat-1/-4): the fast model said "There is no README task" for
+  // a task renamed since, and offered to look. The stand-in's "answers without looking" mode
+  // plays it; the app nudges it to look it up, and the answer comes from the record.
+  it("POST /chat on the stand-in's 'answers without looking' mode: 'what happened to the README task?' is looked up after one nudge and answered from the record, never 'There is no record'", async () => {
+    const a = await open("fr-ui-real-l4-chat-answers-101-", { FORERUNNER_BENCH_CHAT_NOLOOK: "1" });
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.client.createTask(project.id, {
+        title: "Write the README",
+        outcome: "README.md says what the page is",
+      });
+      const renamed = await a.client.executeCommands({
+        commands: [
+          { name: "task.update", params: { task: "Write the README", title: "Write the guide" } },
+        ],
+        wordsUsed: "Edit: Write the guide",
+        source: "ui",
+        projectId: project.id,
+      });
+      expect(renamed.status).toBe("done");
+      const r = await a.chat(project.id, "what happened to the README task?");
+      for (const said of ["There is no record", "Should I look"])
+        expect(r.reply).not.toContain(said);
+      expect(r.reply).toContain("Write the guide");
+      // Three calls: the answer without looking, the lookup after the nudge, the answer.
+      const calls = a.chatCalls();
+      expect(calls).toHaveLength(3);
+      expect(JSON.stringify(calls[1]?.messages?.at(-1))).toContain(
+        "You said it is not there without looking it up.",
+      );
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });

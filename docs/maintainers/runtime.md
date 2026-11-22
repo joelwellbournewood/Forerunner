@@ -4760,6 +4760,25 @@ in one project cancelled a task in another. Now:
   never name a tool, never narrate tool calls or refusals, never ask for a yes in words;
   `conversation-agent.md` 1.5.1). Tests: `conversation-memory.test.ts` "l4-chat-answers, run L4",
   `real-daemon.test.ts` "l4-chat-answers, run L4", `chat.test.tsx` "l4-chat-answers, run L4".
+- **Look it up, never say it is missing** (l4-chat-answers, run L4, 2026-11-22; live check 4's
+  L4-chat-101: "There is no README task" for a task renamed since, "I haven't searched the records
+  yet. Should I look …?", LC-C10 3 of 12 with a date). The **absent** kind: a reply that says a
+  record is not there or offers to look ("I can't see/find", "I found no record", "nothing …
+  mentions", "I haven't searched", "Should I look", "There is no <Name> task", "keine …
+  gefunden", "Soll ich nachsehen?"; `ABSENT` in `claims.ts`) in a turn that offered `recall` and
+  called neither `recall` nor `recall_open` gets one nudge, `ABSENT_NUDGE` ("You said it is not
+  there without looking it up. Call recall now …"), inside the turn's calls and budget, its text
+  not streamed (the step line "Looking through everything recorded…", `LOOKING_STEP`). An absence
+  said after a lookup stands, and an absence is never replaced by a "Nothing changed" line: the
+  answer after the nudge is the reply (with no call left the first one stays; the guard is on the
+  row as `claimGuard.kind: "absent"`). "There is no ready task" names no record and stays free.
+  The facts' task line names a renamed task's earlier title ('"Write the guide" (earlier "Write
+  the README"): Done'; `earlierTitlesOf`, moved from `read-tools.ts` to `project-facts.ts`), and
+  the rules say a lookup needs no yes (`CHAT_RECALL_RULES`, the prompt's "What you look up" and
+  "How you answer"). Not built (the area's cut line): code running recall itself when the model
+  still makes no lookup after the nudge. The bench stand-in's `FORERUNNER_BENCH_CHAT_NOLOOK=1`
+  plays the fast model that answers without looking. Tests: `chat-recall.test.ts`
+  "l4-chat-answers, run L4", `real-daemon.test.ts` "l4-chat-answers, run L4" (the stand-in's mode).
 - **The context** (`src/conversation/project-facts.ts`, in the volatile part): `# Tasks of
   <project>` (every task in run order, at most `CONTEXT_TASKS_MAX` by name, each with its status
   in the person's words from `taskDisplay`, what it waits for, the reason it failed or stopped,
