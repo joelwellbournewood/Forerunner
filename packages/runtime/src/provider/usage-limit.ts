@@ -121,7 +121,7 @@ const CLAUDE_CODE_REFUSALS: ReadonlySet<string> = new Set([
  * output can hold the number ("expected 401 to be 200").
  */
 const REFUSED_TEXT =
-  /(?:api error|status(?: code)?|http)\s*:?\s*401\b|\b401 unauthorized\b|authentication_error|invalid (?:x-api-key|api key|bearer token|authentication)|oauth token (?:has )?(?:expired|been revoked)|please run \/login|not logged in/i;
+  /(?:api error|status(?: code)?|http)\s*:?\s*401\b|\b401 unauthorized\b|authentication_error|\bauthentication error ·|invalid (?:x-api-key|api key|bearer token|authentication)|oauth (?:access )?token (?:has |is )?(?:expired|been revoked|invalid)|please run \/login|not logged in/i;
 
 /**
  * Whether Claude Code says Anthropic refused the credential (U-078, ADR 0100 amended): an
@@ -132,6 +132,37 @@ export function isClaudeCodeRefusal(kind: string | null | undefined, text: strin
   if (kind && CLAUDE_CODE_REFUSALS.has(kind)) return true;
   return REFUSED_TEXT.test(text);
 }
+
+/**
+ * The prefix Agent SDK 0.3.304 puts on the error it throws after Claude Code's error result
+ * (l4-cred-engine L4-creds-2): the stream has already said what went wrong, and the throw
+ * repeats it.
+ */
+export const CLAUDE_CODE_THROWN_PREFIX = "Claude Code returned an error result: ";
+
+/** What the Agent SDK's throw says, without its prefix (the text Claude Code reported). */
+export function thrownClaudeCodeText(message: string): string {
+  return message.startsWith(CLAUDE_CODE_THROWN_PREFIX)
+    ? message.slice(CLAUDE_CODE_THROWN_PREFIX.length)
+    : message;
+}
+
+/**
+ * The Agent SDK's throw read alone (no message of the stream said why), as the error kind
+ * Claude Code would have sent: `rate_limit` for "You've hit your limit" and its kin,
+ * `billing_error` for an empty credit balance; null for anything else.
+ */
+export function usageLimitKindOfText(text: string): "rate_limit" | "billing_error" | null {
+  if (PLAN_LIMIT_TEXT.test(text)) return "rate_limit";
+  if (CREDIT_LOW.test(text)) return "billing_error";
+  return null;
+}
+
+/**
+ * Claude Code's own error message (Agent SDK 0.3.304): an assistant message with `error` set
+ * and this model, with zero usage. It is no model call: never booked, never a step.
+ */
+export const CLAUDE_CODE_SYNTHETIC_MODEL = "<synthetic>";
 
 /**
  * Until when a source rests after a usage limit: the reported reset when it is ahead (at most

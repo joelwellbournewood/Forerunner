@@ -8026,6 +8026,35 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
 `credential-chat.test.tsx`, `run-indicator.test.tsx` with the real-daemon describe
 "d1109-cred-screens, run C".
 
+### Every credential stop read once (l4-cred-engine, run L4, ADR 0120 amended 2026-11-22)
+
+- **One verdict per Claude Code stream** (L4-creds-2, live check 4's LC-C22): Agent SDK 0.3.304
+  ends Claude Code's error result with a throw ("Claude Code returned an error result: ...").
+  `SdkAgentDriver.run` reads the iterator through its own `then`, so a throw ends the loop like
+  the stream's end and the mapping after it runs (the usage limit, `authentication_failed`, an
+  error result's verdict, `error_max_budget_usd`'s budget stop); a throw after the run was
+  stopped is the stop's. A throw with no message that said why is read by its own text
+  (`thrownClaudeCodeText` strips the prefix; `isClaudeCodeRefusal(null, text)`,
+  `usageLimitKindOfText`), the token cut out; any other throw is the run's error as before. A
+  bare 401 in a run's own output still does not count. `ClaudeCodeProvider.stream` keeps
+  `failure`, `rejected` and `sdkError` outside its `try` and yields `errorFromSdk(...)` from them
+  in the catch; an error result whose text is a refusal is `provider_auth` there too.
+  `REFUSED_TEXT` also reads Claude Code's "Authentication error ·" line and "OAuth access token
+  is invalid".
+- **Claude Code's own error message is no model call**: an assistant message with `error` set or
+  model `<synthetic>` (`CLAUDE_CODE_SYNTHETIC_MODEL`, `provider/usage-limit.ts`) adds no step,
+  gets no pre-call estimate and is booked only if it ever carries usage, under the run's model;
+  a `<synthetic>` key in the result's `modelUsage` is the run's model. Before, Costs listed
+  "<synthetic>" with zero tokens.
+
+Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
+throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the
+0.3.304 shape), `claude-code-refusal.test.ts`, `credential-sdk-throw.test.ts` (composed on
+`cred-world.ts` at the routes: one refused card, no failed-task card or notification, the task
+waits, Settings reads refused, chat holds with no new call, no `<synthetic>` in Costs; the usage
+limit and Claude Code's spending limit after the throw; a run and a chat question meeting the
+refusal together), `sdk-contract.test.ts` (the real SDK against a local 401).
+
 ## How to change it
 
 - New limit: add the check to the hook, a `ForerunnerError` code in platform, and a test in

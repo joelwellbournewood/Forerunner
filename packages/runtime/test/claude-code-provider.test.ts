@@ -332,3 +332,71 @@ describe("only the subscription in Claude Code, and usage limits as one code (U-
     expect(minute.code).toBe("provider_rate_limit");
   });
 });
+
+/**
+ * l4-cred-engine L4-creds-2 (live check 4, LC-C22 and LC-C31): Agent SDK 0.3.304 throws after
+ * its error result. Before, the provider's catch yielded `provider_error` ("I could not answer"
+ * in chat, and every later call went to the refused sign-in again); what the stream said is now
+ * read whether it ends or throws.
+ */
+describe("l4-cred-engine, run L4: ClaudeCodeProvider reads the stream when the SDK throws", () => {
+  const REFUSED = "Failed to authenticate. API Error: 401 OAuth access token is invalid.";
+  const synthetic = (error: string, text: string) => ({
+    type: "assistant",
+    error,
+    message: {
+      model: "<synthetic>",
+      content: [{ type: "text", text }],
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+  });
+  const events = async (msgs: SdkMessage[], thrown: string) => {
+    const { query } = fake(async function* () {
+      for (const m of msgs) yield m;
+      throw new Error(thrown);
+    });
+    const p = new ClaudeCodeProvider({ token: async () => OAUTH, cwd: cwd(), query });
+    const out = [];
+    for await (const e of p.stream(req())) out.push(e);
+    return out as { type: string; code?: string; message?: string; resetAt?: string }[];
+  };
+
+  it("a refused sign-in is provider_auth, with no token in the message", async () => {
+    const out = await events(
+      [
+        { type: "system", subtype: "init", session_id: "s" },
+        synthetic("authentication_failed", REFUSED),
+        { type: "result", subtype: "success", is_error: true, result: REFUSED },
+      ],
+      `Claude Code returned an error result: ${REFUSED} ${OAUTH}`,
+    );
+    expect(out).toEqual([
+      expect.objectContaining({ type: "error", code: "provider_auth", retryable: false }),
+    ]);
+    expect(JSON.stringify(out)).not.toContain(OAUTH);
+  });
+
+  it("the thrown text alone is read too: a refusal is provider_auth, a usage limit rests", async () => {
+    const refused = await events([], `Claude Code returned an error result: ${REFUSED}`);
+    expect(refused.map((e) => e.code)).toEqual(["provider_auth"]);
+    expect(JSON.stringify(refused)).not.toContain("Claude Code returned an error result");
+    const resetsAt = Date.parse("2026-11-01T15:00:00Z") / 1000;
+    const limited = await events(
+      [
+        {
+          type: "rate_limit_event",
+          rate_limit_info: { status: "rejected", resetsAt, rateLimitType: "five_hour" },
+        },
+        synthetic("rate_limit", "You've hit your limit · resets 3pm"),
+        { type: "result", subtype: "success", is_error: true, result: "You've hit your limit" },
+      ],
+      "Claude Code returned an error result: You've hit your limit · resets 3pm",
+    );
+    expect(limited).toEqual([
+      expect.objectContaining({
+        code: "provider_usage_limit",
+        resetAt: "2026-11-01T15:00:00.000Z",
+      }),
+    ]);
+  });
+});

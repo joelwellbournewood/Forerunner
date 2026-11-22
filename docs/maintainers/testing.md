@@ -835,6 +835,31 @@ wires it, with the root config's projects naming none of their own. `apps/ui/tes
 `apps/approvals-web/test/test-tmp.test.ts`, `apps/ui/e2e/temp-folder.spec.ts` and the
 `reportDir` cases of `tests/live/test/report.test.ts` check their suite's wiring.
 
+### The scripted Claude Code has the real SDK's shape (`cred-world.ts`, `sdk-contract.test.ts`)
+
+l4-cred-engine, run L4 (2026-11-22; L4-creds-2). Live check 4 ran Agent SDK 0.3.304 against a
+local 401 (LC-C22): on an error the stream says it first, then the SDK throws. On a refused
+sign-in Claude Code streams its own synthetic error message (`error: "authentication_failed"`,
+`message.model: "<synthetic>"`, zero usage), then an `is_error` result with the text, then the
+iterator throws `Error("Claude Code returned an error result: <text>")`; a usage limit is the
+rejected `rate_limit_event`, the synthetic `rate_limit` message, the result, then the throw. The
+test fakes ended the stream normally, so every test passed while the app read the throw as a
+Failed task. Now:
+
+- `packages/runtime/test/cred-world.ts`'s `refusedReply` and `limitReply` have that shape
+  (`syntheticError`, `sdkThrow`, `REFUSED_SIGN_IN_TEXT` are exported for other fakes).
+  `setRunScript` gives a task run on the subscription a script of its own (it gets the `query()`
+  options: the task's folder in `cwd`, the environment in `env`); `sdkOptions` keeps every
+  call's options.
+- `packages/runtime/test/sdk-contract.test.ts` runs the real SDK and its Claude Code binary (the
+  SDK's own platform package, looked up as the SDK does) against a local server that answers
+  every model call with Anthropic's 401, through `SdkAgentDriver` and `ClaudeCodeProvider`, and
+  expects `provider_auth` from both. It skips with the reason when the binary is not installed.
+  It keeps the variables of a Claude Code that runs the tests (`CLAUDE*`, `CCR_*`, the proxy
+  variables) away from the binary for the file and restores them: with them, the binary under
+  test behaved as a remote session and waited about two minutes before its first call. It sets
+  `CLAUDE_CODE_MAX_RETRIES=0` (Claude Code retries a 401 once by itself); about 3 s.
+
 ## Known issues
 
 - Scenario 2 (`02-email-task.scenario.test.ts`) read the agent's `email.send` audit rows

@@ -7,10 +7,13 @@ import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken } from "../enforcement/token.ts";
 import type { EffortLevel, Usage } from "../provider/types.ts";
 import {
+  CLAUDE_CODE_SYNTHETIC_MODEL,
   isClaudeCodeRefusal,
   isClaudeCodeUsageLimit,
   rejectedRateLimitOf,
+  thrownClaudeCodeText,
   USAGE_LIMIT_CODE,
+  usageLimitKindOfText,
 } from "../provider/usage-limit.ts";
 import { siteCovers, type WebAccess } from "../wiring/web-access.ts";
 import { serverDomainOf } from "../wiring/web-ports.ts";
@@ -298,6 +301,8 @@ export class SdkAgentDriver {
     // error kind (ADR 0100); read together once the stream ends.
     let rejected: { resetAt?: string } | null = null;
     let sdkError: { kind: string; text: string } | null = null;
+    // An error result was seen (L4-creds-2): the SDK's throw after it only repeats it.
+    let resultFailed = false;
     // Usage is counted once per API message (budget-stop, ADR 0112): the messages of parallel
     // tool calls share one id and one usage, and a streamed message's output count is a
     // placeholder, which the result's totals correct.
@@ -424,7 +429,18 @@ export class SdkAgentDriver {
         if (text && !returned) finalText = text;
         const u = m?.usage;
         const id = typeof m?.id === "string" && m.id ? m.id : null;
-        if (u && !(id && counted.has(id))) {
+        // Claude Code's own error message (Agent SDK 0.3.304: `error` set, model '<synthetic>',
+        // zero usage) is no model call (L4-creds-2): no step, no estimate, and booked only if it
+        // ever carries usage, under the run's model (before, '<synthetic>' reached Costs).
+        const synthetic = typeof msg.error === "string" || m?.model === CLAUDE_CODE_SYNTHETIC_MODEL;
+        if (synthetic) {
+          if (u && !(id && counted.has(id))) {
+            if (id) counted.add(id);
+            const turnUsage = usageOf(u);
+            if (Object.values(turnUsage).some((n) => n > 0))
+              await book(turnUsage, "turn", req.model, !enforce);
+          }
+        } else if (u && !(id && counted.has(id))) {
           if (id) counted.add(id);
           if (!returned) numTurns++;
           // The message's own model (a subagent may run on another one, R-modelusage).
@@ -470,6 +486,7 @@ export class SdkAgentDriver {
         // books its usage: the stop's outcome and the run's words stand (an aborted query's
         // error result would otherwise turn a budget pause into a Failed task tried again).
         if (!enforce) return;
+        if (msg.is_error || msg.subtype === "error_max_budget_usd") resultFailed = true;
         if (msg.subtype === "error_max_budget_usd") {
           // Claude Code's own spending limit (`maxBudgetUsd`, set above the run's cap): a stop
           // at the run's budget, never a passing error the runner would try again at once.
@@ -570,15 +587,52 @@ export class SdkAgentDriver {
         else controller.signal.addEventListener("abort", fail, { once: true });
       });
       aborted.catch(() => undefined);
+      // The SDK's own throw (Agent SDK 0.3.304 throws after Claude Code's error result,
+      // L4-creds-2): read below with what the stream said, never in place of it.
+      let thrown: unknown = null;
       for (;;) {
         pending ??= iterator.next();
-        const next = await Promise.race([pending, aborted]);
+        const read = pending.then(
+          (r) => ({ r }),
+          (e: unknown) => ({ e }),
+        );
+        const next = await Promise.race([read, aborted]);
         pending = null;
-        if (next.done) {
+        if ("e" in next) {
+          // The iterator is finished. A throw after the run was stopped is the stop's.
+          exited = true;
+          if (controller.signal.aborted) {
+            const reason = controller.signal.reason;
+            throw reason instanceof Error ? reason : new ForerunnerError("killed", "run killed");
+          }
+          thrown = next.e ?? new Error("Claude Code ended with an error");
+          break;
+        }
+        if (next.r.done) {
           exited = true;
           break;
         }
-        await handle(next.value, true);
+        await handle(next.r.value, true);
+      }
+      if (thrown !== null && !sdkError) {
+        // The token is cut out of what Claude Code said (U-053).
+        const said = redact(
+          thrownClaudeCodeText(errorMessage(thrown)).split(req.credential.value).join("[REDACTED]"),
+        );
+        const limitKind = rejected !== null ? "rate_limit" : usageLimitKindOfText(said);
+        if (limitKind && (rejected !== null || !resultFailed)) {
+          // The plan's limit, read below as a usage limit with the reset Claude Code reported.
+          sdkError = { kind: limitKind, text: said };
+        } else if (resultFailed) {
+          // The error result's verdict stands (a refusal, Claude Code's spending limit, an error).
+        } else if (isClaudeCodeRefusal(null, said)) {
+          // No message said why: the throw's own text is read the same way.
+          outcome = "error";
+          error = {
+            code: "provider_auth",
+            message: `Anthropic refused the Claude sign-in: ${said}`,
+          };
+        } else throw thrown;
       }
       // The subscription's usage limit stopped the run (ADR 0100): a stable code with the
       // reset time Claude Code reported, so the executor rests the source and gives the task
@@ -1271,7 +1325,8 @@ function resultTotals(msg: Record<string, unknown>): { model: string | null; usa
     const models = Object.entries(per as Record<string, Record<string, unknown>>);
     if (models.length)
       return models.map(([model, m]) => ({
-        model,
+        // Claude Code's own error message is no model: what it ever carries is the run's.
+        model: model === CLAUDE_CODE_SYNTHETIC_MODEL ? null : model,
         usage: {
           input_tokens: tokens(m?.inputTokens),
           output_tokens: tokens(m?.outputTokens),
