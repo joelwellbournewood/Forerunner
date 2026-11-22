@@ -197,3 +197,15 @@ hours), 0075 (git host triggers start nothing), 0088 (a late hooks approval prep
 tab's actions prepare work and say what happens next), 0112 (a raised or reset budget prepares
 the paused task; Continue is the person's start). Appended to 0116 point 14 (the Sessions list's
 words for `hands_off` and `continuation`).
+
+## Amendment 2026-11-22: a dependency change says when the task runs (l4-chat-depth, run L4)
+
+Live check 4 (L4-session-3): 'make the FAQ task depend on the README task', yes, answered
+'"Write the FAQ" now waits for "Write the README".' and nothing about when it runs; removing the
+last task it waited for prepared no work, against point 3 ("a chat change prepares work and says
+a line"). `task.dependencies` now says when a ready task runs: one that still waits says after
+what and when ("It runs after it is done, at your next Start.", "..., in this session if budget is
+left, else your next Start." while a session of the project runs), read-only; one this change made
+runnable is prepared as any move that makes a task ready (it joins the running session if it fits,
+else "It runs at your next Start."). The Tasks drawer's **Change what it waits for** runs the same
+command, so it says the same. A paused, draft or done task gets no line.

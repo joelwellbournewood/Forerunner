@@ -181,7 +181,7 @@ function readbackOf(
   source: CommandSource,
 ): string {
   // A card with its one question reads back as that question (design §5: "Start a session on
-  // Quote page (up to CHF 5)?"); the chat shows Yes and No, voice asks for the word. In chat
+  // Quote page (up to CHF 5.00)?"); the chat shows Yes and No, voice asks for the word. In chat
   // and voice a card without one is asked in one line too (review of d1109-chat-guard: after a
   // record, a project switch read back as "Change: the active project. From ... Risk: low.
   // Undo: ..." with "reply yes to the email" while email was off).
@@ -341,6 +341,20 @@ export class CommandExecutor {
         projectId: project.id,
       },
     });
+  }
+
+  /**
+   * l4-chat-depth (L4-chat-204): the refusal a pending card meets at its yes when its project was
+   * closed since it was read back (the commands that stay open on a closed project excepted),
+   * or null.
+   */
+  private async closedProjectRefusal(card: ChangeCard): Promise<ForerunnerError | null> {
+    try {
+      await this.refuseClosedProject(card.command, card);
+      return null;
+    } catch (e) {
+      return isClosedProjectRefusal(e) ? (e as ForerunnerError) : null;
+    }
   }
 
   private async prepareAll(calls: CommandCall[], ctx: CommandContext): Promise<Step[]> {
@@ -631,11 +645,23 @@ export class CommandExecutor {
       try {
         const ctx = await contextFor(stored);
         const commandCalls = calls as CommandCall[];
-        const steps = await this.prepareAll(commandCalls, ctx);
-        const card =
-          steps.length === 1 ? (steps[0] as Step).card : mergeCards(steps.map((s) => s.card));
+        // l4-chat-depth (L4-chat-204): a card whose project was closed (joined or removed)
+        // since it was read back is armed as it was shown, so its yes is refused in words by
+        // `confirm` (the joined sentence) and changes nothing; before, it was left to expire and
+        // the yes after a restart met "it expired" instead of why.
+        let steps: Step[] | null = null;
+        try {
+          steps = await this.prepareAll(commandCalls, ctx);
+        } catch (e) {
+          if (!isClosedProjectRefusal(e)) throw e;
+        }
+        const card = !steps
+          ? (json as unknown as ChangeCard)
+          : steps.length === 1
+            ? (steps[0] as Step).card
+            : mergeCards(steps.map((s) => s.card));
         // d1109-selftasks-chat: a composed card's own question, as it was read back.
-        if (steps.length > 1 && typeof json.ask === "string" && json.ask.trim())
+        if (steps && steps.length > 1 && typeof json.ask === "string" && json.ask.trim())
           card.ask = json.ask;
         const id = row.id;
         const cancelTimer = this.clock.setTimeout(
@@ -960,6 +986,18 @@ export class CommandExecutor {
       const reason = `the change now needs ${DECISION_TEXT[now]}: its risk rose since the card was shown; ask again`;
       await this.answerRequest(pendingId, { verdict: "refused", reason, ...answered }, by.id);
       return { status: "refused", card: p.card, reason, code: "approval_required", pendingId };
+    }
+    // l4-chat-depth (L4-chat-204): a project closed by Make one project (or removed) since the
+    // card was read back takes no new work: the yes is refused with the joined sentence and
+    // nothing is performed, whatever path the card came by (the chat, the Inbox, a restart).
+    const closed = await this.closedProjectRefusal(p.card);
+    if (closed) {
+      await this.answerRequest(
+        pendingId,
+        { verdict: "refused", reason: closed.message, ...answered },
+        by.id,
+      );
+      return { ...refusal(closed, p.card), pendingId };
     }
     await this.answerRequest(pendingId, { verdict, ...answered }, by.id);
     return p.perform();
@@ -1486,6 +1524,13 @@ function undoCardOf(
     projectName: card?.projectName ?? null,
     ask,
   });
+}
+
+/** A refusal of a project closed by Make one project or removed (`refuseClosedProject`). */
+function isClosedProjectRefusal(e: unknown): boolean {
+  if (!isForerunnerError(e)) return false;
+  const cause = e.details?.cause;
+  return cause === "project_joined" || cause === "project_removed";
 }
 
 function noPending(pendingId: string): Extract<ExecuteResult, { status: "refused" }> {

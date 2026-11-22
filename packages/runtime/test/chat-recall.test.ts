@@ -595,7 +595,8 @@ describe("d1109-chat-recall, run C: CR-1 the tools' skeleton", () => {
 describe("d1109-chat-recall, run C: CR-9 the prompt and the turn's room", () => {
   it("conversation-agent 1.3.0 is the prompt sent, with 'What you look up' and without 'I don't have that here'; the fast pass allows 6 calls, call room 5", async () => {
     // d1109-chat-depth (C3) bumped it to 1.4.0 ('Thinking longer'); the lookup lines stay.
-    expect(ROLE?.version).toBe("1.4.0");
+    // l4-chat-depth (L4b) made 1.5.0 ('Thinking longer': who writes the ask).
+    expect(ROLE?.version).toBe("1.5.0");
     expect(ROLE?.prompt).toContain("## What you look up");
     expect(ROLE?.prompt).not.toContain("I don't have that here");
     expect(ROLE?.prompt).toContain(

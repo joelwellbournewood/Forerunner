@@ -891,7 +891,10 @@ describe("the UI client against the real daemon", () => {
       version: (await client.tasks(own.id)).find((x) => x.id === next.id)?.version ?? 0,
       dependsOn: [],
     });
-    expect(deps.change?.sentence).toBe('"Create notes/todo.md" waits for no other task now.');
+    // l4-chat-depth (L4-chat-207): a change that makes the task runnable says when it runs.
+    expect(deps.change?.sentence).toBe(
+      '"Create notes/todo.md" waits for no other task now. It runs at your next Start.',
+    );
     await client.undoChange(deps.change?.undoToken ?? "");
     expect((await client.tasks(own.id)).find((x) => x.id === next.id)?.dependsOn).toEqual([
       first.id,
@@ -4325,7 +4328,10 @@ describe("one conversation per project, stored by the daemon (design §3.9)", ()
     // The Yes/No card survived the restart (design §3.9): it still waits, and "yes" runs it.
     expect(again.waiting?.id).toBe(card.pendingConfirmation?.id);
     const yes = await say(quote.id, "yes");
-    expect(yes.reply).toBe('"Write the FAQ" now waits for "Write the README".');
+    // l4-chat-depth (L4-chat-207): the sentence says when the task runs.
+    expect(yes.reply).toBe(
+      '"Write the FAQ" now waits for "Write the README". It runs after it is done, at your next Start.',
+    );
     expect((await client.tasks(quote.id)).find((t) => t.id === faq.id)?.dependsOn).toEqual([
       readme.id,
     ]);
@@ -15553,7 +15559,7 @@ describe("d1109-oversize-start, run C", () => {
       // Before: refused with "Nothing can run within this budget: "Build the shop" needs ...".
       expect(asked.reply).not.toMatch(/Nothing can run/);
       expect(asked.pendingConfirmation?.readback).toBe(
-        'Start a session on Shop chat (up to CHF 5)? "Build the shop" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to continue.',
+        'Start a session on Shop chat (up to CHF 5.00)? "Build the shop" needs more than its work budget of CHF 4.00: it pauses with its work kept and asks you to continue.',
       );
       const yes = await say("yes");
       expect(yes.reply).toMatch(/^Started a session on Shop chat/);
@@ -23956,4 +23962,391 @@ describe("l4-selftasks-check, run L4", () => {
       await a.rt.close();
     }
   }, 120_000);
+});
+
+describe("l4-chat-depth, run L4", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /** The daemon on the bench's stand-in (the role-player), read through the UI client. */
+  async function open(prefix: string, env: Record<string, string> = {}, home?: string) {
+    const dir = home ?? mkdtempSync(join(tmpdir(), prefix));
+    if (!home) homes.push(dir);
+    const log = new ModelCallLog({ file: join(dir, "model-calls.jsonl") });
+    const provider = createRolePlayer(
+      benchOptionsFromEnv({ FORERUNNER_BENCH_DELAY_MS: "0", ...env }, log),
+    );
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: dir },
+      dirs: appDirs({ env: { FORERUNNER_HOME: dir } }),
+      config: null,
+      clock: new SystemClock(),
+      stateUrl: `sqlite:${join(dir, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const chat = (
+      projectId: string,
+      text: string,
+      extra: { offer?: string; depth?: "longer" } = {},
+    ) =>
+      client.chat({ humanId: me.id, agentId, projectId, projectTab: true, text, ...extra });
+    return { rt, client, me, agentId, chat, home: dir, log };
+  }
+
+  // L4-chat-201 (live check 4, L4-chat-12): after one stronger answer, every later Go ahead
+  // under "This needs a stronger model …" showed the same ask again, install-wide.
+  it("POST /chat: Go ahead under 'use a stronger model:' runs Sonnet once, and again after cheap stronger answers, with no ask line said twice", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-201-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      const sessionId =
+        (await a.rt.conversation?.conversationSessionId(a.agentId, project.id)) ?? "";
+      for (const [i, q] of [
+        'why does "Style the page" keep failing?',
+        "compare the two ways to style the page",
+      ].entries()) {
+        if (i === 1) {
+          // Earlier stronger answers on this model were cheap (as one was on the live model):
+          // twice their cost is below the pass's floor, so the floor sets the "at most".
+          const rows = await a.rt.store.event.ofTypes(sessionId, ["chat.reply"], { limit: 5 });
+          const model = (rows[0]?.payload as { passes?: { model: string }[] }).passes?.[0]?.model;
+          expect(model).toBeTruthy();
+          for (let n = 0; n < 3; n++)
+            await a.rt.store.event.append(sessionId, "chat.reply", {
+              transcriptId: `seed-${n}`,
+              text: "seed",
+              conversationProjectId: "elsewhere",
+              passes: [
+                {
+                  depth: "stronger",
+                  model,
+                  effort: "medium",
+                  durationMs: 5_000,
+                  costUsdMicro: 1_000,
+                },
+              ],
+            } as never);
+        }
+        const asked = await a.chat(project.id, `use a stronger model: ${q}`);
+        expect(asked.reply).toMatch(
+          /^This needs a stronger model: about CHF \d+\.\d{2} \(at most CHF \d+\.\d{2}\) and \d+ seconds\. Go ahead\?$/,
+        );
+        expect(asked.offer?.action).toBe("go_ahead");
+        const go = await a.chat(project.id, "Go ahead.", { offer: asked.transcriptId });
+        expect(go.footer, go.reply).toMatch(/^Thought it through with Sonnet · \d+ s · /);
+        // Never the same ask again under the answer. (On the cheap figures the stand-in's three
+        // calls reach the pass's wrap-up, so the strongest model may be offered under it.)
+        expect(go.offer?.line ?? "").not.toMatch(/^This needs a stronger model/);
+      }
+      const view = await a.client.conversation(project.id);
+      // Two asks, two answers under them: no ask line said twice.
+      const asks = view.turns.filter((t) => /Go ahead\?$/.test(t.reply?.text ?? ""));
+      expect(asks).toHaveLength(2);
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+
+  // L4-chat-202 (live check 4, L4-chat-7): the real fast model never called answer_thoroughly; it
+  // asked "Should I go ahead?" in words with no cost and no button. The stand-in's answer-alone
+  // mode plays that; the app attaches its own ask.
+  it("POST /chat on the stand-in's answer-alone mode: 'make a plan for the next two sessions' gets the app's ask line with Go ahead (no thorough call before it); Go ahead runs Sonnet once; 'what is left?' gets no ask", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-202-", { FORERUNNER_BENCH_CHAT_ALONE: "1" });
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      const asked = await a.chat(project.id, "make a plan for the next two sessions");
+      expect(asked.reply).toMatch(
+        /^This needs a stronger model: about CHF \d+\.\d{2} \(at most CHF \d+\.\d{2}\) and \d+ seconds\. Go ahead\?$/,
+      );
+      expect(asked.reply).not.toContain("Should I go ahead?");
+      expect(asked.offer?.action).toBe("go_ahead");
+      const calls = () =>
+        readFileSync(join(a.home, "model-calls.jsonl"), "utf8")
+          .trim()
+          .split("\n")
+          .map((l) => JSON.parse(l) as { system?: string; role?: string });
+      const thorough = () => calls().filter((c) => (c.system ?? "").includes("# Thinking it through"));
+      expect(thorough()).toHaveLength(0);
+      // The conversation view shows the ask line with Go ahead under the newest turn.
+      const view = await a.client.conversation(project.id);
+      expect(view.turns.at(-1)?.reply?.offer?.action).toBe("go_ahead");
+      const go = await a.chat(project.id, "Go ahead.", { offer: asked.transcriptId });
+      expect(go.footer, go.reply).toMatch(/^Thought it through with Sonnet · \d+ s · /);
+      expect(thorough().length).toBeGreaterThan(0);
+      const plain = await a.chat(project.id, "what is left?");
+      expect(plain.offer?.action ?? null).not.toBe("go_ahead");
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+
+  // L4-chat-206 (live check 4, L4-chat-18): after Answer now the answer offered the stronger model.
+  it("POST /chat/turns/:id/answer-now during 'think it through': the answer comes with no ask line and no Go ahead in the conversation view", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-206-", {
+      FORERUNNER_BENCH_CHAT_HOLD_MS: "1500",
+    });
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      let turnId = "";
+      const pending = streamChat(
+        a.client,
+        {
+          humanId: a.me.id,
+          agentId: a.agentId,
+          projectId: project.id,
+          projectTab: true,
+          text: "think it through: what did the last two sessions do?",
+          source: "text",
+        },
+        { onTurn: (t) => (turnId = t.turnId) },
+      );
+      await eventually(
+        async () =>
+          turnId !== "" && (await a.client.conversation(project.id)).answering?.depth === "longer",
+        "the longer pass to be answering (10 s)",
+        async () => JSON.stringify((await a.client.conversation(project.id)).answering),
+        10_000,
+      );
+      expect(await a.client.answerNow(turnId)).toEqual({ done: true });
+      const reply = await pending;
+      expect(reply.reply).toContain("wrapping up");
+      expect(reply.offer).toBeNull();
+      const view = await a.client.conversation(project.id);
+      expect(view.turns.at(-1)?.reply?.offer?.action ?? null).not.toBe("go_ahead");
+      expect(view.turns.at(-1)?.reply?.offer?.line ?? null).toBeNull();
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-chat-207 (live check 4, L4-session-3): a dependency change said nothing about when the
+  // task runs, and removing the last one prepared no work.
+  it("POST /chat and POST /tasks/:id/dependencies: a dependency change says when the task runs; removing the last one says it runs at the next Start", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-207-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.client.createTask(project.id, {
+        title: "Write the README",
+        outcome: "README.md says what the page is",
+      });
+      const faq = await a.client.createTask(project.id, {
+        title: "Write the FAQ",
+        outcome: "faq.md answers three questions",
+      });
+      const asked = await a.chat(project.id, "make the FAQ task depend on the README task");
+      expect(asked.pendingConfirmation?.readback).toBe(
+        'Make "Write the FAQ" wait for "Write the README"?',
+      );
+      const yes = await a.chat(project.id, "yes");
+      expect(yes.reply).toBe(
+        '"Write the FAQ" now waits for "Write the README". It runs after it is done, at your next Start.',
+      );
+      // The Tasks drawer's "Change what it waits for", with nothing ticked.
+      const now = (await a.client.tasks(project.id)).find((t) => t.id === faq.id);
+      const own = await a.client.setTaskDependencies(faq.id, {
+        version: now?.version ?? 0,
+        dependsOn: [],
+      });
+      expect(own.change?.sentence).toBe(
+        '"Write the FAQ" waits for no other task now. It runs at your next Start.',
+      );
+      // No session started: the person says when one runs.
+      expect((await a.client.tasks(project.id)).map((t) => t.status)).toEqual(["ready", "ready"]);
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-chat-204 (C4L-13): a project closed by Make one project still took new work from the
+  // plan route and the Data tab.
+  it("POST /projects/:closed/plan and the Data tab's Add and Import on a joined project: 409 with the joined sentence, nothing written", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-204-");
+    try {
+      const site = await a.client.createProject({ name: "Site", goal: "A page" });
+      const kite = await a.client.createProject({ name: "Kite club", goal: "A club page" });
+      // Closed into Site as Make one project closes it.
+      const row = await a.rt.store.project.mustGet(kite.id);
+      await a.rt.store.project.update(row.id, row.version, {
+        status: "archived",
+        settings: {
+          ...(row.settings as Record<string, unknown>),
+          joined_into: { project: site.id, name: "Site", at: new Date().toISOString() },
+        },
+      });
+      const sentence = '"Kite club" joined "Site", so its work runs there.';
+      const plan = await a.client.raw({
+        method: "POST",
+        path: `/projects/${kite.id}/plan`,
+        body: {
+          reason: "planned from the brief",
+          milestones: [
+            {
+              name: "Phase 1",
+              successCriteria: ["The page loads"],
+              tasks: [{ key: "page", title: "Write the page", outcome: "index.html" }],
+            },
+          ],
+        },
+      });
+      expect(plan.status).toBe(409);
+      expect(await plan.json()).toMatchObject({
+        message: sentence,
+        details: { cause: "project_joined" },
+      });
+      expect(await a.rt.store.task.forProject(kite.id, {}, { limit: 10 })).toEqual([]);
+      await expect(
+        a.client.registerDataAsset(kite.id, { locator: "https://example.com/members.csv", kind: "table" }),
+      ).rejects.toMatchObject({ status: 409, message: sentence });
+      await expect(
+        a.client.importProject(kite.id, { source: "folder", locator: "/tmp/nothing-here" }),
+      ).rejects.toMatchObject({ status: 409, message: sentence });
+      expect(await a.client.dataAssets(kite.id)).toEqual([]);
+      // The open project still takes them.
+      const added = await a.client.registerDataAsset(site.id, {
+        locator: "https://example.com/members.csv",
+        kind: "table",
+      });
+      expect(added.projectIds).toEqual([site.id]);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-chat-210 (live check 4, L4-session-1): the start read-back and its done sentence dropped
+  // the decimals: "up to CHF 1" (design §5 rule 7: two decimals).
+  it("POST /chat 'run it now' with a CHF 1.00 session budget reads back 'up to CHF 1.00', its yes says it, and the Changes row too", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-210-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.client.createTask(project.id, {
+        title: "Write the README",
+        outcome: "README.md says what the page is",
+      });
+      const set = await a.client.executeCommands({
+        commands: [
+          { name: "budget.set", params: { scope: "session", amountChf: 1, project: project.id } },
+        ],
+        wordsUsed: "Session budget (Settings)",
+        source: "ui",
+      });
+      if (set.status === "pending" && set.pendingId)
+        expect((await a.client.confirmCommand(set.pendingId, { answer: "tap" })).status).toBe(
+          "done",
+        );
+      else expect(set.status).toBe("done");
+      const asked = await a.chat(project.id, "run it now");
+      expect(asked.pendingConfirmation?.readback).toBe(
+        "Start a session on Garden club (up to CHF 1.00)?",
+      );
+      const yes = await a.chat(project.id, "yes");
+      expect(yes.reply).toMatch(
+        /^(?:Started a session on Garden club|A session on Garden club starts after the one running now) \(up to CHF 1\.00\)\.$/,
+      );
+      const rows = await a.client.changes({ projectId: project.id, limit: 5 });
+      expect(rows.map((r) => r.sentence).join("\n")).toContain("(up to CHF 1.00)");
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-chat-211 (live check 4): the Changes row read "from CHF 0.00, so chat asks before every
+  // longer answer to CHF 0.10": the setting's meaning sat inside its value.
+  it("settings.set chat_ask_above 0, then 0.10 with its tap: GET /changes reads the amounts alone; 0 says what it means after them", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-211-");
+    try {
+      const say = async (value: number) => {
+        const r = await a.client.executeCommands({
+          commands: [{ name: "settings.set", params: { key: "chat_ask_above", value } }],
+          wordsUsed: "Chat asks first (Settings)",
+          source: "ui",
+        });
+        return r.status === "pending" && r.pendingId
+          ? a.client.confirmCommand(r.pendingId, { answer: "tap" })
+          : r;
+      };
+      expect((await say(0)).status).toBe("done");
+      expect((await say(0.1)).status).toBe("done");
+      const rows = (await a.client.changes({ limit: 10 }))
+        .map((r) => r.sentence)
+        .filter((s) => s.includes("chat asks first"));
+      expect(rows).toEqual([
+        "Set the amount above which chat asks first from CHF 0.00 to CHF 0.10. Undo.",
+        "Set the amount above which chat asks first from CHF 0.10 to CHF 0.00: chat asks before every longer answer. Undo.",
+      ]);
+      expect(rows.join("\n")).not.toContain(", so chat asks");
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-chat-208 (C3L-10): the project-budget cap line had only a stubbed case (chat-depth.test.ts
+  // with a `chatRoom` dep); here the room is the composed one, read from the project's budget.
+  it("POST /chat 'think it through: …' on a project whose budget leaves under the pass's floor: the project's cap line, a quick answer, no longer call", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-208-cap-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.rt.store.project.patch(project.id, { budget_usd_micro: 1_000 });
+      const thorough = () =>
+        existsSync(join(a.home, "model-calls.jsonl"))
+          ? readFileSync(join(a.home, "model-calls.jsonl"), "utf8")
+              .trim()
+              .split("\n")
+              .filter(Boolean)
+              .map((l) => JSON.parse(l) as { system?: string })
+              .filter((c) => (c.system ?? "").includes("# Thinking it through")).length
+          : 0;
+      const r = await a.chat(project.id, "think it through: what did the last two sessions do?");
+      expect(r.reply).toBe(
+        "A closer look would pass this project's budget, so this is the quick answer.",
+      );
+      expect(r.depth).toBe("quick");
+      // No longer pass was asked of the model (the cap is checked before any call).
+      expect(thorough()).toBe(0);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+  // L4-chat-208 (C3L-10): Costs' "Planning and chat" row had no case that chat turns grow it.
+  it("GET /costs?projectId: each chat turn on the project grows its 'Planning and chat' row", async () => {
+    const a = await open("fr-ui-real-l4-chat-depth-208-costs-");
+    try {
+      const project = await a.client.createProject({ name: "Garden club", goal: "A page" });
+      await a.client.createTask(project.id, {
+        title: "Write the README",
+        outcome: "README.md says what the page is",
+      });
+      const planningAndChat = async () =>
+        (await a.client.costs({ projectId: project.id })).byTask.find(
+          (b) => b.label === "Planning and chat",
+        )?.cost.usdMicro ?? 0;
+      const start = await planningAndChat();
+      await a.chat(project.id, "what is left?");
+      const once = await planningAndChat();
+      expect(once).toBeGreaterThan(start);
+      await a.chat(project.id, "what is the next task?");
+      expect(await planningAndChat()).toBeGreaterThan(once);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });

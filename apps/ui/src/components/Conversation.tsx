@@ -43,6 +43,27 @@ export function secondsSince(since: string | null | undefined, nowMs: number): s
 }
 
 /**
+ * l4-chat-depth (L4-chat-212, C3L-8): an ask line ("This needs a stronger model: about CHF 0.29 (at
+ * most CHF 0.57) and 30 seconds. Go ahead?") once another line follows it, in the past: "Offered:
+ * a stronger model, about CHF 0.29 (at most CHF 0.57). Not taken.", or "... You went ahead." when
+ * the next line was its yes and ran it. Before, the old line kept "Go ahead?" with no button, a
+ * question the person could no longer answer (a typed yes then answered nothing). null: the line is
+ * no ask line (a cap line, a plain answer), which stays as it is.
+ */
+export function pastOfferLine(line: string, taken: boolean): string | null {
+  const m = /^This needs (.+?): (about .+?)(?: and [^.]+)?\. Go ahead\?$/.exec(line.trim());
+  if (!m) return null;
+  return `Offered: ${m[1]}, ${m[2]}. ${taken ? "You went ahead." : "Not taken."}`;
+}
+
+/** The next line took the ask above it: a yes (Go ahead's own "Go ahead.") that ran a closer look. */
+function tookOffer(next: ConversationTurnView | undefined): boolean {
+  if (!next?.reply) return false;
+  if (!/^\s*(?:go ahead|yes|ja|ok(?:ay)?)\b[.!]?\s*$/i.test(next.said)) return false;
+  return (next.reply.depth ?? "") !== "quick";
+}
+
+/**
  * C2-left-7: where a record the reply rests on opens. Only the app's pages that show the record
  * it names: a task in the Tasks drawer (`?task=`), a document in Files (`?path=`), a session's own
  * page. Any other link opens a page that does not show that record (or no page at all, as
@@ -300,6 +321,7 @@ export function Conversation({
             key={t.id}
             turn={t}
             newest={!readOnly && i === turns.length - 1}
+            taken={tookOffer(turns[i + 1])}
             readOnly={readOnly}
             testIds={testIds}
             onMakeTask={onMakeTask}
@@ -463,6 +485,7 @@ function isOwnRequest(turn: ConversationTurnView): boolean {
 function Turn({
   turn,
   newest,
+  taken,
   readOnly,
   testIds,
   onMakeTask,
@@ -479,6 +502,8 @@ function Turn({
 }: {
   turn: ConversationTurnView;
   newest: boolean;
+  /** L4-chat-212: the next line was this answer's ask taken (its yes ran the closer look). */
+  taken: boolean;
   /** OJ-06: kept to read (a closed project): no answer, Yes or No, Undo or question options. */
   readOnly: boolean;
   testIds: string;
@@ -509,6 +534,15 @@ function Turn({
       (sentences.includes(text) || sentences.join(" ").trim() === text.trim())
     );
   const offer = r?.offer ?? null;
+  // L4-chat-212: an older ask line reads in the past, with no question and no button; the reply
+  // that was only its ask line too (the daemon then sends the line as the text).
+  const offerLine = offer?.line
+    ? newest
+      ? offer.line
+      : (pastOfferLine(offer.line, taken) ??
+        (/Go ahead\?\s*$/.test(offer.line) ? null : offer.line))
+    : null;
+  const replyText = showText && !newest ? (pastOfferLine(text, taken) ?? text) : text;
   const sources = r?.sources ?? [];
   const noAnswer = !r && !answeringLine && (turn.interrupted || turn.failed);
   return (
@@ -557,7 +591,7 @@ function Turn({
       ) : null}
       {r ? (
         <Bubble who="agent" testIds={testIds} via={via}>
-          {showText ? <RichText text={inAppText(text)} /> : null}
+          {showText ? <RichText text={inAppText(replyText)} /> : null}
           {turn.failed && newest ? (
             <Button
               className="mt-1 px-2 py-0.5 text-xs"
@@ -678,9 +712,9 @@ function Turn({
               })}
             </p>
           ) : null}
-          {offer?.line ? (
+          {offerLine ? (
             <p className="mt-1 text-sm" data-testid={`${testIds}-offer`}>
-              {offer.line}
+              {offerLine}
             </p>
           ) : null}
           {offer?.action === "go_ahead" && newest ? (

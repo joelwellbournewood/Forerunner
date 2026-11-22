@@ -97,7 +97,9 @@ import {
   HANDED_OVER_RESULT,
   handOverStep,
   NOT_NOW,
+  needOfLine,
   notNowResult,
+  offersInWords,
   type PassFigures,
   type Rung,
   rungOfWhy,
@@ -105,10 +107,13 @@ import {
   THINK_THROUGH_WHAT,
   thinkItThroughExplain,
   thinkingLongerFact,
+  thoroughFact,
   VOICE_THOROUGH_NOTICE,
   WHY_VALUES,
   type Why,
   WRAP_UP_STEP,
+  withoutWordsOffer,
+  yesCovers,
 } from "./depth.ts";
 import {
   cardLine,
@@ -140,6 +145,7 @@ import { type ChatTaskFixResult, fixTasksInChat, fixTasksTool } from "./task-fix
 import {
   DEFAULT_CHAT_HISTORY_TOKENS,
   historyMessages,
+  nextTurnNumber,
   readTranscript,
   TRANSCRIPT_SHOW_LIMIT,
   type TranscriptTurn,
@@ -1087,6 +1093,9 @@ export class ConversationAgent {
       text: req.text,
       source: req.source ?? "text",
       conversationProjectId: conversationProject,
+      // l4-chat-depth (L4-chat-205): the turn's number from the conversation's start, so the
+      // history's stepped window is the same function of the rows after 100 turns and a restart.
+      turn: nextTurnNumber(earlier),
     } as never);
     // d1109-chat-depth: the turn is in flight from here (its line is written) to its reply; Stop
     // aborts its controller, which every run of the turn gets as its signal (voice's barge-in too).
@@ -1818,13 +1827,32 @@ export class ConversationAgent {
       };
     };
     /** A thorough pass on `route` within `budgetUsdMicro` (its figures for the step line). */
-    const thoroughPass = async (route: ChatRoute, f: ChatPassFigures, budgetUsdMicro: number) => {
+    const thoroughPass = async (
+      route: ChatRoute,
+      f: ChatPassFigures,
+      budgetUsdMicro: number,
+      by: "yes" | "asked" | "handed",
+    ) => {
       this.turnsOf().setDepth(transcriptId, route.rung);
       // The hand-over: text the quick pass streamed before it is dropped (the step's reset).
       streamed = "";
       gate?.end(true);
       step(handOverStep({ ...f, budgetUsdMicro }), { reset: true });
-      const t = thoroughRequest(volatile);
+      // l4-chat-depth (L4-chat-203): the pass is told what it is, in place of the quick pass's
+      // thinking_longer line (before, a pass the person said yes to read "asks the person first").
+      const t = thoroughRequest(
+        withNowFact(
+          context.volatile,
+          "this_answer",
+          thoroughFact({
+            tier: route.tier,
+            sameModel: route.sameModel,
+            by,
+            budgetUsdMicro,
+            chfPerUsd: chf,
+          }),
+        ),
+      );
       const r = runOf({
         runId: `${transcriptId}:thorough`,
         budgetUsdMicro,
@@ -1856,6 +1884,8 @@ export class ConversationAgent {
     let offer: StoredOffer | null = null;
     let capLevel: CapLevel | null = null;
     let refusedFor: string | null = null;
+    /** L4-chat-202: the offer is the app's own ask, attached by the backstop after a quick answer. */
+    let askedByApp = false;
     let fast: { run: ReturnType<typeof runOf>; result: RunResult } | null = null;
     let thorough: Awaited<ReturnType<typeof thoroughPass>> | null = null;
     /** Decide a pass the person asked for (their words, Think it through, an accepted offer). */
@@ -1866,8 +1896,14 @@ export class ConversationAgent {
       const f = await figuresOf(route);
       // A yes covers its own "at most" on its own model: a Go ahead after a restart, or after the
       // price or the model changed so that it no longer covers the pass, asks again with the new
-      // figures (nothing spends past a figure the person was not shown).
-      if (yes && ((yes.model && yes.model !== f.model) || yes.atMostUsdMicro < f.floorUsdMicro)) {
+      // figures (nothing spends past a figure the person was not shown). l4-chat-depth
+      // (L4-chat-201): judged as the person was shown it, in whole centimes (`yesCovers`): the Go
+      // ahead's own turn measures a floor a few tokens larger, which is the same figure.
+      if (
+        yes &&
+        ((yes.model && yes.model !== f.model) ||
+          !yesCovers(yes.atMostUsdMicro, f.floorUsdMicro, chf))
+      ) {
         offer = offerOf(f, question);
         return null;
       }
@@ -1884,11 +1920,16 @@ export class ConversationAgent {
         offer = offerOf(f, question);
         return null;
       }
-      if (budgetUsdMicro < f.floorUsdMicro) {
+      if (!yesCovers(budgetUsdMicro, f.floorUsdMicro, chf)) {
         offer = offerOf(f, question);
         return null;
       }
-      return thoroughPass(route, f, Math.min(budgetUsdMicro, room?.usdMicro ?? budgetUsdMicro));
+      return thoroughPass(
+        route,
+        f,
+        Math.min(budgetUsdMicro, room?.usdMicro ?? budgetUsdMicro),
+        yes ? "yes" : "asked",
+      );
     };
     if (accepted) {
       thorough = await personsPass(routeOf(accepted.rung), {
@@ -1999,7 +2040,46 @@ export class ConversationAgent {
           go.figures,
           // A pass that goes ahead without a yes: the person's amount within the outer room.
           Math.min(amountUsdMicro, room?.usdMicro ?? Number.POSITIVE_INFINITY),
+          "handed",
         );
+      // l4-chat-depth (L4-chat-202, ADR 0114 amended 2026-11-22): the ask-only backstop. A
+      // typed quick answer that ended without answer_thoroughly on a line that shows a need
+      // (`needOfLine`), or whose reply offered a stronger model in its own words, gets the app's
+      // own ask when the rung asks first: the gate's checks run here in code (a spoken turn, a
+      // quick line, anything the scan flagged, a change this turn, the room, a rung above); a
+      // lookup the quick pass made does not refuse, since an ask spends nothing. A rung that
+      // would go ahead is never started by the words: Think it through stays under the answer
+      // as under every quick answer. Before, live check 4's fast model never called the tool
+      // and asked "Should I go ahead?" in words, with no cost, no time and no button.
+      if (
+        !go &&
+        !offer &&
+        !why &&
+        !refusedFor &&
+        !spoken &&
+        !signal.aborted &&
+        result.outcome === "completed" &&
+        asked.ask !== "quick" &&
+        injection.length === 0 &&
+        results.length === 0
+      ) {
+        const need = needOfLine(question);
+        const inWords = offersInWords(result.finalText);
+        if (need || inWords) {
+          const route = routeOf(need ? rungOfWhy(need) : "stronger");
+          if (!(route.sameModel && route.effort === effort && effort !== "low")) {
+            const f = await figuresOf(route);
+            const asks = asksFirst(f) || amountUsdMicro < f.floorUsdMicro;
+            const level = capFor(f, asks ? f.atMostUsdMicro : amountUsdMicro);
+            if (level) capLevel = level;
+            else if (asks) {
+              why = need;
+              offer = offerOf(f, question);
+              askedByApp = true;
+            }
+          }
+        }
+      }
       // A refusal that is no cap offers Think it through with what a closer look takes.
       if (!offer && refusedFor && !capLevel && !spoken && longerFigures)
         offer = {
@@ -2143,6 +2223,18 @@ export class ConversationAgent {
     const ownAsk = !result && offer !== null;
     if (ownAsk && offer) reply = (offer as StoredOffer).line;
     if (!result && !offer && capLevel) reply = capWords(capLevel);
+    // l4-chat-depth (L4-chat-202): under the app's own ask the model's ask in words is not said
+    // again (one question, the app's, with the cost and Go ahead); a reply that was nothing else
+    // is the ask line itself, as when the person's words asked for the stronger model.
+    let askInPlace = false;
+    if (askedByApp && offer && result && !claimGuard?.replaced && !stopped) {
+      const kept = withoutWordsOffer(reply);
+      if (kept) reply = kept;
+      else {
+        reply = (offer as StoredOffer).line;
+        askInPlace = true;
+      }
+    }
     // A card counts as mentioned only when the reply names it (its task, or the start of its
     // question): an answer about something else leaves it "not yet mentioned" for the next
     // turn, and an aborted or failed turn mentions nothing.
@@ -2255,7 +2347,15 @@ export class ConversationAgent {
     const answered = !!result && result.outcome === "completed" && !heldAfter && !stopped;
     // d1109-chat-depth: under a longer answer that reached its wrap-up, the next rung's ask line
     // (the stronger, or the strongest when the project's highest model is above it).
-    if (deep && !stopped && result?.wrapUpSent && !offer) {
+    // l4-chat-depth (L4-chat-206): only when its budget line wrapped it up; after Answer now the
+    // person asked for the answer, not for a stronger model (before, both earned the offer).
+    if (
+      deep &&
+      !stopped &&
+      result?.wrapUpSent &&
+      !offer &&
+      deep.run.budget.wrapReasonOf(`${transcriptId}:thorough`) === "line"
+    ) {
       const next = routeOf(deep.route.rung === "longer" ? "stronger" : "best");
       if (next.rung !== deep.route.rung && next.model !== deep.route.model)
         offer = offerOf(await figuresOf(next), question);
@@ -2411,7 +2511,7 @@ export class ConversationAgent {
             }
           : {}),
         ...(stopped ? { stopped: true } : {}),
-        ...(ownAsk || heldAfter || failedTurn ? { notice: true } : {}),
+        ...(ownAsk || askInPlace || heldAfter || failedTurn ? { notice: true } : {}),
         // L4-creds-4: a reply that says the answer failed; Ask again under it where the same
         // line could get an answer now.
         ...(failedTurn?.askAgain ? { failed: true } : {}),

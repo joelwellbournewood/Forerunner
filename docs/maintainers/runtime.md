@@ -1656,7 +1656,7 @@ them, and `task.update`, then stores `riskTierFor(specialist, tier)`: a deploy o
 named (phase C leftover C-2: before, only the critic applied the registry's floor, so the row
 read "Light review" and the run used the process sandbox on the host; the science evaluator's
 registry floor of 2 is still applied by the critic only).
-`applyProjectPlan(store, project, plan, author)`, served as `POST /projects/:id/plan`
+`applyProjectPlan(store, project, plan, author)`, served as `POST /projects/:id/plan` (l4-chat-depth, L4-chat-204: on a project closed by Make one project, or removed, the route answers 409 `conflict` with the joined sentence and `details.cause` `project_joined` or `project_removed` and writes nothing, as do the Data tab's `POST /projects/:id/data` and `/data/import` through a middleware in `server.ts`; `closedProjectAnswer`)
 (`ProjectPlanBody` to `PlanProjectView`), writes a plan (phases with their tasks, loose tasks,
 one reason for every row) as milestone and task rows in one transaction: outside the mode a
 milestone per phase after the project's existing ones (`order_index`) and the loose tasks under
@@ -4530,6 +4530,58 @@ step resets the live text", "Think it through never under a change", the yes aft
 line, Stop after a change, the CHF 1.00 amount, the pass budget whatever the medians and Answer
 now; `budget.test.ts` `SessionBudget.wrapUpNow`.
 
+**l4-chat-depth (run L4, 2026-11-22): Thinking longer on the real model, every line true.**
+- *How a yes is judged (L4-chat-201).* The stored "at most" is the CHF on the line: `atMostOf`
+  rounds the larger of twice the estimate and the floor up to the centime
+  (`usdMicroOfCentimes`). A Go ahead, a typed yes or Think it through's press asks again only
+  when the model changed or the floor, in whole centimes, is above what the line showed
+  (`yesCovers`); the pass then runs with the yes's "at most" capped by the room. Before, a floor
+  above twice the estimate was stored unrounded, and the Go ahead's own turn (its history one ask
+  longer) measured a floor a few hundred micro-USD above it: after one cheap stronger answer
+  anywhere on the install (the estimate is the median across the one conversation session), every
+  later Go ahead showed the same ask again and made no call (live check 4, LC-C14).
+- *Who writes the ask (L4-chat-202).* The facts' `thinking_longer` names who acts:
+  "available: call answer_thoroughly; the app goes ahead up to CHF 0.10 on this model" or
+  "available: call answer_thoroughly; the app asks the person with the cost (never ask in your own
+  words)"; `ANSWER_THOROUGHLY_DESCRIPTION` ends 'Never offer a stronger model or ask "Should I go
+  ahead?" yourself: call this tool, and the app writes the ask with its cost.' (before: a
+  subject-less "asks the person first", which the live fast model read as an instruction to ask in
+  words; it never called the tool, 0 of 7 in LC-C13). conversation-agent 1.5.0 says the same in
+  "Thinking longer", and scopes that section to the quick answer.
+- *The ask-only backstop (L4-chat-202, ADR 0114 amended 2026-11-22).* A typed quick answer that
+  ended without `answer_thoroughly` on a line that shows a need (`needOfLine`: why something fails
+  or keeps failing, a plan for what comes next, a comparison, a review, what several sessions
+  did; English and German, outside quotes) or whose reply asks in its own words
+  (`offersInWords`: a question naming a stronger model or a hand-over) runs the gate in code: no
+  spoken turn, no quick line, nothing the scan flagged, no change this turn, the room, a rung
+  above. When the rung asks first, the reply keeps the app's own `StoredOffer` (Go ahead or a
+  typed yes runs it once) and the model's ask in words is taken out (`withoutWordsOffer`; a reply
+  that was nothing else is the ask line itself, a notice); the row's `why` is the need. A rung
+  that would go ahead is never started by the words: Think it through stays under the answer as
+  under every quick answer. A pattern never spends; only the person's yes does.
+- *The closer look is told what it is (L4-chat-203).* The thorough request's `# Now` carries
+  `this_answer` (`thoroughFact`: "the closer look on Sonnet that the person said yes to (at most
+  CHF 0.57)", "the longer look on this model that the person asked for (...)" or "... that the
+  quick answer handed over (...)", the figure being the pass's budget) in place of the quick
+  pass's `thinking_longer`, and `CHAT_THOROUGH_RULES` opens with "You are the closer look ...
+  answer_thoroughly and the "Thinking longer" section are the quick answer's, not yours: never
+  say that you could not hand the question over or that a stronger model was not used", asks it
+  to look an earlier reply up before calling it wrong (L4-chat-106's sentence) and to say in plain
+  words what it could not check. Before, the pass reused the quick facts ("asks the person
+  first" after the yes) and the paid Sonnet answer said "I couldn't hand it to the stronger
+  model" under "Thought it through with Sonnet". The fast request is byte for byte as before.
+- *Answer now earns no offer (L4-chat-206).* `SessionBudget` keeps why a run's wrap-up came
+  (`wrapReasonOf(runId)`: `line` by spend, `now` by Answer now; append-only), and the next rung's
+  ask line goes only under a longer pass whose budget line wrapped it up. Before, Answer now and
+  the line were one decision, so the answer the person asked for now offered "This needs a
+  stronger model ... Go ahead?" under it (live check 4, LC-C16).
+- *Composed cases (L4-chat-208, C3L-10).* The real-daemon describe "l4-chat-depth, run L4"
+  reads the project's cap line from the composed `chatRoom` (a project budget of USD 0.001:
+  "A closer look would pass this project's budget, so this is the quick answer.", no thorough
+  call; it fails when the project's room is left out) and Costs' "Planning and chat" row growing
+  with each chat turn (`GET /costs?projectId`). Stop with its Undo, "Chat asks first" at CHF 1.00,
+  the ask again after a price change and Answer now have their cases in `chat-depth.test.ts`.
+
 **The history leaves out a quoted record's words (L3-left-6).** An earlier reply whose own words
 the injection scan flags (a reply that quoted a report, a card or a recall hit) is sent in the
 history as `QUOTED_RECORD_LEFT_OUT`, so the record's words reach no later call and the later
@@ -4610,10 +4662,17 @@ in one project cancelled a task in another. Now:
   the Chat tab and Talk show the same lines. The agent reads as many turns as the view shows
   (`TRANSCRIPT_SHOW_LIMIT`), so a card shown with Yes and No is the one a "yes" answers (before,
   it looked 12 turns back, and after a restart a card further up answered "Yes to what?").
-- **History.** A model turn sends the last `HISTORY_TURNS` (12) turns of its conversation as
-  alternating user and assistant messages within `historyMaxTokens` (default
-  `DEFAULT_CHAT_HISTORY_TOKENS`, 3,000, counted with the provider's counter; the oldest go
-  first), then the turn's own message: the line, then the volatile facts and blocks. The line is
+- **History.** A model turn sends a window of its conversation's turns as alternating user and
+  assistant messages within `historyMaxTokens` (default `DEFAULT_CHAT_HISTORY_TOKENS`, 3,000,
+  counted with the provider's counter). l4-chat-depth (L4-chat-205): the window moves in steps of
+  `HISTORY_STEP_TURNS` (6) by each turn's number from the conversation's start (kept on its
+  `chat.human` row as `turn`, `nextTurnNumber`; rows written before count from the first
+  numbered one): it starts at turn floor((n - 12) / 6) * 6, so it holds 12 to 17 turns and its
+  first message stays the same for six turns, after a restart too and past the 100 turns the
+  conversation reads; over the budget it drops whole steps from that start, and only the newest
+  step alone is cut one turn at a time. Before, it slid by one turn and the cap dropped one turn
+  per call, so past 12 turns every line wrote its whole history to the cache again (live check
+  4, LC-C15: 0 identical leading messages between two lines). Then the turn's own message: the line, then the volatile facts and blocks. The line is
   the message's stable start (`ChatMessage.stableChars`): the Anthropic adapter sends it as its
   own text block with the cache breakpoint (`stableSplit`, `cacheHistory`), so the entry the
   turn writes ends at the line, and the next turn, whose history replays the line alone, reads

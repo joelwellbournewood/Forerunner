@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  askAboveWords,
   askLine,
   CHAT_THOROUGH_RULES,
   CHAT_WRAP_UP,
@@ -13,6 +12,8 @@ import {
   failureReply,
   footerWords,
   handOverStep,
+  needOfLine,
+  offersInWords,
   type PassFigures,
   STOP_EXPLAIN,
   secondsWords,
@@ -20,6 +21,7 @@ import {
   TIMEOUT_REPLY,
   thinkItThroughExplain,
   thinkingLongerFact,
+  withoutWordsOffer,
 } from "../src/conversation/depth.ts";
 
 /**
@@ -181,12 +183,15 @@ describe("d1109-chat-depth, run C: the sentences", () => {
     expect(STOP_EXPLAIN).toBe("Stops this answer. Changes it already made stay, each with Undo.");
     expect(
       thinkingLongerFact({ state: "goes_ahead", amountUsdMicro: 125_000, chfPerUsd: 0.8 }),
-    ).toBe("goes ahead up to CHF 0.10 on this model");
-    expect(thinkingLongerFact({ state: "asks" })).toBe("asks the person first");
+    ).toBe(
+      // l4-chat-depth (L4-chat-202): an available line says who acts.
+      "available: call answer_thoroughly; the app goes ahead up to CHF 0.10 on this model",
+    );
+    expect(thinkingLongerFact({ state: "asks" })).toBe(
+      "available: call answer_thoroughly; the app asks the person with the cost (never ask in your own words)",
+    );
     expect(thinkingLongerFact({ state: "spoken" })).toBe("not on a spoken turn");
     expect(thinkingLongerFact({ state: "room" })).toBe("not now (the caps leave too little)");
-    expect(askAboveWords(0.1)).toBe("asks first above CHF 0.10");
-    expect(askAboveWords(0)).toBe("asks before every longer answer");
     expect(secondsWords(55)).toBe("a minute");
     expect(secondsWords(21)).toBe("30 seconds");
     expect(chfSpent(0, 0.8)).toBe("under CHF 0.01");
@@ -196,9 +201,11 @@ describe("d1109-chat-depth, run C: the sentences", () => {
     expect(CHAT_WRAP_UP).toBe(
       "Wrap up now: make no more lookups. Answer from what you have, and say in one sentence what you could not check.",
     );
-    expect(
-      CHAT_THOROUGH_RULES.startsWith("# Thinking it through\nThis question was handed to you"),
-    ).toBe(true);
+    // l4-chat-depth (L4-chat-203): the rules start by saying the pass is the closer look itself
+    // (the whole text is asserted in chat-depth.test.ts "L4-chat-203").
+    expect(CHAT_THOROUGH_RULES.startsWith("# Thinking it through\nYou are the closer look: ")).toBe(
+      true,
+    );
   });
 });
 
@@ -272,5 +279,39 @@ describe("l4-cred-engine, run L4 (L4-creds-4): a chat answer that did not comple
       message: "Internal server error at /v1/messages (req_123)",
     } as never);
     expect(said.text).not.toMatch(/Internal|req_|v1|\(/);
+  });
+});
+
+describe("l4-chat-depth, run L4: the lines the app reads itself (L4-chat-202)", () => {
+  it("needOfLine finds a failure, a plan, a comparison, a review or many sessions, outside quotes, in English and German", () => {
+    expect(
+      needOfLine('why does "Write the welcome page" keep failing and what should I change?'),
+    ).toBe("failure");
+    expect(needOfLine("why did the last session fail?")).toBe("failure");
+    expect(needOfLine("warum scheitert die Seite immer?")).toBe("failure");
+    expect(needOfLine("make a plan for the next two sessions")).toBe("plan");
+    expect(needOfLine("mach einen Plan für morgen")).toBe("plan");
+    expect(needOfLine("compare the two ways to style the page")).toBe("comparison");
+    expect(needOfLine("review the README for me")).toBe("review");
+    expect(needOfLine("what did the last two sessions do?")).toBe("many_records");
+    expect(needOfLine("what is left?")).toBeNull();
+    expect(needOfLine("what is in review?")).toBeNull();
+    expect(needOfLine('what is "Plan for the next two sessions" waiting for?')).toBeNull();
+    expect(needOfLine('add a task: "Compare the logos"')).toBeNull();
+  });
+
+  it("offersInWords reads a question that offers a stronger model or a hand-over; withoutWordsOffer takes those sentences out", () => {
+    const live =
+      "This plan needs the stronger model, which costs more and asks you first. Should I go ahead?";
+    expect(offersInWords(live)).toBe(true);
+    expect(withoutWordsOffer(live)).toBe("");
+    expect(offersInWords("Sonnet is a stronger model than Haiku.")).toBe(false);
+    expect(offersInWords("Two tasks are left. Which do you want first?")).toBe(false);
+    expect(withoutWordsOffer("It fails because the file is missing. Should I go ahead?")).toBe(
+      "It fails because the file is missing.",
+    );
+    expect(
+      withoutWordsOffer("It fails.\n\nTo fix it:\n- Add the file.\n\nWant me to think it through?"),
+    ).toBe("It fails.\n\nTo fix it:\n- Add the file.");
   });
 });

@@ -134,6 +134,79 @@ export function depthWords(line: string): DepthAsk {
   return { ask: null, bare: false };
 }
 
+/**
+ * The need a typed line shows, read by the app itself (l4-chat-depth, L4-chat-202, ADR 0114
+ * amended 2026-11-22: the ask-only backstop): why something fails or keeps failing, a plan for
+ * what comes next, a comparison, a review, or what several sessions did, in English and German,
+ * outside quotes (a quoted title is never a need). The same lines the bench's stand-in hands
+ * over on. Its only use is to attach the app's own ask line under a quick answer that ended
+ * without `answer_thoroughly`: it never spends; only the person's yes does.
+ */
+export function needOfLine(line: string): Why | null {
+  const said = outsideQuotes(line).toLowerCase();
+  if (
+    /\bkeeps? (?:on )?failing\b|\bkeeps? going wrong\b/.test(said) ||
+    /\bwhy\b[^.?!]*\b(?:fail|fails|failed|failing|broke|breaks|went wrong|goes wrong)\b/.test(
+      said,
+    ) ||
+    /\bwarum\b[^.?!]*\b(?:scheitert|fehlgeschlagen|schlägt|schlaegt|klappt)\b/.test(said)
+  )
+    return "failure";
+  if (/\bcompare\b|\bcomparison\b|\bpros and cons\b|\bvergleich/.test(said)) return "comparison";
+  if (
+    /\b(?:a|the) plan (?:for|of)\b|\bplan (?:for|out) the next\b|\bplan the next\b/.test(said) ||
+    /\b(?:einen|den) plan\b|\bplan (?:für|fuer)\b/.test(said)
+  )
+    return "plan";
+  if (
+    /\breview (?:the|my|our|this|that|it|for|of)\b|\b(?:überprüfe|ueberpruefe|bewerte)\b/.test(said)
+  )
+    return "review";
+  if (
+    /\b(?:last|past) (?:two|three|few|2|3) sessions\b|\bacross (?:the )?sessions\b/.test(said) ||
+    /\bletzten (?:zwei|drei|2|3) sessions?\b/.test(said)
+  )
+    return "many_records";
+  return null;
+}
+
+/** A reply's sentence that offers a hand-over in its own words ("Should I go ahead?"). */
+const WORDS_OFFER_RE =
+  /\bstronger model\b|\bbetter model\b|\bhand (?:it|this|that) (?:over|to)\b|\b(?:should|shall) i go ahead\b|\bwant me to (?:go ahead|think)\b|\bsoll ich (?:weitermachen|fortfahren)\b/i;
+
+const sentencesOf = (para: string): string[] => para.match(/[^.?!]+[.?!]*\s*/g) ?? [para];
+
+/**
+ * Whether a reply offers a stronger model or a hand-over in its own words (L4-chat-202): a
+ * question that names one ("Should I go ahead?", "Want me to use a stronger model?"). A sentence
+ * that only mentions a stronger model ("Sonnet is a stronger model.") offers nothing.
+ */
+export function offersInWords(text: string): boolean {
+  return text
+    .split(/\n/)
+    .flatMap(sentencesOf)
+    .some((s) => WORDS_OFFER_RE.test(s) && s.trim().endsWith("?"));
+}
+
+/**
+ * The reply without its sentences that offer a hand-over in words, when the app writes its own
+ * ask under it (L4-chat-202): one question, the app's, with the cost and Go ahead. Empty when
+ * the reply was nothing else.
+ */
+export function withoutWordsOffer(text: string): string {
+  return text
+    .split(/\n/)
+    .map((para) =>
+      sentencesOf(para)
+        .filter((s) => !WORDS_OFFER_RE.test(s))
+        .join("")
+        .trim(),
+    )
+    .filter((para, i, all) => para !== "" || (i > 0 && all[i - 1] !== ""))
+    .join("\n")
+    .trim();
+}
+
 /** A model's name as the person reads it: "Sonnet", never "claude-sonnet-5-5" or a tier word. */
 export function modelName(tier: ModelTier): string {
   return tier.charAt(0).toUpperCase() + tier.slice(1);
@@ -162,14 +235,40 @@ export function chfToUsdMicroAt(chf: number, chfPerUsd: number): number {
   return Math.round((Math.max(0, chf) * 1_000_000) / (chfPerUsd > 0 ? chfPerUsd : 1));
 }
 
-/** The "at most" a yes covers: twice the estimate, rounded up to the centime, never below `floor`. */
+/**
+ * The USD micro amount of whole centimes at the day's rate, never more than the centimes say
+ * (its `centimesUp` is the same centimes): what a line that shows "CHF 0.21" covers.
+ */
+export function usdMicroOfCentimes(centimes: number, chfPerUsd: number): number {
+  const at = chfToUsdMicroAt(Math.max(0, centimes) / 100, chfPerUsd);
+  return centimesUp(at, chfPerUsd) > centimes ? at - 1 : at;
+}
+
+/**
+ * The "at most" a yes covers: twice the estimate, never below `floor`, rounded up to the centime
+ * (l4-chat-depth, L4-chat-201): the stored amount is the CHF on the line. Before, a floor above
+ * twice the estimate was stored unrounded, so the Go ahead's own turn (whose context the offered
+ * turn had grown) measured a floor above it and asked again, every time.
+ */
 export function atMostOf(
   estimateUsdMicro: number,
   floorUsdMicro: number,
   chfPerUsd: number,
 ): number {
-  const twice = chfToUsdMicroAt(centimesUp(2 * estimateUsdMicro, chfPerUsd) / 100, chfPerUsd);
-  return Math.max(twice, floorUsdMicro);
+  const centimes = Math.max(
+    centimesUp(2 * estimateUsdMicro, chfPerUsd),
+    centimesUp(floorUsdMicro, chfPerUsd),
+  );
+  return usdMicroOfCentimes(centimes, chfPerUsd);
+}
+
+/**
+ * Whether a yes for `atMostUsdMicro` still covers a pass whose floor is `floorUsdMicro`, judged
+ * as the person was shown it (L4-chat-201): in whole centimes, so a floor a few tokens larger on
+ * the Go ahead's own turn is the same figure, and only a real change of price asks again.
+ */
+export function yesCovers(atMostUsdMicro: number, floorUsdMicro: number, chfPerUsd: number) {
+  return centimesUp(floorUsdMicro, chfPerUsd) <= centimesUp(atMostUsdMicro, chfPerUsd);
 }
 
 /** A longer answer's time when none was measured yet (the five-call estimate's partner). */
@@ -398,9 +497,15 @@ export function failureReply(
 // ---------------------------------------------------------------------------------------------
 // What the model receives (code, asserted verbatim on the requests).
 
-/** answer_thoroughly's definition: the fast model's one way to ask for a longer answer. */
+/**
+ * answer_thoroughly's definition: the fast model's one way to ask for a longer answer.
+ * l4-chat-depth (L4-chat-202): it says who writes the ask. Before, it ended "The facts'
+ * thinking_longer line says whether it is available now", and that line said "asks the person
+ * first" with no subject: the live fast model asked "Should I go ahead?" in its own words, with
+ * no cost and no Go ahead, and never called the tool (live check 4, LC-C13: 0 of 7).
+ */
 export const ANSWER_THOROUGHLY_DESCRIPTION =
-  "Hand this question to a stronger model that thinks it through and can look up more. It is slower (often half a minute) and costs more, within limits the app sets. Use it only when a good answer needs reasoning across many records (several sessions, tasks or days), working out why something keeps failing and what to change, a plan, a comparison, a review or a recommendation, or when the person asks you to think harder. Never for what is running, what is left, one record, a greeting or a change. Call it first, before any lookup, and write nothing before it. The app decides: it hands the question over, asks the person first, or tells you to answer from what you have. The facts' thinking_longer line says whether it is available now.";
+  'Hand this question to a stronger model that thinks it through and can look up more. It is slower (often half a minute) and costs more, within limits the app sets. Use it only when a good answer needs reasoning across many records (several sessions, tasks or days), working out why something keeps failing and what to change, a plan, a comparison, a review or a recommendation, or when the person asks you to think harder. Never for what is running, what is left, one record, a greeting or a change. Call it first, before any lookup, and write nothing before it. The app decides: it hands the question over, asks the person first, or tells you to answer from what you have. Never offer a stronger model or ask "Should I go ahead?" yourself: call this tool, and the app writes the ask with its cost.';
 
 /** The tool's name (in the fast pass's list after the recall tools; never in the thorough pass's). */
 export const ANSWER_THOROUGHLY_TOOL = "answer_thoroughly";
@@ -426,15 +531,51 @@ export const NOT_NOW = {
 /** The hand-over's own result (the fast run ends with it; no later call reads it). */
 export const HANDED_OVER_RESULT = "Handed over: the closer look answers this question.";
 
-/** The thorough pass's own rules, after the fast pass's in its system part. */
+/**
+ * The thorough pass's own rules, after the fast pass's in its system part (cache-stable).
+ * l4-chat-depth (L4-chat-203): they say the pass is the closer look itself. Before, it was never
+ * told so and read the quick pass's "Thinking longer" section and facts: the paid Sonnet answer
+ * said "I couldn't hand it to the stronger model" under "Thought it through with Sonnet" (live
+ * check 4). The sentence about earlier replies is L4-chat-106's (l4-chat-answers), carried here.
+ */
 export const CHAT_THOROUGH_RULES = `# Thinking it through
-This question was handed to you to think through; the person waits and sees what you look up. Look up what the answer rests on with recall, recall_open and the read tools, a few lookups at most. Then answer in at most six short sentences, or a short list whose lines start with "- ". Say what the answer rests on (sessions, tasks, cards, decisions or documents, by name and date), keep what the records say apart from what you conclude, and say what you could not check. When you suggest a next step, name one the app can do; make a change only when the person asked for it. When the app says to wrap up, answer from what you have.`;
+You are the closer look: the stronger model or the longer effort that the person said yes to or the app chose; the facts' this_answer line says which. answer_thoroughly and the "Thinking longer" section are the quick answer's, not yours: never say that you could not hand the question over or that a stronger model was not used. The person waits and sees what you look up. Look up what the answer rests on with recall, recall_open and the read tools, a few lookups at most. Your earlier replies rest on lookups not shown again here: before you call one wrong or unconfirmed, look it up in this turn; when a hit leaves something out, open it. Then answer in at most six short sentences, or a short list whose lines start with "- ". Say what the answer rests on (sessions, tasks, cards, decisions or documents, by name and date), keep what the records say apart from what you conclude, and say in plain words what you could not check. When you suggest a next step, name one the app can do; make a change only when the person asked for it. When the app says to wrap up, answer from what you have.`;
+
+/**
+ * The thorough pass's facts line in place of the quick pass's thinking_longer (L4-chat-203):
+ * what this answer is, who chose it, and the most it may spend. Never "asks the person first"
+ * to a pass that runs.
+ */
+export function thoroughFact(o: {
+  tier: ModelTier;
+  sameModel: boolean;
+  /** `yes`: Go ahead, a typed yes or Think it through; `asked`: the person's own words; `handed`: the quick answer's hand-over. */
+  by: "yes" | "asked" | "handed";
+  budgetUsdMicro: number;
+  chfPerUsd: number;
+}): string {
+  const what = o.sameModel
+    ? "the longer look on this model"
+    : `the closer look on ${modelName(o.tier)}`;
+  const who =
+    o.by === "yes"
+      ? "that the person said yes to"
+      : o.by === "asked"
+        ? "that the person asked for"
+        : "that the quick answer handed over";
+  return `${what} ${who} (at most ${chfUp(o.budgetUsdMicro, o.chfPerUsd)})`;
+}
 
 /** The wrap-up a thorough pass hears once, through the loop's wrapUp option (ADR 0112's mechanism). */
 export const CHAT_WRAP_UP =
   "Wrap up now: make no more lookups. Answer from what you have, and say in one sentence what you could not check.";
 
-/** The facts' thinking_longer line: whether a closer look is available now, in the model's words. */
+/**
+ * The facts' thinking_longer line: whether a closer look is available now, in the model's words.
+ * l4-chat-depth (L4-chat-202): an available line names who acts (the model calls the tool; the
+ * app goes ahead or asks the person with the cost). Before, "asks the person first" had no
+ * subject, and the live fast model read it as an instruction to ask in its own words.
+ */
 export function thinkingLongerFact(
   o:
     | { state: "goes_ahead"; amountUsdMicro: number; chfPerUsd: number }
@@ -442,9 +583,9 @@ export function thinkingLongerFact(
 ): string {
   switch (o.state) {
     case "goes_ahead":
-      return `goes ahead up to ${chfUp(o.amountUsdMicro, o.chfPerUsd)} on this model`;
+      return `available: call answer_thoroughly; the app goes ahead up to ${chfUp(o.amountUsdMicro, o.chfPerUsd)} on this model`;
     case "asks":
-      return "asks the person first";
+      return "available: call answer_thoroughly; the app asks the person with the cost (never ask in your own words)";
     case "spoken":
       return "not on a spoken turn";
     case "room":
@@ -456,8 +597,3 @@ export function thinkingLongerFact(
 
 /** The person's amount by default: CHF 0.10 (the session lead's reading of "expensive"). */
 export const DEFAULT_ASK_ABOVE_CHF = 0.1;
-
-/** The setting's value in words. */
-export function askAboveWords(chf: number): string {
-  return chf <= 0 ? "asks before every longer answer" : `asks first above CHF ${chf.toFixed(2)}`;
-}

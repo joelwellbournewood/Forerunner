@@ -1917,6 +1917,79 @@ function dependenciesSentence(title: string, titles: readonly string[]): string 
 }
 
 /**
+ * When a task that still waits runs (l4-chat-depth, L4-chat-207; ADR 0118 point 3: a chat change
+ * says what happens next): after the tasks it waits for that are not done, then when, read from
+ * the prepared line (read-only). "It runs after it is done, at your next Start." when every task
+ * named in the sentence before is undone; else the undone ones by name, at most 100 characters.
+ */
+function afterDependenciesLine(
+  preview: string | null,
+  undone: readonly string[],
+  named: readonly string[],
+): string {
+  const when = !preview
+    ? "at your next Start"
+    : /once you allow them again/.test(preview)
+      ? "at your next Start once you allow sessions again"
+      : /^Ready: it joins this session/.test(preview)
+        ? "in this session if budget is left, else your next Start"
+        : /^Ready: it joins your session when it goes on/.test(preview)
+          ? "in your session when it goes on, if it fits, else your next Start"
+          : /quiet hours/.test(preview)
+            ? "once your quiet hours are over"
+            : "at your next Start";
+  const all = undone.length === named.length;
+  const one = undone.length === 1;
+  const who = all ? (one ? "it is" : "they are") : `${namesList(undone)} ${one ? "is" : "are"}`;
+  const line = `It runs after ${who} done, ${when}.`;
+  return line.length <= 100 ? line : `It runs after the tasks it waits for are done, ${when}.`;
+}
+
+/**
+ * The line after a dependency change (L4-chat-207): a ready task whose every dependency is done
+ * is prepared (it joins a running session if it fits, else it waits for the next Start), as any
+ * move that makes a task ready; one that still waits says after what and when. Other statuses
+ * (a draft, a paused or a done task) run on nothing a dependency says: no line.
+ */
+async function dependenciesNextLine(
+  ctx: CommandContext,
+  task: TaskRow,
+  outcome: CommandOutcome,
+  wasRunnable: boolean,
+): Promise<CommandOutcome> {
+  if (task.status !== "ready") return outcome;
+  const deps = await Promise.all(task.depends_on.map((id) => ctx.store.task.get(id)));
+  const undone = deps.filter((d) => d && d.status !== "done").map((d) => d?.title ?? "");
+  if (!undone.length) {
+    if (!wasRunnable) return withNextLine(ctx, outcome, task);
+    const preview = ctx.ports.previewWork
+      ? await ctx.ports
+          .previewWork({
+            projectId: task.project_id,
+            by: ctx.actor.kind === "agent" ? "agent" : "person",
+          })
+          .catch(() => null)
+      : null;
+    return preview
+      ? { ...outcome, sentence: `${outcome.sentence} ${afterMove(preview)}` }
+      : outcome;
+  }
+  const preview = ctx.ports.previewWork
+    ? await ctx.ports
+        .previewWork({
+          projectId: task.project_id,
+          by: ctx.actor.kind === "agent" ? "agent" : "person",
+        })
+        .catch(() => null)
+    : null;
+  const named = deps.filter(Boolean).map((d) => d?.title ?? "");
+  return {
+    ...outcome,
+    sentence: `${outcome.sentence} ${afterDependenciesLine(preview, undone, named)}`,
+  };
+}
+
+/**
  * The read-back of a change to what a task waits for (design §3.9): 'Make "Write the FAQ" wait
  * for "Write the README"?', or with tasks added to some it waits for already, 'Make "X" also
  * wait for "Y"?' (only the new ones named).
@@ -1987,6 +2060,11 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
   async run(params, ctx) {
     const task = await findTask(params, ctx);
     const ids = await wantedDependencies(ctx, task, params);
+    // Whether it could run before the change (L4-chat-207: only a change that makes it runnable
+    // prepares it; one that leaves it runnable only says when it runs).
+    const wasRunnable = (
+      await Promise.all(task.depends_on.map((id) => ctx.store.task.get(id)))
+    ).every((d) => !d || d.status === "done");
     const updated = await ctx.store.task.setDependencies(
       task.id,
       task.version,
@@ -1999,19 +2077,28 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
       actorOf(ctx),
     );
     const noteId = await queueNote(ctx, task, params.note);
-    return {
-      before: { task_id: task.id, title: task.title, depends_on: task.depends_on },
-      after: {
-        task_id: task.id,
-        title: task.title,
-        depends_on: updated.depends_on,
-        ...(noteId ? { note_id: noteId } : {}),
+    // l4-chat-depth (L4-chat-207): the sentence says when the task runs; a change that made it
+    // runnable prepares it (it joins a running session if it fits, ADR 0118 point 3).
+    const said = await dependenciesNextLine(
+      ctx,
+      updated,
+      {
+        before: { task_id: task.id, title: task.title, depends_on: task.depends_on },
+        after: {
+          task_id: task.id,
+          title: task.title,
+          depends_on: updated.depends_on,
+          ...(noteId ? { note_id: noteId } : {}),
+        },
+        sentence: dependenciesSentence(task.title, await titlesOf(ctx, updated.depends_on)),
+        projectId: task.project_id,
+        reversible: true,
       },
-      sentence: `${dependenciesSentence(task.title, await titlesOf(ctx, updated.depends_on))}${
-        noteId ? " Your note goes into its next brief." : ""
-      }`,
-      projectId: task.project_id,
-      reversible: true,
+      wasRunnable,
+    );
+    return {
+      ...said,
+      sentence: `${said.sentence}${noteId ? " Your note goes into its next brief." : ""}`,
     };
   },
   async undoBlocked(_params, _before, after, ctx) {

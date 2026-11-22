@@ -345,7 +345,10 @@ them as you left them; an open file or task stays on its own tab.
   a task was set below the full review, the form says that saving moves it to the full review;
   a level you leave as it is is saved as it was) and **Change what it waits for** (the project's
   tasks by title; a failed one is flagged; a task cannot wait on itself, a cancelled task or a
-  task that already waits on it). **New task** asks the title, what done looks like, what it
+  task that already waits on it). The line after it says when the task runs ('"Write the FAQ"
+  now waits for "Write the README". It runs after it is done, at your next Start.'); when it
+  waits for nothing any more it runs at your next Start, or joins the session that is running if
+  it fits. In Chat: "make the FAQ wait for the README", "let the FAQ run on its own". **New task** asks the title, what done looks like, what it
   waits for, the review level ("Light review: the critic reads the work, nothing runs in
   isolation"; "Full review: needs Docker" says when Docker is not running on this computer),
   who does it (let the agent choose, a specialist, or **Me: ask me in the Inbox**: its questions
@@ -454,10 +457,16 @@ them as you left them; an open file or task stays on its own tab.
   through: on the same model it goes ahead by itself up to your amount (CHF 0.10 at first); before
   a stronger model, or an answer that may cost more than your amount, it asks in one line with the
   cost and the time ("This needs a stronger model: about CHF 0.15 (at most CHF 0.30) and 30
-  seconds. Go ahead?") and goes on only when you press **Go ahead** or say "yes". Say "think it
-  through", "take your time" or "use a stronger model" yourself, or press **Think it through**
-  under an answer. The bubble says what it is doing and for how long, and a longer answer ends
-  with one line of its model, time and cost ("Thought it through with Sonnet · 34 s · CHF 0.06").
+  seconds. Go ahead?") and goes on only when you press **Go ahead** or say "yes". That line is
+  always the app's own, with its figures, even when the quick answer only said it in words; Go
+  ahead runs that answer once, within its "at most", and asks again only when the price or the
+  model changed. Once you write something else, the line stays as what was offered ("Offered: a
+  stronger model, about CHF 0.15 (at most CHF 0.30). Not taken.", or "You went ahead.") with no
+  button. Say "think it through", "take your time" or "use a stronger model" yourself, or press
+  **Think it through** under an answer. The bubble says what it is doing and for how long, and a
+  longer answer ends with one line of its model, time and cost ("Thought it through with Sonnet ·
+  34 s · CHF 0.06"). During a longer answer **Answer now** beside Stop answers at once from what
+  it has looked up, with no new offer under it.
   **Stopping an answer.** While Chat answers, **Send** becomes **Stop**: the answer ends, what it
   already changed stays with its Undo, and the line under it says what it cost. Only **Stop**
   stops it: pressing Enter while you type your next line meanwhile keeps the answer going and
@@ -1639,8 +1648,9 @@ your agents may reach beyond their built-in tools.
   are connected (with **Connect Claude** when Claude is not, and the setup assistant), the
   budget per session of each project, the monthly cap, **Chat asks first** before a stronger
   model or an answer over your amount (CHF 0.10 at first; below it Chat thinks longer when it
-  helps, on the same model; 0 makes it ask before every longer answer; a lower amount applies at
-  once, a higher one asks your Yes), the default autonomy by name ("Standard:
+  helps, on the same model; 0 makes it ask before every longer answer, and the Changes row says so
+  after the amounts: "from CHF 0.10 to CHF 0.00: chat asks before every longer answer"; a lower
+  amount applies at once, a higher one asks your Yes), the default autonomy by name ("Standard:
   routine, reversible actions run; the rest asks you"), quiet hours, and **Sandbox (Docker)**
   (whether full-review tasks can run, the step to take, the sandbox download). Everything else is
   under **Advanced** (collapsed; click it to open): the subscription allowance, which Claude

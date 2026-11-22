@@ -27,7 +27,7 @@ test("quick chat streams a reply, confirms an action with Yes and turns a messag
   await confirmation.getByTestId("confirm-yes").click();
   await expect(page.getByTestId("pending-confirmation")).toHaveCount(0);
   await expect(page.getByTestId("chat-agent").nth(2)).toContainText(
-    "Started a session on Atlas (up to CHF 5).",
+    "Started a session on Atlas (up to CHF 5.00).",
   );
   // The turn links the session the start began (phase E), as the daemon's conversation does.
   await expect(page.getByTestId("chat-session-link")).toHaveText("Open the session");

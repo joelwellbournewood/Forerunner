@@ -100,7 +100,10 @@ describe("steering by chat (design §3.9)", () => {
     // Nothing changed before the yes.
     expect((await rt.store.task.mustGet(faq.id)).depends_on).toEqual([]);
     const yes = await say("yes");
-    expect(yes.reply).toBe('"Write the FAQ" now waits for "Write the README".');
+    // l4-chat-depth (L4-chat-207): the sentence says when the task runs.
+    expect(yes.reply).toBe(
+      '"Write the FAQ" now waits for "Write the README". It runs after it is done, at your next Start.',
+    );
     expect((await rt.store.task.mustGet(faq.id)).depends_on).toEqual([readme.id]);
     // "make X wait for Y" adds to what X waits for; it never drops a dependency.
     const style = await task("Style the page");
@@ -251,5 +254,105 @@ describe("steering by chat (design §3.9)", () => {
       /^(?:Started a session on Quote page|A session on Quote page starts after the one running now) \(up to CHF [\d.]+\)\.$/,
     );
     expect(yes.reply).not.toContain("Undo.");
+  });
+});
+
+// l4-chat-depth (run L4, live check 4's L4-session-3): a dependency change says when the task
+// runs, and removing the last one it waits for prepares it (ADR 0118 point 3).
+describe("l4-chat-depth, run L4: a dependency change says when the task runs (L4-chat-207)", () => {
+  let rt: RuntimeApp;
+  let app: ReturnType<typeof createDaemonApp>["app"];
+  let token: string;
+  let projectId = "";
+  const clock = new SimulatedClock("2026-11-17T09:00:00Z");
+  const say = async (text: string) => {
+    const res = await app.request("/chat", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        projectId,
+        projectTab: true,
+        text,
+        source: "text",
+      }),
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as {
+      reply: string;
+      pendingConfirmation: { readback: string } | null;
+    };
+  };
+  const task = (title: string, over: Record<string, unknown> = {}) =>
+    rt.store.task.insert({
+      project_id: projectId,
+      title,
+      outcome: `${title}.`,
+      acceptance_criteria: [],
+      risk_tier: 0,
+      status: "ready",
+      priority: 50,
+      depends_on: [],
+      budget_usd_micro: 0,
+      reason: "",
+      ...over,
+    });
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-chat-steering-l4-"));
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+    });
+    ({ app, token } = createDaemonApp(rt));
+    projectId = (await rt.store.project.insert({ name: "Garden club", goal: "A page" })).id;
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("'make the FAQ task depend on the README task', yes: it says it runs after the README is done, at the next Start; 'let the FAQ run on its own', yes: it runs at the next Start", async () => {
+    const readme = await task("Write the README");
+    const faq = await task("Write the FAQ");
+    await say("make the FAQ task depend on the README task");
+    const waits = await say("yes");
+    expect(waits.reply).toBe(
+      '"Write the FAQ" now waits for "Write the README". It runs after it is done, at your next Start.',
+    );
+    expect((await rt.store.task.mustGet(faq.id)).depends_on).toEqual([readme.id]);
+    const asked = await say("let the FAQ run on its own");
+    expect(asked.pendingConfirmation?.readback).toBe(
+      'Let "Write the FAQ" run without waiting for another task?',
+    );
+    const own = await say("yes");
+    expect(own.reply).toBe(
+      '"Write the FAQ" waits for no other task now. It runs at your next Start.',
+    );
+    expect((await rt.store.task.mustGet(faq.id)).depends_on).toEqual([]);
+    for (const line of [waits.reply, own.reply])
+      for (const sentence of line.split(/(?<=\.) /)) expect(sentence.length).toBeLessThan(100);
+  });
+
+  it("a dependency that is done is not named: only the undone one is", async () => {
+    const done = await task("Pick the colours", { status: "done" });
+    const page = await task("Draw the page");
+    const guide = await task("Write the style guide", { depends_on: [done.id] });
+    await say("make the style guide task depend on the page task");
+    const yes = await say("yes");
+    expect(yes.reply).toBe(
+      '"Write the style guide" now waits for "Pick the colours" and "Draw the page". It runs after "Draw the page" is done, at your next Start.',
+    );
+    void page;
+    void guide;
   });
 });

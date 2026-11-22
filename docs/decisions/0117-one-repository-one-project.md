@@ -261,3 +261,14 @@ Consequences of the amendment:
   Chat is kept to read and points to the kept project's Chat, and its Overview has no note box,
   research setting or (joined) decisions. Undo of a join gives the closed project back with the
   status and `active` it had.
+
+## Amendment 2026-11-22: a closed project takes no new work on any path (l4-chat-depth, run L4)
+
+C4L-13 (run C's leftovers): a project closed by Make one project still took new work from three
+paths: `POST /projects/:id/plan` (a plan written on the closed project), the Data tab's Add and
+Import (`POST /projects/:id/data`, `/data/import`), and a Yes given after the join to a change
+read back before it (after a restart the card was left to expire, and the yes met "it
+expired"). Every path now refuses with the joined sentence ('"Kite club" joined "Site", so its
+work runs there.'), 409 `conflict` with `details.cause` `project_joined` at the routes, and
+writes nothing: the routes check the project first, the executor checks the stored card again
+before it performs, and a card armed again after a restart is refused in the same words.

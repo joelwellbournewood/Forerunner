@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CLOSED_LINE,
+  pastOfferLine,
   recordLink,
   STOP_EXPLAIN,
   secondsSince,
@@ -343,5 +344,106 @@ describe("d1109-chat-depth, run C: under the answer", () => {
     // Each sentence once: in its change row, never again above them.
     expect((agent.textContent ?? "").split(a).length).toBe(2);
     expect((agent.textContent ?? "").split(b).length).toBe(2);
+  });
+});
+
+// l4-chat-depth (L4-chat-212, C3L-8): once another line followed an ask line, the old line kept
+// "Go ahead?" with no button, a question the person could no longer answer.
+describe("l4-chat-depth, run L4: an older ask line reads in the past (L4-chat-212)", () => {
+  const ASK =
+    "This needs a stronger model: about CHF 0.15 (at most CHF 0.30) and 30 seconds. Go ahead?";
+  const texts = () =>
+    [...screen.queryAllByTestId("chat-offer"), ...screen.queryAllByTestId("chat-agent")].map(
+      (e) => e.textContent ?? "",
+    );
+
+  it("an ask line, then another line and its reply: the older line says what was offered and that it was not taken, with no 'Go ahead?' and no button", async () => {
+    const { user, harness, input } = await openChat();
+    harness.daemon.state.nextChatReply = "The stylesheet link looks wrong.";
+    harness.daemon.state.nextChatTurn = {
+      offer: { line: ASK, action: "go_ahead", explain: null },
+    };
+    await user.type(input, 'why does "Style the page" keep failing?');
+    await user.click(screen.getByTestId("chat-send"));
+    expect(await screen.findByTestId("chat-go-ahead")).toBeInTheDocument();
+    harness.daemon.state.nextChatReply = "Two tasks are left.";
+    await user.type(input, "what is left?");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("chat-agent").at(-1)).toHaveTextContent("Two tasks are left."),
+    );
+    expect(screen.getByTestId("chat-offer")).toHaveTextContent(
+      /^Offered: a stronger model, about CHF 0\.15 \(at most CHF 0\.30\)\. Not taken\.$/,
+    );
+    expect(texts().some((t) => /Go ahead\?\s*$/.test(t))).toBe(false);
+    expect(screen.queryByTestId("chat-go-ahead")).toBeNull();
+  });
+
+  it("two ask lines: the older one reads in the past; the newest keeps 'Go ahead?' and its button", async () => {
+    const { user, harness, input } = await openChat();
+    harness.daemon.state.nextChatReply = "The stylesheet link looks wrong.";
+    harness.daemon.state.nextChatTurn = {
+      offer: { line: ASK, action: "go_ahead", explain: null },
+    };
+    await user.type(input, 'why does "Style the page" keep failing?');
+    await user.click(screen.getByTestId("chat-send"));
+    expect(await screen.findByTestId("chat-go-ahead")).toBeInTheDocument();
+    const newer =
+      "This needs the strongest model: about CHF 0.40 (at most CHF 0.80) and a minute. Go ahead?";
+    harness.daemon.state.nextChatReply = "Both plans can work.";
+    harness.daemon.state.nextChatTurn = {
+      offer: { line: newer, action: "go_ahead", explain: null },
+    };
+    await user.type(input, "compare the two plans");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() => expect(screen.getAllByTestId("chat-offer")).toHaveLength(2));
+    const [older, newest] = screen.getAllByTestId("chat-offer");
+    expect(older).toHaveTextContent(
+      "Offered: a stronger model, about CHF 0.15 (at most CHF 0.30). Not taken.",
+    );
+    expect(newest).toHaveTextContent(newer);
+    expect(screen.getAllByTestId("chat-go-ahead")).toHaveLength(1);
+  });
+
+  it("an ask line taken by its Go ahead reads 'You went ahead.' once the answer came", async () => {
+    const { user, harness, input } = await openChat();
+    harness.daemon.state.nextChatReply = "The stylesheet link looks wrong.";
+    harness.daemon.state.nextChatTurn = {
+      offer: { line: ASK, action: "go_ahead", explain: null },
+    };
+    await user.type(input, 'why does "Style the page" keep failing?');
+    await user.click(screen.getByTestId("chat-send"));
+    harness.daemon.state.nextChatReply = "The link points at a file that was renamed.";
+    harness.daemon.state.nextChatTurn = { depth: "stronger" };
+    await user.click(await screen.findByTestId("chat-go-ahead"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("chat-agent").at(-1)).toHaveTextContent(
+        "The link points at a file that was renamed.",
+      ),
+    );
+    expect(screen.getByTestId("chat-offer")).toHaveTextContent(
+      "Offered: a stronger model, about CHF 0.15 (at most CHF 0.30). You went ahead.",
+    );
+    expect(screen.queryByTestId("chat-go-ahead")).toBeNull();
+  });
+
+  it("pastOfferLine: the two ask shapes in the past; any other line is no ask", () => {
+    expect(pastOfferLine(ASK, false)).toBe(
+      "Offered: a stronger model, about CHF 0.15 (at most CHF 0.30). Not taken.",
+    );
+    expect(
+      pastOfferLine(
+        "This needs a closer look: about 30 seconds on your Claude plan (about CHF 0.05 at API prices). Go ahead?",
+        true,
+      ),
+    ).toBe(
+      "Offered: a closer look, about 30 seconds on your Claude plan (about CHF 0.05 at API prices). You went ahead.",
+    );
+    expect(
+      pastOfferLine(
+        "A closer look would pass this month's cap, so this is the quick answer.",
+        false,
+      ),
+    ).toBeNull();
   });
 });

@@ -966,6 +966,27 @@ function errorBody(c: Context, status: 400 | 401 | 403 | 404 | 409, code: string
 }
 
 /**
+ * l4-chat-depth (L4-chat-207), as `task.dependencies` says it: when a ready task runs after a
+ * change to what it waits for (the fake runs no session, so the next Start).
+ */
+function fakeDependenciesNextLine(tasks: readonly TaskView[], task: TaskView): string {
+  if (task.status !== "ready") return "";
+  const deps = task.dependsOn
+    .map((id) => tasks.find((t) => t.id === id))
+    .filter((t): t is TaskView => !!t);
+  const undone = deps.filter((d) => d.status !== "done");
+  if (!undone.length) return " It runs at your next Start.";
+  const one = undone.length === 1;
+  const who =
+    undone.length === deps.length
+      ? one
+        ? "it is"
+        : "they are"
+      : `${undone.map((d) => `"${d.title}"`).join(" and ")} ${one ? "is" : "are"}`;
+  return ` It runs after ${who} done, at your next Start.`;
+}
+
+/**
  * The daemon's dependency check (`TaskRepo.checkDependencies`, U-040) over the fake's tasks:
  * the checked list, or the refusal message the daemon answers 409 with.
  */
@@ -3196,7 +3217,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       projectId: task.projectId,
       source: "ui",
       wordsUsed: parsed.data.reason ?? parsed.data.note ?? "Change what it waits for",
-      sentence: `${titles.length ? `"${task.title}" now waits for ${list}.` : `"${task.title}" waits for no other task now.`}${noteId ? " Your note goes into its next brief." : ""}`,
+      sentence: `${titles.length ? `"${task.title}" now waits for ${list}.` : `"${task.title}" waits for no other task now.`}${fakeDependenciesNextLine(state.tasks, task)}${noteId ? " Your note goes into its next brief." : ""}`,
       reversible: true,
     });
     return c.json(changeOf(task, entry));
@@ -4425,7 +4446,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         });
         startedSessions.set(confirmed.id, session.id);
       }
-      const sentence = `Started a session on ${target?.name ?? "this project"} (up to CHF 5).`;
+      const sentence = `Started a session on ${target?.name ?? "this project"} (up to CHF 5.00).`;
       return {
         ...base,
         reply: sentence,
@@ -4485,6 +4506,25 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         ...base,
         reply:
           "Nothing can run yet: the plan from your brief waits for your approval. Review it in the Inbox.",
+      };
+    }
+    // l4-chat-depth (L4-chat-210), as the daemon's session.start read-back from chat: the
+    // project's name and the budget with two decimals.
+    if (/^(?:run it now|start now|start working now)[.!]?$/.test(lower) && turnProject) {
+      const id = nextId("confirm");
+      const name = state.projects.find((p) => p.id === turnProject)?.name ?? "this project";
+      const readback = `Start a session on ${name} (up to CHF 5.00)?`;
+      state.pendingConfirmation = { id, readback };
+      return {
+        ...base,
+        reply: readback,
+        pendingConfirmation: {
+          id,
+          readback,
+          estimate: money(6_250_000),
+          commands: ["session.start"],
+          decision: "needs_yes",
+        },
       };
     }
     if (lower.includes("start a session")) {
@@ -6272,6 +6312,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     start_by_itself: "medium",
     // d1109-cred-engine CE-13: medium, as SETTING_SPECS.credential_policy (more money asks a yes).
     credential_policy: "medium",
+    // l4-chat-depth (L4-chat-211): medium, as SETTING_SPECS.chat_ask_above (a higher amount
+    // asks a yes; a lower one acts at once). Before, it was missing here, so the fake refused
+    // "unknown setting chat_ask_above" and its own branch below never ran.
+    chat_ask_above: "medium",
   };
   /** Where `settings.set` keeps a key's value: `key`, or `key:projectId` for a project key. */
   const settingSlot = (key: string, projectId: string | null) =>
@@ -6943,8 +6987,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           );
         const had = state.settingValues.chat_ask_above;
         const before = typeof had === "number" ? had : 0.1;
-        const words = (v: number) =>
-          v <= 0 ? "CHF 0.00, so chat asks before every longer answer" : `CHF ${v.toFixed(2)}`;
+        // l4-chat-depth (L4-chat-211): the amount alone; what 0 means after the amounts.
+        const words = (v: number) => `CHF ${Math.max(0, v).toFixed(2)}`;
+        const means = value <= 0 ? ": chat asks before every longer answer" : "";
         const what = "the amount above which chat asks first";
         if (before === value && had !== undefined)
           return refuse(`The amount above which chat asks first is already ${words(before)}.`);
@@ -6961,7 +7006,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               newValue: words(value),
               ask: `Set ${what} to ${words(value)}?`,
               scope: "global",
-              sentence: `Set ${what} from ${words(before)} to ${words(value)}. Undo.`,
+              sentence: `Set ${what} from ${words(before)} to ${words(value)}${means}. Undo.`,
               projectId: null,
               projectName: null,
               usesActiveProject: false,
@@ -8737,6 +8782,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!state.projects.some((p) => p.id === id)) {
       return errorBody(c, 404, "not_found", "no such project");
     }
+    // l4-chat-depth (L4-chat-204), as the daemon: a closed project takes no new data.
+    const joinedData = joinedRefusalOf(id);
+    if (joinedData)
+      return c.json(
+        {
+          code: "conflict",
+          message: joinedData,
+          details: { cause: "project_joined", projectId: id },
+        },
+        409,
+      );
     const body = (await c.req.json()) as { locator?: string; kind?: string };
     if (!body.locator?.trim() || !body.kind?.trim()) {
       return errorBody(c, 400, "validation", "locator and kind are required");
@@ -8769,6 +8825,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!state.projects.some((p) => p.id === id)) {
       return errorBody(c, 404, "not_found", "no such project");
     }
+    // l4-chat-depth (L4-chat-204), as the daemon: a closed project takes no import.
+    const joinedImport = joinedRefusalOf(id);
+    if (joinedImport)
+      return c.json(
+        {
+          code: "conflict",
+          message: joinedImport,
+          details: { cause: "project_joined", projectId: id },
+        },
+        409,
+      );
     const body = (await c.req.json()) as { source?: string; locator?: string; path?: string };
     const locator = (body.path ?? body.locator ?? "").trim();
     if (!locator || !["zip", "folder", "github"].includes(body.source ?? "")) {

@@ -241,3 +241,39 @@ and a failure is the stronger rung's first use.
 A longer pass that goes ahead without asking runs on the credential the person's policy serves
 chat now; the ask line names it when it is not the person's first (the policy's first saved kind),
 which replaces the first-credential rule of run C3.
+
+## Amendment 2026-11-22: the app asks when the fast model answers alone (l4-chat-depth, run L4)
+
+Live check 4 (LC-C13) ran the real fast model: it called `answer_thoroughly` on none of four
+depth lines and none of three failure questions. It answered alone, or wrote "This plan needs the
+stronger model, which costs more and asks you first. Should I go ahead?" with no cost, no time
+and no Go ahead; a typed "yes" then met "Yes to what?". The facts' `thinking_longer` said "asks
+the person first" with no subject, and the definition deferred to it. The owner's answer 2 of
+2026-11-09: "if it will switch models and do an expensive task, it should warn/ask first."
+
+- **Who decides, amended (the ask-only backstop).** The fast model's tool stays the way it hands
+  a question over. When a typed quick answer ends without it, the app reads the person's line
+  itself (`needOfLine`: a failure, a plan, a comparison, a review, several sessions) and the
+  reply (`offersInWords`: a question offering a stronger model or a hand-over). If either shows a
+  need, the gate runs in code (a typed turn, no quick ask, nothing the injection scan flagged, no
+  change this turn, the room, a rung above; a lookup the quick pass made does not refuse, since
+  an ask spends nothing). When that rung asks first, the reply carries the app's own ask line
+  with Go ahead, and the model's ask in words is taken out. When it would go ahead, nothing is
+  started: Think it through stays under the answer as under every quick answer. A pattern never
+  spends; only the person's yes does.
+- **The words the model receives.** `thinking_longer` says who acts ("available: call
+  answer_thoroughly; the app asks the person with the cost (never ask in your own words)"), and
+  the tool's definition says "Never offer a stronger model or ask "Should I go ahead?" yourself:
+  call this tool, and the app writes the ask with its cost." The role prompt (1.5.0) says the same.
+- **A yes is judged against what the person was shown** (L4-chat-201). The stored "at most" is the
+  CHF on the line (rounded up to the centime); a Go ahead asks again only when the model changed
+  or the floor, in whole centimes, is above the line's figure. Before, one cheap stronger answer
+  anywhere made every later Go ahead ask again without a call.
+- **The closer look is told what it is** (L4-chat-203). The thorough pass's facts carry a
+  `this_answer` line (which model or effort, who chose it, the most it may spend) in place of the
+  quick pass's `thinking_longer`, and its rules say it is the closer look and that the
+  `answer_thoroughly` tool and the "Thinking longer" section belong to the quick answer. The
+  paid Sonnet answer of live check 4 said it could not hand the question to the stronger model.
+- **Answer now** (L4-chat-206). "A stronger answer that ran out of room" (the best rung's yes, the
+  next rung's offer) means a pass whose budget line wrapped it up, never one the person ended
+  with Answer now: that answer carries no new offer.

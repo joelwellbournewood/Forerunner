@@ -84,6 +84,11 @@ export interface TranscriptTurn {
   human: { text: string; source: string };
   /** Null while the reply is still coming, or when the turn failed before one was written. */
   reply: TranscriptReply | null;
+  /**
+   * The turn's number from the conversation's start (l4-chat-depth, L4-chat-205), kept on its
+   * `chat.human` row as `turn`; absent on rows written before it.
+   */
+  index?: number;
 }
 
 /** The most recent turns a conversation shows and a model turn may carry. */
@@ -256,6 +261,9 @@ export async function readTranscript(
         seq: h.seq,
         human: { text: str(hp.text), source: str(hp.source) || "text" },
         reply: r ? replyOf(obj(r.payload)) : null,
+        ...(typeof hp.turn === "number" && Number.isInteger(hp.turn) && hp.turn >= 0
+          ? { index: hp.turn }
+          : {}),
       };
     })
     .sort((a, b) => a.seq - b.seq)
@@ -263,8 +271,13 @@ export async function readTranscript(
     .map(({ seq: _seq, ...turn }) => turn);
 }
 
-/** Turns of the history a model turn carries at most. */
+/** Turns of the history a model turn carries at least, when there are that many. */
 export const HISTORY_TURNS = 12;
+/**
+ * The history's window moves in steps of this many turns (l4-chat-depth, L4-chat-205): it holds
+ * 12 to 17 turns and starts at the same turn for six turns in a row, so the prompt cache reads it.
+ */
+export const HISTORY_STEP_TURNS = 6;
 /** Tokens of history a model turn carries at most (oldest turns go first). */
 export const DEFAULT_CHAT_HISTORY_TOKENS = 3000;
 /** The longest one line of the history is (longer ones end with "…"). */
@@ -366,20 +379,58 @@ function replyInHistory(reply: TranscriptReply): string {
 }
 
 /**
+ * Each turn's number from the conversation's start: its own (`index`, kept on its row), else one
+ * more than the turn before it; turns older than the first numbered one count back from it, and
+ * a conversation with no numbered turn (rows written before the numbers) counts from its start.
+ */
+function turnNumbers(turns: readonly TranscriptTurn[]): number[] {
+  const firstNumbered = turns.findIndex((t) => typeof t.index === "number");
+  if (firstNumbered < 0) return turns.map((_, i) => i);
+  let prev = (turns[firstNumbered]?.index ?? firstNumbered) - firstNumbered - 1;
+  return turns.map((t) => {
+    prev = typeof t.index === "number" ? t.index : prev + 1;
+    return prev;
+  });
+}
+
+/**
+ * The number the next turn of a conversation gets (l4-chat-depth, L4-chat-205), kept on its
+ * `chat.human` row: one more than the newest earlier turn's.
+ */
+export function nextTurnNumber(earlier: readonly TranscriptTurn[]): number {
+  const numbers = turnNumbers(earlier);
+  return earlier.length ? (numbers.at(-1) ?? earlier.length - 1) + 1 : 0;
+}
+
+/**
  * The earlier turns as alternating user and assistant messages, newest last, within
- * `maxTokens` (counted with the provider's counter on the text sent): the oldest turns are
- * dropped first. A turn without a reply is the person's line alone, merged with the next. A
- * reply that changed something ends with what the app did (`actionLines`).
+ * `maxTokens` (counted with the provider's counter on the text sent). A turn without a reply is
+ * the person's line alone, merged with the next. A reply that changed something ends with what
+ * the app did (`actionLines`).
+ *
+ * l4-chat-depth (L4-chat-205): the window is a pure function of the stored rows that moves in
+ * steps of `HISTORY_STEP_TURNS`: it starts at the turn numbered floor((n - 12) / 6) * 6 (12 to 17
+ * turns), and when they pass `maxTokens` whole steps are dropped from that same start, so the
+ * first message stays the same turn after turn (and after a restart) and the prompt cache reads
+ * the history. Before, the window slid by one turn and the token cap dropped one turn per call:
+ * past 12 turns every line wrote its whole history to the cache again (live check 4, LC-C15).
+ * Only when even the newest step passes the budget are its turns dropped one by one, as before.
  */
 export function historyMessages(
   turns: readonly TranscriptTurn[],
   countTokens: (text: string) => number,
   maxTokens: number = DEFAULT_CHAT_HISTORY_TOKENS,
 ): { role: "user" | "assistant"; content: string }[] {
-  const recent = turns.slice(-HISTORY_TURNS);
-  const build = (from: number) => {
+  const numbers = turnNumbers(turns);
+  const n = turns.length ? (numbers.at(-1) ?? turns.length - 1) + 1 : 0;
+  const first = Math.max(
+    0,
+    Math.floor((n - HISTORY_TURNS) / HISTORY_STEP_TURNS) * HISTORY_STEP_TURNS,
+  );
+  const from = (start: number) => turns.filter((_, i) => (numbers[i] ?? i) >= start);
+  const build = (recent: readonly TranscriptTurn[]) => {
     const out: { role: "user" | "assistant"; content: string }[] = [];
-    for (const t of recent.slice(from)) {
+    for (const t of recent) {
       const said = cap(t.human.text.trim());
       if (!said) continue;
       const last = out.at(-1);
@@ -392,10 +443,19 @@ export function historyMessages(
     while (out.at(-1)?.role === "user") out.pop();
     return out;
   };
-  for (let from = 0; from < recent.length; from++) {
-    const out = build(from);
-    const tokens = countTokens(out.map((m) => m.content).join("\n"));
-    if (tokens <= maxTokens) return out;
+  const fits = (out: { content: string }[]) =>
+    countTokens(out.map((m) => m.content).join("\n")) <= maxTokens;
+  // Whole steps from the window's start.
+  let start = first;
+  for (; start < n; start += HISTORY_STEP_TURNS) {
+    const out = build(from(start));
+    if (fits(out)) return out;
+  }
+  // The newest step alone passes the budget: its turns one by one, oldest first.
+  const last = from(start - HISTORY_STEP_TURNS);
+  for (let k = 1; k < last.length; k++) {
+    const out = build(last.slice(k));
+    if (fits(out)) return out;
   }
   return [];
 }

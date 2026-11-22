@@ -202,7 +202,7 @@ describe("session.start / stop / pause", () => {
     });
     expect(asked).toMatchObject({
       status: "pending",
-      readback: "Start a session on PharmaWatch (up to CHF 1)?",
+      readback: "Start a session on PharmaWatch (up to CHF 1.00)?",
     });
     expect(w.ports.starts).toEqual([]);
     const cheap = done(
@@ -212,9 +212,9 @@ describe("session.start / stop / pause", () => {
       }),
     );
     // Design §5: the start in plain words, its budget, no "Undo." (the Undo is a button).
-    expect(cheap.sentence).toBe("Started a session on PharmaWatch (up to CHF 1).");
+    expect(cheap.sentence).toBe("Started a session on PharmaWatch (up to CHF 1.00).");
     // Read back as one question when it needs a yes (design §5 "Chat read-back").
-    expect(costly.ask).toBe("Start a session on PharmaWatch (up to CHF 5)?");
+    expect(costly.ask).toBe("Start a session on PharmaWatch (up to CHF 5.00)?");
     expect(w.ports.starts).toEqual([
       {
         agentId: w.agent.id,
@@ -243,7 +243,7 @@ describe("session.start / stop / pause", () => {
       }),
     );
     expect(r.sentence).toBe(
-      "Sent a start for PharmaWatch to your PC (up to CHF 1); it picks it up in seconds.",
+      "Sent a start for PharmaWatch to your PC (up to CHF 1.00); it picks it up in seconds.",
     );
     const [row] = await w.store.remoteCommand.pending("pc");
     expect(row).toMatchObject({
@@ -1736,7 +1736,8 @@ describe("d1109-chat-depth, run C: chat_ask_above", () => {
       }),
     );
     expect(zero.sentence).toBe(
-      "Set the amount above which chat asks first from CHF 0.05 to CHF 0.00, so chat asks before every longer answer. Undo.",
+      // l4-chat-depth (L4-chat-211): the meaning of 0 after the amounts, never inside a value.
+      "Set the amount above which chat asks first from CHF 0.05 to CHF 0.00: chat asks before every longer answer. Undo.",
     );
     const higher = await w.executor.execute({
       name: "settings.set",
@@ -1760,6 +1761,45 @@ describe("d1109-chat-depth, run C: chat_ask_above", () => {
     );
     expect(settingDefinitionLine(SETTING_SPECS.chat_ask_above as never)).toBe(
       "- chat_ask_above (for the person): The CHF above which one chat answer asks first before it thinks longer (a stronger model always asks first). 0: chat asks before every longer answer. Unset: CHF 0.10. Value: number. For example 0.1 or 0.",
+    );
+    await w.store.close();
+  });
+});
+
+// l4-chat-depth (L4-chat-211, live check 4): the Changes row read "from CHF 0.00, so chat asks
+// before every longer answer to CHF 0.10": the setting's meaning sat inside its value.
+describe("l4-chat-depth, run L4: chat_ask_above keeps its value and its meaning apart (L4-chat-211)", () => {
+  it("0, then 0.10 with its yes: the result sentence and the change-log row read the amounts alone; 0 says what it means after them", async () => {
+    const w = await world();
+    const zero = done(
+      await w.executor.execute({
+        name: "settings.set",
+        params: { key: "chat_ask_above", value: 0 },
+        ctx: w.ctx(),
+      }),
+    );
+    expect(zero.sentence).toBe(
+      "Set the amount above which chat asks first from CHF 0.10 to CHF 0.00: chat asks before every longer answer. Undo.",
+    );
+    const asked = await w.executor.execute({
+      name: "settings.set",
+      params: { key: "chat_ask_above", value: 0.1 },
+      ctx: w.ctx(),
+    });
+    expect(asked.status).toBe("pending");
+    expect((asked as { readback?: string }).readback).toContain(
+      "Set the amount above which chat asks first to CHF 0.10?",
+    );
+    const pendingId = asked.status === "pending" ? asked.pendingId : "";
+    const yes = done(
+      await w.executor.confirmByText(pendingId, "yes", { kind: "human", id: w.human.id }),
+    );
+    expect(yes.sentence).toBe(
+      "Set the amount above which chat asks first from CHF 0.00 to CHF 0.10. Undo.",
+    );
+    const row = await w.store.changeLog.mustGet(yes.changeLogId);
+    expect(row.sentence).toBe(
+      "Set the amount above which chat asks first from CHF 0.00 to CHF 0.10. Undo.",
     );
     await w.store.close();
   });

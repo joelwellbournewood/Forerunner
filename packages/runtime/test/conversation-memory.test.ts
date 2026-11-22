@@ -502,7 +502,7 @@ describe("a Yes/No card stays until it is answered (design §3.9)", () => {
       const answered = await w.chat(answer);
       expect(answered.reply).toBe(
         answer === "yes"
-          ? "Started a session on Quote Page (up to CHF 30)."
+          ? "Started a session on Quote Page (up to CHF 30.00)."
           : "Cancelled; nothing was changed.",
       );
       const again = await w.chat("yes");
@@ -570,7 +570,7 @@ describe("a Yes/No card stays until it is answered (design §3.9)", () => {
     expect(w.commands.pendingCard(id)).not.toBeNull();
     w.restart();
     const r = await w.chat("yes");
-    expect(r.reply).toBe("Started a session on Quote Page (up to CHF 30).");
+    expect(r.reply).toBe("Started a session on Quote Page (up to CHF 30.00).");
     await w.store.close();
   });
 
@@ -1193,7 +1193,8 @@ describe("l3-chat-claims, run L3", () => {
     );
     // d1109-chat-recall bumped it to 1.3.0 ("What you look up"); these lines stay.
     // d1109-chat-depth bumped it to 1.4.0 ("Thinking longer").
-    expect(prompt).toContain('version: "1.4.0"');
+    // l4-chat-depth bumped it to 1.5.0 ("Thinking longer": who writes the ask).
+    expect(prompt).toContain('version: "1.5.0"');
     expect(prompt).toContain(
       'A reply that changed something ends with the\n  app\'s own line "The app did: …"; a reply without it changed nothing, whatever it says.',
     );

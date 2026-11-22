@@ -73,10 +73,10 @@ agent's own tools are replaced by these in the daemon wiring step.
 | `task.resume` | project | low | yes (paused again) | `needs_human` → ready, "Resumed by you"; `without_answers: true` is the Tasks tab's Go ahead without: the task's open Inbox cards are withdrawn and a note tells the specialist the person went ahead without answering; refused for a task only the person can do; its undo opens the cards again |
 | `task.reopen` | project | low | yes (cancelled or done again) | Reopen (cancelled → ready) and Redo (done → ready, the person's note says what to fix) through `TaskRepo.reopen`, which takes `cancelled` and `done` (U-080); Redo is refused in words while the task's take-out pull request is open (R-pin, `redoWhileTakingOutSentence` in `daemon/take-out-words.ts`); W15-04: Redo of a done task answers its open merge card (a conflict notice, a rebuild card; `MERGE_CARD_KEY`) as the card's own Redo does, in the same transaction: the card is withdrawn with `redoneMergeCard`'s mark (`outcome: "redone"`, `redo_from_base`), so the next run starts the branch from main and no rebase-conflict card follows (live check 2, F3: a second card beside the notice); it starts no session (the Tasks-row owner question). The cards are withdrawn inside `personMove` (`redoMergeCards`), so they are in the change's `after.withdrawn_requests` with what each held where the mark goes (`after.redone_cards`, `redoMarkOf`), and the line says it ("Reopened "X" to redo it from main: … Its card in the Inbox was withdrawn.", `moveSentence`'s `fromMain`); its Undo opens them again without the mark (`notRedoneMergeCard`) and says "…; its card is back in the Inbox." (fix-up of the review: the Undo left the notice withdrawn for good, and the conflict notice is said once) |
 | `task.update` | project | low | yes (the fields as they were, while nothing changed them since) | Edit: title, outcome, criteria, priority, review level (`risk_tier`, in words by `reviewLevelWords`: a stored 0 reads "Light review", ADR 0104), budget, specialist, through `TaskRepo.edit` (an edit that hands a task to a deploy or a migration, or lowers one of theirs, stores the full review at least, `riskTierFor`, C-2), refused while the task runs or is being reviewed and once it is done or cancelled ("Redo it first") |
-| `task.dependencies` | project | low | yes (what it waited for, while unchanged since) | what a task waits for (ids or titles), through `TaskRepo.setDependencies` (a cancelled task, the task itself or a cycle is refused with the titles); the daemon's `POST /tasks/:id/dependencies` runs it, so the change is in Changes (it bypassed the change log before). `depends_on` is the whole list; `add` (chat's "make X wait for Y") adds to what it waits for now and never drops one |
+| `task.dependencies` | project | low | yes (what it waited for, while unchanged since) | what a task waits for (ids or titles), through `TaskRepo.setDependencies` (a cancelled task, the task itself or a cycle is refused with the titles); the daemon's `POST /tasks/:id/dependencies` runs it, so the change is in Changes (it bypassed the change log before). `depends_on` is the whole list; `add` (chat's "make X wait for Y") adds to what it waits for now and never drops one. l4-chat-depth (L4-chat-207, ADR 0118 point 3): its sentence says when a ready task runs: still waiting, after what (`afterDependenciesLine`: "It runs after it is done, at your next Start.", the undone ones by name when some named are done, "in this session if budget is left, else your next Start" while one runs, read-only from `previewWork`); runnable by this change (its last undone dependency removed), it is prepared (`withNextLine`: it joins a running session if it fits, else "It runs at your next Start."); already runnable, `previewWork`'s line; a paused, draft or done task gets no line |
 | `budget.set` | session / project / global (month) | medium within the ceiling, high above it or raising the ceiling | yes | see below; 0 on a project is no budget ("Set the project budget for X from CHF 3 to no budget: only the monthly cap limits its spending.", ask "Remove the project budget for X? ..."), 0 on the month or a session is refused with why (`ZERO_REFUSED`, the parameters' issue; later #43, polish-screens; the monthly cap's 0 is an open owner question, built as recommended: refused) |
 | `autonomy.set` | project | one step medium, more high, same level low | yes | `project.autonomy_level` |
-| `session.start` | session | medium above the costly threshold (USD 2), else low | yes (stop that start's session; `after.start_id` names the start) | ports or a `remote_command` row; refused with `ports.startBlocked`'s sentence when a start would do nothing (design §3.6: Stop all is on, Claude is not connected, nothing can run, the plan from the brief waits for approval), in `plan` (so the chat says why at once, with no Yes/No card for a start that cannot happen) and again in `run` (the state may change while a card waits); the sentence says what happened: "Started a session on X (up to CHF 5).", "... starts after the one running now ...", "... starts when your quiet hours end ...", "Sent a start for X to your PC ..." |
+| `session.start` | session | medium above the costly threshold (USD 2), else low | yes (stop that start's session; `after.start_id` names the start) | ports or a `remote_command` row; refused with `ports.startBlocked`'s sentence when a start would do nothing (design §3.6: Stop all is on, Claude is not connected, nothing can run, the plan from the brief waits for approval), in `plan` (so the chat says why at once, with no Yes/No card for a start that cannot happen) and again in `run` (the state may change while a card waits); the sentence says what happened: "Started a session on X (up to CHF 5.00)." (l4-chat-depth, L4-chat-210: the budget with two decimals, `chfExact`, in the read-back, the sentence and the card's value), "... starts after the one running now ...", "... starts when your quiet hours end ...", "Sent a start for X to your PC ..." |
 | `session.stop` | session / global | low | no | ports.kill or a `remote_command` row. Scope `agent` (a chat "stop", the default) is Stop now of the agent's running work sessions, one `kill({ sessionId })` each, which freezes nothing (design §3.7, §4.9: before, it stopped the agent's scope and froze it until Allow sessions again); `session` one named session; `all` is Stop all ("No session starts until you say "resume" or press Allow sessions again."). No run or process counts in the sentence |
 | `session.pause` | session | low | yes (resume) | Stop after this task: ports or `session.status`; "The session on X stops after the task it is on." |
 | `session.resume` | global | low | no | Allow sessions again (design §3.1): `ports.allowSessions` lifts Stop all and answers whether it was on; starts nothing ("Say "start a session" to continue where it stopped.") |
@@ -410,7 +410,7 @@ email token and readback, or the reason and error code.
 A command may give its card an `ask` (`buildCard({ ask })`): the change as one question with the
 button's consequence ('Pause "Create notes/todo.md"? No session runs it until you press
 Resume.', 'Make "Write the FAQ" wait for "Write the README"?', "Start a session on Quote page
-(up to CHF 5)?"). A pending card with one reads back as that question alone (voice adds "Say
+(up to CHF 5.00)?"). A pending card with one reads back as that question alone (voice adds "Say
 yes or no."; the paired device's card says to confirm there), in place of the rendered card and
 "Say yes to confirm, or reply yes to the email." (shown even with email off); a composed card
 asks every part's question. In chat and voice a card without an `ask` is asked in one line too
@@ -496,7 +496,7 @@ A task larger than the session's work budget (d1109-oversize-start, ADR 0115, th
 of 2026-11-09): `session.start` never refuses such a start (the runtime's `startBlocked` no
 longer counts it as a blocker), and `ports.startWarning(projectId, budgetUsdMicro)` (the Start
 check's own sentence, `oversizedAsk`) follows the read-back's question in `startAsk`: 'Start a
-session on Shop (up to CHF 5)? "Build the shop" needs more than its work budget of CHF 4.00: it
+session on Shop (up to CHF 5.00)? "Build the shop" needs more than its work budget of CHF 4.00: it
 pauses with its work kept and asks you to continue.'. A start below the costly line is not read
 back (low risk acts at once), so its sentence carries the warning after what happened; a
 costly one said it in its read-back. A phone's start is the PC's to judge (no warning there).
@@ -523,6 +523,7 @@ and each clause goes through the patterns, in English and German:
 | stop after this task, stop when the current task is done, finish this task and then stop | `session.pause` (matched on the whole line, before "and" splits it) |
 | resume, continue, allow sessions again, resume work | `session.resume` |
 | make the FAQ task depend on the README task, make X wait for Y, X should wait for Y, run X after Y | `task.dependencies {task: X, add: [Y]}` (whole line; never a question) |
+| let X run on its own (by itself, without waiting), make X wait for nothing, X should not wait for anything | `task.dependencies {task: X, depends_on: []}` (l4-chat-depth, L4-chat-207) |
 | skip X for now, postpone X, pause the X task, stop the X task; skip X, cancel X, drop X (L-10: "skip X" is the row's Cancel, its read-back says a run or review going on stops and its changes are removed); resume X; reopen X, redo X; try X again, retry X; make X ready | `task.pause`; `task.transition {cancelled}`; `task.resume`; `task.reopen`; `task.transition {ready}` (X by title within the project; "the" and "task" dropped, before or after the name: 'skip the task "Write the FAQ"' finds "Write the FAQ", phase C leftover C-38; the session or work itself is never a task's name) |
 | summarise the last session, summarize it, recap | `summary.speak` |
 | remember that ..., lesson: ..., lesson learned: ..., merk dir, dass ..., Lektion: ..., Lehre: ... | `memory.record` |
@@ -620,7 +621,8 @@ among them.
 - **Money with two decimals (W15-44).** budget.set's sentences, read-backs, card values and its
   "already" refusal write amounts with `chfExact` (shared.ts), "from CHF 3.00 to CHF 12.00"
   (design §5 rule 7; before, `chf`'s whole francs, "from CHF 3 to CHF 12"). A session start's
-  read-back keeps `chf` ("up to CHF 5"), as the design writes it.
+  read-back, sentence and value use it too, "(up to CHF 5.00)" (l4-chat-depth, L4-chat-210;
+  before, they kept `chf`, "up to CHF 1", copying the design's old example against its rule 7).
 - **The monthly cap's 0 says what to do (W15-45).** `ZERO_REFUSED.month` (and Settings'
   `MONTHLY_CAP_ZERO`, the fake daemon's refusal) reads "The monthly cap must be more than CHF
   0.00: it is the limit that stops all spending, so it cannot be turned off. Enter the most you
@@ -639,10 +641,16 @@ switch models and do an expensive task, it should warn/ask first"), global, in
 before every longer answer; a stronger model always asks whatever the amount. Medium risk with
 `narrowingActsAtOnce`: a lower amount (or 0) acts at once with its Undo, a higher one is read
 back. A negative amount is refused in one sentence ("The amount is in CHF, 0 or more: 0 makes
-chat ask before every longer answer."), at most CHF 100. Its words: `chatAskAboveWords` ("CHF
-0.10", "CHF 0.00, so chat asks before every longer answer"), after its label ("Set the amount
-above which chat asks first from CHF 0.10 to CHF 0.05. Undo."; fixup-d1109-chat-depth: before,
-"asks first above CHF 0.10", so the sentence said "asks first" twice). It is appended last to
+chat ask before every longer answer."), at most CHF 100. Its words: `chatAskAboveWords`, the
+amount alone ("CHF 0.10", "CHF 0.00"), after its label ("Set the amount above which chat asks
+first from CHF 0.10 to CHF 0.05. Undo."; fixup-d1109-chat-depth: before, "asks first above CHF
+0.10", so the sentence said "asks first" twice). What 0 means is the spec's `effect`, after both
+amounts: "... from CHF 0.10 to CHF 0.00: chat asks before every longer answer. Undo."
+(l4-chat-depth, L4-chat-211: before, the meaning sat inside the value, so the change back read
+"from CHF 0.00, so chat asks before every longer answer to CHF 0.10"; tests: `commands.test.ts`
+"l4-chat-depth, run L4: chat_ask_above keeps its value and its meaning apart", the real-daemon
+case in "l4-chat-depth, run L4" and `settings-basics.test.tsx`; the fake daemon's
+`SETTING_RISK` now names the key, so its branch runs). It is appended last to
 `SETTING_SPECS` (run C's order: start_by_itself, chat_ask_above, credential_policy), so
 `settings_set`'s definition gains its line last. `model-settings.ts` names the `chat_thorough`
 mode "chat's thorough answers". Tests: `commands.test.ts` and `w15-chat.test.ts` ("d1109-chat-depth,
@@ -752,7 +760,12 @@ run C").
   the same set): `summary.speak`, `session.stop`, `session.pause`, `request.answer` and
   `project.join` (which says itself why a closed project cannot be kept or closed). The sentence
   is `joinedRefusalSentence` there too. Tests: `test/project-join.test.ts` 'a closed project
-  takes no new work'.
+  takes no new work'. l4-chat-depth (L4-chat-204): `confirm` asks it again on the stored card
+  before it performs (`closedProjectRefusal`), so a change read back before Make one project
+  and answered Yes after it is refused with the joined sentence and changes nothing, from chat,
+  the Inbox or the email token alike; `restorePending` arms such a card again after a restart
+  as it was shown (before, it was left to expire and the yes met "it expired"), so its yes is
+  refused in the same words (`test/l4-chat-depth.test.ts`).
 
 ### Who starts a session (d1109-starts-engine, [ADR 0118](../decisions/0118-who-starts-a-session.md))
 
