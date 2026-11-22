@@ -23892,4 +23892,68 @@ describe("l4-selftasks-check, run L4", () => {
       await a.rt.close();
     }
   }, 120_000);
+
+  it("L4-selftasks-101: GET /inbox's plan card warns under a task whose own budget may leave too little for its review; a task with room says nothing", async () => {
+    // Live check 4 (LC-C30): the plan card said "about CHF 0.08" for a README task whose budget
+    // of CHF 0.08 (USD 0.10, as the live model's plan set it) then left no room for its review,
+    // and the task paused before it. The owner's answer 8: "it should get a warning, but it
+    // should get done anyway". The review of fix/l4-selftasks-check (blocking 2): the line was
+    // tested on planTaskViews with a hand-written estimator; here GET /inbox prices it with the
+    // daemon's own estimates and the project's session work budget, as the Inbox reads it.
+    const a = await open("nothing", "");
+    try {
+      const me = await a.client.me();
+      const brief = "Make a one-page website for the bakery that shows its opening hours.";
+      const project = await a.client.createProject({
+        name: "Lakeside Bakery",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await a.rt.intake.inFlight(project.id);
+      const card = async () =>
+        (await a.client.inbox(me.id)).requests.find(
+          (r) => r.projectId === project.id && r.status === "open" && r.planTasks,
+        );
+      const before = await card();
+      if (!before?.planTasks) throw new Error(`no plan card: ${JSON.stringify(before)}`);
+      // The stand-in's plan sets no task budget: no warning on any task.
+      expect(before.planTasks.map((t) => t.note ?? null)).toEqual(
+        before.planTasks.map(() => null),
+      );
+      // The plan as the live model wrote it (a short brief: the small plan's two tasks): the
+      // build task's own budget USD 0.10 (CHF 0.08), the check's USD 5.00, room for its work and
+      // its review.
+      const row = await a.rt.store.humanRequest.mustGet(before.id);
+      type PlanTask = { key?: string; title: string; budgetUsdMicro?: number };
+      const changeCard = structuredClone(row.change_card) as {
+        proposal: { plan: { milestones?: { tasks: PlanTask[] }[]; tasks?: PlanTask[] } };
+      };
+      const planned = [
+        ...(changeCard.proposal.plan.milestones ?? []).flatMap((m) => m.tasks),
+        ...(changeCard.proposal.plan.tasks ?? []),
+      ];
+      expect(planned.map((t) => [t.key, t.title])).toEqual([
+        ["build", "Build the page in index.html, styles.css and script.js"],
+        ["check", "Check that index.html, styles.css and script.js work together"],
+      ]);
+      const budgets: Record<string, number> = { build: 100_000, check: 5_000_000 };
+      for (const t of planned) t.budgetUsdMicro = budgets[t.key ?? ""] ?? 0;
+      await a.rt.store.humanRequest.patch(row.id, { change_card: changeCard as never });
+      const after = await card();
+      // The build task's figure with its review is above its budget: the Start dialog's line,
+      // in its words; the check has room and says nothing.
+      expect(after?.planTasks?.map((t) => [t.key, t.note ?? null])).toEqual([
+        [
+          "build",
+          '"Build the page in index.html, styles.css and script.js": its budget of CHF 0.08 may leave too little for its review, which then waits for Continue.',
+        ],
+        ["check", null],
+      ]);
+      const build = after?.planTasks?.find((t) => t.key === "build");
+      expect(build?.estimateUsdMicro ?? 0).toBeGreaterThan(0);
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
 });

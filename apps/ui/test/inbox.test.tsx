@@ -2144,3 +2144,99 @@ describe("d1109-oversize-pause, run C", () => {
     );
   });
 });
+
+/**
+ * l4-selftasks-check, run L4 (L4-selftasks-101; live check 4's LC-C30; the owner's answer 8: "it
+ * should get a warning, but it should get done anyway"): the plan card said "about CHF 0.08" for
+ * a task whose own budget of CHF 0.08 then left no room for its review. The daemon words the line
+ * (`planTaskViews`, which the fake daemon calls as the daemon does); the card shows it under the
+ * task, where it shows the other limits a task meets as planned.
+ */
+describe("l4-selftasks-check, run L4: the plan card warns under a task whose budget may leave too little for its review", () => {
+  const withPlan = (harness: ReturnType<typeof createHarness>) => {
+    harness.daemon.state.requests.unshift({
+      id: "req_intake_bakery",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      taskTitle: null,
+      sessionId: null,
+      kind: "approval",
+      why: 'Intake for "Atlas": 1 milestone(s), 2 task(s), 1 doc(s) and a first-session plan.',
+      steps: [],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium",
+      changeCard: {
+        key: "intake:proj_atlas",
+        project_id: "proj_atlas",
+        docs_target: "workspace",
+        cost_usd_micro: 0,
+        applied_at: null,
+        proposal: {
+          plan: {
+            reason: "planned from the brief",
+            milestones: [
+              {
+                name: "The page",
+                successCriteria: ["the page works"],
+                targetDate: null,
+                tasks: [
+                  {
+                    key: "readme",
+                    title: "Write the README",
+                    outcome: "README.md says what the page is",
+                    acceptanceCriteria: ["README.md exists"],
+                    priority: "high",
+                    dependsOn: [],
+                    specialist: "coder",
+                    // USD 0.10 (CHF 0.08), as the live model's plan set it.
+                    budgetUsdMicro: 100_000,
+                  },
+                  {
+                    key: "build",
+                    title: "Build the page",
+                    outcome: "index.html",
+                    acceptanceCriteria: [],
+                    priority: "medium",
+                    dependsOn: ["readme"],
+                    specialist: "coder",
+                    budgetUsdMicro: 5_000_000,
+                  },
+                ],
+              },
+            ],
+            tasks: [],
+          },
+          docs: { "README.md": "# Atlas\n" },
+          firstSession: {
+            summary: "The README first.",
+            items: [
+              { key: "readme", estimateUsdMicro: 200_000 },
+              { key: "build", estimateUsdMicro: 500_000 },
+            ],
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T22:00:00.000Z",
+      version: 1,
+    });
+    return harness;
+  };
+
+  it("the README task's line says its budget of CHF 0.08 may leave too little for its review; the task with room says nothing", async () => {
+    renderApp("/inbox", withPlan(createHarness()));
+    const card = await screen.findByTestId("intake-card");
+    await waitFor(() => expect(within(card).getAllByTestId("intake-task")).toHaveLength(2));
+    expect(
+      within(card)
+        .getAllByTestId("intake-task")
+        .map((t) => within(t).queryByTestId("intake-task-note")?.textContent ?? null),
+    ).toEqual([
+      '"Write the README": its budget of CHF 0.08 may leave too little for its review, which then waits for Continue.',
+      null,
+    ]);
+  });
+});
