@@ -1162,6 +1162,14 @@ An expired or signed-out Claude sign-in is read as a refusal however Claude Code
 the task is never marked Failed for it, chat does not ask the refused sign-in again, and Costs
 lists no model for the refused call.
 
+While the only credential that may answer is refused, chat says so and what to do ("Anthropic
+refused your API key, so I have not answered. Save a new key in Settings; until then I can still
+add and change tasks."), and "start a session" gets the Start dialog's sentence ("Nothing can run
+until you save a new API key in Settings.") instead of a question it could not keep. When an
+answer fails for another reason, chat says so in one sentence with **Ask again** ("Claude did not
+answer this time; ask again in a moment."); a failed answer never shows "Answered with ..." or
+**Think it through**, and a call you stop is counted on the credential that made it.
+
 If Anthropic refuses your API key or your Claude sign-in (a revoked key, an expired sign-in),
 one card says so in the Inbox ("Anthropic refused your API key. Save a new one in Settings."),
 Settings shows the credential as **Refused** (Accounts and keys says "Anthropic refused your

@@ -22525,7 +22525,7 @@ describe("d1109-cred-screens, run C", () => {
         standIn.requests.filter((r) => r.method === "POST" && r.path === "/v1/messages").length;
       const held = await client.chat({ humanId: me.id, agentId, text: "what is next?" });
       expect(held.reply).toBe(
-        "Your Claude subscription is at its limit until 11:40, so I have not answered. I can still add, move and start tasks.",
+        "Your Claude subscription is at its limit until 11:40, so I have not answered. I can still add and change tasks.",
       );
       expect(held.oneOff?.label).toBe("Use API key");
       expect(held.oneOff?.explain).toMatch(

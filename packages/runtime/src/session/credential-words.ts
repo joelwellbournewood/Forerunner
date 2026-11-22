@@ -341,12 +341,22 @@ export function switchNotificationWords(input: {
 
 // ── CE-9: chat ───────────────────────────────────────────────────────────────────────────────
 
-/** The reply of a chat question the policy holds (no model call, no ledger row). */
+/**
+ * The reply of a chat question the policy holds (no model call, no ledger row). l4-cred-engine
+ * L4-creds-8: by the stop's reason, and never a promise to start work (before, every stop ended
+ * "I can still add, move and start tasks." while the Start dialog refused a start): a refusal
+ * says what to do in Settings; a limit, the share or a monthly cap says what chat still does.
+ */
 export function chatHoldReply(
   wait: Pick<CredentialWait, "reason" | "kind" | "stop">,
   until: string | null,
 ): string {
-  return `${stoppedPhrase(wait, until)}, so I have not answered. I can still add, move and start tasks.`;
+  const reason = wait.reason === "needs" ? (wait.stop ?? "limit") : wait.reason;
+  if (reason === "refused")
+    return `${stoppedPhrase(wait, until)}, so I have not answered. ${
+      wait.kind === "subscription" ? "Sign in again in Settings" : "Save a new key in Settings"
+    }; until then I can still add and change tasks.`;
+  return `${stoppedPhrase(wait, until)}, so I have not answered. I can still add and change tasks.`;
 }
 
 /** The one-off press's consequence line: "Answers this question on your API key: about CHF 0.02." */

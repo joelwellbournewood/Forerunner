@@ -8085,6 +8085,15 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   `collectStream` keeps it on the response; the loop's `takeBilling` sets the call's source on
   the run's context before the abort branch books it, as after a finished call. The SDK driver's
   late bookings are on its run's one credential (no routing there).
+- **Chat follows the Start dialog under a refusal** (L4-creds-8, live check 4's L4-creds-3):
+  `chatHoldReply` is by the stop's reason and never promises a start ("Anthropic refused your
+  API key, so I have not answered. Save a new key in Settings; until then I can still add and
+  change tasks."; a sign-in: "Sign in again in Settings"; a limit, the share or a monthly cap:
+  "... so I have not answered. I can still add and change tasks."). Chat's `startBlocked` port
+  passes a refused credential's wait (`credentialWaits.now`: a save link, not startable, not
+  kept) to `startBlockedReason` as the dialog's check does, so "start a session" gets the
+  dialog's sentence ("Nothing can run until you save a new API key in Settings.") with no
+  read-back. A resting credential keeps the dialog's "Start at 15:40" and is no refusal there.
 
 Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
 throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the

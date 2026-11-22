@@ -254,7 +254,7 @@ describe("d1109-cred-engine, run C: every sentence of the policy (credential-wor
 
   it("chat's hold reply, its one-off press and its note; the log lines and the notification", () => {
     expect(chatHoldReply(limit, "15:40")).toBe(
-      "Your Claude subscription is at its limit until 15:40, so I have not answered. I can still add, move and start tasks.",
+      "Your Claude subscription is at its limit until 15:40, so I have not answered. I can still add and change tasks.",
     );
     expect(chatOneOffExplain("api_key", "CHF 0.02")).toBe(
       "Answers this question on your API key: about CHF 0.02.",

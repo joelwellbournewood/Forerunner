@@ -4897,6 +4897,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           chfPerUsd: chfPerUsd(),
           plan: plan === "pending" || plan === "drafting" || plan === "waiting" ? plan : null,
           planWait: planNow?.wait ?? null,
+          // l4-cred-engine L4-creds-8: a refused credential refuses chat's start as it refuses
+          // the dialog's (its sentence, no read-back); before, chat read the start back and
+          // "started" it while Start was off. A resting credential keeps the dialog's Start
+          // ("Start at 15:40"), so it is not a refusal here.
+          credentialWait:
+            check.runnable.length > 0 || check.oversized
+              ? await credentialWaits
+                  .now(project.id)
+                  .then((w) => (w?.save && !w.startable && !w.kept ? w : null))
+                  .catch(() => null)
+              : null,
         });
         if (!blocked) return null;
         // The dialog's button, said in words for the chat.

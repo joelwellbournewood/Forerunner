@@ -12,7 +12,7 @@ import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
  * again). The daemon writes every word.
  */
 const HOLD =
-  "Your Claude subscription is at its limit until 15:40, so I have not answered. I can still add, move and start tasks.";
+  "Your Claude subscription is at its limit until 15:40, so I have not answered. I can still add and change tasks.";
 const ONE_OFF = {
   label: "Use API key",
   explain: "Answers this question on your API key: about CHF 0.02.",
@@ -67,6 +67,26 @@ describe("d1109-cred-screens, run C: chat's one-off press under a hold reply (CS
       expect(within(scope).queryByTestId(`${where}-one-off`)).toBeNull();
     });
   }
+});
+
+describe("l4-cred-engine, run L4: chat under a refused key (L4-creds-8)", () => {
+  it("the Chat tab shows the refusal's hold reply, which promises no start, with no press under it", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    // The daemon's words (credential-chat-refused.test.ts composes them).
+    const refused =
+      "Anthropic refused your API key, so I have not answered. Save a new key in Settings; until then I can still add and change tasks.";
+    harness.daemon.state.nextChatTurn = { reply: refused };
+    await user.type(input, "What is next on this project?");
+    await user.click(screen.getByTestId("chat-send"));
+    expect(await screen.findByText(refused)).toBeInTheDocument();
+    expect(screen.getByText(refused).textContent?.toLowerCase()).not.toContain("start");
+    expect(screen.queryByTestId("chat-one-off")).toBeNull();
+    expect(screen.queryByTestId("chat-think")).toBeNull();
+  });
 });
 
 /**
