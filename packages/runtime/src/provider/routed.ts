@@ -268,6 +268,8 @@ export class RoutedProvider implements ModelProvider {
         source.kind === "subscription" && req.speed ? { ...req, speed: undefined } : req;
       let streamed = false;
       let failed: (StreamEvent & { type: "error" }) | null = null;
+      // The input side of the bill, as message_start said it (a call cut off before its end).
+      let startUsage: Usage | null = null;
       for await (const ev of provider.stream(call)) {
         if (ev.type === "error") {
           failed = ev;
@@ -277,6 +279,7 @@ export class RoutedProvider implements ModelProvider {
           yield { ...ev, billing: this.billingOf(source, pick.plan, req.model, ev.usage) };
           continue;
         }
+        if (ev.type === "message_start" && ev.usage) startUsage = ev.usage;
         if (ev.type !== "message_start") streamed = true;
         yield ev;
       }
@@ -286,7 +289,15 @@ export class RoutedProvider implements ModelProvider {
       // made once more on the next source, as at a usage limit.
       const refused = failed.code === "provider_auth";
       if (failed.code !== USAGE_LIMIT_CODE && !refused) {
-        yield { ...failed, sourceId: source.id };
+        // l4-cred-engine L4-creds-5: a call cut off (Stop, a timeout) or failed after it began
+        // is booked on the source that served it, as a finished call is (`billing`).
+        yield {
+          ...failed,
+          sourceId: source.id,
+          ...(startUsage
+            ? { billing: this.billingOf(source, pick.plan, req.model, startUsage) }
+            : {}),
+        };
         return;
       }
       tried.push(source.id);

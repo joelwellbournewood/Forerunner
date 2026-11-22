@@ -205,6 +205,13 @@ export interface CredWorld {
   setRunScript(
     script: ((options: Record<string, unknown>, n: number) => AsyncIterable<SdkMessage>) | null,
   ): void;
+  /**
+   * A provider call on the subscription (chat, planning, a review) plays this script instead
+   * (null: `providerReply`); it gets the call and the `query()` options (its `abortController`).
+   */
+  setProviderScript(
+    script: ((call: SdkCall, options: Record<string, unknown>) => AsyncIterable<SdkMessage>) | null,
+  ): void;
   /** The `query()` options of every Claude Code call, oldest first (for its environment). */
   sdkOptions: Record<string, unknown>[];
   /** The key is at its limit until `ms`, refused, answered with the API's 500, or served. */
@@ -239,6 +246,9 @@ export function credWorld(opts: {
   let runs = 0;
   let limitAfter: { at: number; untilMs: number } | null = null;
   let runReport = SUBSCRIPTION_REPORT;
+  let providerScript:
+    | ((call: SdkCall, options: Record<string, unknown>) => AsyncIterable<SdkMessage>)
+    | null = null;
   let runScript:
     | ((options: Record<string, unknown>, n: number) => AsyncIterable<SdkMessage>)
     | null = null;
@@ -266,7 +276,7 @@ export function credWorld(opts: {
     }
     if (subRefused) return refusedReply();
     if (subLimitUntil !== null && clock.now() < subLimitUntil) return limitReply(subLimitUntil);
-    if (provider) return providerReply(call);
+    if (provider) return providerScript ? providerScript(call, options ?? {}) : providerReply(call);
     runs++;
     return runScript ? runScript(options ?? {}, runs) : runReply(runs, runReport);
   };
@@ -353,6 +363,9 @@ export function credWorld(opts: {
     },
     setRunScript: (script) => {
       runScript = script;
+    },
+    setProviderScript: (script) => {
+      providerScript = script;
     },
     sdkOptions,
     setKey: (answer) => {

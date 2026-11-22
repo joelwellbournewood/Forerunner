@@ -8079,6 +8079,12 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   error's message; the `chat.reply` row is a notice, and `failed` (Ask again in the conversation)
   where the same line could get an answer now. The UI never shows Think it through under a
   failed turn. The Messages API stand-in answers `{kind: "error"}` with the API's 500.
+- **A cut-off call is booked on the credential that served it** (L4-creds-5, run L3's
+  L3-left-14): the routed provider's error for a call that began (Stop, a timeout, a failure
+  after `message_start`) carries `billing` from the input side `message_start` reported, and
+  `collectStream` keeps it on the response; the loop's `takeBilling` sets the call's source on
+  the run's context before the abort branch books it, as after a finished call. The SDK driver's
+  late bookings are on its run's one credential (no routing there).
 
 Tests: `sdk-driver.test.ts` and `claude-code-provider.test.ts` ("l4-cred-engine, run L4": the
 throwing fakes), `subscription-path.test.ts` (the executor's refused-sign-in table with the
@@ -8090,7 +8096,9 @@ refusal together), `sdk-contract.test.ts` (the real SDK against a local 401),
 `credential-share-midrun.test.ts` (the share reached mid-run under next, ask and wait, the raise,
 the month's start and restarts), `credential-chat-failure.test.ts` (POST /chat under
 key_then_subscription with the refused sign-in's turn, and under subscription_then_key with the
-API's 500), `chat-depth-words.test.ts` (`failureReply` over every code), the UI's
+API's 500), `credential-stop-booking.test.ts` (Stop on chat's call served by the subscription
+while the key rests: the ledger row and Costs by credential are the subscription's),
+`chat-depth-words.test.ts` (`failureReply` over every code), the UI's
 `settings-plan-allowance.test.tsx` and `chat-depth.test.tsx` (no Think it through under a failed
 reply) and the real-daemon describe "l4-cred-engine, run L4".
 
