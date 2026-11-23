@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { useLocation } from "react-router";
+import { Link, useLocation } from "react-router";
 import {
   ApiError,
   describeError,
@@ -8,8 +8,10 @@ import {
 } from "../api/client.ts";
 import { Conversation } from "../components/Conversation.tsx";
 import { Dialog } from "../components/Dialog.tsx";
-import { Badge, Button, SegmentedControl } from "../components/ui.tsx";
+import { Badge, Button, buttonClassName, SegmentedControl } from "../components/ui.tsx";
+import { closedChatOf } from "../lib/closed-chat.ts";
 import type { AudioOutput } from "../lib/speech.ts";
+import { useAsync } from "../lib/use-async.ts";
 import { useClient, useRealtime, useUiState, useUiStore } from "../store/context.tsx";
 import type { VoiceReplyMode } from "../store/store.ts";
 import { RunIndicator } from "./RunIndicator.tsx";
@@ -151,6 +153,21 @@ export function ConversationPanel({
   const projectName = useUiState((s) =>
     projectOnScreen ? (s.projects.find((p) => p.id === projectOnScreen)?.name ?? null) : null,
   );
+  // l4-chat-carried (C4-left-9): a project closed into another (or removed) takes no new work, so
+  // its conversation is kept to read here too, with the line its Chat tab shows (`closedChatOf`):
+  // no message box, no voice turn. Before, Talk kept both and a change asked there was refused.
+  const onScreenCard = useUiState((s) =>
+    projectOnScreen ? (s.projects.find((p) => p.id === projectOnScreen) ?? null) : null,
+  );
+  // A closed project is not in the projects list (an archived one is left out): its card is read.
+  const offList = useAsync(
+    (signal) =>
+      open && projectOnScreen && !onScreenCard
+        ? client.project(projectOnScreen, signal)
+        : Promise.resolve(null),
+    [client, open, projectOnScreen, !!onScreenCard],
+  );
+  const closedChat = closedChatOf(onScreenCard ?? offList.data ?? null);
   // Spoken turns from this opening on are shown by the voice lines below, not twice.
   const [openedAt, setOpenedAt] = useState(() => new Date().toISOString());
   useEffect(() => {
@@ -693,42 +710,57 @@ export function ConversationPanel({
         {/* d1109-run-visible (V-4): the panel covers the header, so its first line says what
             runs now, with the same Stop (the run indicator's compact form). */}
         <RunIndicator form="compact" />
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge
-            tone={phase === "listening" ? "good" : phase === "unavailable" ? "warn" : "neutral"}
-            testId="voice-phase"
+        {closedChat ? (
+          <p
+            className="flex flex-wrap items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400"
+            data-testid="conversation-closed"
           >
-            {phaseText[phase]}
-          </Badge>
-          {phase === "listening" ? (
-            <Button variant="primary" onClick={() => void finishTurn()} data-testid="voice-send">
-              Send
-            </Button>
-          ) : (
-            <Button
-              onClick={() => void startTurn()}
-              disabled={phase === "starting"}
-              data-testid="voice-talk"
-              title={
-                phase === "waiting"
-                  ? replyMode === "text"
-                    ? "Stop the reply and talk"
-                    : "Interrupt the reply and talk"
-                  : undefined
-              }
+            {closedChat.text}
+            {closedChat.to ? (
+              <Link to={closedChat.to} className={buttonClassName("secondary")}>
+                Open it
+              </Link>
+            ) : null}
+          </p>
+        ) : null}
+        {closedChat ? null : (
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge
+              tone={phase === "listening" ? "good" : phase === "unavailable" ? "warn" : "neutral"}
+              testId="voice-phase"
             >
-              Talk
-            </Button>
-          )}
-          <SegmentedControl
-            label="Reply"
-            value={replyMode}
-            options={REPLY_OPTIONS}
-            onChange={(mode) => uiStore.dispatch({ type: "voiceReply", mode })}
-            title="Voice: the agent speaks its answer. Text: it answers in text only, without speech. Applies from your next turn."
-            testId="voice-reply-mode"
-          />
-        </div>
+              {phaseText[phase]}
+            </Badge>
+            {phase === "listening" ? (
+              <Button variant="primary" onClick={() => void finishTurn()} data-testid="voice-send">
+                Send
+              </Button>
+            ) : (
+              <Button
+                onClick={() => void startTurn()}
+                disabled={phase === "starting"}
+                data-testid="voice-talk"
+                title={
+                  phase === "waiting"
+                    ? replyMode === "text"
+                      ? "Stop the reply and talk"
+                      : "Interrupt the reply and talk"
+                    : undefined
+                }
+              >
+                Talk
+              </Button>
+            )}
+            <SegmentedControl
+              label="Reply"
+              value={replyMode}
+              options={REPLY_OPTIONS}
+              onChange={(mode) => uiStore.dispatch({ type: "voiceReply", mode })}
+              title="Voice: the agent speaks its answer. Text: it answers in text only, without speech. Applies from your next turn."
+              testId="voice-reply-mode"
+            />
+          </div>
+        )}
         {reason ? (
           <output
             className="block text-xs text-amber-800 dark:text-amber-300"
@@ -780,6 +812,7 @@ export function ConversationPanel({
             testIds="conversation"
             inputRef={inputRef}
             hideVoiceSince={openedAt}
+            readOnly={!!closedChat}
           />
         </div>
       </div>

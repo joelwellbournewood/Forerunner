@@ -208,7 +208,10 @@ task** and, with no task, says 'Its tasks are in "Site".' with **Open it** (`Tas
 box, no examples, no Make this a task, no Yes and No, Undo, question options or Go ahead; an
 empty one says "Nothing was said here.") under
 'This chat is kept to read; ask about its work in the Chat of "Site".' with **Open it**
-(`chat-closed`); its Overview shows no Research reads line and no Note for the next session,
+(`chat-closed`); Talk opened on its pages says the same line (`conversation-closed`, l4-chat-carried
+C4-left-9) over the conversation kept to read, with no message box and no voice turn (the line
+is `closedChatOf` in `lib/closed-chat.ts`, shared with the Chat tab; Talk reads the project's
+card when the projects list leaves it out); its Overview shows no Research reads line and no Note for the next session,
 and a joined project no Decisions (they moved with its work). The words are `joinedTasksSentence`
 and `joinedChatSentence` in `join-words.ts`. Tests:
 `test/onerepo-join.test.tsx` and the real-daemon 'd1109-onerepo-join, run C' cases; the fake
