@@ -227,3 +227,8 @@ reaching the next brief is unchanged.
   ("Making the changes…") and its apply is settled at the next start: applied once (its one
   change log row is found when the apply had run, else the changes are checked and made now),
   never twice and never left at "Making the changes…" (validation rule 4).
+- Point 6 (dated note, C4-left-6 and L4-selftasks-129; ADR 0030 point 6, undo is state-based): a
+  split's Undo puts back what the tasks after it waited for and cancels the parts, so after a
+  later change to what one of them waits for (a step added before it) the Undo is refused in
+  words naming that change, never done in part; undoing the later change first lets the split go
+  back. A part a session holds reads "is running now", not "has run since".

@@ -1121,6 +1121,14 @@ followed). It never touches a running or finished task or another project, and i
 budget or starts a session: a new task joins the running session only if it fits, else it waits
 for your next Start ("Left for your next Start: ...").
 
+A split's Undo puts the task back as one and makes the tasks after it wait as before, so once
+something else changed what they wait for, it is not done in part: Changes says why ('Cannot be
+undone now: "Publish" was made to wait for "Check the links" after the split; undo would drop
+that.'). Undo that later change first, then the split. A part a session holds reads "is running
+now", one that ran "has run since". If Forerunner closes while it makes the changes you approved
+on a suggestion card, it finishes them once when it starts again; the card never stays at
+"Making the changes…".
+
 Only real evidence starts a check: a report's "For the task list:" lines or a problem the critic
 measured that the task did not cause; an ordinary note of the critic's about the task's own work
 starts none. The check's line is in the session log with its cost beside it, so the lines add up

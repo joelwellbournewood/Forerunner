@@ -1415,10 +1415,11 @@ export class CommandExecutor {
       const joined = project ? joinedProjectWords(project) : null;
       if (joined) return joined;
     }
-    for (const step of stepsOf(row)) {
+    const steps = stepsOf(row);
+    for (const step of steps) {
       const def = this.registry.get(step.name);
       if (!def?.undoBlocked) continue;
-      const reason = await def.undoBlocked(step.params, step.before, step.after, ctx);
+      const reason = await def.undoBlocked(step.params, step.before, step.after, ctx, { steps });
       if (reason) return reason;
     }
     return null;

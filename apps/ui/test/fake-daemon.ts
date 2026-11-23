@@ -7836,9 +7836,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       for (const id of [...proposal.restore.map((r) => r.id), ...proposal.created]) {
         const t = state.tasks.find((x) => x.id === id);
         if (!t || ["draft", "ready", "cancelled"].includes(t.status)) continue;
+        // l4-chat-carried (L4-selftasks-129): a part a session took reads as running.
         return proposal.added.includes(t.id)
           ? `the task "${t.title}" is ${t.status}; a ${t.status} task cannot be cancelled, so its creation cannot be undone`
-          : `"${t.title}" has run since, so the split cannot be undone`;
+          : ["claimed", "in_progress", "in_review"].includes(t.status)
+            ? `"${t.title}" is running now, so the split cannot be undone`
+            : `"${t.title}" has run since, so the split cannot be undone`;
       }
       return null;
     }

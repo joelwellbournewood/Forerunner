@@ -829,7 +829,17 @@ run C").
   one part (else '"X" ... The parts leave out a criterion of "X": "c". Nothing was split.'), the
   budget left and the estimate are shared by criteria, the tasks that waited for it wait for
   every part. Sentence 'Split "X" into "A" and "B".'; Undo 'Undone: "X" is one task again.',
-  refused once a part ran ('"P" has run since, so the split cannot be undone').
+  refused once a part ran ('"P" has run since, so the split cannot be undone'), while a session
+  holds or works on one ('"P" is running now, so the split cannot be undone'; L4-selftasks-129:
+  before, a part a session had only taken read "has run since"), and when a wait was added or
+  taken away after it on a task that waited for it or on a part (l4-chat-carried, C4-left-6:
+  '"Publish" was made to wait for "Check the links" after the split; undo would drop that', or
+  'what "Publish" waits for was changed after the split; undo would not put it back as it was'):
+  the Undo resets those waits, so it is refused in words, never done in part (ADR 0030 point 6).
+  Each part's waits as the split made them are kept on the row (`after.parts[].depends_on`; a
+  row from before is read as the split's `in_turn` order made them). The steps of the same
+  change (a task check's split plus a step before, one row) are no later change:
+  `CommandDef.undoBlocked` gets the whole change's steps as its fifth argument.
 - **`task.create` `before` and `why`**: a step added before named Draft or Ready tasks of the
   same project ('Added "X" before "Y".'; a cycle is refused: '"X" cannot both wait for "Y" and
   come before it. Nothing was added.'); its Undo takes it out of what they wait for first. (The

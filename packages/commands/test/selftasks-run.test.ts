@@ -319,7 +319,7 @@ describe("d1109-selftasks-run, run C: task.split (ST-2)", () => {
     await w.store.close();
   });
 
-  it("once the new part ran, the Undo says why it cannot", async () => {
+  it("once a session took the new part, the Undo says why it cannot", async () => {
     const { w, s } = await splitWorld();
     const r = done(
       await w.executor.execute({
@@ -336,8 +336,10 @@ describe("d1109-selftasks-run, run C: task.split (ST-2)", () => {
     });
     const fresh = restarted(w);
     const row = await w.store.changeLog.mustGet(r.changeLogId);
+    // l4-chat-carried (L4-selftasks-129): a part a session took reads as running, not as run
+    // (before: '"Style the colours" has run since, …' before it started).
     expect(await fresh.undoBlockedReason(row, w.ctx({ source: "ui" }))).toBe(
-      '"Style the colours" has run since, so the split cannot be undone',
+      '"Style the colours" is running now, so the split cannot be undone',
     );
     await w.store.close();
   });
@@ -517,6 +519,186 @@ describe("d1116-budget-all, run C: task.split after a review", () => {
     const firstShare = first.budget_usd_micro - first.actual_cost_usd_micro;
     expect(firstShare + colours.budget_usd_micro).toBe(800_000);
     expect(first.budget_usd_micro).toBe(200_000 + firstShare);
+    await w.store.close();
+  });
+});
+
+describe("l4-chat-carried, run L4: a split's Undo after a later change (C4-left-6, L4-selftasks-129)", () => {
+  // ADR 0030 point 6 (undo is state-based) and ADR 0119 dated note 2026-11-23: a split's Undo
+  // that would drop a change made after it is refused in words, never done in part; the refusal
+  // names what came after; a part a session took reads as running, not as run.
+  async function splitWorld() {
+    const w = await world();
+    const s = await runningSession(w);
+    const style = await seed(w, "Style the page", { acceptance_criteria: ["a", "b", "c"] });
+    const publish = await seed(w, "Publish", { depends_on: [style.id] });
+    const split = done(
+      await w.executor.execute({
+        name: "task.split",
+        params: {
+          task: "Style the page",
+          parts: [
+            { title: "Style the layout", acceptance_criteria: ["a", "b"] },
+            { title: "Style the colours", acceptance_criteria: ["c"] },
+          ],
+          order: "in_turn",
+        },
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    const colours = (await w.store.task.forProject(w.pharma.id)).find(
+      (t) => t.title === "Style the colours",
+    ) as TaskRow;
+    return { w, s, style, publish, colours, split };
+  }
+  /** What the person's Tasks show: each title, its status and what it waits for, by title. */
+  async function tasksNow(w: World) {
+    const rows = await w.store.task.forProject(w.pharma.id);
+    const title = new Map(rows.map((t) => [t.id, t.title]));
+    return rows
+      .map((t) => [t.title, t.status, t.depends_on.map((d) => title.get(d)).sort()])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  }
+  const step = (title: string, before: string) => ({
+    name: "task.create",
+    params: {
+      title,
+      outcome: `${title} is done`,
+      acceptance_criteria: ["it is done"],
+      before: [before],
+      specialist: "coder",
+    },
+  });
+
+  it("a step added before the task that waited for the split, then Undo of the split after a restart: refused in one sentence naming what came after; nothing changed", async () => {
+    const { w, s, split } = await splitWorld();
+    done(
+      await w.executor.execute({
+        ...step("Check that the links work", "Publish"),
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    const before = await tasksNow(w);
+    const fresh = restarted(w);
+    const row = await w.store.changeLog.mustGet(split.changeLogId);
+    const reason =
+      '"Publish" was made to wait for "Check that the links work" after the split; undo would drop that';
+    expect(await fresh.undoBlockedReason(row, w.ctx({ source: "ui" }))).toBe(reason);
+    expect(refusedReason(await fresh.undo(split.changeLogId, w.ctx({ source: "ui" })))).toBe(
+      reason,
+    );
+    expect(await tasksNow(w)).toEqual(before);
+    expect((await w.store.changeLog.mustGet(split.changeLogId)).undo_state).toBe("undoable");
+    await w.store.close();
+  });
+
+  it("a step added before one part: the split's Undo is refused and names the part", async () => {
+    const { w, s, split } = await splitWorld();
+    done(
+      await w.executor.execute({
+        ...step("Pick the colours", "Style the colours"),
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    const before = await tasksNow(w);
+    expect(refusedReason(await restarted(w).undo(split.changeLogId, w.ctx({ source: "ui" })))).toBe(
+      '"Style the colours" was made to wait for "Pick the colours" after the split; undo would drop that',
+    );
+    expect(await tasksNow(w)).toEqual(before);
+    await w.store.close();
+  });
+
+  it("the step's own Undo first lets the split go back whole; a wait taken away after a split is named", async () => {
+    const { w, s, style, publish, colours, split } = await splitWorld();
+    const added = done(
+      await w.executor.execute({
+        ...step("Check that the links work", "Publish"),
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    done(await restarted(w).undo(added.changeLogId, w.ctx({ source: "ui" })));
+    const u = done(await restarted(w).undo(split.changeLogId, w.ctx({ source: "ui" })));
+    expect(u.sentence).toBe('Undone: "Style the page" is one task again.');
+    expect((await w.store.task.mustGet(publish.id)).depends_on).toEqual([style.id]);
+    expect((await w.store.task.mustGet(colours.id)).status).toBe("cancelled");
+    // A second split, then the person takes a wait of "Publish" away: its Undo is refused.
+    const again = done(
+      await w.executor.execute({
+        name: "task.split",
+        params: {
+          task: "Style the page",
+          parts: [
+            { title: "Style the layout", acceptance_criteria: ["a", "b"] },
+            { title: "Style the colours again", acceptance_criteria: ["c"] },
+          ],
+          order: "in_turn",
+        },
+        ctx: sessionCtx(w, s.id),
+      }),
+    );
+    const p = await w.store.task.mustGet(publish.id);
+    await w.store.task.setDependencies(p.id, p.version, [style.id], "the person", {
+      humanId: w.human.id,
+    });
+    expect(refusedReason(await restarted(w).undo(again.changeLogId, w.ctx({ source: "ui" })))).toBe(
+      'what "Publish" waits for was changed after the split; undo would not put it back as it was',
+    );
+    await w.store.close();
+  });
+
+  it("a part the running session took reads as running, a part that ran as run, never 'has run since' before it started", async () => {
+    const { w, split, colours } = await splitWorld();
+    const fresh = restarted(w);
+    const row = await w.store.changeLog.mustGet(split.changeLogId);
+    expect(await fresh.undoBlockedReason(row, w.ctx({ source: "ui" }))).toBeNull();
+    const claimed = await w.store.task.transition(colours.id, colours.version, "claimed", "s", {
+      agentId: w.agent.id,
+    });
+    expect(await fresh.undoBlockedReason(row, w.ctx({ source: "ui" }))).toBe(
+      '"Style the colours" is running now, so the split cannot be undone',
+    );
+    const started = await w.store.task.transition(claimed.id, claimed.version, "in_progress", "s", {
+      agentId: w.agent.id,
+    });
+    await w.store.task.transition(started.id, started.version, "failed", "s", {
+      agentId: w.agent.id,
+    });
+    expect(await fresh.undoBlockedReason(row, w.ctx({ source: "ui" }))).toBe(
+      '"Style the colours" has run since, so the split cannot be undone',
+    );
+    await w.store.close();
+  });
+
+  it("a split and a step before the task after it in ONE change (the task check's set) still undo together, after a restart", async () => {
+    const w = await world();
+    const s = await runningSession(w);
+    const style = await seed(w, "Style the page", { acceptance_criteria: ["a", "b", "c"] });
+    const publish = await seed(w, "Publish", { depends_on: [style.id] });
+    const composed = done(
+      await w.executor.compose(
+        [
+          {
+            name: "task.split",
+            params: {
+              task: style.id,
+              parts: [
+                { title: "Style the layout", acceptance_criteria: ["a", "b"] },
+                { title: "Style the colours", acceptance_criteria: ["c"] },
+              ],
+              order: "in_turn",
+            },
+          },
+          step("Check that the links work", publish.id),
+        ],
+        sessionCtx(w, s.id),
+      ),
+    );
+    const fresh = restarted(w);
+    const row = await w.store.changeLog.mustGet(composed.changeLogId);
+    expect(await fresh.undoBlockedReason(row, w.ctx({ source: "ui" }))).toBeNull();
+    done(await fresh.undo(composed.changeLogId, w.ctx({ source: "ui" })));
+    expect((await w.store.task.mustGet(publish.id)).depends_on).toEqual([style.id]);
+    expect((await w.store.task.mustGet(style.id)).title).toBe("Style the page");
     await w.store.close();
   });
 });
