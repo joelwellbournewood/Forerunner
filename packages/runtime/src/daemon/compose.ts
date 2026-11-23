@@ -5234,6 +5234,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       modelSettings: {
         specialists: () => registry.runnableSpecialists().map((d) => d.name),
         maxEffort: (name) => registry.specialists.get(name)?.max_effort,
+        // l4-selftasks-carried (L4-other-1 D-6): chat's read-back of a task for it says so.
+        writesNoFile: (name) => {
+          const d =
+            registry.specialists.get(name) ??
+            registry.specialists.get(canonicalSpecialistName(name));
+          return d ? writesNoFile(d.allowed_tools ?? []) : false;
+        },
         capabilities: () =>
           provider ? providerCapabilities(provider) : { ...DEFAULT_PROVIDER_CAPABILITIES },
       },

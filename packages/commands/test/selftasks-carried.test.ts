@@ -253,3 +253,80 @@ describe("l4-selftasks-carried, run L4: an Undo read back in chat says what is b
     }
   });
 });
+
+/**
+ * L4-other-1 D-6 (ADR 0109's amendment: decision 1 covers New task, Edit and chat): chat's
+ * read-back of a task for the reviewer says what New task and Edit say.
+ */
+describe("l4-selftasks-carried, run L4: chat's read-back of a reviewer task says it writes no file (L4-other-1 D-6)", () => {
+  const NAMED =
+    "The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.";
+  const PLAIN =
+    "The reviewer writes no file: its findings are its report, which you read in the task's drawer.";
+
+  async function reviewerWorld() {
+    const w = await world();
+    w.ports.modelSettings = {
+      specialists: () => ["coder", "reviewer"],
+      capabilities: () => ({ acceptsTemperature: false }) as never,
+      writesNoFile: (name) => name === "reviewer",
+    };
+    return w;
+  }
+
+  it("task.create for the reviewer: the read-back and the sentence carry the line, naming review.md; a coder task carries none", async () => {
+    const w = await reviewerWorld();
+    const ctx = w.ctx({ source: "chat", activeProjectId: w.pharma.id });
+    const card = async (specialist: string, outcome: string) =>
+      (
+        await w.executor.execute({
+          name: "task.create",
+          params: {
+            title: "Review the plan",
+            outcome,
+            acceptance_criteria: [],
+            specialist,
+          },
+          ctx: { ...ctx, recordsRead: true } as never,
+        })
+      ).card;
+    const reviewer = await card(
+      "reviewer",
+      "review.md lists the gaps and risks found in notes/plan.md",
+    );
+    expect(reviewer?.ask).toBe(`Add "Review the plan" to PharmaWatch? ${NAMED}`);
+    expect(reviewer?.sentence).toBe(
+      `Added "Review the plan" to PharmaWatch, for the reviewer. ${NAMED}`,
+    );
+    const plain = await card("reviewer", "The gaps found in notes/plan.md are listed");
+    expect(plain?.ask).toBe(`Add "Review the plan" to PharmaWatch? ${PLAIN}`);
+    const coder = await card("coder", "review.md lists the gaps");
+    expect(coder?.ask).toBe('Add "Review the plan" to PharmaWatch?');
+    await w.store.close();
+  });
+
+  it("task.update that gives a task to the reviewer reads back the line; one that changes only its priority does not", async () => {
+    const w = await reviewerWorld();
+    await w.store.task.insert({
+      project_id: w.pharma.id,
+      title: "Review the plan",
+      outcome: "review.md lists the gaps and risks found in notes/plan.md",
+      status: "ready",
+      specialist: "coder",
+    } as never);
+    const ctx = w.ctx({ source: "chat", activeProjectId: w.pharma.id });
+    const ask = async (params: Record<string, unknown>) =>
+      (
+        await w.executor.execute({
+          name: "task.update",
+          params: { task: "Review the plan", ...params },
+          ctx,
+        })
+      ).card?.ask;
+    expect(await ask({ specialist: "reviewer" })).toBe(
+      `Change "Review the plan": who does it to reviewer? ${NAMED}`,
+    );
+    expect(await ask({ priority: "high" })).toBe('Change "Review the plan": priority to High?');
+    await w.store.close();
+  });
+});

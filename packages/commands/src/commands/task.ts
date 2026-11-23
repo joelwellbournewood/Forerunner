@@ -9,6 +9,7 @@ import {
   prNumberOf as prNumberOfUrl,
 } from "@forerunner/runtime/daemon/cancel-words";
 import { redoWhileTakingOutSentence } from "@forerunner/runtime/daemon/take-out-words";
+import { fileTheWordsWrite, writesNoFileLine } from "@forerunner/runtime/registry/tools";
 // The module itself (import-free): a merge card's key and its Redo's mark (W15-04).
 import {
   MERGE_CARD_KEY,
@@ -926,6 +927,22 @@ const createParams = z.object({
 });
 export type TaskCreateParams = z.infer<typeof createParams>;
 
+/**
+ * l4-selftasks-carried (L4-other-1 D-6; ADR 0109 decision 1 covers New task, Edit and chat): a
+ * task for a specialist that writes no file is read back, and told, with the line New task and
+ * Edit show ("The reviewer writes no file, so review.md is not written: ..."), naming a file the
+ * task's words ask for. Empty for every other specialist, or without the port.
+ */
+function noFileClause(
+  ctx: CommandContext,
+  specialist: string | null | undefined,
+  words: readonly string[],
+): string {
+  if (!specialist || specialist === PERSON_SPECIALIST) return "";
+  if (ctx.ports.modelSettings?.writesNoFile?.(specialist) !== true) return "";
+  return ` ${writesNoFileLine(specialist, fileTheWordsWrite(words))}`;
+}
+
 function createSentence(
   p: TaskCreateParams,
   projectName: string,
@@ -971,6 +988,10 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
     const { project, usedActive } = await resolveProject(ctx, params.project);
     const count = await ctx.store.task.count({ project_id: project.id });
     const beforeTitles = (await stepBefore(ctx, project, params)).map((t) => t.title);
+    const noFile = noFileClause(ctx, params.specialist, [
+      params.outcome,
+      ...params.acceptance_criteria,
+    ]);
     return buildCard({
       command: "task.create",
       what: `the tasks of ${project.name}`,
@@ -978,11 +999,13 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       newValue: `+ ${quote(params.title)}`,
       scope: "project",
       risk: "low",
-      sentence: createSentence(params, project.name, beforeTitles),
+      sentence: `${createSentence(params, project.name, beforeTitles)}${noFile}`,
       // The one-line read-back when it waits for a yes (d1109-chat-guard: after a record).
-      ask: beforeTitles.length
-        ? `Add ${quote(params.title)} before ${namesList(beforeTitles)}?`
-        : `Add ${quote(params.title)} to ${project.name}?`,
+      ask: `${
+        beforeTitles.length
+          ? `Add ${quote(params.title)} before ${namesList(beforeTitles)}?`
+          : `Add ${quote(params.title)} to ${project.name}?`
+      }${noFile}`,
       reversible: true,
       projectId: project.id,
       projectName: project.name,
@@ -1876,6 +1899,16 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
     const task = await findTask(params, ctx);
     const patch = editPatch(params, task);
     const project = await ctx.store.project.mustGet(task.project_id);
+    // l4-selftasks-carried (L4-other-1 D-6): an edit that gives the task to a specialist that
+    // writes no file, or changes such a task's words, says what New task and Edit say.
+    const p = patch;
+    const noFile =
+      p.specialist !== undefined || p.outcome !== undefined || p.acceptance_criteria !== undefined
+        ? noFileClause(ctx, p.specialist !== undefined ? p.specialist : task.specialist, [
+            p.outcome ?? task.outcome,
+            ...(p.acceptance_criteria ?? task.acceptance_criteria ?? []),
+          ])
+        : "";
     return buildCard({
       command: "task.update",
       what: `the task ${quote(task.title)}`,
@@ -1888,7 +1921,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-      ask: `Change ${quote(task.title)}: ${(await editWords(ctx, patch)) || "nothing"}?${noteClause(ctx, params.note)}`,
+      ask: `Change ${quote(task.title)}: ${(await editWords(ctx, patch)) || "nothing"}?${noFile}${noteClause(ctx, params.note)}`,
     });
   },
   async run(params, ctx) {

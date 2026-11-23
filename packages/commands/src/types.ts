@@ -343,6 +343,11 @@ export interface CommandPorts {
     capabilities(): ProviderCapabilities;
     /** A runnable specialist's `max_effort` from its registry file: no effort above it is stored. */
     maxEffort?(specialist: string): EffortLevel | undefined;
+    /**
+     * l4-selftasks-carried (L4-other-1 D-6): whether a specialist writes no file (none of its
+     * tools writes one: the reviewer), so chat's read-back of a task for it says so.
+     */
+    writesNoFile?(specialist: string): boolean;
   };
   /**
    * Sets an agent's email sending mode through the capability's settings store (ADR 0081):
