@@ -6088,6 +6088,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const p = await createProjectRecord(
         {
           store,
+          clock,
           human: { id: human.id },
           agent: { id: agent.id },
           events,

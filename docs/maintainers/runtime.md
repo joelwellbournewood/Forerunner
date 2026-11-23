@@ -6623,7 +6623,8 @@ normalisation. Rows are `source` and `source_candidate` (`packages/state`, migra
   credential problem); the next scan clears it.
 - **Existing install.** A candidate is marked `existing_install` with `install_marker`
   `.forerunner/project.json` when that file exists at the root (through `getFile` on the
-  default branch for a repository, the file system for a folder), or `install_record` when
+  default branch for a repository, the scan's `SourceFs` for a folder: its `readText` reads the
+  marker, through the same reader as the listing, L4-github-105), or `install_record` when
   the folder is the checkout named by this install's `install.json`
   (`readInstallRecord(dirs)`). The G.5 docs scaffold writes the marker beside the doc set
   (`sources/marker.ts`: `{ schema: 1, project, name }`, `renderInstallMarker`,
@@ -7816,7 +7817,8 @@ no store, git host or file system, so the UI's fake daemon imports it).
   `{projects, name, at, removed?}`; Work together uses the repository's id as the row's id, the
   marker's name unless one here has it, `settings.together {name, at, activeOn, login}`, and
   `reviveTogether` brings back a removed together row (its `removed_name` dropped); its scaffold
-  only refreshes this computer's copy.
+  only refreshes this computer's copy. `at` is the daemon's clock (`CreateProjectDeps.clock`,
+  L4-github-105), at the press and at a revive, never the computer's wall clock.
 - **Docs and status** (`loop/docs.ts`): `mark()` passes `replace: tookOverOf(project).projects`
   to `writeInstallMarker` (`replaced` then, and the scaffold's pull request body gets
   `tookOverLine`); the intake's doc set the same (`session/intake.ts`). The scaffold's branch

@@ -662,3 +662,57 @@ describe("source discovery", () => {
     await discovery.remove(chosen.id, ada);
   });
 });
+
+describe("l4-github-link, run L4", () => {
+  it("L4-github-105: a folder's marker is read through the scan's injected reader, so the candidate names the marker's project", async () => {
+    const root = mkdtempSync(join(tmpdir(), "fr-sources-fs-"));
+    const clock = new SimulatedClock(START);
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    try {
+      const who: SourceActor = {
+        humanId: (await store.human.insert({ name: "Ada", email: "ada@example.test" })).id,
+      };
+      const kite = join(root, "kite");
+      const markerFile = join(kite, ".forerunner", "project.json");
+      const marker = `${JSON.stringify({
+        schema: 1,
+        project: "01a1a000-0000-7000-8000-00000000c1ab",
+        name: "Kite club",
+      })}\n`;
+      // The marker is in the injected reader only: nothing named kite is on the disk.
+      const read: string[] = [];
+      const discovery = new SourceDiscovery({
+        store,
+        clock,
+        hostFor: () => {
+          throw new Error("no GitHub source here");
+        },
+        createProject: async () => {
+          throw new Error("nothing is accepted here");
+        },
+        fs: {
+          entries: async (dir) =>
+            dir === root ? [{ name: "kite", directory: true, symlink: false }] : [],
+          exists: async (path) => path === kite || path === markerFile,
+          readText: async (path) => {
+            read.push(path);
+            return path === markerFile ? marker : null;
+          },
+        },
+      });
+      const source = await discovery.add({ kind: "local_folder", locator: root }, who);
+      const scan = await discovery.scan(source.id, who);
+      expect(scan.candidates.map((c) => [c.name, c.existingInstall, c.installMarker])).toEqual([
+        ["kite", true, INSTALL_MARKER_FILE],
+      ]);
+      expect(scan.candidates[0]?.details).toMatchObject({
+        marker_project: "01a1a000-0000-7000-8000-00000000c1ab",
+        marker_name: "Kite club",
+      });
+      expect(read).toEqual([markerFile]);
+    } finally {
+      await store.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

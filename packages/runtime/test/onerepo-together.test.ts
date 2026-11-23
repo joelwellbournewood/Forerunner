@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { GitOps, MemoryGitHost } from "@forerunner/capabilities";
 import { appDirs, join, run, SimulatedClock } from "@forerunner/platform";
@@ -211,6 +211,116 @@ describe("d1109-onerepo-link, run C: two Forerunners on one repository (OR-15)",
       await nothingWritten();
     } finally {
       for (const rt of closing) await rt.close();
+    }
+  }, 120_000);
+});
+
+describe("l4-github-link, run L4", () => {
+  it("L4-github-105: Work together stamps settings.together.at with the daemon's clock, kept after B starts again and on Work together for a removed project", async () => {
+    const root = mkdtempSync(join(tmpdir(), "fr-together-clock-"));
+    const bare = join(root, "kite.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({ cwd: join(root, "seed"), identity });
+    await seed.clone(bare);
+    writeFileSync(join(root, "seed", "README.md"), "# kite\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    const host = new MemoryGitHost("alice");
+    const repo = { owner: "o", name: "kite" };
+    await host.createRepo({ ...repo, private: true, cloneUrl: bare });
+    const asBob = Object.create(host) as MemoryGitHost;
+    asBob.whoAmI = async () => ({ login: "bob" });
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    host.now = () => clock.nowIso();
+    const compose = async (name: string, gitHost: MemoryGitHost) => {
+      const home = join(root, name);
+      const rt = await composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault(),
+        provider: new ScriptedProvider([{ text: "Noted." }], clock),
+        registryDir: REGISTRY,
+        identity: { humanName: name, timezone: "UTC", agentName: "Alice" },
+        appVersion: "0.1.0-test",
+        gitHost,
+        data: { projectsRoot: join(home, "projects") },
+        startServices: false,
+      });
+      const { app, token } = createDaemonApp(rt);
+      const call = async (method: string, path: string, body?: unknown) => {
+        const r = await app.request(path, {
+          method,
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        });
+        return { status: r.status, body: (await r.json()) as Json };
+      };
+      return { rt, call };
+    };
+    const closing: RuntimeApp[] = [];
+    try {
+      const a = await compose("home-a", host);
+      closing.push(a.rt);
+      const made = await a.call("POST", "/projects", {
+        name: "Kite club",
+        goal: "Kites",
+        repos: ["o/kite"],
+      });
+      expect(made.status).toBe(201);
+      const kiteId = String(made.body.id);
+      await host.putFile(repo, {
+        path: ".forerunner/project.json",
+        content: `${JSON.stringify({ schema: 1, project: kiteId, name: "Kite club" }, null, 2)}\n`,
+        message: "marker",
+        branch: "main",
+      });
+      let b = await compose("home-b", asBob);
+      closing.push(b.rt);
+      // The daemon's day, not the computer's: the simulated clock is months from the wall clock.
+      await clock.set("2026-03-05T09:15:00.000Z");
+      const together = await b.call("POST", "/projects", {
+        name: "Mine",
+        goal: "g",
+        repos: ["o/kite"],
+        together: { project: kiteId },
+      });
+      expect(together.status).toBe(201);
+      const at = async () => {
+        const row = await b.rt.store.project.mustGet(kiteId);
+        return (row.settings.together as Json | undefined)?.at;
+      };
+      expect(await at()).toBe("2026-03-05T09:15:00.000Z");
+      // B starts again: the stamp is the one written at the press.
+      await clock.set("2026-03-05T10:00:00.000Z");
+      await b.rt.close();
+      closing.pop();
+      b = await compose("home-b", asBob);
+      closing.push(b.rt);
+      expect(await at()).toBe("2026-03-05T09:15:00.000Z");
+      // Removed here, then Work together again: the same row comes back, stamped at that press.
+      const row = await b.rt.store.project.mustGet(kiteId);
+      await b.rt.store.project.update(row.id, row.version, {
+        status: "archived",
+        active: false,
+        name: `Kite club (removed ${row.id.slice(-8)})`,
+        settings: { ...row.settings, removed_name: row.name },
+      });
+      await clock.set("2026-03-06T07:30:00.000Z");
+      const back = await b.call("POST", "/projects", {
+        name: "Mine",
+        goal: "g",
+        repos: ["o/kite"],
+        together: { project: kiteId },
+      });
+      expect(back.status).toBe(201);
+      expect(back.body.id).toBe(kiteId);
+      expect(await at()).toBe("2026-03-06T07:30:00.000Z");
+    } finally {
+      for (const rt of closing) await rt.close();
+      rmSync(root, { recursive: true, force: true });
     }
   }, 120_000);
 });

@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { lstat, readdir } from "node:fs/promises";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import type { GitHost, RepoInfo, RepoRef } from "@forerunner/capabilities";
 import {
   basename,
@@ -109,6 +108,11 @@ export interface SourceFs {
   /** Immediate entries of a directory (symlinks reported as such, never followed). */
   entries(dir: string): Promise<{ name: string; directory: boolean; symlink: boolean }[]>;
   exists(path: string): Promise<boolean>;
+  /**
+   * A file's text, or null when it cannot be read. L4-github-105: the candidate's marker is
+   * read here, through the same reader as the listing, never straight off the disk.
+   */
+  readText(path: string): Promise<string | null>;
 }
 
 export type SourceStore = Pick<
@@ -185,6 +189,13 @@ const nodeFs: SourceFs = {
       return true;
     } catch {
       return false;
+    }
+  },
+  async readText(path) {
+    try {
+      return await readFile(path, "utf8");
+    } catch {
+      return null;
     }
   },
 };
@@ -714,14 +725,7 @@ export class SourceDiscovery {
       : this.isOwnCheckout(path)
         ? INSTALL_MARKER_RECORD
         : null;
-    let text: string | null = null;
-    if (hasMarker) {
-      try {
-        text = readFileSync(markerFile, "utf8");
-      } catch {
-        text = null;
-      }
-    }
+    const text = hasMarker ? await this.fs.readText(markerFile) : null;
     return {
       kind: "folder",
       name: basename(path),
