@@ -15,6 +15,7 @@ import {
   type EndedWaits,
   endedStatusText,
   planningStatusText,
+  stillWaitsText,
   stopReasonOfHandoff,
 } from "../session/stop-words.ts";
 import type {
@@ -348,6 +349,22 @@ export function sessionEndWords(
   );
 }
 
+/**
+ * l4-starts-sessions (L4-money-213): the Sessions row's end words. Beside "2 needed you" (what
+ * the session left for the person, from its record) the row says what still waits now in one
+ * count ("1 still needs you"), not a second count of the same thing ("Ended: 1 task needs you");
+ * every other end reads as `sessionEndWords` (the session page's badge, L-21).
+ */
+export function listEndWords(
+  row: Pick<SessionRow, "status" | "handoff" | "plan">,
+  waits: EndedWaits | undefined,
+  neededYou: number,
+): string | null {
+  const words = sessionEndWords(row, waits);
+  if (!waits || neededYou <= 0 || !words?.startsWith("Ended: ")) return words;
+  return stillWaitsText(waits) ?? words;
+}
+
 /** Who asked for a session (`plan.startedBy`, written by d1109-starts-engine from run C3). */
 export interface StartedBy {
   by: "person" | "schedule" | "hands_off" | "continuation";
@@ -629,7 +646,7 @@ export async function sessionRowView(
     gist: withoutIds(gist),
     tasks: counts,
     countsWords: countsWords(counts),
-    endedWords: sessionEndWords(row, waits),
+    endedWords: listEndWords(row, waits, counts.needsYou),
     spent,
     spentWords: spentWords(
       { chfMicro: spent.chfMicro, kinds: ctx.spend?.kinds ?? [] },

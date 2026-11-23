@@ -28096,4 +28096,60 @@ describe("l4-starts-sessions, run L4", () => {
       await rt.close();
     }
   }, 120_000);
+
+  it("L4-money-213: a Sessions row of a session that ended on questions says what still waits once, beside what needed the person", async () => {
+    // Live check 4 (L4-session-12): '2 needed you · Ended: 1 task needs you'.
+    const { rt, client } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_ASK: "phone number,rehearsal address",
+    });
+    try {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Choir rows", goal: "A contact page" });
+      for (const title of [
+        "Add the choir's phone number to contact.html",
+        "Add the choir's rehearsal address to contact.html",
+      ])
+        await readyTask(client, project.id, title);
+      const first = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      const sessionId = first.session?.id ?? "";
+      await ended(client, sessionId, "the session that asks");
+      await settleSessions(rt);
+      const cards = async () =>
+        (await client.inbox(me.id)).requests.filter(
+          (r) => r.status === "open" && r.reply === "form" && r.projectId === project.id,
+        );
+      await eventually(
+        async () => (await cards()).length === 2,
+        "both questions cards (20 s)",
+        async () => (await client.inbox(me.id)).requests.map((r) => r.title).join(" | "),
+        20_000,
+      );
+      const row = async () =>
+        (await client.projectSessions(project.id)).rows.find((r) => r.id === sessionId);
+      expect(await row()).toMatchObject({
+        countsWords: "2 needed you",
+        endedWords: "2 still need you",
+      });
+      const [phone] = await cards();
+      await client.answerRequest(phone?.id ?? "", {
+        version: phone?.version ?? 0,
+        answer: {
+          answers: [
+            {
+              question: personQuestionsOf(phone?.changeCard)?.questions[0] ?? "",
+              answer: "079 123 45 67",
+            },
+          ],
+        },
+      });
+      const after = await row();
+      expect(after).toMatchObject({ countsWords: "2 needed you", endedWords: "1 still needs you" });
+      expect(`${after?.countsWords} · ${after?.endedWords}`).not.toMatch(/Ended: 1 task needs you/);
+      // The session page's badge keeps L-21's words.
+      expect((await client.session(sessionId)).statusText).toBe("Ended: 1 task needs you");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
 });

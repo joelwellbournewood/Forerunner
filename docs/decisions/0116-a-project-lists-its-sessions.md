@@ -150,3 +150,10 @@ schedule, the hands-off setting) that ended without a run and without a ledger r
 found nothing stays out: it is not news (design §4.8). Rows written before `plan.startedBy`
 keep the old rule. The heading's count and the Overview's "All N sessions" use the same rule.
 
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-213): one count for what needed you
+
+A row of a session that ended with tasks that needed the person read '2 needed you · Ended: 1
+task needs you' (live check 4): two counts for one thing, one from the session's record, one from
+what waits now. The row keeps the record's count and says what still waits in one count: '2 needed
+you · 1 still needs you' ('Done' once nothing waits). The session page's badge is unchanged (L-21).
+

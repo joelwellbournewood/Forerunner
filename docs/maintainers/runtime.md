@@ -7761,7 +7761,11 @@ page's "Tasks in this session" and of a planning call's row is written in
   "Planning failed: <words>"), `workingWords` (the project status's own working sentence through
   `projectStatusLine`, never a wording of its own; d1109-run-visible re-points it at its run
   view), `sessionEndWords` (the one map, `sessionStatusText`/`endedStatusText`, with a planning
-  call saying how it ended only when it failed), `spentWords` (the CHF figure with the
+  call saying how it ended only when it failed; the list row reads it through `listEndWords`,
+  l4-starts-sessions L4-money-213: beside the record's "2 needed you" what still waits is one
+  count, `stillWaitsText` in `stop-words.ts`, "1 still needs you", "2 still need you, 1
+  paused", never "Ended: 1 task needs you" a second time; the session page's badge keeps
+  `endedStatusText`, L-21), `spentWords` (the CHF figure with the
   credential that paid, from the billing source's kind: "on your API key", "of your Claude
   subscription's allowance", "of your plan credits", both named when two paid, none on the
   stand-in; "so far" while it works), `startedByWords` (`plan.startedBy` first, then the

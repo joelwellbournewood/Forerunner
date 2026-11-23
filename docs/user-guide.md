@@ -917,7 +917,8 @@ count ("14 sessions"); the Costs tab has the totals. A session working now sits 
 it does ('Working on "Style the page" (3 of 7 done)') and what it has cost so far. Below it, one
 row per session, newest first: what it did in one sentence ('Did 2 tasks: "Create index.html" and
 "Style the page".', '"Long report" paused at its budget of CHF 0.40.', "Nothing finished."), then
-when it started, how long it worked, its task counts ("1 done, 1 failed"), how it ended ("Done",
+when it started, how long it worked, its task counts ("1 done, 1 failed"; "2 needed you" with
+"1 still needs you" while one of them still waits), how it ended ("Done",
 "Stopped by you", "Interrupted: Forerunner closed") and what it cost, with the credential that
 paid ("CHF 0.80 on your API key", "CHF 0.80 of your Claude subscription's allowance"); a session
 you did not start says how it started ("started on its schedule"). Every session you started is
