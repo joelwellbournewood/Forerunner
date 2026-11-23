@@ -2,7 +2,7 @@ import { SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import type { ToolExecutionContext } from "../src/agent/tools.ts";
-import { filesBlock, todayLine } from "../src/conversation/project-facts.ts";
+import { filesBlock, quotesOthersWords, todayLine } from "../src/conversation/project-facts.ts";
 import { readTools } from "../src/conversation/read-tools.ts";
 import { scopeOf } from "../src/conversation/scope.ts";
 
@@ -194,5 +194,30 @@ describe("d1109-chat-guard, run C: # Your files from the app's merge records (CG
     expect(filesBlock("/home/robin/notes", null)).toBe(
       "# Your files\nThe project's folder: /home/robin/notes",
     );
+  });
+});
+
+/**
+ * l4-selftasks-carried (L4b-left-4; d1109-chat-guard, ADR 0114): the agent's suggested changes
+ * to the tasks quote what a run's report or a review said (the lines "For the task list:", the
+ * new tasks' titles from the check's reply), so a chat turn that lists the card in full reads
+ * every change back first, as it does for a specialist's questions.
+ */
+describe("l4-selftasks-carried, run L4: a task_proposal card quotes words Forerunner did not write (L4b-left-4)", () => {
+  it("counts the suggestion card; a card in Forerunner's own words still does not count", () => {
+    expect(
+      quotesOthersWords({
+        change_card: {
+          key: "task_proposal",
+          project_id: "p1",
+          quotes: ['"nothing checks the finished work end to end."'],
+          reasons: ["The report says nothing checks it."],
+        },
+        steps: ['Add "Check the finished work"'],
+      } as never),
+    ).toBe(true);
+    expect(
+      quotesOthersWords({ change_card: { key: "task:budget_stop" }, steps: [] } as never),
+    ).toBe(false);
   });
 });
