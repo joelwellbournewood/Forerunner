@@ -747,8 +747,19 @@ export interface FakeDaemonState {
    * holds work that was closed and is rebuilt without it (L3-github-1: `left_to_you`, "#N was
    * rebuilt without #M, ..."). The press is refused at once with that sentence, as the daemon's
    * `ProjectPullRequests.merge` answers it, and the row then says it as the merge step leaves it.
+   * fixup-l4-github-merge (L4-github-124 (a)): `closedDependency`, the task whose pull request
+   * the chain builds on and the press read closed on GitHub; its merge record is settled at the
+   * press ("#N was closed without merging."), so its Tasks row reads "Accepted · pull request
+   * closed" at once, as the daemon's `closedAtPress` leaves it.
    */
-  pullRequestPressFinds: Record<string, { row: "blocked" | "left_to_you"; sentence: string }>;
+  pullRequestPressFinds: Record<
+    string,
+    {
+      row: "blocked" | "left_to_you";
+      sentence: string;
+      closedDependency?: { taskId: string; number: number };
+    }
+  >;
   /** How many times `GET /projects/:id/pull-requests` was read, by project (the Overview's polling). */
   pullRequestReads: Record<string, number>;
   /** How many times `GET /projects` was read (leftovers7-merge: the list follows other changes). */
@@ -2100,7 +2111,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // As the daemon's `projectCard`: a repository project's work is on the repository and in its
     // pull requests (ADR 0106), so its card names the repository and no folder.
     const repository = repositoryOf(p.repos);
-    const folder = repository ? null : (state.folders[p.id] ?? null);
+    // L4-github-115, as the daemon's `projectCard`: a project closed into another has no folder
+    // of its own (never the docs clone's path with its id).
+    const folder = repository || state.joined[p.id] ? null : (state.folders[p.id] ?? null);
     const statusLine = projectStatusLine({
       projectId: p.id,
       tasks: tasks.map((t) => ({
@@ -9132,6 +9145,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         sentence: finds.sentence,
         first: [],
       };
+      // fixup-l4-github-merge (L4-github-124 (a)), as the daemon's press: the pull request the
+      // chain builds on, read closed, is settled at once; the screens hear the project changed.
+      const dep = finds.closedDependency;
+      if (dep) {
+        state.taskMeta.merges?.set(dep.taskId, {
+          approval: "none",
+          ...state.taskMeta.merges.get(dep.taskId),
+          state: "left_to_you",
+          sentence: `#${dep.number} was closed without merging.`,
+          pr_number: dep.number,
+          last_outcome: "closed",
+        });
+        emit("project.changed", { id });
+      }
       return c.json({ state: "refused", sentence: finds.sentence, order: [] });
     }
     const order = [...(row.merge?.first ?? []), number];

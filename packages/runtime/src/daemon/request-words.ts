@@ -1294,6 +1294,11 @@ const NOT_APPLIED_MAX = 140;
  * after Redo it read the card's filing words, '... #4 was not merged. Redo.').
  */
 export function leftOpenCardTitle(card: JsonObject, taskTitle: string): string {
+  // L4-github-112: its pull request was closed, but its change reached main through another.
+  if (card.merged_through === true)
+    return typeof card.through === "number"
+      ? `${q(taskTitle)} reached main through pull request #${card.through}`
+      : `${q(taskTitle)} reached main`;
   if (card.notice === "conflict")
     return `${q(taskTitle)} conflicts with ${str(card.base) ?? "main"}`;
   const rebuilt = rebuildTitle(card, taskTitle);
@@ -1319,14 +1324,19 @@ function mergeLeftOpenCard(
     label,
     explain: /^i merged/i.test(label)
       ? "Closes this card and notes on the task that you merged it."
-      : /^leave/i.test(label)
-        ? "Closes this card; the pull request stays open on GitHub."
-        : // A rebuild's card (R-rebuildcard): the pull request is open; polish owns these words.
-          /^merge$/i.test(label)
-          ? `Merges ${prOfCard(card).replace(/^pull request /, "")} as it is now, as Merge on the Overview does.`
-          : /^redo$/i.test(label)
-            ? `The task is done again from main; ${preparedExplain(ctx)}.`
-            : null,
+      : // L4-github-112: a closed pull request whose change reached main through another.
+        /^take this work out$/i.test(label)
+        ? `Opens a pull request that takes only the change of ${prOfCard(card).replace(/^pull request /, "")} out of main; nothing changes until you merge it.`
+        : /^keep it$/i.test(label)
+          ? `Closes this card; main keeps the change of ${prOfCard(card).replace(/^pull request /, "")}.`
+          : /^leave/i.test(label)
+            ? "Closes this card; the pull request stays open on GitHub."
+            : // A rebuild's card (R-rebuildcard): the pull request is open; polish owns these words.
+              /^merge$/i.test(label)
+              ? `Merges ${prOfCard(card).replace(/^pull request /, "")} as it is now, as Merge on the Overview does.`
+              : /^redo$/i.test(label)
+                ? `The task is done again from main; ${preparedExplain(ctx)}.`
+                : null,
     tone: i === 0 ? "primary" : "secondary",
     confirm: null,
     input: null,
@@ -1346,6 +1356,13 @@ function mergeLeftOpenCard(
 function mergeLeftOpenOutcome(card: JsonObject): string | null {
   if (card.outcome === "merged") return `Noted: you merged ${prOfCard(card)}.`;
   if (card.outcome === "left_open") return `Left open: ${prOfCard(card)} stays open on GitHub.`;
+  // L4-github-112: the merged-through card's answers.
+  if (card.outcome === "kept")
+    return `Kept: the change of ${prOfCard(card).replace(/^pull request /, "")} stays on main.`;
+  if (card.outcome === "taken_out")
+    return typeof card.take_out_result === "string" && card.take_out_result
+      ? card.take_out_result
+      : "Taking the work out: the answer comes in a moment.";
   // A rebuild's card (R-rebuildcard): what the Merge came to, or the Redo.
   const pr = prOfCard(card).replace(/^pull request /, "");
   if (card.outcome === "merging")
@@ -1817,9 +1834,20 @@ export function requestWords(
   } else if (key === ANSWER_CARD_KEYS.mergeLeftOpen) {
     words = mergeLeftOpenCard(r, card, ctx);
     outcome = mergeLeftOpenOutcome(card);
-    // L3-github-2: closed because its pull request was merged (by Forerunner or on GitHub).
+    // L3-github-2: closed because its pull request was merged (by Forerunner or on GitHub);
+    // L4-github-117: closed on GitHub without a merge; L4-github-112: its change reached main
+    // through another pull request (that card says the rest).
+    const closedPr = prOfCard(card).replace(/^pull request /, "");
     if (r.status === "withdrawn" && card.closed === "merged") {
-      words.outcome = `Closed: ${prOfCard(card).replace(/^pull request /, "")} was merged.`;
+      words.outcome = `Closed: ${closedPr} was merged.`;
+      return words;
+    }
+    if (r.status === "withdrawn" && card.closed === "closed") {
+      words.outcome = `Closed: ${closedPr} was closed on GitHub.`;
+      return words;
+    }
+    if (r.status === "withdrawn" && card.closed === "merged_through") {
+      words.outcome = `Closed: the change of ${closedPr} reached main.`;
       return words;
     }
   } else if (key === "sandbox.not_ready") {

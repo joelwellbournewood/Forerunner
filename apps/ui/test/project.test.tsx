@@ -912,3 +912,41 @@ describe("l4-chat-answers, run L4: Last result after Cancel (L4-chat-103)", () =
     }
   });
 });
+
+describe("l4-github-merge, run L4", () => {
+  it("L4-money-301: By task, By specialist and By model read accepted against tries: a run that paused and was continued is one try (1 / 1), as the daemon gives it", async () => {
+    // fixup-l4-github-merge: the fake daemon's own Costs answer, as the real one gives it (no
+    // bucket written by the test). "Write the members guide" paused once and a second run
+    // continued it; the critic's one review accepted it: 2 runs, 1 try, 1 accepted.
+    renderApp("/projects/proj_atlas/costs");
+    const cellsOf = (row: HTMLElement) =>
+      within(row.closest("tr") as HTMLElement)
+        .getAllByRole("cell")
+        .map((c) => c.textContent);
+    const byTask = await screen.findByTestId("cost-by-task");
+    // Before: "1 / 2 (50%)", a paused run read as a try the critic did not accept.
+    expect(cellsOf(within(byTask).getByText("Write the members guide"))).toEqual(
+      expect.arrayContaining(["2", "1 / 1 (100%)"]),
+    );
+    expect(cellsOf(within(byTask).getByText("Add the search box to the header"))).toEqual(
+      expect.arrayContaining(["2", "0 / 2 (0%)"]),
+    );
+    // The coder's and the model's runs are one more than their tries: read against the tries.
+    const bySpecialist = screen.getByTestId("cost-by-specialist");
+    expect(cellsOf(within(bySpecialist).getByText("coder"))).toEqual(
+      expect.arrayContaining(["7", "5 / 6 (83%)"]),
+    );
+    const byModel = screen.getByTestId("cost-by-model");
+    expect(cellsOf(within(byModel).getByText("Sonnet 5.5"))).toEqual(
+      expect.arrayContaining(["10", "7 / 9 (78%)"]),
+    );
+    // A bucket the critic does not judge has no figure.
+    expect(cellsOf(within(byModel).getByText("Haiku 5.5"))).toEqual(
+      expect.arrayContaining(["21", "—"]),
+    );
+    expect(
+      screen.getAllByTitle("Accepted by the critic / tries; a run paused and continued is one try")
+        .length,
+    ).toBeGreaterThan(0);
+  });
+});

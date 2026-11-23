@@ -7,11 +7,13 @@ import type {
   TaskStatus,
 } from "@forerunner/state";
 import {
+  MERGED_THROUGH,
   type MergeMode,
   mergesAfterLabel,
   mergesAfterSentence,
   OWED_FOLDER_LABEL,
   owedMergeWait,
+  throughNumberOf,
 } from "../loop/merge-mode.ts";
 import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { CREDENTIAL_WAIT_REASON } from "../session/credential-wait.ts";
@@ -502,7 +504,12 @@ export function holdsTask(card: { change_card?: unknown }): boolean {
  * one is merged. A take-out pull request closed without merging offers it again.
  */
 function mergedDisplay(
-  merge: Partial<Pick<MergeRecordRow, "take_out_pr_number" | "take_out_pr_url" | "take_out_state">>,
+  merge: Partial<
+    Pick<
+      MergeRecordRow,
+      "take_out_pr_number" | "take_out_pr_url" | "take_out_state" | "last_outcome" | "sentence"
+    >
+  >,
 ): TaskDisplay {
   const number = merge.take_out_pr_number ?? null;
   const url = merge.take_out_pr_url ?? null;
@@ -514,6 +521,18 @@ function mergedDisplay(
     return display("done", `Taken out in #${number}`, "neutral", {
       takeOut: { state: "merged", number, url },
     });
+  // L4-github-112: its pull request was closed, but its change reached main through another
+  // ("#46 was closed, but its change reached main through #48."), with Take this work out.
+  if (merge.last_outcome === MERGED_THROUGH) {
+    const through = throughNumberOf({
+      last_outcome: merge.last_outcome,
+      sentence: merge.sentence ?? "",
+    });
+    return display("done", through ? `Merged through #${through}` : "Merged", "good", {
+      detail: merge.sentence?.trim() || null,
+      takeOut: { state: "offered", number: null, url: null },
+    });
+  }
   return display("done", "Merged", "good", {
     takeOut: { state: "offered", number: null, url: null },
   });

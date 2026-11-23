@@ -81,8 +81,26 @@ export interface PullData {
   mergeable: boolean | null;
   mergeableState: "clean" | "dirty" | "unknown";
   draft: boolean;
+  /**
+   * L4-creds-22 (the pull head lag, `RepoOps.pullHeadLag`): the head the API still shows after a
+   * push, for this many more reads of the pull request; the branch ref and the merge already
+   * have the new head, as on GitHub, whose pull request follows a push a moment late.
+   */
+  shownHead?: { sha: string; reads: number };
   reviews: ReviewRecord[];
   reviewComments: ReviewCommentRecord[];
+}
+
+/**
+ * The head sha the API shows for a pull request (L4-creds-22): a lagging one for its remaining
+ * reads (`PullData.shownHead`), each read counted; else the head.
+ */
+export function shownHeadOf(p: PullData): string {
+  const lag = p.shownHead;
+  if (!lag) return p.headSha;
+  lag.reads -= 1;
+  if (lag.reads <= 0) delete p.shownHead;
+  return lag.sha;
 }
 
 export interface IssueRecord {
@@ -564,7 +582,7 @@ export class HostStore {
       head: {
         label: `${repo.owner}:${p.headRef}`,
         ref: p.headRef,
-        sha: p.headSha,
+        sha: shownHeadOf(p),
         user: ownerUser ? this.userJson(ownerUser) : this.ghostUser(repo.owner),
         repo: repoJson,
       },

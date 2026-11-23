@@ -607,6 +607,12 @@ export interface MergeOutcome {
   humanRequestId?: string;
   /** The merge record's sentence for the person when it was not merged (ADR 0111). */
   sentence?: string;
+  /**
+   * L4-github-122: the pull request was merged on GitHub already when the merge step read it
+   * (`status` merged, the record's outcome `merged_on_host`): "#59 was merged on GitHub
+   * already.", never Forerunner's own "Merged #59.".
+   */
+  alreadyMerged?: boolean;
 }
 
 export interface MergePort {

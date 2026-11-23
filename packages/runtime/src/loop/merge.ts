@@ -1818,13 +1818,16 @@ export class ReviewedPrMerge implements MergePort {
     if (a.status === "merged" || a.alreadyMerged) {
       const mergeSha = a.mergeSha ?? null;
       const method: MergeMethod | null = a.status === "merged" ? "merge" : null;
+      // L4-github-122: one GitHub merged before this step's call is GitHub's, as the watcher
+      // records one it reads (`merged_on_host`): the card and the row say so, not "Merged #59.".
+      const onHost = a.status !== "merged";
       const done = await store.mergeRecord.move(record.id, "merged", {
         merge_sha: mergeSha,
         method,
         approval: gate.approval,
         approved_by: gate.by,
         sentence: "",
-        last_outcome: "merged",
+        last_outcome: onHost ? "merged_on_host" : "merged",
       });
       const reason =
         a.status === "merged"
@@ -1840,6 +1843,7 @@ export class ReviewedPrMerge implements MergePort {
         ...(mergeSha ? { mergeSha } : {}),
         ...detail,
         reason,
+        ...(onHost ? { alreadyMerged: true } : {}),
       };
     }
     return this.settle(current, task, session, owner, {
@@ -2083,41 +2087,87 @@ export class ReviewedPrMerge implements MergePort {
    * a push Forerunner made itself a moment ago (the watcher's poll rebuilt the branch onto main
    * and moved the record to that head between the press's read and now), and a head that is now
    * the reviewed commit, or a pull request no longer open, is no head move the press must say.
+   *
+   * L4-github-118 with L4-creds-22 (ADR 0111, amendment of 2026-11-23): the press reads each
+   * pull request of its chain once before it answers, and this is that read. The head is the
+   * branch as GitHub has it (`getBranchHead`), never only the pull request's head, which GitHub
+   * updates a moment after a push (live check 4: "Merging #62." answered first, the refusal
+   * 1.5 s later). A pull request that no longer merges cleanly (`mergeable` false) or whose check
+   * on that head failed since Forerunner's last look is refused at once in the merge step's own
+   * words, with its record, row and card settled as the merge step settles them; checks still
+   * running keep the step's "merges when its checks pass". Reads only; a read that fails says
+   * nothing (the merge step reads again). `head`: the head the Overview's listing showed.
    */
   async headMovedNow(task: TaskRow, head: string): Promise<string | null> {
-    const { store } = this.deps;
+    const { store, host } = this.deps;
     const record = await store.mergeRecord.forTask(task.id);
-    if (!head || !record?.reviewed_head_sha || record.reviewed_head_sha === head) return null;
+    if (!record?.reviewed_head_sha) return null;
     if (record.pr_url !== task.pr_url) return null;
     if (record.state === "merged" || record.state === "merging" || this.inFlight.has(task.id))
       return null;
     const ref = parsePullUrl(record.pr_url);
-    const now = ref
-      ? await this.deps.host.getPullRequest(ref.repo, ref.number).catch(() => null)
-      : null;
+    if (!ref) return null;
+    const now = await host.getPullRequest(ref.repo, ref.number).catch(() => null);
     if (now && (now.state !== "open" || now.merged)) return null;
-    const moved = now?.head.sha || head;
-    if (moved === record.reviewed_head_sha) return null;
-    const worktree = this.worktreeOf(task);
-    if (worktree && (await this.keepsOwnChange(record, worktree, moved))) return null;
-    const a = headMoved(prName(record.pr_number), moved, record.reviewed_head_sha);
-    const owner = await this.ownerOf(record.agent_id);
-    const out = await this.settle(
-      record,
-      task,
-      null,
-      owner,
-      {
-        taskId: task.id,
-        prUrl: record.pr_url,
-        status: "head_moved",
-        headSha: moved,
-        reason: `PR left open for you: ${a.message}`,
-        ...(a.sentence ? { sentence: a.sentence } : {}),
-      },
-      true,
+    const branch =
+      (now?.head.ref || task.branch) && host.getBranchHead
+        ? await host
+            .getBranchHead(ref.repo, (now?.head.ref || task.branch) as string)
+            .catch(() => null)
+        : null;
+    const moved = branch || now?.head.sha || head;
+    const name = prName(record.pr_number);
+    const owner = () => this.ownerOf(record.agent_id);
+    const press = async (a: Omit<MergePrArtifacts, "updated">, sha: string) =>
+      (
+        await this.settle(
+          record,
+          task,
+          null,
+          await owner(),
+          {
+            taskId: task.id,
+            prUrl: record.pr_url,
+            status: a.status,
+            headSha: sha,
+            reason: `PR left open for you: ${a.message}`,
+            ...(a.sentence ? { sentence: a.sentence } : {}),
+            ...(a.failedChecks ? { failedChecks: a.failedChecks } : {}),
+            ...(a.conflicts ? { conflicts: a.conflicts } : {}),
+          },
+          true,
+        )
+      ).sentence ??
+      a.sentence ??
+      null;
+    if (moved && moved !== record.reviewed_head_sha) {
+      const worktree = this.worktreeOf(task);
+      // A head that keeps exactly the reviewed change (main merged in) is the step's to follow.
+      if (worktree && (await this.keepsOwnChange(record, worktree, moved))) return null;
+      return press(headMoved(name, moved, record.reviewed_head_sha), moved);
+    }
+    if (!now) return null;
+    if (now.mergeable === false) {
+      const worktree = this.worktreeOf(task);
+      const files = worktree ? await conflictsIn(this.deps, ref.repo, worktree, now.base.ref) : [];
+      return press(
+        {
+          status: "conflict",
+          message: `the host reports ${now.head.ref} conflicts with ${now.base.ref}${files.length ? ` in ${files.join(", ")}` : ""}`,
+          sentence: `${name} conflicts with ${now.base.ref}${files.length ? ` in ${listWords(files.slice(0, 3))}` : ""}: resolve the conflict on GitHub, then merge it.`,
+          ...(files.length ? { conflicts: files } : {}),
+        },
+        record.reviewed_head_sha,
+      );
+    }
+    const ci = await ciOf(host, ref.repo, record.reviewed_head_sha).catch(() => null);
+    if (!ci) return null;
+    const verdict = judgeChecks(ci.runs, [], ci.statuses);
+    if (verdict.state !== "failed") return null;
+    return press(
+      checksFailed(verdict, record.reviewed_head_sha, false, name),
+      record.reviewed_head_sha,
     );
-    return out.sentence ?? a.sentence ?? null;
   }
 
   /**

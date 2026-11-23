@@ -1008,3 +1008,12 @@ After a successful rebase the PR executor records `git diff --name-only base...H
 the list under `in_flight_files` in the session handoff, which is what peers use for overlap
 detection (`runtime.md` § Peer awareness). The diff is informational: a failure to compute it
 never fails the pull request.
+
+## GitHubHost: a slow body is GitHub not answering in time (L4-github-120, run L4)
+
+`send` puts the request under `AbortSignal.timeout(requestTimeoutMs)`, which also ends the body
+reads. Every body is read through `json()`, which maps an abort to the same retryable
+`provider_error` "GitHub API at <origin> did not answer in time" and a body cut short otherwise to
+"unreachable", never with the token. `PrTaskExecutor.reachedBase(task, sha)` (read-only, under the
+task folder's lock) tells whether a commit is on the default branch; `takeOut` with `through`
+reverts only the task's own commits that another pull request's merge brought in (`throughPlan`).

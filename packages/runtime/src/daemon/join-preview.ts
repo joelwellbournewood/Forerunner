@@ -1,6 +1,7 @@
 import { DEFAULT_SESSION_CAP_CHF, formatChf } from "@forerunner/billing";
 import type { ProjectRow, StateStore, TaskRow } from "@forerunner/state";
-import { MERGE_MODE_WORDS, mergeModeOf } from "../loop/merge-mode.ts";
+import { statusPullRequestOn } from "../loop/docs.ts";
+import { isClosedRecord, MERGE_MODE_WORDS, mergeModeOf } from "../loop/merge-mode.ts";
 import { moneyWords } from "../session/money-words.ts";
 import { startPendingOf } from "../session/prepared-work.ts";
 import { type LinkIdentity, linkWords, type RepositoryIndex } from "../sources/repository-use.ts";
@@ -254,13 +255,22 @@ function onRepository(deps: Pick<JoinDeps, "identities">, p: ProjectRow): boolea
   return deps.identities(p.repos ?? []).some((l) => l.kind === "repo");
 }
 
-/** A task's pull request that is not merged yet (closed ones included: the store cannot tell). */
+/**
+ * The pull requests of the tasks that are open on GitHub as the store knows it (L4-github-114):
+ * a task's pull request that is neither merged (its own, or merged through another) nor closed
+ * there (`isClosedRecord`: the watcher read the close), and a take-out pull request that waits.
+ * Before, a pull request closed on GitHub counted as open, beside its row's "Accepted · pull
+ * request closed".
+ */
 async function openPullRequests(store: StateStore, tasks: readonly TaskRow[]): Promise<number> {
   let n = 0;
   for (const t of tasks) {
     if (!t.pr_url || t.status === "cancelled") continue;
     const record = await store.mergeRecord.forTask(t.id);
-    if (record?.state !== "merged") n += 1;
+    const ofThis = record?.pr_url === t.pr_url ? record : undefined;
+    if (ofThis?.take_out_state === "open") n += 1;
+    if (ofThis?.state === "merged" || (ofThis && isClosedRecord(ofThis))) continue;
+    n += 1;
   }
   return n;
 }
@@ -296,6 +306,11 @@ export async function joinPreview(
       { label: "Project budget", value: projectBudgetWords(p, rate) },
       ...(onRepository(deps, p)
         ? [{ label: "Who merges", value: MERGE_MODE_WORDS[mergeModeOf(p.settings)] }]
+        : []),
+      // L4-github-113: the status pull request moves too, so its setting is named (a project
+      // worked on together has none, L4-github-103).
+      ...(onRepository(deps, p) && !isTogether(p)
+        ? [{ label: "Status pull request", value: statusPullRequestOn(p) ? "On" : "Off" }]
         : []),
       {
         label: "Research reads",

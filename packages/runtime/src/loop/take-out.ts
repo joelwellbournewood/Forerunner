@@ -16,6 +16,7 @@ import {
   unknownShapeSentence,
 } from "../daemon/take-out-words.ts";
 import { parsePullUrl } from "./merge.ts";
+import { MERGED_THROUGH, throughNumberOf } from "./merge-mode.ts";
 
 /**
  * "Take this work out" on a merged task (merged-actions, the owner's decision of 2026-11-02 on
@@ -48,6 +49,8 @@ export interface TakeOutGitPort {
     mergeSha: string;
     headSha: string | null;
     branch: string;
+    /** L4-github-112: only the task's own commits that `mergeSha` brought in (its PR was closed). */
+    through?: boolean;
   }): Promise<TakeOutGitResult>;
 }
 
@@ -77,9 +80,17 @@ function takeOutBody(
   number: number,
   how: { how: MergeMethod; sure: boolean },
   builtOn: readonly string[],
+  /** L4-github-112: the pull request its change reached main through (its own was closed). */
+  through?: number | null,
 ): string {
+  const merged =
+    through === undefined
+      ? mergedHow(how.how, how.sure)
+      : through
+        ? `closed, its change merged through #${through}`
+        : "closed, its change merged through another";
   const lines = [
-    `Takes out the work of ${quoted(task.title)} (#${number}, ${mergedHow(how.how, how.sure)}): it reverts that change on a branch of its own. Nothing reaches the default branch until you merge this.`,
+    `Takes out the work of ${quoted(task.title)} (#${number}, ${merged}): it reverts that change on a branch of its own. Nothing reaches the default branch until you merge this.`,
     "",
     builtOn.length
       ? `Later tasks built on it: ${andList(builtOn.map(quoted))}. Their work may need it: check them before you merge this.`
@@ -176,6 +187,20 @@ export class TaskTakeOut {
       });
       return refused("GitHub did not answer, so nothing was taken out. Try again later.");
     }
+    // L4-github-112: its pull request was closed, but its reviewed change reached main through a
+    // pull request that built on it (the watcher's merged-through record): only its own commits
+    // that merge brought in are taken out, from that merge commit up to its reviewed head.
+    const through =
+      !pr.merged && record?.state === "merged" && record.last_outcome === MERGED_THROUGH
+        ? { number: throughNumberOf(record), head: record.reviewed_head_sha || pr.head.sha }
+        : null;
+    if (through) {
+      if (!record?.merge_sha)
+        return refused(
+          `Forerunner is still reading where the change of #${ref.number} reached main. Try again in a minute.`,
+        );
+      pr = { ...pr, merged: true, mergeCommitSha: record.merge_sha };
+    }
     if (!pr.merged)
       return refused(
         `#${ref.number} is not merged, so the work of ${quoted(task.title)} is not in main: close #${ref.number} on GitHub if you do not want it.`,
@@ -192,8 +217,9 @@ export class TaskTakeOut {
         task,
         number: ref.number,
         mergeSha,
-        headSha: pr.head.sha || null,
+        headSha: (through ? through.head : pr.head.sha) || null,
         branch,
+        ...(through ? { through: true } : {}),
       });
     } catch (e) {
       this.logger.warn("take-out failed", { taskId, error: redact(errorMessage(e)).slice(0, 500) });
@@ -225,7 +251,13 @@ export class TaskTakeOut {
       // new one is opened for the new branch.
       opened = await host.createPullRequest(done.repo, {
         title: `Take out: ${task.title.replace(/\s+/g, " ").trim()}`,
-        body: takeOutBody(task, ref.number, { how: done.how, sure: done.sure !== false }, later),
+        body: takeOutBody(
+          task,
+          ref.number,
+          { how: done.how, sure: done.sure !== false },
+          later,
+          ...(through ? [through.number] : []),
+        ),
         head: done.branch,
         base: done.base,
       });

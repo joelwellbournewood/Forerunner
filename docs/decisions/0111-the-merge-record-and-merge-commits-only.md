@@ -564,3 +564,54 @@ attempt, files its "changed after the review" card then too, as for a head the p
 For any other head that differs from the listing, the head check reads the pull request again
 before it refuses: a rebuild the watcher's poll pushed between the press's read and its check is
 Forerunner's own push, not a commit the review did not read.
+
+## Amendment (2026-11-23, run L4): merges say what is true now (l4-github-merge)
+
+Live check 4 and run L3's leftovers found the merge side saying things that were no longer true.
+Decided, each tested at the boundary the person uses (`dependent-branches-merge.test.ts` and
+`real-daemon.test.ts`, "l4-github-merge, run L4"):
+
+1. **Merged through another (replaces point 4 of the 2026-11-15 amendment).** A pull request
+   closed on GitHub whose reviewed commit is on main all the same, because a pull request that
+   built on it was merged there, is recorded as merged through it: the record says `merged`
+   with `last_outcome` `merged_through` (no migration: the outcome is free text), the merge
+   commit of the one it came through once that merge is read, and "#46 was closed, but its
+   change reached main through #48.". The watcher may read the two events in either order
+   (`closedOnHost` asks `PrTaskExecutor.reachedBase`; `mergedOnHost` checks the closed tasks
+   the merged one built on), and a daemon started between them reads the same. The Tasks row
+   reads "Merged through #48" with that sentence and Take this work out; one card offers Take
+   this work out (a pull request that reverts only the task's own commits that the merge
+   brought in, `PrTaskExecutor.takeOut` with `through`, `throughPlan`) and Keep it. Nothing is
+   written to GitHub before the person presses.
+2. **A pull request closed on GitHub closes its merge cards** as a merge does (`closeMergeCards`
+   with a reason; the sweep closes one an earlier version left open): Answered "Closed: #33 was
+   closed on GitHub.". "I merged it" is never offered for it. A cancelled task's pull request is
+   read for its state too (once, no event fires; `cancelledPullRequests` in the watcher); its
+   close is recorded as a merge record left to the person with `last_outcome` closed (a record is
+   pinned for one that never had one), so chat's facts read "Closed without merging".
+3. **The press reads each pull request of its chain once before it answers**
+   (`ReviewedPrMerge.headMovedNow`): the branch as GitHub has it (`getBranchHead`: GitHub updates
+   the pull request's head a moment after a push), its mergeable state and the checks on the
+   reviewed head. A head that moved, a conflict or a failed check is refused at once in the merge
+   step's own words, the record, row and one card settled as the merge step settles them; checks
+   still running keep "merges when its checks pass"; nothing merges a pull request whose check
+   failed, and the merge's PUT stays pinned to the sha. The reads are read-only.
+4. **GitHub's merge reads as GitHub's.** A merge the step finds already made on GitHub
+   (`alreadyMerged`) is recorded `merged_on_host` and `MergeOutcome.alreadyMerged` says it: a
+   rebuild card's Merge then answers "#59 was merged on GitHub already."; only Forerunner's own
+   merge reads "Merged #59.".
+5. **A pull request the press finds closed is settled at the press** (L4-github-124 (a), added
+   by the fix-up of the same day). When the pressed chain builds on a pull request that is no
+   longer listed open and not merged on its record, the press reads that pull request once
+   after the chain's own branch check; one closed on GitHub without a merge is settled as the
+   watcher's report settles it (`DependentBranches.closedAtPress` over `closedOnHost`: "#46 was
+   closed without merging." or merged through another, its merge cards closed), so its Tasks row
+   reads "Accepted · pull request closed" right after the press, also when the press is refused.
+   What built on it is not rebuilt there: the press's branch check already rebuilt the chain it
+   merges, and the watcher's next poll, which reads the close again, rebuilds the rest; so the
+   press writes to GitHub only for what the person pressed. One still open (its task redone or
+   cancelled) is left as it is, and one merged on GitHub is left to that poll, whose report tells
+   the merge's listeners once.
+
+Left for later: a Close button for a cancelled task's pull request still open on GitHub (the
+owner's answer of 2026-11-18, ADR 0105 point 4) is not built in this round.

@@ -3105,3 +3105,28 @@ another project here uses answers 409 `conflict` with `inUseSentence` and `detai
 Tests: `test/onerepo-link.test.tsx` "L4-creds-23" (both through the screens) and
 `test/contracts.test.ts` "L4-creds-23" (the answers parsed with the daemon's `DocView` and
 `ErrorBody`; `real-daemon.test.ts` C2-left-13 and OR-04 assert the daemon's own).
+
+## Joined projects and Costs' tries (l4-github-merge, run L4)
+
+The header (`Shell.tsx`) names the project on screen also when it is not in the active list (a
+project joined into another or removed): it reads its card once (`client.project`). The
+Overview's Your files of a joined project reads 'Its files are in "<kept>".' with a link
+(`joined-files`). Costs' Accepted column reads `accepted / tries` (`CostBucket.tries`, `runs`
+from an older daemon), titled "Accepted by the critic / tries; a run paused and continued is one
+try". The fake daemon gives a joined project no folder, as the daemon does.
+
+fixup-l4-github-merge (2026-11-23, L4-money-301): the fake daemon's Costs fixture (`COSTS` in
+`test/fixtures.ts`) carries `tries` as the daemon gives it: every bucket the critic judges has
+it, one with `accepted: null` has none. "Write the members guide" paused once and a later run
+continued it (runs 2, tries 1, accepted 1), so the coder's and Sonnet's runs are one more than
+their tries and the Accepted column ("7 / 9 (78%)", "5 / 6 (83%)") is read against the tries.
+`project.test.tsx` ("l4-github-merge, run L4") reads those rows from the fake; the real daemon's
+rule is pinned in `real-daemon.test.ts` beside "Costs: tasks by title ..." (a paused run and the
+run a Continue started read runs 2, accepted 1, tries 1 for the task, the coder and the model).
+
+fixup-l4-github-merge (2026-11-23, L4-github-124 (a)): the fake daemon's
+`pullRequestPressFinds` takes `closedDependency` (`{ taskId, number }`): the press then settles
+that task's merge record as the daemon's `closedAtPress` does ("#N was closed without merging.",
+`last_outcome` closed) and emits `project.changed`, so its Tasks row reads "Accepted · pull
+request closed" right after the refused press (`project-overview.test.tsx`, "l4-github-merge, run
+L4 (fixup)").

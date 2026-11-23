@@ -2284,6 +2284,33 @@ export class PrTaskExecutor implements TaskExecutor {
   }
 
   /**
+   * L4-github-112: whether commit `sha` of the task's branch is on the default branch as the
+   * host has it now (fetched in the task's worktree, under its lock): a pull request closed
+   * without merging whose reviewed change reached main through another's merge. Null when it
+   * cannot be told now (no worktree, the folder busy, git failed): the caller reads it again.
+   */
+  async reachedBase(task: TaskRow, sha: string): Promise<boolean | null> {
+    const dir = join(this.deps.worktreeRoot, safeSegment(task.id));
+    if (!sha || !existsSync(join(dir, ".git"))) return null;
+    try {
+      return await tryWorktree(dir, async () => {
+        const target = await this.deps.repoFor(task);
+        if (!target) return null;
+        const git = await this.gitFor(target, dir);
+        await git.fetch();
+        if (!(await git.hasRef(sha))) return false;
+        return git.isAncestor(sha, `origin/${target.base}`);
+      });
+    } catch (e) {
+      this.logger.warn("whether a commit reached main not read", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+      return null;
+    }
+  }
+
+  /**
    * "Take this work out" (merged-actions, the owner's decision of 2026-11-02): a branch from the
    * default branch as the host has it, with commits that take the task's merged pull request back
    * by the way it was merged (`takeOutPlan`), pushed under `branch` (forced with a lease, so an
@@ -2298,6 +2325,12 @@ export class PrTaskExecutor implements TaskExecutor {
     mergeSha: string;
     headSha: string | null;
     branch: string;
+    /**
+     * L4-github-112: the task's pull request was closed and its change reached main through
+     * another's merge (`mergeSha`, that pull request's merge commit): only the task's own commits
+     * that this merge brought in (up to `headSha`, its reviewed head) are taken out.
+     */
+    through?: boolean;
   }): Promise<TakeOutGitResult> {
     const target = await this.deps.repoFor(req.task);
     if (!target) return { kind: "no_repository" };
@@ -2326,6 +2359,7 @@ export class PrTaskExecutor implements TaskExecutor {
       mergeSha: string;
       headSha: string | null;
       branch: string;
+      through?: boolean;
     },
   ): Promise<TakeOutGitResult> {
     const git = await this.gitFor(target, dir);
@@ -2340,12 +2374,18 @@ export class PrTaskExecutor implements TaskExecutor {
     let head = req.headSha;
     if (head && !(await git.hasRef(head))) await git.fetchRef(`refs/pull/${req.number}/head`);
     if (head && !(await git.hasRef(head))) head = null;
-    const plan = await takeOutPlan(git, req.mergeSha, head);
+    const plan = req.through
+      ? await throughPlan(git, req.mergeSha, head)
+      : await takeOutPlan(git, req.mergeSha, head);
     if (!plan) return { kind: "unknown_shape" };
     // R-takeoutdep (leftovers7-merge): a merge commit whose merged side carries work of a task
     // this one built on (a dependency merged by GitHub through it, out of dependency order) is
     // not reverted whole with -m 1, which took the dependency's work out of main too.
-    if (plan.mainline && (await this.carriesDependencyWork(git, req.task, req.mergeSha)))
+    if (
+      !req.through &&
+      plan.mainline &&
+      (await this.carriesDependencyWork(git, req.task, req.mergeSha))
+    )
       return { kind: "unknown_shape" };
     await git.createBranch(req.branch, base);
     const reverted = await git.revert(plan.commits, plan.mainline ? { mainline: 1 } : {});
@@ -3174,6 +3214,27 @@ export async function takeOutPlan(
   if (forked && (await git.patchId(parent, mergeSha)) === (await git.patchId(forked, headSha)))
     return { how: "squash", commits: [mergeSha], mainline: false, sure: true };
   return null;
+}
+
+/**
+ * L4-github-112: the take-out of a task whose pull request was closed while its change reached
+ * main through another's merge commit `mergeSha`: the task's own commits that merge brought in
+ * (`git rev-list --no-merges <head> ^<mergeSha's first parent>`), reverted newest first. Null
+ * (nothing is pushed) when the head is unknown or not in that merge, or the range holds a merge
+ * commit of its own (its shape cannot be undone safely).
+ */
+export async function throughPlan(
+  git: GitOps,
+  mergeSha: string,
+  headSha: string | null,
+): Promise<{ how: MergeMethod; commits: string[]; mainline: boolean; sure: boolean } | null> {
+  if (!headSha) return null;
+  const [before] = await git.parentsOf(mergeSha);
+  if (!before || !(await git.isAncestor(headSha, mergeSha))) return null;
+  const own = await git.commitsNotIn(before, headSha);
+  if (!own.length) return null;
+  if (await git.hasMergesSince(before, headSha)) return null;
+  return { how: "merge", commits: [...own].reverse(), mainline: false, sure: true };
 }
 
 export function requireRepo(e: unknown): never {

@@ -342,3 +342,27 @@ should be able to work seamlessly in the same git."
    written with the daemon's `Clock`, at the press and when a removed together project is
    brought back, as every other stamp; a folder source's marker is read through the scan's own
    reader.
+
+## Amendment (2026-11-23, run L4): the joined project's status pull request and screens (l4-github-merge)
+
+Point 3 ("one status pull request again") left the closing project's open status pull request
+listed nowhere after the join when the kept project's own Status pull request setting was off
+(live check 4, L4-github-7). Decided:
+
+1. After Make one project the kept project lists an open `fr/status` pull request whose hidden
+   mark names a project joined into it as its docs row with Open and Merge, whatever its own
+   setting (`isJoinedStatusPr` in `pull-requests.ts`); the status writer still writes there only
+   once the kept project's setting is on. Another project's, its own and an unmarked one are
+   listed as before.
+2. The dialog names the Status pull request setting of each repository project (not a project
+   worked on together) and, where they differ, 'Status pull request: the setting of "Site"
+   applies to the moved work: off.' (every such line now reads "the setting of", L4-github-108's
+   words). Its open pull request count leaves out one GitHub closed (`isClosedRecord`) and counts
+   an open take-out.
+3. A joined project's page names it in the header, has no folder of its own (never the docs
+   clone's path with its id; 'Its files are in "Site".') and its Last result says 'Its tasks went
+   on in "Site".' instead of offering a moved task as ready.
+4. Costs of the kept project read a moved task's own runs, tries and accepted runs
+   (`taskRunFacts`); money and totals stay the project's own ledger (BA-9, OJ-07).
+5. The held hands-off start's refusal is one sentence of at most 100 characters: 'A session of
+   "Kite club" starts by itself soon: make one project after it ran.'.

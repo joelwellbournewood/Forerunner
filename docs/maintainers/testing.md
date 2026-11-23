@@ -3323,3 +3323,11 @@ none`; the egress proxy's routes are the adapter test's), Docker Desktop on Wind
 user the container runs as (the stand-in coder only runs `node --check` in it, which writes
 nothing; the host uid:gid on rootful Docker is `sandbox-factory.test.ts`'s and the adapter's
 integration test's).
+
+## The fake GitHub's pull head lag (L4-creds-22, run L4)
+
+`host.ops.pullHeadLag = N` makes the fake GitHub show a pull request's old head for its next N
+reads after a push to its branch, while the branch ref and a merge pinned to a sha see the new one,
+as GitHub's pull request follows a push a moment late. Off (0) by default; the press's tests in
+`dependent-branches-merge.test.ts` and `real-daemon.test.ts` ("l4-github-merge, run L4") turn it
+on. The bench has no switch for it.

@@ -555,13 +555,24 @@ export const COSTS: Record<string, CostView> = {
         words: "Your Claude subscription: CHF 2.60 (estimate, 12% of its allowance)",
       },
     ],
+    // L4-money-301, as the daemon's costView: a work bucket carries its tries (a run that paused
+    // and that a later run continued is one try with it); one the critic does not judge has none.
+    // "Write the members guide" paused once and was continued: 2 runs, 1 try, so the coder's and
+    // Sonnet's runs are one more than their tries.
     byModel: [
-      { key: "sonnet-5.5", label: "Sonnet 5.5", cost: money(28_000_000), runs: 9, accepted: 7 },
+      {
+        key: "sonnet-5.5",
+        label: "Sonnet 5.5",
+        cost: money(28_000_000),
+        runs: 10,
+        accepted: 7,
+        tries: 9,
+      },
       { key: "haiku-5.5", label: "Haiku 5.5", cost: money(3_250_000), runs: 21, accepted: null },
     ],
     bySpecialist: [
-      { key: "coder", label: "coder", cost: money(22_000_000), runs: 6, accepted: 5 },
-      { key: "tester", label: "tester", cost: money(6_000_000), runs: 3, accepted: 2 },
+      { key: "coder", label: "coder", cost: money(22_000_000), runs: 7, accepted: 5, tries: 6 },
+      { key: "tester", label: "tester", cost: money(6_000_000), runs: 3, accepted: 2, tries: 3 },
       { key: "pm", label: "principal", cost: money(3_250_000), runs: 21, accepted: null },
     ],
     byTask: [
@@ -571,6 +582,7 @@ export const COSTS: Record<string, CostView> = {
         cost: money(2_750_000),
         runs: 1,
         accepted: 1,
+        tries: 1,
       },
       {
         key: "task_2",
@@ -578,6 +590,15 @@ export const COSTS: Record<string, CostView> = {
         cost: money(4_500_000),
         runs: 2,
         accepted: 0,
+        tries: 2,
+      },
+      {
+        key: "task_guide",
+        label: "Write the members guide",
+        cost: money(360_000),
+        runs: 2,
+        accepted: 1,
+        tries: 1,
       },
     ],
     byProject: [

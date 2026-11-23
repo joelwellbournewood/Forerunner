@@ -35,7 +35,10 @@ function BucketTable({ title, rows, testId }: { title: string; rows: Bucket[]; t
             <tr>
               <th className="py-1 pr-2">Name</th>
               <th className="py-1 pr-2">Runs</th>
-              <th className="py-1 pr-2" title="Accepted by the critic / runs">
+              <th
+                className="py-1 pr-2"
+                title="Accepted by the critic / tries; a run paused and continued is one try"
+              >
                 Accepted
               </th>
               <th className="py-1 pr-2 text-right">Per accepted</th>
@@ -52,7 +55,9 @@ function BucketTable({ title, rows, testId }: { title: string; rows: Bucket[]; t
                   <td className="py-1 pr-2">
                     {r.accepted === null
                       ? "—"
-                      : `${r.accepted} / ${r.runs} (${Math.round((r.accepted / Math.max(1, r.runs)) * 100)}%)`}
+                      : // L4-money-301: against the tries (a paused run a later run continued is
+                        // one try with it); an older daemon gives runs only.
+                        `${r.accepted} / ${r.tries ?? r.runs} (${Math.round((r.accepted / Math.max(1, r.tries ?? r.runs)) * 100)}%)`}
                   </td>
                   <td className="py-1 pr-2 text-right" data-testid="cost-per-accepted">
                     {per ? <Money value={per} /> : "—"}

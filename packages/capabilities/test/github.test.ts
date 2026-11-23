@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { SimulatedClock } from "@forerunner/platform";
+import { ForerunnerError, SimulatedClock } from "@forerunner/platform";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GitHubHost } from "../src/githost/github.ts";
 import { MemoryGitHost } from "../src/githost/memory.ts";
@@ -385,5 +385,51 @@ describe("d1109-onerepo-join, run C: the stand-in reads owner and name as GitHub
     await expect(host.getRepo({ owner: "o", name: "kites" })).rejects.toThrow(
       "repo o/kites not found",
     );
+  });
+});
+
+describe("l4-github-merge, run L4", () => {
+  /** A fetch that answers 200 with headers at once, then never sends the body until aborted. */
+  const stallingBody = ((_url: string, init?: RequestInit) =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason));
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    )) as typeof fetch;
+
+  it("L4-github-120: a REST answer whose body stalls past the request timeout is GitHub not answering in time (retryable, no token), never a plain abort", async () => {
+    const marker = ["sent", "with", "every", "call"].join("-");
+    const gh = new GitHubHost({
+      token: marker,
+      baseUrl: "http://github.test",
+      fetchImpl: stallingBody,
+      requestTimeoutMs: 50,
+    });
+    const err = await gh.getRepo({ owner: "o", name: "kite" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ForerunnerError);
+    expect((err as ForerunnerError).code).toBe("provider_error");
+    expect((err as ForerunnerError).retryable).toBe(true);
+    expect((err as Error).message).toBe("GitHub API at http://github.test did not answer in time");
+    expect(JSON.stringify(err)).not.toContain(marker);
+    expect(String((err as Error).stack ?? "")).not.toContain(marker);
+  });
+
+  it("L4-github-120: the same for a GraphQL call", async () => {
+    const gh = new GitHubHost({
+      token: "t",
+      baseUrl: "http://github.test",
+      fetchImpl: stallingBody,
+      requestTimeoutMs: 50,
+    });
+    const err = await gh.graphql("query { viewer { login } }", {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ForerunnerError);
+    expect((err as ForerunnerError).code).toBe("provider_error");
+    expect((err as ForerunnerError).retryable).toBe(true);
+    expect((err as Error).message).toBe("GitHub API at http://github.test did not answer in time");
   });
 });

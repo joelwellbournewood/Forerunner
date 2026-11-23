@@ -773,6 +773,15 @@ run C").
   the Inbox or the email token alike; `restorePending` arms such a card again after a restart
   as it was shown (before, it was left to expire and the yes met "it expired"), so its yes is
   refused in the same words (`test/l4-chat-depth.test.ts`).
+- **On Postgres too** (L4-github-121, fixup-l4-github-merge): `test/join-world.ts` holds the
+  pair "Site" and "Kite club" with work and history (`seedPair`), the join's port as the daemon
+  wires it (`joinPort`) and every table's row count per project (`counts`), shared by the SQLite
+  cases (`test/project-join.test.ts`) and `test/project-join.integration.test.ts`, which walks
+  the same join and its Undo on SQLite and on Postgres (its own schema, dropped at the end) and
+  asserts the same counts at each step, the moved numbers OJ-02 pins and the same sentences.
+  It runs where `FORERUNNER_TEST_PG` is set (CI's Postgres on Linux and Windows) and is skipped
+  with that reason in its name elsewhere. `test/helpers.ts` `world({ store })` takes the store
+  such a case opened.
 
 ### Who starts a session (d1109-starts-engine, [ADR 0118](../decisions/0118-who-starts-a-session.md))
 

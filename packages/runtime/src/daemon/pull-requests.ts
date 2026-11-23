@@ -1,4 +1,9 @@
-import type { GitHost, PullRequestInfo, RepoRef } from "@forerunner/capabilities";
+import {
+  type GitHost,
+  type PullRequestInfo,
+  type RepoRef,
+  readForerunnerMarker,
+} from "@forerunner/capabilities";
 import { ACCEPTED_WITHOUT_REVIEW } from "@forerunner/critic";
 import { errorMessage, ForerunnerError, isAbsolute, log, redact } from "@forerunner/platform";
 import type { MergeRecordRow, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
@@ -10,7 +15,7 @@ import {
   parseRepoRef,
   STATUS_BRANCH,
 } from "../loop/docs.ts";
-import { buildsOnSentence, type ReviewedPrMerge, rulesBlock } from "../loop/merge.ts";
+import { buildsOnSentence, parsePullUrl, type ReviewedPrMerge, rulesBlock } from "../loop/merge.ts";
 import {
   MERGE_MODE_WORDS,
   type MergeMode,
@@ -20,6 +25,7 @@ import {
 } from "../loop/merge-mode.ts";
 import type { TaskTakeOut } from "../loop/take-out.ts";
 import { ACCEPTED_AT_SIGNOFF } from "../session/findings.ts";
+import { isTogether } from "../sources/repository-words.ts";
 import type {
   ProjectPullRequestsView,
   ProjectPullRequestView,
@@ -27,6 +33,24 @@ import type {
   PullRequestMergeAnswer,
   PullRequestPreviewAnswer,
 } from "./api-types.ts";
+import { joinedFromOf } from "./join-words.ts";
+
+/**
+ * L4-github-113 (ADR 0117 point 3, amended 2026-11-23): an open status pull request on
+ * `fr/status` whose hidden mark names a project joined into this one: after Make one project it
+ * is this project's, listed as its docs row with Open and Merge whatever this project's own
+ * Status pull request setting is (the dialog said the pull requests move). The status writer
+ * (`loop/docs.ts`) still writes there only once the kept project's setting is on. Its own mark,
+ * an unmarked one and another project's are never listed here.
+ */
+export function isJoinedStatusPr(
+  project: Pick<ProjectRow, "id" | "settings">,
+  pr: { head: { ref: string }; body: string },
+): boolean {
+  if (pr.head.ref !== STATUS_BRANCH || isTogether(project)) return false;
+  const marked = readForerunnerMarker(pr.body)?.project;
+  return !!marked && marked !== project.id && joinedFromOf(project).includes(marked);
+}
 
 /**
  * Where a repository project's work is, for the person (core-experience design §3.4 "Your
@@ -130,6 +154,13 @@ export interface ProjectPullRequestsDeps {
    * never the project's while it names another project. Absent: not read.
    */
   copyMarker?: (projectId: string) => string | null;
+  /**
+   * L4-github-124 (a) (fixup-l4-github-merge): a pull request the pressed chain builds on that
+   * the press read closed on GitHub (`DependentBranches.closedAtPress`): its record, row and
+   * merge cards are settled at once, as the watcher's report settles them. Absent: left to the
+   * watcher's next poll.
+   */
+  closedAtPress?: (task: TaskRow, info: PullRequestInfo) => Promise<void>;
 }
 
 /** "Open this version" of a waiting pull request (merged-actions), as `ProjectDocs` has it. */
@@ -465,7 +496,10 @@ export class ProjectPullRequests {
             : own,
           ...(folder ? { folder } : {}),
         });
-      } else if (isDocsBranch(pr.head.ref) && isProjectDocsPr(project, pr, { soleLinked })) {
+      } else if (
+        isDocsBranch(pr.head.ref) &&
+        (isProjectDocsPr(project, pr, { soleLinked }) || isJoinedStatusPr(project, pr))
+      ) {
         // Only this project's docs PRs (L-16, W15-01): live, another project's stale scaffold PR
         // on the same repository was listed as "The project's standard docs", and another
         // project's open status PR as this one's, with Merge (live check 2).
@@ -722,16 +756,24 @@ export class ProjectPullRequests {
     // head check took the check's own push for a commit pushed after the review and refused the
     // press with "changed after the review", the row lost its Merge, and B was never merged.
     const rebuiltNow = new Set<string>();
+    // L4-github-124 (a): the pull requests the chain builds on that are no longer listed open.
+    const gone = new Map<string, TaskRow>();
+    let checkRefused: string | null = null;
     if (!waits && merge.checkBranchNow) {
       const open = new Set(
         view.waiting.flatMap((r) => (r.kind === "task" && r.taskId ? [r.taskId] : [])),
       );
       for (const task of chain) {
-        if (!(await this.buildsOnGone(task, open))) continue;
+        const away = await this.goneUnder(task, open);
+        if (!away.length) continue;
+        for (const dep of away) gone.set(dep.id, dep);
         const before = (await store.mergeRecord.forTask(task.id))?.reviewed_head_sha ?? null;
         // The person's press is the attempt: a head moved since the review files its card.
         const checked = await merge.checkBranchNow(task, { pressed: true });
-        if (checked.left) return refused(checked.left.sentence);
+        if (checked.left) {
+          checkRefused = checked.left.sentence;
+          break;
+        }
         const after = (await store.mergeRecord.forTask(task.id))?.reviewed_head_sha ?? null;
         if (after && after !== before) rebuiltNow.add(task.id);
         if (checked.owed) {
@@ -740,21 +782,33 @@ export class ProjectPullRequests {
             waits = wait;
             continue;
           }
-          return refused(notCheckedSentence(row.number));
+          checkRefused = notCheckedSentence(row.number);
+          break;
         }
       }
     }
+    // L4-github-124 (a) (fixup-l4-github-merge): each of them is read once now, after the
+    // chain's own branch check (which rebuilt what the press merges), and one closed on GitHub
+    // is settled as the watcher's report settles it: its Tasks row reads closed (or merged
+    // through) right after the press, also when the press is refused. Before, it read "waiting
+    // for you to merge" until the watcher's next poll. Read-only on GitHub.
+    await this.settleClosedAtPress(project.id, [...gone.values()]);
+    if (checkRefused) return refused(checkRefused);
     // L3-github-3: a head that moved on GitHub since the review (the Overview's read lists it)
     // is said at once, in the merge step's words, and nothing of the chain merges; one that keeps
     // the reviewed change (main merged in) is followed by the merge step as before. Before (live
     // check 3, G4) the press answered "Merging #40." and the refusal came about 4 s later.
+    // L4-github-118 with L4-creds-22: each pull request of the chain is read once now, its
+    // branch head included (GitHub updates the listing's head a moment after a push), and a
+    // head that moved, a conflict or a check that failed since Forerunner's last look is refused
+    // at once in the merge step's words (its record, row and one card settled); before, the
+    // press answered "Merging #N." and the refusal came seconds later (live check 4, L4-l3-11).
     if (!waits && merge.headMovedNow)
       for (const task of chain) {
         if (rebuiltNow.has(task.id)) continue;
         const record = await store.mergeRecord.forTask(task.id);
-        const number = record?.pr_number;
-        const head = listed.find((p) => p.number === number)?.head.sha;
-        if (!record?.reviewed_head_sha || !head || head === record.reviewed_head_sha) continue;
+        if (!record?.reviewed_head_sha) continue;
+        const head = listed.find((p) => p.number === record.pr_number)?.head.sha ?? "";
         const moved = await merge.headMovedNow(task, head);
         if (moved) return refused(moved);
       }
@@ -776,12 +830,14 @@ export class ProjectPullRequests {
   }
 
   /**
-   * L3-github-1: whether `task` builds (directly or through others) on a task whose pull request
-   * is not listed open (`open`: the task rows of the view) and whose merge record does not say
+   * L3-github-1: the tasks `task` builds on (directly or through others) whose pull request is
+   * not listed open (`open`: the task rows of the view) and whose merge record does not say
    * merged: closed on GitHub, merged there and not read yet, or its task redone or cancelled.
+   * Empty when it builds on none (L4-github-124 (a): the press reads each of them once).
    */
-  private async buildsOnGone(task: TaskRow, open: ReadonlySet<string>): Promise<boolean> {
+  private async goneUnder(task: TaskRow, open: ReadonlySet<string>): Promise<TaskRow[]> {
     const { store } = this.deps;
+    const out: TaskRow[] = [];
     const seen = new Set<string>([task.id]);
     const stack = [...(task.depends_on ?? [])];
     while (stack.length) {
@@ -792,12 +848,40 @@ export class ProjectPullRequests {
       if (!dep) continue;
       if (dep.pr_url && !open.has(dep.id)) {
         const record = await store.mergeRecord.forTask(dep.id);
-        if (record?.state !== "merged" || record.pr_url !== dep.pr_url) return true;
+        if (record?.state !== "merged" || record.pr_url !== dep.pr_url) out.push(dep);
         continue;
       }
       stack.push(...(dep.depends_on ?? []));
     }
-    return false;
+    return out;
+  }
+
+  /**
+   * L4-github-124 (a) (fixup-l4-github-merge): each task the pressed chain builds on whose pull
+   * request is no longer listed open is read on GitHub once; one closed there without a merge
+   * is settled now (`closedAtPress`: its record, row and merge cards, as the watcher's report
+   * settles them). One still open (its task redone or cancelled) or merged on GitHub is left as
+   * it is (the watcher's next poll reads a merge and tells its listeners once). Nothing is
+   * written to GitHub; a read that fails leaves it to that poll.
+   */
+  private async settleClosedAtPress(projectId: string, deps: readonly TaskRow[]): Promise<void> {
+    const settle = this.deps.closedAtPress;
+    if (!settle) return;
+    for (const dep of deps) {
+      const parsed = dep.pr_url ? parsePullUrl(dep.pr_url) : null;
+      if (!parsed) continue;
+      try {
+        const info = await this.deps.host.getPullRequest(parsed.repo, parsed.number);
+        if (info.state === "open" || info.merged) continue;
+        await settle(dep, info);
+      } catch (e) {
+        this.logger.warn("closed pull request not settled at the press", {
+          projectId,
+          pr: parsed.number,
+          error: redact(errorMessage(e)).slice(0, 300),
+        });
+      }
+    }
   }
 
   /** W15-05: the sentence of a task's merge that waits for what is left in its folder, or null. */

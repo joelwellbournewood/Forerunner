@@ -36,6 +36,14 @@ export class RepoOps {
    * true`) to see the null the app meets live. The bench has no switch for it.
    */
   lazyMergeability = false;
+  /**
+   * L4-creds-22: GitHub's pull request follows a push to its branch a moment late (live check 4:
+   * Merge pressed right after a push read the old head in the listing). With N > 0, after a
+   * push the API shows the pull request's old head for its next N reads (listings included),
+   * while the branch ref and a merge pinned to a sha already see the new one. Off (0) by
+   * default; a test sets it (`host.ops.pullHeadLag = 2`).
+   */
+  pullHeadLag = 0;
   /** The base..head pair each pull request's read already started working out (lazy mode). */
   private readonly lazyStarted = new WeakMap<object, string>();
 
@@ -318,6 +326,8 @@ export class RepoOps {
           this.store.emit(repo, "pull_request", "closed", this.pullPayload(repo, issue), actor);
           continue;
         }
+        if (this.pullHeadLag > 0 && p.headSha && p.headSha !== after)
+          p.shownHead = { sha: p.shownHead?.sha ?? p.headSha, reads: this.pullHeadLag };
         p.headSha = after;
         issue.updatedAt = this.clock.nowIso();
         await this.computeMergeability(repo, issue);

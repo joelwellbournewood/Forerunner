@@ -17,6 +17,7 @@ import {
   type ReviewedPrMerge,
 } from "../loop/merge.ts";
 import { redoneMergeCard } from "../loop/merge-mode.ts";
+import type { TaskTakeOut } from "../loop/take-out.ts";
 import type { PreparePort } from "./prepared-work.ts";
 import { answeredTaskIds, prepareAnswer, recordStart } from "./resume-work.ts";
 
@@ -54,6 +55,9 @@ export interface PrAnswersResult {
   merging: number;
   /** A rebuild card's Redo (R-rebuildcard). */
   redone: number;
+  /** L4-github-112: a merged-through card's Take this work out and Keep it. */
+  takenOut?: number;
+  kept?: number;
   /** Answers that changed nothing: the task moved on, or the answer was not an option. */
   skipped: number;
 }
@@ -75,6 +79,12 @@ export interface PrAnswersDeps {
    * Start; the daemon's `prepareWork`, absent in a one-shot.
    */
   prepare?: PreparePort;
+  /**
+   * L4-github-112: "Take this work out" on the card of a closed pull request whose change
+   * reached main through another (`TaskTakeOut.takeOut`, as the Tasks row's button). Absent: the
+   * answer is recorded and the card says to use the Tasks row.
+   */
+  takeOut?: Pick<TaskTakeOut, "takeOut">;
 }
 
 const PAGE = 200;
@@ -103,6 +113,8 @@ export async function syncPrAnswers(deps: PrAnswersDeps): Promise<PrAnswersResul
       else if (outcome === "left_open") out.leftOpen++;
       else if (outcome === "merging") out.merging++;
       else if (outcome === "redone") out.redone++;
+      else if (outcome === "taken_out") out.takenOut = (out.takenOut ?? 0) + 1;
+      else if (outcome === "kept") out.kept = (out.kept ?? 0) + 1;
       else out.skipped++;
     } catch (e) {
       logger.warn("pull request answer not applied", { requestId: row.id, error: errorMessage(e) });
@@ -127,7 +139,7 @@ export function isLeftOpenRequest(
 /** The answer of a merge-left-open request as one of its options, or null. */
 export function leftOpenAnswer(
   answer: JsonValue | null,
-): "merged" | "left_open" | "merge" | "redo" | null {
+): "merged" | "left_open" | "merge" | "redo" | "take_out" | "keep" | null {
   const raw =
     typeof answer === "string"
       ? answer
@@ -142,6 +154,9 @@ export function leftOpenAnswer(
   // A rebuild's card (R-rebuildcard).
   if (/^(merge|merge it)$/.test(v)) return "merge";
   if (/^(redo|redo it|redo the task)$/.test(v)) return "redo";
+  // L4-github-112: the merged-through card.
+  if (/^take (this|the) work out$/.test(v)) return "take_out";
+  if (/^keep( it)?$/.test(v)) return "keep";
   return null;
 }
 
@@ -269,6 +284,13 @@ async function applyMergeAnswer(deps: PrAnswersDeps, row: HumanRequestRow): Prom
     if (!task) return markMerge(deps, row, "task_moved_on");
     return answer === "merge" ? applyRebuildMerge(deps, row, task) : applyRedo(deps, row, task);
   }
+  if (answer === "take_out" || answer === "keep") {
+    if (!offered(answer === "take_out" ? "take this work out" : "keep it"))
+      return markMerge(deps, row, "unrecognized_answer");
+    if (!task) return markMerge(deps, row, "task_moved_on");
+    if (answer === "keep") return markMerge(deps, row, "kept");
+    return applyTakeOut(deps, row, task);
+  }
   const outcome = !answer ? "unrecognized_answer" : !task ? "task_moved_on" : answer;
   return store.transaction(async (tx) => {
     if (task && answer === "merged") {
@@ -321,10 +343,16 @@ async function applyRebuildMerge(
   if (already) return markMerge(deps, row, "merging", { merge_result: already });
   // Marked first: a second sync while the merge runs does not merge it twice.
   await markMerge(deps, row, "merging");
+  const record0 = await store.mergeRecord.forTask(task.id);
   if (deps.merge) {
     const records = await deps.merge.approveInOrder([task], deps.humanId);
     const outcomes = records.length ? await deps.merge.mergeApproved(records, deps.humanId) : [];
     const last = outcomes.at(-1);
+    // L4-github-122: merged on GitHub a moment before the step's own call: GitHub's merge.
+    if (last?.status === "merged" && last.alreadyMerged && record0?.pr_number)
+      return markMerge(deps, row, "merging", {
+        merge_result: `#${record0.pr_number} was merged on GitHub already.`,
+      });
     if (last?.status === "merged")
       return markMerge(deps, row, "merging", { merge_result: "merged" });
     if (last?.sentence) return markMerge(deps, row, "merging", { merge_result: last.sentence });
@@ -340,6 +368,26 @@ async function applyRebuildMerge(
       sentence: `#${record.pr_number} merges now: you pressed Merge.`,
     });
   return "merging";
+}
+
+/**
+ * L4-github-112: the merged-through card's Take this work out, as the Tasks row's button does
+ * (`TaskTakeOut.takeOut`: a pull request that takes only the task's own change out of main;
+ * nothing reaches main until the person merges it). Marked first, so a second sync while it
+ * runs opens no second pull request; the card's Answered line is what came of it.
+ */
+async function applyTakeOut(
+  deps: PrAnswersDeps,
+  row: HumanRequestRow,
+  task: TaskRow,
+): Promise<string> {
+  await markMerge(deps, row, "taken_out");
+  if (!deps.takeOut)
+    return markMerge(deps, row, "taken_out", {
+      take_out_result: `Not taken out here: press Take this work out on the row of "${task.title}" in Tasks.`,
+    });
+  const answer = await deps.takeOut.takeOut(task.id);
+  return markMerge(deps, row, "taken_out", { take_out_result: answer.sentence });
 }
 
 /**

@@ -175,3 +175,25 @@ describe("l3-merge, run L3", () => {
     );
   });
 });
+
+describe("l4-github-merge, run L4", () => {
+  it("L4-github-123: a title whose quoted part the word cut would drop whole is kept whole when it overruns a little; a long one is still cut before its quote", () => {
+    // Live check 4: '"Write kite/ferry.txt about the ferry trip to…" changed after the review'.
+    const t55 = 'Write kite/ferry.txt about the ferry trip to "Seal Bay"';
+    expect(t55).toHaveLength(55);
+    const card = { status: "head_moved" };
+    expect(leftOpenCardTitle(card, t55)).toBe(`"${t55}" changed after the review`);
+    const t53 = 'Write kite/trip.txt about the ferry run to "Seal Bay"';
+    expect(t53).toHaveLength(53);
+    expect(leftOpenCardTitle(card, t53)).toBe(`"${t53}" changed after the review`);
+    const t70 = 'Write kite/ferry-notes.txt about the long ferry trip out to "Seal Bay"';
+    expect(t70).toHaveLength(70);
+    const shown = leftOpenCardTitle(card, t70);
+    expect(shown).toBe(
+      '"Write kite/ferry-notes.txt about the long ferry…" changed after the review',
+    );
+    expect(balanced(shown)).toBe(true);
+    // Callers without slack (a notification's title) cut as before.
+    expect(balancedCut(t55, 50, cutWords, 0)).toBe(cutWords(t55, 50));
+  });
+});
