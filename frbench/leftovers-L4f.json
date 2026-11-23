@@ -1,0 +1,14 @@
+{
+ "why": "Run L4 sub-run L4f's items that only the real model can show, for the final check.",
+ "base": "987614d",
+ "items": [],
+ "for_session_lead": {
+  "live_checks_for_F": [
+   "LC-C28: a change in the person's own words read back and confirmed: GET /changes byAgent false, no GET /inbox Update.",
+   "LC-C13/C16: no 'needs your yes' sentence and no CHAT_PENDING_NOTE text beside a read-back in the real model's reply; withoutCardTalk keeps the real answers beside a card (live samples).",
+   "F-7: two chat read-backs left 11 minutes and across a restart still wait; Yes applies.",
+   "F-11: the reviewer that writes no file is held to its report on the real model (U-098 step 4).",
+   "F-2: a pause asked in chat with a model-written note is read back before it applies."
+  ]
+ }
+}

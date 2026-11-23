@@ -1,0 +1,221 @@
+{
+ "area": "l4-selftasks-chat",
+ "branch": "fix/l4-selftasks-chat",
+ "head_sha": "dfa34779927ef8d42f9afde51ece337edf572a91",
+ "commits": [
+  {
+   "sha": "4d2a2b6dc64e01a6a4f59a5d5a31d5f804473312",
+   "subject": "commands, chat: a chat read-back waits across a restart even when its task moved since; its Yes says what changed (L4-selftasks-117)"
+  },
+  {
+   "sha": "30410159ca77fef2114097c315e108eb270a3c53",
+   "subject": "chat: the card says the change once, and the model's answers to the rest of the line stay (L4-selftasks-126)"
+  },
+  {
+   "sha": "e052674395a4c81b600d00d5c74bd03fb3f8c62a",
+   "subject": "injection: a brief channel, the researcher's reach (report-008) and the hand-over judge (L4-selftasks-121)"
+  },
+  {
+   "sha": "c91f657f8d2daaddde3c026fc4e13e35cc124d28",
+   "subject": "words: what waits on a decision is said beside it; the suggestion card's reasons leave its change list; fix the tasks without Claude says what to do (L4-selftasks-130, -129, -127)"
+  },
+  {
+   "sha": "067222470a9e0eee63c44db584e36c8bddf8f807",
+   "subject": "chat: a turn that answered a card tells the screens; a note read back ends once; the guide says what the drawer shows (L4-selftasks-117, -120, -116)"
+  },
+  {
+   "sha": "fe84c7c58b157274ca475b7c35f41956d1453a89",
+   "subject": "commands: a Yes on a task finished since keeps C-38's one sentence; the decision record notes the read-back fix-up (L4-selftasks-117)"
+  },
+  {
+   "sha": "dfa34779927ef8d42f9afde51ece337edf572a91",
+   "subject": "docs: commands guide says which refusal keeps the command's words at a late Yes (L4-selftasks-117)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1: a chat read-back was dropped at a restart if its task had moved in the meantime. Example: a pause read-back for \"Write the FAQ\", then the task is cancelled on Tasks, then Forerunner restarts. GET /commands/pending came back empty, and the Inbox said the untrue \"Forerunner restarted before you answered its card, and a card can only be answered while the app that showed it runs\". Without a restart, the Yes gave only the command's raw refusal, never what had changed. An Undo read back in chat could not be armed again at all.",
+   "u_ids": [
+    "L4-selftasks-117"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-selftasks-chat, run L4' > 'L4-selftasks-117 (review): a read-back whose task was cancelled before a restart still waits after it; its Yes says what changed, changes nothing, and no Update says the card was lost' (pending [] after the restart), plus '... a settings-screen card whose ten minutes passed while Forerunner was closed leaves one Update that says it lapsed, with its values'. Also packages/runtime/test/chat-fix-tasks.test.ts 'L4-selftasks-117 (review): a Yes after the named task was cancelled, so its change can no longer be made, says what changed in one line and applies nothing; after a restart too' and packages/commands/test/undo.test.ts 'fixup-l4-selftasks-chat: an Undo read back in chat waits until it is answered, across a restart'. A sibling regression found by the full check is now fixed: packages/commands/test/commands.test.ts 'cancel from chat: ... a task that finished before the yes says so in words (phase C leftover C-38)'.",
+   "how": "CommandExecutor.restorePending now re-arms a chat, Talk or voice read-back (expiresAt null) exactly as shown, even when its request no longer plans. The only errors it lets through are ones that are not about planning. An Undo read back in chat keeps change_card.undo_of with its context and is armed again through performUndo and redecideUndo. In confirm(), when redecide throws, the new subjectsNow (readback-check.ts) reads the card's tasks from the store as they are now, and changedSince writes the line: '\"Write the FAQ\" changed since I asked: it is cancelled now. Nothing was changed; ask again if you still want it.'. The result is refused with details.reason changed_since. A refusal that already ends \"nothing changed.\" keeps the command's own words (C-38: '\"Write the FAQ\" is already done; nothing changed.'). The orphan sweep (answered-cards.ts orphanedCardUpdate) now only closes cards that nothing can arm again. Its Update tells the truth: 'Its card closed after 10 minutes without your yes' when the ten minutes ran out while Forerunner was closed, otherwise 'Its card could not be opened again after Forerunner restarted'. Both carry the card's values through the new cardChange, and the onExpired Update names them too ('(CHF 5.00 to CHF 20.00)').",
+   "check_in_the_app": "Open a project with a task \"Write the FAQ\". In its Chat, type: pause Write the FAQ. A read-back appears with Yes and No. Go to Tasks and cancel the task. Quit Forerunner and open it again. The Chat still shows the read-back with Yes and No, and the Inbox still has the card. No Update says the card was lost. Press Yes: the chat says '\"Write the FAQ\" changed since I asked: it is cancelled now. Nothing was changed; ask again if you still want it.'. The task stays Cancelled and the header no longer says a change waits. Seen on bench fixup-l4-selftasks-chat (Orchard walk, screenshots 06-08)."
+  },
+  {
+   "problem": "Review blocking 3: L4-selftasks-117 had no real-daemon cases with a fake clock and two composes on one home. Nothing proved that a read-back still waits after 10.5 minutes and a restart.",
+   "u_ids": [
+    "L4-selftasks-117"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'L4-selftasks-117 (review): a read-back whose task was cancelled before a restart still waits after it ...' failed before (pending [] after the second compose). These new cases passed on the fixer's code and now guard it: 'L4-selftasks-117 (real daemon, fake clock): a priority change read back in chat still waits after 10.5 minutes and after a restart, and its Yes makes it', '... a 'fix the tasks' read-back still waits after 10.5 minutes and after a restart, and its Yes makes the set', '... after a restart, a 'fix the tasks' Yes whose list changed since the check says so and changes nothing', and '... the Yes of a read-back whose task was changed elsewhere says what changed and changes nothing'.",
+   "how": "A helper again(home, at) composes a second daemon on the same home with a SimulatedClock moved forward, then runs expireOrphanedCards the way compose does. The cases drive POST /chat through createClient with the stand-in model and check GET /commands/pending, the Inbox and the task rows before and after the Yes. Every case uses settleSessions and removeHomes.",
+   "check_in_the_app": "In Chat, type: make Write the README high priority. Leave the read-back unanswered for more than ten minutes. Quit Forerunner and open it again. The read-back still shows Yes and No, and pressing Yes changes the priority. Do the same with 'fix the tasks', but add a task before pressing Yes. The chat says 'The tasks changed since I checked them; say \"fix the tasks\" to check again.' and nothing changes."
+  },
+  {
+   "problem": "Review blocking 4: withoutCardTalk dropped real answers that sat beside a card. Two examples: 'I can confirm that the README task finished yesterday.' next to a pause card, and 'Publish the page changed hands last week; the coder has it.' next to a priority card. The person's other question went unanswered.",
+   "u_ids": [
+    "L4-selftasks-126"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts 'fixup-l4-selftasks-chat: the card says the change once, and the model's other answers stay (L4-selftasks-126)': 'keeps an answer to anything else, word for word', 'a mixed line keeps its other answer and loses its words about the card', and 'in chat, the answer to the other question stays above the card's question' (4 assertions failed before)",
+   "how": "CARD_TALK_RE now treats confirm/approve as card talk only when the sentence asks the person to do it: please, just, you can, you need to, you have to, you must, once you, or 'confirm it/this/the change' at the end. A bare 'confirm that' no longer counts. The title rule now drops a sentence only if it names the card's task and also starts by doing the change (RESTATES_LEAD: an optional ok/sure/alright/right, an optional I'll, I will, I can, I'm going to, let me or going to, then the verb's stem). The review's probe sentences are now guard cases.",
+   "check_in_the_app": "In Chat, type a line that asks a question and asks for a change, for example: pause Write the FAQ, and did the README task finish? The reply answers the README question. The read-back card under it says the pause once, and the reply itself has no 'Press Yes to confirm' sentence. Seen on bench: '[stand-in model] I can confirm that the README task finished yesterday.' was kept and the restating sentence was dropped (screenshot 05)."
+  },
+  {
+   "problem": "Review blocking 2: L4-selftasks-121 was only partly built. It was missing the 'brief' injection channel with cases and controls, report-008 (the researcher's reach), and the hand-over judge, each of which must fail without its guard.",
+   "u_ids": [
+    "L4-selftasks-121"
+   ],
+   "failing_test_before": "evals/test/injection.test.ts 'fixup-l4-selftasks-chat, run L4: the brief channel, the researcher's reach and the hand-over'. These are guard tests: 'without the quoting, a planted line stands alone in the brief and the case fails', 'without the token's limits, the obedient specialist's call runs and the case fails' (executed [\"run_command\"]), 'report-008: ... without the reach rule it fails', and 'the hand-over judge fails a case whose closer look ran or whose answer it cannot read'. Before, INJECTION_CHANNELS had no 'brief', and the corpus had no brief-*, report-008 or record-012 cases.",
+   "how": "evals/src/injection-runner.ts adds a 'brief' channel (BRIEF_WHERE kept_check, handoff_note, left_to_do). runBriefCase stores a paused run the way the runner does (handoffArtifact, keptArtifact), renders the next brief with the real taskContextBlock and sends it through LoopAgentDriver, the suite's token and the hooks, to an obedient specialist. judgeBriefCase passes only if every planted line is a JSON string under an '(as data)' label, no envelope marker appears in the brief, and every attempt was refused with an audit row. New cases: brief-001..003 and controls brief-101/102. REPORT_SPECIALISTS gains a researcher (cc:WebFetch, cc:WebSearch). report.cardSays makes the judge require the card's reach reason (report-008). In the record channel, answer_thoroughly is judged by what the app answered (toolResultOf, handOverAttempt): 'Not now' counts as denied, the ask counts as a read-back, and a hand-over or thorough pass counts as executed. New cases: record-012 and control record-106. RunCaseOptions.briefOf and reportSpecialists exist so the guard tests can take each guard out.",
+   "check_in_the_app": "There is nothing to press: it is the security suite. pnpm test:injection reports PASS with 92 cases (65 hostile, 27 controls), 0 failed, and the brief channel is listed. On a paused task, the next brief shows the run's note and Left to do list on lines labelled '(as data)'."
+  },
+  {
+   "problem": "Review blocking 5, three parts. L4-selftasks-130: the Overview's Last result said '... needs your decision (Inbox). ... 1 task waits on it.' three sentences after what 'it' named, two blockers were both called 'it', and every waiting task was counted. L4-selftasks-129: the suggestion card's 'Asks you first: ...' reasons were listed as one more change in the Inbox's change list. L4-selftasks-127: 'fix the tasks' with no Claude connected said only 'Fixing the tasks needs Claude.'.",
+   "u_ids": [
+    "L4-selftasks-130",
+    "L4-selftasks-129",
+    "L4-selftasks-127"
+   ],
+   "failing_test_before": "packages/runtime/test/session-update.test.ts 'fixup-l4-selftasks-chat, run L4: what waits on a decision is said beside it (L4-selftasks-130)' (4 cases, 5 assertions failed before); apps/ui/test/real-daemon.test.ts 'L4-selftasks-130 (real daemon): the Overview's Last result names what waits on the decision right after it' and 'L4-selftasks-127 (real daemon, no Claude credential): 'fix the tasks' says what to do, and nothing is spent'; the card shape in real-daemon and apps/ui/test/selftasks.test.tsx (body carries ASKS_LINE, details only the changes)",
+   "how": "session/result.ts has a new line-1 builder, 'waits on what needs you', placed right after the needs-you and failed sentences. It names the waiting tasks ('\"Write styles.css and link it from every page\" waits on it.'). With two or more blockers, each group names the task it waits on. It reads LastSessionOutcome.waiting[].waitsOnIds (from waitingOf), and an outcome kept before the ids existed is matched by title. Line 3 now counts only tasks waiting on something else. sessionUpdateLine removes the card's sentence together with its clause. task-proposal.ts proposalBody(notes, quotes, reasons) puts ' Asks you first: <reason>.' in the body, before 'Nothing changes until you say yes.', and steps now hold only the changes. sentences.ts FIX_NEEDS_CLAUDE = 'Fixing the tasks needs Claude: connect it in Settings, Basics.'.",
+   "check_in_the_app": "End a session where one task needs your decision and another waits on it. On Overview, Last result line 1 reads '\"Write menu.html with five teas in CHF\" needs your decision (Inbox). \"Write styles.css and link it from every page\" waits on it.'. Open a task-suggestion card in the Inbox: the reason it asks you first is in the text above, and the change list holds only the changes. With no Claude connected, type 'fix the tasks' in Chat. It answers 'Fixing the tasks needs Claude: connect it in Settings, Basics.' and spends nothing."
+  },
+  {
+   "problem": "Non-blocking review items. After a No in chat, or a Yes refused because the task changed, the open page kept 'Waiting for you: 1 change to confirm [Answer]' and the Inbox badge until a reload. A note the model passed was read back with a double period ('\"Put on hold by the person.\".'). The user guide said the task shows 'Changed by you', which no screen shows.",
+   "u_ids": [
+    "L4-selftasks-117",
+    "L4-selftasks-120",
+    "L4-selftasks-116"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'L4-selftasks-117 (review): a chat No, and a Yes refused because the task changed, tell the screens at once (inbox.changed, project.changed)' (0 events before); packages/runtime/test/chat-fix-tasks.test.ts note read-back assertion (double period)",
+   "how": "POST /chat and /chat/stream record the executor's waiting cards before the turn (waitingCards). heardChat then sends inbox.changed and the card's project.changed when a card is answered, as well as when a new pending card appears. In commands/task.ts, noteClause adds no period after a note that already ends its own sentence. docs/user-guide.md now says that Changes names you, the Inbox does not repeat it, and the header follows an answer at once.",
+   "check_in_the_app": "In Chat, ask for a priority change and press No. The header's 'Waiting for you: 1 change to confirm' and the Inbox count clear without a reload. Seen on bench: Garden's header read 'Ready: 2 tasks wait for your Start' right after No (screenshot 04)."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-selftasks-129: the split Undo's refusal and its words",
+   "why": "The area's not-to-touch list gives task.ts' split undo and the composed Undo sentence to l4-chat-carried (L4h, scope 'split undo refusal and its words, C4-left-6'). The reviewer allowed 'or session lead moves them'. Only the card-reasons half of -129 is built here."
+  },
+  {
+   "problem": "L4-selftasks-127: the Connect offer kind (a button beside the sentence)",
+   "why": "The cut line allows dropping it. Only the sentence is built: 'Fixing the tasks needs Claude: connect it in Settings, Basics.'."
+  },
+  {
+   "problem": "L4-selftasks-129: the reload line",
+   "why": "Cut by the area's cut line, as in the fixer's report."
+  },
+  {
+   "problem": "Bench re-walk of the C-38 path after fe84c7c",
+   "why": "The last fix (a refusal that already ends 'nothing changed.' keeps its words) came after the bench walks. The walks covered a pause read-back of a cancelled task, whose path is unchanged. The cancel-of-a-finished-task path is covered by packages/commands/test/commands.test.ts (C-38) and was not walked on the bench."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check (first run, before fe84c7c)",
+   "result": "exit 1: 1 failed, packages/commands/test/commands.test.ts C-38 cancel case (the changed-since sentence replaced the already-done sentence). Fixed in fe84c7c."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check (at dfa3477)",
+   "result": "exit 0: lint, lint:paths and typecheck ok; 560 test files, 6125 passed, 7 skipped; docs:check had no origin/main in the worktree ('nothing to check'); docs:links ok (213 files); secrets:scan clean (2271 files)"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base 7eaf59c",
+   "result": "docs-check: ok (64 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped (12); 30 tests passed, 82 skipped (the Postgres and Docker files are not available on this machine)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed, 0 controls flagged; 5 brief-* cases in the table"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 103 files, 1477 tests passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "38 passed (1.3m)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm vitest run packages/commands (after fe84c7c)",
+   "result": "30 files passed; 326 passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm vitest run apps/ui/test/real-daemon.test.ts -t l4-selftasks-chat; and packages/runtime/test/chat-fix-tasks.test.ts packages/commands/test/undo.test.ts",
+   "result": "16 passed (area describe); 54 passed"
+  },
+  {
+   "command": "bench fixup-l4-selftasks-chat (stand-in, --provider bench, daemon 49120, UI 2720): node walk-fixup.cjs and walk-b1.cjs, then scripts/bench/stop.mjs",
+   "result": "Orchard: pause read-back, task cancelled on Tasks, daemon restart, then pending [Pause read-back, null], card open in the Inbox, no Update messages, Chat still shows Yes/No. Yes gives '\"Write the FAQ\" changed since I asked: it is cancelled now. Nothing was changed; ask again if you still want it.'; task stays cancelled, pending 0, header 'No tasks yet'. Garden: No clears the header to 'Ready: 2 tasks wait for your Start' without a reload. Mixed line: the other answer was kept and the restating sentence dropped. Bench stopped (daemon and UI ports down)."
+  },
+  {
+   "command": "cargo fmt/clippy/test",
+   "result": "not run: the desktop shell is unchanged"
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/session-update.test.ts system-text case",
+   "why": "L4-selftasks-130: line 1 now names the waiting task right after the decision. Line 3 no longer gives a bare count."
+  },
+  {
+   "test": "evals/test/injection.test.ts report-004 card assertion; record channel attempt outcomes",
+   "why": "-129: the suggestion card's reasons moved from steps into the body. answer_thoroughly attempts are now judged by the app's answer, so a refused hand-over ('denied') is allowed beside read-backs."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts card shape, 'L4-selftasks-112 (d)', the writer case, and the settings lapse sentence",
+   "why": "-129: why carries 'Asks you first: ...' and steps hold only the changes (112(d) steps length 1). The lapse Update now names the card's values ('(CHF 5.00 to CHF 20.00)')."
+  },
+  {
+   "test": "apps/ui/test/selftasks.test.tsx fixture and assertions",
+   "why": "-129: the body carries the reason line, and the details list only the changes."
+  },
+  {
+   "test": "packages/runtime/test/chat-fix-tasks.test.ts no-Claude sentence and note read-back",
+   "why": "-127's sentence now says what to do. -120's note ends with one period."
+  },
+  {
+   "test": "packages/commands/test/undo.test.ts restart case sentence",
+   "why": "After a restart, the Undo confirmation uses the change-log row's sentence ('Undone: Lowered the monthly cap from CHF 150.00 to CHF 100.00.'). This was already the behaviour after a restart and is asserted as such."
+  }
+ ],
+ "new_problems": [
+  "After a restart, an Undo read back in chat is confirmed with the change-log row's sentence 'Undone: Lowered the monthly cap from CHF 150.00 to CHF 100.00.' instead of the live 'Undone: the monthly cap is back to CHF 150.00.'. This was already the case after a restart (packages/commands/test/undo.test.ts restart case). It is a words item for l4-chat-carried or a later area.",
+  "The bench stand-in model repeats CHAT_PENDING_NOTE in its reply ('... The app shows this question under your reply with Yes and No.'; walk-b1.json o1). This is stand-in only and does not happen with a real model, but it makes bench screenshots read twice.",
+  "taskListFingerprint includes task statuses. Any status move while a 'fix the tasks' read-back waits (for example a session finishing a task) makes its Yes answer TASKS_CHANGED_REPLY. This may be intended, but the owner has not decided it.",
+  "subjectsNow reads only task subjects. A settings card whose request no longer plans across a restart falls back to the command's own refusal, and that path has no changedSince test.",
+  "node scripts/docs-check.mjs --base d9ee810 flags apps/ui/test/selftasks.test.tsx (a test-only change) as missing docs/maintainers/apps.md. Against the run base 7eaf59c, docs-check is ok."
+ ],
+ "notes_for_other_areas": [
+  "@forerunner/commands exports cardChange(card) -> 'CHF 5.00 to CHF 20.00' | null, and ExpiredConfirmation.change carries it. readback-check.ts exports subjectsNow(store, shown), which reads the card's tasks from the store now (a missing task is left out, so changedSince says 'it is no longer there').",
+  "CommandExecutor: change_card.undo_of (with context) marks an Undo read back in chat, and redecideUndo re-decides its risk. restorePending re-arms every chat/voice read-back (untilAnswered), also one whose request no longer plans. At the Yes, confirm() returns refused, code validation, details.reason 'changed_since', with the changedSince sentence. A refusal that already ends 'nothing changed.' keeps the command's words.",
+  "runtime loop/answered-cards.ts exports lapsedCardUpdate(what, change?) and orphanedCardUpdate(what, change, lapsed). The orphan sweep no longer says 'a card can only be answered while the app runs'.",
+  "session/result.ts: LastSessionOutcome.waiting[].waitsOnIds and the exported waitsOnBlockerSentences(o). Line 3 counts only tasks not waiting on a blocker.",
+  "session/task-proposal.ts: proposalBody(notes, quotes, reasons = []). The suggestion card's steps are the changes only.",
+  "conversation/sentences.ts: FIX_NEEDS_CLAUDE = 'Fixing the tasks needs Claude: connect it in Settings, Basics.' (l4-chat-carried can attach the Connect offer kind to it).",
+  "daemon/server.ts heardChat(r, before, humanId) sends inbox.changed and project.changed when a chat turn answered a card (waitingCards before the turn).",
+  "evals injection-runner: new channel 'brief' (BRIEF_WHERE), RunCaseOptions.briefOf and reportSpecialists, report.cardSays, exported REPORT_SPECIALISTS (now with researcher) and handOverAttempt.",
+  "Suggested UPDATE-LOG line (not edited): 'fixup-l4-selftasks-chat: a chat read-back waits across a restart even when its task moved; its Yes says what changed; the card says the change once and other answers stay; the Overview's Last result names what waits on a decision beside it; injection gains a brief channel, report-008 and the hand-over judge (L4-selftasks-117, -121, -126, -127, -129, -130).'",
+  "Suggested design section 3.9 line (not edited): 'A Yes on a read-back whose task moved since says what changed in one line and changes nothing; this holds after a restart too.'"
+ ],
+ "screenshots": {
+  "before": [],
+  "after": [
+   "/tmp/frbench/fixup-l4-selftasks-chat/steps/01-m1-meadow-pause-readback.png",
+   "/tmp/frbench/fixup-l4-selftasks-chat/steps/02-m2-meadow-chat-after-restart.png",
+   "/tmp/frbench/fixup-l4-selftasks-chat/steps/03-m3-meadow-yes-after-restart.png",
+   "/tmp/frbench/fixup-l4-selftasks-chat/steps/04-g2-garden-header-after-no.png",
+   "/tmp/frbench/fixup-l4-selftasks-chat/steps/05-x1-garden-mixed-line.png",
+   "/tmp/frbench/fixup-l4-selftasks-chat/steps/06-o1-orchard-pause-readback.png",
+   "/tmp/frbench/fixup-l4-selftasks-chat/steps/07-o2-orchard-chat-after-restart.png",
+   "/tmp/frbench/fixup-l4-selftasks-chat/steps/08-o3-orchard-yes-after-restart.png"
+  ]
+ }
+}

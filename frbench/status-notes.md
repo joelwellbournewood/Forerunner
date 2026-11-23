@@ -169,3 +169,8 @@
 2026-11-23T09:03:05Z L4e review l4-github-merge saved; fixup running (wt -6).
 2026-11-23T09:45:32Z L4e fixup l4-github-merge done at 35d47d5 (fixup moved the branch itself); merge stage running: local merges 2e9c466 (link), 7f58308 (merge), 7eaf59c (merge fix); worktrees -4/-6 removed.
 2026-11-23T10:08:01Z L4e merged+pushed at 7eaf59c (merge report saved; all signed; validation + smoke 25/25 green). Leftovers: new area l4-github-carried in L4h (15 items, L4-github-130 never cut), OQ-L4e-1 added, rest in leftovers-L4e.json. L4f args built.
+2026-11-23T11:20:19Z CI 332 + Desktop 88 green at 7eaf59c (L4e). Linux CI ran packages/commands/test/project-join.integration.test.ts on Postgres: passed (not skipped). L4f fixer at d9ee810 (8 commits).
+2026-11-23T12:02:01Z L4f fix l4-selftasks-chat saved (head d9ee810); review running (wt -2).
+2026-11-23T12:43:46Z L4f review saved; fixup running (wt -3).
+2026-11-23T14:11:30Z L4f fixup saved (dfa3477, all 5 blocking fixed); merge stage running (local merge 987614d); worktrees removed.
+2026-11-23T14:29:29Z L4f merged+pushed at 987614d (signed; validation + smoke green). Leftovers: L4-selftasks-129 -> l4-chat-carried; new area l4-selftasks-carried (11 items) in L4h. L4g args built.

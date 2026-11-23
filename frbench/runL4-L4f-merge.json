@@ -1,0 +1,86 @@
+{
+ "merged": [
+  "fix/l4-selftasks-chat (head dfa3477, 15 commits: the fixer's 8 and the fix-up's 7) merged with --no-ff into claude/nifty-knuth-f9udt0 as merge commit 987614d. The merge commit is signed."
+ ],
+ "head_sha": "987614dafa895e850e908643a63139cf00dea4c2",
+ "pushed": true,
+ "conflicts_resolved": [],
+ "integration_fixes": [],
+ "validation": [
+  {
+   "command": "git merge --no-edit --no-ff fix/l4-selftasks-chat; git grep -n '^<<<<<<< '",
+   "result": "Clean merge with no conflicts. The merge base was 7eaf59c, the branch tip, so nothing overlapped. The grep found nothing."
+  },
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok"
+  },
+  {
+   "command": "DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. lint (40 warnings, no errors), lint:paths and typecheck passed. Unit: 560 files, 6125 passed, 7 skipped. docs-check ok (64 files) against origin/claude/nifty-knuth-f9udt0. link-check ok (213 files). secret-scan clean (2271 files). Log: /tmp/frbench/merge-w30/check.log"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 82 skipped (Postgres not set, as expected). Log: /tmp/frbench/merge-w30/integration.log"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped. Log: /tmp/frbench/merge-w30/e2e.log"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/live test",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 passed, 17 skipped. Log: /tmp/frbench/merge-w30/live.log"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0, PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed, 0 controls flagged. The table has 5 brief-* cases. Log: /tmp/frbench/merge-w30/injection.log"
+  },
+  {
+   "command": "HOME=<empty dir> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm test:unit (CI's environment)",
+   "result": "exit 0: 560 files; 6125 passed, 7 skipped. Log: /tmp/frbench/merge-w30/unit-ci.log"
+  },
+  {
+   "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 103 files, 1477 passed. Log: /tmp/frbench/merge-w30/ui-vitest.log"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/approvals-web test (a CI step)",
+   "result": "exit 0: 11 files, 59 passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 38 passed (1.2m). Log: /tmp/frbench/merge-w30/playwright.log"
+  },
+  {
+   "command": "pnpm docs:schema && git diff --exit-code -- docs/maintainers/data-model.md (a CI step)",
+   "result": "exit 0: the schema doc is current"
+  },
+  {
+   "command": "pnpm secrets:scan --logs (a CI step)",
+   "result": "clean"
+  },
+  {
+   "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+   "result": "Not run: the merge does not touch apps/desktop (git diff 7eaf59c..HEAD -- apps/desktop is empty)"
+  },
+  {
+   "command": "commit signature check: for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD) ... grep '^gpgsig'",
+   "result": "Printed nothing. All 16 commits are signed, the merge commit included."
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "7eaf59c..987614d pushed on the first try; the remote ref equals HEAD"
+  }
+ ],
+ "smoke": "25/25 checks passed, with 0 findings and 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1 (stand-in, USD 0). Command: node scripts/bench/start.mjs --name merge-w30 --daemon-port 49130 --ui-port 2730 --fresh && node scripts/bench/journeys/smoke.cjs merge-w30. Approve and start wrote the card's 2 tasks and started a session, which completed with 2/2 tasks done. The work wrote index.html, styles.css, script.js and README.md, and the page links its stylesheet and script. The Overview and the Files tab show the folder and the page. The chat reply names a task and has no asterisks, and the critic reviewed the work. The journey script needed no change. The bench was stopped with scripts/bench/stop.mjs and both ports are down. Its home was deleted. The result is at /tmp/frbench/merge-w30/steps/smoke-result.json.",
+ "problems_left": [
+  "Nothing is broken after the merge. The open items below are the area's own not_done lists and the reviewer's non-blocking notes, carried forward unchanged.",
+  "Moved to L4h (l4-chat-carried) or a later area: L4-selftasks-129's split Undo refusal and its words. -127's Connect offer kind; only the sentence is built. -129's reload line, which the cut line allows.",
+  "Also still open: L4b-left-1..5. L4-other-1 D-5 and D-6 (chat's create/edit read-back clause), although ADR 0109's amendment names chat. L4-selftasks-120's redirect guards still judge by whether a note is present. L4-selftasks-125 rest: the bench README does not list FORERUNNER_BENCH_TASK_LIST/_SAYS.",
+  "Fix-up new_problems for the session lead to decide: taskListFingerprint includes task statuses, so a 'fix the tasks' read-back answered while a session runs will usually get 'The tasks changed since I checked them'; the owner has not decided this. After a restart, an Undo read back in chat confirms with the change-log row's sentence instead of the live one. subjectsNow reads only task subjects, so a settings card that no longer plans after a restart falls back to the command's own refusal, with no test. The bench stand-in echoes CHAT_PENDING_NOTE in its reply (stand-in only).",
+  "Interpretation for the session lead (from the fixer): the model's acts-at-once calls stay the agent's on Changes, because security-command-actor.test.ts pins author_agent. Only a read-back the person confirmed becomes theirs.",
+  "Needs the real model (final_check): LC-C28 own-words change (GET /changes byAgent false, no Inbox Update). LC-C13/C16: no 'needs your yes' sentence or CHAT_PENDING_NOTE text beside a read-back. F-7: the two read-backs left 11 minutes and across a restart. F-2: a pause asked in chat with a model note. F-11: a reviewer task with review.md is not failed for the missing file. The stand-in critic still sends a reviewer that changed no file back.",
+  "Not edited, as the rules require: the session lead's suggested UPDATE-LOG and design section 3.9 lines are in the fix and fix-up reports' notes_for_other_areas.",
+  "Lint reports 40 warnings and no errors. pnpm check passes."
+ ]
+}

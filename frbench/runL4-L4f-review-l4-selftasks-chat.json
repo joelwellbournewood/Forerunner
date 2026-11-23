@@ -1,0 +1,129 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Bench \"review-l4-selftasks-chat\" (daemon 49110, UI 2710, --provider bench) started from my worktree at fix/l4-selftasks-chat d9ee810, walked like a person with Playwright. Scripts are in /tmp/frbench/review-l4-selftasks-chat/scripts/. Each walk*.json holds the screen text of every step. The first bench's PNGs were wiped when I restarted the bench --fresh, but I looked at the key ones before that. Remaining PNGs: /tmp/frbench/review-l4-selftasks-chat/steps/01..05-m*.png.\n\n1. L4-selftasks-116 (walk1.json a1..a5, project \"Bakery\" at Assisted). I typed `tool: task_update {...priority high} then say: Changing ... needs your yes. Press Yes ...`.\n   - The model's restating sentence was dropped (126). The card showed once with Yes/No; I pressed Yes.\n   - GET /changes: byAgent false, humanName \"me\", wordsUsed = my line. GET /inbox: no Update; the Inbox page shows \"No updates\".\n   - Task reason is \"Changed by you: priority to High\" (API only). The drawer (a4) shows no reason line at all: it shows only the agent's reasons (task-words.ts AGENT_CHANGE).\n2. L4-selftasks-117 (walk1/2/4/6/9).\n   - Four chat read-backs were left 12-13 min (expiresAt null on GET /commands/pending), then the daemon was restarted (restart-daemon.mjs): pause with a model note, priority Low, a fix set, a drop fix set.\n   - After the restart all four were still in Chat with Yes/No and in Inbox \"Needs you (4)\" (walk4 i1).\n   - Yes applied the pause (\"... The note goes into its next brief.\"), the fix set and the drop.\n   - Garden: I changed the named task's priority on the Tasks tab, then Yes → '\"Publish the page\" changed since I asked: its priority is high now. Nothing was changed; ask again if you still want it.' (walk4 b1).\n   - Quarry: fix set, then I paused another task in the drawer, then Yes → 'The tasks changed since I checked them; say \"fix the tasks\" to check again.' (walk6 q3).\n   - Settings-screen card (POST /commands/execute budget.set, source ui): at 10 min it left the open Inbox without a reload and one Update appeared (walk9 samples at 11:58:39).\n   - Vineyard: card answered in the Inbox in a second tab; the open Chat dropped Yes/No without a reload and read \"(you said yes)\" (walk5b).\n3. L4-selftasks-105 (b) (walk2 e1/e2): two identical task_update calls gave one card of 2. Yes → \"None of the 2 changes was made: one could not be made (nothing to change on \"Write the FAQ\"). Ask again if you still want them.\"; no chat change row.\n4. L4-selftasks-126 (walk5b): a mixed `then say:` line kept \"Two tasks are ready and none has run yet.\" and dropped the restating sentence.\n5. L4-other-1 (walk3/3b).\n   - New task, reviewer: \"The reviewer writes no file: its findings are its report, which you read in the task's drawer.\" Coder: no line. Reviewer again with outcome 'review.md lists ...': Add task added it with specialist reviewer.\n   - Drawer Edit: the line shows for reviewer, goes for coder, comes back for reviewer.\n   - Start: the model-call log shows the reviewer's brief criterion \"1. The report shows this outcome (this specialist writes no file, so a file named here is met by its report): review.md lists ...\" and the same in the critic's request, never \"not only the report\".\n   - On the stand-in, the critic sent the reviewer back twice (\"the worker reports it could not do the work\"). The ladder then gave the task to the data-analyst, which wrote review.md. U-098 step 4 cannot be shown on the stand-in.\n6. Sibling probe across a restart (walk10/11, steps 04-m4, 05-m5): a chat pause read-back waited; I cancelled its task (Tasks route, confirmed); then restarted the daemon. The card was gone (GET /commands/pending []). Chat read \"(not answered; ask again if you still want it)\". The Inbox got: \"... Forerunner restarted before you answered its card, and a card can only be answered while the app that showed it runs. Ask again in Chat if you still want it.\"\n7. Header after a refused Yes (walk7/8): after the changed-since Yes, the open page kept \"Waiting for you: 1 change to confirm [Answer]\" and the Inbox badge for 40 s, while the daemon said nothing waits. A chat No does the same (walk8b), so this class existed before this branch.\n\nBench stopped with stop.mjs; its home and browser profile were deleted.\n\nTests I ran:\n- chat-fix-tasks + security-command-actor: 40 passed.\n- The area's UI and real-daemon cases: 7 passed.\n- With the source diff reverted (git apply -R), 10 of the 11 new chat-fix-tasks cases fail on base. Two examples: the 116 restart case fails on author_human null; the 117 case fails on status 'expired'.\n- The real-daemon 116 case fails on base (expiresAt set). The UI chat case fails with base store/context.tsx.\n- pnpm test:injection: 84/84, record-011 and record-105 pass.\n- pnpm test: 6107 passed / 7 skipped.\n- UI vitest: 103 files, 1468 passed.\n- biome lint of commands types.ts/executor.ts: clean.\n- Playwright and test:integration/e2e: not run by me.\n\nWorktree restored to d9ee810 and clean.",
+ "blocking": [
+  {
+   "issue": "A chat read-back that waits across a restart is dropped when the task it names moved in the meantime. The app then tells the person something that is now false. L4-selftasks-117 and the owner's 2026-11-17 answer say every chat read-back waits until it is answered, across a restart, and its Yes is decided on the state then.",
+   "where": "packages/commands/src/executor.ts:754-815 (restorePending arms only isClosedProjectRefusal cards that fail to plan; any other prepareAll error leaves the card unarmed); packages/runtime/src/loop/answered-cards.ts:169-209 (expireOrphanedCards); packages/runtime/src/daemon/compose.ts:5999/6033 (commands.start() then expireOrphanedCards)",
+   "evidence": "Bench walk10/11 (/tmp/frbench/review-l4-selftasks-chat/walk11.json; steps/04-m4-*.png, 05-m5-*.png). Chat pause read-back for \"Write the FAQ\"; the task was cancelled on the Tasks route; then restart-daemon. After it: GET /commands/pending []. Chat shows \"(not answered; ask again if you still want it)\". Inbox Update: \"The change you asked for was not made: the task \\\"Write the FAQ\\\" (ready to paused). Forerunner restarted before you answered its card, and a card can only be answered while the app that showed it runs. Ask again in Chat if you still want it.\" The same happens to any waiting read-back whose task a session finished (task.pause plan's assertCan throws on done) before a restart.",
+   "expected": "The card stays open in Chat and the Inbox after the restart, as it would without one. Its Yes then answers in one line what changed (changedSince, or the command's own refusal) and applies nothing. The orphan sweep never expires a chat or voice read-back, and never says a card can only be answered while the app runs. Add a test that composes the runtime twice on one home with this case (validation rule 4)."
+  },
+  {
+   "issue": "L4-selftasks-121 (on the spec's never-in-not_done list, security) is only partly built. The acceptance line fails: no 'brief' channel with cases and controls, no report-008 (researcher reach), no hand-over judge.",
+   "where": "evals/src/injection-runner.ts (INJECTION_CHANNELS still web/email/record/report); evals/injection/cases (only record-011/record-105 added); docs/maintainers/testing.md new section says 'not built yet'",
+   "evidence": "Spec fix_scope: 'Never in not_done: ... -121 (security)'. Acceptance: 'the brief and fix_tasks channels exist with cases and controls; report-008 (researcher reach) and the hand-over judge pass and fail without their guards'. The fixer's not_done lists the brief channel, report-008 and C3-left-10's judge as not done. pnpm test:injection shows 84 cases, none in a brief channel.",
+   "expected": "A 'brief' channel: text planted in a kept-work check's output, a handoff note and a Left-to-do list, judged quoted under '(as data)' and never obeyed, with controls. report-008: a plain researcher request at Standard, with the card quoting the reach reason. The hand-over judge: a record asking for a thorough answer, a stronger model or a higher amount. Each fails without its guard."
+  },
+  {
+   "issue": "The owner's 117 acceptance asks for a real-daemon case: a chat read-back left more than 10 minutes and across a daemon restart still waits, and its Yes applies. Validation rule 4 asks for compose twice on one home. Neither exists. The only restart cases rebuild the CommandLoop over an in-memory store, which skips compose's start order. That gap is how the first blocking bug got through.",
+   "where": "apps/ui/test/real-daemon.test.ts 'l4-selftasks-chat, run L4' (only expiresAt null and the settings-card lapse); packages/runtime/test/chat-fix-tasks.test.ts restart() (new CommandLoop on the same sqlite::memory: store)",
+   "evidence": "Owner acceptance: '(composed test with a clock moved past 10 minutes, and a real-daemon case)'. Spec acceptance: 'L4-selftasks-117 (real-daemon with a fake clock): a fix-the-tasks read-back and a priority change read back in chat are each still waiting after 10.5 minutes and after a restart, and each Yes applies its change; ... changed list ... named task changed elsewhere ...'. The fixer lists this as not_done ('a real-daemon fake-clock fix the tasks case ... covered composed').",
+   "expected": "Real-daemon cases at POST /chat and GET /commands/pending, with a fake clock and two composes on one home. Each of a chat priority read-back and a fix-the-tasks read-back still waits after 10.5 minutes and a restart, and Yes applies it. A Yes after the named task changed returns the changed-since line. A Yes after the list changed returns the tasks-changed line. The case from the first blocking issue (task moved, then a restart) is covered too."
+  },
+  {
+   "issue": "The L4-selftasks-126 backstop drops real answers to the person's other question whenever a card is pending. The acceptance line says 'a mixed line keeps its other answer'.",
+   "where": "packages/runtime/src/conversation/agent.ts:531-548 (CARD_TALK_RE alternative \\bconfirm\\s+(?:it|this|that|the\\s+change)\\b, and the title+verb-stem rule)",
+   "evidence": "Probe calling withoutCardTalk(reply, 'Pause \"Write the FAQ\"? No session runs it until you press Resume.'): \"I can confirm that the README task finished yesterday.\" -> \"\". With the read-back 'Change \"Publish the page\": priority to High?': \"Publish the page changed hands last week; the coder has it.\" -> \"\". In both cases the person's question gets no answer; only the card shows.",
+   "expected": "Drop only sentences that speak about the waiting card: the yes, Yes/No, or 'nothing changes until'. Do not drop a bare 'confirm that ...' or a sentence that only names the task. Add the probe sentences as guard cases beside the mixed-line test."
+  },
+  {
+   "issue": "Items that the area's cut line does not allow to be dropped were left unbuilt, so their acceptance lines fail. -127's sentence (the cut line allows only its offer kind), -129's split-undo refusal and the suggestion card's reasons (the cut line allows only the reload line), and -130.",
+   "where": "packages/runtime/src/conversation/sentences.ts (FIX_NEEDS_CLAUDE); packages/commands/src/commands/task.ts (split undo refusal); packages/runtime/src/session/task-proposal.ts:184 (reasons in steps); packages/runtime/src/session/result.ts:518-529",
+   "evidence": "Spec size/cut line: 'Cut line: L4-selftasks-125, -127's offer kind (not its sentence), -128 and -129's reload line may end not_done'. The fixer's not_done: '-127 ..., -129 (split undo ..., undone line after reload, Asks you first in the card's list), -130 ...: Not reached (time and context)'.",
+   "expected": "Build -127's sentence ('Fixing the tasks needs Claude: connect it in Settings, Basics.'), -129's true split-undo refusal and the card's reasons out of its change list, and -130's line-1 clause, each with the acceptance tests. Or the session lead explicitly moves them to a later area."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L4-selftasks-116: a change the person names, read back and confirmed in chat, is the person's on Changes and is no Inbox Update",
+   "holds": true,
+   "note": "Bench Bakery: byAgent false, humanName 'me', Said = the person's line, no Update. The composed restart case fails on base (author_human null)."
+  },
+  {
+   "claim": "116 check_in_the_app step 2: 'the task drawer reads Changed by you: priority to High'",
+   "holds": false,
+   "note": "The reason is stored (GET tasks reason) but the drawer shows no reason line for the person's changes, only the agent's (task-words.ts AGENT_CHANGE). docs/user-guide.md 'the task says \"Changed by you\"' promises what no screen shows."
+  },
+  {
+   "claim": "116: Think it through's change records the question, not the button's line",
+   "holds": true,
+   "note": "The composed case passes on the branch and fails on base. Not walked on the bench."
+  },
+  {
+   "claim": "117: every chat read-back waits 10.5+ minutes and across a restart; its Yes applies it",
+   "holds": true,
+   "note": "Bench: four cards left 12-13 min plus a daemon restart all stayed and applied. Exception: a card whose named task moved before the restart is dropped (blocking 1)."
+  },
+  {
+   "claim": "117: a Yes after the named task changed elsewhere says what changed and applies nothing",
+   "holds": true,
+   "note": "Bench Garden: '\"Publish the page\" changed since I asked: its priority is high now. Nothing was changed; ask again if you still want it.'"
+  },
+  {
+   "claim": "117 / decision 53: a fix set's Yes after the list changed says so and applies nothing",
+   "holds": true,
+   "note": "Bench Quarry: 'The tasks changed since I checked them; say \"fix the tasks\" to check again.'"
+  },
+  {
+   "claim": "117: a remaining lapse (settings-screen card) sends inbox.changed and conversation.changed and leaves one Update",
+   "holds": true,
+   "note": "Bench: the card left the open Inbox without a reload at 10 min, and one Update appeared. The real-daemon test checks rt.events and turns listeners, not GET /events frames."
+  },
+  {
+   "claim": "117: the open chat drops Yes/No when the card is answered in the Inbox",
+   "holds": true,
+   "note": "Bench Vineyard (two tabs). The UI case fails with base store/context.tsx."
+  },
+  {
+   "claim": "L4-selftasks-105 (b): a refused composed set says none was made and why, and writes no row",
+   "holds": true,
+   "note": "Bench Harbour: exact sentence shown; no chat change row."
+  },
+  {
+   "claim": "L4-selftasks-122: fix_tasks + task_update give one card that keeps planFix, askFirst and the fingerprint across a restart",
+   "holds": true,
+   "note": "The composed case passes on the branch and fails on base. Not walkable on the stand-in."
+  },
+  {
+   "claim": "L4-selftasks-126: the read-back is said once; the model's restating is dropped and other answers stay",
+   "holds": false,
+   "note": "The planted restating line is dropped (bench), but 'I can confirm that ...' answers and title+verb sentences are dropped too (blocking 4)."
+  },
+  {
+   "claim": "L4-selftasks-120: a note the model passed is read back, then said as 'The note goes into its next brief.' and stored as the agent's",
+   "holds": true,
+   "note": "Bench Bakery read-back: 'Note for its next brief: \"Put on hold by the person.\".' (double period). After Yes: '... The note goes into its next brief.'"
+  },
+  {
+   "claim": "L4-other-1 D-1..D-4: New task and Edit show the reviewer line; brief and critic hold the report-form criterion; coder unchanged",
+   "holds": true,
+   "note": "Bench screens and model-call log. The stand-in critic still sends the reviewer back; the ladder then hands the task to the data-analyst."
+  },
+  {
+   "claim": "L4-selftasks-121 (part): record-011 and record-105 pass",
+   "holds": true,
+   "note": "pnpm test:injection 84/84. The brief channel, report-008 and the hand-over judge are missing (blocking 2)."
+  },
+  {
+   "claim": "L4-selftasks-125 (part): no noConfusingVoidType warnings",
+   "holds": true,
+   "note": "biome lint of both files is clean."
+  },
+  {
+   "claim": "Validation: pnpm test and the UI suite pass",
+   "holds": true,
+   "note": "Re-run: unit 6107 passed / 7 skipped; UI 1468 passed. Playwright, integration and e2e were not re-run by me."
+  }
+ ],
+ "non_blocking": [
+  "A Yes that closes a card without a change, or a No, leaves the open page stale. After the new changed-since and tasks-changed refusals (and a plain No in chat), the header keeps 'Waiting for you: 1 change to confirm [Answer]' and the Inbox badge for 40+ s until a reload (walk8/8b). POST /chat's heardChat emits inbox.changed only for a new pending card and project events only for done actions (server.ts ~2797-2806). This was there before the branch, but this area adds two frequent new paths into it. Small fix: emit inbox and project when a turn answered a card.",
+  "'fix the tasks' read-back fingerprint: taskListFingerprint includes every task's status. A fix read-back answered while a session runs (statuses moving) will almost always get 'The tasks changed since I checked them'. That is the literal reading of decision 53; the session lead may want session-driven status moves excluded.",
+  "The decision's default 'a change that acts at once on the person's words is theirs too' is not built. The model's acts-at-once calls stay the agent's on Changes, though they are no Inbox echo. The fixer's reason is real: security-command-actor.test.ts pins author_agent for a model note_add. The session lead should decide.",
+  "Words. The 120 read-back ends with a double period ('Note for its next brief: \"Put on hold by the person.\".'). lapsedCardUpdate says 'The change you asked for was not made: the session budget for Quarry.' without the values, while the orphan sibling says '(CHF 5.00 to CHF 20.00)'. Inbox Updates of type warning show a 'warning' badge; that rendering was there before.",
+  "Stand-in gap: the bench critic sends a reviewer that changed no file back ('the worker reports it could not do the work'). After two tries the ladder gives the task to the data-analyst, which writes review.md and replaces the person's chosen reviewer in the drawer. U-098 step 4 can only be checked on the real model (F-11). Teach the stand-in critic the report-form criterion.",
+  "ADR 0109's amendment says decision 1 covers 'New task, Edit, chat', but chat's read-back clause (D-6) was not built. Edit still calls useWhoChoices(true) with no project or words (D-3's 'Edit asks with its project and the edited words'). The line still shows, because it does not depend on them.",
+  "store/context.tsx reloads every conversation that shows a waiting card on every inbox.changed, including the polling mode's periodic counts. Chat cards now wait indefinitely, so this costs extra GET /conversation calls while they wait.",
+  "Still open, as the fixer's not_done says: L4-selftasks-120's redirect guards still judge by the note's presence (task.ts:1303-1308, 1506-1508); a changedSince case for a settings or budget card is untested; L4b-left-1..5; L4-other-1 D-5 and D-6; 125's bench README and docs:check parts; no bench before/after walk or screenshots from the fixer.",
+  "Writes nothing about the waiting card: CHAT_PENDING_NOTE ('The app shows this question under your reply with Yes and No. ...') reaches the model. The stand-in echoes that sentence back into the reply, which the backstop does not drop. With the real model, check in LC-C13/C16 that it is never repeated."
+ ]
+}
