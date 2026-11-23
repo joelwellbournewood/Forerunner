@@ -26,6 +26,7 @@ import type {
 } from "./api-types.ts";
 import { joinedFromOf, joinedIntoOf, sessionsBeforeJoinSentence } from "./join-words.ts";
 import { sessionRunText } from "./run-indicator.ts";
+import { startedByReason } from "./started-by-words.ts";
 import { loadTaskDisplayContext, taskDisplay } from "./task-display.ts";
 import { shortTitle, withoutIds } from "./task-words.ts";
 
@@ -376,24 +377,12 @@ function startedByOf(plan: unknown): StartedBy | null {
  */
 export function startedByWords(row: Pick<SessionRow, "plan" | "trigger">): string | null {
   const who = startedByOf(row.plan);
-  if (who) {
-    switch (who.by) {
-      case "schedule":
-        return "started on its schedule";
-      case "person":
-        return row.trigger === "remote" ? "started from your phone" : null;
-      case "hands_off":
-        // S-5: the project's "Start a session by itself" setting started it.
-        return "started by itself when work was ready";
-      case "continuation":
-        // S-10: the person's own session going on after a wait for its Claude credential.
-        return who.continuesAt
-          ? `goes on with your session of ${who.continuesAt}`
-          : "goes on with your earlier session";
-      default:
-        return null;
-    }
-  }
+  // L4-money-206: one map with the session page's first line (`started-by-words.ts`).
+  if (who)
+    return startedByReason(who.by, {
+      trigger: row.trigger,
+      continuesAt: who.continuesAt ?? null,
+    });
   switch (row.trigger) {
     case "schedule":
       return "started on its schedule";

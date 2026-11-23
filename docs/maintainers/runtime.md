@@ -7756,7 +7756,12 @@ page's "Tasks in this session" and of a planning call's row is written in
   subscription's allowance", "of your plan credits", both named when two paid, none on the
   stand-in; "so far" while it works), `startedByWords` (`plan.startedBy` first, then the
   trigger of older rows; nothing for `manual`, `message` and `budget_reset`; the words for
-  `hands_off` and `continuation` are d1109-starts-engine's, in this function), `countsWords`.
+  `hands_off` and `continuation` are d1109-starts-engine's, since l4-starts-sessions (L4-money-206)
+  in `daemon/started-by-words.ts`' `startedByReason`, the one map that also gives the session
+  page's first line, `startedLine`, from the `session.started` event's `by`: "Started by itself
+  when work was ready (this project's setting), with a budget of CHF 1.00.", "Started on its
+  schedule, ...", "You started the session ..." for the person's start whatever its trigger, an old
+  event without `by` by its trigger as before), `countsWords`.
 - **One figure per session, read when shown.** `sessionSpends` (one query,
   `CostLedgerRepo.sumsBySessionAndSource`) and `spentOf` give the ledger's sum as booked (a row
   without ledger rows reads its own counter at today's rate). `views.ts`' `sessionView` uses it

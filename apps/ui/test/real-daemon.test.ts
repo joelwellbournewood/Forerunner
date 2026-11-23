@@ -27752,6 +27752,15 @@ describe("l4-starts-sessions, run L4", () => {
         'Answers saved in the decision record; "Add the choir\'s rehearsal address to contact.html" is done.',
       ]);
       for (const r of done) expect(r.outcome).not.toMatch(/is done; a session started for it/);
+      // L4-money-206 (LC-C19): its page's first line says who started it, as its row does.
+      const firstLine = (await client.sessionEvents(started?.id ?? "")).find(
+        (e) => e.audience === "person" && e.type === "session.started",
+      );
+      expect(firstLine?.text).toMatch(
+        /^Started by itself when work was ready \(this project's setting\), with a budget of CHF \d+\.\d{2}\.$/,
+      );
+      const row = (await client.projectSessions(project.id)).rows.find((r) => r.id === started?.id);
+      expect(row?.startedBy).toBe("started by itself when work was ready");
     } finally {
       await settleSessions(rt);
       await rt.close();
