@@ -1068,7 +1068,8 @@ l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserv
   without a restart, `subjectsNow` reads what the card named from the store and `changedSince`
   says what changed ('"Write the FAQ" changed since I asked: it is cancelled now. Nothing was
   changed; ask again if you still want it.'); a refusal with nothing named that moved keeps the
-  command's own words.
+  command's own words, and so does one that already ends "nothing changed." (C-38's
+  '"Write the FAQ" is already done; nothing changed.' for a cancel of a task finished since).
 - **A refused set (L4-selftasks-105 (b)).** A composed perform refused at one step rolls back and
   says `composedRefusal`: 'None of the 2 changes was made: one could not be made (...). Ask again
   if you still want them.' (a fix set: 'Say "fix the tasks" to check again.').
