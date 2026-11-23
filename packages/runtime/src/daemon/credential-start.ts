@@ -75,6 +75,15 @@ export interface StartCredentialDeps {
 export interface StartRunsFacts {
   runsWork: boolean;
   stopped: boolean;
+  /**
+   * fixup-l4-cred-screens (L4-creds-17; design §1, "what the app says is true now"): whether no
+   * ready task of the project can run now, each one's own pick meeting a credential wait
+   * (`waits.now`, read only). Under "then the other one" the line says the other credential runs
+   * the start only when the work can run there: work that only the stopped credential can do
+   * here (commands set to the API key, a task that needs the person's answers) waits for it, and
+   * the dialog's blocked sentence says so alone. Asked only in that branch.
+   */
+  waitsNow?: () => Promise<boolean>;
 }
 
 export async function startCredential(
@@ -130,14 +139,35 @@ export async function startCredential(
     const left = await deps.monthLeftUsdMicro();
     return left === null || left > 0;
   };
-  if (policy.rule.whenStopped === "next")
+  // l4-cred-screens (L4-creds-17, live check 4's LC-C26): under 'next' the other credential takes
+  // over in either direction: the API key after the subscription (and the month has room), or the
+  // subscription after the key, when the rule lets it serve and it has no stop of its own. Before,
+  // `serves` was written for the subscription first only, so with the key first and resting the
+  // dialog said nothing of which Claude does the work.
+  const nextServes = async (): Promise<boolean> => {
+    if (first.kind === "subscription") return serves();
+    if (!policy.rule.kinds.includes("subscription")) return false;
+    const sub = (await deps.store.billingSource.list({ human_id: deps.humanId }, { limit: 100 }))
+      .filter((r) => r.kind === "subscription" && r.enabled)
+      .sort((a, b) => a.priority - b.priority)[0];
+    if (!sub) return false;
+    return !(await deps.billing?.currentStopOf(sub.id).catch(() => ({ stopKey: "?" })));
+  };
+  if (policy.rule.whenStopped === "next") {
+    // fixup-l4-cred-screens (the review of L4-creds-17): the other credential serves and the work
+    // can run on it. Before, a key-first dialog said "..., so this runs on your subscription"
+    // beside "Nothing can run until 11:40 (your API key's limit)" for work only the key can do.
+    const waitsNow = async () =>
+      facts.waitsNow ? await facts.waitsNow().catch(() => false) : false;
+    const runsThere = (await nextServes()) && !(await waitsNow());
     return {
       view: {
-        line: (await serves()) ? startRunOutLine(first.kind, stop, about, opts) : null,
+        line: runsThere ? startRunOutLine(first.kind, stop, about, opts) : null,
         runOut: null,
       },
       offer: null,
     };
+  }
   const whenStopped = policy.rule.whenStopped;
   if ((whenStopped === "wait" && !ONE_OFF_UNDER_WAIT) || !(await serves()))
     return { view: { line: null, runOut: null }, offer: null };
@@ -182,7 +212,15 @@ export async function startCredential(
  * credential saved. The per-task runs-on lines stay the chooser's.
  */
 export async function planCredentialLine(
-  deps: Pick<StartCredentialDeps, "store" | "clock" | "humanId" | "billing">,
+  deps: Pick<StartCredentialDeps, "store" | "clock" | "humanId" | "billing"> & {
+    chfPerUsd?: () => number;
+  },
+  /**
+   * l4-cred-screens (L4-creds-15): what the plan's work is planned at (`waitingWorkUsdMicro`
+   * over its tasks, within the work budget): said where the API key would do it, as the ask card
+   * and the Start dialog say it.
+   */
+  planUsdMicro?: number,
 ): Promise<string | null> {
   if (!deps.billing) return null;
   const human = await deps.store.human.get(deps.humanId);
@@ -196,10 +234,18 @@ export async function planCredentialLine(
   if (!first || first.reason === "needs") return planCardLine(policy.rule, saved, null, opts);
   const row = await deps.store.billingSource.get(first.sourceId).catch(() => undefined);
   const grant = grantOf((row?.limits as JsonObject | undefined)?.grant);
+  const about =
+    typeof planUsdMicro === "number" && planUsdMicro > 0 && deps.chfPerUsd
+      ? aboutWords(chfText(planUsdMicro, deps.chfPerUsd()), planUsdMicro)
+      : undefined;
   return planCardLine(
     policy.rule,
     saved,
     { kind: first.kind, stop: { reason: first.reason, until: first.until } },
-    { ...opts, granted: !!grant && grant.stopKey === first.stopKey },
+    {
+      ...opts,
+      granted: !!grant && grant.stopKey === first.stopKey,
+      ...(about ? { about } : {}),
+    },
   );
 }

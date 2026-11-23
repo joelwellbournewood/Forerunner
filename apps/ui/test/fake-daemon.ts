@@ -678,6 +678,10 @@ export interface FakeDaemonState {
       startable?: boolean;
       /** d1109-starts-engine S-10: the person's session waits to go on: Cancel drops it. */
       kept?: boolean;
+      /** S-10: a kept person Start, as the daemon: "Starts at 15:40 (your subscription's limit)". */
+      startsAt?: string;
+      /** l4-cred-screens (L4-creds-26): under "ask", the stop in a few words; Start asks first. */
+      askFirst?: string;
     }
   >;
   /**
@@ -3297,9 +3301,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       view.blocked = {
         kind: "nothing_runnable",
         // W15-78: one sentence with a subject, as the daemon's `startBlocked`.
+        // l4-cred-screens (L4-creds-26), as the daemon: a kept person Start says when it starts.
         sentence: credentialWait.startable
           ? credentialWait.text
-          : nothingRunsYetSentence(credentialWait.text),
+          : credentialWait.kept && credentialWait.startsAt
+            ? `${credentialWait.startsAt}.`
+            : nothingRunsYetSentence(credentialWait.text),
         action: credentialWait.save
           ? { kind: "link", label: credentialWait.save.label, to: credentialWait.save.to }
           : null,
@@ -3605,8 +3612,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           continuing: fakeContinuing(state.requests),
         },
       );
+      // l4-cred-screens (L4-creds-21), as the daemon: a refusal in words is a 400 "validation".
       if (check.blocked?.kind === "nothing_runnable")
-        return errorBody(c, 409, "conflict", check.blocked.sentence);
+        return errorBody(c, 400, "validation", check.blocked.sentence);
     }
     const startId = nextId("start");
     const outcome = options.startOutcome ?? "started";
@@ -4671,6 +4679,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   };
 
   /** A turn kept in its conversation, as the daemon writes chat.human and chat.reply. */
+  /**
+   * l4-cred-screens (L4-creds-19), as the daemon: the one-off press answers the newest held turn
+   * with the same words in its place, so its line and hold reply leave the conversation.
+   */
+  const dropHeldTurn = (body: ChatRequestBody) => {
+    if (!body.oneOff || !body.heldTurn) return;
+    const key = body.projectId ?? "";
+    const turns = state.conversations.get(key) ?? [];
+    const last = turns.at(-1);
+    if (last?.id === body.heldTurn && last.reply?.oneOff && last.said.trim() === body.text.trim())
+      state.conversations.set(key, turns.slice(0, -1));
+  };
   const keepTurn = (body: ChatRequestBody, reply: ChatReplyView, failed = false): ChatReplyView => {
     const key = body.projectId ?? "";
     const turns = state.conversations.get(key) ?? [];
@@ -4790,6 +4810,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const extra = state.nextChatTurn;
     state.nextChatTurn = null;
     state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
+    dropHeldTurn(parsed.data);
     const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
     const reply = keepTurn(
       parsed.data,
@@ -4831,6 +4852,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const extra = state.nextChatTurn;
     state.nextChatTurn = null;
     state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
+    dropHeldTurn(parsed.data);
     const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
     const key = parsed.data.projectId ?? "";
     const startedAt = new Date().toISOString();

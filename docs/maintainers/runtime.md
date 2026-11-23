@@ -1159,6 +1159,83 @@ and what is left of the monthly cap this month (`monthLeft`, the ledger's UTC
 month as the caps count it). `POST /sessions` refuses a budget above `monthLeft` with that
 sentence (`validation`); 0 and negative budgets never pass its schema.
 
+**One figure for the waiting work (l4-cred-screens, run L4, L4-creds-15; ADR 0120 amended
+2026-11-22).** `waitingWorkUsdMicro(check, inFlight)` (`session/start-check.ts`) is what a yes to
+"Use your API key until 15:40?" lets run: the promise (`promiseOf`: runnable tasks, the larger
+task's room, the later followers, each priced by the planner with its review part) plus what is
+left of the tasks a session holds (`inFlightWork`: claimed and in-progress tasks at their planned
+figure less `actual_cost_usd_micro`, floored at 0 and within their own budget), never more than
+the work budget. Its three callers: the ask card's closure in compose.ts (`RouterTaskBilling.ask`),
+the Start dialog's `credentialAtStart` in server.ts (the "Use API key" explain line) and the plan
+card's foot line (`planCredentialLine(deps, planUsdMicro)` over the plan's own tasks, said where
+the API key would do the work: under ask, under next and with a yes standing). The yes's grant
+(`onGrant` in compose.ts) readmits into a running session only `waitedForCredential`
+(`session/grant-readmit.ts`: the ready tasks the runner gave back with `CREDENTIAL_WAIT_REASON`);
+other ready work joins through `prepareWork` only if it fits. Tests:
+`test/credential-ask-figure.test.ts` and `test/credential-grant-readmit.test.ts` (describes
+"l4-cred-screens, run L4"), `test/credential-policy-view.test.ts`, and the UI's
+`test/real-daemon.test.ts` (describe "l4-cred-screens, run L4").
+
+**The needs form (L4-creds-16, CS-5).** When the only credential that can do a task here is
+stopped, `RouterTaskBilling.pick` throws a `needs` wait whose `waitFor.needs` lists what only it
+can do (the hard needs the stopped kind meets and no later group does). `credentialWaitOf` keeps
+it as `CredentialWait.needs`; the executor's `noteWait` then calls `noteNeeds(sourceId,
+projectId, needs)` (an empty list clears it), which writes `WaitEntry.needs` on the project's one
+wait (`limits.waiting`, kept across a restart). `credentialWaitRow` passes it to `waitRowWords`,
+whose needs form (`needsWaitWords` in `session/credential-wait.ts`) gives the row's label, the
+status head (`line`) and the bar's `why`; compose's `waitingContinuations` sets the bar entry's
+`explain` from it and server.ts' `startsWaitOf` uses the needs head for the waiting
+continuation's status line.
+
+**Key first, key out (L4-creds-17).** `startCredential`'s 'next' branch asks `nextServes`: with
+the subscription first, today's `serves` (the key enabled, no stop, the month has room); with the
+key first, the subscription enabled, in the rule's kinds and without a stop of its own. The line
+is `startRunOutLine(first.kind, ...)`. `serves` alone still decides "Use API key" under ask and
+wait. `planCardLine` adds the cost clause only when the other credential is the API key.
+fixup-l4-cred-screens (the review's blocking #3): the line also needs the work to run now
+(`StartRunsFacts.waitsNow`, which server.ts' `credentialAtStart` answers with `waits.now`, the
+read-only pick of each ready task): work only the resting credential can do here (commands set
+to the API key, a task that needs the person's answers) waits for it, so the dialog keeps the
+blocked sentence alone ("Nothing can run until 11:40 (your API key's limit). Press Start at
+11:40 and the work starts then."). Before, "..., so this runs on your subscription" stood beside
+it. With some ready task able to run there the line stays (the rows of the others say why they
+wait). Test: real-daemon "L4-creds-17: key first with the key resting and work only the key can
+do".
+
+**A kept start at a month's stop (L4-creds-18).** `continuations.keepStart` keeps a person's
+Start for the stop of the wait the work meets now (`asStopWait`: a limit, the share or a key's
+monthly cap, a `needs` wait read as its stop), so "Start on 1 Dec" makes no session row and
+`takeReady` starts it once at the month's start. The share's wait links Change the allowance on
+the project's status line (`startsWaitOf`'s `save`) and in the session page's `waitBlock.answer`
+(server.ts, `ALLOWANCE_TO`).
+
+**`POST /sessions` refusals (L4a-left-1, L4-creds-21).** A refused credential the work needs is
+checked first (`startBlocked(..., { credentialWait: true })` with a `/setup` link and not
+startable), before the one-wait rule's kept-session sentence. Refusals in words carry
+`details.reason: "start_refused"`, which `app.onError` maps to 400 `validation` (others keep the
+generic mapping). compose.ts' `keptWait` says a refused credential's step ("once you save a new
+API key in Settings", "once you sign in again in Settings"). `startsWaitOf` reports a person's
+continuation queued behind another project's session as `queued` with `goesOn` ("Goes on after
+the session on ...").
+
+**Credential words (L4-creds-25).** `views.ts`' By credential words pass `moneyWords` (never
+"CHF 0.00" above zero). `useApiKeyExplain` has a refused form that says the step ("until you sign
+in again") without the budget clause, so it fits 100 characters; `stoppedNowLine` under ask with
+no card open says "you are asked before your API key is used".
+
+**Words beside the buttons (L4-creds-26).** `waitThenStartSentence(wait, { on, ask })`: the plan
+card's chooser batch passes `on: "plan"` (server.ts `chooseFor`), and under ask `ask: true`
+(compose.ts' chooser); New task and Settings keep "Press Start ...". `billing.waits.now` returns
+`askFirst` (the stop in a few words) under ask when the other credential is saved and serves, and
+`projectStatusLine` reads it ("...; Start asks first"). `startBlocked` says a kept person Start's
+`startsAt` ("Starts at 15:40 (...).") in place of the wait's goes-on sentence. result.ts' cost
+line is left out for a credential wait that spent nothing.
+
+**Plurals (L4-creds-29).** The intake card's `why`, its milestone steps and its audit lines count
+with `countWords`/`tasksWords` ("2 milestones, 5 tasks, 3 docs"); the calibration run's plan
+summary says "4 eval tasks". `test/plural-words.test.ts` reads intake.ts' and calibration.ts'
+string literals for "(s)".
+
 **Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
 left the row `running`, its run `running` and its task held under a claim nobody renews; the
 one-session rule then refused every later start ("agent Alice already has an active session
@@ -8288,6 +8365,19 @@ log's lines stay in `session/credential-words.ts`); the shapes are in
   `ChatReplyView.oneOff` and the conversation turn's `reply.oneOff` (the newest reply only, kept
   on the `chat.reply` row) carry "Use API key"; a held reply is a notice with no closer (no Think
   it through).
+- **Chat's one-off in place** (l4-cred-screens, L4-creds-19): `ChatRequestBody.heldTurn` (with
+  `oneOff`) reaches the agent as `ChatRequest.heldTurn`. When it is the newest turn, held (its
+  reply carries `oneOff`) and has the same words, the new `chat.human` row records `replaces`;
+  `readTranscript` leaves a replaced turn out (the conversation view and `historyMessages`
+  alike, after a restart too), and the turn's `earlier` drops it before the model call.
+  fixup-l4-cred-screens: every hold reply is the app's own words, never an assistant turn of the
+  history. Both hold forms (held before the call, held on the way) write `hold: true` on their
+  `chat.reply` row (`TranscriptReply.hold`; a notice with `oneOff` reads as one on older rows,
+  `isHoldReply`), and `historyMessages` treats a held turn as the person's line alone (merged
+  with the next, dropped when it is the last). The conversation view still shows it. Before,
+  two held questions and the press on the newest showed the model the first one's "... so I
+  have not answered. I can still add and change tasks." as its own reply (real-daemon "with two
+  held questions").
 - **The refused card's closed line** (C5-left-5): `closeRefusedCards(..., {why, workWaited})`
   records why it closed; `refusedClosedLine` words it.
 - **Rows and status** (CS-5): `waitRowWords` covers the share (Change the allowance), a key's
@@ -8307,7 +8397,12 @@ log's lines stay in `session/credential-words.ts`); the shapes are in
   resting and can do the task (as the pick does) when the preset goes on with the next one, or
   when the person's yes stands for the stop it is at now (`limits.grant` read once per batch:
   only the credential the yes names); under "then wait" and "ask" without a yes the line stays
-  the wait.
+  the wait. fixup-l4-cred-screens: the next credential takes the line only when it can do every
+  hard need the resting one does here (`capabilitiesOf` of both against the task's `needsOf`),
+  since the pick holds such work for the credential that can (a `needs` wait); else the line
+  stays the wait ("Waits until 11:40 (your API key's limit). Press Start and the work starts
+  then."). Before, with the key first and resting and commands set to the key, New task and the
+  plan card said "Runs on your Claude subscription, where commands cannot run: ...".
 - **"Use API key" only for a start that runs** (the review of the fix-up): `startCredential`
   takes `{runsWork, stopped}` (the server passes `runsWork(check)` and Stop all); a start that
   runs nothing (and no session of the project waits to go on) or that Stop all refuses gets no

@@ -288,7 +288,8 @@ export class CalibrationJob {
 
     // The run's session row and token: the budget the hooks enforce before every review. The
     // row is created with its plan, so it carries the reason and the author (spec B.5).
-    const planSummary = `critic calibration over ${evalSet.length} eval task(s)`;
+    // l4-cred-screens (L4-creds-29): the plural as the number says (before: "eval task(s)").
+    const planSummary = `critic calibration over ${evalSet.length} eval ${evalSet.length === 1 ? "task" : "tasks"}`;
     const runAs = this.deps.criticAgentId;
     const session = await store.session.insert({
       agent_id: runAs,

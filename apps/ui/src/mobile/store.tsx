@@ -52,6 +52,7 @@ import {
   type RunnerKeyBridge,
   secureStoreRunnerKeys,
 } from "../lib/runner-unlock.ts";
+import { setPersonZone } from "../lib/time.ts";
 import {
   buildPlanCard,
   type CardContext,
@@ -858,6 +859,8 @@ export class MobileController {
     if (this.state.stage !== "paired") return;
     try {
       const me = await this.client.me();
+      // l4-cred-screens (L4-creds-20): the phone writes times in the person's zone too.
+      setPersonZone(typeof me.timezone === "string" ? me.timezone : null);
       const session = this.state.session;
       if (session) {
         const humanName = me.humanName !== undefined ? (me.humanName ?? null) : session.humanName;

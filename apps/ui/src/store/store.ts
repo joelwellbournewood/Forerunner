@@ -2,6 +2,7 @@ import type { AgentView, HealthView, HumanView, ProjectCard, RunningView } from 
 import type { DaemonConfig } from "../api/config.ts";
 import type { DesktopIndicatorEventData, RestartRequested, StreamMode } from "../api/sse.ts";
 import { type KeyValueStore, storageKey } from "../lib/storage.ts";
+import { setPersonZone } from "../lib/time.ts";
 import { type ConversationState, EMPTY_CONVERSATION } from "./conversation.ts";
 
 /**
@@ -216,6 +217,8 @@ export function reduce(state: UiState, action: UiAction): UiState {
         connection: { ...state.connection, attempt: state.connection.attempt + 1 },
       };
     case "me":
+      // l4-cred-screens (L4-creds-20): every time on the screen is written in the person's zone.
+      setPersonZone(action.me?.timezone);
       return { ...state, me: action.me };
     case "agents":
       return { ...state, agents: action.agents };

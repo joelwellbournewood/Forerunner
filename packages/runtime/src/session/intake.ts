@@ -1482,8 +1482,8 @@ export class IntakeService {
       kind: "approval",
       why: cut(
         planOnly
-          ? `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} new task(s) and a first-session plan of ${tasksWords(n.firstSessionTasks)}. Approve to add them to the project; nothing is written until then.`
-          : `Intake for "${project.name}": ${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s) and a first-session plan of ${tasksWords(n.firstSessionTasks)}. Approve to write the plan and the docs${
+          ? `Intake for "${project.name}": ${countWords(n.milestones, "milestone")}, ${countWords(n.tasks, "new task")} and a first-session plan of ${tasksWords(n.firstSessionTasks)}. Approve to add them to the project; nothing is written until then.`
+          : `Intake for "${project.name}": ${countWords(n.milestones, "milestone")}, ${countWords(n.tasks, "task")}, ${countWords(n.docs, "doc")} and a first-session plan of ${tasksWords(n.firstSessionTasks)}. Approve to write the plan and the docs${
               repo ? ` (the docs as a pull request on ${repo.owner}/${repo.name})` : ""
             }; nothing is written until then.`,
         4000,
@@ -1491,7 +1491,7 @@ export class IntakeService {
       steps: [
         ...shaped.milestones.map(
           (m) =>
-            `Milestone: ${m.name} (${m.tasks.length} task(s)${m.targetDate ? `, by ${m.targetDate}` : ""})`,
+            `Milestone: ${m.name} (${tasksWords(m.tasks.length)}${m.targetDate ? `, by ${m.targetDate}` : ""})`,
         ),
         ...(shaped.smallProject && plan.milestones.length !== 1
           ? [
@@ -1499,7 +1499,7 @@ export class IntakeService {
             ]
           : []),
         ...(shaped.unassigned.length
-          ? [`${shaped.unassigned.length} task(s) under no milestone`]
+          ? [`${tasksWords(shaped.unassigned.length)} under no milestone`]
           : []),
         ...(docPaths.length ? [`Docs: ${docPaths.join(", ")}`] : []),
         `First session: ${first.join("; ")}`,
@@ -1546,7 +1546,7 @@ export class IntakeService {
       ),
       result_summary: redact(
         cut(
-          `${n.milestones} milestone(s), ${n.tasks} task(s), ${n.docs} doc(s), first session ${n.firstSessionTasks} task(s) ~${approxChf(estimate)}; model ${called.model}, cost ${approxChf(called.costUsdMicro)}`,
+          `${countWords(n.milestones, "milestone")}, ${tasksWords(n.tasks)}, ${countWords(n.docs, "doc")}, first session ${tasksWords(n.firstSessionTasks)} ~${approxChf(estimate)}; model ${called.model}, cost ${approxChf(called.costUsdMicro)}`,
         ),
       ),
     });
@@ -2368,7 +2368,7 @@ export class IntakeService {
         agent_id: this.deps.agent.id,
         input_summary: cut(`intake request ${row.id} approved for project ${project.id}`),
         result_summary: cut(
-          `${plan.milestones.length} milestone(s)${plan.reusedMilestone ? " (joined the open one)" : ""}, ${plan.tasks.length} task(s) written; first session ${items.length} task(s) ~${approxChf(estimate)}`,
+          `${countWords(plan.milestones.length, "milestone")}${plan.reusedMilestone ? " (joined the open one)" : ""}, ${tasksWords(plan.tasks.length)} written; first session ${tasksWords(items.length)} ~${approxChf(estimate)}`,
         ),
       });
       return { milestones: plan.milestones.length, tasks: plan.tasks.length };
@@ -2766,4 +2766,12 @@ function estimateOf(p: IntakeProposal): number {
 /** C4b-left-2 (design section 5, rule 6): "1 task", "3 tasks", never "task(s)". */
 function tasksWords(n: number): string {
   return `${n} ${n === 1 ? "task" : "tasks"}`;
+}
+
+/**
+ * l4-cred-screens (L4-creds-29, design §5): "1 milestone", "2 milestones", "3 docs", the plural
+ * as the number says (before: "2 milestone(s), 5 task(s), 3 doc(s)" on the intake card).
+ */
+function countWords(n: number, word: string): string {
+  return `${n} ${n === 1 ? word : `${word}s`}`;
 }

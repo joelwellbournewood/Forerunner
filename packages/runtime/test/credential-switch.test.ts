@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import type { CostView, EventView, SessionView, TaskDetailView } from "../src/daemon/api-types.ts";
 import type { RuntimeApp } from "../src/daemon/compose.ts";
 import { grantForStart } from "../src/session/credential-ask.ts";
+import { moneyWords } from "../src/session/money-words.ts";
 import { credWorld, type Req, seedProject, setPolicy, startSession, until } from "./cred-world.ts";
 import { removeHomes, settleSessions } from "./helpers.ts";
 
@@ -163,7 +164,9 @@ describe("d1109-cred-screens, run C: the switch's data and its session log line 
     expect(rows.map((r) => r.kind).sort()).toEqual(["api_key", "subscription"]);
     expect(rows.reduce((a, r) => a + r.cost.usdMicro, 0)).toBe(cost.totals.usdMicro);
     const keyRow = rows.find((r) => r.kind === "api_key");
-    expect(keyRow?.words).toBe(`Your API key: ${formatChf(keyRow?.cost.chfMicro ?? -1)}`);
+    // l4-cred-screens (L4-creds-25): the money rule, never "CHF 0.00" above zero.
+    const keyChf = keyRow?.cost.chfMicro ?? -1;
+    expect(keyRow?.words).toBe(`Your API key: ${moneyWords(formatChf(keyChf), keyChf)}`);
     expect(rows.find((r) => r.kind === "subscription")?.words).toMatch(
       /^Your Claude subscription: (CHF \d+\.\d\d|less than CHF 0\.01) \(estimate(, \d+% of its allowance)?\)$/,
     );

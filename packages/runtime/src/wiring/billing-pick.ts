@@ -688,6 +688,13 @@ export class RouterTaskBilling implements TaskBillingPort {
         const left = skips.find((s) => s.code === "policy");
         if (more && (stopped || left)) {
           const at = stopped ?? left;
+          // l4-cred-screens (L4-creds-16): what only this credential can do here, so the row
+          // says why the work waits for it ("only it can read web pages here").
+          const can = capabilitiesOf(at?.kind ?? "api_key", facts);
+          const others = groups.slice(i + 1).flatMap((g) => g.map((s) => s.kind));
+          const onlyIt = (req.needs?.hard ?? []).filter(
+            (n) => can[n] && others.every((k) => !capabilitiesOf(k, facts)[n]),
+          );
           throw new ForerunnerError(
             "unavailable",
             `the credential that can do this ${purpose} work cannot serve now; waiting for it`,
@@ -702,6 +709,7 @@ export class RouterTaskBilling implements TaskBillingPort {
                   stopKey: stopped ? `needs:${stopped.sourceId}:${stopped.until ?? ""}` : "needs",
                   ask: false,
                   ...(stopped ? { stop: STOP_REASON_OF[stopped.code] } : {}),
+                  ...(onlyIt.length ? { needs: onlyIt } : {}),
                 } as never,
               },
             },
@@ -956,6 +964,24 @@ export class RouterTaskBilling implements TaskBillingPort {
           error: errorMessage(e),
         }),
       );
+  }
+
+  /**
+   * l4-cred-screens (L4-creds-16): what only this source's credential can do for the project's
+   * waiting work (`WaitEntry.needs`, the chooser's "only it can" list), on the project's one
+   * entry (`noteWait` writes it first); an empty list clears it (a plain wait).
+   */
+  async noteNeeds(sourceId: string, projectId: string, needs: readonly string[]): Promise<void> {
+    const wanted = needsOf([...needs]);
+    await updateSourceLimits(this.opts.store, sourceId, (limits) => {
+      const waiting = waitingOf(limits);
+      const at = waiting.findIndex((w) => w.projectId === projectId);
+      if (at < 0) return null;
+      const { needs: had, ...entry } = waiting[at] as WaitEntry;
+      if ((had ?? []).join(",") === wanted.join(",")) return null;
+      const next: WaitEntry = { ...entry, ...(wanted.length ? { needs: wanted } : {}) };
+      return { ...limits, waiting: waiting.map((w, i) => (i === at ? next : w)) as never };
+    });
   }
 
   /**
@@ -1330,6 +1356,12 @@ export interface WaitEntry {
   sessionId?: string;
   /** The continuation or person start kept for the stop's end (S-10). */
   kept?: KeptStart;
+  /**
+   * l4-cred-screens (L4-creds-16, CS-5's needs form): what only this source's credential can do
+   * for the waiting work here ("webRead": read web pages), when the work waits for it because no
+   * other credential can (a `needs` wait); absent for a plain wait. Kept across a restart.
+   */
+  needs?: TaskNeed[];
 }
 
 function keptOf(v: unknown): KeptStart | undefined {
@@ -1347,13 +1379,19 @@ function keptOf(v: unknown): KeptStart | undefined {
   };
 }
 
+/** A stored list of needs (`WaitEntry.needs`), the known ones only. */
+function needsOf(v: unknown): TaskNeed[] {
+  return Array.isArray(v) ? v.filter((n): n is TaskNeed => TASK_NEEDS.includes(n as TaskNeed)) : [];
+}
+
 /** The projects that wait for a source (`limits.waiting`, U-078), well-formed entries only. */
 export function waitingOf(limits: Record<string, unknown>): WaitEntry[] {
   const list = Array.isArray(limits.waiting) ? limits.waiting : [];
   return list.flatMap((w) => {
     if (!w || typeof w !== "object") return [];
-    const { projectId, agentId, since, sessionId, kept } = w as Record<string, unknown>;
+    const { projectId, agentId, since, sessionId, kept, needs } = w as Record<string, unknown>;
     const k = keptOf(kept);
+    const n = needsOf(needs);
     return typeof projectId === "string" && typeof agentId === "string"
       ? [
           {
@@ -1362,6 +1400,7 @@ export function waitingOf(limits: Record<string, unknown>): WaitEntry[] {
             since: typeof since === "string" ? since : "",
             ...(typeof sessionId === "string" ? { sessionId } : {}),
             ...(k ? { kept: k } : {}),
+            ...(n.length ? { needs: n } : {}),
           },
         ]
       : [];

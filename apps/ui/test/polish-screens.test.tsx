@@ -2,7 +2,7 @@ import { webAccessWords } from "@forerunner/runtime/wiring/web-access";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { formatClock, formatDateTime, formatTime } from "../src/lib/time.ts";
+import { formatClock, formatDateTime, formatTime, setPersonZone } from "../src/lib/time.ts";
 import { shortQuestion } from "../src/pages/project/DecisionsSection.tsx";
 import { WebAccessInput } from "../src/pages/WebAccessInput.tsx";
 import { DECISIONS, money } from "./fixtures.ts";
@@ -165,8 +165,13 @@ describe("times on a screen: 24-hour HH:MM, in a browser set to en-US (later #66
       for (const s of spies) s.mockRestore();
     };
   };
-  /** An instant at this local wall-clock time on 3 Nov 2026. */
-  const at = (h: number, m: number, s = 0) => new Date(2026, 10, 3, h, m, s).toISOString();
+  /**
+   * An instant at this wall-clock time on 3 Nov 2026 on the person's clock (l4-cred-screens,
+   * L4-creds-20: times are written in the person's zone, and the fake's person is in Zurich,
+   * UTC+1 in November; before, in the computer's).
+   */
+  const at = (h: number, m: number, s = 0) =>
+    new Date(Date.UTC(2026, 10, 3, h - 1, m, s)).toISOString();
 
   it("the session title and its log stamps read like 'Waits until 04:36', never '04:32:05 AM'", async () => {
     const restore = asEnUs();
@@ -196,15 +201,20 @@ describe("times on a screen: 24-hour HH:MM, in a browser set to en-US (later #66
   it("Settings' 'Resting until' reads the same way: HH:MM today, '4 Nov, 04:36' another day", () => {
     const restore = asEnUs();
     try {
-      const now = new Date(2026, 10, 3, 9, 0).getTime();
+      setPersonZone("Europe/Zurich");
+      const now = Date.parse(at(9, 0));
       expect(formatClock(at(4, 36), now)).toBe("04:36");
-      expect(formatClock(new Date(2026, 10, 4, 16, 5).toISOString(), now)).toBe("4 Nov, 16:05");
+      expect(formatClock(new Date(Date.UTC(2026, 10, 4, 15, 5)).toISOString(), now)).toBe(
+        "4 Nov, 16:05",
+      );
       expect(formatTime(at(16, 2, 5))).toBe("16:02");
       expect(formatDateTime(at(4, 36))).toBe("3 Nov 2026, 04:36");
       // d1109-cred-screens (CS-1, CS-2): the order list and its "Resting until" row are gone;
       // Settings' "Which Claude does the work" says the state in the daemon's words, in the
       // person's clock (credential-policy-view.test.ts, settings-billing-order.test.tsx).
     } finally {
+      // The zone is the module's: the next test reads the computer's again (the review).
+      setPersonZone(null);
       restore();
     }
   });

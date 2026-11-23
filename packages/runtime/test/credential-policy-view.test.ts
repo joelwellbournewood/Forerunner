@@ -29,14 +29,21 @@ import {
 } from "../src/daemon/credential-policy-view.ts";
 import { eventAudience } from "../src/daemon/event-audience.ts";
 import { projectStatusLine } from "../src/daemon/project-status.ts";
+import { startBlocked } from "../src/daemon/start-blocked.ts";
 import { describeEvent } from "../src/daemon/views.ts";
-import { waitRowWords } from "../src/session/credential-wait.ts";
+import {
+  needsWaitWords,
+  waitRowWords,
+  waitThenStartSentence,
+} from "../src/session/credential-wait.ts";
 import {
   askCardWords,
   backLogLine,
   chatOneOffExplain,
   switchRunLine,
 } from "../src/session/credential-words.ts";
+import { sessionResultLines } from "../src/session/result.ts";
+import { waitingWorkUsdMicro } from "../src/session/start-check.ts";
 
 /**
  * d1109-cred-screens (run C, C6; ADR 0120 amended 2026-11-16): every screen sentence of "which
@@ -136,7 +143,7 @@ describe("credential-policy-view (CS-1): the presets, rows and lines", () => {
       "Your subscription is at its limit until 15:40. Answer the card to use your API key, or wait.",
     );
     expect(stoppedNowLine("subscription", limit, "ask", { ...opts, askOpen: false })).toBe(
-      "Your subscription is at its limit until 15:40; the work waits for it.",
+      "Your subscription is at its limit until 15:40; you are asked before your API key is used.",
     );
     expect(stoppedNowLine("subscription", share, "next", { ...opts, askOpen: false })).toBe(
       "Your subscription has used its share until Tue 1 Dec; your API key does the work meanwhile.",
@@ -490,5 +497,295 @@ describe("d1109-cred-screens, run C: the ask card's figure (CS-8)", () => {
     ).toBe(
       "Your work and chat use your API key until a new sign-in is saved: less than CHF 0.01 for what waits now.",
     );
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-15; ADR 0120 amended 2026-11-22): the waiting work has one
+ * figure (`waitingWorkUsdMicro`: the promise plus what is left of a held task, within the work
+ * budget), and the plan card's foot line says it where the API key would do the plan's work.
+ */
+describe("l4-cred-screens, run L4: one figure for the waiting work (L4-creds-15)", () => {
+  const t = (title: string, usd: number) => ({
+    taskId: title,
+    title,
+    estimateUsdMicro: Math.round(usd * 1_000_000),
+  });
+  it("the promise (runnable, the larger task's room, the followers) plus what is left of a held task, within the work budget", () => {
+    const check = {
+      runnable: [t("A", 0.13)],
+      later: [t("B", 0.12)],
+      overBudget: [],
+      oversized: null,
+      workBudgetUsdMicro: 4_000_000,
+    };
+    expect(waitingWorkUsdMicro(check)).toBe(250_000);
+    expect(waitingWorkUsdMicro(check, [{ leftUsdMicro: 90_000 }])).toBe(340_000);
+    // Never more than the work budget: nothing passes it.
+    expect(
+      waitingWorkUsdMicro({ ...check, workBudgetUsdMicro: 300_000 }, [{ leftUsdMicro: 90_000 }]),
+    ).toBe(300_000);
+    // A held task that spent more than its estimate adds nothing.
+    expect(waitingWorkUsdMicro(check, [{ leftUsdMicro: -5 }])).toBe(250_000);
+  });
+
+  it("the plan card's foot line says the figure where the API key would do the work, never 'costs money' beside it", () => {
+    const ask = ruleOf("subscription_then_ask");
+    const next = ruleOf("subscription_then_key");
+    const stopped = { kind: "subscription", stop: limit };
+    expect(planCardLine(ask, both, stopped, { ...opts, about: "about CHF 0.25" })).toBe(
+      "Your subscription is at its limit until 15:40: you are asked before your API key is used (about CHF 0.25).",
+    );
+    expect(planCardLine(next, both, stopped, { ...opts, about: "about CHF 0.25" })).toBe(
+      "Your subscription is at its limit until 15:40: your API key does the work meanwhile (about CHF 0.25).",
+    );
+    expect(
+      planCardLine(ask, both, stopped, { ...opts, granted: true, about: "about CHF 0.25" }),
+    ).toBe(
+      "Your subscription is at its limit until 15:40: you said yes, so your API key does the work meanwhile (about CHF 0.25).",
+    );
+    // Without a figure (no plan priced): as before.
+    expect(planCardLine(next, both, stopped, opts)).toBe(
+      "Your subscription is at its limit until 15:40: your API key does the work meanwhile (costs money).",
+    );
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-16, CS-5's needs form; run C decision 55: never cut): work
+ * that only one credential can do here and that waits for it says why on its row, the status line
+ * and the bar, each within design section 5's lengths.
+ */
+describe("l4-cred-screens, run L4: the needs form (L4-creds-16)", () => {
+  const keyWait = {
+    reason: "needs" as const,
+    sourceId: "k1",
+    kind: "api_key" as const,
+    until: "2026-11-16T14:40:00Z",
+    stop: "limit" as const,
+    needs: ["webRead"],
+  };
+  it("the row, the status head and the bar's line say what only the API key can do here", () => {
+    const words = needsWaitWords("api_key", ["webRead"]);
+    expect(words).toEqual({
+      label: "Waits for your API key: only it can read web pages here.",
+      line: "Waiting for your API key (only it can read web pages here)",
+      why: "Only your API key can read web pages here.",
+    });
+    for (const s of Object.values(words)) expect(s.length).toBeLessThanOrEqual(80);
+    // Two needs fit; a list too long for a row keeps the first.
+    expect(needsWaitWords("api_key", ["webRead", "webSearch"]).label).toBe(
+      "Waits for your API key: only it can read web pages and search the web here.",
+    );
+    expect(
+      needsWaitWords("api_key", ["webRead", "webSearch", "askPerson"]).label.length,
+    ).toBeLessThanOrEqual(80);
+  });
+
+  it("the row's detail says what holds the key and what then, at a limit, the share, a refusal", () => {
+    const row = waitRowWords(keyWait, { ...opts, goesOn: false });
+    expect(row.label).toBe("Waits for your API key: only it can read web pages here.");
+    expect(row.detail).toBe(
+      "Your API key is at its limit until 15:40; then it runs at your next Start.",
+    );
+    expect(row.line).toBe("Waiting for your API key (only it can read web pages here)");
+    expect(row.why).toBe("Only your API key can read web pages here.");
+    expect(row.save).toBeNull();
+    expect(waitRowWords(keyWait, { ...opts, goesOn: true }).detail).toBe(
+      "Your API key is at its limit until 15:40; then your session goes on.",
+    );
+    const refused = waitRowWords(
+      { ...keyWait, stop: "refused", until: null },
+      { ...opts, goesOn: false },
+    );
+    expect(refused.detail).toBe(
+      "Anthropic refused it. Save a new API key in Settings; then it runs at your next Start.",
+    );
+    expect(refused.save).toEqual({ label: "Save a new key", to: "/setup" });
+    const sub = waitRowWords(
+      { ...keyWait, kind: "subscription", stop: "share", until: "2026-12-01T00:00:00Z" },
+      { ...opts, goesOn: false },
+    );
+    expect(sub.label).toBe("Waits for your Claude subscription: only it can read web pages here.");
+    expect(sub.detail).toBe(
+      "Your Claude subscription has used its share until Tue 1 Dec; then it runs at your next Start.",
+    );
+    expect(sub.save).toEqual({ label: "Change the allowance", to: "/settings#plan-allowance" });
+    for (const r of [row, refused, sub]) {
+      expect(r.label.length).toBeLessThanOrEqual(80);
+      expect(r.line.length).toBeLessThanOrEqual(80);
+    }
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-17, live check 4's LC-C26): under "API key first, then
+ * subscription" with the key out, the Start dialog names the stop in that direction, and no line
+ * says the subscription costs money.
+ */
+describe("l4-cred-screens, run L4: the key-first direction (L4-creds-17)", () => {
+  it("the dialog's run-out line with the key first, and the plan card without '(costs money)'", () => {
+    expect(startRunOutLine("api_key", limit, "about CHF 0.07", opts)).toBe(
+      "Your API key is at its limit until 15:40, so this runs on your subscription (about CHF 0.07).",
+    );
+    const keyFirst = ruleOf("key_then_subscription");
+    const line = planCardLine(keyFirst, both, { kind: "api_key", stop: limit }, opts);
+    expect(line).toBe(
+      "Your API key is at its limit until 15:40: your subscription does the work meanwhile.",
+    );
+    expect(line).not.toContain("costs money");
+    expect(
+      planCardLine(
+        keyFirst,
+        both,
+        { kind: "api_key", stop: limit },
+        {
+          ...opts,
+          about: "about CHF 0.07",
+        },
+      ),
+    ).toBe("Your API key is at its limit until 15:40: your subscription does the work meanwhile.");
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-25, live check 4's LC-C25, C6L-4): the refused form of the
+ * Use API key line fits design section 5's 100 characters, and Settings' now line under "ask"
+ * says the person is asked before the API key is used, not that the work waits.
+ */
+describe("l4-cred-screens, run L4: credential words within section 5 (L4-creds-25)", () => {
+  it("the refused Use API key line is at most 100 characters and says the step", () => {
+    const sub = useApiKeyExplain("subscription", refused, "about CHF 0.90", opts);
+    expect(sub).toBe("Runs now on your API key until you sign in again, about CHF 0.90.");
+    expect(useApiKeyExplain("api_key", refused, "about CHF 10.90", opts)).toBe(
+      "Runs now on your subscription until you save a new key, about CHF 10.90.",
+    );
+    // The button is "Use API key": the subscription is the one that stopped.
+    for (const stop of [limit, share, refused])
+      for (const about of ["about CHF 10.90", "less than CHF 0.01"])
+        expect(useApiKeyExplain("subscription", stop, about, opts).length).toBeLessThanOrEqual(100);
+  });
+
+  it("Settings' now line under ask with no card open says the person is asked first", () => {
+    expect(stoppedNowLine("subscription", limit, "ask", { ...opts, askOpen: false })).toBe(
+      "Your subscription is at its limit until 15:40; you are asked before your API key is used.",
+    );
+    expect(stoppedNowLine("subscription", refused, "ask", { ...opts, askOpen: false })).toBe(
+      "Anthropic refused your Claude sign-in; you are asked before your API key is used.",
+    );
+    // "Then wait" keeps its line: the work waits for it.
+    expect(stoppedNowLine("subscription", limit, "wait", { ...opts, askOpen: false })).toBe(
+      "Your subscription is at its limit until 15:40; the work waits for it.",
+    );
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-26, C6L-8): credential words that agree with the buttons
+ * beside them: the plan card names "Approve and start", the header under "ask" names the stop
+ * and the ask (not "nothing runs"), a wait result spends nothing and says no "CHF 0.00", and a
+ * kept person start reads when it starts, not that "your session goes on".
+ */
+describe("l4-cred-screens, run L4: words that agree with the buttons (L4-creds-26)", () => {
+  const wait = {
+    reason: "limit" as const,
+    sourceId: "bs_1",
+    kind: "subscription" as const,
+    until: "2026-11-16T14:40:00Z",
+  };
+  it("the plan card's wait line names Approve and start; New task keeps Press Start", () => {
+    expect(waitThenStartSentence(wait, opts)).toBe(
+      "Waits until 15:40 (your subscription's limit). Press Start and the work starts then.",
+    );
+    const plan = waitThenStartSentence(wait, { ...opts, on: "plan" });
+    expect(plan).toBe(
+      "Waits until 15:40 (your subscription's limit); Approve and start keeps it for then.",
+    );
+    const ask = waitThenStartSentence(wait, { ...opts, on: "plan", ask: true });
+    expect(ask).toBe(
+      "Waits until 15:40 (your subscription's limit); Approve and start asks before your API key is used.",
+    );
+    for (const s of [plan, ask]) {
+      expect(s).not.toContain("Press Start");
+      expect(s.length).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("the header under ask names the stop and the ask, within 80 characters", () => {
+    const tasks = [
+      { id: "t1", status: "ready", title: "A" },
+      { id: "t2", status: "ready", title: "B" },
+    ];
+    const displays = new Map([
+      ["t1", { key: "ready", label: "Ready" }],
+      ["t2", { key: "ready", label: "Ready" }],
+    ]);
+    const line = projectStatusLine({
+      tasks,
+      displays: displays as never,
+      cards: [],
+      plan: "none",
+      credentialWaitNow: {
+        text: "Nothing can run until 15:40 (your subscription's limit). Press Start at 15:40 and the work starts then.",
+        save: null,
+        startable: true,
+        askFirst: "your subscription is at its limit until 15:40",
+      },
+    } as never);
+    expect(line.text).toBe(
+      "Ready: 2 tasks; your subscription is at its limit until 15:40; Start asks first",
+    );
+    expect(line.text.length).toBeLessThanOrEqual(80);
+    expect(line.text).not.toContain("nothing runs");
+    expect(line.action).toEqual({ kind: "start", label: "Continue", to: null });
+  });
+
+  it("a session that ended to wait and spent nothing says no CHF 0.00", () => {
+    const lines = sessionResultLines({
+      outcome: {
+        done: [],
+        failed: [],
+        needsYou: [],
+        leftOver: [{ id: "t1", title: "Style the page" }],
+        waiting: [],
+        waitingForDocker: [],
+        stopReason: "credential_wait",
+        spentChfMicro: 0,
+        credentialWait:
+          "Waits until 15:40 (your subscription's limit); then it runs at your next Start.",
+      },
+      inReview: [],
+      leftOutForBudget: [],
+      sessionCapChfMicro: 800_000,
+      openTasks: 1,
+    } as never).join(" ");
+    expect(lines).toContain("Waits until 15:40");
+    expect(lines).not.toContain("CHF 0.00");
+  });
+
+  it("a kept person start reads when it starts, with Cancel, never 'your session goes on'", () => {
+    const blocked = startBlocked(
+      {
+        runnable: [{ taskId: "t1", title: "Style the page", estimateUsdMicro: 100_000 }],
+        ready: 1,
+        waiting: [],
+        later: [],
+        overBudget: [],
+        oversized: null,
+        workBudgetUsdMicro: 800_000,
+      } as never,
+      {
+        projectId: "p1",
+        hasModel: true,
+        credentialWait: {
+          text: "Waits until 15:40 (your subscription's limit); then your session goes on.",
+          save: null,
+          kept: true,
+          startsAt: "Starts at 15:40 (your subscription's limit)",
+        },
+      } as never,
+    );
+    expect(blocked?.sentence).toBe("Starts at 15:40 (your subscription's limit).");
+    expect(blocked?.kept).toBe(true);
   });
 });

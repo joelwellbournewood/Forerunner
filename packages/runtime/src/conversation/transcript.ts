@@ -75,6 +75,12 @@ export interface TranscriptReply {
   failed?: boolean;
   /** C5-left-3: a hold reply's one-off press ("Use API key") with its consequence line. */
   oneOff?: { label: string; explain: string } | null;
+  /**
+   * fixup-l4-cred-screens (L4-creds-19): the app's own hold reply ("Your Claude subscription is
+   * at its limit until 15:40, so I have not answered. ..."): the credential policy held the
+   * question and no model wrote it. Set only when true.
+   */
+  hold?: boolean;
 }
 
 export interface TranscriptTurn {
@@ -156,7 +162,17 @@ function replyOf(p: Record<string, unknown>): TranscriptReply {
       typeof obj(p.oneOff).label === "string" && typeof obj(p.oneOff).explain === "string"
         ? { label: str(obj(p.oneOff).label), explain: str(obj(p.oneOff).explain) }
         : null,
+    ...(p.hold === true ? { hold: true } : {}),
   };
+}
+
+/**
+ * fixup-l4-cred-screens (L4-creds-19): whether a reply is the app's own hold reply, which no
+ * model wrote: marked `hold`, or, on a row written before the mark, a notice with the one-off
+ * press (only a hold reply carries it).
+ */
+export function isHoldReply(reply: TranscriptReply): boolean {
+  return reply.hold === true || (reply.notice && !!reply.oneOff);
 }
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -221,10 +237,15 @@ export async function readTranscript(
   const latest = await store.event.latestSeq(sessionId);
   const humans = new Map<string, EventRow>();
   const replies = new Map<string, EventRow>();
+  // l4-cred-screens (L4-creds-19): a held turn the one-off press answered in its place (the
+  // answering line's `replaces`): it is no turn of its own any more, here and after a restart.
+  const replaced = new Set<string>();
   let scanned = 0;
   let hi = latest;
   const mine = (): string[] =>
-    [...humans.keys()].filter((t) => t !== opts.exclude && keyOf(t) === projectId);
+    [...humans.keys()].filter(
+      (t) => t !== opts.exclude && !replaced.has(t) && keyOf(t) === projectId,
+    );
   const keyOf = (transcriptId: string): string | null => {
     const h = humans.get(transcriptId);
     const r = replies.get(transcriptId);
@@ -243,8 +264,11 @@ export async function readTranscript(
       if (e.seq > hi) continue;
       const t = str(obj(e.payload).transcriptId);
       if (!t) continue;
-      if (e.type === "chat.human" && !humans.has(t)) humans.set(t, e);
-      else if (e.type === "chat.reply" && !replies.has(t)) replies.set(t, e);
+      if (e.type === "chat.human" && !humans.has(t)) {
+        humans.set(t, e);
+        const r = obj(e.payload).replaces;
+        if (typeof r === "string" && r) replaced.add(r);
+      } else if (e.type === "chat.reply" && !replies.has(t)) replies.set(t, e);
     }
     scanned += rows.length;
     hi = from;
@@ -482,7 +506,11 @@ export function historyMessages(
       const last = out.at(-1);
       if (last?.role === "user") last.content = `${last.content}\n\n${said}`;
       else out.push({ role: "user", content: said });
-      const reply = t.reply ? replyInHistory(t.reply) : "";
+      // fixup-l4-cred-screens (L4-creds-19): the app's own hold reply is no assistant turn (the
+      // model never wrote it): the held question is the person's line alone, as a turn without
+      // a reply. Before, a second held question's press showed the model "... so I have not
+      // answered. I can still add and change tasks." as its own words.
+      const reply = t.reply && !isHoldReply(t.reply) ? replyInHistory(t.reply) : "";
       if (reply) out.push({ role: "assistant", content: reply });
     }
     // The turn's own line follows as a user message: the history ends with the assistant.

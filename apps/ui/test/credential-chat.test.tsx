@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
@@ -154,4 +154,44 @@ describe("d1109-cred-screens, run C: the Inbox's ask card (CS-8)", () => {
     );
     expect(answers).toEqual(["Use API key"]);
   });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-19, live check 4's LC-C25, C6L-6): the one-off press answers
+ * the held question in its place. Before, it sent the question as a new turn: the question showed
+ * twice (and stayed twice after a reload), with the hold reply between them.
+ */
+describe("l4-cred-screens, run L4: the one-off press answers the held turn in place (L4-creds-19)", () => {
+  for (const where of ["chat", "conversation"] as const) {
+    it(`${where === "chat" ? "the Chat tab" : "Talk"}: after the press the question shows once, also after a remount, and the press names the held turn`, async () => {
+      const { user, harness, scope } = await heldChat(where);
+      const press = await within(scope).findByTestId(`${where}-one-off`);
+      harness.daemon.state.nextChatTurn = { reply: "The page has three tasks left." };
+      await user.click(press);
+      await waitFor(() => expect(scope.textContent).toContain("The page has three tasks left."));
+      const count = (el: HTMLElement) =>
+        (el.textContent ?? "").split("what is left on the page?").length - 1;
+      expect(count(scope)).toBe(1);
+      expect(scope.textContent).not.toContain("so I have not answered");
+      const sent = postedCalls(harness, "/chat/stream").map(
+        (c) => c.body as { text?: string; oneOff?: boolean; heldTurn?: string },
+      );
+      const heldId = harness.daemon.state.conversations
+        .get("proj_atlas")
+        ?.find((t) => t.said === "what is left on the page?")?.id;
+      expect(sent.at(-1)?.oneOff).toBe(true);
+      expect(typeof sent.at(-1)?.heldTurn).toBe("string");
+      expect(heldId).toBeDefined();
+      // A remount reads the conversation again: still once.
+      cleanup();
+      renderApp("/projects/proj_atlas/chat", harness);
+      let again: HTMLElement = document.body;
+      if (where === "conversation") {
+        await user.click(await screen.findByTestId("talk-open"));
+        again = await screen.findByTestId("conversation");
+      }
+      await waitFor(() => expect(again.textContent).toContain("The page has three tasks left."));
+      expect(count(again)).toBe(1);
+    });
+  }
 });

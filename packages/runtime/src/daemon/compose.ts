@@ -247,11 +247,13 @@ import {
 import {
   askCardOpen,
   askShown,
+  asStopWait,
   CREDENTIAL_WAIT_REASON,
   type CredentialWait,
   clockTime,
   credentialWaitOf,
   keptStartLine,
+  needsWaitWords,
   saveLink,
   startKeepsWaitSentence,
   waitSentence,
@@ -272,6 +274,7 @@ import {
   fileCursorStore,
   GitHostWatcher,
 } from "../session/githost-watcher.ts";
+import { waitedForCredential } from "../session/grant-readmit.ts";
 import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
 import { type LateApprovalSyncResult, syncLateApprovals } from "../session/late-approval.ts";
 import { LiveSessions } from "../session/live-sessions.ts";
@@ -308,7 +311,12 @@ import {
   type TaskExecutor,
 } from "../session/runner.ts";
 import { syncSessionReviewAnswers } from "../session/session-review-answers.ts";
-import { type StartCheck, startCheck } from "../session/start-check.ts";
+import {
+  inFlightWork,
+  type StartCheck,
+  startCheck,
+  waitingWorkUsdMicro,
+} from "../session/start-check.ts";
 import { taskReasonForStop } from "../session/stop-words.ts";
 import { type TaskCheckDeps, callsOf as taskChangeCalls } from "../session/task-check.ts";
 import { fileTaskProposal, syncTaskProposals } from "../session/task-proposal.ts";
@@ -353,6 +361,7 @@ import {
 } from "../voice/pkg.ts";
 import {
   type ChooserFacts,
+  capabilitiesOf,
   dropKeptStart,
   keepContinuation,
   keepStartAtReset,
@@ -838,6 +847,8 @@ export interface RuntimeApp {
       specialist: string;
       projectId?: string | null;
       task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
+      /** l4-cred-screens (L4-creds-26): where the line shows (the plan card names its button). */
+      on?: "plan" | "new_task";
     }): Promise<{ kind: string; line: string | null } | null>;
     /**
      * R-inboxperf: `forTask` for one request that asks it many times (GET /inbox, a plan card's
@@ -848,6 +859,7 @@ export interface RuntimeApp {
       specialist: string;
       projectId?: string | null;
       task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
+      on?: "plan" | "new_task";
     }) => Promise<{ kind: string; line: string | null } | null>) & {
       /**
        * d1109-cred-screens (CS-4, R-inboxperf): the billing view the batch reads the credentials
@@ -991,6 +1003,12 @@ export interface RuntimeApp {
         startLabel?: string;
         /** S-10: a kept person Start: "Starts at 15:40 (your subscription's limit)". */
         startsAt?: string;
+        /**
+         * l4-cred-screens (L4-creds-26, C6L-8): under "ask" with the other credential able to run,
+         * the stop in a few words ("your subscription is at its limit until 02:51"): the header
+         * says Start asks first, not that nothing runs (the Start dialog offers Use API key).
+         */
+        askFirst?: string;
         /**
          * d1109-cred-screens (CS-7): while the one ask card of the stop is open (`text` is then its
          * "Waits for your answer: ..." form), the wait's own sentence with its time ("Waits until
@@ -1820,27 +1838,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           projectId,
           cap,
         ).catch(() => null);
-        // d1109-cred-screens (CS-8): the task whose run met the stop is claimed while the card is
-        // filed, so the ready tasks alone left it out (the bench's card read "about CHF 0.00"):
-        // its own estimate counts too, at the start check's fallback pricing.
-        const inFlight = (
-          await store.task
-            .forProject(projectId, { status: ["claimed", "in_progress"] }, { limit: 50 })
-            .catch(() => [])
-        ).reduce(
-          (sum, t) =>
-            sum +
-            Math.max(
-              0,
-              (t.est_cost_usd_micro || t.budget_usd_micro || 500_000) - t.actual_cost_usd_micro,
-            ),
-          0,
+        // l4-cred-screens (L4-creds-15): the one figure the Start dialog and the plan card show
+        // too: the promise (runnable tasks and their followers, each with its review part) and
+        // what is left of the task whose run met the stop (claimed while the card is filed,
+        // d1109-cred-screens CS-8), within the work budget. Before, the card priced the claimed
+        // task at its raw estimate and left out its review part and its followers.
+        const inFlight = await inFlightWork(
+          { store, estimates, defaultEstimateUsdMicro: 500_000 },
+          projectId,
         );
-        if (check)
-          estimateUsdMicro += Math.min(
-            check.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0) + inFlight,
-            check.workBudgetUsdMicro,
-          );
+        if (check) estimateUsdMicro += waitingWorkUsdMicro(check, inFlight);
       }
       // "Use API key" is offered only when the caps have room for it: with the month cap
       // reached, the key could do nothing, so no card asks (the work waits as under 'wait').
@@ -4145,10 +4152,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       specialist,
       projectId,
       task,
+      on,
     }: {
       specialist: string;
       projectId?: string | null;
       task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
+      on?: "plan" | "new_task";
     }) => {
       const name = canonicalSpecialistName(specialist);
       const spec = specialists(name);
@@ -4165,13 +4174,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           })();
         if (!known) deps.set(projectId, dependencies);
       }
+      const taskNeeds = needsOf({
+        registryTools: spec.registryTools ?? spec.allowedTools,
+        task: task ?? null,
+        codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
+      });
       const choice = credentialChoiceFor({
         kindsInOrder: kinds,
-        needs: needsOf({
-          registryTools: spec.registryTools ?? spec.allowedTools,
-          task: task ?? null,
-          codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
-        }),
+        needs: taskNeeds,
         facts: chooserFacts(),
         specialist: name,
         dependencies: await dependencies,
@@ -4194,22 +4204,36 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               !blocked.has(k as BillingSource["kind"]) &&
               (!yesTo || k === yesTo),
           ),
-          needs: needsOf({
-            registryTools: spec.registryTools ?? spec.allowedTools,
-            task: task ?? null,
-            codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
-          }),
+          needs: taskNeeds,
           facts: chooserFacts(),
           specialist: name,
           dependencies: await dependencies,
         });
-        if (next) return next;
+        // fixup-l4-cred-screens (the review of L4-creds-17's sibling): the next credential takes
+        // the task only when it can do every hard need the resting one does here, as the pick
+        // holds such work for the credential that can (CE-3, a `needs` wait). Before, with the
+        // API key first and resting and commands set to the key, New task and the plan card said
+        // "Runs on your Claude subscription, where commands cannot run: ..." for a task that
+        // waits for the key; the wait stays the line.
+        const facts = chooserFacts();
+        const stoppedCan = capabilitiesOf(choice.kind as BillingSource["kind"], facts);
+        const nextCan = next ? capabilitiesOf(next.kind as BillingSource["kind"], facts) : null;
+        if (next && nextCan && taskNeeds.hard.every((n) => !stoppedCan[n] || nextCan[n]))
+          return next;
       }
       return choice && wait
         ? {
             ...choice,
             // W15-66: creating the task keeps no wait, so nothing starts by itself (TR-2).
-            line: waitThenStartSentence(wait, { timezone: await zoneNow(), nowMs: clock.now() }),
+            // l4-cred-screens (L4-creds-26): the plan card names its own button.
+            line: waitThenStartSentence(wait, {
+              timezone: await zoneNow(),
+              nowMs: clock.now(),
+              ...(on ? { on } : {}),
+              ...(on === "plan" && credentialPolicyOf(prefs).rule.whenStopped === "ask"
+                ? { ask: true }
+                : {}),
+            }),
           }
         : choice;
     };
@@ -4294,9 +4318,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       if (ends) at = ends;
     }
     const words = { timezone: await zoneNow(), nowMs: clock.now() };
+    // l4-cred-screens (L4a-left-2, design §5 rule 8): a refused credential's wait names the
+    // person's step (before: "once its Claude credential is back", which named none).
+    const refused =
+      typeof (source?.limits as { refusedAt?: unknown } | undefined)?.refusedAt === "string";
     const when = at
       ? `at ${clockTime(at, words.timezone, words.nowMs)}`
-      : "once its Claude credential is back";
+      : refused
+        ? source?.kind === "subscription"
+          ? "once you sign in again in Settings"
+          : "once you save a new API key in Settings"
+        : "once its Claude credential is back";
     return { found, when, words, at };
   };
   const continuations: RuntimeApp["continuations"] = {
@@ -4328,8 +4360,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // project, and no session of it runs or waits in line.
       if (busyHere(scheduler.activeStart(agentId), projectId)) return null;
       if (scheduler.pendingStarts(agentId).some((p) => p.req.projectId === projectId)) return null;
-      const wait = await credentialWaitNow(projectId);
-      if (wait?.reason !== "limit") return null;
+      // l4-cred-screens (L4-creds-18, C6L-2): the share's stop and a key's monthly cap keep a start
+      // for the month's start as a limit keeps one for its reset ("Start on 1 Dec"); before, only
+      // a limit did, and the dialog's "Start on 1 Dec" started a session that stopped at once.
+      const found = await credentialWaitNow(projectId);
+      const wait = found ? asStopWait(found) : null;
+      if (!wait || !["limit", "share", "key_month"].includes(wait.reason) || !wait.sourceId)
+        return null;
       if ((await keptContinuationOf(store, projectId)) || (await keptStartOf(store, projectId)))
         return null;
       // d1109-cred-screens (CS-3; the review of the fix-up): under "ask before API key", "Start
@@ -4428,6 +4465,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             since: w.kept.at || w.since || null,
             wait,
             ...(answer ? { answer } : {}),
+            // l4-cred-screens (L4-creds-16): why it waits for this credential, when only it can
+            // do the work here ("Only your API key can read web pages here.").
+            ...(w.needs?.length ? { why: needsWaitWords(row.kind, w.needs).why } : {}),
           });
         }
       }
@@ -4768,7 +4808,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const kept = source
         ? waitingOf(source.limits).find((w) => w.projectId === projectId)?.kept
         : undefined;
-      if (wait.reason !== "refused" && !kept)
+      if (wait.reason !== "refused" && !kept) {
+        // l4-cred-screens (L4-creds-26, C6L-8): under "ask", with the other credential saved
+        // and serving, the Start dialog offers Use API key: the header says Start asks first.
+        const stop = asStopWait(wait);
+        const policy = await policyOf(store, human.id).catch(() => null);
+        const other: BillingSource["kind"] =
+          stop.kind === "subscription" ? "api_key" : "subscription";
+        const otherServes =
+          policy?.rule.whenStopped === "ask" &&
+          policy.rule.kinds.includes(other) &&
+          (await taskBilling.savedKinds().catch(() => [] as string[])).includes(other) &&
+          !(await taskBilling.blockedKinds().catch(() => new Map())).has(other);
+        const askFirst =
+          otherServes && stop.until && ["limit", "share", "key_month"].includes(stop.reason)
+            ? `${stop.kind === "subscription" ? "your subscription" : "your API key"} ${
+                stop.reason === "share"
+                  ? "has used its share"
+                  : stop.reason === "key_month"
+                    ? "is at its monthly cap"
+                    : "is at its limit"
+              } until ${clockTime(stop.until, words.timezone, words.nowMs)}`
+            : null;
         return {
           text: startKeepsWaitSentence(wait, words),
           save: null,
@@ -4777,7 +4838,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           ...(wait.until
             ? { startLabel: `Start at ${clockTime(wait.until, words.timezone, words.nowMs)}` }
             : {}),
+          ...(askFirst ? { askFirst } : {}),
         };
+      }
       // CS-7: under 'ask' with the card open, the plain wait with its time and the card.
       const askingId = (source?.limits as { asking?: { requestId?: unknown } } | undefined)?.asking
         ?.requestId;
@@ -5191,8 +5254,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             }
             const handle = liveSessions.forProject(projectId);
             if (handle) {
-              const ready = await store.task.readyTasks(projectId, { limit: 50 }).catch(() => []);
-              handle.readmit(ready.map((t) => t.id));
+              // l4-cred-screens (L4-creds-15, C5L-6): only the tasks that waited for this stop
+              // inside the running session; other ready work joins only if it fits (option C).
+              handle.readmit(await waitedForCredential(store, projectId));
               goesOn = true;
               continue;
             }

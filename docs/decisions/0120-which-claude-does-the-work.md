@@ -186,3 +186,78 @@ each point.
    subscription's task runs (L4-creds-10), the ask card's yes is applied once across a restart
    (L4-creds-11), a continuation queued behind another project's session is named as next
    (L4-creds-9), and chat's room for a longer answer reads the plan's share (L4-creds-6).
+
+## Amendment 2026-11-22: the money consent and the screens agree with what runs (l4-cred-screens, run L4)
+
+Live check 4 asked "Use your API key until 08:26?" at about CHF 0.10 for work that then cost CHF
+0.24 on the key, while the Start dialog said CHF 0.15 and the plan card CHF 0.37 for the same
+work. The owner's D5 ("allow the task to be completed by the API, but in a transparent way"), his
+answer 3 ("For all work.": the yes covers all work until the stop ends) and his answer of
+2026-11-16 ("yes it should count critics reviews, and fixes") decide each point.
+
+1. **One figure for the waiting work (L4-creds-15).** `waitingWorkUsdMicro` (start-check.ts) is
+   the session's promise (`promiseOf`: the runnable tasks, the larger task's room and the later
+   followers, each priced with its review part) plus what is left of a task a session holds
+   (`inFlightWork`: its planned figure less all it spent), never more than the session's work
+   budget. The ask card, the Start dialog's "Use API key" line and the plan card's foot line say
+   it, the plan card over its own tasks. The dialog keeps its plan sentence beside the stop line,
+   so the figure is for tasks the person can see.
+2. **The yes lets in what waited (L4-creds-15, C5L-6).** On "Use API key", a running session
+   takes back only the tasks that waited for a credential inside it (`waitedForCredential`, the
+   ready tasks the runner gave back with `CREDENTIAL_WAIT_REASON`). Other ready work joins only if
+   it fits (the owner's option C); before, every ready task was taken back, also one the session
+   had left out for its budget. Work the agent adds later stays bounded by the session's budget.
+3. **A task only one credential can do says why it waits (L4-creds-16, CS-5's needs form, run C
+   decision 55).** The router's `needs` wait carries what only the stopped credential can do here
+   (the chooser's `onlyIt`, e.g. reading web pages); the executor keeps it on the project's wait
+   (`WaitEntry.needs`, `noteNeeds`), read the same after a restart. The row reads "Waits for your
+   API key: only it can read web pages here." with what holds the key and what then; the status
+   line "Waiting for your API key (only it can read web pages here)"; the bar's waiting entry
+   "Only your API key can read web pages here." beside its words.
+4. **The other credential takes over in either direction (L4-creds-17).** Under "next" the Start
+   dialog's line names the stop and the credential that runs the start, also with the key first
+   ("Your API key is at its limit until 11:57, so this runs on your subscription (about CHF
+   0.07)."; `nextServes` in credential-start.ts). The plan card says "(costs money)" only after
+   the API key. It says so only when the work can run on the other credential: work that only
+   the stopped one can do here (commands set to the API key, a task that needs the person's
+   answers) waits for it, so the dialog says only "Nothing can run until 11:57 (your API key's
+   limit). ...", and New task and the plan card's task lines keep the wait (the review of the
+   fix-up, 2026-11-23).
+5. **"Start on 1 Dec" keeps the start (L4-creds-18).** A Start at the share's stop or a key's
+   monthly cap is kept for the month's start as "Start at 15:40" is for a limit
+   (`continuations.keepStart` takes the stop of a `needs` wait too), and the wake starts it once,
+   also after a restart. "Change the allowance" is wherever the share's wait shows: the run bar,
+   the project's status line and the session page's wait block.
+6. **A refused credential is said first, with its step (L4a-left-1, -2; L4-creds-21).**
+   `POST /sessions` answers a refused credential the work needs with the Start dialog's sentence
+   ("Nothing can run until you save a new API key in Settings."), also while the person's session
+   is kept to go on; a kept wait on a refused credential says the step ("goes on by itself once
+   you save a new API key in Settings"). A start refused in words answers 400 `validation`.
+   Cancel's line on a waiting session reads as the button's ("Cancel: nothing starts when Claude
+   is back; its tasks wait for your Start."), and a continuation queued behind another project's
+   session reads "Goes on after the session on "Map notes"" on its own status line.
+7. **Credential words within section 5 (L4-creds-25).** Costs' By credential follows the money
+   rule ("Your API key: less than CHF 0.01", never "CHF 0.00" above zero). After a refusal the
+   Start dialog's Use API key line says the step and fits 100 characters ("Runs now on your API
+   key until you sign in again, about CHF 0.90."). Under "Subscription first, then ask me"
+   Settings' now line with no card open says "...; you are asked before your API key is used.",
+   not that the work waits.
+8. **Words that agree with the buttons beside them (L4-creds-26).** The plan card's task lines
+   name its button ("Waits until 08:26 (your subscription's limit); Approve and start keeps it
+   for then.", under ask "...; Approve and start asks before your API key is used."); New task
+   keeps "Press Start ...". Under ask with the key able to run, the project's line reads "Ready:
+   2 tasks; your subscription is at its limit until 02:51; Start asks first" (within 80
+   characters; the spec's longer sentence ran past §5's status length), not "nothing runs". A
+   session that ended to wait and spent nothing says no "CHF 0.00". A kept person Start reads
+   "Starts at 04:28 (your subscription's limit)." in the Start dialog, with Cancel the wait,
+   never "your session goes on". `POST /sessions` refuses with the refused credential's sentence
+   only while a session is kept (L4a-left-1); without one a start still runs, meets the refusal
+   and goes on by itself once a new credential is saved.
+9. **Chat's one-off press answers the held question in its place (L4-creds-19).** `POST /chat`'s
+   `heldTurn` (with `oneOff`) names the held turn; the new turn's line records `replaces`, and
+   the transcript leaves the held line and its hold reply out, in the conversation and in the
+   model's history, also after a restart. Before, the question showed twice and reached the
+   model twice with "so I have not answered" between.
+10. **The screens' clocks are the person's (L4-creds-20).** The session page, the Sessions rows,
+    Files and every time the UI writes use `GET /me`'s `timezone`, as the daemon's own sentences
+    do ("Waits until 11:40"); before, they used the computer's zone beside them.

@@ -198,6 +198,8 @@ export interface ProjectCardFacts {
     startable?: boolean;
     /** S-10: a Start the person pressed is kept for the reset ("Starts at 15:40 (...)"). */
     startsAt?: string;
+    /** l4-cred-screens (L4-creds-26): under "ask", the stop in a few words; Start asks first. */
+    askFirst?: string;
   } | null>;
   /** OR-07: the Overview's line about the repository (`RepositoryUse.overviewOf`). */
   repositoryElsewhere?: (project: ProjectRow) => Promise<ProjectCard["repositoryElsewhere"]>;
@@ -1344,14 +1346,17 @@ export async function costView(
     .map(([kind, v]) => {
       const cost = money(v.usd, chfPerUsd);
       const share = kind === "subscription" ? v.share : null;
+      // l4-cred-screens (L4-creds-25): an amount above zero never reads "CHF 0.00" (design §5
+      // rule 7), as the joined spend above: "Your API key: less than CHF 0.01".
+      const chf = moneyWords(formatChf(cost.chfMicro), cost.chfMicro);
       return {
         kind,
         cost,
         share,
         words:
           kind === "other"
-            ? `Not tied to a credential: ${formatChf(cost.chfMicro)}`
-            : costByCredentialWords(kind, formatChf(cost.chfMicro), share),
+            ? `Not tied to a credential: ${chf}`
+            : costByCredentialWords(kind, chf, share),
       };
     });
   return {

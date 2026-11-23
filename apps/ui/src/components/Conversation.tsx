@@ -153,7 +153,9 @@ export function Conversation({
     (t) =>
       !(hideVoiceSince && t.source === "voice" && t.at >= hideVoiceSince) &&
       // The line this screen is sending shows as its live bubble, not twice.
-      !(liveBusy && live?.turnId && t.id === live.turnId),
+      !(liveBusy && live?.turnId && t.id === live.turnId) &&
+      // l4-cred-screens (L4-creds-19): the held turn the one-off press answers in its place.
+      !(live?.replaces && t.id === live.replaces),
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when the list grows
@@ -170,13 +172,22 @@ export function Conversation({
 
   const send = async (
     text: string,
-    extra: { offer?: string; depth?: "longer"; oneOff?: boolean } = {},
+    extra: { offer?: string; depth?: "longer"; oneOff?: boolean; heldTurn?: string } = {},
   ) => {
     const said = text.trim();
     if (!identity || busy || !said) return;
     update((c) => ({
       ...c,
-      live: { said, text: "", error: null, turnId: null, step: null, since: null, depth: null },
+      live: {
+        said,
+        text: "",
+        error: null,
+        turnId: null,
+        step: null,
+        since: null,
+        depth: null,
+        ...(extra.heldTurn ? { replaces: extra.heldTurn } : {}),
+      },
     }));
     try {
       const reply = await streamChat(
@@ -344,7 +355,9 @@ export function Conversation({
             onAnswer={(word) => void send(word)}
             onGoAhead={() => void send("Go ahead.", { offer: t.id })}
             onThink={() => void send("Think it through.", { offer: t.id, depth: "longer" })}
-            onOneOff={() => void send(t.said, { oneOff: true })}
+            // l4-cred-screens (L4-creds-19): the press answers this held turn in its place (the
+            // daemon drops its line and hold reply), so the question shows once.
+            onOneOff={() => void send(t.said, { oneOff: true, heldTurn: t.id })}
             onAskAgain={() => void send(t.said)}
             waitingEstimate={waiting && t.reply?.waiting ? waiting.estimate : null}
             busy={busy}

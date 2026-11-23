@@ -7,6 +7,22 @@ import { AppRoutes } from "../src/routes.tsx";
 import { AppProvider } from "../src/store/context.tsx";
 import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
 
+/**
+ * Today at this time on the person's clock (l4-cred-screens, L4-creds-20: Files writes times in
+ * the person's zone, and the fake's person is in Zurich; before, in the computer's).
+ */
+function personToday(h: number, m: number): Date {
+  const zone = { timeZone: "Europe/Zurich" };
+  const day = new Date().toLocaleDateString("en-CA", zone);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const guess = new Date(`${day}T${pad(h)}:${pad(m)}:00Z`);
+  const [sh, sm] = guess
+    .toLocaleTimeString("en-GB", { ...zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+    .split(":")
+    .map(Number);
+  return new Date(guess.getTime() - ((sh ?? 0) * 60 + (sm ?? 0) - (h * 60 + m)) * 60_000);
+}
+
 /** The daemon's `/events` stream from the fake daemon's listeners, open at once. */
 function liveEvents(harness: Harness): StreamOptions {
   const factory = (_url: string): EventSourceLike => {
@@ -89,8 +105,7 @@ describe("Files (design §3.10)", () => {
 
   it("a copy that stopped following what is merged says so and why, never 'As merged'; once it follows again the line says when (R-copystuck)", async () => {
     const harness = createHarness();
-    const today = new Date();
-    today.setHours(14, 5, 0, 0);
+    const today = personToday(14, 5);
     const line =
       "You changed README.md in this copy, and a merge changed it too: move your change out of the way and the copy follows again.";
     harness.daemon.state.copies.proj_atlas = {
@@ -134,8 +149,7 @@ describe("Files (design §3.10)", () => {
     // until a session ended, the page never said when the copy was brought up to date, and
     // there was no folder of the person's own that Forerunner never uploads.
     const harness = createHarness();
-    const today = new Date();
-    today.setHours(14, 5, 0, 0);
+    const today = personToday(14, 5);
     const copyDir = "/home/alice/.local/share/forerunner/worktrees/proj_atlas";
     harness.daemon.state.copies.proj_atlas = {
       updatedAt: today.toISOString(),

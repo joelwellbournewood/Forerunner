@@ -1,5 +1,5 @@
 import { reviewPartUsdMicro } from "@forerunner/runtime/estimates/model";
-import { CREDENTIAL_WAIT_REASON } from "@forerunner/runtime/session/credential-wait";
+import { CREDENTIAL_WAIT_REASON, waitRowWords } from "@forerunner/runtime/session/credential-wait";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
@@ -2241,5 +2241,38 @@ describe("l4-selftasks-check, run L4: the Critic column of a task that is not un
     renderApp("/projects/proj_atlas/tasks", harness);
     const row = await rowOf("task_redone");
     expect(within(row).getByTestId("task-critic").textContent).toBe("—");
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-16, CS-5's needs form; run C decision 55): a task only the
+ * API key can do here, waiting for the resting key, says why on its row, in the daemon's own words
+ * (`waitRowWords` with the wait's needs, as `credentialWaitRow` gives them).
+ */
+describe("l4-cred-screens, run L4: a task only the API key can do says why it waits (L4-creds-16)", () => {
+  it("the row reads 'Waits for your API key: only it can read web pages here.' and the drawer says until when", async () => {
+    const harness = createHarness();
+    addTask(harness, "t_research", "Research the sources", { reason: CREDENTIAL_WAIT_REASON });
+    const words = waitRowWords(
+      {
+        reason: "needs",
+        sourceId: "src_key",
+        kind: "api_key",
+        until: "2026-11-17T15:40:00Z",
+        stop: "limit",
+        needs: ["webRead"],
+      },
+      { timezone: "UTC", nowMs: Date.parse("2026-11-17T12:00:00Z"), goesOn: false },
+    );
+    harness.daemon.state.taskMeta.credentialWaits.set("proj_atlas", words);
+    renderApp("/projects/proj_atlas/tasks?task=t_research", harness);
+    const row = await rowOf("t_research");
+    expect(within(row).getByTestId("task-status")).toHaveTextContent(
+      "Waits for your API key: only it can read web pages here.",
+    );
+    const drawer = await screen.findByTestId("task-drawer");
+    expect(drawer).toHaveTextContent(
+      "Your API key is at its limit until 15:40; then it runs at your next Start.",
+    );
   });
 });

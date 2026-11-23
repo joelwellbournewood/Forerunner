@@ -63,6 +63,7 @@ import {
 } from "../session/project-plan.ts";
 import { endDeadSession, isIntakeSession, namesOf } from "../session/recovery.ts";
 import { defaultPeers } from "../session/runner.ts";
+import { inFlightWork, waitingWorkUsdMicro } from "../session/start-check.ts";
 import {
   QUIT_REASON,
   STOP_ALL_REASON,
@@ -218,6 +219,7 @@ import {
   ACTION_FROM,
   ACTION_WORDS,
   changesTasks,
+  credentialWaitRow,
   loadTaskDisplayContext,
   runOrder,
   taskCheck,
@@ -518,7 +520,9 @@ export function createDaemonApp(
         err.code === "not_found"
           ? 404
           : err.code === "validation" &&
-              (err.details?.reason === "bad_query" || err.details?.reason === NOT_AN_OPTION)
+              (err.details?.reason === "bad_query" ||
+                err.details?.reason === NOT_AN_OPTION ||
+                err.details?.reason === START_REFUSED)
             ? 400
             : err.code === "validation" ||
                 err.code === "version_conflict" ||
@@ -974,13 +978,30 @@ export function createDaemonApp(
    * for the reset, a person start waiting behind another project's session, a hands-off start
    * the quiet hours hold. Read only (d1109-starts-engine's accessors).
    */
+  /** Where the subscription's allowance is raised (Settings), as the share's wait links it. */
+  const ALLOWANCE_TO = "/settings#plan-allowance";
   const startsWaitOf = async (projectId: string): Promise<StartsWait | null> => {
     const now = () => rt.billing.waits.now(projectId).catch(() => null);
     if (await keptContinuationOf(rt.store, projectId)) {
+      // l4-cred-screens (L4-creds-16): work only one credential can do here says why it waits.
+      const needs = await credentialWaitRow(rt.store, projectId).catch(() => null);
+      if (needs?.why)
+        return {
+          kind: "continuation",
+          head: needs.line,
+          ...(needs.save ? { save: needs.save } : {}),
+        };
       const wait = await now();
       const text = wait?.text ?? "";
       const until = /^Waits (until .+); then your session goes on\.$/.exec(text);
-      if (until) return { kind: "continuation", head: `Waiting ${until[1]}` };
+      // l4-cred-screens (L4-creds-18, C6L-5): the share's wait offers Change the allowance here
+      // too, as the bar and the row do.
+      if (until)
+        return {
+          kind: "continuation",
+          head: `Waiting ${until[1]}`,
+          ...(needs?.save?.to === ALLOWANCE_TO ? { save: needs.save } : {}),
+        };
       const saved = /^Waits for (.+?): save one in Settings/.exec(text);
       if (saved)
         return { kind: "continuation", head: `Waiting for ${saved[1]}`, save: wait?.save ?? null };
@@ -992,13 +1013,21 @@ export function createDaemonApp(
     }
     const pending = rt.scheduler.pendingStarts(rt.agent.id);
     const active = rt.scheduler.activeStart(rt.agent.id)?.req.projectId;
-    if (
-      active &&
-      active !== projectId &&
-      pending.some((e) => e.req.projectId === projectId && startByOf(e.req) === "person")
-    ) {
+    // l4-cred-screens (L4a-left-4, L4-creds-9 part 3): the person's own session going on after
+    // its credential wait (by "continuation") waits in line too, and its line says it goes on.
+    const inLine = pending.find(
+      (e) =>
+        e.req.projectId === projectId &&
+        (startByOf(e.req) === "person" || startByOf(e.req) === "continuation"),
+    );
+    if (active && active !== projectId && inLine) {
       const behind = (await rt.store.project.get(active).catch(() => undefined))?.name;
-      if (behind) return { kind: "queued", behind };
+      if (behind)
+        return {
+          kind: "queued",
+          behind,
+          ...(startByOf(inLine.req) === "continuation" ? { goesOn: true } : {}),
+        };
     }
     const held = pending.some((e) => e.req.projectId === projectId && e.result === "deferred");
     const project = await rt.store.project.get(projectId).catch(() => undefined);
@@ -1595,7 +1624,10 @@ export function createDaemonApp(
    * stop its "Use API key" acts on (`credential-start.ts`). The figure is the runnable work's
    * estimate, never above the session's work budget.
    */
-  const credentialAtStart = (r: Awaited<ReturnType<RuntimeApp["startCheck"]>>, projectId: string) =>
+  const credentialAtStart = async (
+    r: Awaited<ReturnType<RuntimeApp["startCheck"]>>,
+    projectId: string,
+  ) =>
     startCredential(
       {
         store: rt.store,
@@ -1606,13 +1638,21 @@ export function createDaemonApp(
         monthLeftUsdMicro,
       },
       projectId,
-      Math.min(
-        r.workBudgetUsdMicro,
-        r.runnable.reduce((sum, t) => sum + t.estimateUsdMicro, 0) +
-          (r.oversized ? r.workBudgetUsdMicro : 0),
+      // l4-cred-screens (L4-creds-15): the one figure of the waiting work the ask card and the
+      // plan card show too (the promise with its followers and review parts, plus what is left
+      // of a task a session holds), within the work budget. Before: the runnable tasks alone.
+      waitingWorkUsdMicro(
+        r,
+        await inFlightWork({ store: rt.store, estimates: rt.estimates }, projectId).catch(() => []),
       ),
       // "Use API key" only for a start that runs something and that Stop all does not refuse.
-      { runsWork: runsWork(r), stopped: rt.kill.isFrozen({ agentId: rt.agent.id }) },
+      // fixup-l4-cred-screens (L4-creds-17): under "then the other one", whether the work can
+      // run at all now (each ready task's own pick, read only), as the blocked sentence reads it.
+      {
+        runsWork: runsWork(r),
+        stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
+        waitsNow: async () => !!(await rt.billing.waits.now(projectId)),
+      },
     ).catch(() => ({ view: null, offer: null }));
   /**
    * Why a Start now would do nothing (design §3.6; `start-blocked.ts`, the chat says the same).
@@ -1862,6 +1902,12 @@ export function createDaemonApp(
     return c.json(view);
   });
 
+  /**
+   * l4-cred-screens (L4-creds-21, C6L-9): a start refused in words (nothing to run, a refused
+   * credential, "Use API key" not offered) answers 400 with code `validation`, as a bad request
+   * does; before, the generic mapping answered 409 "conflict" for a refusal that is no conflict.
+   */
+  const START_REFUSED = "start_refused";
   app.post("/sessions", async (c) => {
     const body = await parse(c, StartSessionBody);
     // S-10: a session's Continue goes on with the ended session: the rest of its promise and of
@@ -1912,11 +1958,13 @@ export function createDaemonApp(
           });
         const blocked = await startBlocked(check, body.projectId, body.agentId);
         if (blocked?.kind === "nothing_runnable" && !runsWork(check))
-          throw new ForerunnerError("validation", blocked.sentence, { details: { blocked } });
+          throw new ForerunnerError("validation", blocked.sentence, {
+            details: { blocked, reason: START_REFUSED },
+          });
         throw new ForerunnerError(
           "validation",
           "Use API key is not offered for this start now: open Start again to see what it does.",
-          { details: { cause: "use_other_not_offered" } },
+          { details: { cause: "use_other_not_offered", reason: START_REFUSED } },
         );
       }
       // The money checks come before the yes: a start refused for its budget writes no yes for
@@ -1947,6 +1995,28 @@ export function createDaemonApp(
         return c.json(view, 202);
       }
     }
+    // l4-cred-screens (L4a-left-1): a refused credential the work needs is said first, in the
+    // Start dialog's and chat's sentence ("Nothing can run until you save a new API key in
+    // Settings."), also while the person's session is kept to go on; before, a start from the
+    // API, the phone or the session page's Continue got the kept session's "goes on by itself
+    // once its Claude credential is back", which names no step. Only while a session is kept:
+    // without one, a start still runs and meets the refusal, and that session goes on by itself
+    // once a new one is saved (S-10, the refused-key case's "starts both by itself").
+    if (body.projectId && !yesForStop && (await rt.continuations.waiting(body.projectId))) {
+      const check = await rt.startCheck(body.projectId, body.budgetUsdMicro);
+      const refused = await startBlocked(check, body.projectId, body.agentId, {
+        credentialWait: true,
+      });
+      if (
+        refused?.kind === "nothing_runnable" &&
+        !refused.startable &&
+        refused.action?.kind === "link" &&
+        refused.action.to === "/setup"
+      )
+        throw new ForerunnerError("validation", refused.sentence, {
+          details: { blocked: refused, cause: "credential_refused", reason: START_REFUSED },
+        });
+    }
     // S-10: one wait per project: while the person's session waits to go on (or a Start was kept
     // for the reset), a Start keeps nothing new and starts nothing; it says when it goes on. The
     // wake runs first, so a stop that has ended goes on now.
@@ -1970,7 +2040,7 @@ export function createDaemonApp(
       const blocked = await startBlocked(check, body.projectId, body.agentId);
       if (blocked?.kind === "nothing_runnable")
         throw new ForerunnerError("validation", blocked.sentence, {
-          details: { blocked },
+          details: { blocked, reason: START_REFUSED },
         });
       // S-10 (ADR 0118), "Start at 15:40": the Claude credential the work needs is out (its usage
       // limit) and nothing is kept for the project, so the person's Start is kept for the reset:
@@ -2085,6 +2155,11 @@ export function createDaemonApp(
       : null;
     const budgetLeft = money(Math.max(0, s.budget_cap_usd_micro - s.spent_usd_micro), chf());
     const wait = await rt.billing.waits.now(projectId).catch(() => null);
+    // l4-cred-screens (L4-creds-18, C6L-5): the share's wait offers Change the allowance beside
+    // the block's own button, as the bar does (the ask card's Answer comes first while it is open).
+    const row = await credentialWaitRow(rt.store, projectId).catch(() => null);
+    const allowance =
+      row?.save?.to === ALLOWANCE_TO ? { answer: { label: row.save.label, to: row.save.to } } : {};
     // d1109-cred-screens (CS-7): under 'ask' with its card open, the wait's own time and stop
     // (before: "Waiting for Claude, then it goes on with ..."), and Answer opening the card.
     const text = wait?.asking?.plain ?? wait?.text ?? "";
@@ -2099,7 +2174,7 @@ export function createDaemonApp(
         explain: CANCEL_WAIT_EXPLAIN,
         projectId,
         budgetLeft,
-        ...(wait?.asking ? { answer: { label: "Answer", to: wait.asking.to } } : {}),
+        ...(wait?.asking ? { answer: { label: "Answer", to: wait.asking.to } } : allowance),
       };
     }
     if ((await keptStartOf(rt.store, projectId)) && names) {
@@ -2111,6 +2186,7 @@ export function createDaemonApp(
         explain: CANCEL_WAIT_EXPLAIN,
         projectId,
         budgetLeft,
+        ...allowance,
       };
     }
     if (!names || budgetLeft.usdMicro <= 0) return null;
@@ -2124,6 +2200,7 @@ export function createDaemonApp(
       explain: `Opens Start with the rest of this session and the ${formatChf(budgetLeft.chfMicro)} left of its budget.`,
       projectId,
       budgetLeft,
+      ...allowance,
     };
   };
   /**
@@ -2449,7 +2526,8 @@ export function createDaemonApp(
     let batch: ReturnType<RuntimeApp["chooser"]["batch"]> | null = null;
     const chooseFor: ReturnType<RuntimeApp["chooser"]["batch"]> = (input) => {
       batch ??= rt.chooser.batch();
-      return batch(input);
+      // l4-cred-screens (L4-creds-26): the plan card's lines name its button (Approve and start).
+      return batch({ ...input, on: "plan" });
     };
     // d1116-budget-all (BA-7): an open plan card prices with what the Start dialog learns from.
     if (requests.some((r) => r.status === "open" && isRecordWithProposal(r.change_card)))
@@ -2495,14 +2573,34 @@ export function createDaemonApp(
       if (planTasks && view) {
         // R-inboxperf: through this request's chooser batch, so the vault is asked once.
         batch ??= rt.chooser.batch();
-        view.planCredentialLine = await planCredentialLine({
-          store: rt.store,
-          clock: rt.clock,
-          humanId: rt.human.id,
-          billing:
-            batch.billing ??
-            (rt.billing.pick instanceof RouterTaskBilling ? rt.billing.pick : null),
-        }).catch(() => null);
+        // l4-cred-screens (L4-creds-15): the plan's work at the one figure of the waiting work
+        // (its tasks as each is priced on the card, within the session's work budget), which
+        // the ask card and the Start dialog say once its tasks are written.
+        const planUsdMicro = planProject
+          ? waitingWorkUsdMicro({
+              runnable: planTasks.map((t) => ({
+                taskId: t.key ?? t.title,
+                title: t.title,
+                estimateUsdMicro: t.estimateUsdMicro ?? 0,
+              })),
+              later: [],
+              overBudget: [],
+              oversized: null,
+              workBudgetUsdMicro: (await rt.startCheck(planProject.id)).workBudgetUsdMicro,
+            })
+          : undefined;
+        view.planCredentialLine = await planCredentialLine(
+          {
+            store: rt.store,
+            clock: rt.clock,
+            humanId: rt.human.id,
+            billing:
+              batch.billing ??
+              (rt.billing.pick instanceof RouterTaskBilling ? rt.billing.pick : null),
+            chfPerUsd: chf,
+          },
+          planUsdMicro,
+        ).catch(() => null);
       }
     }
     const msgViews = [];
@@ -2723,6 +2821,8 @@ export function createDaemonApp(
       ...(body.depth ? { depth: body.depth } : {}),
       ...(body.offer ? { offer: body.offer } : {}),
       ...(body.oneOff ? { oneOffSwitch: true } : {}),
+      // l4-cred-screens (L4-creds-19): the held turn the one-off press answers in its place.
+      ...(body.oneOff && body.heldTurn ? { heldTurn: body.heldTurn } : {}),
     });
     await heardChat(r);
     return c.json(chatReplyView(r));
@@ -2752,6 +2852,7 @@ export function createDaemonApp(
           ...(body.depth ? { depth: body.depth } : {}),
           ...(body.offer ? { offer: body.offer } : {}),
           ...(body.oneOff ? { oneOffSwitch: true } : {}),
+          ...(body.oneOff && body.heldTurn ? { heldTurn: body.heldTurn } : {}),
           // The turn's id first (for Stop), then what it is doing at each step, then the tokens.
           onTurn: (t) => send("turn", t satisfies ChatTurnFrame),
           onStep: (text, o) =>

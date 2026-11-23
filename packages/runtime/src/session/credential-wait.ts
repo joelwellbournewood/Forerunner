@@ -43,10 +43,66 @@ export interface CredentialWait {
   ask?: boolean;
   /** `needs`: what stopped the credential that can do the task. */
   stop?: "limit" | "refused" | "share" | "key_month";
+  /**
+   * l4-cred-screens (L4-creds-16, CS-5's needs form): `needs` only: what only this credential
+   * can do for the task here, as the chooser names it ("webRead": read web pages).
+   */
+  needs?: string[];
 }
 
 const WAIT_REASONS: readonly string[] = ["limit", "refused", "share", "key_month", "needs"];
 const STOPS: readonly string[] = ["limit", "refused", "share", "key_month"];
+
+/** What a credential can do that the waiting work needs, in a person's words (the chooser's). */
+const NEED_WORDS: Record<string, string> = {
+  webRead: "read web pages",
+  webSearch: "search the web",
+  askPerson: "ask you questions while it works",
+  commands: "run commands",
+};
+
+/** A stored or sent list of needs, the known ones only. */
+function knownNeeds(v: unknown): string[] {
+  return Array.isArray(v)
+    ? v.filter((n): n is string => typeof n === "string" && n in NEED_WORDS)
+    : [];
+}
+
+/**
+ * "read web pages", "read web pages and search the web": what only a credential can do here, as
+ * the chooser's runs-on line says it ("Runs on your API key: only it can read web pages here.").
+ */
+export function canDoWords(needs: readonly string[]): string {
+  const list = needs.map((n) => NEED_WORDS[n] ?? n);
+  return list.length <= 1
+    ? (list[0] ?? "")
+    : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+}
+
+/**
+ * l4-cred-screens (L4-creds-16, CS-5's needs form; run C decision 55): the work waits for the one
+ * credential that can do it here. `label` is the task row's ("Waits for your API key: only it can
+ * read web pages here.", at most 80 characters: with several needs and too long, the first alone),
+ * `line` the project status sentence's head ("Waiting for your API key (only it can read web
+ * pages here)"), `why` the bar's line under its entry ("Only your API key can read web pages
+ * here.").
+ */
+export function needsWaitWords(
+  kind: BillingSourceKind | string,
+  needs: readonly string[],
+): { label: string; line: string; why: string } {
+  const who = yourCredential(kind);
+  const fit = (ns: readonly string[]) => {
+    const can = canDoWords(ns);
+    return {
+      label: `Waits for ${who}: only it can ${can} here.`,
+      line: `Waiting for ${who} (only it can ${can} here)`,
+      why: `Only ${who} can ${can} here.`,
+    };
+  };
+  const all = fit(needs);
+  return all.label.length <= 80 || needs.length <= 1 ? all : fit(needs.slice(0, 1));
+}
 
 /** The session's stop reason when nothing it may run can be billed now. */
 export const CREDENTIAL_WAIT_STOP = "credential_wait";
@@ -93,6 +149,9 @@ export function credentialWaitOf(error: unknown): CredentialWait | null {
       ...(typeof w.stopKey === "string" ? { stopKey: w.stopKey } : {}),
       ...(w.ask === true ? { ask: true } : {}),
       ...(STOPS.includes(String(w.stop)) ? { stop: w.stop as CredentialWait["stop"] } : {}),
+      ...(knownNeeds((w as { needs?: unknown }).needs).length
+        ? { needs: knownNeeds((w as { needs?: unknown }).needs) }
+        : {}),
     };
   if (w && typeof w.sourceId === "string" && typeof w.until === "string")
     return {
@@ -341,11 +400,29 @@ export function keptStartLine(
  */
 export function waitThenStartSentence(
   wait: CredentialWait,
-  opts: { timezone?: string; nowMs: number },
+  opts: {
+    timezone?: string;
+    nowMs: number;
+    /**
+     * l4-cred-screens (L4-creds-26, C6L-8): where the line shows. On the plan card the button is
+     * "Approve and start" (before, its task lines said "Press Start ..."): "...; Approve and
+     * start keeps it for then.", and under "ask" "...; Approve and start asks before your API
+     * key is used.". New task and Settings ("new_task", the default) keep "Press Start ...".
+     */
+    on?: "plan" | "new_task";
+    /** With `on: "plan"`: the person's policy asks before the other credential is used. */
+    ask?: boolean;
+  },
 ): string {
   const w = asStopWait(wait);
   if (w.reason === "refused" || w.reason === "needs") return waitSentence(w, opts);
   const at = w.until ? clockTime(w.until, opts.timezone, opts.nowMs) : "its reset";
+  if (opts.on === "plan") {
+    const other = w.kind === "subscription" ? "your API key" : "your subscription";
+    return opts.ask
+      ? `Waits until ${at} (${stopWordsOf(w)}); Approve and start asks before ${other} is used.`
+      : `Waits until ${at} (${stopWordsOf(w)}); Approve and start keeps it for then.`;
+  }
   return `Waits until ${at} (${stopWordsOf(w)}). ${PRESS_START_THEN}`;
 }
 
@@ -412,6 +489,9 @@ export function waitRowWords(
   },
 ): CredentialWaitWords {
   const wait = asStopWait(given);
+  // l4-cred-screens (L4-creds-16, CS-5's needs form): the work waits for the one credential that
+  // can do it here; the row says why, the detail says what holds that credential and what then.
+  if (given.needs?.length) return needsRowWords(given, opts);
   // CE-7: under 'ask' the row says the work waits for the person's answer on the one card;
   // d1109-cred-screens (CS-5): Answer opens it, and the project's status says it first
   // ("Waiting for you: use your API key?", rule 1).
@@ -472,6 +552,53 @@ export function waitRowWords(
   };
 }
 
+/**
+ * The row of work that waits for the one credential that can do it here (L4-creds-16): the label
+ * and the status head say why (`needsWaitWords`), the detail what holds that credential now and
+ * what comes after: "Your API key is at its limit until 15:40; then it runs at your next Start.",
+ * a refusal's "Anthropic refused it. Save a new API key in Settings; ...", or, when the person's
+ * choice leaves it out, that Settings does.
+ */
+function needsRowWords(
+  given: CredentialWait,
+  opts: { timezone?: string; nowMs: number; goesOn?: boolean; goesOnAt?: string },
+): CredentialWaitWords {
+  const words = needsWaitWords(given.kind, given.needs ?? []);
+  const wait = asStopWait(given);
+  const who = capital(yourCredential(given.kind));
+  const then = afterWaitClause(opts.goesOn);
+  const base = { label: words.label, line: words.line, why: words.why };
+  if (wait.reason === "needs")
+    return {
+      ...base,
+      detail: `"Which Claude does the work" in Settings leaves ${yourCredential(given.kind)} out.`,
+      save: { label: "Open Settings", to: "/settings" },
+    };
+  if (wait.reason === "refused")
+    return {
+      ...base,
+      detail: `Anthropic refused it. Save ${newCredential(given.kind)} in Settings; ${then}.`,
+      save: saveLink(given.kind),
+    };
+  const full = wait.until ? clockTime(wait.until, opts.timezone, opts.nowMs) : "its reset";
+  const month = wait.reason === "share" || wait.reason === "key_month";
+  const at = month ? full.replace(/, \d\d:\d\d$/, "") : full;
+  const held =
+    wait.reason === "share"
+      ? `${who} has used its share until ${at}`
+      : wait.reason === "key_month"
+        ? `${who} is at its monthly cap until ${at}`
+        : `${who} is at its limit until ${at}`;
+  return {
+    ...base,
+    detail: `${held}; ${then}.`,
+    save:
+      wait.reason === "share"
+        ? { label: "Change the allowance", to: "/settings#plan-allowance" }
+        : null,
+  };
+}
+
 /** A credential wait in the words of a task row and of the project's status sentence. */
 export interface CredentialWaitWords {
   label: string;
@@ -482,6 +609,11 @@ export interface CredentialWaitWords {
   save: { label: string; to: string } | null;
   /** d1109-cred-screens (CS-5): the work waits for the person's answer on the ask card. */
   ask?: boolean;
+  /**
+   * l4-cred-screens (L4-creds-16): the work waits for the one credential that can do it here:
+   * the bar's line ("Only your API key can read web pages here.").
+   */
+  why?: string;
 }
 
 /** The refused card's link and the status sentence's: where a new key or sign-in is saved. */
@@ -542,6 +674,7 @@ export function credentialWaitFrom(value: unknown): CredentialWait | null {
     ...(typeof v.stopKey === "string" ? { stopKey: v.stopKey } : {}),
     ...(v.ask === true ? { ask: true } : {}),
     ...(STOPS.includes(String(v.stop)) ? { stop: v.stop as CredentialWait["stop"] } : {}),
+    ...(knownNeeds(v.needs).length ? { needs: knownNeeds(v.needs) } : {}),
   };
 }
 

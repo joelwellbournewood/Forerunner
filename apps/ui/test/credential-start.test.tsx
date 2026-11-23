@@ -314,3 +314,129 @@ describe("d1109-cred-screens, run C: a kept start alone says its own label (CS-3
     );
   });
 });
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-15, C6L-3; ADR 0120 amended 2026-11-22): with the first
+ * choice out and "Use API key" offered, the dialog keeps its plan sentence (which tasks the
+ * session runs) beside the stop line, so the figure under "Use API key" is for work the person
+ * can see. Before, the stop line replaced the plan sentence and the dialog named no task.
+ */
+describe("l4-cred-screens, run L4: the plan sentence stays beside the stop line (L4-creds-15)", () => {
+  it("under 'ask' with the subscription out: the plan names the task, then the stop line and the two buttons", async () => {
+    const harness = createHarness();
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Nothing can run until 15:40 (your subscription's limit). Press Start at 15:40 and the work starts then.",
+      save: null,
+      startable: true,
+    };
+    harness.daemon.state.startCredential.proj_atlas = {
+      line: null,
+      runOut: {
+        use: USE,
+        later: LATER,
+        lean: "use",
+        goesOnLine: null,
+        stoppedLine: "Your subscription is at its limit until 15:40.",
+      },
+    };
+    const { dialog } = await openDialog(harness);
+    await within(dialog).findByTestId("start-session-run-out");
+    expect(within(dialog).getByTestId("start-session-plan")).toHaveTextContent(
+      /^This session runs ".+" \(about CHF \d+\.\d\d\)/,
+    );
+    expect(within(dialog).getByTestId("start-session-blocked")).toHaveTextContent(
+      /^Your subscription is at its limit until 15:40\.$/,
+    );
+  });
+
+  it("a stop no button can run past (Start alone, kept for the reset) shows no plan sentence", async () => {
+    const harness = createHarness();
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Nothing can run until 15:40 (your subscription's limit). Press Start at 15:40 and the work starts then.",
+      save: null,
+      startable: true,
+    };
+    harness.daemon.state.startCredential.proj_atlas = { line: null, runOut: null };
+    const { dialog } = await openDialog(harness);
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("confirm-start-session")).toHaveTextContent(
+        "Start at 15:40",
+      ),
+    );
+    expect(within(dialog).queryByTestId("start-session-plan")).toBeNull();
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-17, live check 4's LC-C26): under "API key first, then
+ * subscription" with the key at its limit, the dialog's line names the stop and the subscription
+ * that runs it, in the daemon's words, with the plain Start.
+ */
+describe("l4-cred-screens, run L4: the key-first direction in the Start dialog (L4-creds-17)", () => {
+  it("shows 'Your API key is at its limit until 11:40, so this runs on your subscription (...)' under the plan, with Start", async () => {
+    const harness = createHarness();
+    harness.daemon.state.startCredential.proj_atlas = {
+      line: "Your API key is at its limit until 11:40, so this runs on your subscription (about CHF 0.07).",
+      runOut: null,
+    };
+    const { dialog } = await openDialog(harness);
+    expect(await within(dialog).findByTestId("start-session-credential")).toHaveTextContent(
+      /^Your API key is at its limit until 11:40, so this runs on your subscription \(about CHF 0\.07\)\.$/,
+    );
+    expect(within(dialog).getByTestId("start-session-plan")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("confirm-start-session")).toHaveTextContent(/^Start$/);
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-26, C6L-8): after "Start at 04:28" the reopened dialog read
+ * "...; then your session goes on." with "Cancel the wait" for a kept person Start, which is no
+ * session yet. It reads when the start happens (the daemon's sentence), with its Cancel.
+ */
+describe("l4-cred-screens, run L4: a kept person Start in the Start dialog (L4-creds-26)", () => {
+  it("reads 'Starts at 04:28 (your subscription's limit).' with Cancel the wait, never 'your session goes on'", async () => {
+    const harness = createHarness();
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Waits until 04:28 (your subscription's limit); then your session goes on.",
+      save: null,
+      kept: true,
+      startsAt: "Starts at 04:28 (your subscription's limit)",
+    };
+    const { dialog } = await openDialog(harness);
+    const blocked = await within(dialog).findByTestId("start-session-blocked");
+    expect(blocked).toHaveTextContent(/^Starts at 04:28 \(your subscription's limit\)\.$/);
+    expect(dialog).not.toHaveTextContent("your session goes on");
+    expect(within(dialog).getByTestId("start-session-cancel-wait")).toHaveTextContent(
+      "Cancel the wait",
+    );
+  });
+
+  // fixup-l4-cred-screens (the review's non-blocking note on L4-creds-15): with a Start kept and
+  // "Use API key" still offered, the plan sentence names the tasks its figure is for, as it does
+  // beside "Start at 04:28". Before, the kept state dropped it and "about CHF 0.14" named no task.
+  it("with a Start kept and Use API key offered, the plan sentence names the tasks beside the figure", async () => {
+    const harness = createHarness();
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Waits until 04:28 (your subscription's limit); then your session goes on.",
+      save: null,
+      kept: true,
+      startsAt: "Starts at 04:28 (your subscription's limit)",
+    };
+    harness.daemon.state.startCredential.proj_atlas = {
+      line: null,
+      runOut: {
+        use: USE,
+        later: null,
+        lean: "use",
+        goesOnLine: null,
+        stoppedLine: "Your subscription is at its limit until 04:28.",
+      },
+    };
+    const { dialog } = await openDialog(harness);
+    const list = await within(dialog).findByTestId("start-session-run-out");
+    expect(list).toHaveTextContent(USE.explain);
+    expect(within(dialog).getByTestId("start-session-plan")).toHaveTextContent(
+      /^This session runs /,
+    );
+  });
+});

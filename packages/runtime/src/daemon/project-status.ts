@@ -93,6 +93,12 @@ export interface ProjectStatusInput {
      * for its reset: "Starts at 15:40 (your subscription's limit)", the line's head.
      */
     startsAt?: string;
+    /**
+     * l4-cred-screens (L4-creds-26, C6L-8): under "ask" with the other credential able to run,
+     * the stop in a few words ("your subscription is at its limit until 02:51"): the line says
+     * Start asks first (the Start dialog offers Use API key), not that nothing runs.
+     */
+    askFirst?: string;
   } | null;
   /**
    * Whether a Claude credential is in force now (the intake can call the model); null when not
@@ -126,7 +132,11 @@ export type StartsWait =
   | { kind: "continuation"; head: string; save?: { label: string; to: string } | null }
   | { kind: "kept_start"; head: string }
   | { kind: "held" }
-  | { kind: "queued"; behind: string };
+  /**
+   * l4-cred-screens (L4a-left-4): `goesOn`, the person's own session that waited for its
+   * credential goes on after the other project's session ("Goes on after ..."), not a new start.
+   */
+  | { kind: "queued"; behind: string; goesOn?: boolean };
 
 /** Cancel on a wait that goes on or starts by itself (POST /projects/:id/continuation/cancel). */
 const CANCEL_WAIT = { kind: "cancel", label: "Cancel", to: null } as const;
@@ -362,7 +372,9 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
   if (sw?.kind === "queued")
     return {
       kind: "paused",
-      text: fitStatus(`Starts after the session on "${shortTitle(sw.behind, 40)}"`),
+      text: fitStatus(
+        `${sw.goesOn ? "Goes on" : "Starts"} after the session on "${shortTitle(sw.behind, 40)}"`,
+      ),
       action: null,
     };
   if (sw?.kind === "held")
@@ -433,6 +445,20 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
     const wait = input.credentialWaitNow;
     // S-10: the person's Start is kept for the reset: the line says when it starts.
     if (wait?.startsAt) return { kind: "ready", text: `${wait.startsAt}: ${n}`, action: null };
+    // l4-cred-screens (L4-creds-26): "Ready: 2 tasks; your subscription is at its limit until
+    // 02:51; Start asks first"; past the length, the ask and its time alone.
+    if (wait?.askFirst) {
+      const full = `Ready: ${n}; ${wait.askFirst}; Start asks first`;
+      const until = /until (.+)$/.exec(wait.askFirst)?.[1] ?? "";
+      return {
+        kind: "ready",
+        text:
+          full.length <= STATUS_MAX
+            ? full
+            : fitStatus(`Ready: ${n}; Start asks about your API key until ${until}`),
+        action: { kind: "start", label: "Continue", to: null },
+      };
+    }
     if (wait)
       return {
         kind: "ready",

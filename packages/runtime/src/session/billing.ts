@@ -127,6 +127,12 @@ export interface TaskBillingPort {
     sessionId?: string,
   ): Promise<void>;
   /**
+   * l4-cred-screens (L4-creds-16, append-only): what only this source's credential can do for the
+   * project's waiting work (the chooser's "only it can" list), kept on the project's wait so its
+   * rows say why; an empty list clears it. Optional.
+   */
+  noteNeeds?(sourceId: string, projectId: string, needs: readonly string[]): Promise<void>;
+  /**
    * C5-left-1 (CE-11): the switch this pick makes, when it goes to another credential than the
    * person's first choice because that one is stopped now; null when the pick is the first
    * choice (or the first choice serves and the pick is only another kind for a need). Optional.

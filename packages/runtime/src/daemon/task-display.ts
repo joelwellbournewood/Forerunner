@@ -223,6 +223,9 @@ export async function credentialWaitRow(
         kind: row.kind as BillingSourceKind,
         until: until ?? monthStop?.until ?? null,
         ...(askOpen ? { ask: true } : {}),
+        // l4-cred-screens (L4-creds-16): the one credential that can do the waiting work here
+        // says why the work waits for it (kept on the wait, after a restart too).
+        ...(entry.needs?.length ? { needs: entry.needs } : {}),
       },
       {
         ...(human?.timezone ? { timezone: human.timezone } : {}),

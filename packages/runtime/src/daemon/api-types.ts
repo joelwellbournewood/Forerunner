@@ -792,7 +792,8 @@ export const SessionView = z.object({
       budgetLeft: Money,
       /**
        * d1109-cred-screens (CS-7): while the one ask card of its stop is open, "Answer" opening
-       * it beside Cancel. Absent otherwise (and from an older daemon).
+       * it beside Cancel; l4-cred-screens (L4-creds-18): for the share's wait, "Change the
+       * allowance" opening Settings. Absent otherwise (and from an older daemon).
        */
       answer: z.object({ label: z.string(), to: z.string() }).optional(),
     })
@@ -1163,6 +1164,13 @@ export const ChatRequestBody = z.object({
    * one question may go to the next credential at the stop (no grant, no card, never a job).
    */
   oneOff: z.boolean().optional(),
+  /**
+   * l4-cred-screens (L4-creds-19): with `oneOff`, the held turn the press answers (its id): the
+   * answer takes that turn's place, so the question shows once and reaches the model once, with
+   * no hold reply before it. Ignored unless that turn is the conversation's newest held one with
+   * the same words.
+   */
+  heldTurn: z.string().optional(),
 });
 export type ChatRequestBody = z.infer<typeof ChatRequestBody>;
 

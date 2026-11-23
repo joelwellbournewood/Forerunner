@@ -44,6 +44,7 @@ import { clockTime } from "@forerunner/runtime/session/credential-wait";
 import { conflictNoticeSentence } from "@forerunner/runtime/session/dependent-branches";
 import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
+import { isIntakeSession } from "@forerunner/runtime/session/recovery";
 import { SECRET_NAMES } from "@forerunner/runtime/setup/wizard";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -78,7 +79,7 @@ import { streamChat } from "../src/api/chat-stream.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { readSseStream } from "../src/api/sse.ts";
-import { chfToMicro, formatMoney } from "../src/lib/money.ts";
+import { chfToMicro, formatChf, formatMoney } from "../src/lib/money.ts";
 import { currentFromLog, taskStepsFromLog } from "../src/lib/session-steps.ts";
 import {
   actionExplain,
@@ -256,7 +257,7 @@ describe("the UI client against the real daemon", () => {
     // Nothing to run yet: refused in the Start dialog's words, no session.
     await expect(
       client.startSession({ agentId, projectId, trigger: "manual" }),
-    ).rejects.toMatchObject({ code: "conflict", message: "Nothing can run: no task is ready." });
+    ).rejects.toMatchObject({ code: "validation", message: "Nothing can run: no task is ready." });
     await someWork("Write contract.md");
     const started = await client.startSession({ agentId, projectId, trigger: "manual" });
     expect(started.result).toBe("started");
@@ -6182,9 +6183,10 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
     const check = await client.startCheck(project.id);
     expect(check.blocked?.kind).toBe("nothing_runnable");
     expect(refused).toBeInstanceOf(ApiError);
+    // l4-cred-screens (L4-creds-21): a refusal in words is a 400 "validation".
     expect(refused, JSON.stringify(refused)).toMatchObject({
-      code: "conflict",
-      status: 409,
+      code: "validation",
+      status: 400,
       message: check.blocked?.sentence,
     });
     expect((await client.sessions()).length).toBe(before);
@@ -6693,9 +6695,10 @@ describe("the UI client against the real daemon: a start on a project with nothi
         (r) => r,
         (e: unknown) => e,
       );
+      // l4-cred-screens (L4-creds-21): a refusal in words is a 400 "validation".
       expect(refused, JSON.stringify(refused)).toMatchObject({
-        code: "conflict",
-        status: 409,
+        code: "validation",
+        status: 400,
         message: "Nothing can run: no task is ready.",
       });
       const reply = await client.chat({
@@ -11519,12 +11522,13 @@ describe("leftovers7-tailrun, wave 13", () => {
       expect((await client.project(started.id)).statusLine?.text).toBe(
         "Starts at 09:30 (your API key's limit)",
       );
-      // From then on its check says the person's session goes on (true now), with Start off.
+      // From then on its check says when the kept Start starts (true now), with Start off.
       expect((await client.startCheck(started.id)).blocked).toEqual({
         kind: "nothing_runnable",
         // W15-78 (before: "Nothing can run yet. Waits until 09:30 (...) and starts by itself.");
-        // d1109-starts-engine S-10: only the person's session goes on by itself.
-        sentence: "Nothing can run until 09:30 (your API key's limit); then your session goes on.",
+        // l4-cred-screens (L4-creds-26, C6L-8): a kept person Start is no session yet, so it
+        // reads when it starts (before: "...; then your session goes on.").
+        sentence: "Starts at 09:30 (your API key's limit).",
         action: null,
         // The person's Start is kept: the dialog offers Cancel the wait.
         kept: true,
@@ -21825,7 +21829,7 @@ describe("d1109-run-visible, run C: the page of a session that ended to wait (V-
         state: "goes_on",
         text: 'Waiting until 11:40 (your subscription\'s limit), then it goes on with "Write note A" and 1 more.',
         action: "cancel",
-        explain: "Nothing starts when Claude is back; its tasks wait for your Start.",
+        explain: "Cancel: nothing starts when Claude is back; its tasks wait for your Start.",
         projectId: project.id,
       });
       expect(ended.summary.split("\n")[0]).toBe(
@@ -22136,8 +22140,9 @@ describe("d1109-cred-screens, run C", () => {
       expect((await second.client.credentialPolicy()).grant).toBe(true);
       const ended = await second.client.endCredentialGrant();
       expect(ended.grant).toBe(false);
+      // l4-cred-screens (L4-creds-25): under ask the line says the person is asked first.
       expect(ended.nowLine).toBe(
-        "Your subscription is at its limit until 11:40; the work waits for it.",
+        "Your subscription is at its limit until 11:40; you are asked before your API key is used.",
       );
       // The next pick waits for the stop's end: nothing goes to the API key.
       const picker = second.rt.billing.pick;
@@ -22469,8 +22474,11 @@ describe("d1109-cred-screens, run C", () => {
       const until = new Date(rt.clock.now() + 40 * 60_000).toISOString();
       await restSubscription(rt, until);
       const at = clockTime(until, rt.human.timezone, rt.clock.now());
-      expect((await card())?.planCredentialLine).toBe(
-        `Your subscription is at its limit until ${at}: you are asked before your API key is used.`,
+      // l4-cred-screens (L4-creds-15): with the plan's figure, as the ask card says it.
+      expect((await card())?.planCredentialLine).toMatch(
+        new RegExp(
+          `^Your subscription is at its limit until ${at}: you are asked before your API key is used \\(about CHF \\d+\\.\\d\\d\\)\\.$`,
+        ),
       );
       await setPolicyCs(client, "subscription_then_wait");
       expect((await card())?.planCredentialLine).toBe(
@@ -22513,8 +22521,11 @@ describe("d1109-cred-screens, run C", () => {
       await restSubscription(rt, until);
       const at = clockTime(until, rt.human.timezone, rt.clock.now());
       const first = await card();
-      expect(first?.planCredentialLine).toBe(
-        `Your subscription is at its limit until ${at}: your API key does the work meanwhile (costs money).`,
+      // l4-cred-screens (L4-creds-15): the plan's figure says what it costs.
+      expect(first?.planCredentialLine).toMatch(
+        new RegExp(
+          `^Your subscription is at its limit until ${at}: your API key does the work meanwhile \\(about CHF \\d+\\.\\d\\d\\)\\.$`,
+        ),
       );
       const lines = (first?.planTasks ?? []).map((t) => t.runsOn?.line ?? null);
       expect(lines.length).toBeGreaterThan(0);
@@ -22524,6 +22535,19 @@ describe("d1109-cred-screens, run C", () => {
       const waiting = (await card())?.planTasks ?? [];
       expect(waiting.some((t) => (t.runsOn?.line ?? "").startsWith(`Waits until ${at}`))).toBe(
         true,
+      );
+      // l4-cred-screens (L4-creds-26, C6L-8): the card's button is "Approve and start", and its
+      // task lines name it (before: "Press Start and the work starts then.").
+      const lineOf = (ts: typeof waiting) => ts.map((t) => t.runsOn?.line ?? "");
+      for (const line of lineOf(waiting)) expect(line).not.toContain("Press Start");
+      expect(lineOf(waiting)).toContain(
+        `Waits until ${at} (your subscription's limit); Approve and start keeps it for then.`,
+      );
+      await setPolicyCs(client, "subscription_then_ask");
+      const asking = (await card())?.planTasks ?? [];
+      for (const line of lineOf(asking)) expect(line).not.toContain("Press Start");
+      expect(lineOf(asking)).toContain(
+        `Waits until ${at} (your subscription's limit); Approve and start asks before your API key is used.`,
       );
     } finally {
       await settleSessions(rt);
@@ -22623,7 +22647,7 @@ describe("d1109-cred-screens, run C", () => {
       expect(rows[0]?.words).toMatch(
         /^Your Claude subscription: CHF \d+\.\d\d \(estimate, 12% of its allowance\)$/,
       );
-      expect(rows[1]?.words).toMatch(/^Your API key: CHF \d+\.\d\d$/);
+      expect(rows[1]?.words).toBe(`Your API key: ${formatChf(rows[1]?.cost.chfMicro ?? -1)}`);
       expect(rows[0]?.share).toBe(0.12);
     } finally {
       await rt.close();
@@ -22787,18 +22811,17 @@ describe("d1109-cred-screens, run C", () => {
       } as never);
       const project = await share.client.createProject({ name: "Quote page", goal: "A quote" });
       await addReady(share.client, project.id, "Style the page");
-      const agentId = (await share.client.agents())[0]?.id ?? "";
-      const started = await share.client.startSession({ agentId, projectId: project.id });
-      const sessionId = started.session?.id ?? "";
-      await eventually(
-        async () =>
-          !["running", "paused", "planned"].includes(
-            (await share.client.session(sessionId)).status,
-          ),
-        "the session to end to wait (at least 10 s of real time)",
-        async () => (await share.client.session(sessionId)).status,
-        20_000,
-      );
+      // l4-cred-screens (L4-creds-18): a Start pressed while the share is known is kept for the
+      // month's start ("Start on 1 Apr") and makes no session; the person's session that meets
+      // the share inside it ends to wait and goes on then.
+      await share.rt.runner.start({
+        agentId: share.rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        by: "person",
+        budgetCapUsdMicro: 5_000_000,
+        grant: await share.rt.sessionGrant(project.id),
+      });
       await settleSessions(share.rt);
       // The clock is 5 March: the share ends on 1 April, 00:00 UTC, 02:00 in Zurich (summer time).
       expect(await share.client.running()).toEqual([
@@ -22961,8 +22984,11 @@ describe("d1109-cred-screens, run C", () => {
       });
       expect(["started", "queued"]).toContain(goes.result);
       const after = await card();
-      expect(after?.planCredentialLine).toBe(
-        `Your subscription is at its limit until ${at}: you said yes, so your API key does the work meanwhile.`,
+      // l4-cred-screens (L4-creds-15): with the plan's figure, as the ask card says it.
+      expect(after?.planCredentialLine).toMatch(
+        new RegExp(
+          `^Your subscription is at its limit until ${at}: you said yes, so your API key does the work meanwhile \\(about CHF \\d+\\.\\d\\d\\)\\.$`,
+        ),
       );
       const lines = (after?.planTasks ?? []).map((t) => t.runsOn?.line ?? "");
       expect(lines.length).toBeGreaterThan(0);
@@ -25008,6 +25034,838 @@ describe("l4-chat-answers, run L4", () => {
       await settleSessions(b.rt);
     } finally {
       await b.rt.close();
+    }
+  }, 60_000);
+});
+
+describe("l4-cred-screens, run L4", () => {
+  const oauth = ["sk-ant-oat01-", "l4credscr", "6".repeat(40)].join(""); // not-a-secret
+  const apiKey = ["sk-ant-api03-", "l4credscr", "7".repeat(40)].join(""); // not-a-secret
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+  /** 10:40 UTC, 11:40 in Zurich (the person's zone). */
+  const resetAt = "2026-03-05T10:40:00.000Z";
+
+  /**
+   * Claude Code at its limit on its first `atLimit` calls, then it serves: a task run writes its
+   * report; a one-turn provider call (the critic's review, chat) answers as cred-world's does.
+   */
+  const claudeCode =
+    (calls: string[], atLimit = 1): NonNullable<ComposeOptions["sdkQuery"]> =>
+    ({ prompt, options }) => {
+      calls.push(prompt);
+      const limited = calls.length <= atLimit;
+      const o = (options ?? {}) as {
+        maxTurns?: number;
+        tools?: unknown[];
+        systemPrompt?: { prompt?: string };
+      };
+      if (!limited && o.maxTurns === 1 && Array.isArray(o.tools) && o.tools.length === 0) {
+        const system = o.systemPrompt?.prompt ?? "";
+        return providerReply({
+          prompt: String(prompt),
+          provider: true,
+          review: system.includes("submit_review"),
+          system,
+        }) as never;
+      }
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        if (limited) {
+          yield {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt: Date.parse(resetAt) / 1000 },
+          };
+          yield {
+            type: "assistant",
+            error: "rate_limit",
+            message: { content: [{ type: "text", text: "You've hit your limit" }] },
+          };
+          yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+          return;
+        }
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${calls.length}`,
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+
+  /** The daemon as `fr daemon` composes it (no injected provider), read through the UI client. */
+  async function composeL4(
+    opts: {
+      home?: string;
+      clock?: SimulatedClock;
+      vault?: MemoryVault;
+      sdkQuery?: ComposeOptions["sdkQuery"];
+      standIn?: ReturnType<typeof messagesApiStandIn>;
+      billing?: ComposeOptions["billing"];
+    } = {},
+  ) {
+    const home = opts.home ?? mkdtempSync(join(tmpdir(), "fr-ui-real-l4credscr-"));
+    if (!homes.includes(home)) homes.push(home);
+    const clock = opts.clock ?? new SimulatedClock("2026-03-05T08:00:00Z");
+    const vault =
+      opts.vault ??
+      new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey });
+    const standIn =
+      opts.standIn ??
+      messagesApiStandIn({
+        model: new AcceptingCriticProvider(
+          new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock),
+        ),
+        clock,
+      });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault,
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      ...(opts.sdkQuery ? { sdkQuery: opts.sdkQuery } : {}),
+      ...(opts.billing ? { billing: opts.billing } : {}),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const keyCalls = () =>
+      standIn.requests.filter((r) => r.method === "POST" && r.path === "/v1/messages");
+    /** A route answered as the UI's client sees it, status included. */
+    const raw = async (path: string, body?: unknown) => {
+      const res = await app.request(path, {
+        method: body === undefined ? "GET" : "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      return { status: res.status, body: (await res.json().catch(() => null)) as unknown };
+    };
+    return { rt, client, home, clock, vault, standIn, keyCalls, raw };
+  }
+
+  const setPolicyL4 = async (client: DaemonClient, value: string) => {
+    const r = await client.executeCommands({
+      commands: [{ name: "settings.set", params: { key: "credential_policy", value } }],
+      wordsUsed: `Settings: Which Claude does the work to ${value}`,
+      source: "ui",
+    });
+    if (r.status === "pending") await client.confirmCommand(r.pendingId ?? "", { answer: "tap" });
+  };
+  const addTask = (
+    client: DaemonClient,
+    projectId: string,
+    title: string,
+    over: { dependsOn?: string[]; specialist?: string } = {},
+  ) =>
+    client.createTask(projectId, {
+      title,
+      outcome: `${title} is done`,
+      acceptanceCriteria: ["it is done"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: over.dependsOn ?? [],
+      budgetUsdMicro: 0,
+      specialist: over.specialist ?? "coder",
+      riskTier: 0,
+    });
+  /** A billing source's row rests until `until`, as the router writes it. */
+  async function restSource(rt: RuntimeApp, kind: string, until: string) {
+    const row = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
+      (r) => r.kind === kind,
+    );
+    if (!row) throw new Error(`no ${kind} row`);
+    await rt.store.billingSource.update(row.id, row.version, {
+      limits: { ...(row.limits as Record<string, unknown>), restingUntil: until } as never,
+    });
+    return row.id;
+  }
+  const chfIn = (s: string | null | undefined) => /about (CHF \d+\.\d\d)/.exec(s ?? "")?.[1];
+
+  // L4-creds-15 (live check 4, LC-C24: the ask card said about CHF 0.10, the Start dialog CHF
+  // 0.15 and the plan card CHF 0.37 for the same waiting work): one figure, the promise of the
+  // task that met the stop and its follower with their review parts.
+  it("L4-creds-15: the ask card's figure and the Start dialog's Use API key say the same, A and its follower B with their review parts; the dialog still names both", async () => {
+    const calls: string[] = [];
+    const { rt, client, keyCalls } = await composeL4({ sdkQuery: claudeCode(calls) });
+    try {
+      await setPolicyL4(client, "subscription_then_ask");
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      const a = await addTask(client, project.id, "Style the page");
+      await addTask(client, project.id, "Write the copy", { dependsOn: [a.id] });
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          !["running", "paused", "planned"].includes((await client.session(sessionId)).status),
+        "the session to end to wait (at least 10 s of real time)",
+        async () => (await client.session(sessionId)).status,
+        20_000,
+      );
+      const me = await client.me();
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.status === "open" && (r.title ?? "").startsWith("Use your API key"),
+      );
+      const onCard = chfIn(card?.body);
+      expect(onCard, card?.body ?? "no ask card").toBeDefined();
+      const check = await client.startCheck(project.id);
+      expect(check.runnable.map((t) => t.title)).toEqual(["Style the page"]);
+      expect(check.later.map((t) => t.title)).toEqual(["Write the copy"]);
+      expect(chfIn(check.credential?.runOut?.use.explain)).toBe(onCard);
+      const both = [...check.runnable, ...check.later].reduce(
+        (sum, t) => sum + t.estimate.chfMicro,
+        0,
+      );
+      expect(Math.abs(Number(onCard?.slice(4)) - both / 1_000_000)).toBeLessThanOrEqual(0.011);
+      expect(keyCalls()).toHaveLength(0);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("L4-creds-15: the plan card's foot line under 'ask' with the subscription out says the plan's figure, its tasks' figures within the work budget", async () => {
+    const both = await composeWithRolePlayer(
+      {},
+      {
+        vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      },
+    );
+    const { rt, client } = both;
+    try {
+      await setPolicyL4(client, "subscription_then_ask");
+      const brief = "A small web page that shows a quote of the day.";
+      const project = await client.createProject({
+        name: "Quote page",
+        goal: goalFromBrief(brief),
+        brief,
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const me = await client.me();
+      const until = new Date(rt.clock.now() + 40 * 60_000).toISOString();
+      await restSource(rt, "subscription", until);
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.projectId === project.id && r.status === "open" && r.planTasks,
+      );
+      const figure = chfIn(card?.planCredentialLine);
+      expect(figure, card?.planCredentialLine ?? "no plan card").toBeDefined();
+      const check = await client.startCheck(project.id);
+      const rate = check.workBudget.chfMicro / check.workBudget.usdMicro;
+      const planned = Math.min(
+        (card?.planTasks ?? []).reduce((s, t) => s + (t.estimateUsdMicro ?? 0), 0),
+        check.workBudget.usdMicro,
+      );
+      expect(Math.abs(Number(figure?.slice(4)) - (planned * rate) / 1_000_000)).toBeLessThan(0.011);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  // L4-creds-16 (CS-5's needs form, run C decision 55: never cut): under "API key first, then
+  // subscription" with the key at its limit, a research task only the key can do here (its page
+  // reading: the subscription cannot read pages on this install) waits for the key and says why
+  // on its row, the project's status line and the bar, also after a restart.
+  it("L4-creds-16: a task only the resting API key can do says why it waits on GET /projects/:id/tasks, the status line and GET /running, the same after composing again", async () => {
+    // This install reads pages only on the key, and the key does not search (one need).
+    const billing = { facts: { subscriptionPages: false, keySearch: false } };
+    const first = await composeL4({ billing });
+    let projectId = "";
+    const row = "Waits for your API key: only it can read web pages here.";
+    try {
+      await setPolicyL4(first.client, "key_then_subscription");
+      await restSource(first.rt, "api_key", resetAt);
+      const project = await first.client.createProject({ name: "Map notes", goal: "Notes" });
+      projectId = project.id;
+      await addTask(first.client, project.id, "Research the sources", {
+        specialist: "researcher",
+      });
+      // The person's session meets the key's stop inside it (a Start pressed while the stop is
+      // known is kept for its end, L4-creds-18).
+      await first.rt.runner.start({
+        agentId: first.rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        by: "person",
+        budgetCapUsdMicro: 5_000_000,
+        grant: await first.rt.sessionGrant(project.id),
+      });
+      const task = (await first.client.tasks(project.id)).find(
+        (t) => t.title === "Research the sources",
+      );
+      expect(task?.display?.label).toBe(row);
+      expect(task?.display?.detail).toBe(
+        "Your API key is at its limit until 11:40; then your session goes on.",
+      );
+      // The person's session waits to go on: the status line names the need.
+      const card = await first.client.project(project.id);
+      expect(card.statusLine?.text).toBe(
+        "Waiting for your API key (only it can read web pages here), then it goes on",
+      );
+      const entry = (await first.client.running()).find((r) => r.projectId === project.id);
+      expect(entry?.state).toBe("waiting");
+      expect(entry?.explain).toBe("Only your API key can read web pages here.");
+      expect(first.keyCalls()).toHaveLength(0);
+      await settleSessions(first.rt);
+    } finally {
+      await first.rt.close();
+    }
+    // Composed again on the same home: the wait and its need are read the same.
+    const second = await composeL4({
+      home: first.home,
+      vault: first.vault,
+      clock: first.clock,
+      billing,
+    });
+    try {
+      const task = (await second.client.tasks(projectId)).find(
+        (t) => t.title === "Research the sources",
+      );
+      expect(task?.display?.label).toBe(row);
+      expect((await second.client.project(projectId)).statusLine?.text).toBe(
+        "Waiting for your API key (only it can read web pages here), then it goes on",
+      );
+      const entry = (await second.client.running()).find((r) => r.projectId === projectId);
+      expect(entry?.explain).toBe("Only your API key can read web pages here.");
+    } finally {
+      await second.rt.close();
+    }
+  }, 120_000);
+
+  // L4-creds-17 (live check 4, LC-C26: under "API key first, then subscription" with the key at
+  // its limit the Start dialog said nothing of which Claude does the work): the 'next' branch
+  // names the stop in either direction, and Start runs on the subscription.
+  it("L4-creds-17: key first with the key resting: the dialog's line names the key's limit and the subscription, and Start runs on the subscription", async () => {
+    const calls: string[] = [];
+    const { rt, client, keyCalls } = await composeL4({ sdkQuery: claudeCode(calls, 0) });
+    try {
+      await setPolicyL4(client, "key_then_subscription");
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addTask(client, project.id, "Style the page");
+      await restSource(rt, "api_key", resetAt);
+      const check = await client.startCheck(project.id);
+      expect(check.credential?.line).toMatch(
+        /^Your API key is at its limit until 11:40, so this runs on your subscription \((about CHF \d+\.\d\d|less than CHF 0\.01)\)\.$/,
+      );
+      expect(check.blocked).toBeNull();
+      expect(check.credential?.runOut).toBeNull();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () => (await client.tasks(project.id)).every((t) => t.status === "done"),
+        "the task to run on the subscription (at least 10 s of real time)",
+        async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+        20_000,
+      );
+      expect(keyCalls()).toHaveLength(0);
+      const runs = await rt.store.run.list({ session_id: sessionId } as never, { limit: 20 });
+      const work = runs.filter((r) => r.specialist !== "critic");
+      expect(work.length).toBeGreaterThan(0);
+      for (const r of work) {
+        const source = r.billing_source_id
+          ? await rt.store.billingSource.get(r.billing_source_id)
+          : undefined;
+        expect(source?.kind).toBe("subscription");
+      }
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
+  // fixup-l4-cred-screens (the review's blocking #3; L4-creds-17, design §1 "what the app says is
+  // true now"): under "API key first, then subscription" with the key resting, work that only the
+  // key can do here does not run on the subscription; it waits for the key. The dialog said "...,
+  // so this runs on your subscription (about CHF 0.06)." beside "Nothing can run until 11:40
+  // (your API key's limit). ...". Both forms of such work: commands set to the API key, and a
+  // task that needs the person's answers (the subscription cannot ask while it works).
+  it("L4-creds-17: key first with the key resting and work only the key can do: the dialog says only that nothing can run until the key is back", async () => {
+    const calls: string[] = [];
+    const { rt, client, keyCalls } = await composeL4({ sdkQuery: claudeCode(calls, 0) });
+    try {
+      await setPolicyL4(client, "key_then_subscription");
+      const commands = await client.executeCommands({
+        commands: [{ name: "settings.set", params: { key: "code_commands", value: "api_key" } }],
+        wordsUsed: "Settings: Code tasks that need commands to the API key",
+        source: "ui",
+      });
+      if (commands.status === "pending")
+        await client.confirmCommand(commands.pendingId ?? "", { answer: "tap" });
+      const project = await client.createProject({ name: "Tool notes", goal: "Notes" });
+      await addTask(client, project.id, "Write the tool notes");
+      await restSource(rt, "api_key", resetAt);
+      const check = await client.startCheck(project.id);
+      expect(check.blocked?.sentence).toBe(
+        "Nothing can run until 11:40 (your API key's limit). Press Start at 11:40 and the work starts then.",
+      );
+      expect(check.credential?.line ?? null).toBeNull();
+      expect(check.credential?.runOut ?? null).toBeNull();
+      expect(JSON.stringify(check.credential)).not.toContain("runs on your subscription");
+      // The sibling, New task's line for a coder task here (the plan card's task lines read the
+      // same chooser): it waits for the key. Before: "Runs on your Claude subscription, where
+      // commands cannot run: this task's tests will not run." for work the pick holds for the key.
+      const waitsLine =
+        "Waits until 11:40 (your API key's limit). Press Start and the work starts then.";
+      const models = await client.modelSettings(undefined, project.id);
+      expect(models.specialists.find((s) => s.name === "coder")?.runsOn).toEqual({
+        kind: "api_key",
+        line: waitsLine,
+      });
+      // A task that needs the person's answers, with commands back on the person's order: only
+      // the key can ask while it works.
+      const back = await client.executeCommands({
+        commands: [
+          { name: "settings.set", params: { key: "code_commands", value: "first_choice" } },
+        ],
+        wordsUsed: "Settings: Code tasks that need commands to my first choice anyway",
+        source: "ui",
+      });
+      if (back.status === "pending")
+        await client.confirmCommand(back.pendingId ?? "", { answer: "tap" });
+      const asks = await client.createProject({ name: "Palette", goal: "Colours" });
+      await client.createTask(asks.id, {
+        title: "Choose the colours",
+        outcome: "The palette needs your decision on the colours",
+        acceptanceCriteria: ["it is done"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 0,
+      });
+      const asked = await client.startCheck(asks.id);
+      expect(asked.blocked?.sentence).toBe(
+        "Nothing can run until 11:40 (your API key's limit). Press Start at 11:40 and the work starts then.",
+      );
+      expect(asked.credential?.line ?? null).toBeNull();
+      const typed = await client.modelSettings(undefined, asks.id, {
+        title: "Choose the colours",
+        outcome: "The palette needs your decision on the colours",
+      });
+      expect(typed.specialists.find((s) => s.name === "coder")?.runsOn?.line).toBe(waitsLine);
+      // A task the subscription can do here still runs there, and the dialog says so.
+      const plain = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addTask(client, plain.id, "Style the page");
+      expect((await client.startCheck(plain.id)).credential?.line).toMatch(
+        /^Your API key is at its limit until 11:40, so this runs on your subscription \((about CHF \d+\.\d\d|less than CHF 0\.01)\)\.$/,
+      );
+      expect(calls).toHaveLength(0);
+      expect(keyCalls()).toHaveLength(0);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
+  // L4-creds-18 (C6L-2: "Start on 1 Dec" at the share's stop started a session that stopped at
+  // once): the start is kept for the month's start as "Start at 15:40" is for a limit, and starts
+  // exactly one session then, also after a restart.
+  it("L4-creds-18: 'Start on 1 Apr' at the share's stop keeps the start (no session row); at the month's start exactly one session starts, after composing again", async () => {
+    const calls: string[] = [];
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const first = await composeL4({ clock, sdkQuery: claudeCode(calls, 0) });
+    let projectId = "";
+    try {
+      const sub = (
+        await first.rt.store.billingSource.list({ human_id: first.rt.human.id }, { limit: 10 })
+      ).find((r) => r.kind === "subscription");
+      await first.rt.store.costLedger.record({
+        human_id: first.rt.human.id,
+        agent_id: first.rt.agent.id,
+        billing_source_id: sub?.id ?? null,
+        kind: "subscription",
+        usd_micro: 0,
+        chf_micro: 0,
+        plan_usage_share: 0.95,
+        model: "claude-sonnet-5-5",
+      } as never);
+      const project = await first.client.createProject({ name: "Quote page", goal: "A quote" });
+      projectId = project.id;
+      await addTask(first.client, project.id, "Style the page");
+      const check = await first.client.startCheck(project.id);
+      expect(check.credential?.runOut?.later?.label).toBe("Start on 1 Apr");
+      // "Start on 1 Apr" sends a plain start, as the dialog does.
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const kept = await first.client.startSession({ agentId, projectId: project.id });
+      expect(kept.result).toBe("kept");
+      expect(kept.sentence).toBe("A session of Quote page starts at Wed 1 Apr, 02:00.");
+      const rows = async (rt: RuntimeApp) =>
+        (await rt.store.session.forProject(projectId, { limit: 20 })).filter(
+          (s) => !isIntakeSession(s),
+        );
+      expect(await rows(first.rt)).toHaveLength(0);
+      expect(first.keyCalls()).toHaveLength(0);
+      await settleSessions(first.rt);
+    } finally {
+      await first.rt.close();
+    }
+    // Composed again on the same home: the kept start starts exactly one session on the 1st.
+    const second = await composeL4({
+      home: first.home,
+      vault: first.vault,
+      clock,
+      sdkQuery: claudeCode(calls, 0),
+    });
+    try {
+      clock.set(Date.parse("2026-04-01T00:01:00Z"));
+      expect(await second.rt.billing.waits.wake()).toBe(1);
+      expect(await second.rt.billing.waits.wake()).toBe(0);
+      await eventually(
+        async () => (await second.client.tasks(projectId)).every((t) => t.status === "done"),
+        "the kept start's session to run the task (at least 10 s of real time)",
+        async () => (await second.client.tasks(projectId)).map((t) => t.status).join(", "),
+        20_000,
+      );
+      const sessions = (await second.rt.store.session.forProject(projectId, { limit: 20 })).filter(
+        (s) => !isIntakeSession(s),
+      );
+      expect(sessions).toHaveLength(1);
+      await settleSessions(second.rt);
+    } finally {
+      await second.rt.close();
+    }
+  }, 120_000);
+
+  // L4-creds-18 (C6L-5: "Change the allowance" was only on the run bar): the person's session
+  // that met the share waits to go on; the project's status line and the session page's wait
+  // block offer Change the allowance too.
+  it("L4-creds-18: the share's wait offers Change the allowance on the status line and the session page's wait block", async () => {
+    const calls: string[] = [];
+    const { rt, client } = await composeL4({ sdkQuery: claudeCode(calls, 0) });
+    try {
+      const sub = (
+        await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+      ).find((r) => r.kind === "subscription");
+      await rt.store.costLedger.record({
+        human_id: rt.human.id,
+        agent_id: rt.agent.id,
+        billing_source_id: sub?.id ?? null,
+        kind: "subscription",
+        usd_micro: 0,
+        chf_micro: 0,
+        plan_usage_share: 0.95,
+        model: "claude-sonnet-5-5",
+      } as never);
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addTask(client, project.id, "Style the page");
+      await addTask(client, project.id, "Write the copy");
+      const r = await rt.runner.start({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        by: "person",
+        budgetCapUsdMicro: 5_000_000,
+        grant: await rt.sessionGrant(project.id),
+      });
+      await settleSessions(rt);
+      const allowance = { label: "Change the allowance", to: "/settings#plan-allowance" };
+      const card = await client.project(project.id);
+      expect(card.statusLine?.text).toBe(
+        "Waiting until Wed 1 Apr, 02:00 (your subscription's share), then it goes on",
+      );
+      expect(card.statusLine?.action).toEqual({ kind: "link", ...allowance });
+      const block = (await client.session(r.sessionId)).waitBlock;
+      expect(block?.state).toBe("goes_on");
+      expect(block?.answer).toEqual(allowance);
+      expect(block?.action).toBe("cancel");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
+  // L4a-left-1, L4a-left-2 (l4-cred-engine's leftovers): with the subscription refused and the
+  // person's session kept to go on, a start from the API, the phone or Continue gets the Start
+  // dialog's sentence (not the kept session's), and the kept wait names the person's step.
+  it("L4a-left-1/2: a refused sign-in with the session kept: POST /sessions says the dialog's sentence (400 validation); the kept wait names the step", async () => {
+    const { rt, client, raw } = await composeL4();
+    try {
+      const sub = (
+        await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+      ).find((r) => r.kind === "subscription");
+      if (!sub) throw new Error("no subscription row");
+      await rt.store.billingSource.update(sub.id, sub.version, {
+        limits: {
+          ...(sub.limits as Record<string, unknown>),
+          refusedAt: rt.clock.nowIso(),
+        } as never,
+      });
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addTask(client, project.id, "Style the page");
+      await rt.runner.start({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        by: "person",
+        budgetCapUsdMicro: 5_000_000,
+        grant: await rt.sessionGrant(project.id),
+      });
+      await settleSessions(rt);
+      expect(await rt.continuations.waiting(project.id)).toBe(
+        "Your session of 09:00 goes on by itself once you sign in again in Settings.",
+      );
+      const dialog = (await client.startCheck(project.id)).blocked?.sentence;
+      expect(dialog).toBe("Nothing can run until you save a new Claude sign-in in Settings.");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const refused = await raw("/sessions", { agentId, projectId: project.id });
+      expect(refused.status).toBe(400);
+      expect(refused.body).toMatchObject({ code: "validation", message: dialog });
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
+  // L4-creds-21 (C6L-9): a start refused for nothing to run answers 400 "validation" (before:
+  // 409 "conflict"), with the Start dialog's sentence.
+  it("L4-creds-21: POST /sessions with nothing to run answers 400 validation with the dialog's sentence", async () => {
+    const { rt, client, raw } = await composeL4();
+    try {
+      const project = await client.createProject({ name: "Empty", goal: "Nothing yet" });
+      const sentence = (await client.startCheck(project.id)).blocked?.sentence;
+      expect(sentence).toBeTruthy();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const refused = await raw("/sessions", { agentId, projectId: project.id });
+      expect(refused.status).toBe(400);
+      expect(refused.body).toMatchObject({ code: "validation", message: sentence });
+      // The UI's client reads the same sentence.
+      const err = await client
+        .startSession({ agentId, projectId: project.id })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).status).toBe(400);
+      expect((err as ApiError).message).toBe(sentence);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // L4-creds-25 (live check 4's LC-C25: Costs said "Your API key: CHF 0.00" beside "less than
+  // CHF 0.01" for three small rows): By credential follows the money rule (design §5 rule 7).
+  it("L4-creds-25: GET /costs' By credential reads 'Your API key: less than CHF 0.01' for three small rows, and no CHF 0.00 for an amount above zero", async () => {
+    const { rt, client, clock } = await composeL4();
+    try {
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      const key = (
+        await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+      ).find((s) => s.kind === "api_key");
+      // The live check's three API rows: 1665, 181 and 189 micro CHF.
+      for (const chf of [1665, 181, 189])
+        await rt.store.costLedger.insert({
+          human_id: rt.human.id,
+          project_id: project.id,
+          billing_source_id: key?.id ?? null,
+          kind: "api",
+          usd_micro: Math.round(chf * 1.25),
+          chf_micro: chf,
+          model: "claude-sonnet-5-5",
+          occurred_at: clock.nowIso(),
+        } as never);
+      const costs = await client.costs({ projectId: project.id });
+      const rows = costs.byCredential ?? [];
+      expect(rows.map((r) => r.kind)).toEqual(["api_key"]);
+      expect(rows[0]?.cost.chfMicro ?? 0).toBeGreaterThan(0);
+      expect(rows[0]?.words).toBe("Your API key: less than CHF 0.01");
+      // Nothing the Costs tab shows in words reads CHF 0.00 for the spend above zero.
+      expect(rows.map((r) => r.words).join(" ")).not.toMatch(/CHF 0\.00/);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // L4-creds-26 (C6L-8): under "ask" with the key able to run, the header said "nothing runs
+  // until 11:40" beside a dialog that offers Use API key; after "Start at 11:40" the reopened
+  // dialog said "...; then your session goes on." for a start that is no session yet.
+  it("L4-creds-26: under 'ask' the header names the stop and the ask; after Start at 11:40 the dialog reads when it starts, with Cancel", async () => {
+    const { rt, client, keyCalls } = await composeL4();
+    try {
+      await setPolicyL4(client, "subscription_then_ask");
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addTask(client, project.id, "Style the page");
+      await addTask(client, project.id, "Write the copy");
+      await restSource(rt, "subscription", resetAt);
+      const header = (await client.project(project.id)).statusLine;
+      expect(header?.text).toBe(
+        "Ready: 2 tasks; your subscription is at its limit until 11:40; Start asks first",
+      );
+      expect(header?.text ?? "").not.toMatch(/nothing runs/);
+      expect(header?.action).toEqual({ kind: "start", label: "Continue", to: null });
+      // The dialog offers what the header says: Use API key, or Start at 11:40.
+      const check = await client.startCheck(project.id);
+      expect(check.credential?.runOut?.use.label).toBe("Use API key");
+      expect(check.credential?.runOut?.later?.label).toBe("Start at 11:40");
+      // "Start at 11:40" keeps the person's start: the reopened dialog says when it starts, with
+      // its Cancel, and never that "your session goes on".
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const kept = await client.startSession({ agentId, projectId: project.id });
+      expect(kept.result).toBe("kept");
+      const again = await client.startCheck(project.id);
+      expect(again.blocked?.sentence).toBe("Starts at 11:40 (your subscription's limit).");
+      expect(again.blocked?.kept).toBe(true);
+      expect(JSON.stringify(again.blocked)).not.toContain("your session goes on");
+      expect((await client.project(project.id)).statusLine?.text).toBe(
+        "Starts at 11:40 (your subscription's limit)",
+      );
+      expect(keyCalls()).toHaveLength(0);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
+  // L4-creds-19 (live check 4's LC-C25, C6L-6): chat's one-off "Use API key" sent the held
+  // question again as a new turn: it showed twice, stayed twice after a reload, and the model got
+  // the question twice with the hold reply ("so I have not answered") between them.
+  it("L4-creds-19: chat's one-off Use API key answers the held question in its place: it shows once, after composing again too, and reaches the model once", async () => {
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const scripted = new ScriptedProvider([{ text: "Next is the quote page." }], clock);
+    const standIn = messagesApiStandIn({ model: new AcceptingCriticProvider(scripted), clock });
+    const first = await composeL4({ clock, standIn });
+    const said = "what is next?";
+    try {
+      await restSource(first.rt, "subscription", resetAt);
+      const me = await first.client.me();
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const held = await first.client.chat({ humanId: me.id, agentId, text: said });
+      expect(held.reply).toMatch(/so I have not answered/);
+      expect(held.oneOff?.label).toBe("Use API key");
+      // The press, as the conversation sends it: the same question, the one-off flag and the
+      // held turn it answers.
+      const answered = await first.client.chat({
+        humanId: me.id,
+        agentId,
+        text: said,
+        oneOff: true,
+        heldTurn: held.transcriptId,
+      });
+      expect(answered.reply).toContain("Next is the quote page.");
+      const once = async (client: DaemonClient) => {
+        const turns = (await client.conversation(null)).turns;
+        expect(turns.filter((t) => t.said === said)).toHaveLength(1);
+        expect(JSON.stringify(turns)).not.toContain("so I have not answered");
+        expect(turns.at(-1)?.reply?.text ?? "").toContain("Next is the quote page.");
+      };
+      await once(first.client);
+      // The model got the question once, without the hold reply before it.
+      const messages = (scripted.calls.at(-1)?.messages ?? []).map((m) => ({
+        role: m.role,
+        text: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      }));
+      expect(messages.filter((m) => m.role === "user" && m.text.includes(said))).toHaveLength(1);
+      expect(messages.some((m) => m.text.includes("so I have not answered"))).toBe(false);
+      await settleSessions(first.rt);
+    } finally {
+      await first.rt.close();
+    }
+    const second = await composeL4({ home: first.home, clock, vault: first.vault, standIn });
+    try {
+      const turns = (await second.client.conversation(null)).turns;
+      expect(turns.filter((t) => t.said === said)).toHaveLength(1);
+      expect(JSON.stringify(turns)).not.toContain("so I have not answered");
+    } finally {
+      await second.rt.close();
+    }
+  }, 60_000);
+
+  // fixup-l4-cred-screens (the review's blocking #2; L4-creds-19): two held questions, then the
+  // press on the newest. The app's own hold reply under the first one reached the model as an
+  // assistant turn ("... so I have not answered. I can still add and change tasks."): words the
+  // model never wrote, in its history. The history leaves out every hold reply; the conversation
+  // still shows the first question with its hold reply, and the answered one once.
+  it("L4-creds-19: with two held questions, the press on the newest reaches the model with no hold reply in its history, after composing again too", async () => {
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const scripted = new ScriptedProvider([{ text: "It has cost CHF 0.40 so far." }], clock);
+    const standIn = messagesApiStandIn({ model: new AcceptingCriticProvider(scripted), clock });
+    const first = await composeL4({ clock, standIn });
+    const earlier = "which task is next?";
+    const said = "how much has this project cost?";
+    const modelSaw = () =>
+      (scripted.calls.at(-1)?.messages ?? []).map((m) => ({
+        role: m.role,
+        text: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      }));
+    let home = "";
+    try {
+      await restSource(first.rt, "subscription", resetAt);
+      const me = await first.client.me();
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const one = await first.client.chat({ humanId: me.id, agentId, text: earlier });
+      expect(one.reply).toMatch(/so I have not answered/);
+      const two = await first.client.chat({ humanId: me.id, agentId, text: said });
+      expect(two.reply).toMatch(/so I have not answered/);
+      expect(two.oneOff?.label).toBe("Use API key");
+      const answered = await first.client.chat({
+        humanId: me.id,
+        agentId,
+        text: said,
+        oneOff: true,
+        heldTurn: two.transcriptId,
+      });
+      expect(answered.reply).toContain("It has cost CHF 0.40 so far.");
+      // The model's request: the pressed question once, and no line the model never wrote.
+      const messages = modelSaw();
+      expect(messages.filter((m) => m.role === "user" && m.text.includes(said))).toHaveLength(1);
+      expect(messages.some((m) => m.text.includes("so I have not answered"))).toBe(false);
+      expect(messages.some((m) => m.text.includes("I can still add and change tasks"))).toBe(false);
+      expect(messages.filter((m) => m.role === "assistant")).toEqual([]);
+      // The conversation as the person sees it: the first question with its hold reply, the
+      // answered one once.
+      const turns = (await first.client.conversation(null)).turns;
+      expect(turns.map((t) => t.said)).toEqual([earlier, said]);
+      expect(turns[0]?.reply?.text).toMatch(/so I have not answered/);
+      expect(turns[1]?.reply?.text ?? "").toContain("It has cost CHF 0.40 so far.");
+      await settleSessions(first.rt);
+      home = first.home;
+    } finally {
+      await first.rt.close();
+    }
+    // Composed again: the next question's history has the answered turn, and still no hold reply.
+    const second = await composeL4({ home, clock, vault: first.vault, standIn });
+    try {
+      const me = await second.client.me();
+      const agentId = (await second.client.agents())[0]?.id ?? "";
+      // The subscription's rest is kept across the restart: this one is answered on the key too.
+      const next = await second.client.chat({
+        humanId: me.id,
+        agentId,
+        text: "and what is left?",
+        oneOff: true,
+      });
+      expect(next.reply).toContain("It has cost CHF 0.40 so far.");
+      const messages = modelSaw();
+      expect(messages.some((m) => m.text.includes("so I have not answered"))).toBe(false);
+      expect(messages.filter((m) => m.role === "user" && m.text.includes(said))).toHaveLength(1);
+      expect(
+        messages.filter((m) => m.role === "assistant" && m.text.includes("CHF 0.40")),
+      ).toHaveLength(1);
+      await settleSessions(second.rt);
+    } finally {
+      await second.rt.close();
     }
   }, 60_000);
 });

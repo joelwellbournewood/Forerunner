@@ -1172,10 +1172,43 @@ page says so with **Answer**, and the card names what the waiting work costs on 
 CHF 0.40"). If your choice moves work onto the key by itself, you get one notification for that
 stop with its cost.
 
+Every time on the screens is in your time zone (the one in Settings), the same as the app's
+sentences ("Waits until 11:40"), whatever zone this computer is set to.
+
+If Anthropic refused your key or sign-in, the Start dialog says "Nothing can run until you save a
+new API key in Settings." and offers no Start; while a session of yours waits to go on, Continue
+and the phone say the same, and the waiting session says it goes on once you save a new one.
+
+Under "Subscription first, then ask me", while your subscription is out and your API key could
+run, the project's line says "Ready: 2 tasks; your subscription is at its limit until 02:51;
+Start asks first"; the plan card's tasks say "Approve and start asks before your API key is
+used.". After **Start at 04:28** the Start dialog says "Starts at 04:28 (your subscription's
+limit)." with **Cancel the wait**.
+
+When your subscription has used its share for the month, **Start on 1 Dec** keeps your start for
+the month's start: no session runs before, and one starts then by itself. **Change the allowance**
+is beside the wait on the run bar, the project's status line and the session page.
+
+Under "API key first, then subscription" with your key at its limit, the Start dialog says so and
+that the session runs on your subscription ("Your API key is at its limit until 11:57, so this
+runs on your subscription (about CHF 0.07)."), and **Start** runs it there. Work that only your
+API key can do here (code tasks whose commands you set to the API key, a task that needs your
+answers while it works) waits for the key instead: the dialog then says only "Nothing can run
+until 11:57 (your API key's limit). Press Start at 11:57 and the work starts then.", and New
+task and the plan card say the same wait.
+
+The card, the Start dialog's **Use API key** and the plan card's last line give one figure for
+the same waiting work: the tasks that wait, the ones that follow them, and the critic's reviews of
+each, never more than the session's work budget. The dialog still names the tasks it runs above
+the stop. Your yes lets the waiting work go on; other ready work joins a session that runs only
+if it fits its budget, as anything you make ready does.
+
 A waiting task's row says why and until when: "Waits until 15:40 (your subscription's limit)",
 "Waits until Tue 1 Dec (your subscription's share)" with **Change the allowance**, "Waits for your
 answer: use your API key?" with **Answer**. The project's status line says it once ("Waiting for
-you: use your API key?").
+you: use your API key?"). A task only one of your credentials can do here says so: "Waits for your
+API key: only it can read web pages here.", with what holds the key and when it is back under it;
+the status line and the bar at the top say the same.
 
 Reaching the share of your subscription that Forerunner may use in the middle of a task is
 running out too, and your choice decides what happens, as for a usage limit: the work goes on
@@ -1194,11 +1227,13 @@ again. Under the session's spend: "On your API key since 14:20 (your subscriptio
 0.42 so far."; once it ended: "Your API key took over at 14:20 (your subscription's limit): CHF
 0.42 of CHF 0.62.". The task's drawer reads "On your API key after your subscription's limit · CHF
 0.43" on that run, and Costs has **By credential** ("Your API key: CHF 1.20", "Your Claude
-subscription: CHF 2.10 (estimate, 12% of its allowance)").
+subscription: CHF 2.10 (estimate, 12% of its allowance)"; a few calls under a centime read "less
+than CHF 0.01").
 
 While chat waits for your subscription it says so and offers **Use API key** for that one question
-("Answers this question on your API key: about CHF 0.02."); the press asks it again once, on the
-key, and the answer's note says so. It gives no standing yes: the next question waits again.
+("Answers this question on your API key: about CHF 0.02."); the press answers that question once,
+on the key, in its place (it shows once, with the answer under it), and the answer's note says
+so. It gives no standing yes: the next question waits again.
 
 An expired or signed-out Claude sign-in is read as a refusal however Claude Code reports it:
 the task is never marked Failed for it, chat does not ask the refused sign-in again, and Costs

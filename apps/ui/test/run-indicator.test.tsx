@@ -261,7 +261,7 @@ describe("d1109-run-visible: the run indicator under the header (V-2)", () => {
     expect(within(entry).queryByTestId("run-stop")).toBeNull();
     expect(within(entry).queryByTestId("run-elapsed")).toBeNull();
     expect(within(entry).getByTestId("run-cancel-explain")).toHaveTextContent(
-      "Nothing starts when Claude is back; its tasks wait for your Start.",
+      "Cancel: nothing starts when Claude is back; its tasks wait for your Start.",
     );
     expect(document.title).toBe("Forerunner");
     await user.click(within(entry).getByTestId("run-cancel"));
@@ -371,7 +371,7 @@ describe("d1109-run-visible: Home, the Overview, the project's line and Talk (V-
     expect(cancel).toHaveTextContent("Cancel");
     expect(cancel).toHaveAttribute(
       "title",
-      "Nothing starts when Claude is back; its tasks wait for your Start.",
+      "Cancel: nothing starts when Claude is back; its tasks wait for your Start.",
     );
     await user.click(cancel);
     await waitFor(() =>
@@ -495,7 +495,7 @@ describe("d1109-run-visible: the page of a session that ended to wait (V-5), its
     state: "goes_on" as const,
     text: 'Waiting until 15:40 (your subscription\'s limit), then it goes on with "B" and 1 more.',
     action: "cancel" as const,
-    explain: "Nothing starts when Claude is back; its tasks wait for your Start.",
+    explain: "Cancel: nothing starts when Claude is back; its tasks wait for your Start.",
     projectId: "proj_atlas",
     budgetLeft: { usdMicro: 1_500_000, chfMicro: 1_200_000 },
   };
@@ -792,7 +792,7 @@ describe("d1109-cred-screens, run C: the run indicator's credential forms (CS-7)
       state: "goes_on",
       text: 'Waiting until 16:00 (your subscription\'s limit), then it goes on with "B".',
       action: "cancel",
-      explain: "Nothing starts when Claude is back; its tasks wait for your Start.",
+      explain: "Cancel: nothing starts when Claude is back; its tasks wait for your Start.",
       projectId: "proj_atlas",
       budgetLeft: { usdMicro: 1_500_000, chfMicro: 1_200_000 },
       answer: { label: "Answer", to: "/inbox#card-req_ask" },
@@ -804,5 +804,35 @@ describe("d1109-cred-screens, run C: the run indicator's credential forms (CS-7)
       "/inbox#card-req_ask",
     );
     expect(within(block).getByTestId("session-wait-cancel")).toBeInTheDocument();
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-16): a session that waits for the one credential that can do
+ * its work here says why under its words on the bar (`RunningView.explain`, the daemon's
+ * `needsWaitWords(...).why`), on every page.
+ */
+describe("l4-cred-screens, run L4: the bar says why a session waits for the API key (L4-creds-16)", () => {
+  it("a waiting entry with a why shows it beside its words, with Cancel", async () => {
+    const harness = createHarness();
+    harness.daemon.state.runningExtra = [
+      { ...WAITING, explain: "Only your API key can read web pages here." },
+    ];
+    renderApp("/", harness);
+    const bar = await screen.findByTestId("run-indicator-bar");
+    const entry = await within(bar).findByTestId("run-entry");
+    expect(within(entry).getByTestId("run-wait-why")).toHaveTextContent(
+      /^Only your API key can read web pages here\.$/,
+    );
+    expect(within(entry).getByTestId("run-cancel")).toBeInTheDocument();
+  });
+
+  it("a plain waiting entry shows no why", async () => {
+    const harness = createHarness();
+    harness.daemon.state.runningExtra = [WAITING];
+    renderApp("/", harness);
+    const bar = await screen.findByTestId("run-indicator-bar");
+    const entry = await within(bar).findByTestId("run-entry");
+    expect(within(entry).queryByTestId("run-wait-why")).toBeNull();
   });
 });

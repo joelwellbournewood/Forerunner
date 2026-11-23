@@ -1021,13 +1021,47 @@ answers the card with the option it shows.
 - **Session page**: `session-switch-line` under the spend; **drawer**: `drawer-run-switch`.
 - **Chat and Talk** (`components/Conversation.tsx`): a hold reply's `<ids>-one-off` press and
   `<ids>-one-off-explain`; the press sends the same line with `oneOff: true`, disabled while an
-  answer comes.
+  answer comes. l4-cred-screens (L4-creds-19): it also sends `heldTurn` (the held turn's id); the
+  live bubble's `replaces` hides that turn while the answer comes, and the daemon drops it, so
+  the question shows once (the fake's `dropHeldTurn` does the same). Tests:
+  `test/credential-chat.test.tsx` (describe "the one-off press answers the held turn in place").
 - **Costs**: `cost-by-credential` from `CostView.byCredential` (the fake's fixture carries it).
 
 The fake daemon mirrors each route (`credentialPolicy` option, `startCredential`,
 `credentialGrants`, `planCredentialLine`, `nextChatTurn.oneOff`/`reply`, `chatPosts`, runs'
 `switchLine`, sessions' `switchLine`, costs' `byCredential`) with the daemon's words; the
 real-daemon describe "d1109-cred-screens, run C" keeps it honest.
+
+l4-cred-screens, run L4 ([ADR 0120](../decisions/0120-which-claude-does-the-work.md) amended
+2026-11-22):
+
+- **One figure (L4-creds-15).** The ask card, the Start dialog's "Use API key" line and the plan
+  card's foot line say the daemon's one figure for the waiting work (`waitingWorkUsdMicro`). With
+  the first choice out and "Use API key" offered, the dialog keeps `start-session-plan` (the plan
+  sentence) beside the stop line (`runOutOffered` in `StartSessionDialog.tsx`), also beside a kept
+  Start ("Starts at 04:28 (your subscription's limit).") while "Use API key" is still offered
+  (fixup-l4-cred-screens: before, its figure named no task there); a stop with Start alone shows
+  no plan sentence. Tests: `test/credential-start.test.tsx` (describe
+  "l4-cred-screens, run L4"), `test/real-daemon.test.ts` (describe "l4-cred-screens, run L4").
+- **The needs form (L4-creds-16).** A task only one credential can do here reads the daemon's
+  needs label on its row ("Waits for your API key: only it can read web pages here."); the bar
+  shows a waiting entry's `explain` beside its words (`run-wait-why`, `shell/RunIndicator.tsx`).
+  Tests: `test/tasks.test.tsx` and `test/run-indicator.test.tsx` (describes "l4-cred-screens, run
+  L4"; the fake's row words come from the daemon's `waitRowWords`).
+- **Change the allowance (L4-creds-18).** The Overview's status line and the session page's wait
+  block (`session-wait-answer`) show the daemon's link for the share's wait. Tests:
+  `test/credential-screens-l4.test.tsx`.
+- **Times in the person's zone (L4-creds-20).** `lib/time.ts` writes every time in the
+  person's zone: the store's `me` action calls `setPersonZone(me.timezone)` (the phone's store
+  does the same when it reads `/me`), and each helper (`formatTime`, `formatClock`,
+  `formatDateTime`, `formatDate`, `formatDayMonth`) also takes a zone; `formatClock` says
+  "today" by the person's day ("18 Nov, 00:30" across midnight in Zurich). An unknown zone keeps
+  the computer's. Files' `copyUpdatedWords` uses `formatClock`. Tests:
+  `test/person-zone.test.tsx` (the computer on UTC, the person in Zurich).
+- **A kept person Start (L4-creds-26).** The Start dialog shows the daemon's "Starts at 04:28
+  (your subscription's limit)." with Cancel the wait; the fake daemon's `credentialWaitNow` carries
+  `startsAt` and `askFirst` as the daemon does. Tests: `test/credential-start.test.tsx` (describe
+  "a kept person Start in the Start dialog").
 
 ## How to change it
 
