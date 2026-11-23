@@ -461,6 +461,25 @@ describe("d1109-selftasks-chat, run C: each change line has its Undo where it is
     expect(screen.queryByTestId("change-undo")).not.toBeInTheDocument();
   });
 
+  // l4-chat-carried (L4-selftasks-129): after a reload an undone line read only "Undone.".
+  it("an undone line read again (a reload) keeps the undo's own sentence", async () => {
+    const harness = withChange({ undone: true });
+    const undoRow = harness.daemon.state.changes.find((c) => c.id === "chg_split");
+    if (!undoRow) throw new Error("no fixture");
+    harness.daemon.state.changes.unshift({
+      ...undoRow,
+      id: "chg_undo",
+      commands: [{ name: "undo", params: { of: "chg_split" } }],
+      undoState: "irreversible",
+      sentence: 'Undone: "Style the page" is one task again.',
+    });
+    renderApp("/sessions/sess_1", harness);
+    expect(await screen.findByTestId("change-undone")).toHaveTextContent(
+      'Undone: "Style the page" is one task again.',
+    );
+    expect(screen.queryByTestId("change-undo")).not.toBeInTheDocument();
+  });
+
   it("a change whose Undo is blocked says why in words, with no button", async () => {
     const harness = withChange({
       blocked: '"Style the page: layout" has run since, so the split cannot be undone',

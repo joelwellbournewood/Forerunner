@@ -3807,12 +3807,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const entry = state.changes.find((ch) => ch.id === changeLogId);
     if (!entry) return e;
     const view = withUndoable(entry, new Date().toISOString());
+    // l4-chat-carried (L4-selftasks-129), as the daemon: an undone line keeps the undo's sentence.
+    const undoneSentence =
+      entry.undoState === "undone"
+        ? state.changes.find((ch) => {
+            const step = ch.commands[0] as { name?: string; params?: { of?: unknown } } | undefined;
+            return step?.name === "undo" && step.params?.of === entry.id;
+          })?.sentence
+        : undefined;
     return {
       ...e,
       changeId: entry.id,
       undoable: view.undoable,
       undoBlocked: view.undoable ? null : (view.undoBlockedReason ?? null),
       undone: entry.undoState === "undone",
+      ...(undoneSentence ? { undoneSentence } : {}),
     };
   };
   app.get("/sessions/:id/events", (c) => {

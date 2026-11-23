@@ -8295,7 +8295,9 @@ The results loop composes several pending task changes of one model turn into on
 (`CommandLoop.recompose`): the separate cards are marked `chat_only` and cancelled, so the Inbox
 holds one. GET /sessions/:id/events gives each `change` line `changeId`, `undoable`,
 `undoBlocked` and `undone` (`withUndo` in server.ts, from the change log row and
-`CommandLoop.undoBlocked`); `ChangeLogView.byAgent` marks the agent's own changes; the task
+`CommandLoop.undoBlocked`), and an undone line `undoneSentence`, the undo row's own sentence (the
+project's rows whose first command is `undo` with the change's `change_log_id`, read once per
+project; l4-chat-carried, L4-selftasks-129: after a reload the line read only "Undone."); `ChangeLogView.byAgent` marks the agent's own changes; the task
 check's model is chosen as the intake's (C5-left-7). An added step marks only itself as written
 by the agent (C4-left-1).
 

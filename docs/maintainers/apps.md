@@ -3098,7 +3098,9 @@ named) and "Keep the tasks" changes nothing; nothing starts a session. Tests:
 ## Undo where a change is shown (d1109-selftasks-chat, ADR 0119)
 
 The session page's change lines carry their Undo (`ChangeUndo` in SessionPage.tsx, POST
-/changes/:id/undo; a blocked one says "Cannot be undone now: …"); Changes shows "In a session"
+/changes/:id/undo; a blocked one says "Cannot be undone now: …"; an undone one keeps the undo's
+own sentence after a reload, `EventView.undoneSentence`, and reads "Undone." only when the daemon
+has none, l4-chat-carried L4-selftasks-129); Changes shows "In a session"
 for source `session` and the agent's name for `byAgent` rows; an Inbox card with `openDetails`
 (the agent's suggested task changes) lists its details open. Tests: `test/session.test.tsx`,
 `test/changes.test.tsx`, `test/selftasks.test.tsx`, `test/real-daemon.test.ts` (describe

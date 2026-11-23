@@ -23442,6 +23442,10 @@ describe("d1109-selftasks-chat, run C", () => {
       expect(undone.status).toBe("done");
       const [after] = (await b.client.sessionEvents(sessionId)).filter((e) => e.type === "change");
       expect([after?.undoable, after?.undone]).toEqual([false, true]);
+      // l4-chat-carried (L4-selftasks-129): the line read again (a reload) keeps the undo's own
+      // sentence, not "Undone." alone.
+      expect(undone.sentence).toMatch(/^Undone: /);
+      expect(after?.undoneSentence).toBe(undone.sentence);
       await settleSessions(b.rt);
     } finally {
       await b.rt.close();
