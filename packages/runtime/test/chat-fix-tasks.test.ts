@@ -878,6 +878,32 @@ describe("l4-selftasks-chat, run L4: a change the person names is theirs, and ev
     expect((await publishOf(w)).priority).toBe(publish.priority);
   });
 
+  it("L4-selftasks-117 (review): a Yes after the named task was cancelled, so its change can no longer be made, says what changed in one line and applies nothing; after a restart too", async () => {
+    for (const restart of [false, true]) {
+      // A pause: its plan refuses a cancelled task ("a cancelled task cannot be paused").
+      const w = await setup({
+        level: 2,
+        replies: [toolReply("task_pause", { task: "Publish the page" }), textReply("")],
+      });
+      expect((await w.chat("put Publish the page on hold")).pendingConfirmation?.readback).toBe(
+        'Pause "Publish the page"? No session runs it until you press Resume.',
+      );
+      const publish = await publishOf(w);
+      await w.store.task.patch(publish.id, { status: "cancelled" } as never);
+      if (restart) await w.restart();
+      expect((await w.store.humanRequest.open({ humanId: w.human })).length).toBe(1);
+      const yes = await w.chat("yes");
+      expect(yes.reply).toBe(
+        '"Publish the page" changed since I asked: it is cancelled now. Nothing was changed; ask again if you still want it.',
+      );
+      expect(yes.actions).toEqual([]);
+      expect(await w.store.changeLog.list({ project_id: w.quote } as never, { limit: 5 })).toEqual(
+        [],
+      );
+      expect(await w.store.humanRequest.open({ humanId: w.human })).toEqual([]);
+    }
+  });
+
   it("L4-selftasks-117 (run C decision 53): a 'fix the tasks' read-back waits 10.5 minutes and a restart; after the list changed its Yes says so and applies nothing", async () => {
     const w = await setup({ level: 1, replies: [textReply(THREE)] });
     const r = await w.chat("fix the tasks");

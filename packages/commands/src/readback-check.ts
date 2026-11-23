@@ -142,6 +142,31 @@ export function changedSince(shown: ChangeCard, fresh: ChangeCard): string | nul
   return `${lines.slice(0, 2).join("; ")}. ${ASK_AGAIN}`;
 }
 
+/**
+ * fixup-l4-selftasks-chat (review of L4-selftasks-117): what the read-back named, read from the
+ * store as it is now, as a card `changedSince` compares with the one shown. Used when the same
+ * request can no longer be planned (the task it named was cancelled, finished or removed since,
+ * so its command refuses): the Yes still says what changed in one line, and not only the
+ * command's own refusal. Before, such a card was not armed again after a restart and the orphan
+ * sweep told the person it was lost.
+ */
+export async function subjectsNow(
+  store: Pick<StateStore, "task">,
+  shown: ChangeCard,
+): Promise<ChangeCard> {
+  const parts = await Promise.all(
+    partsOf(shown).map(async (p) => {
+      const subjects: CardSubject[] = [];
+      for (const s of p.subjects ?? []) {
+        const task = await store.task.get(s.id).catch(() => undefined);
+        if (task) subjects.push(taskSubject(task));
+      }
+      return { ...p, subjects };
+    }),
+  );
+  return shown.parts?.length ? { ...shown, parts } : (parts[0] ?? shown);
+}
+
 /** Run C decision 53: the Yes of a fix of the task list whose tasks changed since its check. */
 export const TASKS_CHANGED_REPLY =
   'The tasks changed since I checked them; say "fix the tasks" to check again.';

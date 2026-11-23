@@ -5480,9 +5480,16 @@ state as it is and keeps the card's id, email token and expiry), so a Yes/No car
 restart (design §3.9) and its Inbox button and the chat's "yes" work. `expireOrphanedCards`
 runs once when the daemon starts (services on, sync not paused; never in a one-shot, which
 composes beside a running daemon): an open change card of this human that no closure stands
-behind (one written before cards kept their commands, or whose commands no longer plan) is
-expired, so it leaves the Inbox instead of staying as a button that does nothing, and the
-human gets one warning message that the change was not made and to ask again. One daemon per
+behind (one written before cards kept their commands, a settings-screen card whose commands no
+longer plan, one whose ten minutes passed while the daemon was down) is expired, so it leaves
+the Inbox instead of staying as a button that does nothing, and the human gets one warning
+message that the change was not made and to ask again (`orphanedCardUpdate`: a card past its ten
+minutes says "Its card closed after 10 minutes without your yes", any other "Its card could not
+be opened again after Forerunner restarted", each with the card's values). A chat or voice
+read-back is never left to it: it is armed again even when its request no longer plans, and its
+Yes then says what changed (fixup-l4-selftasks-chat; the owner, 2026-11-17: every chat read-back
+waits until the person answers it). Tested by real-daemon.test.ts 'l4-selftasks-chat, run L4'
+(two composes on one home, the orphan sweep run in the daemon's order). One daemon per
 human holds pending cards; a second daemon of the same human on one shared store would
 expire the first one's cards at its start (Known issues). Tests:
 `inbox-change-card.test.ts` (Chat, the Inbox's own option strings through the daemon's answer

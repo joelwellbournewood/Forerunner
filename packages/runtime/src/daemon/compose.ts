@@ -4945,7 +4945,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         to_human_id: card.humanId,
         project_id: card.projectId,
         type: "warning",
-        body: lapsedCardUpdate(card.what),
+        body: lapsedCardUpdate(card.what, card.change),
         requires_ack: false,
         author_agent: agent.id,
       });

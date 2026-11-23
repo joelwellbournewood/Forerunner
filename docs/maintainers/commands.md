@@ -1059,7 +1059,16 @@ l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserv
   I asked: its priority is low now. Nothing was changed; ask again if you still want it.' A fix
   of the task list keeps the list's fingerprint (`taskListFingerprint`, `planFix.fingerprint`):
   'The tasks changed since I checked them; say "fix the tasks" to check again.' Every other
-  confirmation keeps the ten minutes; its lapse calls `ExecutorOptions.onExpired`.
+  confirmation keeps the ten minutes; its lapse calls `ExecutorOptions.onExpired` (with
+  `ExpiredConfirmation.change`, the card's values from `cardChange`).
+  fixup-l4-selftasks-chat (review): a chat or voice read-back whose request no longer plans after
+  a restart (its task was cancelled or finished meanwhile) is armed as it was shown, never left
+  for the orphan sweep; an Undo read back in chat keeps its row (`change_card.undo_of` with its
+  context) and is armed again too. When the request can no longer be planned at the Yes, with or
+  without a restart, `subjectsNow` reads what the card named from the store and `changedSince`
+  says what changed ('"Write the FAQ" changed since I asked: it is cancelled now. Nothing was
+  changed; ask again if you still want it.'); a refusal with nothing named that moved keeps the
+  command's own words.
 - **A refused set (L4-selftasks-105 (b)).** A composed perform refused at one step rolls back and
   says `composedRefusal`: 'None of the 2 changes was made: one could not be made (...). Ask again
   if you still want them.' (a fix set: 'Say "fix the tasks" to check again.').

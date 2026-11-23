@@ -1,3 +1,4 @@
+import { cardChange } from "@forerunner/commands";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject, JsonValue, StateStore } from "@forerunner/state";
 import type { CommandLoop, PendingView } from "./commands.ts";
@@ -144,8 +145,28 @@ export function isChangeCardRequest(row: Pick<HumanRequestRow, "kind" | "change_
  * (a settings-screen or email card keeps ADR 0030's ten minutes; a chat read-back waits until it
  * is answered and never lapses).
  */
-export function lapsedCardUpdate(what: string): string {
-  return `The change you asked for was not made: ${what.trim().replace(/[.\s]+$/, "")}. Its card closed after 10 minutes without your yes; ask again if you still want it.`;
+export function lapsedCardUpdate(what: string, change?: string | null): string {
+  return `The change you asked for was not made: ${changeWords(what, change)}. Its card closed after 10 minutes without your yes; ask again if you still want it.`;
+}
+
+/** What a card would have changed, with its values when it changes one ("... (CHF 5.00 to CHF 20.00)"). */
+function changeWords(what: string, change?: string | null): string {
+  const words = what.trim().replace(/[.\s]+$/, "");
+  return change ? `${words} (${change})` : words;
+}
+
+/**
+ * fixup-l4-selftasks-chat: the one Update for a card a restart could not arm again (it kept no
+ * command, or its context could not be built). Chat and voice read-backs are armed again after a
+ * restart and wait until they are answered (`CommandExecutor.restorePending`); a card whose ten
+ * minutes passed while Forerunner was closed says it lapsed. Before, every such card was said to
+ * be lost because "a card can only be answered while the app that showed it runs", which is no
+ * longer true of any card.
+ */
+export function orphanedCardUpdate(what: string, change: string | null, lapsed: boolean): string {
+  return lapsed
+    ? lapsedCardUpdate(what, change)
+    : `The change you asked for was not made: ${changeWords(what, change)}. Its card could not be opened again after Forerunner restarted; ask again if you still want it.`;
 }
 
 export interface OrphanedCardsDeps {
@@ -183,17 +204,19 @@ export async function expireOrphanedCards(deps: OrphanedCardsDeps): Promise<numb
     expired++;
     const card = row.change_card as JsonObject;
     const what = typeof card.what === "string" && card.what ? card.what : row.why;
-    const change =
-      typeof card.oldValue === "string" && typeof card.newValue === "string"
-        ? ` (${card.oldValue} to ${card.newValue})`
-        : "";
+    const change = cardChange({
+      oldValue: typeof card.oldValue === "string" ? card.oldValue : "",
+      newValue: typeof card.newValue === "string" ? card.newValue : "",
+    });
+    const lapsed =
+      typeof card.expires_at === "string" && Date.parse(card.expires_at) <= deps.clock.now();
     try {
       await deps.store.message.send({
         from_agent_id: deps.agentId,
         to_human_id: deps.humanId,
         project_id: row.project_id,
         type: "warning",
-        body: `The change you asked for was not made: ${what}${change}. Forerunner restarted before you answered its card, and a card can only be answered while the app that showed it runs. Ask again in Chat if you still want it.`,
+        body: orphanedCardUpdate(what, change, lapsed),
         requires_ack: false,
         author_agent: deps.agentId,
       });

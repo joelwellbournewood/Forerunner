@@ -34,6 +34,7 @@ import { createProjectRecord } from "@forerunner/runtime/daemon/create-project";
 import { createDaemonApp } from "@forerunner/runtime/daemon/server";
 import { planEstimateUsdMicro, reviewPartUsdMicro } from "@forerunner/runtime/estimates/model";
 import { handoverAgentId } from "@forerunner/runtime/jobs/handover";
+import { expireOrphanedCards } from "@forerunner/runtime/loop/answered-cards";
 import { projectWorkspaceDir } from "@forerunner/runtime/loop/docs";
 import { fileLeftOpenRequest, headMovedSentence } from "@forerunner/runtime/loop/merge";
 import { evidenceRootOf, type TryPagesRequest } from "@forerunner/runtime/loop/try-it";
@@ -27027,10 +27028,295 @@ describe("l4-selftasks-chat, run L4", () => {
       const inbox = await a.client.inbox(a.me.id);
       expect(inbox.requests.filter((x) => x.projectId === project.id)).toEqual([]);
       expect(inbox.messages.filter((m) => m.projectId === project.id).map((m) => m.body)).toEqual([
-        "The change you asked for was not made: the session budget for Bike shop. Its card closed after 10 minutes without your yes; ask again if you still want it.",
+        "The change you asked for was not made: the session budget for Bike shop (CHF 5.00 to CHF 20.00). Its card closed after 10 minutes without your yes; ask again if you still want it.",
       ]);
     } finally {
       await a.rt.close();
     }
   }, 60_000);
+
+  // fixup-l4-selftasks-chat (review of L4-selftasks-117): every chat read-back waits until it is
+  // answered, also across a restart of the daemon on the same home (validation rule 4), and its
+  // Yes is decided on the state then. `again` starts the daemon as `fr daemon` does: the command
+  // loop arms the waiting cards (`commands.start()` in compose), then the orphan sweep expires
+  // the ones nothing stands behind (compose's `expireOrphanedCards`, which a daemon composed
+  // without its services skips, so the case runs it in the same order).
+  async function again(home: string, at: string) {
+    const clock = new SimulatedClock(at);
+    const b = await open("", { clock, home });
+    await expireOrphanedCards({
+      store: b.rt.store,
+      clock,
+      commands: b.rt.commands,
+      humanId: b.me.id,
+      agentId: b.rt.agent.id,
+    });
+    return b;
+  }
+  const taskBody = (title: string) => ({
+    title,
+    outcome: `${title} is done`,
+    acceptanceCriteria: [],
+    riskTier: 1,
+    priority: "normal" as const,
+    status: "ready" as const,
+  });
+  /** What the Inbox shows of a project: its open cards and its Updates' words. */
+  async function inboxOf(a: Awaited<ReturnType<typeof open>>, projectId: string) {
+    const inbox = await a.client.inbox(a.me.id);
+    return {
+      open: inbox.requests.filter((r) => r.projectId === projectId && r.status === "open").length,
+      updates: inbox.messages.filter((m) => m.projectId === projectId).map((m) => m.body),
+    };
+  }
+  const FIX_LINE =
+    'fix the tasks: "Style the page" is two jobs, the layout and the colours; nothing checks that the links work.';
+  const FIX_ASK =
+    'Make these 2 changes to the tasks of Quote page? Split "Style the page" into "Style the page: layout" and "Style the page: colours"; add "Check that the links work".';
+  /** Quote page at Assisted with the agent's own plan tasks, which "fix the tasks" reads back. */
+  async function quotePage(a: Awaited<ReturnType<typeof open>>) {
+    const project = await a.client.createProject({
+      name: "Quote page",
+      goal: "A page that quotes prices",
+      autonomyLevel: 1,
+    });
+    const task = (title: string, extra: Record<string, unknown> = {}) =>
+      a.rt.store.task.insert({
+        project_id: project.id,
+        title,
+        outcome: `${title} is done`,
+        acceptance_criteria: ["it is done"],
+        risk_tier: 1,
+        status: "ready",
+        priority: 5,
+        reason: "From the plan",
+        specialist: "coder",
+        author_agent: a.rt.agent.id,
+        ...extra,
+      } as never);
+    const create = await task("Create the page in index.html", { priority: 9 });
+    const style = await task("Style the page", {
+      acceptance_criteria: ["the layout is a grid", "the colours match the logo"],
+      depends_on: [create.id],
+    });
+    return { project, create, style };
+  }
+
+  it("L4-selftasks-117 (real daemon, fake clock): a priority change read back in chat still waits after 10.5 minutes and after a restart, and its Yes makes it", async () => {
+    const clock = new SimulatedClock("2026-11-17T09:00:00Z");
+    const a = await open("fr-ui-real-l4-stc-wait-", { clock });
+    const ask = 'Change "Write the README": priority to High?';
+    let projectId = "";
+    let taskId = "";
+    try {
+      const project = await a.client.createProject({ name: "Docs", goal: "A README" });
+      projectId = project.id;
+      taskId = (await a.client.createTask(project.id, taskBody("Write the README"))).id;
+      const asked = await a.chat(
+        project.id,
+        'tool: task_update {"task": "Write the README", "priority": "high"}',
+      );
+      expect(asked.pendingConfirmation?.readback).toBe(ask);
+      await clock.advance(10.5 * 60_000);
+      expect((await a.client.pendingCommands()).map((p) => [p.readback, p.expiresAt])).toEqual([
+        [ask, null],
+      ]);
+      expect(await inboxOf(a, projectId)).toEqual({ open: 1, updates: [] });
+    } finally {
+      await a.rt.close();
+    }
+    const b = await again(a.home, "2026-11-17T09:12:00Z");
+    try {
+      expect((await b.client.pendingCommands()).map((p) => [p.readback, p.expiresAt])).toEqual([
+        [ask, null],
+      ]);
+      expect(await inboxOf(b, projectId)).toEqual({ open: 1, updates: [] });
+      const yes = await b.chat(projectId, "yes");
+      expect(yes.actions).toHaveLength(1);
+      expect((await b.client.task(taskId)).task.priority).toBe("high");
+      expect(await b.client.pendingCommands()).toEqual([]);
+      expect(await inboxOf(b, projectId)).toEqual({ open: 0, updates: [] });
+    } finally {
+      await b.rt.close();
+    }
+  }, 90_000);
+
+  it("L4-selftasks-117 (real daemon, fake clock): a 'fix the tasks' read-back still waits after 10.5 minutes and after a restart, and its Yes makes the set", async () => {
+    const clock = new SimulatedClock("2026-11-17T09:00:00Z");
+    const a = await open("fr-ui-real-l4-stc-fixwait-", { clock });
+    let projectId = "";
+    try {
+      const w = await quotePage(a);
+      projectId = w.project.id;
+      const asked = await a.chat(projectId, FIX_LINE);
+      expect(asked.pendingConfirmation?.readback).toBe(FIX_ASK);
+      await clock.advance(10.5 * 60_000);
+      expect((await a.client.pendingCommands()).map((p) => [p.readback, p.expiresAt])).toEqual([
+        [FIX_ASK, null],
+      ]);
+    } finally {
+      await a.rt.close();
+    }
+    const b = await again(a.home, "2026-11-17T09:12:00Z");
+    try {
+      expect((await b.client.pendingCommands()).map((p) => p.readback)).toEqual([FIX_ASK]);
+      expect(await inboxOf(b, projectId)).toEqual({ open: 1, updates: [] });
+      const yes = await b.chat(projectId, "yes");
+      expect(yes.actions).toHaveLength(1);
+      expect((await b.client.tasks(projectId)).map((t) => t.title).sort()).toEqual([
+        "Check that the links work",
+        "Create the page in index.html",
+        "Style the page: colours",
+        "Style the page: layout",
+      ]);
+    } finally {
+      await b.rt.close();
+    }
+  }, 90_000);
+
+  it("L4-selftasks-117 (real daemon): after a restart, a 'fix the tasks' Yes whose list changed since the check says so and changes nothing", async () => {
+    const a = await open("fr-ui-real-l4-stc-fixmoved-", {
+      clock: new SimulatedClock("2026-11-17T09:00:00Z"),
+    });
+    let projectId = "";
+    try {
+      const w = await quotePage(a);
+      projectId = w.project.id;
+      expect((await a.chat(projectId, FIX_LINE)).pendingConfirmation?.readback).toBe(FIX_ASK);
+      // Another task of the list changes on the Tasks tab after the check.
+      const row = await a.client.task(w.create.id);
+      await a.client.updateTask(w.create.id, { version: row.task.version, priority: "low" });
+    } finally {
+      await a.rt.close();
+    }
+    const b = await again(a.home, "2026-11-17T09:12:00Z");
+    try {
+      expect((await b.client.pendingCommands()).map((p) => p.readback)).toEqual([FIX_ASK]);
+      const yes = await b.chat(projectId, "yes");
+      expect(yes.reply).toBe(
+        'The tasks changed since I checked them; say "fix the tasks" to check again.',
+      );
+      expect(yes.actions).toEqual([]);
+      expect((await b.client.tasks(projectId)).map((t) => t.title).sort()).toEqual([
+        "Create the page in index.html",
+        "Style the page",
+      ]);
+      expect(await b.client.pendingCommands()).toEqual([]);
+      expect((await b.client.changes({ projectId })).filter((r) => r.source === "chat")).toEqual(
+        [],
+      );
+    } finally {
+      await b.rt.close();
+    }
+  }, 90_000);
+
+  it("L4-selftasks-117 (real daemon): after a restart, the Yes of a read-back whose task was changed elsewhere says what changed and changes nothing", async () => {
+    const a = await open("fr-ui-real-l4-stc-moved-", {
+      clock: new SimulatedClock("2026-11-17T09:00:00Z"),
+    });
+    let projectId = "";
+    let taskId = "";
+    try {
+      const project = await a.client.createProject({ name: "Docs", goal: "A README" });
+      projectId = project.id;
+      taskId = (await a.client.createTask(project.id, taskBody("Write the README"))).id;
+      await a.chat(
+        project.id,
+        'tool: task_update {"task": "Write the README", "priority": "high"}',
+      );
+      const row = await a.client.task(taskId);
+      await a.client.updateTask(taskId, { version: row.task.version, priority: "low" });
+    } finally {
+      await a.rt.close();
+    }
+    const b = await again(a.home, "2026-11-17T09:12:00Z");
+    try {
+      expect((await b.client.pendingCommands()).map((p) => p.readback)).toEqual([
+        'Change "Write the README": priority to High?',
+      ]);
+      const yes = await b.chat(projectId, "yes");
+      expect(yes.reply).toBe(
+        '"Write the README" changed since I asked: its priority is low now. Nothing was changed; ask again if you still want it.',
+      );
+      expect(yes.actions).toEqual([]);
+      expect((await b.client.task(taskId)).task.priority).toBe("low");
+    } finally {
+      await b.rt.close();
+    }
+  }, 90_000);
+
+  it("L4-selftasks-117 (review): a settings-screen card whose ten minutes passed while Forerunner was closed leaves one Update that says it lapsed, with its values", async () => {
+    const a = await open("fr-ui-real-l4-stc-lapsedshut-", {
+      clock: new SimulatedClock("2026-11-17T09:00:00Z"),
+    });
+    let projectId = "";
+    try {
+      const project = await a.client.createProject({ name: "Bike shop", goal: "A shop page" });
+      projectId = project.id;
+      const r = await a.client.executeCommands({
+        commands: [
+          { name: "budget.set", params: { scope: "session", amountChf: 20, project: project.id } },
+        ],
+        source: "ui",
+        projectId: project.id,
+      });
+      expect(r.status).toBe("pending");
+    } finally {
+      await a.rt.close();
+    }
+    const b = await again(a.home, "2026-11-17T09:11:00Z");
+    try {
+      expect(await b.client.pendingCommands()).toEqual([]);
+      expect(await inboxOf(b, projectId)).toEqual({
+        open: 0,
+        updates: [
+          "The change you asked for was not made: the session budget for Bike shop (CHF 5.00 to CHF 20.00). Its card closed after 10 minutes without your yes; ask again if you still want it.",
+        ],
+      });
+    } finally {
+      await b.rt.close();
+    }
+  }, 90_000);
+
+  it("L4-selftasks-117 (review): a read-back whose task was cancelled before a restart still waits after it; its Yes says what changed, changes nothing, and no Update says the card was lost", async () => {
+    const a = await open("fr-ui-real-l4-stc-gone-", {
+      clock: new SimulatedClock("2026-11-17T09:00:00Z"),
+    });
+    const ask = 'Pause "Write the FAQ"? No session runs it until you press Resume.';
+    let projectId = "";
+    let taskId = "";
+    try {
+      const project = await a.client.createProject({ name: "Help", goal: "A help page" });
+      projectId = project.id;
+      taskId = (await a.client.createTask(project.id, taskBody("Write the FAQ"))).id;
+      const asked = await a.chat(project.id, 'tool: task_pause {"task": "Write the FAQ"}');
+      expect(asked.pendingConfirmation?.readback).toBe(ask);
+      const row = await a.client.task(taskId);
+      await a.client.transitionTask(taskId, {
+        version: row.task.version,
+        to: "cancelled",
+        reason: "not needed",
+      });
+    } finally {
+      await a.rt.close();
+    }
+    const b = await again(a.home, "2026-11-17T09:12:00Z");
+    try {
+      // The card is still in Chat and the Inbox, with its Yes and No.
+      expect((await b.client.pendingCommands()).map((p) => [p.readback, p.expiresAt])).toEqual([
+        [ask, null],
+      ]);
+      expect(await inboxOf(b, projectId)).toEqual({ open: 1, updates: [] });
+      const yes = await b.chat(projectId, "yes");
+      expect(yes.reply).toBe(
+        '"Write the FAQ" changed since I asked: it is cancelled now. Nothing was changed; ask again if you still want it.',
+      );
+      expect(yes.actions).toEqual([]);
+      expect((await b.client.task(taskId)).task.status).toBe("cancelled");
+      expect(await b.client.pendingCommands()).toEqual([]);
+      expect(await inboxOf(b, projectId)).toEqual({ open: 0, updates: [] });
+    } finally {
+      await b.rt.close();
+    }
+  }, 90_000);
 });
