@@ -236,7 +236,7 @@ describe("d1109-cred-screens, run C: Which Claude does the work (CS-1)", () => {
     );
     await waitFor(() =>
       expect(within(section).getByTestId("credential-policy-now")).toHaveTextContent(
-        `Your subscription is at its limit until ${at}; the work waits for it.`,
+        `Your subscription is at its limit until ${at}; you are asked before your API key is used.`,
       ),
     );
     expect(postedCalls(harness, "/settings/credential-policy/grant/end")).toHaveLength(1);

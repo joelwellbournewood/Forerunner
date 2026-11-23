@@ -232,3 +232,9 @@ answer 3 ("For all work.": the yes covers all work until the stop ends) and his 
    Cancel's line on a waiting session reads as the button's ("Cancel: nothing starts when Claude
    is back; its tasks wait for your Start."), and a continuation queued behind another project's
    session reads "Goes on after the session on "Map notes"" on its own status line.
+7. **Credential words within section 5 (L4-creds-25).** Costs' By credential follows the money
+   rule ("Your API key: less than CHF 0.01", never "CHF 0.00" above zero). After a refusal the
+   Start dialog's Use API key line says the step and fits 100 characters ("Runs now on your API
+   key until you sign in again, about CHF 0.90."). Under "Subscription first, then ask me"
+   Settings' now line with no card open says "...; you are asked before your API key is used.",
+   not that the work waits.

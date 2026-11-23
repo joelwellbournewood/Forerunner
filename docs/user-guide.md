@@ -1214,7 +1214,8 @@ again. Under the session's spend: "On your API key since 14:20 (your subscriptio
 0.42 so far."; once it ended: "Your API key took over at 14:20 (your subscription's limit): CHF
 0.42 of CHF 0.62.". The task's drawer reads "On your API key after your subscription's limit · CHF
 0.43" on that run, and Costs has **By credential** ("Your API key: CHF 1.20", "Your Claude
-subscription: CHF 2.10 (estimate, 12% of its allowance)").
+subscription: CHF 2.10 (estimate, 12% of its allowance)"; a few calls under a centime read "less
+than CHF 0.01").
 
 While chat waits for your subscription it says so and offers **Use API key** for that one question
 ("Answers this question on your API key: about CHF 0.02."); the press asks it again once, on the

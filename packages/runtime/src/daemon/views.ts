@@ -1344,14 +1344,17 @@ export async function costView(
     .map(([kind, v]) => {
       const cost = money(v.usd, chfPerUsd);
       const share = kind === "subscription" ? v.share : null;
+      // l4-cred-screens (L4-creds-25): an amount above zero never reads "CHF 0.00" (design §5
+      // rule 7), as the joined spend above: "Your API key: less than CHF 0.01".
+      const chf = moneyWords(formatChf(cost.chfMicro), cost.chfMicro);
       return {
         kind,
         cost,
         share,
         words:
           kind === "other"
-            ? `Not tied to a credential: ${formatChf(cost.chfMicro)}`
-            : costByCredentialWords(kind, formatChf(cost.chfMicro), share),
+            ? `Not tied to a credential: ${chf}`
+            : costByCredentialWords(kind, chf, share),
       };
     });
   return {

@@ -1209,6 +1209,11 @@ API key in Settings", "once you sign in again in Settings"). `startsWaitOf` repo
 continuation queued behind another project's session as `queued` with `goesOn` ("Goes on after
 the session on ...").
 
+**Credential words (L4-creds-25).** `views.ts`' By credential words pass `moneyWords` (never
+"CHF 0.00" above zero). `useApiKeyExplain` has a refused form that says the step ("until you sign
+in again") without the budget clause, so it fits 100 characters; `stoppedNowLine` under ask with
+no card open says "you are asked before your API key is used".
+
 **Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
 left the row `running`, its run `running` and its task held under a claim nobody renews; the
 one-session rule then refused every later start ("agent Alice already has an active session

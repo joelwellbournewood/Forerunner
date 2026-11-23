@@ -137,7 +137,7 @@ describe("credential-policy-view (CS-1): the presets, rows and lines", () => {
       "Your subscription is at its limit until 15:40. Answer the card to use your API key, or wait.",
     );
     expect(stoppedNowLine("subscription", limit, "ask", { ...opts, askOpen: false })).toBe(
-      "Your subscription is at its limit until 15:40; the work waits for it.",
+      "Your subscription is at its limit until 15:40; you are asked before your API key is used.",
     );
     expect(stoppedNowLine("subscription", share, "next", { ...opts, askOpen: false })).toBe(
       "Your subscription has used its share until Tue 1 Dec; your API key does the work meanwhile.",
@@ -639,5 +639,37 @@ describe("l4-cred-screens, run L4: the key-first direction (L4-creds-17)", () =>
         },
       ),
     ).toBe("Your API key is at its limit until 15:40: your subscription does the work meanwhile.");
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-25, live check 4's LC-C25, C6L-4): the refused form of the
+ * Use API key line fits design section 5's 100 characters, and Settings' now line under "ask"
+ * says the person is asked before the API key is used, not that the work waits.
+ */
+describe("l4-cred-screens, run L4: credential words within section 5 (L4-creds-25)", () => {
+  it("the refused Use API key line is at most 100 characters and says the step", () => {
+    const sub = useApiKeyExplain("subscription", refused, "about CHF 0.90", opts);
+    expect(sub).toBe("Runs now on your API key until you sign in again, about CHF 0.90.");
+    expect(useApiKeyExplain("api_key", refused, "about CHF 10.90", opts)).toBe(
+      "Runs now on your subscription until you save a new key, about CHF 10.90.",
+    );
+    // The button is "Use API key": the subscription is the one that stopped.
+    for (const stop of [limit, share, refused])
+      for (const about of ["about CHF 10.90", "less than CHF 0.01"])
+        expect(useApiKeyExplain("subscription", stop, about, opts).length).toBeLessThanOrEqual(100);
+  });
+
+  it("Settings' now line under ask with no card open says the person is asked first", () => {
+    expect(stoppedNowLine("subscription", limit, "ask", { ...opts, askOpen: false })).toBe(
+      "Your subscription is at its limit until 15:40; you are asked before your API key is used.",
+    );
+    expect(stoppedNowLine("subscription", refused, "ask", { ...opts, askOpen: false })).toBe(
+      "Anthropic refused your Claude sign-in; you are asked before your API key is used.",
+    );
+    // "Then wait" keeps its line: the work waits for it.
+    expect(stoppedNowLine("subscription", limit, "wait", { ...opts, askOpen: false })).toBe(
+      "Your subscription is at its limit until 15:40; the work waits for it.",
+    );
   });
 });

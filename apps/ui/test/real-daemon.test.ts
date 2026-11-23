@@ -79,7 +79,7 @@ import { streamChat } from "../src/api/chat-stream.ts";
 import { ApiError, createClient, type DaemonClient, isRouteMissing } from "../src/api/client.ts";
 import { followSandboxPull } from "../src/api/sandbox.ts";
 import { readSseStream } from "../src/api/sse.ts";
-import { chfToMicro, formatMoney } from "../src/lib/money.ts";
+import { chfToMicro, formatChf, formatMoney } from "../src/lib/money.ts";
 import { currentFromLog, taskStepsFromLog } from "../src/lib/session-steps.ts";
 import {
   actionExplain,
@@ -22137,8 +22137,9 @@ describe("d1109-cred-screens, run C", () => {
       expect((await second.client.credentialPolicy()).grant).toBe(true);
       const ended = await second.client.endCredentialGrant();
       expect(ended.grant).toBe(false);
+      // l4-cred-screens (L4-creds-25): under ask the line says the person is asked first.
       expect(ended.nowLine).toBe(
-        "Your subscription is at its limit until 11:40; the work waits for it.",
+        "Your subscription is at its limit until 11:40; you are asked before your API key is used.",
       );
       // The next pick waits for the stop's end: nothing goes to the API key.
       const picker = second.rt.billing.pick;
@@ -22630,7 +22631,7 @@ describe("d1109-cred-screens, run C", () => {
       expect(rows[0]?.words).toMatch(
         /^Your Claude subscription: CHF \d+\.\d\d \(estimate, 12% of its allowance\)$/,
       );
-      expect(rows[1]?.words).toMatch(/^Your API key: CHF \d+\.\d\d$/);
+      expect(rows[1]?.words).toBe(`Your API key: ${formatChf(rows[1]?.cost.chfMicro ?? -1)}`);
       expect(rows[0]?.share).toBe(0.12);
     } finally {
       await rt.close();
@@ -25434,8 +25435,7 @@ describe("l4-cred-screens, run L4", () => {
       expect(await second.rt.billing.waits.wake()).toBe(1);
       expect(await second.rt.billing.waits.wake()).toBe(0);
       await eventually(
-        async () =>
-          (await second.client.tasks(projectId)).every((t) => t.status === "done"),
+        async () => (await second.client.tasks(projectId)).every((t) => t.status === "done"),
         "the kept start's session to run the task (at least 10 s of real time)",
         async () => (await second.client.tasks(projectId)).map((t) => t.status).join(", "),
         20_000,
@@ -25457,9 +25457,9 @@ describe("l4-cred-screens, run L4", () => {
     const calls: string[] = [];
     const { rt, client } = await composeL4({ sdkQuery: claudeCode(calls, 0) });
     try {
-      const sub = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
-        (r) => r.kind === "subscription",
-      );
+      const sub = (
+        await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+      ).find((r) => r.kind === "subscription");
       await rt.store.costLedger.record({
         human_id: rt.human.id,
         agent_id: rt.agent.id,
@@ -25504,12 +25504,15 @@ describe("l4-cred-screens, run L4", () => {
   it("L4a-left-1/2: a refused sign-in with the session kept: POST /sessions says the dialog's sentence (400 validation); the kept wait names the step", async () => {
     const { rt, client, raw } = await composeL4();
     try {
-      const sub = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
-        (r) => r.kind === "subscription",
-      );
+      const sub = (
+        await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+      ).find((r) => r.kind === "subscription");
       if (!sub) throw new Error("no subscription row");
       await rt.store.billingSource.update(sub.id, sub.version, {
-        limits: { ...(sub.limits as Record<string, unknown>), refusedAt: rt.clock.nowIso() } as never,
+        limits: {
+          ...(sub.limits as Record<string, unknown>),
+          refusedAt: rt.clock.nowIso(),
+        } as never,
       });
       const project = await client.createProject({ name: "Quote page", goal: "A quote" });
       await addTask(client, project.id, "Style the page");
@@ -25556,6 +25559,39 @@ describe("l4-cred-screens, run L4", () => {
       expect(err).toBeInstanceOf(ApiError);
       expect((err as ApiError).status).toBe(400);
       expect((err as ApiError).message).toBe(sentence);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // L4-creds-25 (live check 4's LC-C25: Costs said "Your API key: CHF 0.00" beside "less than
+  // CHF 0.01" for three small rows): By credential follows the money rule (design §5 rule 7).
+  it("L4-creds-25: GET /costs' By credential reads 'Your API key: less than CHF 0.01' for three small rows, and no CHF 0.00 for an amount above zero", async () => {
+    const { rt, client, clock } = await composeL4();
+    try {
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      const key = (
+        await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+      ).find((s) => s.kind === "api_key");
+      // The live check's three API rows: 1665, 181 and 189 micro CHF.
+      for (const chf of [1665, 181, 189])
+        await rt.store.costLedger.insert({
+          human_id: rt.human.id,
+          project_id: project.id,
+          billing_source_id: key?.id ?? null,
+          kind: "api",
+          usd_micro: Math.round(chf * 1.25),
+          chf_micro: chf,
+          model: "claude-sonnet-5-5",
+          occurred_at: clock.nowIso(),
+        } as never);
+      const costs = await client.costs({ projectId: project.id });
+      const rows = costs.byCredential ?? [];
+      expect(rows.map((r) => r.kind)).toEqual(["api_key"]);
+      expect(rows[0]?.cost.chfMicro ?? 0).toBeGreaterThan(0);
+      expect(rows[0]?.words).toBe("Your API key: less than CHF 0.01");
+      // Nothing the Costs tab shows in words reads CHF 0.00 for the spend above zero.
+      expect(rows.map((r) => r.words).join(" ")).not.toMatch(/CHF 0\.00/);
     } finally {
       await rt.close();
     }

@@ -284,8 +284,10 @@ export function untilClause(kind: CredentialKind | string, stop: StopFacts, opts
 
 /**
  * Settings' now line while the first choice is out (CS-1), by the rule and the facts: under ask
- * with the card open "... Answer the card to use your API key, or wait." [Answer]; under next
- * "...; your API key does the work meanwhile."; else "...; the work waits for it."
+ * with the card open "... Answer the card to use your API key, or wait." [Answer]; under ask
+ * with no card open "...; you are asked before your API key is used." (l4-cred-screens,
+ * L4-creds-25: it said the work waits, beside a preset that asks); under next "...; your API key
+ * does the work meanwhile."; else "...; the work waits for it."
  */
 export function stoppedNowLine(
   kind: CredentialKind | string,
@@ -296,6 +298,7 @@ export function stoppedNowLine(
   const head = firstStoppedPhrase(kind, stop, opts);
   const other = short(otherOf(kind));
   if (rule === "ask" && opts.askOpen) return `${head}. Answer the card to use ${other}, or wait.`;
+  if (rule === "ask") return `${head}; you are asked before ${other} is used.`;
   if (rule === "next") return `${head}; ${other} does the work meanwhile.`;
   return `${head}; the work waits for it.`;
 }
@@ -351,14 +354,22 @@ export function startStoppedLine(
   return `${firstStoppedPhrase(kind, stop, opts)}.`;
 }
 
-/** 'Use API key': "Runs now on your API key until 15:40, about CHF 0.90; nothing passes this session's budget." */
+/**
+ * 'Use API key': "Runs now on your API key until 15:40, about CHF 0.90; nothing passes this
+ * session's budget." After a refusal (l4-cred-screens, L4-creds-25: "until a new sign-in is
+ * saved, ...; nothing passes ..." ran past design §5's 100 characters) it says the step instead:
+ * "Runs now on your API key until you sign in again, about CHF 0.90."
+ */
 export function useApiKeyExplain(
   kind: CredentialKind | string,
   stop: StopFacts,
   aboutChf: string,
   opts: ClockOpts,
 ): string {
-  return `Runs now on ${short(otherOf(kind))} ${untilClause(kind, stop, opts)}, ${aboutChf}; nothing passes this session's budget.`;
+  const other = short(otherOf(kind));
+  if (stop.reason === "refused")
+    return `Runs now on ${other} ${kind === "subscription" ? "until you sign in again" : "until you save a new key"}, ${aboutChf}.`;
+  return `Runs now on ${other} ${untilClause(kind, stop, opts)}, ${aboutChf}; nothing passes this session's budget.`;
 }
 
 /** 'Start at 15:40' (at most three words): "Start at 15:40", "Start on 1 Dec". */
