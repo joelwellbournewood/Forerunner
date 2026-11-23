@@ -46,6 +46,7 @@ import { conflictNoticeSentence } from "@forerunner/runtime/session/dependent-br
 import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { isIntakeSession } from "@forerunner/runtime/session/recovery";
+import { fileTaskProposal } from "@forerunner/runtime/session/task-proposal";
 import { SECRET_NAMES } from "@forerunner/runtime/setup/wizard";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -28277,6 +28278,211 @@ describe("l4-starts-sessions, run L4", () => {
       second.bench.criticDelayMs = 0;
       await settleSessions(second.rt);
       await second.rt.close();
+    }
+  }, 120_000);
+});
+
+describe("l4-chat-carried, run L4", () => {
+  // Run C's carried chat items (C6L-19, L4-selftasks-123). The daemon as composed with the
+  // bench's stand-in on a file database, started again on the same home where a case says so.
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes.splice(0)));
+
+  async function open(home: string, later = false) {
+    const env = { FORERUNNER_HOME: home };
+    return composeWithRolePlayer(
+      {},
+      {
+        env,
+        dirs: appDirs({ env }),
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        ...(later ? { clock: new ShiftedClock("2026-03-05T11:00:00Z") } : {}),
+      },
+    );
+  }
+  type Open = Awaited<ReturnType<typeof open>>;
+
+  /** A project at Assisted: "Style the page", and "Publish the page" waiting for it. */
+  async function quotePage(a: Open) {
+    const project = await a.client.createProject({
+      name: "Quote page",
+      goal: "A page that quotes prices",
+      autonomyLevel: 1,
+    });
+    const style = await a.client.createTask(project.id, {
+      title: "Style the page",
+      outcome: "The page has its layout and colours",
+      acceptanceCriteria: ["the layout is a grid", "the colours match the logo"],
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const publish = await a.client.createTask(project.id, {
+      title: "Publish the page",
+      outcome: "The page is online",
+      acceptanceCriteria: ["the page opens"],
+      riskTier: 1,
+      specialist: "coder",
+      dependsOn: [style.id],
+    });
+    return { project, style, publish };
+  }
+
+  const SPLIT_LINE =
+    'Split "Style the page" into "Style the page: layout" and "Style the page: colours".';
+
+  /** The agent's suggestion to split "Style the page", as `fileTaskProposal` files it. */
+  async function suggestSplit(a: Open, projectId: string, styleId: string): Promise<string> {
+    const project = await a.rt.store.project.mustGet(projectId);
+    const id = await fileTaskProposal(a.rt.store, {
+      project,
+      humanId: a.rt.human.id,
+      agentId: a.rt.agent.id,
+      sessionId: null,
+      notes: [],
+      fence: {
+        changes: [
+          {
+            change: {
+              kind: "split",
+              task: "Style the page",
+              parts: [
+                { title: "Style the page: layout", acceptanceCriteria: ["the layout is a grid"] },
+                {
+                  title: "Style the page: colours",
+                  acceptanceCriteria: ["the colours match the logo"],
+                },
+              ],
+              order: "in_turn",
+            },
+            why: "The coder said it is two jobs.",
+            taskIds: [styleId],
+          },
+        ],
+        quotes: [],
+        askFirst: [],
+      } as never,
+      callsOf: async () => [
+        {
+          name: "task.split",
+          params: {
+            task: styleId,
+            parts: [
+              { title: "Style the page: layout", acceptance_criteria: ["the layout is a grid"] },
+              {
+                title: "Style the page: colours",
+                acceptance_criteria: ["the colours match the logo"],
+              },
+            ],
+            order: "in_turn",
+            why: "The coder said it is two jobs.",
+          },
+        },
+      ],
+    } as never);
+    expect(id).toBeTruthy();
+    return id ?? "";
+  }
+
+  const cardOf = async (a: Open, id: string) =>
+    (await a.client.inbox((await a.client.me()).id)).requests.find((r) => r.id === id);
+  const splitRows = async (a: Open, projectId: string) =>
+    (await a.client.changes({ projectId })).filter((c) => c.sentence === SPLIT_LINE);
+
+  it("C4-left-7: a suggestion card a crash left between its mark and its apply is applied once at the next start, as GET /inbox and Changes show it; never 'Making the changes…'", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-carried-applying-"));
+    homes.push(home);
+    const a = await open(home);
+    let w: Awaited<ReturnType<typeof quotePage>>;
+    let cardId = "";
+    try {
+      w = await quotePage(a);
+      cardId = await suggestSplit(a, w.project.id, w.style.id);
+      expect((await cardOf(a, cardId))?.details).toEqual([SPLIT_LINE]);
+      // The person pressed "Make these changes"; the daemon marked the card and stopped (a crash)
+      // before it made the changes: the answer and the mark are on the row, nothing else.
+      const row = await a.rt.store.humanRequest.mustGet(cardId);
+      const answered = await a.rt.store.humanRequest.answer(
+        row.id,
+        row.version,
+        "Make these changes",
+        a.rt.human.id,
+      );
+      await a.rt.store.humanRequest.patch(answered.id, {
+        change_card: { ...(answered.change_card as object), outcome: "applying" },
+      } as never);
+    } finally {
+      await a.rt.close();
+    }
+    const b = await open(home, true);
+    try {
+      const card = await cardOf(b, cardId);
+      expect(card?.status).toBe("answered");
+      expect(card?.outcome).not.toBe("Making the changes…");
+      expect(card?.outcome).toMatch(/^Changed 1 task; your next Start runs/);
+      expect((await b.client.tasks(w.project.id)).map((t) => [t.title, t.status])).toEqual([
+        ["Style the page: layout", "ready"],
+        ["Style the page: colours", "ready"],
+        ["Publish the page", "ready"],
+      ]);
+      const rows = await splitRows(b, w.project.id);
+      expect(rows.map((r) => [r.undoable, r.wordsUsed])).toEqual([[true, "Make these changes"]]);
+    } finally {
+      await b.rt.close();
+    }
+    // A third start applies nothing again: still one change.
+    const c = await open(home, true);
+    try {
+      expect((await splitRows(c, w.project.id)).length).toBe(1);
+      expect((await cardOf(c, cardId))?.outcome).toMatch(/^Changed 1 task; your next Start runs/);
+    } finally {
+      await c.rt.close();
+    }
+  }, 120_000);
+
+  it("C4-left-7: a card a crash left after its changes were made and before its outcome was written is not applied twice: the next start finds its one change", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-carried-applied-"));
+    homes.push(home);
+    const a = await open(home);
+    let w: Awaited<ReturnType<typeof quotePage>>;
+    let cardId = "";
+    try {
+      w = await quotePage(a);
+      cardId = await suggestSplit(a, w.project.id, w.style.id);
+      const card = await cardOf(a, cardId);
+      const answered = await a.client.answerRequest(cardId, {
+        version: card?.version ?? 0,
+        answer: card?.options[0],
+      });
+      expect(answered.outcome).toMatch(/^Changed 1 task; your next Start runs/);
+      // The crash came after the changes and before the card's outcome was written: the row as
+      // it was right after the mark.
+      const row = await a.rt.store.humanRequest.mustGet(cardId);
+      const {
+        outcome: _o,
+        changed: _c,
+        change_log_id: _l,
+        approved_task_ids: _t,
+        running: _r,
+        ...kept
+      } = row.change_card as Record<string, unknown>;
+      await a.rt.store.humanRequest.patch(row.id, {
+        change_card: { ...kept, outcome: "applying" },
+      } as never);
+    } finally {
+      await a.rt.close();
+    }
+    const b = await open(home, true);
+    try {
+      expect((await cardOf(b, cardId))?.outcome).toMatch(/^Changed 1 task; your next Start runs/);
+      const rows = await splitRows(b, w.project.id);
+      expect(rows.map((r) => [r.undoable, r.wordsUsed])).toEqual([[true, "Make these changes"]]);
+      expect((await b.client.tasks(w.project.id)).map((t) => t.title)).toEqual([
+        "Style the page: layout",
+        "Style the page: colours",
+        "Publish the page",
+      ]);
+    } finally {
+      await b.rt.close();
     }
   }, 120_000);
 });

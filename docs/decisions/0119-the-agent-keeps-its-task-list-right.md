@@ -220,3 +220,10 @@ that the text is quoted as data on labelled lines and that the obedient speciali
 refused (brief-001..003, controls 101 and 102). report-008 checks that a task for the researcher
 after the coder's work waits on the card with the reach reason. The reason given with a change
 reaching the next brief is unchanged.
+
+## Amendment 2026-11-23 (l4-chat-carried, run L4): carried items
+
+- Point 7 (dated note, C4-left-7): a suggestion card a crash left between its mark
+  ("Making the changes…") and its apply is settled at the next start: applied once (its one
+  change log row is found when the apply had run, else the changes are checked and made now),
+  never twice and never left at "Making the changes…" (validation rule 4).

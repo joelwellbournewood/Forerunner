@@ -8233,6 +8233,15 @@ and fixes it as the autonomy level allows. The pieces:
   named; the approved new tasks join a running session by the admit rule; no answer starts one.
   The card's words: `daemon/task-proposal-words.ts` (import-free; the fake daemon reads it) and
   `request-words.ts`'s `taskProposalCard`.
+- **A crash between the mark and the apply** (l4-chat-carried, C4-left-7): the card is marked
+  `outcome: "applying"` with `applying_at` before its changes are made, so a second sync never
+  applies it twice. A card found at `applying` that this process is not applying now
+  (`applyingNow`) is a crash's leftover and is settled at the next sync (the daemon's start runs
+  one): when its change log row exists (`changeOfCard`: the person's `ui` row in the card's
+  project since `applying_at`, whose commands are the card's calls in order) the card is marked
+  `applied` with that row; otherwise its changes are checked and applied now, once. It never
+  stays at "Making the changes…". Tests: real-daemon.test.ts "l4-chat-carried, run L4" (both
+  crash points, composed again on one home, read from `GET /inbox` and `GET /changes`).
 - **What the person reads**: the check's line in the session log (`session.task_checked`:
   'Checked the task list after "Create the page": no change (CHF 0.03).'), each change's
   sentence, the result's 'Changed 2 tasks: split "Style the page"; added "Check the links".',
