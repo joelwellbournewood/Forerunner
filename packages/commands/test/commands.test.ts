@@ -94,6 +94,43 @@ describe("budget.set", () => {
     await w.store.close();
   });
 
+  // l4-starts-sessions, run L4 (L4-money-204): a raised project budget or monthly cap wakes the
+  // tasks paused at it at the write (the port), and the sentence says what became of them.
+  it("a raised project budget or monthly cap asks the port to wake what paused at it and says the line it answers (l4-starts-sessions, run L4)", async () => {
+    const w = await world();
+    const asked: (string | null)[] = [];
+    const ctx = w.ctx();
+    const ports = {
+      ...ctx.ports,
+      limitChanged: async (projectId: string | null) => {
+        asked.push(projectId);
+        return projectId ? "1 paused task is ready again: it runs at your next Start." : null;
+      },
+    };
+    const p = done(
+      await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "project", amountChf: 50, project: "game" },
+        ctx: { ...ctx, ports },
+        confirmation: tap(w.human.id),
+      }),
+    );
+    expect(p.sentence).toBe(
+      "Set the project budget for Game from no budget to CHF 50.00. 1 paused task is ready again: it runs at your next Start. Undo.",
+    );
+    const m = done(
+      await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "month", amountChf: 100 },
+        ctx: { ...ctx, ports },
+        confirmation: tap(w.human.id),
+      }),
+    );
+    // Nothing woke: the sentence is the change alone.
+    expect(m.sentence).not.toMatch(/paused task/);
+    expect(asked).toEqual([w.game.id, null]);
+  });
+
   it("project and permanent session budgets write the project row and undo restores", async () => {
     const w = await world();
     const p = done(

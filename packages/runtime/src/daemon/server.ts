@@ -1714,6 +1714,9 @@ export function createDaemonApp(
 
   app.get("/projects/:id/start-check", async (c) => {
     const budget = intQuery(c, "budgetUsdMicro", 0, Number.MAX_SAFE_INTEGER);
+    // L4-money-204: a task paused at a limit the person raised is ready before the check reads
+    // it (before, its card was read as "needs your answer" until the scheduler's next tick).
+    await rt.wakeLimitWaits();
     // d1116-budget-all (BA-7): a task closed outside a session (the Inbox, chat, the merge
     // watcher) is learned before the Start dialog prices, as the fold after a restart learns it.
     await refreshEstimates();
@@ -1910,6 +1913,8 @@ export function createDaemonApp(
   const START_REFUSED = "start_refused";
   app.post("/sessions", async (c) => {
     const body = await parse(c, StartSessionBody);
+    // L4-money-204: a raised limit's paused tasks are ready before the start is checked.
+    await rt.wakeLimitWaits();
     // S-10: a session's Continue goes on with the ended session: the rest of its promise and of
     // its budget (its cap less its booked spend), never more; refused when nothing is left.
     if (body.continues) {

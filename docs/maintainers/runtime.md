@@ -2609,8 +2609,13 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   { budgetUsdMicro })`; its outcome line is 'Gave "X" CHF 0.40 more: a session started.'. Cancel
   cancels it and calls the `setAside` port (`PrTaskExecutor.setAsideWork`), the card recording
   `set_aside` or `kept` for its line. An older card (`raise_to_usd_micro`) keeps its meaning.
-- *Limits no Continue lifts (`wakeBudgetWaits`).* Before every scheduler tick (compose's
-  `refresh`, beside `credentialWaits.wake`), each open budget card whose limit changed since the
+- *Limits no Continue lifts (`wakeBudgetWaits`).* Right after `budget.set` writes a project
+  budget or the monthly cap (`CommandPorts.limitChanged`, whose line the change's sentence ends
+  with: "... 1 paused task is ready again: it runs at your next Start. Undo."), before `GET
+  /projects/:id/start-check`, `POST /sessions` and chat's start check read the tasks
+  (`RuntimeApp.wakeLimitWaits`, l4-starts-sessions L4-money-204), and still before every
+  scheduler tick as the fallback (compose's `refresh`, beside `credentialWaits.wake`; one
+  function, `wakeLimitWaits`, for all four), each open budget card whose limit changed since the
   pause and has room goes on: at `project`, the project's budget now (`limitNow`, compose reads
   the row; unset is none) above the card's `cap_usd_micro`; at `month`, the monthly cap above it
   or the card's `resets_at` passed (else the month after the card was filed); at `plan`, its

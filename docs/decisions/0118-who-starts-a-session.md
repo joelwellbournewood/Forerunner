@@ -222,3 +222,17 @@ it runs at your next Start.' (`preparedLine('too_large')`); an answer's Done lin
 and its Start offer shows once no session of the project runs. Several tasks answered at once
 read `too_large` only when none of them joined or may join.
 
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-204): a raised limit wakes at the write
+
+A task paused at the project's budget or this month's cap goes on once the person raised that
+limit (S-3, ADR 0112): until now only the scheduler's refresh before each tick (up to 30 s)
+woke it, so ten seconds after a raise the Start dialog still said 'Nothing can run: "Write the
+club motto in motto.txt" needs your answer.' (live check 4, L3-run-10), and Settings' line named
+only the new amount. Now `budget.set` asks the daemon to wake such tasks right after it writes
+the limit (`CommandPorts.limitChanged`), and the start check, `POST /sessions` and chat's start
+check wake first; the tick stays the fallback (a new month, the subscription's share). The wake
+prepares the work (it joins a running session if it fits, else waits for the person's next
+Start; the hands-off setting starts one as built): it never starts a session by itself. The
+change's sentence says what became of the tasks ("1 paused task is ready again: it runs at your
+next Start.").
+

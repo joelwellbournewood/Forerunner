@@ -27828,4 +27828,71 @@ describe("l4-starts-sessions, run L4", () => {
       await rt.close();
     }
   }, 120_000);
+
+  // L4-money-204 (live check 4, L3-run-10): ten seconds after the person raised the project's
+  // budget, the Start dialog said 'Nothing can run: "X" needs your answer.'; the task paused at
+  // the budget went on only at the scheduler's next tick (up to 30 s).
+  it("L4-money-204: right after a raise in Settings the Start dialog's check runs the paused task, its card is closed, and the change says so", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Club motto", goal: "A motto" });
+      const motto = await readyTask(client, project.id, "Write the club motto in motto.txt");
+      // Paused at the project's budget of CHF 0.06, as the run left it.
+      await rt.store.project.patch(project.id, { budget_usd_micro: 75_000 });
+      await rt.store.task.patch(motto.id, { status: "needs_human", reason: "paused" });
+      await fileBudgetStopCard({
+        store: rt.store,
+        task: await rt.store.task.mustGet(motto.id),
+        session: null,
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        runId: null,
+        stop: {
+          capUsdMicro: 75_000,
+          spentUsdMicro: 20_000,
+          source: "project",
+          specialist: "coder",
+        },
+        handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "budget" },
+        now: rt.clock.nowIso(),
+      });
+      expect((await client.startCheck(project.id)).blocked?.sentence).toBe(
+        'Nothing can run: "Write the club motto in motto.txt" needs your answer.',
+      );
+      // Settings: Project budget to CHF 0.50, with its yes.
+      const asked = await client.executeCommands({
+        commands: [
+          { name: "budget.set", params: { scope: "project", amountChf: 0.5, project: project.id } },
+        ],
+        wordsUsed: "Settings: Project budget to 0.50",
+        source: "ui",
+        projectId: project.id,
+      });
+      const done =
+        asked.status === "pending"
+          ? await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" })
+          : asked;
+      expect(done.status, JSON.stringify(done)).toBe("done");
+      expect((done as { sentence?: string }).sentence ?? "").toMatch(
+        / 1 paused task is ready again: it runs at your next Start\. Undo\.$/,
+      );
+      // No tick: the check right after the raise runs it.
+      const check = await client.startCheck(project.id);
+      expect(check.blocked).toBeNull();
+      expect(check.runnable.map((t) => t.title)).toEqual(["Write the club motto in motto.txt"]);
+      const card = (await client.inbox(me.id)).requests.find((r) => r.taskId === motto.id);
+      expect(card?.status).toBe("withdrawn");
+      expect(card?.outcome).toBe(
+        '"Write the club motto in motto.txt" is ready again: its limit has room; it runs at your next Start.',
+      );
+      // The wake prepared it and started nothing (the hands-off setting is off).
+      expect(rt.scheduler.isActive(rt.agent.id)).toBe(false);
+      expect(rt.scheduler.pendingFor(rt.agent.id)).toBeUndefined();
+      expect(await client.sessions({ projectId: project.id })).toEqual([]);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
 });

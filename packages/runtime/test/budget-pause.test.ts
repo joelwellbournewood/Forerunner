@@ -743,15 +743,25 @@ describe("a task paused at the project's budget goes on only once that budget ch
         })
       ).json()) as Json;
     expect(result.status, JSON.stringify(result)).toBe("done");
+    // l4-starts-sessions (L4-money-204): the write wakes it, with no scheduler tick (before, up
+    // to 30 s later the Start dialog still said it "needs your answer"); the confirm says so.
+    expect(String(result.sentence)).toMatch(
+      / 1 paused task is ready again: it runs at your next Start\. Undo\.$/,
+    );
 
-    // The next tick wakes it: its card closes and it is ready; d1109-starts-engine (S-3): no
-    // session starts until the person's Start, which finishes it.
-    await rt.scheduler.tick();
+    // Its card closes and it is ready at once; d1109-starts-engine (S-3): no session starts
+    // until the person's Start, which finishes it.
     const after = await cardOf(r.taskId);
     expect(after.map((q) => q.status)).toEqual(["withdrawn"]);
     expect(after[0]?.outcome).toBe(
       '"Members chart" is ready again: its limit has room; it runs at your next Start.',
     );
+    expect((await rt.store.task.mustGet(r.taskId)).status).toBe("ready");
+    expect(await sessions()).toBe(1);
+    // The Start dialog's check right after the raise runs it (no "needs your answer").
+    const check = (await (await req(`/projects/${r.projectId}/start-check`)).json()) as Json;
+    expect(check.blocked, JSON.stringify(check)).toBeNull();
+    expect((check.runnable as { title: string }[]).map((t) => t.title)).toEqual(["Members chart"]);
     await startAfterRaise(req, rt, r.projectId, 1);
     const done = await waitFor(
       async () => {

@@ -408,6 +408,14 @@ export interface CommandPorts {
    * at your next Start.". Chat's "summary" reads the last result through it. Absent: as stored.
    */
   resultNow?(projectId: string, since: string | null, text: string): Promise<string>;
+  /**
+   * l4-starts-sessions (L4-money-204): a project budget or the monthly cap was just written: the
+   * tasks paused at a limit that now has room are made ready again at once (prepared like every
+   * wake, never started, except under the hands-off setting as built), and the answer is the
+   * line that says so ("1 paused task is ready again: it runs at your next Start."), or null
+   * when none was. Absent: the scheduler's next tick wakes them.
+   */
+  limitChanged?(projectId: string | null): Promise<string | null>;
 }
 
 /** What `project.join` asks the daemon before anything moves (`join-preview.ts`). */
