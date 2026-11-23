@@ -2,11 +2,13 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import {
   ensureBaseBranch,
+  forerunnerMarker,
   type GitHost,
   GitOps,
   type GitTokenSource,
   gitAuthFor,
   type RepoRef,
+  readForerunnerMarker,
   resolveGitToken,
 } from "@forerunner/capabilities";
 import { removedProjectRefusal } from "@forerunner/commands";
@@ -65,9 +67,14 @@ import {
 import { USAGE_LIMIT_CODE } from "../provider/usage-limit.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
 import { SETUP_ASSISTANT_PATH } from "../setup/no-model.ts";
-import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
+import {
+  INSTALL_MARKER_FILE,
+  type InstallMarkerWrite,
+  parseInstallMarker,
+  writeInstallMarker,
+} from "../sources/marker.ts";
 import { tookOverLine } from "../sources/repository-use.ts";
-import { isTogether, tookOverOf } from "../sources/repository-words.ts";
+import { isTogether, projectIdsOf, tookOverOf } from "../sources/repository-words.ts";
 import { intakeAnswer, intakeChangeText } from "../wiring/request-answers.ts";
 import { webAccessOf } from "../wiring/web-access.ts";
 import { markAnswer } from "./answer-mark.ts";
@@ -155,8 +162,34 @@ export const INTAKE_DEADLINE_MARGIN_MS = 60_000;
  * (`callModel`), told what was wrong (`retryPrompt`), before the person reads "Planning failed".
  */
 export const INTAKE_CALLS = 2;
-/** The branch the approved doc set goes up on: the whole project id, so no two projects share it. */
-export const intakeDocsBranch = (projectId: string): string =>
+/**
+ * The branch the approved doc set goes up on (L4-github-111): R-branch's form,
+ * `fr/intake-<8 characters of the id's random end>-<the name>-docs`, as a task's branch reads
+ * (`taskBranchName`); before, the whole id ("fr/intake-01a1e80e-6201-...-docs" on GitHub). The
+ * pull request's hidden mark (`forerunnerMarker`) names the project, so detection never reads
+ * the id from the name. An id that is not a UUID gives its own first characters.
+ */
+export function intakeDocsBranch(project: Pick<ProjectRow, "id" | "name">): string {
+  const hex = project.id.toLowerCase().replace(/[^0-9a-f]/g, "");
+  const own =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(project.id) &&
+    hex.length === 32
+      ? hex.slice(-8)
+      : safeSegment(project.id.toLowerCase(), "project").slice(0, 8);
+  // Dots become dashes, as in the scaffold's branch (`scaffoldBranchesOf`): git refuses ".." and
+  // a component ending ".lock", which a name such as "Wait... what" would otherwise give.
+  const name = safeSegment(project.name.toLowerCase(), "project")
+    .replace(/\.+/g, "-")
+    .slice(0, 40)
+    .replace(/[-._]+$/, "");
+  return `fr/intake-${own}-${name || "project"}-docs`;
+}
+
+/**
+ * An earlier version's intake branch: the whole project id. Still read (`isProjectDocsPr`,
+ * `projectIdsNamedBy`), and the branch used when the short one on GitHub is not this project's.
+ */
+export const legacyIntakeDocsBranch = (projectId: string): string =>
   `fr/intake-${safeSegment(projectId, "project")}-docs`;
 /** Longest brief handed to the model whole; a longer one is cut and the card says so. */
 export const MAX_BRIEF_CHARS = 600_000;
@@ -783,8 +816,31 @@ export interface IntakeReadReply {
  * The model's reply as a proposal (`readIntakeReply`), or a `validation` error naming what is
  * wrong in words (`IntakeReplyProblem` in its details).
  */
-export function parseIntakeReply(text: string, opts: { stopReason?: string } = {}): IntakeProposal {
+export function parseIntakeReply(
+  text: string,
+  opts: { stopReason?: string; planOnly?: boolean } = {},
+): IntakeProposal {
   return readIntakeReply(text, opts).proposal;
+}
+
+/**
+ * L4-github-104: what a first plan's reply without its decision record is told on the one retry
+ * (model-facing: the card's "Decision: ..." line is read from that record, design section 3.3).
+ */
+export const MISSING_DECISION_PROBLEM =
+  "docs: the decision record is missing: write docs/decisions/0001-<slug>.md with the choice the brief points to; any standard doc you leave out is written from the template.";
+
+/** L4-github-104: the cut-off advice of the first-plan form keeps the decision record. */
+export const CUT_OFF_PROBLEM =
+  "Your reply was cut off at the output limit before the JSON object ended. Write each doc in a few lines, or leave out the standard docs (Forerunner writes them from its templates), but keep docs/decisions/0001-<slug>.md, in a few lines, so the whole object fits.";
+
+/** The cut-off advice of the plan-only form (Add to it), which writes no document. */
+export const CUT_OFF_PLAN_ONLY_PROBLEM =
+  "Your reply was cut off at the output limit before the JSON object ended. Write each task in a few lines, so the whole object fits.";
+
+/** Whether a first plan's reply carries its decision record (`docs/decisions/0001-<slug>.md`). */
+export function hasDecisionRecord(proposal: Pick<IntakeProposal, "docs">): boolean {
+  return Object.keys(proposal.docs ?? {}).some((p) => FIRST_DECISION_PATH.test(p));
 }
 
 /**
@@ -795,7 +851,10 @@ export function parseIntakeReply(text: string, opts: { stopReason?: string } = {
  * "not JSON" (live check of 2026-11-01, two of six replies). Over-long prose is shortened by the
  * schema (`planProse`, `shortenDoc`); `shortened` names what was cut, for the log.
  */
-export function readIntakeReply(text: string, opts: { stopReason?: string } = {}): IntakeReadReply {
+export function readIntakeReply(
+  text: string,
+  opts: { stopReason?: string; planOnly?: boolean } = {},
+): IntakeReadReply {
   const parsed = replyObject(text);
   if (!parsed) {
     const cutOff = opts.stopReason === "max_tokens";
@@ -806,9 +865,7 @@ export function readIntakeReply(text: string, opts: { stopReason?: string } = {}
       cutOff
         ? {
             words: "Claude's plan was cut off before it ended.",
-            problems: [
-              "Your reply was cut off at the output limit before the JSON object ended. Write each doc in a few lines, or leave docs out (Forerunner writes the standard docs from its templates), so the whole object fits.",
-            ],
+            problems: [opts.planOnly ? CUT_OFF_PLAN_ONLY_PROBLEM : CUT_OFF_PROBLEM],
           }
         : {
             words: "Claude's plan could not be read.",
@@ -1764,6 +1821,7 @@ export class IntakeService {
         try {
           read = readIntakeReply(result.finalText, {
             ...(result.stopReason ? { stopReason: result.stopReason } : {}),
+            planOnly: !!ask.planOnly,
           });
           checkPlanShape(read.proposal, project);
         } catch (e) {
@@ -1793,11 +1851,18 @@ export class IntakeService {
         }
         const tooBig =
           ask.checkSize && call < INTAKE_CALLS ? smallPlanProblem(read.proposal.plan) : null;
-        if (!tooBig) return taken(read, call);
-        // A small plan was asked for and a bigger one came: asked once more, with its size.
-        this.logger.info("intake: the plan is bigger than a small plan; asking once more", {
+        // L4-github-104: a first plan needs its decision record (the card's "Decision: ..."
+        // line); asked once more for it, and a retry without it is taken as it is.
+        const noRecord =
+          !ask.planOnly && call < INTAKE_CALLS && !hasDecisionRecord(read.proposal)
+            ? MISSING_DECISION_PROBLEM
+            : null;
+        if (!tooBig && !noRecord) return taken(read, call);
+        // A small plan was asked for and a bigger one came, or the record is missing: asked
+        // once more, with what to change.
+        this.logger.info("intake: asking the model once more", {
           projectId: project.id,
-          problem: tooBig,
+          problems: [tooBig, noRecord].filter(Boolean),
         });
         oversized = read;
         messages.push(
@@ -1805,8 +1870,8 @@ export class IntakeService {
           {
             role: "user",
             content: retryPrompt(
-              new ForerunnerError("validation", "intake: the plan is bigger than a small plan", {
-                details: { problems: [tooBig] },
+              new ForerunnerError("validation", "intake: the plan is asked for again", {
+                details: { problems: [tooBig, noRecord].filter((p): p is string => !!p) },
               }),
             ),
           },
@@ -2518,27 +2583,25 @@ export class IntakeService {
         prUrl: null,
         ...firstSet,
       };
-    const branch = intakeDocsBranch(project.id);
-    const existingPr = (await host.listPullRequests(repo, { state: "open", head: branch }))[0];
-    await git.createBranch(
-      branch,
-      existingPr ? `origin/${branch}` : `origin/${info.defaultBranch}`,
-    );
+    // L4-github-107: the doc set is written only by a first plan (a project with no task:
+    // `planOnlyFor`), tasks are never deleted, and the approval writes its tasks before its docs,
+    // so no first plan finds its own intake pull request open: the set always starts from the
+    // default branch, and the comment on an open one ("Updated by Forerunner from the project's
+    // brief: ...") is gone with the branch that wrote it.
+    const branch = await this.intakeBranchFor(host, repo, git, project);
+    await git.createBranch(branch, `origin/${info.defaultBranch}`);
     const r = await writeDocSet(dir, docs, project);
     const commit = await git.commitAll(
       `docs: project doc set from the brief\n\nDrafted by Forerunner from the project's brief: ${docSetWords(r)}.`,
     );
-    if (!commit.committed && !existingPr)
+    if (!commit.committed)
       return { target: "repository", repo: fullName, branch, prUrl: null, ...r };
-    await git.push(branch, { force: !!existingPr, defaultBranch: info.defaultBranch });
-    if (existingPr) {
-      await host.commentOnPullRequest(
-        repo,
-        existingPr.number,
-        `Updated by Forerunner from the project's brief: ${docSetWords(r)}.`,
-      );
-      return { target: "repository", repo: fullName, branch, prUrl: existingPr.htmlUrl, ...r };
-    }
+    // L4-github-102 (D-L4-24): a branch GitHub kept from an earlier, closed pull request of this
+    // project (`intakeBranchFor` proved it is this project's) is replaced with a lease from the
+    // default branch (before: the push was refused as not a fast-forward and no pull request
+    // opened). Never the default branch.
+    const onHost = await git.hasRef(`origin/${branch}`);
+    await git.push(branch, { force: onHost, defaultBranch: info.defaultBranch });
     const pr = await host.createPullRequest(repo, {
       title: `docs: project doc set for ${project.name}`,
       body: `The standard doc set drafted from the project brief by Forerunner.\n\nDrafted: ${
@@ -2548,7 +2611,10 @@ export class IntakeService {
       }${
         // d1109-onerepo-link: a take-over's docs pull request says whose the repository is now.
         r.marker.status === "replaced" ? `\n\n${tookOverLine(r.marker.was.name, project.name)}` : ""
-      }\n\nOpened by Forerunner.`,
+      }\n\nOpened by Forerunner.\n\n${
+        // L4-github-111: the hidden mark names the project (the branch no longer carries its id).
+        forerunnerMarker({ project: project.id })
+      }`,
       head: branch,
       base: info.defaultBranch,
     });
@@ -2557,6 +2623,33 @@ export class IntakeService {
       prUrl: pr.htmlUrl,
     });
     return { target: "repository", repo: fullName, branch, prUrl: pr.htmlUrl, ...r };
+  }
+
+  /**
+   * The intake's branch (L4-github-111): the short form (`intakeDocsBranch`) when GitHub has no
+   * such branch or it is this project's (a pull request on it whose hidden mark names the
+   * project, or the marker file on it naming the project); else the whole id's form, which is
+   * this project's alone. A force-push only ever goes over this project's own branch.
+   */
+  private async intakeBranchFor(
+    host: GitHost,
+    repo: RepoRef,
+    git: GitOps,
+    project: ProjectRow,
+  ): Promise<string> {
+    const short = intakeDocsBranch(project);
+    if (!(await git.hasRef(`origin/${short}`))) return short;
+    const ids = projectIdsOf(project).map((id) => id.toLowerCase());
+    const prs = await host.listPullRequests(repo, { state: "all", head: short });
+    const marked = prs.some((p) => {
+      const named = readForerunnerMarker(p.body)?.project?.toLowerCase();
+      return !!named && ids.includes(named);
+    });
+    if (marked) return short;
+    const file = await git.fileAt(`origin/${short}`, INSTALL_MARKER_FILE);
+    const named = file ? parseInstallMarker(file)?.project?.toLowerCase() : null;
+    if (named && ids.includes(named)) return short;
+    return legacyIntakeDocsBranch(project.id);
   }
 }
 

@@ -19,6 +19,7 @@ import { MERGE_MODE_SETTING, MERGE_MODE_WORDS, mergeModeOf } from "../loop/merge
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { DEFAULT_CEILING, speedQualityOffsetOf } from "../models/ladder.ts";
 import { PUSH_UNFINISHED_SETTING, pushUnfinishedOf } from "../session/push-unfinished.ts";
+import { isTogether } from "../sources/repository-words.ts";
 import { WEB_ACCESS_ROW_WORDS, WEB_ACCESS_SETTING, webAccessOf } from "../wiring/web-access.ts";
 import type { Money, SettingView } from "./api-types.ts";
 import { money } from "./views.ts";
@@ -313,7 +314,10 @@ export function settingsView(input: SettingsViewInput): Row[] {
               }),
             ]
           : []),
-        ...(onHostRepository(p)
+        // L4-github-103 (D9): a project worked on together writes nothing to the repository,
+        // so it never has a status pull request and Settings offers none (as C-57 hides it for
+        // a linked folder); settings.set refuses it in words.
+        ...(onHostRepository(p) && !isTogether(p)
           ? [
               project({
                 key: "project.status_pull_request",

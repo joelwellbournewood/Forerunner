@@ -6,13 +6,7 @@ import {
   type RepoRef,
   readForerunnerMarker,
 } from "@forerunner/capabilities";
-import {
-  type Clock,
-  currentPlatform,
-  ForerunnerError,
-  type Platform,
-  safeSegment,
-} from "@forerunner/platform";
+import { type Clock, currentPlatform, ForerunnerError, type Platform } from "@forerunner/platform";
 import type { ProjectRow, StateStore } from "@forerunner/state";
 import { scanForInjection } from "../injection/scan.ts";
 import { DEFAULT_REPO_HOSTS, parseRepoLocator, type RepoLocator, repoKey } from "./locators.ts";
@@ -22,6 +16,7 @@ import {
   alreadyHereSentence,
   alsoElsewhereSentence,
   CHAT_TOGETHER_HINT,
+  configuredWebHost,
   type Elsewhere,
   elsewhereSentence,
   inUseSentence,
@@ -32,6 +27,7 @@ import {
   nothingToTakeOverSentence,
   otherHostSentence,
   projectIdsOf,
+  scaffoldLeftNoMarker,
   TAKE_OVER_UNDO_MERGED,
   TAKE_OVER_UNDO_OPEN,
   TAKE_OVER_UNDO_UNREADABLE,
@@ -45,6 +41,7 @@ import {
   takeOverLine,
   togetherFolderSentence,
   togetherLine,
+  tookOverNoPullRequestSentence,
   tookOverOf,
 } from "./repository-words.ts";
 
@@ -350,10 +347,19 @@ export class RepositoryIndex {
     return this.rows.find((p) => p.id === id) ?? null;
   }
 
-  /** Whether `id` names a project of this install: a row, joined into one, or taken over here. */
+  /**
+   * Whether `id` names a project of this install: a row, joined into one, or taken over here.
+   * L4-github-101 (ADR 0117 point 2): a removed project uses nothing, so neither its take-over
+   * nor the ids joined into it make an id known (live check 4: after the Undo of a project made
+   * with Take it over, New project on that repository got no offer and took nothing over, while
+   * the repository still named "Kite club"). A project joined into another still counts through
+   * its keeper, which is not removed. The removed project's own id stays a row here: the marker
+   * that names it frees the repository (`verdictOf`'s `removed`, run C decision 14).
+   */
   knows(id: string): boolean {
     if (this.row(id)) return true;
     for (const p of this.rows) {
+      if (isRemovedProject(p)) continue;
       if (projectIdsOf(p).includes(id)) return true;
       if (tookOverOf(p)?.projects.includes(id)) return true;
     }
@@ -441,13 +447,14 @@ export function markerNameOf(name: string | null | undefined): string | null {
 /**
  * The line a take-over's docs pull request says (ADR 0058 amended): which Forerunner project the
  * repository was, and whose it is now. The old name is the marker's own, cleaned as data
- * (`markerNameOf`); unknown or flagged, "another Forerunner project".
+ * (`markerNameOf`); unknown or flagged, "another Forerunner project". No possessive after a
+ * quoted name (L4-github-108: live, 'it is now "Kite flyers"'s.').
  */
 export function tookOverLine(wasName: string | null | undefined, name: string): string {
   const was = markerNameOf(wasName);
   return was
-    ? `This repository was the Forerunner project "${was}"; it is now "${name}"'s.`
-    : `This repository was another Forerunner project; it is now "${name}"'s.`;
+    ? `This repository was the Forerunner project "${was}"; it is now the project "${name}".`
+    : `This repository was another Forerunner project; it is now the project "${name}".`;
 }
 
 /** The project ids a pull request names (the hidden mark, the intake branch, the L-16 line). */
@@ -613,11 +620,6 @@ export function linkWords(identity: LinkIdentity, theirs?: LinkIdentity | null):
   return identity.entry.trim();
 }
 
-/** The safe segment of an id as an intake branch carries it (for the take-over's checks). */
-export function intakeBranchOf(id: string): string {
-  return `fr/intake-${safeSegment(id, "project")}-docs`;
-}
-
 /** Whether `clock`-relative instants are within the activity window. */
 export function withinActiveWindow(iso: string, clock: Pick<Clock, "now">): boolean {
   return Date.parse(iso) >= clock.now() - ACTIVE_ELSEWHERE_DAYS * 24 * 3600_000;
@@ -745,8 +747,12 @@ const OVERVIEW_READ_MS = 5 * 60_000;
 /** The Overview never waits longer than this on GitHub: the line shows, the press checks. */
 const OVERVIEW_WAIT_MS = 4_000;
 
-/** Forerunner's docs branches: the scaffold's and an intake's doc set (`loop/docs.ts`). */
-const DOCS_BRANCH = /^fr\/(?:docs-scaffold|intake-[^/]+-docs)$/;
+/**
+ * Forerunner's docs branches: the scaffold's (`fr/docs-scaffold`, or the project's own
+ * `fr/docs-scaffold-<project>` when that one is another's, L4-github-102) and an intake's doc
+ * set (`loop/docs.ts`).
+ */
+const DOCS_BRANCH = /^fr\/(?:docs-scaffold(?:-[\w-]+)?|intake-[^/]+-docs)$/;
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
   const x = [...new Set(a.map((s) => s.toLowerCase()))].sort();
@@ -789,7 +795,10 @@ export class RepositoryUse {
       if (typeof entry !== "string") continue;
       const r = identityOf(entry, this.identityOptions());
       if (r.kind === "other_host")
-        throw linkRefusal(otherHostSentence(r.host), { cause: "other_host" });
+        throw linkRefusal(
+          otherHostSentence(r.host, configuredWebHost(this.deps.hosts ?? DEFAULT_REPO_HOSTS)),
+          { cause: "other_host" },
+        );
       if (r.kind === "identity") out.push(r.identity);
     }
     return out;
@@ -980,6 +989,25 @@ export class RepositoryUse {
     const parsed = text ? parseInstallMarker(text) : null;
     const id = parsed && PROJECT_ID.test(parsed.project) ? parsed.project.toLowerCase() : null;
     if (!id) return null;
+    // L4-github-102: taken over here, but the default branch still names the other project and
+    // the scaffold left no docs pull request that names this one: said, never "Took over" alone.
+    const took = tookOverOf(project);
+    if (
+      took &&
+      !took.removed &&
+      took.projects.map((p) => p.toLowerCase()).includes(id) &&
+      scaffoldLeftNoMarker(project)
+    )
+      return {
+        kind: "elsewhere",
+        text: tookOverNoPullRequestSentence(repo.locator, {
+          ids: took.projects,
+          name: markerNameOf(took.name) ?? markerNameOf(parsed?.name),
+        }),
+        canTakeOver: false,
+        takeOverLine: null,
+        details: null,
+      };
     const own = new Set([...projectIdsOf(project), ...(tookOverOf(project)?.projects ?? [])]);
     if (own.has(id)) return null;
     const index = await this.index();

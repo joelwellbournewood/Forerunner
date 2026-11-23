@@ -1,6 +1,11 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { GitOps, MemoryGitHost } from "@forerunner/capabilities";
+import {
+  forerunnerMarker,
+  GitOps,
+  MemoryGitHost,
+  readForerunnerMarker,
+} from "@forerunner/capabilities";
 import { appDirs, join, run, SimulatedClock } from "@forerunner/platform";
 import type { JsonObject } from "@forerunner/state";
 import { MemoryVault } from "@forerunner/vault";
@@ -13,6 +18,7 @@ import {
   STARTING_ESTIMATES_USD_MICRO,
   taskSizeFactor,
 } from "../src/estimates/model.ts";
+import { isProjectDocsPr } from "../src/loop/docs.ts";
 import { INTAKE_RUN_SPECIALIST } from "../src/models/ladder.ts";
 import type { StateBrief } from "../src/session/brief.ts";
 import {
@@ -23,14 +29,18 @@ import {
   IntakeService,
   intakeDocsBranch,
   intakeKey,
+  legacyIntakeDocsBranch,
   NO_WEB_RULE,
   onlyWebsitesLines,
   parseIntakeReply,
+  readIntakeReply,
   SMALL_PLAN_RULES,
 } from "../src/session/intake.ts";
 import { type PlannerContext, StaticPlanner } from "../src/session/runner.ts";
+import { projectIdsNamedBy } from "../src/sources/repository-use.ts";
+import { TAKE_OVER_UNDO_OPEN } from "../src/sources/repository-words.ts";
 import { WEB_ACCESS_SETTING } from "../src/wiring/web-access.ts";
-import { ScriptedProvider, type ScriptReply } from "./helpers.ts";
+import { removeHomes, ScriptedProvider, type ScriptReply } from "./helpers.ts";
 
 /** A coder task's plan estimate at the top of its calibrated band ('cost', L-22). */
 const CODER_BAND = Math.round((STARTING_ESTIMATES_USD_MICRO.coder as number) * PLAN_ESTIMATE_BOUND);
@@ -682,8 +692,9 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect(prs.some((pr) => pr.head.ref === "fr/docs-scaffold")).toBe(true);
     const intakePr = prs.find((pr) => /^fr\/intake-/.test(pr.head.ref));
     expect(intakePr?.title).toContain("doc set");
-    // The branch carries the whole project id: no other project's docs can land on it.
-    expect(intakePr?.head.ref).toBe(intakeDocsBranch(projectId));
+    // The branch is the project's own (L4-github-111: 8 characters of its id and its name; its
+    // pull request's hidden mark names the project).
+    expect(intakePr?.head.ref).toBe(intakeDocsBranch(await rt.store.project.mustGet(projectId)));
     const c = await card(requestId);
     expect(c.docs).toMatchObject({
       target: "repository",
@@ -1356,12 +1367,34 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect((await rt.store.milestone.forProject(projectId)).map((m) => m.name)).toEqual(["Tiny"]);
   });
 
-  it("the docs branch carries the whole project id, so two projects of one minute never share it", () => {
+  it("the docs branch carries the id's random end and the name (R-branch's form, L4-github-111), so two projects of one minute never share it", () => {
     // UUIDv7: the first eight hex characters are the top bits of the millisecond timestamp.
     const a = "019cbd02-c000-7141-af6d-7c62f66a6f86";
     const b = "019cbd02-c000-7151-a46d-0f0983870ed7";
-    expect(intakeDocsBranch(a)).toBe(`fr/intake-${a}-docs`);
-    expect(intakeDocsBranch(a)).not.toBe(intakeDocsBranch(b));
+    expect(intakeDocsBranch({ id: a, name: "Kite club" })).toBe(
+      "fr/intake-f66a6f86-kite-club-docs",
+    );
+    expect(intakeDocsBranch({ id: a, name: "Kite club" })).not.toBe(
+      intakeDocsBranch({ id: b, name: "Kite club" }),
+    );
+    // An earlier version's form, still read: the whole id.
+    expect(legacyIntakeDocsBranch(a)).toBe(`fr/intake-${a}-docs`);
+  });
+
+  it("the docs branch of a name with dots is one git accepts: dots become dashes, as the scaffold's branch does (review of L4-github-111)", async () => {
+    // Before: "Wait... what" gave fr/intake-f66a6f86-wait...-what-docs, which git refuses ("..").
+    const a = "019cbd02-c000-7141-af6d-7c62f66a6f86";
+    expect(intakeDocsBranch({ id: a, name: "Wait... what" })).toBe(
+      "fr/intake-f66a6f86-wait--what-docs",
+    );
+    for (const name of ["Wait... what", "a..b", "site.lock", "v1.2 notes.", "..."]) {
+      const branch = intakeDocsBranch({ id: a, name });
+      const checked = await run(["git", "check-ref-format", "--branch", branch], {
+        allowFailure: true,
+      });
+      expect({ name, branch, code: checked.code }).toEqual({ name, branch, code: 0 });
+      expect(branch).toMatch(/^fr\/intake-f66a6f86-[\w-]+-docs$/);
+    }
   });
 });
 
@@ -1650,7 +1683,10 @@ describe("w15-words, wave 15 run B", () => {
       expect(pr?.body.split("\n\n")[0]).toBe(
         "The standard doc set drafted from the project brief by Forerunner.",
       );
-      expect(pr?.body).not.toMatch(uuid);
+      // L4-github-111: the hidden mark names the project (as the scaffold's and the status pull
+      // request's do, W15-08); what a person reads names no id.
+      expect(readForerunnerMarker(pr?.body)).toEqual({ project: projectId });
+      expect(pr?.body.replace(/<!--[\s\S]*?-->/g, "")).not.toMatch(uuid);
       const message = (
         await run(["git", "--git-dir", bare, "log", "-1", "--format=%B", pr?.head.ref ?? ""])
       ).stdout;
@@ -1929,6 +1965,223 @@ describe("d1109-onerepo-link, run C: a new brief for a project with work plans o
       expect(milestones.map((m) => m.name)).toEqual(["Everything"]);
     } finally {
       await rt.close();
+    }
+  }, 60_000);
+});
+
+describe("l4-github-link, run L4", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+  /** A composed daemon with a scripted planner and o/site, a real bare repository. */
+  const world = async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-intake-l4-link-"));
+    homes.push(home);
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const replies: ScriptReply[] = [];
+    const provider = new ScriptedProvider(replies, clock);
+    const host = new MemoryGitHost("alice");
+    const bare = join(home, "site.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seedDir = join(home, "seed");
+    const seed = new GitOps({
+      cwd: seedDir,
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(seedDir, "README.md"), "# site\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "o", name: "site", private: true, cloneUrl: bare });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider,
+      gitHost: host,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const req = (path: string, init: RequestInit = {}) =>
+      app.request(path, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
+    const answer = async (requestId: string, value: string) => {
+      const row = await rt.store.humanRequest.mustGet(requestId);
+      const res = await req(`/requests/${requestId}/answer`, {
+        method: "POST",
+        body: JSON.stringify({ version: row.version, answer: value }),
+      });
+      expect(res.status).toBe(200);
+    };
+    const project = await rt.store.project.insert({
+      name: "Site",
+      goal: "A site",
+      repos: ["o/site"],
+    });
+    return { rt, req, answer, replies, provider, host, bare, seed, seedDir, project };
+  };
+  const git = (bare: string, ...args: string[]) =>
+    run(["git", "--git-dir", bare, ...args], { allowFailure: true });
+
+  it("L4-github-102 (sibling): the first plan's docs branch on GitHub from an earlier, closed pull request is this project's own, so the approved doc set replaces it from main with a lease and its pull request opens", async () => {
+    const w = await world();
+    try {
+      const branch = intakeDocsBranch(w.project);
+      // An earlier plan's docs pull request of this project, closed unmerged; GitHub keeps its branch.
+      await run(["git", "-C", w.seedDir, "checkout", "-q", "-b", branch]);
+      writeFileSync(join(w.seedDir, "OLD.md"), "an old draft\n");
+      await w.seed.commitAll("old docs");
+      await w.seed.push(branch, { defaultBranch: "main" });
+      const old = await w.host.createPullRequest(
+        { owner: "o", name: "site" },
+        {
+          title: "docs: old",
+          body: `old\n\n${forerunnerMarker({ project: w.project.id })}`,
+          head: branch,
+          base: "main",
+        },
+      );
+      await w.host.updatePullRequest({ owner: "o", name: "site" }, old.number, { state: "closed" });
+      w.replies.push({ text: JSON.stringify(proposal()) });
+      const planned = await json(
+        await w.req(`/projects/${w.project.id}/intake`, { method: "POST", body: "{}" }),
+      );
+      await w.answer(String(planned.requestId), "approve");
+      const open = await w.host.listPullRequests({ owner: "o", name: "site" }, { state: "open" });
+      expect(open.map((p) => p.head.ref)).toEqual([branch]);
+      expect((await git(w.bare, "merge-base", "--is-ancestor", "main", branch)).code).toBe(0);
+      expect((await git(w.bare, "show", `${branch}:OLD.md`)).code).not.toBe(0);
+      expect((await git(w.bare, "show", `${branch}:docs/overview.md`)).stdout).toContain(
+        "Ship the thing",
+      );
+    } finally {
+      await w.rt.close();
+    }
+  }, 60_000);
+  it("L4-github-104: a first plan's reply without the decision record is asked again once with the exact problem line; the record the retry brings lands on the card; a plan-only reply without docs is taken at once", async () => {
+    const w = await world();
+    try {
+      const { docs: _docs, ...noDocs } = proposal();
+      // The retry brings the record with the decision the card reads ("Decision: ...").
+      const record =
+        "# 0001 — Stack\n\nDecision: one TypeScript service with one SQLite file.\n\n## Context\n\nSmall team.\n";
+      const withRecord = proposal({
+        docs: { ...proposal().docs, "docs/decisions/0001-stack.md": record },
+      });
+      w.replies.push({ text: JSON.stringify(noDocs) }, { text: JSON.stringify(withRecord) });
+      const before = w.provider.calls.length;
+      const planned = await json(
+        await w.req(`/projects/${w.project.id}/intake`, { method: "POST", body: "{}" }),
+      );
+      expect(w.provider.calls.length).toBe(before + 2);
+      const retry = w.provider.calls.at(-1)?.messages.at(-1);
+      expect(String(retry?.content)).toBe(
+        [
+          "Forerunner could not use your reply:",
+          "- docs: the decision record is missing: write docs/decisions/0001-<slug>.md with the choice the brief points to; any standard doc you leave out is written from the template.",
+          "",
+          "Reply again with the whole JSON object in the shape the instructions give, with these problems fixed and nothing else changed: no text and no code fence around it.",
+        ].join("\n"),
+      );
+      const card = (await w.rt.store.humanRequest.mustGet(String(planned.requestId)))
+        .change_card as JsonObject;
+      const docs = (card.proposal as JsonObject).docs as Record<string, string>;
+      // The stored record whole; what the Inbox card shows from it is pinned in
+      // apps/ui/test/real-daemon.test.ts ("l4-github-link, run L4", L4-github-104).
+      expect(docs["docs/decisions/0001-stack.md"]).toBe(record);
+      // A plan-only form (the project has tasks now) takes a reply without docs at once.
+      await w.answer(String(planned.requestId), "approve");
+      const { docs: _none, ...planOnly } = proposal();
+      w.replies.push({ text: JSON.stringify(planOnly) });
+      const callsBefore = w.provider.calls.length;
+      const added = await w.req(`/projects/${w.project.id}/intake`, {
+        method: "POST",
+        body: JSON.stringify({ brief: "Add an export." }),
+      });
+      expect(added.status).toBe(202);
+      expect(w.provider.calls.length).toBe(callsBefore + 1);
+    } finally {
+      await w.rt.close();
+    }
+  }, 60_000);
+
+  it("L4-github-104: when the retry also has no decision record the card is filed without it (no third call); the cut-off advice keeps the record and drops the rest", async () => {
+    const w = await world();
+    try {
+      const { docs: _docs, ...noDocs } = proposal();
+      w.replies.push({ text: JSON.stringify(noDocs) }, { text: JSON.stringify(noDocs) });
+      const before = w.provider.calls.length;
+      const planned = await w.req(`/projects/${w.project.id}/intake`, {
+        method: "POST",
+        body: "{}",
+      });
+      expect(planned.status).toBe(202);
+      expect(w.provider.calls.length).toBe(before + 2);
+    } finally {
+      await w.rt.close();
+    }
+    const cutOff = (planOnly: boolean) => {
+      try {
+        readIntakeReply('{ "plan": {', { stopReason: "max_tokens", planOnly });
+      } catch (e) {
+        return (e as { details: { problems: string[] } }).details.problems;
+      }
+      throw new Error("not refused");
+    };
+    expect(cutOff(false)).toEqual([
+      "Your reply was cut off at the output limit before the JSON object ended. Write each doc in a few lines, or leave out the standard docs (Forerunner writes them from its templates), but keep docs/decisions/0001-<slug>.md, in a few lines, so the whole object fits.",
+    ]);
+    expect(cutOff(true)).toEqual([
+      "Your reply was cut off at the output limit before the JSON object ended. Write each task in a few lines, so the whole object fits.",
+    ]);
+  }, 60_000);
+
+  it("L4-github-111: the first plan's docs pull request is on fr/intake-<8 characters>-<name>-docs, never the whole id, and its body carries the hidden mark; ownership, the ids it names and the take-over's Undo check read it", async () => {
+    // Live: "wants to merge ... from fr/intake-01a1e80e-6201-70a1-9dc1-4bfa2093ef6e-docs".
+    const w = await world();
+    try {
+      w.replies.push({ text: JSON.stringify(proposal()) });
+      const planned = await json(
+        await w.req(`/projects/${w.project.id}/intake`, { method: "POST", body: "{}" }),
+      );
+      await w.answer(String(planned.requestId), "approve");
+      const open = await w.host.listPullRequests({ owner: "o", name: "site" }, { state: "open" });
+      const pr = open.find((p) => p.head.ref.startsWith("fr/intake-"));
+      const own = w.project.id.replace(/-/g, "").slice(-8);
+      expect(pr?.head.ref).toBe(`fr/intake-${own}-site-docs`);
+      expect(pr?.head.ref).not.toContain(w.project.id);
+      expect(readForerunnerMarker(pr?.body)).toEqual({ project: w.project.id });
+      // What a person reads names no id: the mark is an HTML comment.
+      expect((pr?.body ?? "").replace(/<!--[\s\S]*?-->/g, "")).not.toMatch(
+        /[0-9a-f]{8}-[0-9a-f]{4}-/,
+      );
+      if (!pr) throw new Error("no intake pull request");
+      const row = await w.rt.store.project.mustGet(w.project.id);
+      expect(isProjectDocsPr(row, pr)).toBe(true);
+      expect(projectIdsNamedBy(pr)).toEqual([w.project.id]);
+      const other = { ...row, id: "01a1a000-0000-7000-8000-0000000000b2" };
+      expect(isProjectDocsPr(other, pr)).toBe(false);
+      // An earlier version's pull request on the whole id's branch is still this project's.
+      const legacy = { head: { ref: legacyIntakeDocsBranch(w.project.id), sha: "" }, body: "" };
+      expect(isProjectDocsPr(row, legacy)).toBe(true);
+      expect(projectIdsNamedBy(legacy)).toEqual([w.project.id]);
+      // The take-over's Undo reads the new form: its docs pull request is open on GitHub.
+      expect(await w.rt.repositoryUse?.takeOverUndoBlocked(w.project.id, "", null)).toBe(
+        TAKE_OVER_UNDO_OPEN,
+      );
+    } finally {
+      await w.rt.close();
     }
   }, 60_000);
 });

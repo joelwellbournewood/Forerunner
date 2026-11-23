@@ -108,10 +108,14 @@ import {
   inUseSentence,
   nothingToTakeOverSentence,
   otherHostSentence,
+  TOGETHER_OVERVIEW_DETAILS,
+  TOGETHER_OVERVIEW_LINE,
   takeOverAsk,
   takeOverDetails,
   takeOverLine,
+  togetherDocNote,
   togetherLine,
+  togetherStatusPullRequestSentence,
   tookOverSentence,
 } from "@forerunner/runtime/sources/repository-words";
 
@@ -2169,6 +2173,37 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // As the daemon (active projects only): a project closed into another leaves Home.
     return c.json(state.projects.filter((p) => !state.joined[p.id]).map(projectCardOf));
   });
+  /**
+   * As the daemon's `RepositoryUse.checkHere`: a project here (not archived, not `except`) that
+   * uses the link, as the 409's sentence and details; null when none does.
+   */
+  const linkInUse = (
+    entry: string,
+    except?: string,
+  ): { message: string; details: Record<string, unknown> } | null => {
+    const r = fakeLinkOf(entry);
+    if (!r || "host" in r) return null;
+    for (const p of state.projects) {
+      if (p.status === "archived" || p.id === except) continue;
+      for (const theirs of p.repos ?? []) {
+        const t = fakeLinkOf(theirs);
+        if (!t || "host" in t) continue;
+        const same =
+          r.kind === "repo"
+            ? t.kind === "repo" && t.locator === r.locator
+            : t.kind === "folder" && (r.path === t.path || r.path.startsWith(`${t.path}/`));
+        if (!same) continue;
+        return {
+          message: inUseSentence(
+            { kind: r.kind, locator: r.kind === "repo" ? r.locator : r.path },
+            p.name,
+          ),
+          details: { cause: "repository_in_use", projectId: p.id, projectName: p.name },
+        };
+      }
+    }
+    return null;
+  };
   app.post("/projects", async (c) => {
     const parsed = CreateProjectBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
@@ -2183,25 +2218,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const r = fakeLinkOf(entry);
       if (!r) continue;
       if ("host" in r) return refuse(otherHostSentence(r.host), { cause: "other_host" });
-      for (const p of state.projects) {
-        if (p.status === "archived") continue;
-        for (const theirs of p.repos ?? []) {
-          const t = fakeLinkOf(theirs);
-          if (!t || "host" in t) continue;
-          const same =
-            r.kind === "repo"
-              ? t.kind === "repo" && t.locator === r.locator
-              : t.kind === "folder" && (r.path === t.path || r.path.startsWith(`${t.path}/`));
-          if (!same) continue;
-          return refuse(
-            inUseSentence(
-              { kind: r.kind, locator: r.kind === "repo" ? r.locator : r.path },
-              p.name,
-            ),
-            { cause: "repository_in_use", projectId: p.id, projectName: p.name },
-          );
-        }
-      }
+      const inUse = linkInUse(entry);
+      if (inUse) return refuse(inUse.message, inUse.details);
       const repo = r.kind === "repo" ? r : null;
       const e = repo ? state.repositoryElsewhere[repo.locator] : undefined;
       if (repo && e) {
@@ -2261,6 +2279,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       repos: parsed.data.repos ?? [],
     };
     state.projects.push(project);
+    // As the daemon (D9, L4-creds-23): a project made with Work together is one, so its Overview
+    // says so and its Docs rows say who writes what it does not have.
+    if (togetherId)
+      state.repositoryOverview[project.id] = {
+        kind: "together",
+        text: TOGETHER_OVERVIEW_LINE,
+        canTakeOver: false,
+        takeOverLine: null,
+        details: TOGETHER_OVERVIEW_DETAILS,
+      };
     // As the daemon (W15-36): `switch: true` (the New project dialog) makes it the active
     // project in the same change, one Changes row whose Undo removes it and puts the previous
     // active project back.
@@ -2966,7 +2994,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const n = record?.pr_number;
       return refused(
         n
-          ? `#${n} is not merged, so ${title}'s work is not in main: close #${n} on GitHub if you do not want it.`
+          ? `#${n} is not merged, so the work of ${title} is not in main: close #${n} on GitHub if you do not want it.`
           : `${title} has no pull request, so there is nothing to take out of main.`,
       );
     }
@@ -5242,15 +5270,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         description: `You press Merge (each accepted task's pull request waits for your Merge on the Overview of ${p.name}), or merge automatically after review (Forerunner merges it once the critic accepted it)`,
         risk: "medium",
       });
-      rows.push({
-        key: "project.status_pull_request",
-        label: "Status pull request",
-        scope: "project",
-        scopeId: p.id,
-        value: state.settingValues[settingSlot("status_pull_request", p.id)] === true,
-        description: `Each session's status of ${p.name} as one pull request on GitHub (off: it stays in the app, under Docs, Status)`,
-        risk: "low",
-      });
+      // l4-github-link, run L4 (L4-github-103, D9): a project worked on together has no status
+      // pull request, so no row (settings-view.ts).
+      if (state.repositoryOverview[p.id]?.kind !== "together")
+        rows.push({
+          key: "project.status_pull_request",
+          label: "Status pull request",
+          scope: "project",
+          scopeId: p.id,
+          value: state.settingValues[settingSlot("status_pull_request", p.id)] === true,
+          description: `Each session's status of ${p.name} as one pull request on GitHub (off: it stays in the app, under Docs, Status)`,
+          risk: "low",
+        });
     }
     // Like the daemon (settings-view.ts, 'sites'): "Web pages research may read" per project.
     for (const p of state.projects)
@@ -7116,6 +7147,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         const before = state.settingValues[slot] === true;
         const onOff = (v: boolean) => (v ? "on" : "off");
         const what = `the status pull request for ${project.name}`;
+        // l4-github-link, run L4 (L4-github-103): refused on a together project, as the daemon.
+        if (value && state.repositoryOverview[project.id]?.kind === "together")
+          return refuse(togetherStatusPullRequestSentence(project.name));
         if (before === value)
           return refuse(`The status pull request for ${project.name} is already ${onOff(before)}.`);
         const effect = value
@@ -8928,6 +8962,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       return errorBody(c, 400, "validation", "source and path or locator are required");
     }
     if (body.source === "github") {
+      // As the daemon (OR-04, C2-left-12, L4-creds-23): a repository another project here uses
+      // is refused before anything is cloned, 409 "conflict" with the cause the offer reads.
+      const inUse = linkInUse(locator, id);
+      if (inUse)
+        return c.json({ code: "conflict", message: inUse.message, details: inUse.details }, 409);
       const slug = locator.replace(/^https?:\/\/[^/]+\//, "").replace(/\.git$/, "");
       return c.json(
         ImportResultView.parse({
@@ -8974,7 +9013,24 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!state.projects.some((p) => p.id === id)) {
       return errorBody(c, 404, "not_found", "no such project");
     }
-    return c.json(state.docs[id] ?? []);
+    const rows = state.docs[id];
+    // As the daemon (C2-left-13, L4-creds-23): a together project writes no docs, so each doc it
+    // does not have says who writes it (notWrittenHere), never "not written yet".
+    const project = state.projects.find((p) => p.id === id);
+    if (!rows && project && state.repositoryOverview[id]?.kind === "together")
+      return c.json(
+        DOCS.map((d) => ({
+          path: d.path,
+          title: d.title,
+          exists: false,
+          sizeBytes: 0,
+          updatedAt: null,
+          drift: false,
+          note: togetherDocNote(project.name),
+          notWrittenHere: true,
+        })),
+      );
+    return c.json(rows ?? []);
   });
   app.get("/projects/:id/docs/:path", (c) => {
     const doc = DOC_CONTENTS[c.req.param("path")];

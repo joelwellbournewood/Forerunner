@@ -147,7 +147,9 @@ export interface BenchOptions {
    * live check of 2026-11-01): `reason-too-long` (a 750-character plan.reason), `fenced-docs`
    * (docs that hold code fences), `missing-tasks` (a milestone with no task), `not-json` (prose),
    * `too-big` (the full plan when a small one was asked for: the live model's six tasks for a
-   * one-line brief). The intake's one retry (its request carries the refused reply) gets the plan.
+   * one-line brief), `no-docs` (a first plan with no docs at all, so no decision record: run C's
+   * CL-6, L4-github-104). The intake's one retry (its request carries the refused reply) gets the
+   * plan.
    */
   intakeBad: IntakeBad;
   /**
@@ -193,6 +195,7 @@ export const INTAKE_BAD_KINDS = [
   "missing-tasks",
   "not-json",
   "too-big",
+  "no-docs",
 ] as const;
 export type IntakeBad = (typeof INTAKE_BAD_KINDS)[number] | "none";
 
@@ -677,6 +680,11 @@ function badIntakeReply(
         `${STAND_IN} Here is my plan: first build the page, then check it works. I will write the JSON next.`,
         injected,
       );
+    case "no-docs": {
+      // The plan and its first session, and no `docs` key: the decision record is missing.
+      const { docs: _docs, ...rest } = proposal;
+      return text(JSON.stringify(rest, null, 2), injected);
+    }
   }
 }
 

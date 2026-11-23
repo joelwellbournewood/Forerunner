@@ -87,7 +87,7 @@ import {
   reviewLevelValue,
   specialistName,
 } from "../src/lib/task-actions.ts";
-import { intakeCardOf, intakeTotalLine } from "../src/pages/InboxPage.tsx";
+import { intakeCardOf, intakeDecisionLine, intakeTotalLine } from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 import { latestRunByTask, taskCapWords } from "../src/pages/project/TasksTab.tsx";
 
@@ -12585,7 +12585,7 @@ describe("w15-merge, wave 15", () => {
         // d1109-onerepo-link (OR-09, L3-github-5): why, in words; never "(Settings turns it on)",
         // which was untrue while the setting is on.
         expect(row?.note).toBe(
-          `Kept in the app while "Shared A"'s status pull request is open on GitHub.`,
+          `Kept in the app while the status pull request of "Shared A" is open on GitHub.`,
         );
         const text = (await client.doc(b.id, "docs/status.md")).content;
         expect(text).toContain("Write the notes in b-notes.md");
@@ -18342,21 +18342,30 @@ describe("d1109-onerepo-link, run C", () => {
         projects: [KITE_ID],
         name: "Kite club",
       });
-      expect((await client.project(made.id)).repositoryElsewhere ?? null).toBeNull();
+      // L4-github-102 (run L4): the Overview says it too, never nothing (before: no line, as if
+      // GitHub now named this project).
+      const saidOnOverview = {
+        kind: "elsewhere",
+        text: noPr,
+        canTakeOver: false,
+        takeOverLine: null,
+        details: null,
+      };
+      expect((await client.project(made.id)).repositoryElsewhere).toEqual(saidOnOverview);
       // The other project's pull request is untouched (no push, comment or close).
       expect(JSON.stringify(theirs)).toBe(theirsBefore.replace(daysAgo(3), daysAgo(20)));
       expect(await host.listPullRequestComments(repo, theirs.number)).toEqual([]);
       // The daemon starts again; this project's docs pull request (with its marker) is open.
       await rt.close();
       ({ rt, client } = await compose());
-      expect((await client.project(made.id)).repositoryElsewhere ?? null).toBeNull();
+      expect((await client.project(made.id)).repositoryElsewhere).toEqual(saidOnOverview);
       // Opened (on GitHub's clock) after the take-over, with this project's mark.
       const tookOverAt = String(
         ((await rt.store.project.mustGet(made.id)).settings.took_over as { at: string }).at,
       );
       const docsPr = await host.openPullRequestAs(repo, "alice", {
         title: "docs: scaffold the standard project doc set",
-        body: `This repository was the Forerunner project "Kite club"; it is now "Kites"'s.\n\n<!-- forerunner:pr project=${made.id} -->`,
+        body: `This repository was the Forerunner project "Kite club"; it is now the project "Kites".\n\n<!-- forerunner:pr project=${made.id} -->`,
         head: "fr/docs-scaffold",
         updatedAt: new Date(Date.parse(tookOverAt) + 60_000).toISOString(),
       });
@@ -25877,4 +25886,308 @@ describe("l4-cred-screens, run L4", () => {
       await second.rt.close();
     }
   }, 60_000);
+});
+
+describe("l4-github-link, run L4", () => {
+  const KITE_ID = "01a1a000-0000-7000-8000-00000000c1ab";
+  const kiteMarker = `${JSON.stringify({ schema: 1, project: KITE_ID, name: "Kite club" }, null, 2)}\n`;
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /**
+   * A daemon on its own home with a memory git host whose repositories are real bare ones (so
+   * this computer's copy and the docs pull requests are real git), composed again on the same
+   * home for what must survive a restart.
+   */
+  const world = () => {
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-l4-link-"));
+    homes.push(work);
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const host = new MemoryGitHost("alice");
+    const identity = { name: "Forerunner", email: "agent@example.test" };
+    /** o/<name> with `files` on main, in git and on the host's file view alike. */
+    const seeded = async (name: string, files: Record<string, string>) => {
+      const bare = join(work, `${name}.git`);
+      await run(["git", "init", "--bare", "-b", "main", bare]);
+      const seedDir = join(work, `${name}-seed`);
+      const seed = new GitOps({ cwd: seedDir, identity });
+      await seed.clone(bare);
+      for (const [path, text] of Object.entries(files)) {
+        mkdirSync(join(seedDir, ...path.split("/").slice(0, -1)), { recursive: true });
+        writeFileSync(join(seedDir, ...path.split("/")), text);
+      }
+      await seed.commitAll("seed");
+      await seed.push("main");
+      await host.createRepo({ owner: "o", name, private: true, cloneUrl: bare });
+      for (const [path, text] of Object.entries(files))
+        await host.putFile(
+          { owner: "o", name },
+          { path, content: text, message: "seed", branch: "main" },
+        );
+      return { bare, seedDir, seed };
+    };
+    /** `bench`: the stand-in's knobs for this compose (`FORERUNNER_BENCH_INTAKE_BAD`, ...). */
+    const compose = (bench: Record<string, string> = {}) =>
+      composeWithRolePlayer(bench, {
+        gitHost: host,
+        tryIt: false,
+        env,
+        dirs: appDirs({ env }),
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      });
+    return { work, host, seeded, compose };
+  };
+  /** What a refused call answered: the status, the message and the details. */
+  const refusalOf = async (call: Promise<unknown>) => {
+    try {
+      await call;
+    } catch (e) {
+      if (e instanceof ApiError)
+        return { status: e.status, message: e.message, details: e.details };
+      throw e;
+    }
+    throw new Error("the call was not refused");
+  };
+
+  it('L4-github-101: after Take it over and the Undo of that creation, New project on the same repository gets the offer again (409 naming "Kite club", Work together and Take it over), and a project whose copy names Kite club has the Overview\'s line; the same after the daemon starts again', async () => {
+    const w = world();
+    await w.seeded("kite", { "README.md": "# kite\n", ".forerunner/project.json": kiteMarker });
+    const body = { name: "Kite flyers", goal: "Fly kites", repos: ["o/kite"], switch: true };
+    const offerAgain = async (c: DaemonClient) => {
+      const r = await refusalOf(
+        c.createProject({
+          ...body,
+          name: "Kite flyers again",
+          brief: "A page that lists the club's kites.",
+          intake: true,
+        }),
+      );
+      expect(r.status).toBe(409);
+      expect(r.message).toBe(
+        'o/kite is already the Forerunner project "Kite club", which is not on this computer. Work on it together, or take it over if nobody works on it any more.',
+      );
+      expect(r.details).toMatchObject({
+        cause: "repository_used_elsewhere",
+        projects: [KITE_ID],
+        canWorkTogether: true,
+        canTakeOver: true,
+      });
+    };
+    let { rt, client } = await w.compose();
+    try {
+      const first = await refusalOf(client.createProject(body));
+      expect(first.status).toBe(409);
+      expect(first.details).toMatchObject({ projects: [KITE_ID], canTakeOver: true });
+      const made = await client.createProject({ ...body, takeOver: { projects: [KITE_ID] } });
+      // Undo the creation on Changes (W15-36): the project is removed, its take-over with it.
+      const created = (await client.changes({ projectId: made.id })).find((r) =>
+        r.sentence.startsWith("Created the project Kite flyers"),
+      );
+      expect(created?.id).toBeTruthy();
+      await client.undoChange(created?.id ?? "");
+      expect((await rt.store.project.mustGet(made.id)).status).toBe("archived");
+      // Before: 201, a project with no offer and nothing taken over.
+      await offerAgain(client);
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      await offerAgain(client);
+      // A project made on o/kite before the rule (or while GitHub could not be read), whose copy
+      // of main names Kite club: the Overview's line, with Take it over (before: null).
+      const before = await rt.store.project.insert({
+        name: "Kite site",
+        goal: "g",
+        repos: ["o/kite"],
+        author_human: rt.human.id,
+      });
+      await rt.docs.refreshCopy(before);
+      const line = {
+        kind: "elsewhere",
+        text: 'o/kite is also the Forerunner project "Kite club", which is not on this computer.',
+        canTakeOver: true,
+      };
+      expect((await client.project(before.id)).repositoryElsewhere).toMatchObject(line);
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      expect((await client.project(before.id)).repositoryElsewhere).toMatchObject(line);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it('L4-github-102: Take it over whose docs pull request GitHub refuses (the push is refused): the project is made, and its Overview says GitHub still names "Kite club" because that pull request could not be opened; the same after the daemon starts again', async () => {
+    const w = world();
+    const { bare } = await w.seeded("kite", {
+      "README.md": "# kite\n",
+      ".forerunner/project.json": kiteMarker,
+    });
+    // GitHub refuses every push to the repository (a branch rule, a token without write).
+    writeFileSync(join(bare, "hooks", "pre-receive"), "#!/bin/sh\necho refused >&2\nexit 1\n", {
+      mode: 0o755,
+    });
+    let { rt, client } = await w.compose();
+    try {
+      const made = await client.createProject({
+        name: "Kite flyers",
+        goal: "Fly kites",
+        repos: ["o/kite"],
+        switch: true,
+        takeOver: { projects: [KITE_ID] },
+      });
+      expect(await w.host.listPullRequests({ owner: "o", name: "kite" }, { state: "all" })).toEqual(
+        [],
+      );
+      const said = {
+        kind: "elsewhere",
+        text: 'Took over o/kite from "Kite club" here, but the docs pull request that names this project could not be opened, so GitHub still names "Kite club".',
+        canTakeOver: false,
+        takeOverLine: null,
+        details: null,
+      };
+      expect((await client.project(made.id)).repositoryElsewhere).toEqual(said);
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      expect((await client.project(made.id)).repositoryElsewhere).toEqual(said);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  // Review of the fix: the composed intake case asserted the stored card's docs only, and its
+  // record had no "Decision:" line, so it passed whether or not the person saw a decision.
+  it("L4-github-104: a first plan whose reply has no docs is asked once for its decision record with the exact problem line, and the plan card in the Inbox reads its Decision line, also after the daemon starts again; Add to it's plan-only reply without docs is taken with one call and its card has no decision line", async () => {
+    const w = world();
+    // The stand-in's first reply of each draft has no docs (the live model's, run C's CL-6).
+    let { rt, client, intakeCalls } = await w.compose({ FORERUNNER_BENCH_INTAKE_BAD: "no-docs" });
+    const decided =
+      "Decision: a plain page in three files (index.html, styles.css, script.js), opened straight from the folder; no framework, no build step.";
+    try {
+      const me = await client.me();
+      const planCard = async (c: DaemonClient, projectId: string) => {
+        const cards = (await c.inbox(me.id)).requests.filter(
+          (r) => r.projectId === projectId && r.status === "open",
+        );
+        expect(cards).toHaveLength(1);
+        const shown = intakeCardOf(cards[0]?.changeCard);
+        if (!shown) throw new Error("the Inbox card is not a plan card");
+        return { card: cards[0], shown };
+      };
+      const before = intakeCalls.length;
+      const project = await client.createProject({
+        name: "Quote page",
+        goal: "A page that shows a random quote",
+        brief: "A one-page website that shows a random quote. Plain HTML, CSS and JavaScript.",
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const calls = intakeCalls.slice(before);
+      expect(calls).toHaveLength(2);
+      // The retry carries the refused reply and the one problem line, word for word.
+      expect(String(calls[1]?.messages[2]?.content)).toBe(
+        [
+          "Forerunner could not use your reply:",
+          "- docs: the decision record is missing: write docs/decisions/0001-<slug>.md with the choice the brief points to; any standard doc you leave out is written from the template.",
+          "",
+          "Reply again with the whole JSON object in the shape the instructions give, with these problems fixed and nothing else changed: no text and no code fence around it.",
+        ].join("\n"),
+      );
+      const first = await planCard(client, project.id);
+      expect(first.card?.title).toMatch(/^Plan for "Quote page": \d+ tasks?$/);
+      expect(first.shown.planOnly).toBe(false);
+      expect(first.shown.docs[0]?.path).toBe("docs/decisions/0001-plain-static-page.md");
+      // What the card shows the person under the tasks (data-testid intake-decision-line).
+      expect(intakeDecisionLine(first.shown)).toBe(decided);
+
+      // Add to it on a project with work: the plan-only form writes no docs, so its reply without
+      // docs is taken at once, and its card has no decision line.
+      const site = await client.createProject({ name: "Site", goal: "A site" });
+      await client.createTask(site.id, {
+        title: "Write the home page",
+        outcome: "The home page is written",
+        riskTier: 0,
+      });
+      const addBefore = intakeCalls.length;
+      const view = await client.proposeIntake(site.id, {
+        brief: "Add a page of favourite quotes.",
+      });
+      expect(view).toMatchObject({ pending: true, projectId: site.id, docsTarget: null });
+      expect(intakeCalls.length).toBe(addBefore + 1);
+      const added = await planCard(client, site.id);
+      expect(added.card?.id).toBe(view.requestId);
+      expect(added.shown).toMatchObject({ planOnly: true, docs: [] });
+      expect(intakeDecisionLine(added.shown)).toBeNull();
+
+      // Both cards read the same after the daemon starts again (the stand-in now plays well).
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client, intakeCalls } = await w.compose());
+      expect(intakeDecisionLine((await planCard(client, project.id)).shown)).toBe(decided);
+      expect(intakeDecisionLine((await planCard(client, site.id)).shown)).toBeNull();
+      expect(intakeCalls).toHaveLength(0);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("L4-github-103: after Work together on o/kite, GET /settings has no Status pull request row for the project and settings.set status_pull_request=true answers the one refusal sentence and writes nothing; the same after the daemon starts again", async () => {
+    const w = world();
+    await w.seeded("kite", { "README.md": "# kite\n", ".forerunner/project.json": kiteMarker });
+    let { rt, client } = await w.compose();
+    try {
+      const made = await client.createProject({
+        name: "Kites here",
+        goal: "Fly kites",
+        repos: ["o/kite"],
+        switch: true,
+        together: { project: KITE_ID },
+      });
+      expect(made.id).toBe(KITE_ID);
+      const sentence =
+        'You work on "Kite club" together with another Forerunner, so its status stays in the app (Docs, Status); no status pull request is opened.';
+      const check = async (c: DaemonClient) => {
+        const rows = await c.settings();
+        expect(
+          rows.filter((r) => r.key === "project.status_pull_request" && r.scopeId === KITE_ID),
+        ).toEqual([]);
+        // Who merges and the other GitHub rows stay: the project's own task pull requests are its.
+        expect(rows.some((r) => r.key === "project.merge_mode" && r.scopeId === KITE_ID)).toBe(
+          true,
+        );
+        const changesBefore = (await c.changes({ projectId: KITE_ID })).length;
+        const r = await c.executeCommands({
+          commands: [
+            {
+              name: "settings.set",
+              params: { key: "status_pull_request", value: true, project: KITE_ID },
+            },
+          ],
+          wordsUsed: "turn on the status pull request",
+          source: "ui",
+          projectId: KITE_ID,
+          confirm: "tap",
+        });
+        expect(r.status).toBe("refused");
+        expect(r.reason).toBe(sentence);
+        expect((await c.changes({ projectId: KITE_ID })).length).toBe(changesBefore);
+        expect(
+          (await rt.store.project.mustGet(KITE_ID)).settings.status_pull_request,
+        ).toBeUndefined();
+      };
+      await check(client);
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      await check(client);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

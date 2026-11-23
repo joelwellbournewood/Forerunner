@@ -74,7 +74,13 @@ const SMALL_PLAN = JSON.stringify({
     ],
     tasks: [],
   },
-  docs: { "README.md": "# Quotes\n\nA page that shows a random quote.\n" },
+  // The small plan's docs are README.md and the decision record (SMALL_PLAN_RULES); a first plan
+  // without the record is asked for again (L4-github-104).
+  docs: {
+    "README.md": "# Quotes\n\nA page that shows a random quote.\n",
+    "docs/decisions/0001-plain-page.md":
+      "# 0001: A plain page\n\nDecision: one index.html opened locally.\n",
+  },
   firstSession: {
     summary: "Write the page.",
     items: [{ key: "page", estimateUsdMicro: 200_000, rationale: "the whole brief" }],

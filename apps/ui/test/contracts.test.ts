@@ -250,3 +250,54 @@ describe("d1109-chat-recall, run C: a reply's sources", () => {
     ]);
   });
 });
+
+describe("l4-github-link, run L4 (L4-creds-23): the fake daemon's onerepo answers", () => {
+  it("a together project's Docs rows and the import's link refusal parse with the daemon's schemas, in the daemon's shape (real-daemon.test.ts asserts the daemon's own: C2-left-13 and OR-04)", async () => {
+    const { DocView, ErrorBody } = await import("@forerunner/runtime/daemon/api-types");
+    const { createHarness } = await import("./helpers.tsx");
+    const harness = createHarness();
+    const KITE = "01a1a000-0000-7000-8000-00000000c1ab";
+    harness.daemon.state.repositoryElsewhere["o/kite"] = {
+      ids: [KITE],
+      name: "Kite club",
+      lastActive: null,
+      otherAccount: null,
+      canWorkTogether: true,
+      canTakeOver: false,
+    };
+    const call = (path: string, init: RequestInit = {}) =>
+      harness.daemon.app.request(path, {
+        ...init,
+        headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+      });
+    const made = await call("/projects", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Kites",
+        goal: "Kites",
+        repos: ["o/kite"],
+        together: { project: KITE },
+      }),
+    });
+    expect(made.status).toBe(201);
+    const rows = DocView.array().parse(await (await call(`/projects/${KITE}/docs`)).json());
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows)
+      expect({ exists: r.exists, notWrittenHere: r.notWrittenHere, note: r.note }).toEqual({
+        exists: false,
+        notWrittenHere: true,
+        note: 'The other Forerunner of "Kite club" writes this doc on GitHub; this project does not write docs.',
+      });
+    const refused = await call("/projects/proj_beacon/data/import", {
+      method: "POST",
+      body: JSON.stringify({ source: "github", locator: "org/atlas" }),
+    });
+    expect(refused.status).toBe(409);
+    const body = ErrorBody.parse(await refused.json());
+    expect(body).toEqual({
+      code: "conflict",
+      message: 'org/atlas is already the project "Atlas". Open it, or add this to it as new work.',
+      details: { cause: "repository_in_use", projectId: "proj_atlas", projectName: "Atlas" },
+    });
+  });
+});

@@ -174,6 +174,18 @@ export function intakeTotalLine(card: IntakeCardView, totalWords: string): strin
 }
 
 /**
+ * The plan card's decision line (design §3.3): "Decision: " and the decision the drafted record
+ * makes in one or two sentences, or null when the card has no decision record (a plan-only card)
+ * or the record says no decision. The real-daemon test reads the daemon's own card through this
+ * (L4-github-104: a first plan whose reply left the record out is asked for it once).
+ */
+export function intakeDecisionLine(card: IntakeCardView): string | null {
+  const decision = card.docs.find((d) => isDecisionDoc(d.path));
+  const decided = decision ? decisionLine(decision.text) : null;
+  return decided ? `Decision: ${decided}` : null;
+}
+
+/**
  * The card key of questions only the person can answer (U-022): the runtime's
  * `PERSON_QUESTIONS_KEY_PREFIX` (`session/person-questions.ts`), which `test/inbox.test.tsx`
  * checks this equals; the runtime module itself needs Node and is not imported here.
@@ -373,7 +385,7 @@ function IntakeCard({
     personTasks: agentTasks.length < tasks.length,
   });
   const decision = card.docs.find((d) => isDecisionDoc(d.path));
-  const decided = decision ? decisionLine(decision.text) : null;
+  const decided = intakeDecisionLine(card);
   const titleOf = (key: string) => tasks.find((t) => t.key === key)?.title ?? null;
   return (
     <section
@@ -463,7 +475,7 @@ function IntakeCard({
           {credentialLine}
         </p>
       ) : null}
-      {decided ? <p data-testid="intake-decision-line">Decision: {decided}</p> : null}
+      {decided ? <p data-testid="intake-decision-line">{decided}</p> : null}
       {decision ? (
         <details
           className="rounded border border-neutral-200 p-1 dark:border-neutral-800"

@@ -1,4 +1,4 @@
-import { errorMessage, ForerunnerError, log } from "@forerunner/platform";
+import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import type { JsonValue, ProjectRow, StateStore } from "@forerunner/state";
 import type { z } from "zod";
 import type { ProjectDocsPort } from "../loop/ports.ts";
@@ -24,6 +24,12 @@ const logger = log("create-project");
  */
 export interface CreateProjectDeps {
   store: Pick<StateStore, "project" | "queue" | "human">;
+  /**
+   * The daemon's clock (L4-github-105): Work together's `settings.together.at` is the daemon's
+   * time, as every other stamp, so a simulated clock or a computer with a wrong wall clock still
+   * says the day the press was made.
+   */
+  clock: Pick<Clock, "nowIso">;
   human: { id: string };
   agent: { id: string };
   events: { emit(event: string, payload: unknown): unknown };
@@ -92,7 +98,7 @@ export async function createProjectRecord(
     data_assets: [],
     settings: {
       members: [deps.agent.id],
-      ...linkSettings(linked, name),
+      ...linkSettings(linked, name, deps.clock.nowIso()),
     },
     // Off at creation, whatever the brief: the mode gives a task that names no tier tier 0 (no
     // critic), and the critic reviews code tasks (the owner's decision of 2026-11-01). A short
@@ -105,12 +111,12 @@ export async function createProjectRecord(
 }
 
 /** The settings a checked link adds: the take-over or the together project (ADR 0117). */
-function linkSettings(linked: LinkCheck, name: string): Record<string, JsonValue> {
+function linkSettings(linked: LinkCheck, name: string, now: string): Record<string, JsonValue> {
   if (linked.together)
     return {
       [TOGETHER_KEY]: {
         name: linked.together.name ?? name,
-        at: new Date().toISOString(),
+        at: now,
         activeOn: linked.together.activeOn,
         login: linked.together.login,
       },
@@ -150,7 +156,7 @@ async function reviveTogether(
       ...settings,
       [TOGETHER_KEY]: {
         name: before?.name ?? name,
-        at: new Date().toISOString(),
+        at: deps.clock.nowIso(),
         activeOn: before?.activeOn ?? null,
         login: before?.login ?? null,
       },

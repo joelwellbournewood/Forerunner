@@ -334,3 +334,23 @@ describe("l3-small, run L3: Settings never makes a project's name a possessive (
       expect(r).not.toHaveTextContent("Atlas's");
   });
 });
+
+describe("l4-github-link, run L4", () => {
+  it("L4-github-103: a project worked on together has no Status pull request row and no Change for it; Who merges stays (D9)", async () => {
+    // Live check 4: Settings offered the status pull request on a Work-together project and
+    // promised one that never opened.
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = {
+      kind: "together",
+      text: "Shared on GitHub with another Forerunner: each keeps its own tasks.",
+      canTakeOver: false,
+      takeOverLine: null,
+      details: null,
+    };
+    renderApp("/settings", harness);
+    await rowFor("project.merge_mode");
+    const rows = await screen.findAllByTestId("setting-row");
+    expect(rows.filter((r) => r.dataset.key === "project.status_pull_request")).toEqual([]);
+    for (const r of rows) expect(r).not.toHaveTextContent("Status pull request");
+  });
+});

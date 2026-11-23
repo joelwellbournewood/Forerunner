@@ -1837,8 +1837,17 @@ an overlapping sync) exactly one writes the plan and the other's transaction rol
 (`applied_elsewhere`, nothing counted); then the docs: with a repository
 (`repoRefOf(repos[0])`, `owner/name` or a URL) the executor's branch-and-PR flow (`GitOps`
 clone or fetch into `<worktrees>/intake/<project>`, branch `intakeDocsBranch`:
-`fr/intake-<the whole project id>-docs`, push, `createPullRequest` or a comment on the open
-one), else the project's workspace `<data>/projects/<id>/workspace` (`workspaceDir`); a
+`fr/intake-<8 characters of the id's random end>-<the name>-docs` (L4-github-111, R-branch's
+form; the name's dots become dashes, as in `scaffoldBranchesOf`, since git refuses ".." and a
+component ending ".lock"; `intakeBranchFor` takes it when GitHub has no such branch or it is this project's, by a
+pull request on it whose hidden mark names the project or by its marker file, else the whole
+id's `legacyIntakeDocsBranch`), push, `createPullRequest` with the hidden mark
+`forerunnerMarker({ project })` at the end of its body), else the project's workspace
+`<data>/projects/<id>/workspace` (`workspaceDir`). There is no comment on an open intake pull
+request (L4-github-107): only a first plan writes the doc set (a project with no task,
+`planOnlyFor`), tasks are never deleted and the approval writes its tasks before its docs, so
+no first plan finds its own intake pull request open, and the branch that commented ("Updated
+by Forerunner from the project's brief: ...") was removed; a
 drafted doc is written only where no file exists (`kept` otherwise) and `scaffoldDocs` fills
 the standard docs the model left out; a pull request that fails falls back to the workspace
 with `repo_error` on the card, and a docs failure after the rows is recorded on the card
@@ -1889,7 +1898,13 @@ from `details.problems`, "plan.milestones[0].tasks[1] (key "build").outcome: …
 with the whole JSON object…"). Both calls share the session's budget; each has its token, its Run
 row (`intake_<session>` and `intake_<session>_2`) and its ledger rows; the card's `cost_usd_micro`
 is their sum and `model_calls` says 2. A call that did not complete (the provider, the time
-limit, the budget, a stop) is not repeated. (4) The failure words name the cause
+limit, the budget, a stop) is not repeated. A first plan (not the plan-only form) whose reply
+has no `docs/decisions/0001-<slug>.md` is asked once more with `MISSING_DECISION_PROBLEM` (the
+card's "Decision: ..." line is read from that record; L4-github-104, run L4; the real-daemon case
+walks it with the stand-in's `FORERUNNER_BENCH_INTAKE_BAD=no-docs`), and a retry still
+without it is taken as it is (no third call); the cut-off advice is `CUT_OFF_PROBLEM` (keep the
+record, leave out the standard docs) or, for the plan-only form, `CUT_OFF_PLAN_ONLY_PROBLEM`
+(`readIntakeReply(text, {stopReason, planOnly})`). (4) The failure words name the cause
 (`details.words` from the reader): "Claude's plan could not be read.", "Claude's plan was cut off
 before it ended.", "Claude's plan was missing its tasks.", "Claude's plan was missing a task's
 outcome.", "Claude's plan had tasks waiting for each other in a circle.", with " Forerunner asked
@@ -4464,9 +4479,11 @@ answers `firstCommit: true`, `branch` the default branch, no PR; `summary_cache.
 After each write the docs clone is back on the default branch (`backToBase`), so what reads it
 sees what is merged; `docsInPullRequests(project)` fetches the clone and lists the docs that wait
 in one of Forerunner's docs pull requests (`isDocsBranch`: `fr/docs-scaffold`, the intake's
-`fr/intake-<id>-docs`, `fr/status`) with the PR's number and link, for the Docs tab; only this
+`fr/intake-...-docs`, `fr/status`) with the PR's number and link, for the Docs tab; only this
 project's (`isProjectDocsPr`, L-16 and W15-01: the status PR while its setting is on and it is
-this project's, the intake branch named for the project, a status or scaffold PR whose hidden
+this project's, an intake PR whose hidden mark names the project or, an earlier version's, on
+the branch named by its whole id (a short intake branch without the mark is nobody's), a status
+or scaffold PR whose hidden
 mark names it, a scaffold PR whose body ends "Forerunner project <id>." (before wave 15) or that
 the project's scaffold wrote onto, `summary_cache.docs.pr_url`; an unmarked one only while this
 is the one project of the install linked to the repository, `soleLinked`), the
@@ -6618,7 +6635,8 @@ normalisation. Rows are `source` and `source_candidate` (`packages/state`, migra
   credential problem); the next scan clears it.
 - **Existing install.** A candidate is marked `existing_install` with `install_marker`
   `.forerunner/project.json` when that file exists at the root (through `getFile` on the
-  default branch for a repository, the file system for a folder), or `install_record` when
+  default branch for a repository, the scan's `SourceFs` for a folder: its `readText` reads the
+  marker, through the same reader as the listing, L4-github-105), or `install_record` when
   the folder is the checkout named by this install's `install.json`
   (`readInstallRecord(dirs)`). The G.5 docs scaffold writes the marker beside the doc set
   (`sources/marker.ts`: `{ schema: 1, project, name }`, `renderInstallMarker`,
@@ -7777,7 +7795,10 @@ no store, git host or file system, so the UI's fake daemon imports it).
   above it, words). `projectsUsing(link, except)` lists the non-archived projects that use a link
   (a joined project as its keeper, `settings.joined_from`, which d1109-onerepo-join writes);
   `usersOf(repo)` the ids of any status; `keeperOf(id)`; `knows(id)` (a row, a joined id, a
-  taken-over id).
+  taken-over id). A removed project (`isRemovedProject`: the Undo of its creation) uses nothing,
+  so its `took_over` and `joined_from` make no id known (L4-github-101, run L4: after the Undo of
+  a project made with Take it over, New project on that repository got no offer and took nothing
+  over); its own id stays a row, so a marker naming it still frees the repository (`removed`).
 - **The check** (`RepositoryUse.check(repos, {takeOver, together, withBrief, except})`), run
   before anything is written by `createProjectRecord` (`POST /projects`, Sources' accept, the
   chat's port), by `project.create`'s plan and run (the commands' `repositoryUse` port,
@@ -7786,7 +7807,8 @@ no store, git host or file system, so the UI's fake daemon imports it).
   This computer first: a project here that uses the link is `repository_in_use` with its name.
   Then the repository (`readRepository`, the person's token on the configured host): the marker
   on the default branch, the marks of up to 100 pull requests in every state newest first
-  (`projectIdsNamedBy`: the hidden mark, `fr/intake-<id>-docs`, the visible L-16 line), and the
+  (`projectIdsNamedBy`: the hidden mark, an earlier version's `fr/intake-<whole id>-docs`, the
+  visible L-16 line), and the
   token's login. `verdictOf` gives `free`, `here`, `removed` (the person's own removed project:
   taken over with `removed: true`), `removed_together` (Work together brings that row back) or
   `elsewhere` (`elsewhereOf`: `lastActive`, `otherAccount` within `ACTIVE_ELSEWHERE_DAYS` = 14
@@ -7798,19 +7820,52 @@ no store, git host or file system, so the UI's fake daemon imports it).
   `untrusted` mark stripped); the sources routes the same. GitHub that cannot be read fails
   open at creation only; Work together answers 'GitHub did not answer, so the project cannot be
   checked. Try again.'
+- **The offer's lines** (L4-github-109): `togetherLine` and `takeOverLine` keep within
+  `CONSEQUENCE_LINE_MAX` (100): the name whole, else cut at a word (`withNameFitted`; Take it over
+  then reads 'GitHub then names this project; choose it only if nobody uses "..." now.');
+  `otherHostSentence(host, configuredWebHost(hosts))` names the install's own host.
 - **The marker's name** (`markerNameOf`): cut at 60 characters, control characters removed,
   `scanForInjection` flagged or `"<>\`` inside: null ("another Forerunner project").
 - **Creating** (`daemon/create-project.ts`): Take it over writes `settings.took_over`
   `{projects, name, at, removed?}`; Work together uses the repository's id as the row's id, the
   marker's name unless one here has it, `settings.together {name, at, activeOn, login}`, and
   `reviveTogether` brings back a removed together row (its `removed_name` dropped); its scaffold
-  only refreshes this computer's copy.
+  only refreshes this computer's copy. `at` is the daemon's clock (`CreateProjectDeps.clock`,
+  L4-github-105), at the press and at a revive, never the computer's wall clock.
 - **Docs and status** (`loop/docs.ts`): `mark()` passes `replace: tookOverOf(project).projects`
   to `writeInstallMarker` (`replaced` then, and the scaffold's pull request body gets
-  `tookOverLine`); the intake's doc set the same (`session/intake.ts`). A together project:
+  `tookOverLine`); the intake's doc set the same (`session/intake.ts`). The scaffold's branch
+  (L4-github-102, D-L4-24, ADR 0117 amended 2026-11-23): `scaffoldBranchFor` takes the first of
+  `scaffoldBranchesOf(project)` (`fr/docs-scaffold`, `fr/docs-scaffold-<name slug>`, that with
+  8 characters of the id) that holds this project's open scaffold pull request, is not on GitHub,
+  or is this project's own (its marker names the project); `fr/docs-scaffold` with another
+  project's open pull request stays `foreign` (W15-01, nothing written); null means no branch.
+  `checkout(project, target, pick, {ours, fresh: (open) => !open})` starts from the default branch
+  whenever no pull request of this project is open, and the push replaces a branch already on
+  GitHub with `--force-with-lease` (only the project's own; `GitOps.push` refuses the default
+  branch). `rebuildForTakeOver` (C4L-2): with this project's own scaffold pull request open and
+  its marker one the project took over, the copy goes to the default branch with the files the
+  branch added (its marker left out), the marker is replaced and the branch force-pushed with a
+  lease; the pull request gets 'Rebuilt on main for project <name>: …' with `tookOverLine`. The
+  copy is settled back on the default branch also when a step throws (before, a refused push left
+  it on the scaffold branch, so `copyMarker` read this project's own marker). `isScaffoldBranch`
+  reads both names (`isDocsBranch`, `isProjectDocsPr`, the take-over Undo's `DOCS_BRANCH`). The
+  intake's branch (`intakeBranchFor`: free, or this project's by its pull request's mark or its
+  marker file, else the whole id's form) starts from the default branch and, when GitHub kept it
+  from an earlier, closed pull request, is pushed with a lease (before: refused as not a
+  fast-forward). `docsPullRequestNamesProject(outcome)` (a pull
+  request and no other project's marker) is what `repositoryTakeOver.writeMarker` answers
+  `failed` on; `scaffoldLeftNoMarker(project)` reads the same from `summary_cache.docs` for the
+  Overview. A together project:
   `isProjectDocsPr` and `isProjectStatusPr` are false, `scaffoldProject` records
   `{together: true}` and writes nothing, `writeSessionStatus` keeps the status in the app, and
-  `statusDocRoot` reads it there. `ownsUnmarkedDocs(store, project, repo, copyMarker)` is
+  `statusDocRoot` reads it there; Settings lists no Status pull request row for it
+  (`settings-view.ts`, L4-github-103) and `settings.set` refuses turning it on in one sentence
+  (`togetherStatusPullRequestSentence`, commands.md). No line puts a possessive after a quoted
+  name (L4-github-108): `tookOverLine` reads 'it is now the project "Kite flyers".',
+  `heldStatusNote` 'the status pull request of "A"', and the take-out's refusals 'the work of
+  "X"' / 'The project of "X"'; the writing-rules sweep in `writing-rules.test.ts` finds any new
+  one. `ownsUnmarkedDocs(store, project, repo, copyMarker)` is
   W15-01's "the only project linked" through the index (fails closed; a together project is
   never the sole user; the copy's marker must name no other project); `ProjectDocs.copyMarker`
   reads the copy's marker as a file. `statusInApp` records the holder beside the kept status
@@ -7827,7 +7882,10 @@ no store, git host or file system, so the UI's fake daemon imports it).
 - **The Overview's line** (`RepositoryUse.overviewOf`, `ProjectCard.repositoryElsewhere` through
   `ProjectCardFacts.repositoryElsewhere`): `together` for a together project; `elsewhere` when
   this computer's copy's marker (`deps.copyMarker`) names an id that is not this project's, not
-  taken over by it, not a row here and not known; the 14-day rule from a read reused for five
+  taken over by it, not a row here and not known; also `elsewhere`, with no button, when the
+  project took that id over but its last scaffold left no docs pull request that names it
+  (`scaffoldLeftNoMarker`): the text is `tookOverNoPullRequestSentence` (L4-github-102), and the
+  Docs tab shows the same line above its count; the 14-day rule from a read reused for five
   minutes (`OVERVIEW_READ_MS`) and never waited on longer than four seconds
   (`OVERVIEW_WAIT_MS`); `alsoElsewhereSentence`.
 - **Take it over on an existing project** (`repo.take_over`, commands.md): the

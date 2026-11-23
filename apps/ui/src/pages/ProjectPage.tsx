@@ -265,7 +265,7 @@ export function ProjectPage() {
           />
         ) : null}
         {tab === "files" ? <FilesTab projectId={id} repository={view?.repository ?? null} /> : null}
-        {tab === "docs" ? <DocsTab projectId={id} /> : null}
+        {tab === "docs" ? <DocsTab projectId={id} project={view} /> : null}
         {tab === "reviews" ? <ReviewsTab projectId={id} /> : null}
         {tab === "costs" ? <CostsTab projectId={id} /> : null}
         {tab === "data" ? <DataTab projectId={id} /> : null}

@@ -125,7 +125,12 @@ import {
 import { expireOrphanedCards, syncAnsweredCards } from "../loop/answered-cards.ts";
 import { CommandLoop, sessionCapFromSettings, sessionCommandPorts } from "../loop/commands.ts";
 import { CriticLoop } from "../loop/critic.ts";
-import { ProjectDocs, parseRepoRef, projectWorkspaceDir } from "../loop/docs.ts";
+import {
+  docsPullRequestNamesProject,
+  ProjectDocs,
+  parseRepoRef,
+  projectWorkspaceDir,
+} from "../loop/docs.ts";
 import { keptWorkChecker } from "../loop/kept-work-check.ts";
 import {
   isMemoryConsolidationRequest,
@@ -5074,6 +5079,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         writeMarker: async (projectId) => {
           try {
             const out = await docs.scaffoldProject(await store.project.mustGet(projectId));
+            // L4-github-102: the take-over landed only when a docs pull request of this project
+            // carries its marker; none opened (another project's open scaffold pull request, no
+            // branch of its own) or the marker left as another's is said as not opened.
+            if (!docsPullRequestNamesProject(out))
+              return { prUrl: out.prUrl ?? null, failed: true };
             return { prUrl: out.prUrl ?? null };
           } catch {
             // C2-left-11: said in the take-over's sentence, not swallowed (the scaffold records
@@ -6078,6 +6088,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const p = await createProjectRecord(
         {
           store,
+          clock,
           human: { id: human.id },
           agent: { id: agent.id },
           events,

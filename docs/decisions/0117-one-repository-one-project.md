@@ -80,7 +80,8 @@ the app with a note that blamed the setting.
    take-over records `settings.took_over` {projects, name, at}; the project's next docs pull
    request (the scaffold's or the intake's set) replaces exactly that marker
    (`writeInstallMarker(..., {replace})`, status `replaced`) and its body says so in one line
-   ('This repository was the Forerunner project "Kite club"; it is now "Kites"'s.'); any other
+   ('This repository was the Forerunner project "Kite club"; it is now the project "Kites".',
+   worded so since 2026-11-23, L4-github-108); any other
    project's marker is never overwritten. A marker naming the person's own removed project frees
    the repository the same way (`removed: true`). Nothing of the other project's on GitHub is
    pushed to, commented on, closed or listed.
@@ -112,7 +113,8 @@ the app with a note that blamed the setting.
     project's only when the index says it is the repository's only user, a together project is
     never its sole user, and this computer's copy's marker names no other project
     (`ownsUnmarkedDocs`, fails closed). The Docs row of a status kept in the app says why:
-    'Kept in the app while "A"'s status pull request is open on GitHub.' (unmarked: '... another
+    'Kept in the app while the status pull request of "A" is open on GitHub.' (worded so since
+    2026-11-23, L4-github-108; unmarked: '... another
     status pull request ...; close it there to have this one's there.').
 11. **Repository text is data**: the marker and pull request bodies are parsed strictly (schema
     1, a URI-encoded mark), a marker's name is cut at 60 characters, control characters removed,
@@ -272,3 +274,71 @@ expired"). Every path now refuses with the joined sentence ('"Kite club" joined 
 work runs there.'), 409 `conflict` with `details.cause` `project_joined` at the routes, and
 writes nothing: the routes check the project first, the executor checks the stored card again
 before it performs, and a card armed again after a restart is refused in the same words.
+
+## Amendment 2026-11-23: said truly on GitHub and in the app (l4-github-link, run L4)
+
+Live check 4 (2026-11-17, real GitHub) and run C's leftovers. The owner's words this builds:
+D1, "There should not be 2 projects in one repo. ... Make it such that multiple projects are not
+done on one repo, in an intelligent way."; D9, "if 2 people are working on the same project they
+should be able to work seamlessly in the same git."
+
+1. **A removed project's take-over no longer counts** (L4-github-101). Point 2 reads: a removed
+   project uses nothing, so neither its `took_over` nor its `joined_from` make an id known
+   (`RepositoryIndex.knows`). Before, after the Undo of a project made with Take it over, New
+   project on that repository was made with no offer and took nothing over while the
+   repository still named "Kite club", and from then on the 14-day rule was skipped and the
+   Overview showed no line. A joined project still counts through its keeper, and a marker
+   naming the person's own removed project still frees the repository (run C decision 14).
+2. **The scaffold's branch starts from the default branch and is never another's**
+   (L4-github-102, D-L4-24). Live, Take it over on a repository whose old `fr/docs-scaffold` (a
+   closed pull request's branch, kept by GitHub) carried a third project's marker started the
+   copy from that branch, found every doc present, kept that marker and opened nothing, and no
+   screen said so. With no open scaffold pull request of this project the scaffold now starts
+   from the default branch, as `fr/status` does. Forerunner never writes over a branch it did
+   not write for this project: when `fr/docs-scaffold` on GitHub is not this project's own
+   (another project's marker, or none), the docs pull request opens on
+   `fr/docs-scaffold-<project name>` (then that with 8 characters of the id) without force and
+   the old branch and its closed pull request stay as they are; a force-push, with a lease on the
+   head just fetched and never on the default branch, replaces only this project's own scaffold
+   or intake branch. Another project's open pull request is never touched (W15-01): the scaffold
+   then writes nothing. A take-over while this project's own scaffold pull request is open
+   rebuilds that branch on the default branch with the files it added before the replaced marker
+   is written, and comments the take-over line on it (C4L-2).
+3. **A take-over that did not land says so** (L4-github-102, design section 5 rule 9). When no
+   docs pull request that names the project opened (GitHub refused the push, another project's
+   scaffold pull request is open, or the marker stayed another's), `repo.take_over` answers
+   'Took over o/kite from "Kite club" here, but the docs pull request that names this project
+   could not be opened, so GitHub still names "Kite club".', and the Overview (and the Docs tab
+   above its count) shows the same sentence, also for a project made with Take it over, until
+   that pull request is on GitHub. The point-7 Consequence "a take-over after this project's own
+   `fr/docs-scaffold` pull request was opened still leaves that pull request without the
+   take-over line" no longer holds.
+4. **A together project's Settings never promise a status pull request** (L4-github-103, D9).
+   Its status always stays in the app (point 6), but Settings offered the Status pull request
+   switch and its yes promised a pull request that never opened (live check 4). Settings now
+   shows no such row for it, and `settings.set status_pull_request` to on is refused in one
+   sentence at the command (Settings, chat and voice alike, nothing written): 'You work on
+   "Kite club" together with another Forerunner, so its status stays in the app (Docs, Status);
+   no status pull request is opened.' Turning it off still acts.
+5. **The take-over and host lines read well** (L4-github-108, L4-github-109; design section 5
+   rules 1 and 6): no possessive after a quoted name ('it is now the project "Kite flyers".',
+   'Kept in the app while the status pull request of "A" is open on GitHub.'); the lines under
+   Work together and Take it over stay within 100 characters, the marker's name whole or cut at
+   a word (a long one under Take it over reads 'GitHub then names this project; choose it only if
+   nobody uses "The neighbourhood kite flying…" now.'); and a link on another host names the host
+   this install is set up for (an Enterprise install's own, `configuredWebHost`), never
+   github.com alone.
+6. **The plan's docs branch reads like a task's** (L4-github-111, design section 5 rule 3). A
+   first plan's docs pull request is on `fr/intake-<8 characters of the id's random end>-<the
+   project's name>-docs` (R-branch's form), and its body ends with the hidden mark that names the
+   project, as the scaffold's and the status pull request's do; detection reads the mark, and a
+   pull request an earlier version opened on `fr/intake-<whole id>-docs` is still its project's.
+   That whole-id branch is also used when GitHub has the short one and it is not provably this
+   project's, so a force-push still goes only over this project's own branch. The Consequence
+   "The intake's docs branch is still named by the project id" no longer holds. The comment on
+   an open intake pull request is gone (L4-github-107): only a first plan writes the doc set, and
+   a first plan never finds its own intake pull request open.
+7. **Work together's stamp is the daemon's clock** (L4-github-105): `settings.together.at` is
+   written with the daemon's `Clock`, at the press and when a removed together project is
+   brought back, as every other stamp; a folder source's marker is read through the scan's own
+   reader.

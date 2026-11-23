@@ -136,12 +136,52 @@ export const STATUS_IN_APP_DIR = "app-status";
  */
 export const STATUS_HELD_MARK = ".held-by-another-status-pr";
 
+/**
+ * Whether `branch` is one of the scaffold's branches: `fr/docs-scaffold`, or the project's own
+ * `fr/docs-scaffold-<project name>` when that one is not the project's (D-L4-24).
+ */
+export function isScaffoldBranch(branch: string): boolean {
+  return branch === DOCS_SCAFFOLD_BRANCH || /^fr\/docs-scaffold-[\w-]+$/.test(branch);
+}
+
+/**
+ * The branches the scaffold may write on, in order (L4-github-102, D-L4-24): `fr/docs-scaffold`,
+ * then `fr/docs-scaffold-<project name>`, then that with 8 characters of the project's id. A
+ * branch is taken when it is free on GitHub, holds this project's open scaffold pull request, or
+ * is this project's own (its marker names the project); Forerunner never writes over a branch it
+ * did not write for this project (a closed pull request's branch is kept by GitHub, and it can
+ * be another project's or another person's).
+ */
+export function scaffoldBranchesOf(project: Pick<ProjectRow, "id" | "name">): string[] {
+  const slug =
+    safeSegment(project.name.toLowerCase(), "project")
+      .replace(/\.+/g, "-")
+      .slice(0, 40)
+      .replace(/[-_]+$/, "") || "project";
+  const hex = project.id.toLowerCase().replace(/[^0-9a-f]/g, "");
+  const own = hex.length >= 8 ? hex.slice(-8) : safeSegment(project.id, "project").slice(0, 8);
+  return [
+    DOCS_SCAFFOLD_BRANCH,
+    `${DOCS_SCAFFOLD_BRANCH}-${slug}`,
+    `${DOCS_SCAFFOLD_BRANCH}-${slug}-${own}`,
+  ];
+}
+
+/**
+ * Whether a scaffold run left a docs pull request that names the project (L4-github-102): one
+ * is open (or was commented on) and the marker on it is not another project's. A take-over is
+ * said as landed only then (`repo.take_over`'s sentence, the Overview's line).
+ */
+export function docsPullRequestNamesProject(
+  out: Pick<DocsScaffoldOutcome, "prUrl" | "marker">,
+): boolean {
+  return !!out.prUrl && out.marker?.status !== "other_project";
+}
+
 /** The branches Forerunner keeps the project's docs on (scaffold, the intake's set, status). */
 export function isDocsBranch(branch: string): boolean {
   return (
-    branch === DOCS_SCAFFOLD_BRANCH ||
-    branch === STATUS_BRANCH ||
-    /^fr\/intake-[^/]+-docs$/.test(branch)
+    isScaffoldBranch(branch) || branch === STATUS_BRANCH || /^fr\/intake-[^/]+-docs$/.test(branch)
   );
 }
 
@@ -189,8 +229,15 @@ export function isProjectDocsPr(
   if (ref === STATUS_BRANCH)
     return statusPullRequestOn(project) && isProjectStatusPr(project, pr, opts);
   const intake = /^fr\/intake-(.+)-docs$/.exec(ref);
-  if (intake) return ids.some((id) => intake[1] === safeSegment(id, "project"));
-  if (ref === DOCS_SCAFFOLD_BRANCH) {
+  if (intake) {
+    // L4-github-111: the intake's pull request names its project in its hidden mark (its branch
+    // is `fr/intake-<8 characters>-<name>-docs`); one an earlier version opened is on a branch
+    // named by the whole id. A short branch without the mark is nobody's (fails closed).
+    const marked = readForerunnerMarker(pr.body)?.project?.toLowerCase();
+    if (marked) return ids.some((id) => id.toLowerCase() === marked);
+    return ids.some((id) => intake[1] === safeSegment(id, "project"));
+  }
+  if (isScaffoldBranch(ref)) {
     // The PR the project's scaffold wrote its docs onto (recorded at creation) is its own.
     const recorded = (project.summary_cache?.docs as { pr_url?: unknown } | undefined)?.pr_url;
     if (pr.htmlUrl && recorded === pr.htmlUrl) return true;
@@ -864,18 +911,96 @@ export class ProjectDocs implements ProjectDocsPort {
     return outcome;
   }
 
-  /** The scaffold of a repository project, in its copy (under the copy's lock). */
+  /**
+   * The scaffold of a repository project, in its copy (under the copy's lock). L4-github-102
+   * (D-L4-24): the branch is one the project owns (`scaffoldBranchFor`); without an open
+   * scaffold pull request of this project it starts from the default branch, and a branch of
+   * this project's that is on GitHub already (a merged or closed pull request's) is replaced
+   * with a lease, as `fr/status` is. A take-over while this project's own scaffold pull request
+   * is open rebuilds that branch on the default branch (C4L-2). The copy goes back to the default
+   * branch afterwards, also when a step failed.
+   */
   private async scaffoldInCopy(
     project: ProjectRow,
     target: ProjectRepoTarget,
   ): Promise<DocsScaffoldOutcome> {
-    const info = { name: project.name, goal: project.goal, repos: project.repos };
-    const branch = DOCS_SCAFFOLD_BRANCH;
     const soleLinked = await this.ownsUnmarked(project, target.repo);
-    const { git, dir, existingPr, first, foreign } = await this.checkout(project, target, branch, {
-      // W15-01: another project's open scaffold PR is never written to or commented on.
-      ours: (pr) => isProjectDocsPr(project, pr, { soleLinked }),
-    });
+    // W15-01: another project's open scaffold PR is never written to or commented on.
+    const ours = (pr: PullRequestInfo) => isProjectDocsPr(project, pr, { soleLinked });
+    const out = await this.checkout(
+      project,
+      target,
+      (git) => this.scaffoldBranchFor(project, target, git, ours),
+      { ours, fresh: async (open) => !open },
+    );
+    const { git, dir } = out;
+    let outcome: DocsScaffoldOutcome;
+    try {
+      outcome = await this.scaffoldOnBranch(project, target, out);
+    } catch (e) {
+      await this.settle(git, dir, target).catch((err: unknown) =>
+        this.logger.warn("this computer's copy was not put back on the default branch", {
+          projectId: project.id,
+          error: errorMessage(err),
+        }),
+      );
+      throw e;
+    }
+    await this.settle(git, dir, target);
+    return outcome;
+  }
+
+  /**
+   * The branch the scaffold writes on (D-L4-24), or null when every candidate is someone else's:
+   * the first of `scaffoldBranchesOf` that holds this project's open scaffold pull request, is
+   * not on GitHub, or is this project's own (its marker names the project). `fr/docs-scaffold`
+   * with another project's open pull request is returned as it is: `checkout` names it
+   * `foreign` and nothing is written (W15-01).
+   */
+  private async scaffoldBranchFor(
+    project: ProjectRow,
+    target: ProjectRepoTarget,
+    git: GitOps,
+    ours: (pr: PullRequestInfo) => boolean,
+  ): Promise<string | null> {
+    const ids = projectIdsOf(project).map((id) => id.toLowerCase());
+    for (const branch of scaffoldBranchesOf(project)) {
+      const open = await this.deps.host.listPullRequests(target.repo, {
+        state: "open",
+        head: branch,
+      });
+      if (open.length) {
+        if (branch === DOCS_SCAFFOLD_BRANCH || open.every(ours)) return branch;
+        continue;
+      }
+      if (!(await git.hasRef(`origin/${branch}`))) return branch;
+      const marker = parseInstallMarker(
+        (await git.fileAt(`origin/${branch}`, INSTALL_MARKER_FILE)) ?? "",
+      );
+      if (marker && ids.includes(marker.project.toLowerCase())) return branch;
+      this.logger.info("a scaffold branch on the repository is not this project's: left as it is", {
+        projectId: project.id,
+        branch,
+      });
+    }
+    return null;
+  }
+
+  /** The scaffold's write on the branch `checkout` gave (the copy's lock is held). */
+  private async scaffoldOnBranch(
+    project: ProjectRow,
+    target: ProjectRepoTarget,
+    out: Awaited<ReturnType<ProjectDocs["checkout"]>>,
+  ): Promise<DocsScaffoldOutcome> {
+    const info = { name: project.name, goal: project.goal, repos: project.repos };
+    const { git, dir, existingPr, first, foreign, branch } = out;
+    if (!branch) {
+      this.logger.info(
+        "standard docs not scaffolded: every scaffold branch on the repository is another's",
+        { projectId: project.id },
+      );
+      return { location: "repo", prUrl: null, created: [], existing: [] };
+    }
     if (foreign) {
       this.logger.info(
         "standard docs not scaffolded: another project's docs pull request is open",
@@ -885,12 +1010,10 @@ export class ProjectDocs implements ProjectDocsPort {
           prUrl: foreign.htmlUrl,
         },
       );
-      await this.settle(git, dir, target);
       return { location: "repo", branch, prUrl: null, created: [], existing: [] };
     }
     if (first) {
       // An empty repository: the set went in as its first commit on the default branch.
-      await this.settle(git, dir, target);
       return {
         location: "repo",
         branch: target.base,
@@ -901,6 +1024,13 @@ export class ProjectDocs implements ProjectDocsPort {
         firstCommit: true,
       };
     }
+    const remote = await git.hasRef(`origin/${branch}`);
+    // C4L-2: a take-over while this project's own scaffold pull request is open. The branch is
+    // rebuilt on the default branch with the files it added (a person's edits on it included),
+    // so the pull request's only change to the marker is the replaced one, and it merges.
+    const rebuilt = existingPr
+      ? await this.rebuildForTakeOver(project, target, git, dir, branch)
+      : false;
     const res = await scaffoldDocs(dir, info);
     const marker = await this.mark(project, dir);
     const written = [
@@ -918,12 +1048,20 @@ export class ProjectDocs implements ProjectDocsPort {
             ? `\n\n${tookOverLine(marker.was.name, project.name)}`
             : "";
       await git.commitAll(`docs: scaffold the standard doc set\n\n${list}`);
-      await git.push(branch, { defaultBranch: target.base });
+      // D-L4-24: a branch this project owns that GitHub already has (a merged or closed pull
+      // request's, or the open one rebuilt) is replaced with a lease on the head just fetched;
+      // never the default branch (GitOps refuses), never a branch of another's.
+      await git.push(branch, {
+        force: remote && (rebuilt || !existingPr),
+        defaultBranch: target.base,
+      });
       if (existingPr) {
         await this.deps.host.commentOnPullRequest(
           target.repo,
           existingPr.number,
-          `Added the missing standard docs for project ${project.name}:\n${list}${markerNote}`,
+          rebuilt
+            ? `Rebuilt on ${target.base} for project ${project.name}:\n${list}${markerNote}`
+            : `Added the missing standard docs for project ${project.name}:\n${list}${markerNote}`,
         );
       } else {
         const pr = await this.deps.host.createPullRequest(target.repo, {
@@ -936,7 +1074,6 @@ export class ProjectDocs implements ProjectDocsPort {
         prUrl = pr.htmlUrl;
       }
     }
-    await this.settle(git, dir, target);
     return {
       location: "repo",
       branch,
@@ -945,6 +1082,47 @@ export class ProjectDocs implements ProjectDocsPort {
       existing: res.existing,
       marker,
     };
+  }
+
+  /**
+   * C4L-2 (ADR 0117 amended 2026-11-23): when this project took the repository over and its own
+   * open scaffold pull request still carries the marker it took over, the copy is put on the
+   * default branch with the files that branch added (the marker left as the default branch has
+   * it), so `mark()` replaces exactly that marker and the push replaces the branch with a lease.
+   * False when there is nothing to rebuild.
+   */
+  private async rebuildForTakeOver(
+    project: ProjectRow,
+    target: ProjectRepoTarget,
+    git: GitOps,
+    dir: string,
+    branch: string,
+  ): Promise<boolean> {
+    const took = (tookOverOf(project)?.projects ?? []).map((id) => id.toLowerCase());
+    if (!took.length) return false;
+    const onBranch = parseInstallMarker(
+      (await git.fileAt(`origin/${branch}`, INSTALL_MARKER_FILE)) ?? "",
+    );
+    if (!onBranch || !took.includes(onBranch.project.toLowerCase())) return false;
+    const base = `origin/${target.base}`;
+    const added = new Map<string, string>();
+    for (const file of await git.changedFiles(base, `origin/${branch}`)) {
+      if (file === INSTALL_MARKER_FILE) continue;
+      const text = await git.fileAt(`origin/${branch}`, file);
+      if (text !== null) added.set(file, text);
+    }
+    await this.switchCopy(git, dir, branch, base);
+    for (const [file, text] of added) {
+      const abs = join(dir, fromPosix(file));
+      mkdirSync(join(abs, ".."), { recursive: true });
+      writeFileSync(abs, text, "utf8");
+    }
+    this.logger.info("scaffold branch rebuilt on the default branch for a take-over", {
+      projectId: project.id,
+      branch,
+      files: added.size,
+    });
+    return true;
   }
 
   async writeSessionStatus(input: {
@@ -1193,11 +1371,13 @@ export class ProjectDocs implements ProjectDocsPort {
    * `ours` (W15-01): an open pull request on the branch that is not this project's makes the
    * branch another project's for now: the copy is not switched to it and `foreign` names it, so
    * the caller writes nothing there (a push to the branch would land in that pull request).
+   * `branch` may be a choice made once the copy is fetched (the scaffold's, D-L4-24); null
+   * there means no branch may be written, and the copy stays where it is.
    */
   private async checkout(
     project: ProjectRow,
     target: ProjectRepoTarget,
-    branch: string,
+    pick: string | ((git: GitOps) => Promise<string | null>),
     opts: {
       fresh?: (openPr: boolean) => Promise<boolean>;
       ours?: (pr: PullRequestInfo) => boolean;
@@ -1233,6 +1413,16 @@ export class ProjectDocs implements ProjectDocsPort {
         return `docs: start the repository with the standard doc set\n\nThe repository was empty; Forerunner made this first commit so the project's work has a branch to start from:\n${res.created.map((p) => `- ${p}`).join("\n")}`;
       },
     });
+    const branch = typeof pick === "string" ? pick : await pick(git);
+    if (!branch)
+      return {
+        git,
+        dir,
+        branch: null,
+        existingPr: null,
+        foreign: null as PullRequestInfo | null,
+        first: first as { created: string[]; marker: InstallMarkerWrite | null } | null,
+      };
     const open = await this.deps.host.listPullRequests(target.repo, {
       state: "open",
       head: branch,
@@ -1242,6 +1432,7 @@ export class ProjectDocs implements ProjectDocsPort {
       return {
         git,
         dir,
+        branch,
         existingPr: null,
         foreign,
         first: first as { created: string[]; marker: InstallMarkerWrite | null } | null,
@@ -1256,6 +1447,7 @@ export class ProjectDocs implements ProjectDocsPort {
     return {
       git,
       dir,
+      branch: branch as string | null,
       existingPr,
       foreign: null as PullRequestInfo | null,
       first: first as { created: string[]; marker: InstallMarkerWrite | null } | null,

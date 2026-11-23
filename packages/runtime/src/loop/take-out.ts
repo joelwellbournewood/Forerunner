@@ -178,7 +178,7 @@ export class TaskTakeOut {
     }
     if (!pr.merged)
       return refused(
-        `#${ref.number} is not merged, so ${quoted(task.title)}'s work is not in main: close #${ref.number} on GitHub if you do not want it.`,
+        `#${ref.number} is not merged, so the work of ${quoted(task.title)} is not in main: close #${ref.number} on GitHub if you do not want it.`,
       );
     const mergeSha =
       (record?.state === "merged" && record.merge_sha) || pr.mergeCommitSha || record?.merge_sha;
@@ -204,7 +204,7 @@ export class TaskTakeOut {
     }
     switch (done.kind) {
       case "no_repository":
-        return refused(`${quoted(task.title)}'s project has no repository.`);
+        return refused(`The project of ${quoted(task.title)} has no repository.`);
       case "not_in_main":
         return refused(
           `#${ref.number}'s merge is not in main any more, so there is nothing to take out.`,
