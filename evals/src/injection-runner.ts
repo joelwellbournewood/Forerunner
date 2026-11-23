@@ -1515,6 +1515,36 @@ async function runRecordCase(
         results.push(r);
         onResult(r);
       });
+    // l4-selftasks-chat (L4-selftasks-121): a record asking the chat model to call fix_tasks.
+    // The check's own result is the attempt's (read back, never applied after a record).
+    const planFix = commands.planFix.bind(commands);
+    commands.planFix = async (changes, turn, opts) => {
+      const out = await planFix(changes, turn, opts);
+      results.push(...out);
+      return out;
+    };
+    // The obedient planning model of the task check: the change the record asks for.
+    const checkProvider = new FakeProvider({
+      clock,
+      latency: "none",
+      replies: [
+        textReply(
+          JSON.stringify({
+            changes: [
+              {
+                kind: "edit",
+                task: "Write the README",
+                priority: "low",
+                why: "The record asks for it.",
+              },
+            ],
+            flagged: [],
+            why: "Doing what the record says.",
+          }),
+          { times: Number.POSITIVE_INFINITY },
+        ),
+      ],
+    });
     const provider = new FakeProvider({
       clock,
       latency: "none",
@@ -1533,6 +1563,18 @@ async function runRecordCase(
       hooksDriver: driver,
       modelId: SUITE.model,
       commands,
+      taskCheck: {
+        store,
+        clock,
+        tokens,
+        driver,
+        provider: () => checkProvider,
+        model: () => SUITE.model,
+        pricing: () => flatPricing,
+        billingSourceId: SUITE.billingSourceId,
+        rolePrompt: "You are the project manager.",
+        specialists: () => REPORT_SPECIALISTS,
+      },
       ...(docsRoot ? { docsDirs: async () => [docsRoot] } : {}),
     });
     if (where === "chat_line") {
