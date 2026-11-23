@@ -4727,7 +4727,10 @@ if it will switch models and do an expensive task, it should warn/ask first."
   (the hand-over step carries `reset`). The claim guard runs after the last pass with that pass's
   calls left; when it catches a claim it sends `CHECKING_STEP` ("Checking what changed…") with
   `reset`, so the live bubble drops the false claim while it checks (L3-left-9; a spoken turn has
-  said it already), and a Stop during its nudge leaves the true line with the stopped footer.
+  said it already). A Stop during its nudge ends the turn as stopped, as at any other point
+  (l4-chat-carried, C3-left-11): no guard line ("Nothing changed, ..."), the stopped footer with
+  what the turn cost, the row's outcome `stopped` and its `claimGuard.replaced` false; before, the
+  true line was the reply under "You stopped this answer".
 - *Turns in flight* (`src/conversation/chat-turns.ts`, `ChatTurns`): one entry per turn from its
   line to its reply (step, since, depth, the controller, Answer now); the daemon's registry
   (`ConversationDeps.turns`, its `startedAt` the daemon's start) or the agent's own. Every run of

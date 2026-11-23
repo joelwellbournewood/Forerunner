@@ -315,3 +315,10 @@ that rested on a hit line had no From line.
   its date only when the hit was strong and no other hit of this turn has that day. A name found
   only inside another source's title does not count. There are at most three sources, and none
   appears twice.
+
+## Amendment 2026-11-23 (l4-chat-carried, run L4): a Stop during the claim guard's nudge
+
+A Stop pressed while the claim guard's nudge runs ends the turn as stopped, as a Stop at any other
+point of the turn does: "You stopped this answer: CHF … spent." with what the turn cost, and never
+the guard's "Nothing changed, and nothing waits for your yes." line (C3-left-11). The claim the
+model streamed was already taken back when the nudge began; nothing changes.

@@ -64,7 +64,11 @@ const text = (c: unknown): string =>
  */
 async function setup(
   replies: ScriptedReply[] = [],
-  opts: { turnBudgetUsdMicro?: number } = {},
+  opts: {
+    turnBudgetUsdMicro?: number;
+    /** l4-chat-carried (C3-left-11): replies wait their ttftMs on the clock (a call held). */
+    latency?: "simulated";
+  } = {},
 ): Promise<World> {
   const h = harness();
   const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
@@ -108,7 +112,7 @@ async function setup(
     ).id;
   const quote = await project("Quote Page", "A page that shows a random quote");
   const notes = await project("Notes CLI", "A command line notes tool");
-  const provider = new FakeProvider({ replies, clock: h.clock, latency: "none" });
+  const provider = new FakeProvider({ replies, clock: h.clock, latency: opts.latency ?? "none" });
   const loop = () =>
     new CommandLoop({
       store,
@@ -2020,6 +2024,80 @@ describe("l4-chat-answers, run L4, fixup: clarifying questions stay free", () =>
       .filter((e) => e.type === "chat.reply")
       .at(-1)?.payload as Record<string, unknown>;
     expect(row.claimGuard).toBeUndefined();
+    await w.store.close();
+  });
+});
+
+/**
+ * l4-chat-carried, run L4 (C3-left-11; ADR 0114 dated note 2026-11-23): Stop pressed while the
+ * claim guard's nudge runs ends the turn as stopped, with its money line, like a Stop at any other
+ * point of the turn: never with the guard's "Nothing changed, ..." line, and nothing changes.
+ */
+describe("l4-chat-carried, run L4: a Stop during the claim guard's nudge (C3-left-11)", () => {
+  const ONLY = { key: "web_access", value: { mode: "only", only: ["developer.mozilla.org"] } };
+  const CLAIM =
+    "Widening research access needs your yes, so I've asked for confirmation. Once you approve, research can read any public website again.";
+  const GUARD_LINE =
+    "Nothing changed, and nothing waits for your yes. Say it again to try once more.";
+
+  it("the turn ends stopped: no guard line, the stopped line with what it cost, nothing changed, nothing waits", async () => {
+    const w = await setup(
+      [
+        toolReply("settings_set", ONLY, undefined, { ttftMs: 0, totalMs: 0 }),
+        textReply("Done.", { ttftMs: 0, totalMs: 0 }),
+        textReply(CLAIM, { ttftMs: 0, totalMs: 0 }),
+        // The nudge's call is held until the Stop.
+        textReply("Nothing is waiting.", { ttftMs: 600_000 }),
+      ],
+      { latency: "simulated" },
+    );
+    await w.chat("only read developer.mozilla.org for research");
+    const before = w.provider.calls.length;
+    let turnId = "";
+    const pending = w.agent.chat({
+      humanId: w.human,
+      agentId: w.alice,
+      projectId: w.quote,
+      projectTab: true,
+      text: "research may read any public website again",
+      source: "text",
+      onTurn: (t) => {
+        turnId = t.turnId;
+      },
+    });
+    // The nudge's call has started (at most 10 s of real time).
+    const started = Date.now();
+    while (w.provider.calls.length < before + 2 && Date.now() - started < 10_000)
+      await new Promise((r) => setTimeout(r, 5));
+    expect(w.provider.calls.length - before, "the nudge's call never started").toBe(2);
+    expect(w.agent.turnsOf().get(turnId)?.step).toBeTruthy();
+    expect(w.agent.turnsOf().stop(turnId)).toBe(true);
+    const res = await pending;
+    // Stopped, as a Stop at any other point: the stopped line with its money, no guard line.
+    expect(res.reply).not.toBe(GUARD_LINE);
+    expect(res.reply).not.toContain("Nothing changed");
+    expect(res.reply).not.toContain("I've asked");
+    expect(res.footer).toMatch(/^You stopped this answer: (?:under )?CHF \d+\.\d{2} spent\.$/);
+    const sessionId = await w.agent.conversationSessionId(w.alice, w.quote);
+    const row = (await w.store.event.list(sessionId, 0, 500))
+      .filter((e) => e.type === "chat.reply")
+      .map((e) => e.payload as Record<string, unknown>)
+      .at(-1);
+    expect(row).toMatchObject({ outcome: "stopped", stopped: true });
+    expect(row?.notice).toBeUndefined();
+    expect(row?.costUsdMicro).toBe(res.costUsdMicro);
+    expect(res.costUsdMicro).toBeGreaterThan(0);
+    // The conversation reads the same after a reload: stopped, no guard line.
+    const turns = await readTranscript(w.store, sessionId, w.quote);
+    expect(turns.at(-1)?.reply?.text ?? "").not.toContain("Nothing changed");
+    expect(turns.at(-1)?.reply?.footer).toBe(res.footer);
+    // Nothing changed and nothing waits.
+    expect(res.actions).toEqual([]);
+    expect(res.pendingConfirmation).toBeNull();
+    expect(
+      ((await w.store.project.mustGet(w.quote)).settings as Record<string, unknown>).web_access,
+    ).toEqual({ mode: "only", only: ["developer.mozilla.org"], never: [] });
+    expect(await w.store.humanRequest.open({ humanId: w.human }, { limit: 10 })).toEqual([]);
     await w.store.close();
   });
 });

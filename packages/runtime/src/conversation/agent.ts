@@ -2344,8 +2344,12 @@ export class ConversationAgent {
         nudged,
         replaced,
       });
-      // A Stop pressed during the nudge: the reply is the true line, and it says it was stopped.
+      // l4-chat-carried (C3-left-11, ADR 0114 dated note 2026-11-23): a Stop pressed during the
+      // nudge ends the turn as stopped, as a Stop at any other point does: its stopped line with
+      // what it cost, never the guard's "Nothing changed, ..." line (before, the true line was the
+      // reply under "You stopped this answer"). The claim streamed was taken back at the nudge.
       stopped = entry.stopped;
+      if (stopped) claimGuard = { ...claimGuard, replaced: false };
       if (replaced || stopped) break;
       // A new kind the answer after the nudge claims gets its own nudge while calls are left (with
       // none left, a change or ask claim is put right at once, as before).

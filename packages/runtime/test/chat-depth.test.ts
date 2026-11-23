@@ -1032,7 +1032,9 @@ describe("d1109-chat-depth fixup: the claim guard's step resets the live text", 
     expect(r.reply).toBe(TRUE_LINE);
   });
 
-  it("Stop pressed during the nudge: the reply is the true line (never the claim), and it says the person stopped it", async () => {
+  // l4-chat-carried (C3-left-11): a Stop during the nudge ends the turn stopped, as at any other
+  // point: never the claim, and never the guard's true line either (before: TRUE_LINE).
+  it("Stop pressed during the nudge: the reply is neither the claim nor the guard's line, and it says the person stopped it", async () => {
     const slow = new FakeProvider({
       replies: [textReply(CLAIM, { ttftMs: 0 }), textReply(CLAIM, { ttftMs: 600_000 })],
       latency: "simulated",
@@ -1049,7 +1051,8 @@ describe("d1109-chat-depth fixup: the claim guard's step resets the live text", 
       },
     });
     expect(slow.calls).toHaveLength(2);
-    expect(r.reply).toBe(TRUE_LINE);
+    expect(r.reply).not.toContain(CLAIM);
+    expect(r.reply).not.toBe(TRUE_LINE);
     expect(r.footer).toMatch(/^You stopped this answer: (?:under )?CHF \d+\.\d{2} spent\.$/);
     const row = await w.lastRow();
     expect(row.outcome).toBe("stopped");
