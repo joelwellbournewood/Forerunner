@@ -206,7 +206,7 @@ describe("monthly critic calibration job (H.7)", () => {
         status: "completed",
         budget_cap_usd_micro: 2_000_000,
         // Created with its plan, so the row names the reason and the agent (B.5).
-        reason: "critic calibration over 4 eval task(s)",
+        reason: "critic calibration over 4 eval tasks",
         author_agent: w.criticAgent,
         author_human: null,
       });

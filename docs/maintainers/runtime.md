@@ -1222,6 +1222,11 @@ card's chooser batch passes `on: "plan"` (server.ts `chooseFor`), and under ask 
 `startsAt` ("Starts at 15:40 (...).") in place of the wait's goes-on sentence. result.ts' cost
 line is left out for a credential wait that spent nothing.
 
+**Plurals (L4-creds-29).** The intake card's `why`, its milestone steps and its audit lines count
+with `countWords`/`tasksWords` ("2 milestones, 5 tasks, 3 docs"); the calibration run's plan
+summary says "4 eval tasks". `test/plural-words.test.ts` reads intake.ts' and calibration.ts'
+string literals for "(s)".
+
 **Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
 left the row `running`, its run `running` and its task held under a claim nobody renews; the
 one-session rule then refused every later start ("agent Alice already has an active session

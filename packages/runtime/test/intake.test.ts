@@ -296,7 +296,9 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       expect(firstLine).toContain("1. Scaffold the repository");
       expect(firstLine).not.toContain("CHF");
       expect(Object.keys(prop.docs)).toContain("docs/decisions/0001-stack.md");
-      expect(row.why).toContain("2 milestone(s)");
+      // l4-cred-screens (L4-creds-29): the plural as the number says.
+      expect(row.why).toContain("2 milestones");
+      expect(row.why).not.toContain("(s)");
       expect(row.steps.some((s) => s.startsWith("Milestone: Foundations"))).toBe(true);
 
       // Nothing is written until the human approves: no rows, no docs, no plan on the project.
@@ -1344,9 +1346,10 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect(res.summary).toMatchObject({ milestones: 1, tasks: 3 });
     const requestId = String(res.requestId);
     const row = await rt.store.humanRequest.mustGet(requestId);
-    expect(row.why).toContain("1 milestone(s)");
+    expect(row.why).toContain("1 milestone,");
+    expect(row.why).not.toContain("(s)");
     expect(row.steps.filter((s) => s.startsWith("Milestone:"))).toEqual([
-      "Milestone: Tiny (3 task(s), by 2026-04-01)",
+      "Milestone: Tiny (3 tasks, by 2026-04-01)",
     ]);
     expect(row.steps.some((s) => /small-project mode/i.test(s))).toBe(true);
     await answer(requestId, "approve");
