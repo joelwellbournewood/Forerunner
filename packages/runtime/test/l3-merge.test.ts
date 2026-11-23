@@ -189,7 +189,9 @@ describe("l4-github-merge, run L4", () => {
     const t70 = 'Write kite/ferry-notes.txt about the long ferry trip out to "Seal Bay"';
     expect(t70).toHaveLength(70);
     const shown = leftOpenCardTitle(card, t70);
-    expect(shown).toBe('"Write kite/ferry-notes.txt about the long ferry…" changed after the review');
+    expect(shown).toBe(
+      '"Write kite/ferry-notes.txt about the long ferry…" changed after the review',
+    );
     expect(balanced(shown)).toBe(true);
     // Callers without slack (a notification's title) cut as before.
     expect(balancedCut(t55, 50, cutWords, 0)).toBe(cutWords(t55, 50));

@@ -710,7 +710,9 @@ describe("l4-selftasks-check, run L4: project.join and the agent's task-list not
 describe("l4-github-merge, run L4", () => {
   it("L4-creds-28: the held hands-off start's refusal is one sentence of at most 100 characters", () => {
     const line = joinRefusedHeldStart("Kite club");
-    expect(line).toBe('A session of "Kite club" starts by itself soon: make one project after it ran.');
+    expect(line).toBe(
+      'A session of "Kite club" starts by itself soon: make one project after it ran.',
+    );
     expect(line.length).toBeLessThanOrEqual(100);
     expect(line.match(/[.!?](\s|$)/g)).toHaveLength(1);
   });

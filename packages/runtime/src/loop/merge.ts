@@ -2164,7 +2164,10 @@ export class ReviewedPrMerge implements MergePort {
     if (!ci) return null;
     const verdict = judgeChecks(ci.runs, [], ci.statuses);
     if (verdict.state !== "failed") return null;
-    return press(checksFailed(verdict, record.reviewed_head_sha, false, name), record.reviewed_head_sha);
+    return press(
+      checksFailed(verdict, record.reviewed_head_sha, false, name),
+      record.reviewed_head_sha,
+    );
   }
 
   /**

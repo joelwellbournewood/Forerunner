@@ -25938,8 +25938,7 @@ describe("l4-github-merge, run L4", () => {
     await eventually(
       async () => (await client.session(started.session?.id ?? "")).status !== "running",
       "the session to end (at least 60 s)",
-      async () =>
-        (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
+      async () => (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
       60_000,
     );
   }
@@ -26059,7 +26058,9 @@ describe("l4-github-merge, run L4", () => {
       const cardsOfC = async () =>
         (await client.inbox(me.id)).requests.filter((r) => r.taskId === c.id);
       const [movedCard] = (await cardsOfC()).filter((r) => r.status === "open");
-      expect(movedCard?.title).toBe('"Write kite/rules.txt with the rules" changed after the review');
+      expect(movedCard?.title).toBe(
+        '"Write kite/rules.txt with the rules" changed after the review',
+      );
       // The person closes C on GitHub; the next poll closes the card.
       await w.github.updatePullRequest(w.REPO, prC, { state: "closed" });
       await rt.githostWatcher?.pollOnce();
@@ -26208,7 +26209,10 @@ describe("l4-github-merge, run L4", () => {
         repos: ["alice/l4join"],
       });
       // Kite club's status pull request is open on fr/status, marked with its id.
-      const [status] = await w.github.listPullRequests(w.REPO, { state: "open", head: "fr/status" });
+      const [status] = await w.github.listPullRequests(w.REPO, {
+        state: "open",
+        head: "fr/status",
+      });
       expect(status?.body).toContain(`<!-- forerunner:pr project=${kite.id} -->`);
       // One of Kite club's pull requests is closed on GitHub without a merge; one poll.
       const closedPr = prOf((await rt.store.task.mustGet(first.id)).pr_url);

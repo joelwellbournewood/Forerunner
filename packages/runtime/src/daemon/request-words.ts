@@ -1330,13 +1330,13 @@ function mergeLeftOpenCard(
         : /^keep it$/i.test(label)
           ? `Closes this card; main keeps the change of ${prOfCard(card).replace(/^pull request /, "")}.`
           : /^leave/i.test(label)
-        ? "Closes this card; the pull request stays open on GitHub."
-        : // A rebuild's card (R-rebuildcard): the pull request is open; polish owns these words.
-          /^merge$/i.test(label)
-          ? `Merges ${prOfCard(card).replace(/^pull request /, "")} as it is now, as Merge on the Overview does.`
-          : /^redo$/i.test(label)
-            ? `The task is done again from main; ${preparedExplain(ctx)}.`
-            : null,
+            ? "Closes this card; the pull request stays open on GitHub."
+            : // A rebuild's card (R-rebuildcard): the pull request is open; polish owns these words.
+              /^merge$/i.test(label)
+              ? `Merges ${prOfCard(card).replace(/^pull request /, "")} as it is now, as Merge on the Overview does.`
+              : /^redo$/i.test(label)
+                ? `The task is done again from main; ${preparedExplain(ctx)}.`
+                : null,
     tone: i === 0 ? "primary" : "secondary",
     confirm: null,
     input: null,

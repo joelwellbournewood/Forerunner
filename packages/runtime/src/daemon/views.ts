@@ -254,8 +254,7 @@ export async function projectCard(
   // L4-github-115: a project closed into another has no folder of its own any more (Make one
   // project cleared its link): never the docs clone under Forerunner's own folders, with its id
   // in the path; its files are the kept project's ('Its files are in "Site".' on its page).
-  const folder =
-    !repository && facts?.folder && !joinedIntoOf(p) ? facts.folder(p) : null;
+  const folder = !repository && facts?.folder && !joinedIntoOf(p) ? facts.folder(p) : null;
   const working = await workingOn(store, p.id);
   // OJ-06 (d1109-onerepo-join): a project closed into another says where its work went, and the
   // kept one which projects' work it includes, both read from the rows now.
@@ -1523,10 +1522,7 @@ async function costFacts(
     if (r) runs.set(id, r);
   }
   const taskIds = [
-    ...new Set([
-      ...entries.map((e) => e.task_id).filter((x): x is string => !!x),
-      ...ownTasks,
-    ]),
+    ...new Set([...entries.map((e) => e.task_id).filter((x): x is string => !!x), ...ownTasks]),
   ];
   const tasks = new Map<string, TaskRow>();
   for (const id of taskIds) {

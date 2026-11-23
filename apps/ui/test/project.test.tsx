@@ -934,9 +934,7 @@ describe("l4-github-merge, run L4", () => {
     const row = await screen.findByText("Compare three static site hosts");
     const cells = within(row.closest("tr") as HTMLElement).getAllByRole("cell");
     // Before: "1 / 2 (50%)", a paused run read as a try the critic did not accept.
-    expect(cells.map((c) => c.textContent)).toEqual(
-      expect.arrayContaining(["2", "1 / 1 (100%)"]),
-    );
+    expect(cells.map((c) => c.textContent)).toEqual(expect.arrayContaining(["2", "1 / 1 (100%)"]));
     expect(
       screen.getAllByTitle("Accepted by the critic / tries; a run paused and continued is one try")
         .length,

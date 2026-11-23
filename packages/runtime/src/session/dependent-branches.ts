@@ -479,7 +479,10 @@ export class DependentBranches {
       });
       this.deps.cardsClosed?.();
     } catch (e) {
-      this.logger.warn("merged-through card not filed", { taskId: task.id, error: errorMessage(e) });
+      this.logger.warn("merged-through card not filed", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
     }
   }
 
