@@ -1049,6 +1049,13 @@ l4-cred-screens, run L4 ([ADR 0120](../decisions/0120-which-claude-does-the-work
 - **Change the allowance (L4-creds-18).** The Overview's status line and the session page's wait
   block (`session-wait-answer`) show the daemon's link for the share's wait. Tests:
   `test/credential-screens-l4.test.tsx`.
+- **Times in the person's zone (L4-creds-20).** `lib/time.ts` writes every time in the
+  person's zone: the store's `me` action calls `setPersonZone(me.timezone)` (the phone's store
+  does the same when it reads `/me`), and each helper (`formatTime`, `formatClock`,
+  `formatDateTime`, `formatDate`, `formatDayMonth`) also takes a zone; `formatClock` says
+  "today" by the person's day ("18 Nov, 00:30" across midnight in Zurich). An unknown zone keeps
+  the computer's. Files' `copyUpdatedWords` uses `formatClock`. Tests:
+  `test/person-zone.test.tsx` (the computer on UTC, the person in Zurich).
 - **A kept person Start (L4-creds-26).** The Start dialog shows the daemon's "Starts at 04:28
   (your subscription's limit)." with Cancel the wait; the fake daemon's `credentialWaitNow` carries
   `startsAt` and `askFirst` as the daemon does. Tests: `test/credential-start.test.tsx` (describe

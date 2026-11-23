@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router";
 import type { ProjectFileEntryView, ProjectFilesView } from "../../api/client.ts";
 import { FolderPath } from "../../components/FolderPath.tsx";
 import { EmptyState, ErrorBanner, Loading } from "../../components/ui.tsx";
-import { relativeTime } from "../../lib/time.ts";
+import { formatClock, relativeTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient, useUiState } from "../../store/context.tsx";
 
@@ -15,11 +15,8 @@ export const OPEN_LOCAL_ONLY_EXPLAIN = "Opens the Local only folder.";
  * is merged (merged-copy, ADR 0113). The clock of the person's computer, 24 hours.
  */
 export function copyUpdatedWords(iso: string, now = new Date()): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  if (d.toDateString() === now.toDateString()) return time;
-  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, ${time}`;
+  // l4-cred-screens (L4-creds-20): in the person's zone, as every time on the screen.
+  return formatClock(iso, now.getTime());
 }
 
 /**

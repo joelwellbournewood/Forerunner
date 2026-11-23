@@ -211,8 +211,10 @@ describe("d1109-sessions, run C: the Sessions tab (SL-7)", () => {
   });
 
   it("just after midnight, a row of today shows its time and a row of yesterday its day", async () => {
-    // C3-left-1: what the row lines above assert, at the hour CI used to fail.
-    pinClock(new Date(2026, 10, 16, 0, 30, 0));
+    // C3-left-1: what the row lines above assert, at the hour CI used to fail. l4-cred-screens
+    // (L4-creds-20): the rows read the person's clock (the fake's person is in Zurich, UTC+1 in
+    // November): 00:30 there on the 16th.
+    pinClock(new Date(Date.UTC(2026, 10, 15, 23, 30, 0)));
     const t = Date.now();
     const harness = createHarness();
     harness.daemon.state.projectSessions.proj_atlas = [

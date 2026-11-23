@@ -1172,6 +1172,9 @@ page says so with **Answer**, and the card names what the waiting work costs on 
 CHF 0.40"). If your choice moves work onto the key by itself, you get one notification for that
 stop with its cost.
 
+Every time on the screens is in your time zone (the one in Settings), the same as the app's
+sentences ("Waits until 11:40"), whatever zone this computer is set to.
+
 If Anthropic refused your key or sign-in, every Start (the dialog, Continue, the phone) says the
 same: "Nothing can run until you save a new API key in Settings.", and a session waiting to go on
 says it goes on once you save a new one.

@@ -1,56 +1,104 @@
 /**
- * Display helpers for ISO-8601 UTC timestamps, in the computer's time zone. One way of writing a
+ * Display helpers for ISO-8601 UTC timestamps, in the person's time zone. One way of writing a
  * time on every screen (design §5, P7-9): 24 hours, "04:36", whatever the browser's language
  * (an en-US browser wrote "04:32:05 AM" in a log beside "Waits until 04:36" from the daemon).
+ *
+ * l4-cred-screens (L4-creds-20, live check 4's LC-C26): the zone is the person's (`GET /me`'s
+ * `timezone`, set by the store when it reads it, `setPersonZone`), as the daemon writes its own
+ * sentences ("Waits until 11:40"); before, the session page and the Sessions row wrote the
+ * computer's zone beside them. Without one (or an unknown name) the computer's zone stays. Each
+ * helper also takes a zone, for tests and for a screen that names another.
  */
 
 /** "04:36": hours and minutes, 24 hours. */
 const HH_MM: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
 
+let personZone: string | undefined;
+
+/** The person's zone for every time on the screen (null or an unknown name: the computer's). */
+export function setPersonZone(zone: string | null | undefined): void {
+  personZone = zone && knownZone(zone) ? zone : undefined;
+}
+
+/** The zone the screens write times in now (undefined: the computer's). */
+export function personTimeZone(): string | undefined {
+  return personZone;
+}
+
+function knownZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function zoneOf(timeZone?: string): { timeZone?: string } {
+  const z = timeZone && knownZone(timeZone) ? timeZone : personZone;
+  return z ? { timeZone: z } : {};
+}
+
+/** The calendar day in the zone ("2026-11-18"), to say "today" as the person's clock does. */
+function dayIn(d: Date, timeZone?: string): string {
+  return d.toLocaleDateString("en-CA", { ...zoneOf(timeZone) });
+}
+
 /** "3 Nov 2026, 04:36". */
-export function formatDateTime(iso: string | null | undefined): string {
+export function formatDateTime(iso: string | null | undefined, timeZone?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}, ${d.toLocaleTimeString("en-GB", HH_MM)}`;
+  const z = zoneOf(timeZone);
+  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", ...z })}, ${d.toLocaleTimeString("en-GB", { ...HH_MM, ...z })}`;
 }
 
 /**
  * "04:36" today, "4 Nov, 04:36" another day: a time a person waits for or looks back on, as the
  * daemon's own sentences write it ("Waits until 04:36", `clockTime`) and Files' copy line
- * (`copyUpdatedWords`). `now` is injectable for tests.
+ * (`copyUpdatedWords`). `now` is injectable for tests; "today" is the person's day.
  */
-export function formatClock(iso: string | null | undefined, now = Date.now()): string {
+export function formatClock(
+  iso: string | null | undefined,
+  now = Date.now(),
+  timeZone?: string,
+): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const time = d.toLocaleTimeString("en-GB", HH_MM);
-  if (d.toDateString() === new Date(now).toDateString()) return time;
-  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, ${time}`;
+  const z = zoneOf(timeZone);
+  const time = d.toLocaleTimeString("en-GB", { ...HH_MM, ...z });
+  if (dayIn(d, timeZone) === dayIn(new Date(now), timeZone)) return time;
+  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...z })}, ${time}`;
 }
 
 /** Date only, for axes and compact rows. */
-export function formatDate(iso: string | null | undefined): string {
+export function formatDate(iso: string | null | undefined, timeZone?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    ...zoneOf(timeZone),
+  });
 }
 
 /** Day and month as a sentence names them: "1 Nov" (design §5, "Decision"). */
-export function formatDayMonth(iso: string | null | undefined): string {
+export function formatDayMonth(iso: string | null | undefined, timeZone?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...zoneOf(timeZone) });
 }
 
 /** "16:02": a log line's time, 24 hours, no seconds (design §5, P7-9). */
-export function formatTime(iso: string | null | undefined): string {
+export function formatTime(iso: string | null | undefined, timeZone?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleTimeString("en-GB", HH_MM);
+  return d.toLocaleTimeString("en-GB", { ...HH_MM, ...zoneOf(timeZone) });
 }
 
 /** "3 min ago", "2 h ago", "yesterday"; `now` is injectable for tests. */

@@ -254,3 +254,6 @@ answer 3 ("For all work.": the yes covers all work until the stop ends) and his 
    the transcript leaves the held line and its hold reply out, in the conversation and in the
    model's history, also after a restart. Before, the question showed twice and reached the
    model twice with "so I have not answered" between.
+10. **The screens' clocks are the person's (L4-creds-20).** The session page, the Sessions rows,
+    Files and every time the UI writes use `GET /me`'s `timezone`, as the daemon's own sentences
+    do ("Waits until 11:40"); before, they used the computer's zone beside them.
