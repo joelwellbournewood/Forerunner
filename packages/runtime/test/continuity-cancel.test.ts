@@ -961,6 +961,12 @@ describe("l4-starts-sessions, run L4: the result of a session whose only task yo
     const row = (list.rows as Json[]).find((r) => r.id === sessionId);
     expect(row?.gist).toBe('"About page" paused by you.');
     expect(String(row?.endedWords ?? "")).not.toMatch(/needs? you/);
+    // The Overview's Last result says it once: no "Since then" line repeats the pause (the
+    // bench walk of the fix-up read 'Since then: "About page" is paused by you.' under it).
+    const overview = (await (await req(`/projects/${project.id}/summary`)).json()) as Json;
+    const last = overview.lastSession as Json;
+    expect(String(last.summary)).toMatch(/^You paused "About page"; nothing else ran\./);
+    expect(last.since ?? []).toEqual([]);
     // The session page's "Tasks in this session" says it too (before: "Worked on").
     const tasks = (await (await req(`/sessions/${sessionId}/tasks`)).json()) as Json;
     expect((tasks.tasks as Json[]).map((t) => [t.title, t.here, t.now])).toEqual([

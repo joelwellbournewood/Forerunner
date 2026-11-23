@@ -512,11 +512,19 @@ export async function projectSummary(
   const keptName = joinedTo
     ? ((await store.project.get(joinedTo.project))?.name ?? joinedTo.name ?? "")
     : "";
+  // L4-money-214: a task the person paused while it ran is said by the result ('You paused "X";
+  // nothing else ran.'); while it is still theirs no "Since then" line says it again.
+  const pausedByYou = new Set(
+    (outcomeOfHandoff(lastRow?.handoff)?.pausedByYou ?? []).map((t) => t.id),
+  );
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const movedOn = blockedTaskIds(lastRow?.handoff).filter((id) => {
+    const t = byId.get(id);
+    return !(pausedByYou.has(id) && t && isPausedByPerson(t, false));
+  });
   const since = lastRow
     ? [
-        ...sinceLines(blockedTaskIds(lastRow.handoff), new Map(tasks.map((t) => [t.id, t])), (t) =>
-          taskDisplay(t, ctx),
-        ),
+        ...sinceLines(movedOn, byId, (t) => taskDisplay(t, ctx)),
         // merge-in-app: the pull requests the session left open that are merged now (by the
         // person's Merge, the retry, or on GitHub); the result still says it left them.
         ...(await mergedSinceLine(store, lastRow.handoff)),

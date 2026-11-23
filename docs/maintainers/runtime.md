@@ -3854,6 +3854,8 @@ check 4 L4-l3-8: "CHF 0.01." alone, the Sessions row "Nothing finished." and the
 also keeps it out of `needsYou`), 'You paused "X"; nothing else ran.' (with a cancel in one
 sentence: 'You cancelled "A" and paused "B"; nothing else ran.'), not news; the status note's
 count and `stillBlocked` (the session page's badge, the Sessions row's end words) leave it out,
+and so does the Overview's "Since then" while the task is still theirs (the fix-up's bench walk
+read 'Since then: "X" is paused by you.' under the result that said it);
 `sessionGist` reads '"X" paused by you.' and the session's task list "Paused by you" (tests:
 `writing-rules.test.ts`, `session-list.test.ts` and the composed `continuity-cancel.test.ts`,
 each "l4-starts-sessions, run L4"). The Overview's Last result gets "Since then: merged #2, #3
