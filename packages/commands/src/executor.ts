@@ -33,6 +33,8 @@ import {
 import {
   changedSince,
   composedRefusal,
+  fixListMoved,
+  namedTaskIds,
   subjectsNow,
   TASKS_CHANGED_REPLY,
   taskListFingerprint,
@@ -173,8 +175,11 @@ interface PendingEntry extends PendingConfirmation {
   redecide: () => Promise<Redecided>;
   /** The card as it was read back: what the Yes compares the state now with (L4-selftasks-117). */
   shown: ChangeCard;
-  /** A fix of the task list: the list's fingerprint its check judged (run C decision 53). */
-  fingerprint?: { projectId: string; value: string };
+  /**
+   * A fix of the task list: the list's fingerprint its check judged (run C decision 53), and the
+   * tasks its set names, which the Yes compares (l4-selftasks-carried, L4f-left-2).
+   */
+  fingerprint?: { projectId: string; value: string; named: string[] };
   cancelTimer: () => void;
   /** An answer is being checked (a device lookup is in flight); a second answer is refused. */
   inFlight: boolean;
@@ -761,7 +766,13 @@ export class CommandExecutor {
       perform,
       redecide,
       ...(fingerprint && card.projectId
-        ? { fingerprint: { projectId: card.projectId, value: fingerprint } }
+        ? {
+            fingerprint: {
+              projectId: card.projectId,
+              value: fingerprint,
+              named: namedTaskIds(calls ?? [], card),
+            },
+          }
         : {}),
       cancelTimer,
       inFlight: false,
@@ -892,7 +903,13 @@ export class CommandExecutor {
           perform: async (by) => this.perform(await this.prepareAll(commandCalls, ctx), ctx, by),
           redecide: async () => this.redecideAll(commandCalls, ctx),
           ...(print && card.projectId
-            ? { fingerprint: { projectId: card.projectId, value: print } }
+            ? {
+                fingerprint: {
+                  projectId: card.projectId,
+                  value: print,
+                  named: namedTaskIds(commandCalls, shown),
+                },
+              }
             : {}),
           cancelTimer,
           inFlight: false,
@@ -1242,12 +1259,14 @@ export class CommandExecutor {
       return { status: "cancelled", card: p.card, pendingId };
     }
     // Run C decision 53 (L4-selftasks-117): a fix of the task list applies only the set its check
-    // made of the list as it was then.
+    // made of the list as it was then. l4-selftasks-carried (L4f-left-2; session lead decision
+    // 2026-11-23): judged on which tasks the list holds and on the tasks the set names, so a
+    // session finishing a task the set does not name leaves the Yes valid. A failure to read
+    // the list refuses, as before.
     if (p.fingerprint) {
-      const current = await taskListFingerprint(this.store, p.fingerprint.projectId).catch(
-        () => null,
-      );
-      if (current !== p.fingerprint.value) {
+      const { projectId, value, named } = p.fingerprint;
+      const moved = await fixListMoved(this.store, projectId, value, named).catch(() => true);
+      if (moved) {
         const reason = TASKS_CHANGED_REPLY;
         await this.answerRequest(pendingId, { verdict: "refused", reason, ...answered }, by.id);
         return {

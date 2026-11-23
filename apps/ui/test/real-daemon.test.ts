@@ -27246,9 +27246,14 @@ describe("l4-selftasks-chat, run L4", () => {
       const w = await quotePage(a);
       projectId = w.project.id;
       expect((await a.chat(projectId, FIX_LINE)).pendingConfirmation?.readback).toBe(FIX_ASK);
-      // Another task of the list changes on the Tasks tab after the check.
-      const row = await a.client.task(w.create.id);
-      await a.client.updateTask(w.create.id, { version: row.task.version, priority: "low" });
+      // The task the set names changes on the Tasks tab after the check (l4-selftasks-carried,
+      // L4f-left-2: a change of a task the set does not name, such as another task's priority,
+      // leaves the Yes valid; session lead decision of 2026-11-23).
+      const row = await a.client.task(w.style.id);
+      await a.client.updateTask(w.style.id, {
+        version: row.task.version,
+        outcome: "The page has a grid layout",
+      });
     } finally {
       await a.rt.close();
     }
@@ -28290,7 +28295,7 @@ describe("l4-selftasks-carried, run L4", () => {
 
   async function open(
     prefix: string,
-    opts: { clock?: SystemClock | SimulatedClock; home?: string } = {},
+    opts: { clock?: SystemClock | SimulatedClock; home?: string; services?: boolean } = {},
   ) {
     const dir = opts.home ?? mkdtempSync(join(tmpdir(), prefix));
     if (!opts.home) homes.push(dir);
@@ -28308,7 +28313,9 @@ describe("l4-selftasks-carried, run L4", () => {
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.0.0-ui-contract",
       sandboxDetection: NO_ENGINE,
-      startServices: false,
+      // A session the person starts at Assisted runs once its plan is approved: the daemon's
+      // services start it (syncPlanApprovals), so the cases that run one compose with them.
+      startServices: opts.services === true,
     });
     const { app, token } = createDaemonApp(rt);
     const client = createClient(
@@ -28413,6 +28420,172 @@ describe("l4-selftasks-carried, run L4", () => {
     } finally {
       await settleSessions(a.rt);
       await a.rt.close();
+    }
+  }, 90_000);
+  // L4f-left-2 (session lead decision 2026-11-23): a 'fix the tasks' read-back's Yes is judged on
+  // the tasks its set names (present, status, title, outcome, what they wait for) and on which
+  // tasks the list holds, not on the status of tasks it does not name.
+  const FIX_LINE_CARRIED =
+    'fix the tasks: "Style the page" is two jobs, the layout and the colours; nothing checks that the links work.';
+  const FIX_ASK_CARRIED =
+    'Make these 2 changes to the tasks of Quote page? Split "Style the page" into "Style the page: layout" and "Style the page: colours"; add "Check that the links work".';
+  /** Quote page at Assisted: "Style the page" (the set names it) and "Create the page" (it does not). */
+  async function quoteWorld(a: Awaited<ReturnType<typeof open>>, styleRuns: boolean) {
+    const project = await a.client.createProject({
+      name: "Quote page",
+      goal: "A page that quotes prices",
+      autonomyLevel: 1,
+    });
+    const task = (title: string, extra: Record<string, unknown> = {}) =>
+      a.rt.store.task.insert({
+        project_id: project.id,
+        title,
+        outcome: `${title} is done`,
+        acceptance_criteria: ["it is done"],
+        risk_tier: 1,
+        status: "ready",
+        priority: 5,
+        reason: "From the plan",
+        specialist: "coder",
+        author_agent: a.rt.agent.id,
+        ...extra,
+      } as never);
+    const create = await task("Create the page in index.html", { priority: 9 });
+    // Unless it is the task the session runs, "Style the page" waits for a draft no session
+    // runs, so the session's plan holds "Create the page" alone.
+    const colours = styleRuns ? null : await task("Choose the colours", { status: "draft" });
+    const style = await task("Style the page", {
+      acceptance_criteria: ["the layout is a grid", "the colours match the logo"],
+      priority: styleRuns ? 9 : 5,
+      ...(colours ? { depends_on: [colours.id] } : {}),
+    });
+    return { project, create, style, colours };
+  }
+  /**
+   * The person starts a session and approves its plan (Assisted, which ends the first session
+   * with the plan's card); the approved session runs `taskId` and ends (waited for, not timed).
+   * The plan's card is the open approval that is not the chat's read-back.
+   */
+  async function runSession(
+    a: Awaited<ReturnType<typeof open>>,
+    projectId: string,
+    taskId: string,
+  ) {
+    const started = await a.client.startSession({ agentId: a.agentId, projectId });
+    expect(started.session?.id, JSON.stringify(started)).toBeTruthy();
+    const readBacks = new Set((await a.client.pendingCommands()).map((p) => p.id));
+    const planCard = async () =>
+      (await a.client.inbox(a.me.id)).requests.find(
+        (r) =>
+          r.projectId === projectId &&
+          r.kind === "approval" &&
+          r.status === "open" &&
+          !readBacks.has(r.id),
+      );
+    await eventually(
+      async () => !!(await planCard()),
+      "the session's plan to wait for its approval (20 s)",
+      async () => (await a.client.session(started.session?.id ?? "")).status,
+      20_000,
+    );
+    const plan = await planCard();
+    await a.client.answerRequest(plan?.id ?? "", {
+      version: plan?.version ?? 0,
+      answer: "approve",
+    });
+    await eventually(
+      async () =>
+        (await a.client.task(taskId)).task.status === "done" &&
+        (await a.client.sessions({ projectId })).every((x) => x.status !== "running"),
+      "the approved session to finish the task and end (30 s)",
+      async () =>
+        (await a.client.tasks(projectId)).map((t) => `${t.title}: ${t.status}`).join(", "),
+      30_000,
+    );
+    await settleSessions(a.rt);
+  }
+
+  it("L4f-left-2: a session finishes a task the set does not name between the read-back and the Yes, and the set applies", async () => {
+    const a = await open("fr-ui-real-l4-stcar-fixother-", { services: true });
+    try {
+      const w = await quoteWorld(a, false);
+      expect((await a.chat(w.project.id, FIX_LINE_CARRIED)).pendingConfirmation?.readback).toBe(
+        FIX_ASK_CARRIED,
+      );
+      await runSession(a, w.project.id, w.create.id);
+      expect((await a.client.task(w.style.id)).task.status).toBe("ready");
+      const yes = await a.chat(w.project.id, "yes");
+      expect(yes.reply).not.toBe(
+        'The tasks changed since I checked them; say "fix the tasks" to check again.',
+      );
+      expect(yes.actions).toHaveLength(1);
+      expect((await a.client.tasks(w.project.id)).map((t) => t.title).sort()).toEqual([
+        "Check that the links work",
+        "Choose the colours",
+        "Create the page in index.html",
+        "Style the page: colours",
+        "Style the page: layout",
+      ]);
+      expect(await a.client.pendingCommands()).toEqual([]);
+    } finally {
+      await settleSessions(a.rt);
+      await a.rt.close();
+    }
+  }, 90_000);
+
+  it("L4f-left-2: a session finishes the task the set names between the read-back and the Yes, and the Yes says the tasks changed and changes nothing", async () => {
+    const a = await open("fr-ui-real-l4-stcar-fixnamed-", { services: true });
+    try {
+      const w = await quoteWorld(a, true);
+      expect((await a.chat(w.project.id, FIX_LINE_CARRIED)).pendingConfirmation?.readback).toBe(
+        FIX_ASK_CARRIED,
+      );
+      await runSession(a, w.project.id, w.style.id);
+      const yes = await a.chat(w.project.id, "yes");
+      expect(yes.reply).toBe(
+        'The tasks changed since I checked them; say "fix the tasks" to check again.',
+      );
+      expect(yes.actions).toEqual([]);
+      expect((await a.client.tasks(w.project.id)).map((t) => t.title).sort()).toEqual([
+        "Create the page in index.html",
+        "Style the page",
+      ]);
+      expect(await a.client.pendingCommands()).toEqual([]);
+    } finally {
+      await settleSessions(a.rt);
+      await a.rt.close();
+    }
+  }, 90_000);
+
+  it("L4f-left-2: a task added to the list (the list's membership) still makes the Yes say the tasks changed, also after a restart", async () => {
+    const a = await open("fr-ui-real-l4-stcar-fixadded-");
+    let projectId = "";
+    try {
+      const w = await quoteWorld(a, false);
+      projectId = w.project.id;
+      expect((await a.chat(projectId, FIX_LINE_CARRIED)).pendingConfirmation?.readback).toBe(
+        FIX_ASK_CARRIED,
+      );
+      // A priority change of a task the set does not name leaves the Yes valid ...
+      const row = await a.client.task(w.create.id);
+      await a.client.updateTask(w.create.id, { version: row.task.version, priority: "low" });
+      // ... a task added on the Tasks tab does not.
+      await a.client.createTask(projectId, taskBody("Write the README"));
+    } finally {
+      await settleSessions(a.rt);
+      await a.rt.close();
+    }
+    const b = await open("", { home: a.home });
+    try {
+      expect((await b.client.pendingCommands()).map((p) => p.readback)).toEqual([FIX_ASK_CARRIED]);
+      const yes = await b.chat(projectId, "yes");
+      expect(yes.reply).toBe(
+        'The tasks changed since I checked them; say "fix the tasks" to check again.',
+      );
+      expect(yes.actions).toEqual([]);
+    } finally {
+      await settleSessions(b.rt);
+      await b.rt.close();
     }
   }, 90_000);
 });
