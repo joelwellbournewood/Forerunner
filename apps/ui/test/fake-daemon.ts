@@ -149,7 +149,6 @@ import {
 } from "@forerunner/runtime/daemon/credential-policy-view";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
-import { fileTheWordsWrite, writesNoFileLine } from "@forerunner/runtime/registry/tools";
 import {
   comesAfterSentence,
   leftOutSentence,
@@ -186,6 +185,7 @@ import {
   mergesAfterSentence,
 } from "@forerunner/runtime/loop/merge-mode";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
+import { fileTheWordsWrite, writesNoFileLine } from "@forerunner/runtime/registry/tools";
 import {
   SANDBOX_WHY,
   type SandboxPullEntryView,
@@ -4995,7 +4995,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       card.version += 1;
     }
     if ((reply.actions.length || card) && projectId) emit("project.changed", { id: projectId });
-    if (reply.pendingConfirmation || card) emit("inbox.changed", { blockingCount: blockingCount() });
+    if (reply.pendingConfirmation || card)
+      emit("inbox.changed", { blockingCount: blockingCount() });
   };
   app.post("/chat", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());

@@ -9,7 +9,6 @@ import {
   prNumberOf as prNumberOfUrl,
 } from "@forerunner/runtime/daemon/cancel-words";
 import { redoWhileTakingOutSentence } from "@forerunner/runtime/daemon/take-out-words";
-import { fileTheWordsWrite, writesNoFileLine } from "@forerunner/runtime/registry/tools";
 // The module itself (import-free): a merge card's key and its Redo's mark (W15-04).
 import {
   MERGE_CARD_KEY,
@@ -26,6 +25,7 @@ import {
   priorityLevel,
   TaskPrioritySchema,
 } from "@forerunner/runtime/priority";
+import { fileTheWordsWrite, writesNoFileLine } from "@forerunner/runtime/registry/tools";
 import {
   canTransition,
   type JsonObject,

@@ -10,7 +10,6 @@ import type {
 } from "@forerunner/state";
 import { requestWords } from "../daemon/request-words.ts";
 import { resultAfterWait } from "../daemon/run-indicator.ts";
-import { TASK_PROPOSAL_KEY } from "../daemon/task-proposal-words.ts";
 import {
   findingAsk,
   loadTaskDisplayContext,
@@ -19,6 +18,7 @@ import {
   runOrder,
   taskDisplay,
 } from "../daemon/task-display.ts";
+import { TASK_PROPOSAL_KEY } from "../daemon/task-proposal-words.ts";
 import { parseRepoRef } from "../loop/docs.ts";
 import { type MergeMode, mergeModeOf } from "../loop/merge-mode.ts";
 import type { IntakeState } from "../session/intake.ts";

@@ -1889,10 +1889,13 @@ describe("l4-selftasks-carried, run L4: chat's recall names who made a change as
         await x.clock.set("2026-11-09T09:00:00.000Z");
         await row('Split "Style the page" into two tasks. Undo.', { agent: x.alice });
         await x.clock.set("2026-11-09T09:05:00.000Z");
-        await row('Split "Write the menu" into two tasks; changed "Publish": priority to Low. Undo.', {
-          human: x.human,
-          agent: x.alice,
-        });
+        await row(
+          'Split "Write the menu" into two tasks; changed "Publish": priority to Low. Undo.',
+          {
+            human: x.human,
+            agent: x.alice,
+          },
+        );
         await x.clock.set("2026-11-09T09:10:00.000Z");
         await row('Changed "Publish": priority to High. Undo.', { human: x.human });
       },
@@ -1905,9 +1908,9 @@ describe("l4-selftasks-carried, run L4: chat's recall names who made a change as
     expect(lines.some((l) => /\] You and Alice, in Chat, .*: split "Write the menu"/.test(l))).toBe(
       true,
     );
-    expect(lines.some((l) => /\] You, in Chat, .*: changed "Publish": priority to High/.test(l))).toBe(
-      true,
-    );
+    expect(
+      lines.some((l) => /\] You, in Chat, .*: changed "Publish": priority to High/.test(l)),
+    ).toBe(true);
     await w.store.close();
   });
 });

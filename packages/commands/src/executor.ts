@@ -1430,7 +1430,10 @@ export class CommandExecutor {
         how,
       });
     } catch (e) {
-      this.logger.warn("could not tell about the closed card", { id: p.id, error: errorMessage(e) });
+      this.logger.warn("could not tell about the closed card", {
+        id: p.id,
+        error: errorMessage(e),
+      });
     }
   }
 
