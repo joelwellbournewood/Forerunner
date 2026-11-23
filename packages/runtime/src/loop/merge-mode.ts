@@ -248,6 +248,15 @@ export function owedMergeWait(record: {
 }
 
 /**
+ * L4-github-114: a merge record that says its pull request was closed on GitHub without a merge
+ * (the watcher read it, `closedOnHost`): not open, whatever else the store holds. The one
+ * predicate the join's dialog reads with the Tasks row's "Accepted · pull request closed".
+ */
+export function isClosedRecord(record: { state: string; last_outcome: string | null }): boolean {
+  return record.state === "left_to_you" && record.last_outcome === "closed";
+}
+
+/**
  * L4-github-112 (ADR 0111, amendment of 2026-11-23): a task's pull request closed on GitHub
  * whose reviewed change reached main all the same, through a pull request that built on it and
  * was merged there. Its merge record says merged with this outcome (no migration: the outcome is

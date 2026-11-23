@@ -178,9 +178,13 @@ export function joinStaysLine(closed: readonly string[]): string {
     : `${quotedList(closed)} keep their sessions, changes and spending to read; no budget changes.`;
 }
 
-/** OJ-05: one setting of the kept project that differs, as the dialog names it. */
+/**
+ * OJ-05: one setting of the kept project that differs, as the dialog names it ('Status pull
+ * request: the setting of "Kite flyers" applies to the moved work: off.'; L4-github-113: without
+ * the possessive, as L4-github-108 words the project names).
+ */
 export function settingAppliesLine(setting: string, keep: string, value: string): string {
-  return `${setting}: "${keep}"'s setting applies to the moved work: ${value}.`;
+  return `${setting}: the setting of "${keep}" applies to the moved work: ${value}.`;
 }
 
 // --- Refusals (one sentence each: what holds it, what to do) ----------------------------------
@@ -219,9 +223,13 @@ export function joinRefusedWaiting(name: string, when: string | null): string {
   return `A session of "${name}" waits to go on${when ? ` ${when}` : ""}. Make one project after it ran, or cancel it first.`;
 }
 
-/** A hands-off start held on one of them (quiet hours, another session first). */
+/**
+ * A hands-off start held on one of them (quiet hours, another session first). L4-creds-28: one
+ * sentence of at most 100 characters (a consequence line, design section 5 rule 1); the
+ * setting's name is the dialog's link ("When work is ready"), not in the sentence.
+ */
 export function joinRefusedHeldStart(name: string): string {
-  return `A session of "${name}" waits to start by itself. Make one project after it ran, or turn "When work is ready" back to Wait for my Start.`;
+  return `A session of "${name}" starts by itself soon: make one project after it ran.`;
 }
 
 /** The projects share no repository or folder. */

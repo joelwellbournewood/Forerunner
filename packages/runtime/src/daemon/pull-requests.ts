@@ -1,4 +1,9 @@
-import type { GitHost, PullRequestInfo, RepoRef } from "@forerunner/capabilities";
+import {
+  type GitHost,
+  type PullRequestInfo,
+  type RepoRef,
+  readForerunnerMarker,
+} from "@forerunner/capabilities";
 import { ACCEPTED_WITHOUT_REVIEW } from "@forerunner/critic";
 import { errorMessage, ForerunnerError, isAbsolute, log, redact } from "@forerunner/platform";
 import type { MergeRecordRow, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
@@ -20,6 +25,7 @@ import {
 } from "../loop/merge-mode.ts";
 import type { TaskTakeOut } from "../loop/take-out.ts";
 import { ACCEPTED_AT_SIGNOFF } from "../session/findings.ts";
+import { isTogether } from "../sources/repository-words.ts";
 import type {
   ProjectPullRequestsView,
   ProjectPullRequestView,
@@ -27,6 +33,24 @@ import type {
   PullRequestMergeAnswer,
   PullRequestPreviewAnswer,
 } from "./api-types.ts";
+import { joinedFromOf } from "./join-words.ts";
+
+/**
+ * L4-github-113 (ADR 0117 point 3, amended 2026-11-23): an open status pull request on
+ * `fr/status` whose hidden mark names a project joined into this one: after Make one project it
+ * is this project's, listed as its docs row with Open and Merge whatever this project's own
+ * Status pull request setting is (the dialog said the pull requests move). The status writer
+ * (`loop/docs.ts`) still writes there only once the kept project's setting is on. Its own mark,
+ * an unmarked one and another project's are never listed here.
+ */
+export function isJoinedStatusPr(
+  project: Pick<ProjectRow, "id" | "settings">,
+  pr: { head: { ref: string }; body: string },
+): boolean {
+  if (pr.head.ref !== STATUS_BRANCH || isTogether(project)) return false;
+  const marked = readForerunnerMarker(pr.body)?.project;
+  return !!marked && marked !== project.id && joinedFromOf(project).includes(marked);
+}
 
 /**
  * Where a repository project's work is, for the person (core-experience design §3.4 "Your
@@ -465,7 +489,10 @@ export class ProjectPullRequests {
             : own,
           ...(folder ? { folder } : {}),
         });
-      } else if (isDocsBranch(pr.head.ref) && isProjectDocsPr(project, pr, { soleLinked })) {
+      } else if (
+        isDocsBranch(pr.head.ref) &&
+        (isProjectDocsPr(project, pr, { soleLinked }) || isJoinedStatusPr(project, pr))
+      ) {
         // Only this project's docs PRs (L-16, W15-01): live, another project's stale scaffold PR
         // on the same repository was listed as "The project's standard docs", and another
         // project's open status PR as this one's, with Merge (live check 2).

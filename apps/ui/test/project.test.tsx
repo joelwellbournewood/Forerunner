@@ -912,3 +912,34 @@ describe("l4-chat-answers, run L4: Last result after Cancel (L4-chat-103)", () =
     }
   });
 });
+
+describe("l4-github-merge, run L4", () => {
+  it("L4-money-301: By task reads accepted against tries: a run that paused and was continued is one try (1 / 1), as the daemon gives it", async () => {
+    const harness = createHarness();
+    const view = harness.daemon.state.costs.proj_atlas;
+    if (!view) throw new Error("no costs fixture");
+    // The task's first run paused at the session's budget and a second run continued it; the
+    // critic's one review accepted the work: 2 runs, 1 try, 1 accepted.
+    view.byTask = [
+      {
+        key: "task_2",
+        label: "Compare three static site hosts",
+        cost: money(360_000),
+        runs: 2,
+        accepted: 1,
+        tries: 1,
+      },
+    ];
+    renderApp("/projects/proj_atlas/costs", harness);
+    const row = await screen.findByText("Compare three static site hosts");
+    const cells = within(row.closest("tr") as HTMLElement).getAllByRole("cell");
+    // Before: "1 / 2 (50%)", a paused run read as a try the critic did not accept.
+    expect(cells.map((c) => c.textContent)).toEqual(
+      expect.arrayContaining(["2", "1 / 1 (100%)"]),
+    );
+    expect(
+      screen.getAllByTitle("Accepted by the critic / tries; a run paused and continued is one try")
+        .length,
+    ).toBeGreaterThan(0);
+  });
+});

@@ -1,4 +1,5 @@
 import { type JoinDeps, joinRefusal } from "@forerunner/runtime/daemon/join-preview";
+import { joinRefusedHeldStart } from "@forerunner/runtime/daemon/join-words";
 import { keepStartPending } from "@forerunner/runtime/session/prepared-work";
 import { identityOf, RepositoryIndex } from "@forerunner/runtime/sources/repository-use";
 import type { ProjectRow, StateStore } from "@forerunner/state";
@@ -418,7 +419,8 @@ describe("d1109-onerepo-join, run C: project.join (OJ-02, OJ-04, OJ-06, OJ-08)",
     await refused(
       site.id,
       [kite.id],
-      'A session of "Site" waits to start by itself. Make one project after it ran, or turn "When work is ready" back to Wait for my Start.',
+      // L4-creds-28: one sentence of at most 100 characters (was about 130).
+      'A session of "Site" starts by itself soon: make one project after it ran.',
     );
     const siteRow = await w.store.project.mustGet(site.id);
     await w.store.project.patch(site.id, { summary_cache: {} });
@@ -702,5 +704,14 @@ describe("l4-selftasks-check, run L4: project.join and the agent's task-list not
     expect(await notesOf(w, kite.id)).toEqual([NOTE]);
     expect((await openProposals(w, site.id)).map((c) => c.id)).toEqual([siteCard.id]);
     expect((await openProposals(w, kite.id)).map((c) => c.id)).toEqual([kiteCard.id]);
+  });
+});
+
+describe("l4-github-merge, run L4", () => {
+  it("L4-creds-28: the held hands-off start's refusal is one sentence of at most 100 characters", () => {
+    const line = joinRefusedHeldStart("Kite club");
+    expect(line).toBe('A session of "Kite club" starts by itself soon: make one project after it ran.');
+    expect(line.length).toBeLessThanOrEqual(100);
+    expect(line.match(/[.!?](\s|$)/g)).toHaveLength(1);
   });
 });

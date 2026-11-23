@@ -251,7 +251,11 @@ export async function projectCard(
   // A repository project's work is on the repository and in its pull requests (ADR 0106): this
   // install's docs clone holds the default branch only, so it is not "your files".
   const repository = facts?.repository ? facts.repository(p) : null;
-  const folder = !repository && facts?.folder ? facts.folder(p) : null;
+  // L4-github-115: a project closed into another has no folder of its own any more (Make one
+  // project cleared its link): never the docs clone under Forerunner's own folders, with its id
+  // in the path; its files are the kept project's ('Its files are in "Site".' on its page).
+  const folder =
+    !repository && facts?.folder && !joinedIntoOf(p) ? facts.folder(p) : null;
   const working = await workingOn(store, p.id);
   // OJ-06 (d1109-onerepo-join): a project closed into another says where its work went, and the
   // kept one which projects' work it includes, both read from the rows now.
@@ -403,6 +407,28 @@ async function mergedSinceLine(store: StateStore, handoff: unknown): Promise<str
   return [`Since then: merged ${list}.`];
 }
 
+/** L4-github-125: the Last result's line of a project closed into another. */
+export function tasksWentOnLine(kept: string): string {
+  return `Its tasks went on in "${kept.replace(/\s+/g, " ").trim()}".`;
+}
+
+/**
+ * L4-github-125: a stored result without its "… is ready to continue." sentence (its tasks moved
+ * to the kept project): written at the session's end, untrue once Make one project moved them.
+ */
+export function withoutReadyClause(text: string): string {
+  return text
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/(?:^|\s)[^.]*\b(?:is|are) ready to continue\.(?=\s|$)/g, "")
+        .replace(/\s{2,}/g, " ")
+        .trim(),
+    )
+    .filter((line) => line.length > 0)
+    .join("\n");
+}
+
 export async function projectSummary(
   store: StateStore,
   projectId: string,
@@ -465,6 +491,12 @@ export async function projectSummary(
   // the summary is the record of the end ("… needs your decision (Inbox)"); once such a task
   // moved on (its card answered, Mark done anyway, a cancel), one line says what it is now.
   const lastRow = s.last_session?.id ? await store.session.get(s.last_session.id) : undefined;
+  // L4-github-125: a project closed into another: its tasks went on there, so its last result
+  // offers none of them as ready here (design section 5 rule 4).
+  const joinedTo = joinedIntoOf(p);
+  const keptName = joinedTo
+    ? ((await store.project.get(joinedTo.project))?.name ?? joinedTo.name ?? "")
+    : "";
   const since = lastRow
     ? [
         ...sinceLines(blockedTaskIds(lastRow.handoff), new Map(tasks.map((t) => [t.id, t])), (t) =>
@@ -481,13 +513,15 @@ export async function projectSummary(
   const lastSpend = lastRow
     ? (await sessionSpends(store, [lastRow.id])).get(lastRow.id)
     : undefined;
-  const lastText = s.last_session
+  const lastTextNow = s.last_session
     ? resultTextNow(
         lastSummary,
         s.last_session.outcome ?? outcomeOfHandoff(lastRow?.handoff),
         lastRow ? spentOf(lastSpend, lastRow, chfPerUsd).chfMicro : 0,
       )
     : "";
+  const lastText = joinedTo ? withoutReadyClause(lastTextNow) : lastTextNow;
+  if (joinedTo && keptName && s.last_session) since.unshift(tasksWentOnLine(keptName));
   return {
     goal: p.goal,
     stage: p.stage,
@@ -501,7 +535,7 @@ export async function projectSummary(
           ...(since.length ? { since } : {}),
         }
       : null,
-    nextSteps: next,
+    nextSteps: joinedTo ? [] : next,
     next: nextLines,
     openQuestions: s.open_questions ?? 0,
     spend: money(spend.usd_micro, chfPerUsd),
@@ -1206,6 +1240,7 @@ export async function costView(
         cost: money(b.usd_micro, chfPerUsd),
         runs: b.entries ?? b.count ?? 0,
         accepted: null as number | null,
+        tries: undefined as number | undefined,
       }),
     );
   };
@@ -1233,6 +1268,7 @@ export async function costView(
           cost: money(b.usd_micro, chfPerUsd),
           runs: b.entries,
           accepted: null as number | null,
+          tries: undefined as number | undefined,
         }));
         const here = new Set(whole.map((b) => b.key));
         return [...whole, ...ledgerByTask.filter((b) => !here.has(b.key))].sort(
@@ -1244,7 +1280,13 @@ export async function costView(
   // specialist that ran it, with the runs the critic accepted. The ledger's entries name a run;
   // the run names its specialist (the ledger's own column is not filled), and a task's accepted
   // run is its last work run before an accepting review.
-  const facts = await costFacts(store, f);
+  // L4-github-116: a task's runs, tries and accepted runs are its own wherever its ledger rows
+  // are booked (a task Make one project moved has its runs' rows on the closed project).
+  const facts = await costFacts(
+    store,
+    f,
+    byTask.map((b) => b.key).filter((k) => k !== "(none)"),
+  );
   const bySpecialist = facts.bySpecialist.length
     ? facts.bySpecialist.map((s) => ({
         key: s.key,
@@ -1252,6 +1294,7 @@ export async function costView(
         cost: money(s.usdMicro, chfPerUsd),
         runs: s.runs,
         accepted: s.accepted,
+        ...(s.accepted === null ? {} : { tries: s.tries }),
       }))
     : ledgerBySpecialist;
   // "Runs" counts runs, not ledger entries (one per model call): "1 / 3 accepted" compares
@@ -1266,8 +1309,11 @@ export async function costView(
         : undefined);
     if (t) {
       b.label = t.title;
-      b.runs = facts.runsByTask.get(b.key) ?? b.runs;
+      // L4-github-116: never the ledger-row count as runs for a known task (one per model call:
+      // "6 · 0 / 6" for a moved task that ran once and was accepted).
+      b.runs = facts.runsByTask.get(b.key) ?? 0;
       b.accepted = facts.acceptedRunsByTask.get(b.key) ?? 0;
+      b.tries = facts.triesByTask.get(b.key) ?? b.runs;
     } else if (b.key === "(none)")
       // l4-selftasks-114 (live check 4, L4-l3-17): a project whose only spend outside its tasks
       // is the task check reads it as that, not "Planning and chat".
@@ -1284,6 +1330,7 @@ export async function costView(
     if (work) {
       b.runs = work;
       b.accepted = facts.acceptedRunsByModel.get(b.key) ?? 0;
+      b.tries = facts.triesByModel.get(b.key) ?? work;
     } else {
       b.runs = facts.allRunsByModel.get(b.key) ?? b.runs;
       b.accepted = null;
@@ -1383,10 +1430,62 @@ export async function costView(
   };
 }
 
+/**
+ * L4-github-116 with L4-money-301: one task-run helper. For each task, its own work runs in the
+ * period (`store.run.forTask` without the critic's, whatever project their ledger rows name),
+ * the accepted ones (the last work run before each accepting review) and its tries: a work run
+ * that paused (its budget, the session's wrap-up) and that a later work run of the same task
+ * continued is one try with that run (ADR 0112 point 5: a paused run is no failed try).
+ */
+export async function taskRunFacts(
+  store: Pick<StateStore, "run" | "review">,
+  taskIds: readonly string[],
+  f: { from?: string; to?: string } = {},
+): Promise<{
+  byTask: Map<string, { runs: number; tries: number; accepted: number }>;
+  accepted: Set<string>;
+  continued: Set<string>;
+}> {
+  const byTask = new Map<string, { runs: number; tries: number; accepted: number }>();
+  const accepted = new Set<string>();
+  const continued = new Set<string>();
+  for (const id of taskIds) {
+    const all = (await store.run.forTask(id))
+      .filter((r) => r.specialist !== "critic")
+      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+    all.forEach((r, i) => {
+      if (r.outcome === "paused" && i < all.length - 1) continued.add(r.id);
+    });
+    const reviews = (await store.review.forTask(id, { limit: 200 })).filter(
+      (r) => r.verdict === "accept",
+    );
+    let ok = 0;
+    for (const rv of reviews) {
+      const before = all.filter((r) => r.created_at <= rv.created_at).at(-1);
+      if (before && !accepted.has(before.id)) {
+        accepted.add(before.id);
+        if ((!f.from || before.created_at >= f.from) && (!f.to || before.created_at < f.to))
+          ok += 1;
+      }
+    }
+    const work = all.filter(
+      (r) => (!f.from || r.created_at >= f.from) && (!f.to || r.created_at < f.to),
+    );
+    byTask.set(id, {
+      runs: work.length,
+      tries: work.filter((r) => !continued.has(r.id)).length,
+      accepted: ok,
+    });
+  }
+  return { byTask, accepted, continued };
+}
+
 /** What the cost view adds to the ledger's sums: names, specialists, accepted runs, period. */
 async function costFacts(
   store: StateStore,
   f: { projectId?: string; from?: string; to?: string; humanId?: string },
+  /** L4-github-116: tasks whose own runs are read whatever project their rows name. */
+  ownTasks: readonly string[] = [],
 ): Promise<{
   tasks: Map<string, TaskRow>;
   bySpecialist: {
@@ -1395,7 +1494,11 @@ async function costFacts(
     usdMicro: number;
     runs: number;
     accepted: number | null;
+    tries: number;
   }[];
+  /** L4-money-301: tries per task and per model (`taskRunFacts`). */
+  triesByTask: Map<string, number>;
+  triesByModel: Map<string, number>;
   acceptedRunsByTask: Map<string, number>;
   acceptedRunsByModel: Map<string, number>;
   /** The specialists of the spend outside any task (l4-selftasks-114). */
@@ -1419,48 +1522,51 @@ async function costFacts(
     const r = await store.run.get(id);
     if (r) runs.set(id, r);
   }
-  const taskIds = [...new Set(entries.map((e) => e.task_id).filter((x): x is string => !!x))];
+  const taskIds = [
+    ...new Set([
+      ...entries.map((e) => e.task_id).filter((x): x is string => !!x),
+      ...ownTasks,
+    ]),
+  ];
   const tasks = new Map<string, TaskRow>();
   for (const id of taskIds) {
     const t = await store.task.get(id);
     if (t) tasks.set(id, t);
   }
-  // A task's accepted run: its last work run before each accepting review.
-  const accepted = new Set<string>();
-  for (const id of taskIds) {
-    const reviews = (await store.review.forTask(id, { limit: 200 })).filter(
-      (r) => r.verdict === "accept",
-    );
-    if (!reviews.length) continue;
-    const work = (await store.run.forTask(id))
-      .filter((r) => r.specialist !== "critic")
-      .sort((a, b) => a.created_at.localeCompare(b.created_at));
-    for (const rv of reviews) {
-      const before = work.filter((r) => r.created_at <= rv.created_at).at(-1);
-      if (before) accepted.add(before.id);
-    }
-  }
-  const acceptedRunsByTask = new Map<string, number>();
+  // One task-run helper (L4-github-116, L4-money-301): each task's own work runs in the period,
+  // the runs the critic accepted and the runs that are no try of their own.
+  const own = await taskRunFacts(store, [...tasks.keys()], f);
+  const accepted = own.accepted;
+  const continued = own.continued;
+  const runsByTaskOwn = new Map([...own.byTask].map(([id, t]) => [id, t.runs]));
+  const triesByTask = new Map([...own.byTask].map(([id, t]) => [id, t.tries]));
+  const acceptedRunsByTask = new Map([...own.byTask].map(([id, t]) => [id, t.accepted]));
   const acceptedRunsByModel = new Map<string, number>();
   for (const id of accepted) {
     const r = runs.get(id) ?? (await store.run.get(id));
     if (!r) continue;
-    if (r.task_id) acceptedRunsByTask.set(r.task_id, (acceptedRunsByTask.get(r.task_id) ?? 0) + 1);
     acceptedRunsByModel.set(r.model, (acceptedRunsByModel.get(r.model) ?? 0) + 1);
   }
   const specialists = new Map<
     string,
-    { usdMicro: number; runs: Set<string>; entries: number; accepted: number }
+    { usdMicro: number; runs: Set<string>; entries: number; accepted: number; tries: number }
   >();
   for (const e of entries) {
     const run = e.run_id ? runs.get(e.run_id) : undefined;
     const key = e.specialist ?? run?.specialist ?? "(none)";
-    const s = specialists.get(key) ?? { usdMicro: 0, runs: new Set(), entries: 0, accepted: 0 };
+    const s = specialists.get(key) ?? {
+      usdMicro: 0,
+      runs: new Set(),
+      entries: 0,
+      accepted: 0,
+      tries: 0,
+    };
     s.usdMicro += e.usd_micro;
     s.entries += 1;
     if (e.run_id && !s.runs.has(e.run_id)) {
       s.runs.add(e.run_id);
       if (accepted.has(e.run_id)) s.accepted += 1;
+      if (!continued.has(e.run_id)) s.tries += 1;
     }
     specialists.set(key, s);
   }
@@ -1471,16 +1577,18 @@ async function costFacts(
     key === "(none)" ||
     key === INTAKE_RUN_SPECIALIST ||
     key === TASK_CHECK_RUN_SPECIALIST;
-  const runsByTask = new Map<string, number>();
+  // A task's runs are its work runs (its own, wherever their rows are booked); the critic's
+  // reviews of it are not attempts.
+  const runsByTask = runsByTaskOwn;
   const runsByModel = new Map<string, number>();
+  const triesByModel = new Map<string, number>();
   const allRunsByModel = new Map<string, number>();
   for (const r of runs.values()) {
-    // A task's runs are its work runs; the critic's reviews of it are not attempts.
-    if (r.task_id && r.specialist !== "critic")
-      runsByTask.set(r.task_id, (runsByTask.get(r.task_id) ?? 0) + 1);
     allRunsByModel.set(r.model, (allRunsByModel.get(r.model) ?? 0) + 1);
-    if (!notWork(r.specialist ?? "(none)"))
+    if (!notWork(r.specialist ?? "(none)")) {
       runsByModel.set(r.model, (runsByModel.get(r.model) ?? 0) + 1);
+      if (!continued.has(r.id)) triesByModel.set(r.model, (triesByModel.get(r.model) ?? 0) + 1);
+    }
   }
   const bySpecialist = [...specialists.entries()]
     .map(([key, s]) => ({
@@ -1500,6 +1608,7 @@ async function costFacts(
       usdMicro: s.usdMicro,
       runs: s.runs.size || s.entries,
       accepted: notWork(key) ? null : s.accepted,
+      tries: s.runs.size ? s.tries : s.entries,
     }))
     .sort((a, b) => b.usdMicro - a.usdMicro || a.key.localeCompare(b.key));
   const times = entries.map((e) => e.occurred_at).sort();
@@ -1517,6 +1626,8 @@ async function costFacts(
     acceptedRunsByModel,
     runsByTask,
     runsByModel,
+    triesByTask,
+    triesByModel,
     allRunsByModel,
     first: times[0] ?? null,
     last: times.at(-1) ?? null,

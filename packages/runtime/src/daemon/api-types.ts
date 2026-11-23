@@ -1094,6 +1094,13 @@ export const CostBucket = z.object({
   cost: Money,
   runs: z.number().int(),
   accepted: z.number().int().nullable(),
+  /**
+   * L4-money-301: the work runs the critic or the failure ladder judged: a run that paused (its
+   * budget, the session's wrap-up) and that a later run of the same task continued is one try
+   * with it, never a try the critic did not accept (ADR 0112 point 5). "Accepted" is read
+   * against it. Absent from an older service (the screens then read `runs`).
+   */
+  tries: z.number().int().optional(),
 });
 export const CostView = z.object({
   totals: Money,

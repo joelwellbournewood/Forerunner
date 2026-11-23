@@ -45,6 +45,30 @@ export function Shell() {
   const viewedId = matchPath("/projects/:id/*", location.pathname)?.params.id ?? null;
   const viewed = viewedId ? (state.projects.find((p) => p.id === viewedId) ?? null) : null;
   const active = viewed ?? activeProject(state);
+  // L4-github-115: a project joined into another or removed is not in the active list, yet its
+  // page is on screen: the header names it (read once from GET /projects/:id), never the active
+  // project; the switcher list stays the active projects, with none of them shown as current.
+  const [shownElsewhere, setShownElsewhere] = useState<{ id: string; name: string } | null>(null);
+  useEffect(() => {
+    if (!viewedId || viewed) return;
+    let gone = false;
+    client
+      .project(viewedId)
+      .then((p) => {
+        if (!gone) setShownElsewhere({ id: p.id, name: p.name });
+      })
+      .catch(() => undefined);
+    return () => {
+      gone = true;
+    };
+  }, [client, viewedId, viewed]);
+  const headerName = viewed
+    ? viewed.name
+    : viewedId && shownElsewhere?.id === viewedId
+      ? shownElsewhere.name
+      : viewedId
+        ? null
+        : (active?.name ?? null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
@@ -271,7 +295,7 @@ export function Shell() {
               onClick={() => setSwitcherOpen((o) => !o)}
               title="Switch project"
             >
-              {active ? active.name : "No active project"}
+              {headerName ?? (viewedId ? "" : "No active project")}
               <span aria-hidden className="text-xs">
                 ▾
               </span>

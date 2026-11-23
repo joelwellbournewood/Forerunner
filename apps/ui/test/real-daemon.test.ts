@@ -19685,6 +19685,8 @@ describe("d1109-onerepo-join, run C", () => {
             "Budget per session: CHF 5.00",
             "Project budget: no project budget",
             "Who merges: Merge automatically after review",
+            // L4-github-113: the status pull request's setting moves with the work too.
+            "Status pull request: Off",
             "Research reads: any public website",
           ],
         },
@@ -19699,6 +19701,7 @@ describe("d1109-onerepo-join, run C", () => {
             "Budget per session: CHF 5.00",
             "Project budget: no project budget",
             "Who merges: You press Merge",
+            "Status pull request: Off",
             "Research reads: any public website",
           ],
         },
@@ -19707,12 +19710,13 @@ describe("d1109-onerepo-join, run C", () => {
         moves: 'The tasks, plan, cards and pull requests of "Kite club" move into "Site".',
         stays: '"Kite club" keeps its sessions, changes and spending to read; no budget changes.',
         settings: [
-          'Who merges: "Site"\'s setting applies to the moved work: merge automatically after review.',
+          // L4-github-113: without the possessive (L4-github-108's words).
+          'Who merges: the setting of "Site" applies to the moved work: merge automatically after review.',
         ],
         refusal: null,
       });
       expect(preview.ifKept[kite.id]?.settings).toEqual([
-        'Who merges: "Kite club"\'s setting applies to the moved work: you press Merge.',
+        'Who merges: the setting of "Kite club" applies to the moved work: you press Merge.',
       ]);
       expect(preview.keepOnly).toBeNull();
       // A session working on Kite club holds the join, in the dialog and at the press.
@@ -25877,4 +25881,403 @@ describe("l4-cred-screens, run L4", () => {
       await second.rt.close();
     }
   }, 60_000);
+});
+
+describe("l4-github-merge, run L4", () => {
+  /** A repository project on the fake GitHub, the watcher polled by the test, recomposable. */
+  async function repoWorld(name: string) {
+    const work = mkdtempSync(join(tmpdir(), `fr-ui-real-l4m-${name}-`));
+    const clock = new SystemClock();
+    const host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: "alice@example.test" });
+    await host.createRepo({
+      owner: "alice",
+      name,
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": `# ${name}\n` },
+    });
+    const REPO = { owner: "alice", name };
+    const token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock });
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const homeEnv = { FORERUNNER_HOME: home };
+    const compose = async () => {
+      const vault = new MemoryVault();
+      await vault.set(SECRET_NAMES.github, token);
+      return composeWithRolePlayer(
+        {},
+        {
+          env: homeEnv,
+          dirs: appDirs({ env: homeEnv }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          gitHost: new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+          vault,
+          tryIt: false,
+          githostWatch: { enabled: true, pollMs: 86_400_000 },
+          config: {
+            version: 1,
+            profile: "default",
+            timezone: "UTC",
+            githubApiBase: host.baseUrl,
+            anthropicApiBase: "http://an.test",
+            repos: [],
+            credentials: { github: true, anthropic: false, anthropicSubscription: false },
+            stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          },
+        },
+      );
+    };
+    return { host, github, REPO, token, compose, work };
+  }
+  const prOf = (url: string | null | undefined) => Number(/\/pull\/(\d+)/.exec(url ?? "")?.[1]);
+  async function runSession(client: DaemonClient, projectId: string) {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId });
+    await eventually(
+      async () => (await client.session(started.session?.id ?? "")).status !== "running",
+      "the session to end (at least 60 s)",
+      async () =>
+        (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
+      60_000,
+    );
+  }
+
+  it("L4-github-112, L4-github-117: A closed and B merged on GitHub: the Inbox card says A reached main through #B with Take this work out and Keep it, the Tasks row reads merged through #B, Keep it answers it; a 'changed after the review' card closes with 'Closed: #N was closed on GitHub.' once its pull request is closed there, also after the daemon starts again", async () => {
+    const w = await repoWorld("l4through");
+    let { rt, client } = await w.compose();
+    try {
+      const me = await client.me();
+      const project = await client.createProject({
+        name: "Kite club",
+        goal: "The club's pages",
+        repos: ["alice/l4through"],
+      });
+      const a = await client.createTask(project.id, {
+        title: "Write kite/club.txt with one line",
+        outcome: "kite/club.txt holds one line",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const b = await client.createTask(project.id, {
+        title: "Write kite/club-day.txt after the club file",
+        outcome: "kite/club-day.txt names the club day",
+        riskTier: 1,
+        specialist: "coder",
+        dependsOn: [a.id],
+      });
+      const c = await client.createTask(project.id, {
+        title: "Write kite/rules.txt with the rules",
+        outcome: "kite/rules.txt lists the rules",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await runSession(client, project.id);
+      const [prA, prB, prC] = [
+        prOf((await rt.store.task.mustGet(a.id)).pr_url),
+        prOf((await rt.store.task.mustGet(b.id)).pr_url),
+        prOf((await rt.store.task.mustGet(c.id)).pr_url),
+      ];
+      // A is closed on GitHub and B, which holds A's change, is merged there; one poll.
+      await w.github.updatePullRequest(w.REPO, prA, { state: "closed" });
+      expect((await w.github.mergePullRequest(w.REPO, prB)).merged).toBe(true);
+      await w.host.settle();
+      await rt.githostWatcher?.pollOnce();
+      await w.host.settle();
+      const sentence = `#${prA} was closed, but its change reached main through #${prB}.`;
+      const cardOf = async () =>
+        (await client.inbox(me.id)).requests.filter((r) => r.taskId === a.id);
+      const [card] = (await cardOf()).filter((r) => r.status === "open");
+      expect(card?.title).toBe(
+        `"Write kite/club.txt with one line" reached main through pull request #${prB}`,
+      );
+      expect(card?.body).toBe(sentence);
+      expect(card?.choices?.map((x) => x.label)).toEqual(["Take this work out", "Keep it"]);
+      const rowA = (await client.tasks(project.id)).find((t) => t.id === a.id);
+      expect(rowA?.display?.label).toBe(`Merged through #${prB}`);
+      // Nothing was written to GitHub: A stays closed, no take-out pull request opened.
+      expect((await w.github.getPullRequest(w.REPO, prA)).state).toBe("closed");
+      const open = await w.github.listPullRequests(w.REPO, { state: "open" });
+      expect(open.map((p) => p.number)).toContain(prC);
+      expect(open.filter((p) => p.title.startsWith("Take out:"))).toEqual([]);
+      expect(open.map((p) => p.number)).not.toContain(prA);
+      // Keep it, with the option string the Inbox shows.
+      const keep = card?.choices?.find((x) => x.label === "Keep it")?.label ?? "";
+      await client.answerRequest(card?.id ?? "", { version: card?.version ?? 0, answer: keep });
+      await rt.syncApprovals();
+      expect((await cardOf()).find((r) => r.id === card?.id)?.outcome).toBe(
+        `Kept: the change of #${prA} stays on main.`,
+      );
+      // C: a commit pushed to its branch on GitHub; Merge pressed: refused at once, one card.
+      const branchC = (await rt.store.task.mustGet(c.id)).branch ?? "";
+      const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-l4m-push-"));
+      try {
+        const auth = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${w.token}`).toString("base64")}`;
+        const g = (args: string[]) =>
+          run([
+            "git",
+            "-C",
+            dir,
+            "-c",
+            "user.name=Pat",
+            "-c",
+            "user.email=pat@example.test",
+            "-c",
+            `http.extraheader=${auth}`,
+            ...args,
+          ]);
+        await run([
+          "git",
+          "-c",
+          `http.extraheader=${auth}`,
+          "clone",
+          "-q",
+          "--branch",
+          branchC,
+          w.host.cloneUrl("alice/l4through"),
+          dir,
+        ]);
+        writeFileSync(join(dir, "theirs.txt"), "pushed on GitHub after the review\n");
+        await g(["add", "theirs.txt"]);
+        await g(["commit", "-q", "-m", "Add theirs.txt"]);
+        // GitHub's pull request follows the push a moment late (L4-creds-22).
+        w.host.ops.pullHeadLag = 5;
+        await g(["push", "-q", "origin", `HEAD:${branchC}`]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+      const moved = `#${prC} changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.`;
+      // Before: {"state":"queued","sentence":"Merging #3.","order":[3]}, refused later.
+      expect(await client.mergePullRequest(project.id, prC)).toEqual({
+        state: "refused",
+        sentence: moved,
+        order: [],
+      });
+      w.host.ops.pullHeadLag = 0;
+      await rt.pullRequests.idle();
+      const cardsOfC = async () =>
+        (await client.inbox(me.id)).requests.filter((r) => r.taskId === c.id);
+      const [movedCard] = (await cardsOfC()).filter((r) => r.status === "open");
+      expect(movedCard?.title).toBe('"Write kite/rules.txt with the rules" changed after the review');
+      // The person closes C on GitHub; the next poll closes the card.
+      await w.github.updatePullRequest(w.REPO, prC, { state: "closed" });
+      await rt.githostWatcher?.pollOnce();
+      expect((await cardsOfC()).filter((r) => r.status === "open")).toEqual([]);
+      expect((await cardsOfC()).find((r) => r.id === movedCard?.id)?.outcome).toBe(
+        `Closed: #${prC} was closed on GitHub.`,
+      );
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      await rt.githostWatcher?.pollOnce();
+      expect((await cardsOfC()).filter((r) => r.status === "open")).toEqual([]);
+      expect((await client.tasks(project.id)).find((t) => t.id === a.id)?.display?.label).toBe(
+        `Merged through #${prB}`,
+      );
+    } finally {
+      await rt.close();
+      await w.host.stop();
+    }
+  }, 240_000);
+
+  it("L4-github-118: a check that failed on GitHub after Forerunner's last look: Merge answers the refusal at once, nothing merges; L4-chat-110: a cancelled task's pull request closed on GitHub reads 'Closed without merging' in what the chat model is told", async () => {
+    const w = await repoWorld("l4checks");
+    const { rt, client, chatCalls } = await w.compose();
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({
+        name: "Trips",
+        goal: "The trips pages",
+        repos: ["alice/l4checks"],
+      });
+      const t = await client.createTask(project.id, {
+        title: "Write trips/index.txt with the trips",
+        outcome: "trips/index.txt lists the trips",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const u = await client.createTask(project.id, {
+        title: "Write trips/old.txt with the old trips",
+        outcome: "trips/old.txt lists the old trips",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await runSession(client, project.id);
+      const task = await rt.store.task.mustGet(t.id);
+      const pr = prOf(task.pr_url);
+      const reviewed = (await rt.store.mergeRecord.forTask(t.id))?.reviewed_head_sha ?? "";
+      await w.host.settle();
+      const res = await fetch(`${w.host.baseUrl}/repos/alice/l4checks/check-runs`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${w.token}`,
+          Accept: "application/vnd.github+json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "ci/test",
+          head_sha: reviewed,
+          status: "completed",
+          conclusion: "failure",
+        }),
+      });
+      expect(res.ok).toBe(true);
+      const sentence = `A check failed on #${pr} (ci/test): fix it, or merge it on GitHub.`;
+      expect(await client.mergePullRequest(project.id, pr)).toEqual({
+        state: "refused",
+        sentence,
+        order: [],
+      });
+      await rt.pullRequests.idle();
+      expect((await w.github.getPullRequest(w.REPO, pr)).merged).toBe(false);
+      const row = (await client.projectPullRequests(project.id)).waiting.find(
+        (r) => r.number === pr,
+      );
+      expect(row?.merge).toMatchObject({ canMerge: false, sentence });
+      // U is redone and cancelled (its pull request stays open on GitHub), then closed there.
+      let urow = await rt.store.task.mustGet(u.id);
+      await rt.store.task.reopen(u.id, urow.version, "ready", "Redo asked by you", {
+        agentId,
+      });
+      urow = await rt.store.task.mustGet(u.id);
+      await rt.store.task.transition(u.id, urow.version, "cancelled", "you cancelled it", {
+        agentId,
+      });
+      await w.github.updatePullRequest(w.REPO, prOf(urow.pr_url), { state: "closed" });
+      await rt.githostWatcher?.pollOnce();
+      await client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text: "what happened to the old trips pull request?",
+        source: "text",
+      });
+      const told =
+        JSON.stringify(chatCalls.at(-1)?.messages ?? []) + (chatCalls.at(-1)?.system ?? "");
+      // Before: "Left open on GitHub when their task was cancelled ...".
+      expect(told).toContain(
+        `Closed without merging: \\"Write trips/old.txt with the old trips\\" ${urow.pr_url}`,
+      );
+      expect(told).not.toContain("Left open on GitHub when their task was cancelled");
+    } finally {
+      await rt.close();
+      await w.host.stop();
+    }
+  }, 240_000);
+
+  it("L4-github-113, -114, -115, -116, -125, L4-creds-28: Make one project of two on one repository: the dialog names the status setting and counts a pull request closed on GitHub as not open; after the join the kept project lists the closed one's status pull request with Merge (its own setting off), Costs reads the moved task's own run, and the closed project's page has no docs-clone folder and says where its tasks went; the same after the daemon starts again", async () => {
+    const w = await repoWorld("l4join");
+    let { rt, client } = await w.compose();
+    try {
+      const statusOn = async (projectId: string) => {
+        const on = await client.executeCommands({
+          commands: [
+            {
+              name: "settings.set",
+              params: { key: "status_pull_request", value: true, project: projectId },
+            },
+          ],
+          source: "ui",
+        });
+        expect(on.status).toBe("done");
+      };
+      const kite = await client.createProject({
+        name: "Kite club",
+        goal: "Kites",
+        repos: ["alice/l4join"],
+      });
+      await statusOn(kite.id);
+      const first = await client.createTask(kite.id, {
+        title: "Write kite/club.txt with one line",
+        outcome: "kite/club.txt holds one line",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const second = await client.createTask(kite.id, {
+        title: "Write kite/rules.txt with the rules",
+        outcome: "kite/rules.txt lists the rules",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await runSession(client, kite.id);
+      const site = await pairBeforeTheRule(rt, client, {
+        name: "Site",
+        goal: "A site",
+        repos: ["alice/l4join"],
+      });
+      // Kite club's status pull request is open on fr/status, marked with its id.
+      const [status] = await w.github.listPullRequests(w.REPO, { state: "open", head: "fr/status" });
+      expect(status?.body).toContain(`<!-- forerunner:pr project=${kite.id} -->`);
+      // One of Kite club's pull requests is closed on GitHub without a merge; one poll.
+      const closedPr = prOf((await rt.store.task.mustGet(first.id)).pr_url);
+      await w.github.updatePullRequest(w.REPO, closedPr, { state: "closed" });
+      await rt.githostWatcher?.pollOnce();
+      expect((await client.tasks(kite.id)).find((t) => t.id === first.id)?.display?.label).toBe(
+        "Accepted · pull request closed",
+      );
+      // Its last result offered a task as ready to continue (as a session leaves it).
+      const kiteRow = await rt.store.project.mustGet(kite.id);
+      const cache = kiteRow.summary_cache as { last_session?: { summary: string } };
+      if (cache.last_session)
+        await rt.store.project.patch(kite.id, {
+          summary_cache: {
+            ...kiteRow.summary_cache,
+            last_session: {
+              ...cache.last_session,
+              summary: `Done: 2 tasks. "Write the notes in notes.md" is ready to continue.`,
+            },
+          },
+        });
+      const preview = await client.joinPreview(site.id, [kite.id]);
+      const kiteLines = preview.projects.find((p) => p.id === kite.id)?.lines ?? [];
+      // Before: "2 open pull requests" (the closed one counted).
+      expect(kiteLines).toContain("2 tasks done");
+      expect(kiteLines).toContain("1 open pull request");
+      expect(kiteLines).toContain("Status pull request: On");
+      expect(preview.projects.find((p) => p.id === site.id)?.lines).toContain(
+        "Status pull request: Off",
+      );
+      // Before: [] (four settings only).
+      expect(preview.ifKept[site.id]?.settings).toContain(
+        'Status pull request: the setting of "Site" applies to the moved work: off.',
+      );
+      const joined = await client.executeCommands({
+        commands: [{ name: "project.join", params: { keep: site.id, close: [kite.id] } }],
+        wordsUsed: "Make one project (Overview)",
+        source: "ui",
+        projectId: site.id,
+        confirm: "tap",
+      });
+      expect(joined.status).toBe("done");
+      const check = async (c: DaemonClient) => {
+        // L4-github-113: Kite club's status pull request is Site's docs row, with Merge.
+        const docsRow = (await c.projectPullRequests(site.id)).waiting.find(
+          (r) => r.kind === "docs" && r.branch === "fr/status",
+        );
+        expect(docsRow?.number).toBe(status?.number);
+        expect(docsRow?.merge?.canMerge).toBe(true);
+        // L4-github-116: the moved task's own run and its accept (before: the ledger rows).
+        const costs = await c.costs({ projectId: site.id });
+        const moved = costs.byTask.find((b) => b.key === second.id);
+        expect(moved).toMatchObject({ runs: 1, accepted: 1, tries: 1 });
+        // L4-github-115: the closed project's page has no folder of its own.
+        const card = await c.project(kite.id);
+        expect(card.folder ?? null).toBeNull();
+        expect(card.joinedInto?.name).toBe("Site");
+        // L4-github-125: its last result says where its tasks went, and offers none as ready.
+        const summary = await c.projectSummary(kite.id);
+        expect(summary.lastSession?.summary).not.toContain("ready to continue");
+        expect(summary.lastSession?.since).toContain('Its tasks went on in "Site".');
+      };
+      await check(client);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      await check(client);
+    } finally {
+      await rt.close();
+      await w.host.stop();
+    }
+  }, 240_000);
 });

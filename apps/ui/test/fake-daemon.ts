@@ -2096,7 +2096,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // As the daemon's `projectCard`: a repository project's work is on the repository and in its
     // pull requests (ADR 0106), so its card names the repository and no folder.
     const repository = repositoryOf(p.repos);
-    const folder = repository ? null : (state.folders[p.id] ?? null);
+    // L4-github-115, as the daemon's `projectCard`: a project closed into another has no folder
+    // of its own (never the docs clone's path with its id).
+    const folder = repository || state.joined[p.id] ? null : (state.folders[p.id] ?? null);
     const statusLine = projectStatusLine({
       projectId: p.id,
       tasks: tasks.map((t) => ({

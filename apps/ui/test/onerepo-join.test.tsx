@@ -49,14 +49,15 @@ const PREVIEW: JoinPreviewView = {
       moves: 'The tasks, plan, cards and pull requests of "Beacon" move into "Atlas".',
       stays: '"Beacon" keeps its sessions, changes and spending to read; no budget changes.',
       settings: [
-        'Who merges: "Atlas"\'s setting applies to the moved work: merge automatically after review.',
+        'Who merges: the setting of "Atlas" applies to the moved work: merge automatically after review.',
+        'Status pull request: the setting of "Atlas" applies to the moved work: off.',
       ],
       refusal: null,
     },
     proj_beacon: {
       moves: 'The tasks, plan, cards and pull requests of "Atlas" move into "Beacon".',
       stays: '"Atlas" keeps its sessions, changes and spending to read; no budget changes.',
-      settings: ['Who merges: "Beacon"\'s setting applies to the moved work: you press Merge.'],
+      settings: ['Who merges: the setting of "Beacon" applies to the moved work: you press Merge.'],
       refusal: null,
     },
   },
@@ -101,7 +102,9 @@ describe("d1109-onerepo-join, run C: Make one project on the Overview (OJ-01, OJ
         .getAllByTestId("join-setting")
         .map((e) => e.textContent),
     ).toEqual([
-      'Who merges: "Atlas"\'s setting applies to the moved work: merge automatically after review.',
+      'Who merges: the setting of "Atlas" applies to the moved work: merge automatically after review.',
+      // L4-github-113: the status pull request's setting is named too.
+      'Status pull request: the setting of "Atlas" applies to the moved work: off.',
     ]);
     expect(within(dialog).getByTestId("join-confirm")).toBeEnabled();
     await user.click(within(dialog).getByTestId("join-confirm"));
@@ -302,5 +305,40 @@ describe("d1109-onerepo-join, run C: the kept project's Sessions and Costs (OJ-1
         'Joined into "Atlas" on 9 Nov.',
       ),
     );
+  });
+});
+
+describe("l4-github-merge, run L4", () => {
+  const joinedBeacon = () => {
+    const harness = createHarness();
+    const { state } = harness.daemon;
+    state.joined.proj_beacon = {
+      projectId: "proj_atlas",
+      name: "Atlas",
+      at: "2026-11-09T10:00:00.000Z",
+      text: 'Joined into "Atlas" on 9 Nov.',
+    };
+    // As the daemon: a joined project is archived, so GET /projects lists Atlas only.
+    for (const p of state.projects) if (p.id === "proj_beacon") p.status = "archived";
+    state.folders.proj_beacon = "/home/you/.forerunner/worktrees/docs/proj_beacon";
+    return harness;
+  };
+
+  it("L4-github-115: a joined project's page names it in the header, not the active project", async () => {
+    const harness = joinedBeacon();
+    renderApp("/projects/proj_beacon/summary", harness);
+    await screen.findByTestId("project-joined");
+    // Before: the header read "Atlas" (the active project; Beacon is not in the active list).
+    await waitFor(() => expect(screen.getByTestId("active-project")).toHaveTextContent("Beacon"));
+    expect(screen.getByTestId("active-project")).not.toHaveTextContent("Atlas");
+  });
+
+  it("L4-github-115: its Your files says where its files are, with no folder path of Forerunner's own", async () => {
+    const harness = joinedBeacon();
+    renderApp("/projects/proj_beacon/summary", harness);
+    const files = await screen.findByTestId("joined-files");
+    expect(files).toHaveTextContent('Its files are in "Atlas".');
+    expect(screen.getByTestId("your-files")).not.toHaveTextContent("worktrees");
+    expect(screen.getByTestId("your-files")).not.toHaveTextContent("proj_beacon");
   });
 });

@@ -224,7 +224,25 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
           </ul>
         </section>
       ) : null}
-      {project?.repository ? (
+      {project?.joinedInto ? (
+        // L4-github-115: a project closed into another keeps no files of its own; they are the
+        // kept project's (never the docs clone's path with this project's id).
+        <section aria-labelledby="files-title" data-testid="your-files">
+          <h2 id="files-title" className="font-semibold">
+            Your files
+          </h2>
+          <p className="mt-1 text-sm" data-testid="joined-files">
+            Its files are in{" "}
+            <Link
+              to={`/projects/${encodeURIComponent(project.joinedInto.projectId)}/summary`}
+              className="text-blue-700 hover:underline dark:text-blue-300"
+            >
+              "{project.joinedInto.name}"
+            </Link>
+            .
+          </p>
+        </section>
+      ) : project?.repository ? (
         <RepositoryFiles
           projectId={projectId}
           repository={project.repository}
