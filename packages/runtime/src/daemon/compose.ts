@@ -361,6 +361,7 @@ import {
 } from "../voice/pkg.ts";
 import {
   type ChooserFacts,
+  capabilitiesOf,
   dropKeptStart,
   keepContinuation,
   keepStartAtReset,
@@ -4173,13 +4174,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           })();
         if (!known) deps.set(projectId, dependencies);
       }
+      const taskNeeds = needsOf({
+        registryTools: spec.registryTools ?? spec.allowedTools,
+        task: task ?? null,
+        codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
+      });
       const choice = credentialChoiceFor({
         kindsInOrder: kinds,
-        needs: needsOf({
-          registryTools: spec.registryTools ?? spec.allowedTools,
-          task: task ?? null,
-          codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
-        }),
+        needs: taskNeeds,
         facts: chooserFacts(),
         specialist: name,
         dependencies: await dependencies,
@@ -4202,16 +4204,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               !blocked.has(k as BillingSource["kind"]) &&
               (!yesTo || k === yesTo),
           ),
-          needs: needsOf({
-            registryTools: spec.registryTools ?? spec.allowedTools,
-            task: task ?? null,
-            codeCommands: codeCommandsOf(prefs?.[CODE_COMMANDS_SETTING]),
-          }),
+          needs: taskNeeds,
           facts: chooserFacts(),
           specialist: name,
           dependencies: await dependencies,
         });
-        if (next) return next;
+        // fixup-l4-cred-screens (the review of L4-creds-17's sibling): the next credential takes
+        // the task only when it can do every hard need the resting one does here, as the pick
+        // holds such work for the credential that can (CE-3, a `needs` wait). Before, with the
+        // API key first and resting and commands set to the key, New task and the plan card said
+        // "Runs on your Claude subscription, where commands cannot run: ..." for a task that
+        // waits for the key; the wait stays the line.
+        const facts = chooserFacts();
+        const stoppedCan = capabilitiesOf(choice.kind as BillingSource["kind"], facts);
+        const nextCan = next ? capabilitiesOf(next.kind as BillingSource["kind"], facts) : null;
+        if (next && nextCan && taskNeeds.hard.every((n) => !stoppedCan[n] || nextCan[n]))
+          return next;
       }
       return choice && wait
         ? {

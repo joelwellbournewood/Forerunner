@@ -1192,6 +1192,15 @@ the subscription first, today's `serves` (the key enabled, no stop, the month ha
 key first, the subscription enabled, in the rule's kinds and without a stop of its own. The line
 is `startRunOutLine(first.kind, ...)`. `serves` alone still decides "Use API key" under ask and
 wait. `planCardLine` adds the cost clause only when the other credential is the API key.
+fixup-l4-cred-screens (the review's blocking #3): the line also needs the work to run now
+(`StartRunsFacts.waitsNow`, which server.ts' `credentialAtStart` answers with `waits.now`, the
+read-only pick of each ready task): work only the resting credential can do here (commands set
+to the API key, a task that needs the person's answers) waits for it, so the dialog keeps the
+blocked sentence alone ("Nothing can run until 11:40 (your API key's limit). Press Start at
+11:40 and the work starts then."). Before, "..., so this runs on your subscription" stood beside
+it. With some ready task able to run there the line stays (the rows of the others say why they
+wait). Test: real-daemon "L4-creds-17: key first with the key resting and work only the key can
+do".
 
 **A kept start at a month's stop (L4-creds-18).** `continuations.keepStart` keeps a person's
 Start for the stop of the wait the work meets now (`asStopWait`: a limit, the share or a key's
@@ -8388,7 +8397,12 @@ log's lines stay in `session/credential-words.ts`); the shapes are in
   resting and can do the task (as the pick does) when the preset goes on with the next one, or
   when the person's yes stands for the stop it is at now (`limits.grant` read once per batch:
   only the credential the yes names); under "then wait" and "ask" without a yes the line stays
-  the wait.
+  the wait. fixup-l4-cred-screens: the next credential takes the line only when it can do every
+  hard need the resting one does here (`capabilitiesOf` of both against the task's `needsOf`),
+  since the pick holds such work for the credential that can (a `needs` wait); else the line
+  stays the wait ("Waits until 11:40 (your API key's limit). Press Start and the work starts
+  then."). Before, with the key first and resting and commands set to the key, New task and the
+  plan card said "Runs on your Claude subscription, where commands cannot run: ...".
 - **"Use API key" only for a start that runs** (the review of the fix-up): `startCredential`
   takes `{runsWork, stopped}` (the server passes `runsWork(check)` and Stop all); a start that
   runs nothing (and no session of the project waits to go on) or that Stop all refuses gets no

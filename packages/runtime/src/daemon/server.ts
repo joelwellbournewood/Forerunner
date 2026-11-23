@@ -1646,7 +1646,13 @@ export function createDaemonApp(
         await inFlightWork({ store: rt.store, estimates: rt.estimates }, projectId).catch(() => []),
       ),
       // "Use API key" only for a start that runs something and that Stop all does not refuse.
-      { runsWork: runsWork(r), stopped: rt.kill.isFrozen({ agentId: rt.agent.id }) },
+      // fixup-l4-cred-screens (L4-creds-17): under "then the other one", whether the work can
+      // run at all now (each ready task's own pick, read only), as the blocked sentence reads it.
+      {
+        runsWork: runsWork(r),
+        stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
+        waitsNow: async () => !!(await rt.billing.waits.now(projectId)),
+      },
     ).catch(() => ({ view: null, offer: null }));
   /**
    * Why a Start now would do nothing (design §3.6; `start-blocked.ts`, the chat says the same).

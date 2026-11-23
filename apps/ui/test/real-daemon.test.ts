@@ -25397,6 +25397,91 @@ describe("l4-cred-screens, run L4", () => {
     }
   }, 60_000);
 
+  // fixup-l4-cred-screens (the review's blocking #3; L4-creds-17, design §1 "what the app says is
+  // true now"): under "API key first, then subscription" with the key resting, work that only the
+  // key can do here does not run on the subscription; it waits for the key. The dialog said "...,
+  // so this runs on your subscription (about CHF 0.06)." beside "Nothing can run until 11:40
+  // (your API key's limit). ...". Both forms of such work: commands set to the API key, and a
+  // task that needs the person's answers (the subscription cannot ask while it works).
+  it("L4-creds-17: key first with the key resting and work only the key can do: the dialog says only that nothing can run until the key is back", async () => {
+    const calls: string[] = [];
+    const { rt, client, keyCalls } = await composeL4({ sdkQuery: claudeCode(calls, 0) });
+    try {
+      await setPolicyL4(client, "key_then_subscription");
+      const commands = await client.executeCommands({
+        commands: [{ name: "settings.set", params: { key: "code_commands", value: "api_key" } }],
+        wordsUsed: "Settings: Code tasks that need commands to the API key",
+        source: "ui",
+      });
+      if (commands.status === "pending")
+        await client.confirmCommand(commands.pendingId ?? "", { answer: "tap" });
+      const project = await client.createProject({ name: "Tool notes", goal: "Notes" });
+      await addTask(client, project.id, "Write the tool notes");
+      await restSource(rt, "api_key", resetAt);
+      const check = await client.startCheck(project.id);
+      expect(check.blocked?.sentence).toBe(
+        "Nothing can run until 11:40 (your API key's limit). Press Start at 11:40 and the work starts then.",
+      );
+      expect(check.credential?.line ?? null).toBeNull();
+      expect(check.credential?.runOut ?? null).toBeNull();
+      expect(JSON.stringify(check.credential)).not.toContain("runs on your subscription");
+      // The sibling, New task's line for a coder task here (the plan card's task lines read the
+      // same chooser): it waits for the key. Before: "Runs on your Claude subscription, where
+      // commands cannot run: this task's tests will not run." for work the pick holds for the key.
+      const waitsLine =
+        "Waits until 11:40 (your API key's limit). Press Start and the work starts then.";
+      const models = await client.modelSettings(undefined, project.id);
+      expect(models.specialists.find((s) => s.name === "coder")?.runsOn).toEqual({
+        kind: "api_key",
+        line: waitsLine,
+      });
+      // A task that needs the person's answers, with commands back on the person's order: only
+      // the key can ask while it works.
+      const back = await client.executeCommands({
+        commands: [
+          { name: "settings.set", params: { key: "code_commands", value: "first_choice" } },
+        ],
+        wordsUsed: "Settings: Code tasks that need commands to my first choice anyway",
+        source: "ui",
+      });
+      if (back.status === "pending")
+        await client.confirmCommand(back.pendingId ?? "", { answer: "tap" });
+      const asks = await client.createProject({ name: "Palette", goal: "Colours" });
+      await client.createTask(asks.id, {
+        title: "Choose the colours",
+        outcome: "The palette needs your decision on the colours",
+        acceptanceCriteria: ["it is done"],
+        priority: "medium",
+        status: "ready",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 0,
+      });
+      const asked = await client.startCheck(asks.id);
+      expect(asked.blocked?.sentence).toBe(
+        "Nothing can run until 11:40 (your API key's limit). Press Start at 11:40 and the work starts then.",
+      );
+      expect(asked.credential?.line ?? null).toBeNull();
+      const typed = await client.modelSettings(undefined, asks.id, {
+        title: "Choose the colours",
+        outcome: "The palette needs your decision on the colours",
+      });
+      expect(typed.specialists.find((s) => s.name === "coder")?.runsOn?.line).toBe(waitsLine);
+      // A task the subscription can do here still runs there, and the dialog says so.
+      const plain = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addTask(client, plain.id, "Style the page");
+      expect((await client.startCheck(plain.id)).credential?.line).toMatch(
+        /^Your API key is at its limit until 11:40, so this runs on your subscription \((about CHF \d+\.\d\d|less than CHF 0\.01)\)\.$/,
+      );
+      expect(calls).toHaveLength(0);
+      expect(keyCalls()).toHaveLength(0);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
   // L4-creds-18 (C6L-2: "Start on 1 Dec" at the share's stop started a session that stopped at
   // once): the start is kept for the month's start as "Start at 15:40" is for a limit, and starts
   // exactly one session then, also after a restart.

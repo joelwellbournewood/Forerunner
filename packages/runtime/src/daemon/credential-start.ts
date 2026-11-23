@@ -75,6 +75,15 @@ export interface StartCredentialDeps {
 export interface StartRunsFacts {
   runsWork: boolean;
   stopped: boolean;
+  /**
+   * fixup-l4-cred-screens (L4-creds-17; design §1, "what the app says is true now"): whether no
+   * ready task of the project can run now, each one's own pick meeting a credential wait
+   * (`waits.now`, read only). Under "then the other one" the line says the other credential runs
+   * the start only when the work can run there: work that only the stopped credential can do
+   * here (commands set to the API key, a task that needs the person's answers) waits for it, and
+   * the dialog's blocked sentence says so alone. Asked only in that branch.
+   */
+  waitsNow?: () => Promise<boolean>;
 }
 
 export async function startCredential(
@@ -144,14 +153,20 @@ export async function startCredential(
     if (!sub) return false;
     return !(await deps.billing?.currentStopOf(sub.id).catch(() => ({ stopKey: "?" })));
   };
-  if (policy.rule.whenStopped === "next")
+  if (policy.rule.whenStopped === "next") {
+    // fixup-l4-cred-screens (the review of L4-creds-17): the other credential serves and the work
+    // can run on it. Before, a key-first dialog said "..., so this runs on your subscription"
+    // beside "Nothing can run until 11:40 (your API key's limit)" for work only the key can do.
+    const runsThere =
+      (await nextServes()) && !(await (facts.waitsNow?.() ?? false).catch(() => false));
     return {
       view: {
-        line: (await nextServes()) ? startRunOutLine(first.kind, stop, about, opts) : null,
+        line: runsThere ? startRunOutLine(first.kind, stop, about, opts) : null,
         runOut: null,
       },
       offer: null,
     };
+  }
   const whenStopped = policy.rule.whenStopped;
   if ((whenStopped === "wait" && !ONE_OFF_UNDER_WAIT) || !(await serves()))
     return { view: { line: null, runOut: null }, offer: null };

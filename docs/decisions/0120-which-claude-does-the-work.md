@@ -218,7 +218,11 @@ answer 3 ("For all work.": the yes covers all work until the stop ends) and his 
    dialog's line names the stop and the credential that runs the start, also with the key first
    ("Your API key is at its limit until 11:57, so this runs on your subscription (about CHF
    0.07)."; `nextServes` in credential-start.ts). The plan card says "(costs money)" only after
-   the API key.
+   the API key. It says so only when the work can run on the other credential: work that only
+   the stopped one can do here (commands set to the API key, a task that needs the person's
+   answers) waits for it, so the dialog says only "Nothing can run until 11:57 (your API key's
+   limit). ...", and New task and the plan card's task lines keep the wait (the review of the
+   fix-up, 2026-11-23).
 5. **"Start on 1 Dec" keeps the start (L4-creds-18).** A Start at the share's stop or a key's
    monthly cap is kept for the month's start as "Start at 15:40" is for a limit
    (`continuations.keepStart` takes the stop of a `needs` wait too), and the wake starts it once,

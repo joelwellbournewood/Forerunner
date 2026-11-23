@@ -1191,7 +1191,11 @@ is beside the wait on the run bar, the project's status line and the session pag
 
 Under "API key first, then subscription" with your key at its limit, the Start dialog says so and
 that the session runs on your subscription ("Your API key is at its limit until 11:57, so this
-runs on your subscription (about CHF 0.07)."), and **Start** runs it there.
+runs on your subscription (about CHF 0.07)."), and **Start** runs it there. Work that only your
+API key can do here (code tasks whose commands you set to the API key, a task that needs your
+answers while it works) waits for the key instead: the dialog then says only "Nothing can run
+until 11:57 (your API key's limit). Press Start at 11:57 and the work starts then.", and New
+task and the plan card say the same wait.
 
 The card, the Start dialog's **Use API key** and the plan card's last line give one figure for
 the same waiting work: the tasks that wait, the ones that follow them, and the critic's reviews of
