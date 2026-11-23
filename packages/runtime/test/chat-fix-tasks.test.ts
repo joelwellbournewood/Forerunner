@@ -77,7 +77,12 @@ interface World {
   agent: ConversationAgent;
   tasks: Record<string, TaskRow>;
   restart(): Promise<void>;
-  chat(text: string, opts?: { projectId?: string | null }): ReturnType<ConversationAgent["chat"]>;
+  /** The harness's simulated clock (l4-selftasks-chat: a read-back left for days). */
+  clock: ReturnType<typeof harness>["clock"];
+  chat(
+    text: string,
+    opts?: { projectId?: string | null; depth?: "longer"; offer?: string },
+  ): ReturnType<ConversationAgent["chat"]>;
   /** The provider calls labelled as the task check. */
   checks(): FakeProvider["calls"];
   titles(): Promise<[string, string][]>;
@@ -206,6 +211,7 @@ async function setup(
     commands: built.commands,
     agent: built.agent,
     tasks: { create, style, publish },
+    clock: h.clock,
     restart: async () => {
       w.commands.stop();
       const next = await build();
@@ -219,6 +225,8 @@ async function setup(
         ...(o.projectId === null ? {} : { projectId: o.projectId ?? quote, projectTab: true }),
         text,
         source: "text",
+        ...(o.depth ? { depth: o.depth } : {}),
+        ...(o.offer ? { offer: o.offer } : {}),
       }),
     checks: () => provider.calls.filter((c) => c.request.origin?.label?.startsWith("task-check")),
     titles: async () =>
@@ -765,5 +773,186 @@ describe("l4-selftasks-check, run L4: why a read-back asks first is said only wh
     expect(r.footer).toBe(
       'Asks you first: "Style the page" is a task you added or changed yourself. Checking the tasks cost less than CHF 0.01.',
     );
+  });
+});
+
+describe("l4-selftasks-chat, run L4: a change the person names is theirs, and every read-back waits until answered", () => {
+  // The owner's rule (run C decision 52): "Changes the person names in their own words stay the
+  // person's instruction". The owner, 2026-11-17: every chat read-back "stays open in chat and
+  // the Inbox until the person presses Yes or No"; none lapses after 10 minutes.
+  const LINE = "Publish the page matters most now";
+  const urgent = () => [
+    toolReply("task_update", { task: "Publish the page", priority: "high" }, "Raising it."),
+    textReply('Raising "Publish the page" needs your yes. Press Yes to confirm.'),
+  ];
+  const publishOf = (w: World) => w.store.task.mustGet(w.tasks.publish?.id ?? "");
+
+  it("L4-selftasks-116: the model's task_update on the person's line, confirmed with yes, is the person's: their row, 'Changed by you', no Inbox Update; the read-back is said once (L4-selftasks-126)", async () => {
+    const w = await setup({ level: 2, replies: urgent() });
+    const r = await w.chat(LINE);
+    const readback = r.pendingConfirmation?.readback ?? "";
+    expect(readback).toBe('Change "Publish the page": priority to High?');
+    // The model's own words about the card are dropped: the card says it once.
+    expect(r.reply).toBe(readback);
+    // The chat's model was told the app shows the question (L4-selftasks-126).
+    const last = w.provider.calls[1]?.request.messages.at(-1)?.content;
+    const toolResult = Array.isArray(last)
+      ? last.map((b) => ("content" in b ? String(b.content) : "")).join("")
+      : String(last);
+    expect(toolResult).toBe(
+      `Needs confirmation. The person is asked: ${readback} The app shows this question under your reply with Yes and No. Write nothing about it: no restating, no asking for a yes, no 'press Yes'; answer only what else was asked.`,
+    );
+    const yes = await w.chat("yes");
+    expect(yes.actions).toHaveLength(1);
+    const rows = await w.store.changeLog.list({ project_id: w.quote } as never, { limit: 5 });
+    expect(rows.map((x) => [x.author_human, x.author_agent, x.words_used])).toEqual([
+      [w.human, null, LINE],
+    ]);
+    expect((await publishOf(w)).reason).toBe("Changed by you: priority to High");
+    // The person's own chat command is in Changes and the chat, never an Inbox Update.
+    expect(await w.store.message.inbox({ humanId: w.human }, { limit: 50 })).toEqual([]);
+  });
+
+  it("L4-selftasks-116: the same, confirmed after a restart, is still the person's; a model change that acts at once stays the agent's and is no Inbox Update", async () => {
+    const w = await setup({
+      level: 2,
+      replies: [
+        ...urgent(),
+        toolReply("note_add", { text: "Check the colours", kind: "note" }),
+        textReply(""),
+      ],
+    });
+    await w.chat(LINE);
+    await w.restart();
+    await w.chat("yes");
+    const [row] = await w.store.changeLog.list({ project_id: w.quote } as never, { limit: 5 });
+    expect([row?.author_human, row?.author_agent]).toEqual([w.human, null]);
+    await w.chat("keep the colours in mind for later");
+    const rows = await w.store.changeLog.list({ project_id: w.quote } as never, { limit: 5 });
+    const note = rows.find((x) => (x.commands as { name: string }[])[0]?.name === "note.add");
+    // ADR 0030 item 2: the model's call that acts at once is the agent's act.
+    expect([note?.author_human, note?.author_agent]).toEqual([null, w.alice]);
+    expect(await w.store.message.inbox({ humanId: w.human }, { limit: 50 })).toEqual([]);
+  });
+
+  it("L4-selftasks-116: Think it through's change says the question it answers, never the button's line", async () => {
+    const w = await setup({
+      level: 2,
+      replies: [textReply("It is ready to run."), ...urgent()],
+    });
+    const quick = await w.chat(LINE);
+    const r = await w.chat("Think it through.", { depth: "longer", offer: quick.transcriptId });
+    expect(r.pendingConfirmation?.readback).toBe('Change "Publish the page": priority to High?');
+    await w.chat("yes");
+    const [row] = await w.store.changeLog.list({ project_id: w.quote } as never, { limit: 5 });
+    expect(row?.words_used).toBe(LINE);
+  });
+
+  it("L4-selftasks-117: a read-back left 10.5 minutes and across a restart still waits in chat and the Inbox, and its Yes makes the change", async () => {
+    const w = await setup({ level: 2, replies: urgent() });
+    const r = await w.chat(LINE);
+    const id = r.pendingConfirmation?.id ?? "";
+    await w.clock.advance(10.5 * 60_000);
+    expect((await w.store.humanRequest.mustGet(id)).status).toBe("open");
+    await w.restart();
+    await w.clock.advance(60 * 60_000);
+    expect((await w.store.humanRequest.open({ humanId: w.human })).map((x) => x.id)).toEqual([id]);
+    const yes = await w.chat("yes");
+    expect(yes.actions).toHaveLength(1);
+    expect((await publishOf(w)).priority).not.toBe(w.tasks.publish?.priority);
+  });
+
+  it("L4-selftasks-117: a Yes after the named task was changed elsewhere says what changed and applies nothing", async () => {
+    const w = await setup({ level: 2, replies: urgent() });
+    await w.chat(LINE);
+    const publish = await publishOf(w);
+    await w.store.task.patch(publish.id, { status: "needs_human" } as never);
+    const yes = await w.chat("yes");
+    expect(yes.reply).toBe(
+      '"Publish the page" changed since I asked: it is paused now. Nothing was changed; ask again if you still want it.',
+    );
+    expect(yes.actions).toEqual([]);
+    expect(await w.store.changeLog.list({ project_id: w.quote } as never, { limit: 5 })).toEqual(
+      [],
+    );
+    expect((await publishOf(w)).priority).toBe(publish.priority);
+  });
+
+  it("L4-selftasks-117 (run C decision 53): a 'fix the tasks' read-back waits 10.5 minutes and a restart; after the list changed its Yes says so and applies nothing", async () => {
+    const w = await setup({ level: 1, replies: [textReply(THREE)] });
+    const r = await w.chat("fix the tasks");
+    expect(r.pendingConfirmation?.readback).toBe(ASK_THREE);
+    await w.clock.advance(10.5 * 60_000);
+    await w.restart();
+    await w.store.task.patch(w.tasks.create?.id ?? "", { title: "Create the index page" } as never);
+    const yes = await w.chat("yes");
+    expect(yes.reply).toBe(
+      'The tasks changed since I checked them; say "fix the tasks" to check again.',
+    );
+    expect(await w.titles()).toContainEqual(["Style the page", "ready"]);
+    expect(w.checks()).toHaveLength(1);
+  });
+
+  it("L4-selftasks-117: an unchanged list's fix set still applies after 10.5 minutes and a restart, with no second check", async () => {
+    const w = await setup({ level: 1, replies: [textReply(THREE)] });
+    await w.chat("fix the tasks");
+    await w.clock.advance(10.5 * 60_000);
+    await w.restart();
+    const yes = await w.chat("yes");
+    expect(yes.actions).toHaveLength(1);
+    expect(await w.titles()).toContainEqual(["Style the page: colours", "ready"]);
+    expect(w.checks()).toHaveLength(1);
+  });
+
+  it("L4-selftasks-122: fix_tasks and task_update in one turn give one card that keeps the planFix rules (and its fingerprint) after a restart", async () => {
+    const w = await setup({
+      level: 1,
+      replies: [
+        toolReply("fix_tasks", {}),
+        textReply(THREE),
+        toolReply("task_update", { task: "Publish the page", priority: "low" }),
+        textReply(""),
+      ],
+    });
+    const r = await w.chat("tidy the list and make Publish the page less important");
+    const open = await w.store.humanRequest.open({ humanId: w.human });
+    expect(open).toHaveLength(1);
+    const context = (open[0]?.change_card as { context?: Record<string, unknown> }).context;
+    expect(context?.planFix).toMatchObject({ level: 1, fingerprint: expect.any(String) });
+    expect(r.pendingConfirmation?.id).toBe(open[0]?.id);
+    await w.restart();
+    const yes = await w.chat("yes");
+    expect(yes.actions).toHaveLength(1);
+    // The agent's set with the person's change: told by chat, no Inbox line (the planFix rule).
+    expect(await w.store.message.inbox({ humanId: w.human }, { limit: 50 })).toEqual([]);
+    // The person's own change in the set is theirs; the agent's three stay the agent's.
+    const publish = await publishOf(w);
+    expect([publish.priority, publish.reason]).toEqual([
+      expect.any(Number),
+      "Changed by you: priority to Low",
+    ]);
+    const split = await w.store.task.forProject(w.quote, {}, { limit: 20 });
+    expect(split.find((t) => t.title === "Style the page: layout")?.reason).toMatch(/agent/);
+  });
+
+  it("L4-selftasks-105 (b): a Yes whose set is refused at one change says none was made and why, changes nothing and writes no row", async () => {
+    const w = await setup({
+      level: 2,
+      replies: [
+        toolReply("task_update", { task: "Publish the page", priority: "high" }),
+        toolReply("task_update", { task: "Publish the page", priority: "high" }),
+        textReply(""),
+      ],
+    });
+    const r = await w.chat("Publish the page is urgent, really urgent");
+    expect(r.pendingConfirmation).not.toBeNull();
+    const yes = await w.chat("yes");
+    expect(yes.reply).toBe(
+      'None of the 2 changes was made: one could not be made (nothing to change on "Publish the page"). Ask again if you still want them.',
+    );
+    expect(await w.store.changeLog.list({ project_id: w.quote } as never, { limit: 5 })).toEqual(
+      [],
+    );
+    expect((await publishOf(w)).priority).toBe(w.tasks.publish?.priority);
   });
 });

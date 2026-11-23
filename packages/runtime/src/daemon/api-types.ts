@@ -2932,7 +2932,11 @@ export const PendingChangeView = z.object({
   card: z.unknown(),
   decision: z.enum(["needs_yes", "needs_device"]),
   createdAt: z.string(),
-  expiresAt: z.string(),
+  /**
+   * When the card lapses unanswered; null for a chat, Talk or voice read-back, which waits until
+   * it is answered (l4-selftasks-chat, L4-selftasks-117; the owner, 2026-11-17).
+   */
+  expiresAt: z.string().nullable(),
   readback: z.string(),
   wordsUsed: z.string(),
 });

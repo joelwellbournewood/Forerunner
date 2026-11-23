@@ -37,7 +37,8 @@ import {
   type TaskStatus,
 } from "@forerunner/state";
 import { z } from "zod";
-import { buildCard, formatChfShort } from "../change-card.ts";
+import { buildCard, type CardSubject, formatChfShort } from "../change-card.ts";
+import { taskSubject } from "../readback-check.ts";
 import type { CommandContext, CommandDef, CommandOutcome } from "../types.ts";
 import { asObject, authorOf, quote, resolveProject } from "./shared.ts";
 
@@ -238,6 +239,17 @@ function sameTitleRefusal(title: string, tags: readonly { tag: string }[]): Fore
     `${count} tasks are called ${quote(title)}: ${list}. Say which, for example ${quote(example)}.`,
     { details: { candidates: named } },
   );
+}
+
+/**
+ * L4-selftasks-117: the task a change names, as it is now (`CommandDef.subjects`): a read-back
+ * keeps it, and its Yes is compared with the task then (`changedSince`).
+ */
+async function taskSubjects(
+  params: { task: string; project?: string | undefined },
+  ctx: CommandContext,
+): Promise<CardSubject[]> {
+  return [taskSubject(await findTask(params, ctx))];
 }
 
 async function findTask(
@@ -1232,6 +1244,7 @@ export function transitionUndoable(from: TaskStatus, to: TaskStatus): boolean {
 
 export const taskTransition: CommandDef<TaskTransitionParams> = {
   name: "task.transition",
+  subjects: taskSubjects,
   description:
     "Move a task along its workflow: ready (make ready, try again; it joins the running session if it fits, else waits for the person's next Start), needs_human (pause), cancelled; agents also use in_progress, in_review, done and failed. Prefer task.pause, task.resume and task.reopen for those moves.",
   params: transitionParams,
@@ -1405,6 +1418,7 @@ export type TaskPauseParams = z.infer<typeof pauseParams>;
 
 export const taskPause: CommandDef<TaskPauseParams> = {
   name: "task.pause",
+  subjects: taskSubjects,
   description:
     "Pause a task: no session runs it until the person resumes it. A running task's run stops now (Stop); the session goes on with the other tasks.",
   params: pauseParams,
@@ -1442,6 +1456,7 @@ export type TaskResumeParams = z.infer<typeof resumeParams>;
 
 export const taskResume: CommandDef<TaskResumeParams> = {
   name: "task.resume",
+  subjects: taskSubjects,
   description:
     "Resume a paused task, or let a task that waits for the person's answers go ahead without them: it is ready again and joins the running session if it fits, else waits for the person's next Start. Its open Inbox cards are withdrawn.",
   params: resumeParams,
@@ -1502,6 +1517,7 @@ export type TaskReopenParams = z.infer<typeof reopenParams>;
 
 export const taskReopen: CommandDef<TaskReopenParams> = {
   name: "task.reopen",
+  subjects: taskSubjects,
   description:
     "Reopen a cancelled task (Reopen), or a done task to redo it (Redo): it is ready again and joins the running session if it fits, else waits for the person's next Start; the person's note says what to fix and goes into its brief.",
   params: reopenParams,
@@ -1784,6 +1800,7 @@ async function editWords(ctx: CommandContext, patch: EditPatch): Promise<string>
 
 export const taskUpdate: CommandDef<TaskUpdateParams> = {
   name: "task.update",
+  subjects: taskSubjects,
   description:
     "Edit a task that is not running, done or cancelled: its title, outcome, acceptance criteria, priority, review level (1 light review; 2 full review: needs Docker; 3 full review and sign-off), budget or specialist ('person' for the person).",
   params: updateParams,
@@ -2025,6 +2042,7 @@ async function wantedDependencies(
 
 export const taskDependencies: CommandDef<TaskDependenciesParams> = {
   name: "task.dependencies",
+  subjects: taskSubjects,
   description:
     "Change what a task waits for: the tasks (by title) that must be done before it runs (depends_on: the whole list; an empty list lets it run on its own), or add: tasks to wait for besides what it waits for now. Refused for a cancelled task, the task itself or a cycle.",
   params: dependenciesParams,
@@ -2207,6 +2225,7 @@ function shares(whole: number, parts: readonly { acceptance_criteria: string[] }
 
 export const taskSplit: CommandDef<TaskSplitParams> = {
   name: "task.split",
+  subjects: taskSubjects,
   description:
     "Split a draft or ready task that is two or more jobs: the task stays as its first part (its folder, branch and earlier work carry on) and one to three new tasks hold the rest; every acceptance criterion goes word for word into one part; the parts wait for each other in turn or run side by side; the tasks that waited for it wait for all its parts; its own budget is shared, never raised.",
   params: splitParams,

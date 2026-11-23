@@ -4,6 +4,7 @@ export * from "./confirmation.ts";
 export * from "./executor.ts";
 export * from "./intent.ts";
 export * from "./ownership.ts";
+export * from "./readback-check.ts";
 export * from "./registry.ts";
 export * from "./time.ts";
 export * from "./types.ts";

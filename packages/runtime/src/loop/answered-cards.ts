@@ -139,6 +139,15 @@ export function isChangeCardRequest(row: Pick<HumanRequestRow, "kind" | "change_
   );
 }
 
+/**
+ * l4-selftasks-chat (L4-selftasks-117): the one Update for a confirmation that lapsed unanswered
+ * (a settings-screen or email card keeps ADR 0030's ten minutes; a chat read-back waits until it
+ * is answered and never lapses).
+ */
+export function lapsedCardUpdate(what: string): string {
+  return `The change you asked for was not made: ${what.trim().replace(/[.\s]+$/, "")}. Its card closed after 10 minutes without your yes; ask again if you still want it.`;
+}
+
 export interface OrphanedCardsDeps {
   store: Pick<StateStore, "humanRequest" | "message">;
   clock: Clock;
