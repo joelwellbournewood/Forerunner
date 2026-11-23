@@ -152,19 +152,34 @@ export class SessionRepo extends Repository<SessionRow> {
   /**
    * The listed rule of a project's sessions (d1109-sessions, ADR 0116) as SQL on the row `s`:
    * the project's sessions that ran a task or spent money or work now, planning calls included
-   * (`plan.intake`); never the conversation's row, never a session that ended without a run and
-   * without a ledger row (an automatic start that found nothing is not news, design §4.8).
+   * (`plan.intake`); never the conversation's row, never an automatic start that ended without a
+   * run and without a ledger row (it found nothing: not news, design §4.8).
+   *
+   * l4-starts-sessions (L4-money-201; ADR 0116 point 5, amended 2026-11-23): also every session
+   * the person started (`plan.startedBy.by` 'person') or that goes on with one
+   * ('continuation'), and every session that ended to wait for its Claude credential
+   * (`handoff.stop_reason` 'credential_wait'), with or without a run: live check 4's Start with
+   * only a refused key stopped at once to wait and the list said "No sessions yet." while Last
+   * result and the continuation pointed to it. Rows from before `startedBy` keep the old rule.
    */
   private listedWhere(): string {
-    const intake =
-      this.db.dialect === "sqlite"
-        ? `json_extract(s."plan", '$.intake') IS NOT NULL`
-        : `(s."plan" -> 'intake') IS NOT NULL`;
+    const sqlite = this.db.dialect === "sqlite";
+    const intake = sqlite
+      ? `json_extract(s."plan", '$.intake') IS NOT NULL`
+      : `(s."plan" -> 'intake') IS NOT NULL`;
+    const startedBy = sqlite
+      ? `json_extract(s."plan", '$.startedBy.by')`
+      : `(s."plan" -> 'startedBy' ->> 'by')`;
+    const stopReason = sqlite
+      ? `json_extract(s."handoff", '$.stop_reason')`
+      : `(s."handoff" ->> 'stop_reason')`;
     return `s."project_id" = ? AND s."summary" <> 'conversation' AND (
       s."status" IN ('planned', 'running', 'paused')
       OR EXISTS (SELECT 1 FROM "run" r WHERE r."session_id" = s."id")
       OR EXISTS (SELECT 1 FROM "cost_ledger" c WHERE c."session_id" = s."id")
-      OR ${intake})`;
+      OR ${intake}
+      OR ${startedBy} IN ('person', 'continuation')
+      OR ${stopReason} = 'credential_wait')`;
   }
 
   /**

@@ -27466,3 +27466,174 @@ describe("l4-selftasks-chat, run L4", () => {
     }
   }, 60_000);
 });
+
+describe("l4-starts-sessions, run L4", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+  const refusedKey = ["sk-ant-api03-", "refused", "5".repeat(40)].join(""); // not-a-secret
+  const goodKey = ["sk-ant-api03-", "good", "4".repeat(40)].join(""); // not-a-secret
+  const ENDED = ["completed", "stopped", "failed", "killed"];
+
+  /**
+   * The daemon as `fr daemon` composes it (no injected provider) over the vault's API key: the
+   * Messages API stand-in answers a key holding "refused" with 401, and the bench's role-player
+   * is the model behind it once a key serves. The home is on disk, so it can be composed again.
+   */
+  async function keyWorld(home: string, clock: SimulatedClock, key = refusedKey) {
+    if (!homes.includes(home)) homes.push(home);
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const standIn = messagesApiStandIn({
+      model,
+      clock,
+      answerFor: keyRule({ refuse: ["refused"] }),
+    });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault({ anthropic_api_key: key }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const agentId = (await client.agents())[0]?.id ?? "";
+    return { rt, client, agentId, standIn };
+  }
+
+  const readyTask = (client: DaemonClient, projectId: string, title: string) =>
+    client.createTask(projectId, {
+      title,
+      outcome: `${title} is written`,
+      acceptanceCriteria: ["it is written"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+      specialist: "coder",
+      riskTier: 0,
+    });
+
+  const ended = (client: DaemonClient, sessionId: string, what: string) =>
+    eventually(
+      async () => ENDED.includes((await client.session(sessionId)).status),
+      `${what} to end (20 s)`,
+      async () => (await client.session(sessionId)).status,
+      20_000,
+    );
+
+  /** The Sessions tab's rows as a person reads them: line 1, how it ended, why it started. */
+  const listed = async (client: DaemonClient, projectId: string) => {
+    const view = await client.projectSessions(projectId);
+    return {
+      count: view.count,
+      rows: [...view.working, ...view.rows].map((r) => ({
+        id: r.id,
+        gist: r.gist,
+        ended: r.endedWords,
+        startedBy: r.startedBy,
+      })),
+    };
+  };
+
+  /** Marks the key refused the way live check 4's LC-C21 did before its Start: one call. */
+  async function keyRefusedFirst(client: DaemonClient) {
+    const planned = await client.createProject({
+      name: "Plan first",
+      goal: goalFromBrief("A page that shows a random quote."),
+      brief: "A page that shows a random quote.",
+      intake: true,
+    });
+    await eventually(
+      async () => (await client.intakeStatus(planned.id)).state === "waiting",
+      "the planning to wait for a new key (20 s)",
+      async () => JSON.stringify(await client.intakeStatus(planned.id)),
+      20_000,
+    );
+  }
+
+  it("L4-money-201: a person's Start that stopped at once to wait for a new API key is listed and counted while it waits and after a restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4starts-201-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    let projectId = "";
+    let waitingId = "";
+    const a = await keyWorld(home, clock);
+    try {
+      await keyRefusedFirst(a.client);
+      const project = await a.client.createProject({ name: "Field notes", goal: "A note" });
+      projectId = project.id;
+      await readyTask(a.client, project.id, "Write notes/today.md");
+      const started = await a.client.startSession({ agentId: a.agentId, projectId: project.id });
+      waitingId = started.session?.id ?? "";
+      expect(waitingId, JSON.stringify(started)).not.toBe("");
+      await ended(a.client, waitingId, "the person's session");
+      await settleSessions(a.rt);
+      // No run and no money: it met the key's mark, not the API.
+      expect(await a.rt.store.run.forSession(waitingId)).toEqual([]);
+      const view = await listed(a.client, project.id);
+      expect(view.count, JSON.stringify(view)).toBe(1);
+      expect(view.rows.map((r) => r.id)).toEqual([waitingId]);
+      expect(view.rows[0]?.ended).toBe("Stopped to wait for a Claude credential");
+      // What it did is true later too; how it ended says the wait (the session page has the rest).
+      expect(view.rows[0]?.gist).toBe("Nothing finished.");
+      expect((await a.client.session(waitingId)).summary?.split("\n")[0]).toBe(
+        "Waits for a new API key: save one in Settings; then your session goes on.",
+      );
+      expect((await a.client.projectSummary(project.id)).sessionCount).toBe(1);
+    } finally {
+      await settleSessions(a.rt);
+      await a.rt.close();
+    }
+    // The daemon starts again on the same home: still listed and counted.
+    const b = await keyWorld(home, clock);
+    try {
+      const view = await listed(b.client, projectId);
+      expect(view.count).toBe(1);
+      expect(view.rows.map((r) => r.id)).toEqual([waitingId]);
+      expect((await b.client.projectSummary(projectId)).sessionCount).toBe(1);
+      // A working key is saved: the person's session goes on (S-10), and the list holds both,
+      // the continuation naming the row above it by its start time.
+      expect((await b.client.setupAnthropic(goodKey)).ok).toBe(true);
+      await eventually(
+        async () => (await b.client.tasks(projectId)).every((t) => t.status === "done"),
+        "the session that goes on to finish the task (30 s)",
+        async () => (await b.client.tasks(projectId)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      await settleSessions(b.rt);
+      const after = await listed(b.client, projectId);
+      expect(after.count, JSON.stringify(after)).toBe(2);
+      expect(after.rows.map((r) => r.id)[1]).toBe(waitingId);
+      const first = await b.rt.store.session.mustGet(waitingId);
+      const at = clockTime(first.started_at ?? "", "Europe/Zurich", clock.now());
+      expect(after.rows[0]?.startedBy).toBe(`goes on with your session of ${at}`);
+      expect((await b.client.projectSummary(projectId)).sessionCount).toBe(2);
+    } finally {
+      await settleSessions(b.rt);
+      await b.rt.close();
+    }
+  }, 120_000);
+});

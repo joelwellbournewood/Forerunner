@@ -919,7 +919,11 @@ row per session, newest first: what it did in one sentence ('Did 2 tasks: "Creat
 when it started, how long it worked, its task counts ("1 done, 1 failed"), how it ended ("Done",
 "Stopped by you", "Interrupted: Forerunner closed") and what it cost, with the credential that
 paid ("CHF 0.80 on your API key", "CHF 0.80 of your Claude subscription's allowance"); a session
-you did not start says how it started ("started on its schedule"). Drafting the plan from your
+you did not start says how it started ("started on its schedule"). Every session you started is
+listed, also one that stopped at once to wait for Claude before anything ran ("Nothing finished."
+· "Stopped to wait for a Claude credential"), and the session that goes on with it later says so
+("goes on with your session of 09:00"). A session that started by itself and found nothing to do
+is not listed. Drafting the plan from your
 brief is a row too ("Drafted a plan of 5 tasks; you approved it.", or "Planning failed: …" with
 the words the project page showed). A session Forerunner closed during counts only the time it
 worked, not the time Forerunner was closed. **Show older sessions** shows 20 more; the rows you

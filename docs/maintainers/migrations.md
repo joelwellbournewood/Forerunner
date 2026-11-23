@@ -193,6 +193,10 @@ columns, and the repository methods it added (`SessionRepo.pageForProject` and
 project with every ledger row booked to it whatever project the row names) are
 queries on the existing tables (the listed rule reads `plan.intake` with `json_extract` on SQLite
 and `->` on Postgres). `suite.ts`' "a project's sessions (d1109-sessions)" runs them on both.
+Since l4-starts-sessions (run L4, L4-money-201) the rule also reads `plan.startedBy.by`
+('person', 'continuation') and `handoff.stop_reason` ('credential_wait') the same way
+(`->> 'by'` and `->> 'stop_reason'` on Postgres), still with no migration; the suite's case
+"lists a person's start and a session that ended to wait ..." covers both dialects.
 
 ## Known issues
 

@@ -7769,7 +7769,10 @@ page's "Tasks in this session" and of a planning call's row is written in
   takes the same words. `planningStatusText` gives a planning call's page "Drafting the plan",
   "Plan drafted" or "Planning failed".
 - **The routes.** `GET /projects/:id/sessions?before=&limit=` (`projectSessionsView`): `count`
-  (the listed rule, `SessionRepo.listedCountForProject`), `working` (first page only),
+  (the listed rule, `SessionRepo.listedCountForProject`: a session that ran a task, spent money,
+  works now or planned, and since l4-starts-sessions (L4-money-201) every session the person
+  started or that goes on with one, and every session that ended to wait for its Claude
+  credential, run or not; an automatic start that found nothing stays out), `working` (first page only),
   `rows` (`SessionRepo.pageForProject` with `ended`, newest first by created_at and id), `next`
   (an opaque base64url cursor of the last row's created_at and id, valid across a restart; a
   cursor it cannot read is 400 "This list cannot go on from there. Open Sessions again."),
