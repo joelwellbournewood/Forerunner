@@ -99,6 +99,11 @@ export function ChangesPage() {
     return name ? { name, removed: false } : null;
   };
   const whoOf = (c: ChangeLogView): string =>
+    // l4-selftasks-carried (L4f-left-4): the agent's fixes with a change the person named, on
+    // one card and one yes, name both.
+    (c.byYouAndAgent
+      ? `${c.humanName ?? me?.name ?? "you"} and ${c.agentName ?? "the agent"}`
+      : null) ??
     // d1109-selftasks-chat (SC-7): the agent's own change names the agent, never the person.
     (c.byAgent ? (c.agentName ?? "the agent") : null) ??
     c.humanName ??

@@ -7953,6 +7953,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         agentName: ch.agentName ?? agent?.name ?? null,
         // d1109-selftasks-chat (SC-7), as the daemon: the agent's own change says so.
         byAgent: ch.byAgent ?? false,
+        // l4-selftasks-carried (L4f-left-4), as the daemon: a set of the agent's fixes with the
+        // person's own change names both.
+        byYouAndAgent: ch.byYouAndAgent ?? false,
       };
     };
     const rows = state.changes

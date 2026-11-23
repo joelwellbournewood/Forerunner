@@ -9,6 +9,7 @@ import {
   withoutCardTalk,
 } from "../src/conversation/agent.ts";
 import { FIX_TASKS_DESCRIPTION, fixTasksTool } from "../src/conversation/task-fix-tool.ts";
+import { changeRowViews } from "../src/daemon/change-rows.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
 import {
   type TaskCheckDeps,
@@ -1095,5 +1096,57 @@ describe("fixup-l4-selftasks-chat: the card says the change once, and the model'
     const readback = 'Pause "Publish the page"? No session runs it until you press Resume.';
     expect(r.pendingConfirmation?.readback).toBe(readback);
     expect(r.reply).toBe(`I can confirm that the README task finished yesterday. ${readback}`);
+  });
+});
+
+describe("l4-selftasks-carried, run L4: a merged card's row names both who asked (L4f-left-4)", () => {
+  // The fixup of l4-selftasks-chat: "A merged card that mixes the agent's planFix steps with the
+  // person's own step is one change-log row authored by the agent (byAgent true) while the
+  // person's step's task reads 'Changed by you'."
+  it("the agent's fixes and the person's own change on one card: one row, by the agent and the person; Changes and chat's recall name both", async () => {
+    const w = await setup({
+      level: 1,
+      replies: [
+        toolReply("fix_tasks", {}),
+        textReply(THREE),
+        toolReply("task_update", { task: "Publish the page", priority: "low" }),
+        textReply(""),
+      ],
+    });
+    await w.chat("tidy the list and make Publish the page less important");
+    const yes = await w.chat("yes");
+    expect(yes.actions).toHaveLength(1);
+    const rows = await w.store.changeLog.list({ project_id: w.quote } as never, { limit: 5 });
+    expect(rows.map((r) => [r.author_human, r.author_agent])).toEqual([[w.human, w.alice]]);
+    const [view] = await changeRowViews(w.store, rows, new Date().toISOString());
+    expect(view).toMatchObject({ byAgent: false, byYouAndAgent: true, agentName: "Alice" });
+    // The task lines agree with the row: the person's change is theirs, the split the agent's.
+    expect((await w.store.task.mustGet(w.tasks.publish?.id ?? "")).reason).toBe(
+      "Changed by you: priority to Low",
+    );
+  });
+
+  it("a set of the agent's fixes alone stays the agent's row; the person's own change alone stays theirs", async () => {
+    const fix = await setup({ level: 1, replies: [textReply(THREE)] });
+    await fix.chat("fix the tasks");
+    await fix.chat("yes");
+    const fixRows = await fix.store.changeLog.list({ project_id: fix.quote } as never, {
+      limit: 5,
+    });
+    expect(fixRows.map((r) => [r.author_human, r.author_agent])).toEqual([[null, fix.alice]]);
+    expect((await changeRowViews(fix.store, fixRows, new Date().toISOString()))[0]).toMatchObject({
+      byAgent: true,
+      byYouAndAgent: false,
+    });
+    const own = await setup({
+      level: 2,
+      replies: [toolReply("task_update", { task: "Publish the page", priority: "low" })],
+    });
+    await own.chat("make Publish the page less important");
+    await own.chat("yes");
+    const ownRows = await own.store.changeLog.list({ project_id: own.quote } as never, {
+      limit: 5,
+    });
+    expect(ownRows.map((r) => [r.author_human, r.author_agent])).toEqual([[own.human, null]]);
   });
 });

@@ -1105,16 +1105,25 @@ async function changeHits(
   const out: RecallRecord[] = [];
   let bound: string | null = null;
   // Who, as the Changes page's row names them (changeRowViews, GET /changes' own function).
+  // l4-selftasks-carried (L4f-left-4): the agent's own change is the agent's (every row names
+  // the person it was made for, so `humanId` alone read "You" for it), and a set of the agent's
+  // fixes with the person's own change names both, as the Changes page does.
   const whoOf = (v: {
     humanId: string | null;
     humanName: string | null;
     agentName: string | null;
+    byAgent?: boolean;
+    byYouAndAgent?: boolean;
   }) =>
-    v.humanId === c.deps.humanId
-      ? "You"
-      : v.humanId
-        ? (v.humanName ?? "Another person")
-        : (v.agentName ?? "The agent");
+    v.byYouAndAgent
+      ? `You and ${v.agentName ?? "the agent"}`
+      : v.byAgent
+        ? (v.agentName ?? "The agent")
+        : v.humanId === c.deps.humanId
+          ? "You"
+          : v.humanId
+            ? (v.humanName ?? "Another person")
+            : (v.agentName ?? "The agent");
   for (const p of c.projects) {
     c.deps.scope.reads++;
     // Only this person's changes and the app's own (never another person's).

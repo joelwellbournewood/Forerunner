@@ -1865,3 +1865,49 @@ describe("l4-chat-answers, run L4", () => {
     ).toEqual(["card"]);
   });
 });
+
+describe("l4-selftasks-carried, run L4: chat's recall names who made a change as the Changes page does (L4f-left-4)", () => {
+  it("the agent's own fix reads the agent's name, a set with the person's own change reads both, the person's own reads You", async () => {
+    const w = await setup({
+      more: async (x) => {
+        const row = (sentence: string, by: { human?: string; agent?: string }) =>
+          x.store.changeLog.record({
+            human_id: x.human,
+            agent_id: x.alice,
+            words_used: "fix the tasks",
+            commands: [{ name: "task.update", params: {} }],
+            before: {},
+            after: {},
+            scope: "project",
+            project_id: x.quote,
+            undo_state: "undoable",
+            source: "chat",
+            sentence,
+            author_human: by.human ?? null,
+            author_agent: by.agent ?? null,
+          } as never);
+        await x.clock.set("2026-11-09T09:00:00.000Z");
+        await row('Split "Style the page" into two tasks. Undo.', { agent: x.alice });
+        await x.clock.set("2026-11-09T09:05:00.000Z");
+        await row('Split "Write the menu" into two tasks; changed "Publish": priority to Low. Undo.', {
+          human: x.human,
+          agent: x.alice,
+        });
+        await x.clock.set("2026-11-09T09:10:00.000Z");
+        await row('Changed "Publish": priority to High. Undo.', { human: x.human });
+      },
+    });
+    const [changes] = await lookups(w, [
+      { tool: "recall", input: { kinds: ["changes"], from: "2026-11-09" } },
+    ]);
+    const lines = inner(changes).split("\n");
+    expect(lines.some((l) => /\] Alice, in Chat, .*: split "Style the page"/.test(l))).toBe(true);
+    expect(lines.some((l) => /\] You and Alice, in Chat, .*: split "Write the menu"/.test(l))).toBe(
+      true,
+    );
+    expect(lines.some((l) => /\] You, in Chat, .*: changed "Publish": priority to High/.test(l))).toBe(
+      true,
+    );
+    await w.store.close();
+  });
+});

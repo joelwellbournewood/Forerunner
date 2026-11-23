@@ -28588,4 +28588,41 @@ describe("l4-selftasks-carried, run L4", () => {
       await b.rt.close();
     }
   }, 90_000);
+  it("L4f-left-4: GET /changes names both who asked for a merged card's set (byYouAndAgent), the agent alone for its own fix, the person alone for theirs", async () => {
+    const a = await open("fr-ui-real-l4-stcar-both-");
+    try {
+      const project = await a.client.createProject({ name: "Quote page", goal: "Prices" });
+      const record = (sentence: string, by: { human?: boolean; agent?: boolean }) =>
+        a.rt.store.changeLog.record({
+          human_id: a.me.id,
+          agent_id: a.agentId,
+          words_used: "tidy the list",
+          commands: [{ name: "task.update", params: {} }],
+          before: {},
+          after: {},
+          scope: "project",
+          project_id: project.id,
+          undo_state: "irreversible",
+          source: "chat",
+          sentence,
+          author_human: by.human ? a.me.id : null,
+          author_agent: by.agent ? a.agentId : null,
+        } as never);
+      await record("The agent's own fix.", { agent: true });
+      await record("The agent's fixes and your change.", { human: true, agent: true });
+      await record("Your own change.", { human: true });
+      const rows = await a.client.changes({ projectId: project.id });
+      const by = Object.fromEntries(
+        rows.map((r) => [r.sentence, [r.byAgent, r.byYouAndAgent, r.humanName, r.agentName]]),
+      );
+      expect(by).toEqual({
+        "The agent's own fix.": [true, false, "J", "Alice"],
+        "The agent's fixes and your change.": [false, true, "J", "Alice"],
+        "Your own change.": [false, false, "J", "Alice"],
+      });
+    } finally {
+      await settleSessions(a.rt);
+      await a.rt.close();
+    }
+  }, 60_000);
 });

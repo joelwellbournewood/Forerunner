@@ -1009,6 +1009,14 @@ export class CommandExecutor {
     // agent's, as fix_tasks' own changes are).
     const personsWords = done.length > 0 && done.every((d) => d.step.persons === true);
     const ctx: CommandContext = person && personsWords ? { ...given, actor: person } : given;
+    // l4-selftasks-carried (L4f-left-4): a set that mixes the agent's own fixes with a change the
+    // person named (a merged card) stays the agent's (its post, its session line), and its row
+    // names both: the person's step reads "Changed by you" on the task, the row said the agent
+    // alone. The actor rule still reads the agent (ADR 0030 item 2).
+    const alsoPerson =
+      person && !personsWords && ctx.actor.kind === "agent" && done.some((d) => d.step.persons)
+        ? person.id
+        : null;
     const reversible = done.every((d) => d.outcome.reversible ?? d.step.def.reversible);
     const expiring = done
       .map((d) => d.outcome.expiresAt)
@@ -1039,7 +1047,7 @@ export class CommandExecutor {
       undo_state: reversible ? "undoable" : "irreversible",
       source: ctx.source,
       sentence,
-      author_human: ctx.actor.kind === "human" ? ctx.actor.id : null,
+      author_human: ctx.actor.kind === "human" ? ctx.actor.id : alsoPerson,
       author_agent: ctx.actor.kind === "agent" ? ctx.actor.id : null,
     });
     this.cards.set(row.id, card);

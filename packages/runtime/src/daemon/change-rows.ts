@@ -51,6 +51,9 @@ export async function changeRowViews(
         agentName: row.agent_id ? ((await agentOf(row.agent_id))?.name ?? null) : null,
         // d1109-selftasks-chat (SC-7): the agent's own change, said as the agent's.
         byAgent: !!row.author_agent && !row.author_human,
+        // l4-selftasks-carried (L4f-left-4): a set of the agent's fixes with a change the person
+        // named (one card, one yes): the row names both.
+        byYouAndAgent: !!row.author_agent && !!row.author_human,
       };
     }),
   );
