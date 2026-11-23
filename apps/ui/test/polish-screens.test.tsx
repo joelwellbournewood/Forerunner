@@ -213,6 +213,8 @@ describe("times on a screen: 24-hour HH:MM, in a browser set to en-US (later #66
       // Settings' "Which Claude does the work" says the state in the daemon's words, in the
       // person's clock (credential-policy-view.test.ts, settings-billing-order.test.tsx).
     } finally {
+      // The zone is the module's: the next test reads the computer's again (the review).
+      setPersonZone(null);
       restore();
     }
   });

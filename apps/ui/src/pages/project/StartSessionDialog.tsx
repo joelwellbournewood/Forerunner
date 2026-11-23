@@ -380,7 +380,9 @@ export function StartSessionDialog({
   // l4-cred-screens (L4-creds-15, C6L-3): with the first choice out and "Use API key" offered,
   // the plan sentence stays beside the stop line: the figure under "Use API key" is for the
   // tasks it names (before, the stop line replaced it and the dialog named no task).
-  const runOutOffered = !!blocked?.startable && !!data?.credential?.runOut;
+  // fixup-l4-cred-screens: also beside a kept Start ("Starts at 04:28 ...") while "Use API key"
+  // is still offered: its figure is for the same tasks.
+  const runOutOffered = (!!blocked?.startable || !!blocked?.kept) && !!data?.credential?.runOut;
   const plan =
     data && (!blocked || runOutOffered)
       ? planning

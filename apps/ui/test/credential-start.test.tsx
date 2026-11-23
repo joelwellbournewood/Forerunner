@@ -410,4 +410,33 @@ describe("l4-cred-screens, run L4: a kept person Start in the Start dialog (L4-c
       "Cancel the wait",
     );
   });
+
+  // fixup-l4-cred-screens (the review's non-blocking note on L4-creds-15): with a Start kept and
+  // "Use API key" still offered, the plan sentence names the tasks its figure is for, as it does
+  // beside "Start at 04:28". Before, the kept state dropped it and "about CHF 0.14" named no task.
+  it("with a Start kept and Use API key offered, the plan sentence names the tasks beside the figure", async () => {
+    const harness = createHarness();
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Waits until 04:28 (your subscription's limit); then your session goes on.",
+      save: null,
+      kept: true,
+      startsAt: "Starts at 04:28 (your subscription's limit)",
+    };
+    harness.daemon.state.startCredential.proj_atlas = {
+      line: null,
+      runOut: {
+        use: USE,
+        later: null,
+        lean: "use",
+        goesOnLine: null,
+        stoppedLine: "Your subscription is at its limit until 04:28.",
+      },
+    };
+    const { dialog } = await openDialog(harness);
+    const list = await within(dialog).findByTestId("start-session-run-out");
+    expect(list).toHaveTextContent(USE.explain);
+    expect(within(dialog).getByTestId("start-session-plan")).toHaveTextContent(
+      /^This session runs /,
+    );
+  });
 });

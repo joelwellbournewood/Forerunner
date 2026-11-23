@@ -1175,9 +1175,9 @@ stop with its cost.
 Every time on the screens is in your time zone (the one in Settings), the same as the app's
 sentences ("Waits until 11:40"), whatever zone this computer is set to.
 
-If Anthropic refused your key or sign-in, every Start (the dialog, Continue, the phone) says the
-same: "Nothing can run until you save a new API key in Settings.", and a session waiting to go on
-says it goes on once you save a new one.
+If Anthropic refused your key or sign-in, the Start dialog says "Nothing can run until you save a
+new API key in Settings." and offers no Start; while a session of yours waits to go on, Continue
+and the phone say the same, and the waiting session says it goes on once you save a new one.
 
 Under "Subscription first, then ask me", while your subscription is out and your API key could
 run, the project's line says "Ready: 2 tasks; your subscription is at its limit until 02:51;
