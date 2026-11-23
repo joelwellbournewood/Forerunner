@@ -995,6 +995,8 @@ export function requestView(
     ...(startOfferOf(r.change_card, r.status, r.project_id) ? { startOffer: true } : {}),
     answeredAt: r.answered_at ?? null,
     followUp: words.followUp ?? null,
+    // L4-money-202: the questions form's button and its line.
+    ...(words.submit ? { submit: words.submit } : {}),
   };
 }
 

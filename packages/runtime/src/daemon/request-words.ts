@@ -103,6 +103,13 @@ export interface RequestWords {
    * Try again; its next brief carries the answers). Null otherwise.
    */
   followUp?: { label: string; explain: string; action: "redo" | "reopen" | "try_again" } | null;
+  /**
+   * l4-starts-sessions (L4-money-202): the form's own button (`reply: 'form'`) with its
+   * one-line consequence, read when the card is shown like every option that prepares work
+   * (S-9): "Send answers" / "The task goes on with your answers; it runs at your next Start.".
+   * Absent on cards without a form.
+   */
+  submit?: { label: string; explain: string } | null;
 }
 
 /** A list a card shows under its body: its label ("Left to do") and its items, each whole. */
@@ -540,10 +547,13 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
   const choices: RequestChoiceWords[] = [];
   // Not offered again once the person went ahead without on the task (live L-3): the work then
   // needs what it asks for (a missing input), and going ahead again only ran the same ask.
+  // L4-money-202 (S-9 extended): Go ahead without and Send answers prepare the work, so each
+  // says what pressing it does now ("...; it joins the running session if it fits.").
+  const next = preparedExplain(ctx);
   if (!planned && card.go_ahead !== false)
     choices.push({
       label: "Go ahead without",
-      explain: "The specialist decides and says what it assumed.",
+      explain: `The specialist decides and says what it assumed; ${next}.`,
       tone: "secondary",
       confirm: null,
       input: null,
@@ -563,6 +573,13 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
     reply: "form",
     details: [],
     outcome: null,
+    submit: {
+      label: "Send answers",
+      // The person's own task is done by the answers (the body says so); a specialist's goes on.
+      explain: planned
+        ? "Saves your answers in the decision record and closes the task."
+        : `The task goes on with your answers; ${next}.`,
+    },
   };
 }
 

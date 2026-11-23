@@ -226,12 +226,19 @@ function PersonQuestionsForm({
   busy,
   onSend,
   showContext = true,
+  submit,
 }: {
   card: PersonQuestionsView;
   busy: boolean;
   onSend: (value: unknown) => void;
   /** The card body says the specialist's words already (design §3.8): not twice. */
   showContext?: boolean;
+  /**
+   * L4-money-202: the daemon's words for the form's button and what pressing it does now
+   * ("The task goes on with your answers; it runs at your next Start."), shown beside it as
+   * every option's line is; absent from an older daemon (the button then has no line).
+   */
+  submit?: { label: string; explain: string } | null;
 }) {
   const [answers, setAnswers] = useState<string[]>(() => card.questions.map(() => ""));
   const given = card.questions
@@ -268,14 +275,24 @@ function PersonQuestionsForm({
           />
         </label>
       ))}
-      <Button
-        type="submit"
-        variant="primary"
-        disabled={busy || given.length === 0}
-        data-testid="send-answers"
-      >
-        Send answers
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={busy || given.length === 0}
+          data-testid="send-answers"
+        >
+          {submit?.label ?? "Send answers"}
+        </Button>
+        {submit?.explain ? (
+          <span
+            className="text-xs text-neutral-600 dark:text-neutral-400"
+            data-testid="send-answers-explain"
+          >
+            {submit.explain}
+          </span>
+        ) : null}
+      </div>
     </form>
   );
 }
@@ -1064,6 +1081,7 @@ function RequestCard({
           busy={busy}
           onSend={send}
           showContext={!request.body}
+          submit={request.submit ?? null}
         />
       ) : null}
       {intake ? (

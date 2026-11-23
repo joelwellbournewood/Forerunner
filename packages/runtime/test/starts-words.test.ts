@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
+import { requestWords } from "../src/daemon/request-words.ts";
 import {
   type PreparedContext,
   preparedContextOf,
@@ -137,6 +138,76 @@ describe("d1109-starts-engine S-9: the explain of an option that prepares work",
     expect(await preparedContextOf(deps, { agentId: "a", projectId: "p-hands-off" })).toEqual({
       running: "other",
       startsByItself: true,
+    });
+  });
+});
+
+/**
+ * l4-starts-sessions, run L4 (L4-money-202): live check 4 (LC-C18, LC-C19) showed the questions
+ * card's Send answers with no line and Go ahead without with a fixed one, with a session running
+ * and with the hands-off setting on alike, although both prepare the work as Try again does.
+ */
+describe("l4-starts-sessions, run L4: the questions card's options say what pressing them does now", () => {
+  const card = (source: "specialist" | "critic" | "planned") => ({
+    kind: "decision" as never,
+    why: "The specialist asks you.",
+    steps: [],
+    options: ["Send answers", "Go ahead without", "Cancel task"],
+    status: "open" as never,
+    answer: null,
+    change_card: {
+      key: "person_questions:t1",
+      source,
+      task_title: "Add the club's phone number to contact.html",
+      questions: ["What is the club's phone number?"],
+    } as never,
+  });
+  it.each<[string, PreparedContext, string]>([
+    ["nothing runs", {}, "it runs at your next Start"],
+    [
+      "the project's session runs",
+      { running: "this_project" },
+      "it joins the running session if it fits",
+    ],
+    ["the hands-off setting on", { startsByItself: true }, "a session starts for it by itself"],
+    [
+      "the hands-off setting on, another session runs",
+      { startsByItself: true, running: "other" },
+      "a session starts for it after the current one",
+    ],
+    [
+      "the person's session waits to go on",
+      { continuationWaits: true },
+      "it joins your session when it goes on, if it fits",
+    ],
+    [
+      "the hands-off setting on, quiet hours now",
+      { startsByItself: true, quiet: true },
+      "a session starts for it after your quiet hours",
+    ],
+  ])("%s", (_what, ctx, clause) => {
+    const words = requestWords(card("specialist"), { ...ctx, taskTitle: "Add the phone" });
+    const without = words.choices.find((c) => c.label === "Go ahead without");
+    expect(without?.explain).toBe(`The specialist decides and says what it assumed; ${clause}.`);
+    expect(words.submit).toEqual({
+      label: "Send answers",
+      explain: `The task goes on with your answers; ${clause}.`,
+    });
+    for (const line of [without?.explain ?? "", words.submit?.explain ?? ""]) {
+      expect(line.length).toBeLessThanOrEqual(100);
+      expect(line).not.toMatch(/CHF|USD|\$|[0-9a-f]{8}-/);
+    }
+    // The critic's questions read the same.
+    expect(requestWords(card("critic"), ctx).submit?.explain).toBe(
+      `The task goes on with your answers; ${clause}.`,
+    );
+  });
+  it("the person's own task: Send answers closes it, and there is no Go ahead without", () => {
+    const words = requestWords(card("planned"), { startsByItself: true });
+    expect(words.choices.map((c) => c.label)).toEqual(["Cancel task"]);
+    expect(words.submit).toEqual({
+      label: "Send answers",
+      explain: "Saves your answers in the decision record and closes the task.",
     });
   });
 });

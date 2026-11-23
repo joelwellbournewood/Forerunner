@@ -88,7 +88,12 @@ import {
   reviewLevelValue,
   specialistName,
 } from "../src/lib/task-actions.ts";
-import { intakeCardOf, intakeDecisionLine, intakeTotalLine } from "../src/pages/InboxPage.tsx";
+import {
+  intakeCardOf,
+  intakeDecisionLine,
+  intakeTotalLine,
+  personQuestionsOf,
+} from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 import { latestRunByTask, taskCapWords } from "../src/pages/project/TasksTab.tsx";
 
@@ -27634,6 +27639,102 @@ describe("l4-starts-sessions, run L4", () => {
     } finally {
       await settleSessions(b.rt);
       await b.rt.close();
+    }
+  }, 120_000);
+
+  // L4-money-202 (live check 4, LC-C18 and LC-C19): the questions card's Send answers had no line
+  // and Go ahead without a fixed one, whether nothing ran or the hands-off setting started a
+  // session at the press. Both now say what pressing them does when the card is shown (S-9), and
+  // the press does that.
+  it("L4-money-202: GET /inbox's questions card says under Send answers and Go ahead without what pressing does now, and the answer does that", async () => {
+    const { rt, client } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_ASK: "phone number,rehearsal address",
+    });
+    try {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Choir", goal: "A contact page" });
+      for (const title of [
+        "Add the choir's phone number to contact.html",
+        "Add the choir's rehearsal address to contact.html",
+      ])
+        await readyTask(client, project.id, title);
+      const first = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      await ended(client, first.session?.id ?? "", "the session that asks");
+      await settleSessions(rt);
+      const cards = async () =>
+        (await client.inbox(me.id)).requests.filter(
+          (r) => r.status === "open" && r.reply === "form" && r.projectId === project.id,
+        );
+      await eventually(
+        async () => (await cards()).length === 2,
+        "both questions cards (20 s)",
+        async () => (await client.inbox(me.id)).requests.map((r) => r.title).join(" | "),
+        20_000,
+      );
+      const lines = (c: Awaited<ReturnType<typeof cards>>[number]) => [
+        c.submit?.label,
+        c.submit?.explain,
+        c.choices?.find((x) => x.label === "Go ahead without")?.explain,
+      ];
+      const [phone, address] = await cards();
+      // Nothing runs and the setting is off: the person's next Start runs it.
+      expect(lines(phone as NonNullable<typeof phone>)).toEqual([
+        "Send answers",
+        "The task goes on with your answers; it runs at your next Start.",
+        "The specialist decides and says what it assumed; it runs at your next Start.",
+      ]);
+      const answer = (c: NonNullable<typeof phone>) =>
+        client.answerRequest(c.id, {
+          version: c.version,
+          answer: {
+            answers: [
+              {
+                question: personQuestionsOf(c.changeCard)?.questions[0] ?? "",
+                answer: "079 123 45 67",
+              },
+            ],
+          },
+        });
+      const before = (await client.sessions({ projectId: project.id })).length;
+      const sent = await answer(phone as NonNullable<typeof phone>);
+      expect(sent.outcome).toMatch(/; it runs at your next Start\.$/);
+      // Nothing started and nothing waits to start (the setting is off).
+      expect(rt.scheduler.isActive(rt.agent.id)).toBe(false);
+      expect(rt.scheduler.pendingFor(rt.agent.id)).toBeUndefined();
+      expect((await client.sessions({ projectId: project.id })).length).toBe(before);
+      // "Start a session by itself" on: a session starts for it, and the press starts one.
+      const asked = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "start_by_itself", value: true, project: project.id },
+          },
+        ],
+        source: "ui",
+      });
+      expect((await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" })).status).toBe(
+        "done",
+      );
+      const shown = (await cards()).find((c) => c.id === address?.id);
+      expect(lines(shown as NonNullable<typeof shown>)).toEqual([
+        "Send answers",
+        "The task goes on with your answers; a session starts for it by itself.",
+        "The specialist decides and says what it assumed; a session starts for it by itself.",
+      ]);
+      await answer(shown as NonNullable<typeof shown>);
+      await eventually(
+        async () => (await client.sessions({ projectId: project.id })).length === before + 1,
+        "the session the setting started (20 s)",
+        async () => `${(await client.sessions({ projectId: project.id })).length} sessions`,
+        20_000,
+      );
+      const started = (await client.sessions({ projectId: project.id })).find(
+        (s) => s.id !== first.session?.id,
+      );
+      await ended(client, started?.id ?? "", "the session the setting started");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
     }
   }, 120_000);
 });

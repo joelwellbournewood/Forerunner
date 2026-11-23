@@ -7986,7 +7986,9 @@ Only the person starts a session; everything else prepares work. The pieces:
   `sweepStartPending` asks again; a hands-off start that begins drops it). `preparedLine`,
   `preparedClause` and `preparedExplain` are the only words; `previewWork` is the read-only
   sibling for a read-back. An Inbox option that prepares work (Try again, Send it back, the
-  cannot-run card's Try again, the rebuild and rebase cards' Redo) says what pressing it does,
+  cannot-run card's Try again, the rebuild and rebase cards' Redo, and since l4-starts-sessions
+  (L4-money-202) the questions card's Go ahead without and its form's Send answers, the form's
+  button being `RequestWords.submit`/`HumanRequestView.submit`) says what pressing it does,
   read when the card is shown: `preparedContextOf` (the same steps as `prepareWork`: the
   project's live or asked-for session, the person's waiting session, `start_by_itself` with Stop
   all and quiet hours, another project's session) feeds `RequestWordsContext` through

@@ -1059,7 +1059,8 @@ describe("Inbox", () => {
       const options = within(request).getAllByTestId("option");
       expect(options.map((b) => b.textContent)).toEqual(["Go ahead without", "Cancel task"]);
       expect(within(request).getAllByTestId("option-explain")[0]).toHaveTextContent(
-        "The specialist decides and says what it assumed.",
+        // L4-money-202 (S-9 extended): it says what pressing it does now.
+        "The specialist decides and says what it assumed; it runs at your next Start.",
       );
       await user.click(options[0] as HTMLElement);
       await waitFor(() =>
@@ -2301,5 +2302,90 @@ describe("l4-money-pause, run L4: a card whose review waits says the work is don
     // The title comes before the body.
     expect(title.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(card).not.toHaveTextContent(/paused at its budget/);
+  });
+});
+
+describe("l4-starts-sessions, run L4: the questions card says what Send answers does now (L4-money-202)", () => {
+  // Live check 4 (LC-C18, LC-C19): Send answers had no line, and Go ahead without a fixed one,
+  // while a session ran and while the hands-off setting was on alike.
+  const specialistCard = () => ({
+    id: "req_asks",
+    projectId: "proj_atlas",
+    projectName: "Atlas",
+    taskId: "task_1",
+    taskTitle: "Index the documentation pages",
+    sessionId: "sess_1",
+    kind: "decision",
+    why: '"Index the documentation pages": the specialist asks you',
+    steps: ["Which pages count as documentation?"],
+    options: ["Go ahead without", "Cancel the task"],
+    blocking: true,
+    risk: "low" as const,
+    changeCard: {
+      key: `${ANSWER_CARD_KEYS.personQuestionsPrefix}task_1`,
+      task_id: "task_1",
+      task_title: "Index the documentation pages",
+      questions: ["Which pages count as documentation?"],
+      source: "specialist",
+      on_answer: "ready",
+      context: "I need to know which pages to index.",
+      applied_at: null,
+    },
+    status: "open",
+    answer: null,
+    createdAt: "2026-11-17T06:18:00.000Z",
+    version: 1,
+  });
+  const setUp = (byItself: boolean) => {
+    const harness = createHarness();
+    harness.daemon.state.requests.unshift(specialistCard());
+    const t1 = harness.daemon.state.tasks.find((t) => t.id === "task_1");
+    if (t1) t1.status = "needs_human";
+    if (byItself) harness.daemon.state.settingValues["start_by_itself:proj_atlas"] = true;
+    return harness;
+  };
+
+  it("nothing runs: Send answers and Go ahead without each say it runs at your next Start; the press sends the answers", async () => {
+    const user = userEvent.setup();
+    const harness = setUp(false);
+    renderApp("/inbox", harness);
+    const form = await screen.findByTestId("person-questions");
+    const card = form.closest('[data-testid="request"]') as HTMLElement;
+    expect(within(form).getByTestId("send-answers")).toHaveTextContent("Send answers");
+    expect(within(form).getByTestId("send-answers-explain")).toHaveTextContent(
+      "The task goes on with your answers; it runs at your next Start.",
+    );
+    const without = within(card)
+      .getAllByTestId("option")
+      .find((o) => o.textContent === "Go ahead without");
+    expect(without?.parentElement).toHaveTextContent(
+      "The specialist decides and says what it assumed; it runs at your next Start.",
+    );
+    await user.type(within(form).getByTestId("person-answer"), "The guides and the API pages");
+    await user.click(within(form).getByTestId("send-answers"));
+    await waitFor(() => expect(postedCalls(harness, "/requests/req_asks/answer")).toHaveLength(1));
+    expect(postedCalls(harness, "/requests/req_asks/answer")[0]?.body).toEqual({
+      version: 1,
+      answer: {
+        answers: [
+          {
+            question: "Which pages count as documentation?",
+            answer: "The guides and the API pages",
+          },
+        ],
+      },
+    });
+  });
+
+  it("with 'Start a session by itself' on, both say a session starts for it by itself", async () => {
+    renderApp("/inbox", setUp(true));
+    const form = await screen.findByTestId("person-questions");
+    expect(within(form).getByTestId("send-answers-explain")).toHaveTextContent(
+      "The task goes on with your answers; a session starts for it by itself.",
+    );
+    const card = form.closest('[data-testid="request"]') as HTMLElement;
+    expect(card).toHaveTextContent(
+      "The specialist decides and says what it assumed; a session starts for it by itself.",
+    );
   });
 });

@@ -1065,7 +1065,11 @@ done, and a task that was waiting on it is ready: it runs at your next Start, or
 session that is running if it fits (the card's Done line says which); a task a specialist was
 working on goes back to ready and its next run gets your answers. On a specialist's questions,
 **Go ahead without** lets the specialist decide and say in its report what it assumed; the task is
-ready again in the same way. The specialist is not let ask you the same again: if the work cannot be done
+ready again in the same way. Beside **Send answers** and **Go ahead without** a line says what
+pressing it does now: "The task goes on with your answers; it runs at your next Start.", "...; it
+joins the running session if it fits." while a session of the project runs, or "...; a session
+starts for it by itself." when the project's "Start a session by itself" is on; on a task planned
+for you it reads "Saves your answers in the decision record and closes the task." The specialist is not let ask you the same again: if the work cannot be done
 at all without your answer (a file that is missing), you get one card that says why in its own
 words, where you can answer or cancel the task, without a second **Go ahead without**. A task
 planned for you has no specialist to decide in your place, so its card has no Go ahead without:

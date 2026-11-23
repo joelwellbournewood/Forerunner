@@ -1015,6 +1015,12 @@ export const HumanRequestView = z.object({
    */
   startOffer: z.boolean().optional(),
   answeredAt: z.string().nullable().optional(),
+  /**
+   * l4-starts-sessions (L4-money-202): a card with the questions form (`reply: 'form'`): its
+   * button and the line under it, what pressing it does now ("The task goes on with your
+   * answers; it runs at your next Start."). Absent on other cards and from an older daemon.
+   */
+  submit: z.object({ label: z.string(), explain: z.string() }).nullable().optional(),
   /** Answers that came after their task moved on: "Redo with these answers" (design §3.8). */
   followUp: z
     .object({
