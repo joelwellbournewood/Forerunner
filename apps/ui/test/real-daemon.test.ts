@@ -254,6 +254,24 @@ describe("the UI client against the real daemon", () => {
   const someWork = (title: string) =>
     client.createTask(projectId, { title, outcome: `${title} exists`, riskTier: 0 });
 
+  /**
+   * CI-flake-1 (Desktop app run 86, Windows): a case that starts a session waits for it to end
+   * before the next case starts one (one session per agent). The wait is on the daemon's own
+   * answer, bounded at 30 s of real time, and fails with what it saw: a slow runner is no
+   * reason for the next case to read a session that never started.
+   */
+  const sessionEnds = (sessionId: string, why: string) =>
+    eventually(
+      async () => !!(await client.session(sessionId)).endedAt,
+      `${why}: the session to end (30 s)`,
+      async () => {
+        const s = await client.session(sessionId);
+        const running = (await client.sessions({ projectId })).filter((x) => !x.endedAt);
+        return `status ${s.status}, ${running.length} running`;
+      },
+      30_000,
+    );
+
   it("start session: answers with the session it started, which the dialog opens (U-003)", async () => {
     // Nothing to run yet: refused in the Start dialog's words, no session.
     await expect(
@@ -269,15 +287,15 @@ describe("the UI client against the real daemon", () => {
     expect(session?.projectId).toBe(projectId);
     // The dialog navigates to the session page, which reads it by id.
     expect((await client.session(session?.id ?? "")).id).toBe(session?.id);
+    // Nothing is left running for the next case (CI-flake-1).
+    await sessionEnds(session?.id ?? "", "the first start");
   });
 
   it("start session with a note: the session keeps it for every task's brief (design §4.6)", async () => {
-    // The session the case before started ends first (one session per agent).
-    for (let i = 0; i < 200; i++) {
-      const running = (await client.sessions({ projectId })).filter((s) => !s.endedAt);
-      if (running.length === 0) break;
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    // The session the case before started has ended (CI-flake-1: one session per agent; on a
+    // slow runner a second start answered without a session and the read met 404).
+    const running = (await client.sessions({ projectId })).filter((s) => !s.endedAt);
+    for (const s of running) await sessionEnds(s.id, "the session the case before started");
     await someWork("Write note.md");
     const started = await client.startSession({
       agentId,
@@ -285,15 +303,11 @@ describe("the UI client against the real daemon", () => {
       trigger: "manual",
       note: "Keep it in plain HTML.",
     });
+    expect(started.result, JSON.stringify(started)).toBe("started");
     const id = started.session?.id ?? "";
-    let handoff: unknown = null;
-    for (let i = 0; i < 200; i++) {
-      const s = await client.session(id);
-      handoff = s.handoff;
-      if (s.endedAt) break;
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    expect(handoff).toMatchObject({ note: "Keep it in plain HTML." });
+    expect(id).not.toBe("");
+    await sessionEnds(id, "the session with a note");
+    expect((await client.session(id)).handoff).toMatchObject({ note: "Keep it in plain HTML." });
   });
 
   it("next-session queue: add, list and dismiss (U-004)", async () => {
