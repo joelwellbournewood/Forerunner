@@ -1000,9 +1000,8 @@ describe("l4-github-link, run L4", () => {
       'Kept in the app while the status pull request of "Kite club" is open on GitHub.',
     );
     // The sweep: a template that quotes a name and then adds "'s" (live check 4: 'it is now
-    // "Kite flyers"'s.'). Comments are left out. join-words.ts' settingAppliesLine is
-    // l4-github-merge's (L4-github-113, same sub-run): it rewrites that function.
-    const handedOver = new Set(["join-words.ts"]);
+    // "Kite flyers"'s.'). Comments are left out. Every file is swept: join-words.ts'
+    // settingAppliesLine was rewritten by l4-github-merge (L4-github-113, merged beside this).
     const roots = ["packages", "apps/ui/src"].map((r) => join(process.cwd(), r));
     const files: string[] = [];
     const walk = (dir: string) => {
@@ -1016,7 +1015,6 @@ describe("l4-github-link, run L4", () => {
     for (const root of roots) walk(root);
     const found: string[] = [];
     for (const file of files) {
-      if (handedOver.has(file.split(/[\\/]/).pop() ?? "")) continue;
       readFileSync(file, "utf8")
         .split(/\r?\n/)
         .forEach((line, i) => {

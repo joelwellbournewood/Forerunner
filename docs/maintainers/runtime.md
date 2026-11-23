@@ -7849,7 +7849,10 @@ no store, git host or file system, so the UI's fake daemon imports it).
   lease; the pull request gets 'Rebuilt on main for project <name>: …' with `tookOverLine`. The
   copy is settled back on the default branch also when a step throws (before, a refused push left
   it on the scaffold branch, so `copyMarker` read this project's own marker). `isScaffoldBranch`
-  reads both names (`isDocsBranch`, `isProjectDocsPr`, the take-over Undo's `DOCS_BRANCH`). The
+  reads both names (`isDocsBranch`, `isProjectDocsPr`, the take-over Undo's `DOCS_BRANCH`, and
+  `pull-requests.ts` `docsTitle`, so the Overview lists a scaffold on `fr/docs-scaffold-<name>`
+  as "The project's standard docs", never as the plan's docs: merge of run L4e, test
+  `apps/ui/test/real-daemon.test.ts` "merge L4e"). The
   intake's branch (`intakeBranchFor`: free, or this project's by its pull request's mark or its
   marker file, else the whole id's form) starts from the default branch and, when GitHub kept it
   from an earlier, closed pull request, is pushed with a lease (before: refused as not a

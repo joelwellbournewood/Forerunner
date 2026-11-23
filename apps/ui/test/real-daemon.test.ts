@@ -26283,6 +26283,64 @@ describe("l4-github-link, run L4", () => {
       await rt.close();
     }
   }, 120_000);
+
+  // Merge of l4-github-link and l4-github-merge (run L4e): the take-over's docs pull request on
+  // fr/docs-scaffold-<name> (L4-github-102) was listed on the Overview as "The project's docs
+  // from the plan" although there was no plan (pull-requests.ts docsTitle knew only
+  // fr/docs-scaffold; seen on both areas' bench walks).
+  it("merge L4e (L4-github-102 with pull-requests.ts): the take-over's docs pull request on fr/docs-scaffold-kite-flyers is listed on the Overview as \"The project's standard docs\", also after the daemon starts again", async () => {
+    const w = world();
+    const { seed, seedDir } = await w.seeded("kite", {
+      "README.md": "# kite\n",
+      ".forerunner/project.json": kiteMarker,
+    });
+    // An earlier project's scaffold branch, kept by GitHub after its pull request was closed.
+    await run(["git", "-C", seedDir, "checkout", "-q", "-b", "fr/docs-scaffold"]);
+    writeFileSync(
+      join(seedDir, ".forerunner", "project.json"),
+      `${JSON.stringify({ schema: 1, project: "01a1a000-0000-7000-8000-00000000d2cd", name: "Sandbox hello" }, null, 2)}\n`,
+    );
+    await seed.commitAll("docs: scaffold the standard doc set");
+    await seed.push("fr/docs-scaffold", { defaultBranch: "main" });
+    await run(["git", "-C", seedDir, "checkout", "-q", "main"]);
+    const repo = { owner: "o", name: "kite" };
+    const old = await w.host.createPullRequest(repo, {
+      title: "docs: scaffold",
+      body: "old",
+      head: "fr/docs-scaffold",
+      base: "main",
+    });
+    await w.host.updatePullRequest(repo, old.number, { state: "closed" });
+    let { rt, client } = await w.compose();
+    try {
+      const made = await client.createProject({
+        name: "Kite flyers",
+        goal: "Fly kites",
+        repos: ["o/kite"],
+        switch: true,
+        takeOver: { projects: [KITE_ID] },
+      });
+      const open = await w.host.listPullRequests(repo, { state: "open" });
+      expect(open.map((p) => p.head.ref)).toEqual(["fr/docs-scaffold-kite-flyers"]);
+      const listed = async (c: DaemonClient) =>
+        (await c.projectPullRequests(made.id)).waiting
+          .filter((row) => row.kind === "docs")
+          .map((row) => ({ title: row.title, branch: row.branch, number: row.number }));
+      const row = {
+        title: "The project's standard docs",
+        branch: "fr/docs-scaffold-kite-flyers",
+        number: open[0]?.number,
+      };
+      expect(await listed(client)).toEqual([row]);
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      expect(await listed(client)).toEqual([row]);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });
 
 describe("l4-github-merge, run L4", () => {

@@ -8,9 +8,9 @@ import { ACCEPTED_WITHOUT_REVIEW } from "@forerunner/critic";
 import { errorMessage, ForerunnerError, isAbsolute, log, redact } from "@forerunner/platform";
 import type { MergeRecordRow, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
 import {
-  DOCS_SCAFFOLD_BRANCH,
   isDocsBranch,
   isProjectDocsPr,
+  isScaffoldBranch,
   ownsUnmarkedDocs,
   parseRepoRef,
   STATUS_BRANCH,
@@ -90,10 +90,13 @@ export function projectRepository(
   return { fullName: `${ref.owner}/${ref.name}`, url: repoWebUrl(apiBase, ref) };
 }
 
-/** What a docs pull request holds, in the person's words. */
+/**
+ * What a docs pull request holds, in the person's words. A scaffold may open on
+ * `fr/docs-scaffold-<name>` (L4-github-102), and that is the standard set too, not a plan's.
+ */
 function docsTitle(branch: string): string {
   if (branch === STATUS_BRANCH) return "Project status (docs/status.md)";
-  if (branch === DOCS_SCAFFOLD_BRANCH) return "The project's standard docs";
+  if (isScaffoldBranch(branch)) return "The project's standard docs";
   return "The project's docs from the plan";
 }
 
