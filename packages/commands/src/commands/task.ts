@@ -128,6 +128,15 @@ function personsNote(ctx: CommandContext): boolean {
   return ctx.actor.kind === "human" && ctx.onPersonsWords !== true;
 }
 
+/**
+ * l4-selftasks-carried (L4-selftasks-120): a note the person wrote themselves (`personsNote`), as
+ * the redirect guards of task.transition and task.resume judge it: before, any note kept a move
+ * off the card whose answer it is, the chat model's own included.
+ */
+function ownNote(ctx: CommandContext, note: string | undefined): boolean {
+  return !!note?.trim() && personsNote(ctx);
+}
+
 /** The note a read-back shows when the model passed it ('Note for its next brief: "…"'). */
 function noteClause(ctx: CommandContext, note: string | undefined): string {
   const text = note?.trim();
@@ -1308,7 +1317,9 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
     if (params.duplicate_of) return null;
     const option = cardOptionFor(params.to);
     // A person's note goes with the move; a card's answer has no room for it: as said.
-    return option && !params.note?.trim() ? moveAsCardAnswer(ctx, params, option) : null;
+    // l4-selftasks-carried (L4-selftasks-120): only the person's own note does; one the chat's
+    // model wrote no longer keeps the move off the card.
+    return option && !ownNote(ctx, params.note) ? moveAsCardAnswer(ctx, params, option) : null;
   },
   async plan(params, ctx) {
     const task = await findTask(params, ctx);
@@ -1507,7 +1518,9 @@ export const taskResume: CommandDef<TaskResumeParams> = {
   reversible: true,
   undoStrategy: "pause the task again",
   async redirect(params, ctx) {
-    if (params.note?.trim()) return null;
+    // l4-selftasks-carried (L4-selftasks-120): the person's own note keeps the resume (a card's
+    // answer has no room for it); one the chat's model wrote does not.
+    if (ownNote(ctx, params.note)) return null;
     return moveAsCardAnswer(ctx, params, params.without_answers ? "Go ahead without" : "Try again");
   },
   async plan(params, ctx) {

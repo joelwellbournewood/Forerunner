@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { fixListMoved, namedTaskIds, taskListFingerprint } from "../src/index.ts";
+import {
+  CommandExecutor,
+  fixListMoved,
+  namedTaskIds,
+  taskListFingerprint,
+} from "../src/index.ts";
 import { type World, world } from "./helpers.ts";
 
 /**
@@ -89,5 +94,114 @@ describe("l4-selftasks-carried, run L4: the fix set's fingerprint (L4f-left-2)",
         } as never,
       ).sort(),
     ).toEqual(["t1", "t2", "t3", "t4", "t5", "t6", "t7"]);
+  });
+});
+
+/**
+ * L4-selftasks-120 (rest): a move said in chat on a task whose card offers it answers that card,
+ * unless the person's own note goes with it (a card's answer has no room for it). The note is the
+ * person's only when they wrote it (L4f: their own command, never one the chat's model passed,
+ * also after their yes), so a note the model wrote no longer keeps the move off the card.
+ */
+describe("l4-selftasks-carried, run L4: the redirect guards judge a note by who wrote it (L4-selftasks-120)", () => {
+  async function failedWithCard(w: World) {
+    const task = await w.store.task.insert({
+      project_id: w.pharma.id,
+      title: "Write the digest page",
+      outcome: "digest.html",
+      status: "failed",
+    });
+    const card = await w.store.humanRequest.insert({
+      kind: "approval",
+      why: '"Write the digest page" failed: the model did not answer.',
+      options: ["Try again", "Mark done anyway", "Cancel task"],
+      human_id: w.human.id,
+      project_id: w.pharma.id,
+      task_id: task.id,
+      risk: "medium",
+      blocking: true,
+    });
+    w.ports.cardWords = async (r) =>
+      r.id === card.id
+        ? {
+            title: '"Write the digest page" failed',
+            choices: [
+              { label: "Try again", explain: "Starts a session that tries again." },
+              { label: "Mark done anyway", explain: null },
+              { label: "Cancel task", explain: null },
+            ],
+            outcome: null,
+          }
+        : null;
+    return { task, card };
+  }
+  const MODEL_NOTE = "Put on hold by the person.";
+
+  it("the chat model's note (as the agent, or on the person's line before their yes) answers the card; the person's own note moves the task with it", async () => {
+    const w = await world();
+    const { card } = await failedWithCard(w);
+    const agent = { kind: "agent", id: w.agent.id } as const;
+    for (const [name, params] of [
+      ["task.transition", { task: "digest", to: "ready", note: MODEL_NOTE }],
+      ["task.resume", { task: "digest", note: MODEL_NOTE }],
+    ] as const) {
+      for (const ctx of [
+        w.ctx({ actor: agent, source: "chat" }),
+        w.ctx({ source: "chat", onPersonsWords: true }),
+      ]) {
+        const asked = await w.executor.execute({ name, params, ctx });
+        expect(asked.status, `${name} ${ctx.actor.kind}`).toBe("pending");
+        expect(asked.card?.command, `${name} ${ctx.actor.kind}`).toBe("request.answer");
+        expect((asked as { readback: string }).readback).toBe(
+          'Try again ("Write the digest page" failed)? Starts a session that tries again.',
+        );
+        await w.executor.cancel((asked as { pendingId: string }).pendingId, w.ctx().actor);
+      }
+    }
+    // The person's own note (their command: the parser's, the drawer's) keeps the move.
+    const own = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "digest", to: "ready", note: "Use the old layout." },
+      ctx: w.ctx({ source: "chat" }),
+    });
+    expect(own.card?.command).toBe("task.transition");
+    if (own.status === "pending") await w.executor.cancel(own.pendingId, w.ctx().actor);
+    expect((await w.store.humanRequest.mustGet(card.id)).status).toBe("open");
+    await w.store.close();
+  });
+
+  it("after a restart, the read-back a model's note made of the card's answer is armed again as that answer, and its yes answers the card", async () => {
+    const w = await world();
+    const { card } = await failedWithCard(w);
+    const asked = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "digest", to: "ready", note: MODEL_NOTE },
+      ctx: w.ctx({ actor: { kind: "agent", id: w.agent.id }, source: "chat" }),
+    });
+    expect(asked.card?.command).toBe("request.answer");
+    const pendingId = (asked as { pendingId: string }).pendingId;
+    // A new process on the same store: the executor arms the open cards again.
+    const again = new CommandExecutor({ registry: w.registry, store: w.store, clock: w.clock });
+    const open = await w.store.humanRequest.list({ status: "open", kind: "approval" } as never, {
+      limit: 50,
+    });
+    const armed = await again.restorePending(open, async (stored) => ({
+      ...w.ctx(),
+      actor: stored.actor,
+      humanId: stored.humanId,
+      agentId: stored.agentId,
+      activeProjectId: stored.activeProjectId,
+      source: stored.source,
+      wordsUsed: stored.wordsUsed,
+    }));
+    expect(armed).toContain(pendingId);
+    expect(again.getPending(pendingId)?.card.command).toBe("request.answer");
+    expect(again.getPending(pendingId)?.readback).toBe(
+      'Try again ("Write the digest page" failed)? Starts a session that tries again.',
+    );
+    const yes = await again.confirmByText(pendingId, "yes", w.ctx().actor);
+    expect(yes.status).toBe("done");
+    expect((await w.store.humanRequest.mustGet(card.id)).answer).toBe("Try again");
+    await w.store.close();
   });
 });
