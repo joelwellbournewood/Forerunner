@@ -1,0 +1,83 @@
+{
+ "branch": "fix/l4c-workstate",
+ "head_sha": "fb20d1e8e2677bc1c9669bc2b53489e5c52e619c",
+ "commits": [
+  "083e7f9 budget-pause: a line that says work remains is work, never 'nothing left' (l4c-workstate)",
+  "a4fc2f2 test: the month's-cap cases assert the exact words each run says (l4c-workstate)",
+  "d7467db critic: a long session-review cause is cut at a word with an ellipsis (l4c-workstate)",
+  "fb20d1e ui: a noted session-check finding shows no 'To fix' line (l4c-workstate)"
+ ],
+ "fixed": [
+  {
+   "item": "1 [major, correctness] L4-money-101's general rule (isWholeSetNothing) read Left-to-do lines that say the work is NOT done as an empty list. Root cause: it accepted any one-clause line that started with nothing/none and named the whole set, minus a blocklist (WORK_STATE) that knew only a few verbs. A rule-8 sibling search found two older holes of the same kind. A reason after punctuation was never checked: since L3-research-1, 'Nothing for the criteria: tests and docs remain' read as nothing. And ABOUT's middle `[^.;:]*?` let any words stand between the preposition and the noun: since W15-14, 'Nothing in the code works for the task' read as nothing.",
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts, describe 'l4c-workstate, run L4: a line that says work remains is work, never nothing left'. Four cases failed on d526f40. (a) The reviewer's seven lines, all read as []. (b) 19 siblings: other work states, negations, 'not yet', 'still', 'remains', 'is missing', 'was not', 'pending'. (c) 13 lists or sentences of work after a colon, semicolon or comma. (d) 5 states between the 'nothing' and what it is about. The composed case also failed: the live-shaped report ends 'Left to do: - Nothing the task requires has been tested', and before the fix the task was 'done' and reviewed. Of the 43 work lines, 29 read as nothing on d526f40. Against the parser before 71127f6, 10 of them did, so 19 came with L4-money-101 and 10 are older siblings. A 5th case, the 'still nothing' forms, passes before and after: 22 lines, including the general rule's own forms, which had no test at all (with isWholeSetNothing switched off, all 176 Left-to-do tests still passed).",
+   "how": "packages/runtime/src/session/budget-pause.ts, on the safe side (when unsure, a line is work left). (1) The general rule is now a closed allowlist form, SAYS_ONLY_NOTHING_LEFT. It accepts nothing/none, then LEFT words (else, more, is left, is needed, to do ...), then what the line is about: a preposition and the whole set (for, in, by, against, on, within, to meet, 'listed in' ...) or a relative clause ('[that] the brief lists', 'the criteria have asked for'). After that comes at most one more LEFT word or 'remains', and nothing else. WORK_STATE is removed, and WHOLE_SET, ONE_CRITERION and NOT_NOTHING still apply. (2) ABOUT's middle is a closed list, ABOUT_WORD: the, this, the task's, acceptance, the scope of, each of ... (3) reasonSaysDone: a reason after punctuation, in both NOTHING and RELATIVE_HEAD, counts only when it has a done word (met, covers, written, opened, lists ...). It must name nothing still to come (remain, pending, left, to do, need to, then ...; 'nothing remains' inside the reason is allowed) and no part may start with an order ('write ...'). Every L4-money-101, W15-14 and L3-research-1 case stays green, including the composed LC-C7 live report, the live F4 and L3 reports, and the bench stand-in's FORERUNNER_BENCH_LEFT_NOTE line. The composed case now pauses with exactly '\"Write the Swiss pairing rules\" paused before its budget of CHF 0.15 ran out: it spent CHF 0.10 and listed one thing left to do; CHF 0.04 is kept for its review.' Its card is '\"Write the Swiss pairing rules\" paused before its budget ran out' with 'Continue (CHF 0.16 more)' and 'Cancel task', and the task is not reviewed. ADR 0112 has a dated amendment (2026-11-22, l4c-workstate) because the rule's meaning changes. runtime.md and the user guide are updated.",
+   "check_in_the_app": "Live, with the real model: a researcher or writer task whose budget is below its estimate, so it hears the wrap-up. If its report ends 'Left to do:' with a line such as 'Nothing the task requires has been tested' or 'Nothing for the criteria: tests and docs remain', the session page shows '\"<task>\" paused before its budget ... ran out: it spent CHF x and listed one thing left to do ...', the task is not reviewed, and the Inbox has its card with 'Continue (CHF y more)' and 'Cancel task'. A report ending 'Left to do: nothing the criteria require.' is still reviewed and done in the same session, with no card. The stand-in cannot word these lines (role-player.ts writes fixed Left-to-do lines), so this step needs the real model."
+  },
+  {
+   "item": "2 [tests] budget-pause.test.ts' month's-cap cases had been loosened by L4-money-103 to accept either form ('paused (?:at|before) this month's cap(?: ran out)?') in the 'Members page' summary and the 'Members map' label, and the 'Members list' line's review clause was optional.",
+   "failing_test_before": "None: this tightens tests (no source change). Each run is deterministic, so I captured what each one produces and asserted that exactly. Before L4c, both cases were exact (\"paused at this month's cap of CHF 0.10: ...\" and label \"Paused at this month's cap\").",
+   "how": "'Members list': exactly ['\"Members list\" paused before this month's cap of CHF 0.10 ran out: it spent CHF 0.05 and listed 2 things left to do; CHF 0.04 is kept for its review.']. 'Members page' (CHF 0.05 of the cap left, so it wraps up): its summary is exactly '\"Members page\" paused before this month's cap of CHF 0.10 ran out: it is ready again once that limit is raised or resets, for your next Start.\\nStopped at this month's cap of CHF 0.10. CHF 0.04.' 'Members map' (CHF 0.01 left, too little to wrap up, so it stops at the cap with its work kept): label 'Paused at this month's cap' and its detail, exactly, plus its start line 'This run may spend CHF 0.01, the rest of this month's cap: too little to wrap up (two steps may cost CHF 0.01), so it pauses and keeps its work.' Checked against section 5: CHF with two decimals, no ids, a label under 80 characters, and a promise the code keeps (the same block's next case shows the task ready again once the cap is raised, running at the next Start). No other test in packages, apps/ui, tests or testenv accepts either form.",
+   "check_in_the_app": "None beyond L4-money-103's own steps (test-only change)."
+  },
+  {
+   "item": "3 [words] reviseCause cut a finding at 200 characters with slice(0, 200), mid-word and without an ellipsis. A long finding read '... after the critic asked for a result (grade 85, 1 finding).' when the finding went on 'a results table ...'.",
+   "failing_test_before": "packages/critic/test/session-review.test.ts 'a long finding is cut at a word, with an ellipsis, within 200 characters (l4c-workstate)': exact result, at most 200 characters, a whole word before the '…'; got '... asked for a result'. packages/runtime/test/event-lines.test.ts 'a long cause reads cut at a word with an ellipsis in the session log (l4c-workstate)': the exact 'Session review: planned tasks cost CHF 0.37, ... the critic asked for a… (grade 85, 1 finding).' line built from reviseCause.",
+   "how": "reviseCause returns quotedWords(description, 200). That is the critic's existing helper for cut sentences (followup.ts: one or two sentences, at most max characters, cut at a word with '…'), the one a card uses to quote a report. A finding within 200 characters is whole, as before. critic.md is updated.",
+   "check_in_the_app": "Live: a session review that notes a finding longer than 200 characters. Under Details, the 'Session review: ...' line ends its cause at a whole word with '…' before '(grade N, 1 finding).', never inside a word. Today's code-made findings are short, so this is rare live."
+  },
+  {
+   "item": "4 [words] More > Reviews > Session checks showed 'To fix: Record the overrun against the estimate so the next plan is calibrated; split the work that overran' under a finding whose badge reads 'noted'.",
+   "failing_test_before": "apps/ui/test/reviews.test.tsx 'a noted finding shows what was noted and no To fix line (l4c-workstate)'. The finding row still contained 'To fix: Record the overrun ...'. The existing L4-money-112 UI case checked only the badge, so the line was never asserted.",
+   "how": "ReviewsTab.tsx shows the 'To fix' line only under a task review's finding. Every action on a session check is addressed to the agent: record the overrun, plan within the budget, say in the summary what the spend bought, report counts from the task states. None is a step the person takes, and the app does not carry any of them out as a promise, so no line replaces it. The finding still shows what was noted. The real-daemon L4-money-112 case now pins what the client gets for that finding (its description and that action), which is exactly what the UI case feeds the fake (rule 3). A task review keeps its 'To fix: Debounce the input ...'. apps.md and the user guide are updated.",
+   "check_in_the_app": "Live or on the bench (bench journey D of the review: FORERUNNER_BENCH_CRITIC_REJECT and FORERUNNER_BENCH_USAGE on one task): after a session whose task was sent back once and accepted over its estimate, open More > Reviews and expand Session checks. The check reads '85 / 100' and 'noted', its finding is badged 'noted' with its description, and there is no 'To fix' line under it. A task review's open finding still shows its 'To fix:' line."
+  }
+ ],
+ "validation": [
+  {
+   "command": "DOCS_CHECK_BASE=d526f40 FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. Lint, path lint and typecheck pass. 557 unit files: 6038 tests passed, 7 skipped. docs-check ok (13 files) against d526f40. link-check ok (213 files). secret-scan clean (2252 files)."
+  },
+  {
+   "command": "cd apps/ui && FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 101 files, 1413 tests passed."
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts (the local-only config pointing at /opt/pw-browsers/chromium, copied in untracked from the other worktree and deleted afterwards)",
+   "result": "exit 0: 38 passed (1.2 min)."
+  },
+  {
+   "command": "FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped by their own guards (5 of them need FORERUNNER_TEST_PG, which is not set on this machine); 30 tests passed, 81 skipped."
+  },
+  {
+   "command": "FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped."
+  },
+  {
+   "command": "Failing-first runs (each under the lock): budget-pause.test.ts -t l4c-workstate on the unfixed parser; session-review.test.ts and event-lines.test.ts -t l4c-workstate before the reviseCause change; reviews.test.tsx before the ReviewsTab change",
+   "result": "4 of 5 new budget-pause cases failed (the reviewer's 7 lines read [], the siblings read [], the composed task was 'done'); both reviseCause cases failed ('... asked for a result'); the UI case failed on the 'To fix' line. All pass after the fixes."
+  },
+  {
+   "command": "Probe: the 43 work lines and 19 nothing lines of the new block through parseHandoff, on d526f40, on the pre-71127f6 parser and on the fix",
+   "result": "d526f40: 29 of 43 work lines read as nothing. Pre-71127f6: 10, plus 12 nothing lines read as work. Fix: 0 and 0."
+  },
+  {
+   "command": "flock ... vitest run --project unit on the 12 runtime/testenv files that read Left-to-do lines, with isWholeSetNothing switched off on the base (then restored)",
+   "result": "176 passed: no existing test pinned what the general rule accepted, which is why the new block adds its own positive cases."
+  },
+  {
+   "command": "git status; git grep -n '^<<<<<<< '; commit signatures",
+   "result": "Tree clean, no conflict markers. fix/l4c-workstate = HEAD = fb20d1e. All 4 commits carry an SSH signature and end with the two required trailers. %G? reads N for them and for the base d526f40 alike, because no gpg.ssh.allowedSignersFile is configured. Playwright output and scratch probes were deleted; no bench was started."
+  }
+ ],
+ "not_done": [
+  "No bench walk with screenshots. The stand-in cannot word a work-state Left-to-do line (testenv/src/bench/role-player.ts writes fixed lines), so item 1's evidence is the composed case through the runtime's routes (GET /sessions/:id/events, /inbox) plus the live check step above. Item 4 is covered by the UI case and the real-daemon pin, not a bench screenshot.",
+  "Sibling left for the session lead (a choice about what the person sees, AGENTS.md): in ReviewsTab.tsx, a task review's finding badged 'fixed', 'accepted as it is', 'closed: the task is done' or 'closed: the task was cancelled' still shows 'To fix: ...' under it. The options are to drop it, as for a noted finding, or to reword it (for example 'The critic asked: ...').",
+  "Sibling for the phone round (task 27): the phone's Reviews screen (apps/ui/src/mobile/screens/ReviewsScreen.tsx) does not single out session checks. It shows the raw verdict ('revise'), 'tier N' and 'Needed: <action>' under their findings.",
+  "Other bare slices found by the rule-8 search, which I did not change. Each names a person-facing text: packages/critic/src/tier0.ts:230 cuts at 200 mid-word (with an ellipsis); packages/critic/src/measured.ts:37,39 at 300 with none; packages/runtime/src/session/runner.ts:1115 ('Lesson: ...' at 300) and :3155/:3677 (a result summary at 200). The Left-to-do item cut at 200 inside a word (budget-pause.ts `cut`) is the known L4-money-113.",
+  "The review's other non-blocking items were not in this area's scope: the outer-limit 'Stopped at the project's budget' status while spend is under the limit, result.ts's 'this session's CHF X was used' sibling, the L4-selftasks-107 learned-EstimatePort case, sdk-driver exact wrap-up text, and the L4-money-111 status and project-facts siblings.",
+  "The worktree keeps its node_modules from `pnpm install --frozen-lockfile --prefer-offline` (hard links from the shared store; free disk stayed at 12 GB), so the merge can rerun tests here."
+ ],
+ "update_log_suggestion": "2026-11-22 l4c-workstate (run L4, after the review of l4-money-pause): a report whose 'Left to do' says the work is not done ('Nothing the task requires has been tested', 'Nothing for the criteria: tests and docs remain') now pauses the task with its Continue card, never 'nothing left'; only a line that clearly says nothing is left reads as empty (ADR 0112 amended 2026-11-22, l4c-workstate). A long session-review cause is cut at a whole word with '…', and Session checks show a noted finding with no 'To fix' line. U-089 Check in the app addition: a run whose Left to do says nothing is tested pauses ('... listed one thing left to do ...') with 'Continue (CHF x more)' and 'Cancel task', unreviewed. U-042 addition: More > Reviews > Session checks: a 'noted' finding has no 'To fix' line."
+}

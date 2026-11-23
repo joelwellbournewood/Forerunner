@@ -16,6 +16,11 @@
    "id": "L4c-left-13",
    "severity": "cut line",
    "text": "l4-chat-answers: L4-chat-105 (a closed project's lessons reach the kept project), -109 (recall ranking golden set), the L4-chat-113 reply check (scrub or flag tool names), the L4-chat-101 code-run recall fallback, the L4-chat-104 'switch' Open link; L4a-left-6 (L4-creds-6 composed test), L4b-left-9 (dependenciesNextLine with the hands-off setting)."
+  },
+  {
+   "id": "L4c-ws-1",
+   "severity": "minor (residual)",
+   "text": "l4c-workstate fixup (82a8470): the Left-to-do reason allowlist keeps a free subject slot (up to 5 words) guarded by word lists; an unlisted hedge ('the visible ones') inside a subject that ends in a done word could still read as nothing left. Clause shapes are closed; subject words are not. Live check F-9 covers the real model's phrasings."
   }
  ],
  "for_session_lead": {

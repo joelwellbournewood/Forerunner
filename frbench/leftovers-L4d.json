@@ -1,0 +1,29 @@
+{
+ "why": "Run L4 sub-run L4d's leftovers that no later run L4 area owns.",
+ "base": "0288a46",
+ "items": [
+  {
+   "id": "L4d-left-6",
+   "severity": "minor, performance",
+   "text": "GET /inbox calls rt.startCheck once for each open plan card only to read workBudgetUsdMicro (a route R-inboxperf optimised)."
+  },
+  {
+   "id": "L4d-left-7",
+   "severity": "minor",
+   "text": "setPersonZone runs inside the store reducer (a side effect): a screen rendered before /me answers is not re-rendered when the zone arrives, and a zone saved in Settings is read again only after a restart or a project switch."
+  },
+  {
+   "id": "L4d-left-8",
+   "severity": "tests",
+   "text": "L4a-left-4's queued-continuation status line has no real-daemon case; other '(s)' literals remain outside intake.ts and calibration.ts; the plan card foot line is about 104-117 characters under ask."
+  },
+  {
+   "id": "L4d-left-9",
+   "severity": "pre-existing",
+   "text": "Task rows show 'CHF 0.00' for unspent tasks."
+  }
+ ],
+ "for_session_lead": {
+  "live_checks_for_F": "Under 'ask' with the real subscription at its limit mid-session: compare the ask card's 'about CHF N' with the Start dialog's Use API key figure, then the actual spend after the yes."
+ }
+}

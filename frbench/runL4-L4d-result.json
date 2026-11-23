@@ -1,0 +1,617 @@
+{
+ "wave": 28,
+ "areas": [
+  {
+   "key": "l4-cred-screens",
+   "fix": {
+    "area": "l4-cred-screens",
+    "branch": "fix/l4-cred-screens",
+    "head_sha": "3e0a8b1c31e3e0974a8fab174208e877b91acb18",
+    "commits": [
+     {
+      "sha": "734ab340308de2601c06023d5c285f8bed49d02d",
+      "subject": "credential screens: one figure for the waiting work, and the yes lets in only what waited (L4-creds-15, U-078)"
+     },
+     {
+      "sha": "6279b6a200abde504109f7a8b6401df5e579b701",
+      "subject": "credential screens: a task only one credential can do says why it waits (L4-creds-16, U-078)"
+     },
+     {
+      "sha": "ddf71ea20d3f8134fffa1fd7c6d0adad9d741fc0",
+      "subject": "credential screens: the Start dialog names the stop with the key first too (L4-creds-17, U-078)"
+     },
+     {
+      "sha": "456b37484ec604fa69822cc6eb8ec789d3dd6d37",
+      "subject": "credential screens: Start on 1 Dec keeps the start; Change the allowance where the share's wait shows (L4-creds-18, U-078, U-096)"
+     },
+     {
+      "sha": "dbb4d9751e26e29a962ec65a5d5510495f221533",
+      "subject": "credential screens: a refused credential said first with its step; 400 for start refusals; queued continuation line; Cancel's line (L4a-left-1..4, L4-creds-21, U-078)"
+     },
+     {
+      "sha": "9c4ab3b159b6744f7536b5ff5b8958caf0de0657",
+      "subject": "credential screens: By credential never reads CHF 0.00; refused Use API key line within 100; Settings under ask says you are asked (L4-creds-25, U-078)"
+     },
+     {
+      "sha": "68a67124176c18fead56dc41dabd3fa02f2c77df",
+      "subject": "credential screens: words agree with the buttons beside them (L4-creds-26, U-078)"
+     },
+     {
+      "sha": "499d15c0eea9f62bde5161561c506f63b0cc67f4",
+      "subject": "credential screens: chat's one-off Use API key answers the held question in its place (L4-creds-19, U-078)"
+     },
+     {
+      "sha": "3299b0fa15cb1029b2c986ae3f23d1bfec3f7a0f",
+      "subject": "credential screens: client test reads the start refusal as 400 validation (L4-creds-21)"
+     },
+     {
+      "sha": "4322f1b936a59ee57aff775b6a97395a3a9df571",
+      "subject": "ui: every time on the screens is in the person's zone (L4-creds-20, U-078)"
+     },
+     {
+      "sha": "78a6c11986e4f0e1e6330252190eec563d98d422",
+      "subject": "intake: counts say their plural, never \"(s)\" (L4-creds-29, U-078)"
+     },
+     {
+      "sha": "40c9abf34787ec25d428b4b66da90d5b86c78222",
+      "subject": "credential screens: daemon test reads the start refusal as 400 validation (L4-creds-21)"
+     },
+     {
+      "sha": "3e0a8b1c31e3e0974a8fab174208e877b91acb18",
+      "subject": "credential screens: real-daemon start refusals read as 400 validation (L4-creds-21)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "L4-creds-15 (never cut): the ask card, the Start dialog's Use API key line and the plan card's foot line gave three different figures for the same waiting work, and after a yes a ready task that had not waited could join the running session.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-ask-figure.test.ts; packages/runtime/test/credential-grant-readmit.test.ts; apps/ui/test/real-daemon.test.ts 'L4-creds-15: the ask card's figure and the Start dialog's Use API key say the same ...' and 'L4-creds-15 plan card foot figure'; apps/ui/test/credential-start.test.tsx (L4-creds-15)",
+      "how": "start-check.ts gains inFlightWork() and waitingWorkUsdMicro() (the promise of the waiting work with its review parts, plus what is left of in-flight tasks, capped at the work budget). compose.ts' ask card, server.ts' credentialAtStart and the plan card's foot line all use it. grant-readmit.ts' waitedForCredential() makes onGrant readmit only the tasks that waited for the credential. The Start dialog keeps the plan sentence beside the stop line when Use API key is offered.",
+      "check_in_the_app": "Settings > Which Claude does the work: 'Subscription first, then ask me'. With the subscription at its limit, make a project with task A and a follower B. Open Start: the Use API key line says 'about CHF N'. The ask card in the Inbox and the plan card's last line give the same CHF N. Press Use API key: only A and B run; a third ready task added after the stop waits for the next Start."
+     },
+     {
+      "problem": "L4-creds-16 (never cut): a task only the resting API key can do (it reads web pages) showed the stop's words, not why it waits, on its row, the status line and the run bar. This was lost after a restart.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'L4-creds-16 ...' (row, /status, /running, after composing again); packages/runtime/test/credential-policy-view.test.ts (the needs form); apps/ui/test/tasks.test.tsx and run-indicator.test.tsx (L4-creds-16)",
+      "how": "WaitEntry.needs is recorded by billing-pick (onlyIt: hard needs that only the stopped kind can do), and executor.noteNeeds persists it. credential-wait.ts' needsWaitWords gives 'Waits for your API key: only it can read web pages here.' (row), 'Waiting for your API key (only it can read web pages here)' (status) and the bar's why. task-display, run-indicator and startsWaitOf read it.",
+      "check_in_the_app": "API key at its limit, policy 'then wait'. Add a researcher task. Tasks tab row: 'Waits for your API key: only it can read web pages here.' The Overview's line and the run bar say the same. Quit and reopen Forerunner: still the same."
+     },
+     {
+      "problem": "L4-creds-17 (never cut): under 'API key first, then subscription' with the key resting, the Start dialog had no line, and planCardLine said '(costs money)' after the subscription.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'L4-creds-17 ...'; apps/ui/test/credential-start.test.tsx (L4-creds-17); credential-policy-view.test.ts 'the key-first direction'",
+      "how": "credential-start.ts' nextServes() handles the key-first direction: 'Your API key is at its limit until 11:40, so this runs on your subscription (about CHF 0.07).'. planCardLine says the cost only when the other credential is the API key.",
+      "check_in_the_app": "Settings: 'API key first, then subscription'. Make the key reach its limit. Open Start: 'Your API key is at its limit until HH:MM, so this runs on your subscription (about CHF N).' Start runs on the subscription. The plan card has no '(costs money)'."
+     },
+     {
+      "problem": "L4-creds-18: 'Start on 1 Dec' at the subscription's share stop (or a key's monthly cap) started a session that stopped at once. The share's wait had no 'Change the allowance' on the status line or the session page.",
+      "u_ids": [
+       "U-078",
+       "U-096"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'L4-creds-18: Start on 1 Apr ...' and 'L4-creds-18: the share's wait offers Change the allowance ...'; credential-screens-l4.test.tsx",
+      "how": "compose.ts keepStart also keeps a start for 'share' and 'key_month' stops (result 'kept', no session row). Exactly one session starts at the month's start, also after a restart. server.ts' startsWaitOf and waitBlockOf carry the /settings#plan-allowance link.",
+      "check_in_the_app": "Subscription at 95% of its allowance. Open Start: the button says 'Start on 1 Dec'. Press it: no session starts and the line says it starts then. The Overview line and the session page's wait block show 'Change the allowance'."
+     },
+     {
+      "problem": "L4a-left-1/2/3/4 and L4-creds-21 part 2: (1) POST /sessions while a refused credential's session was kept said 'goes on by itself once its Claude credential is back' instead of the dialog's sentence. (2) The kept wait named no step. (3) Cancel's line read as a status. (4) A continuation queued behind another project's session had no line. (21) Start refusals in words answered 409 'conflict'.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'L4a-left-1/2: a refused sign-in with the session kept ...' and 'L4-creds-21: POST /sessions with nothing to run answers 400 ...'; packages/runtime/test/project-status.test.ts (queued goesOn)",
+      "how": "server.ts checks the refused credential first, while a session is kept, and returns the dialog's sentence. keptWait says 'once you save a new API key in Settings' or 'once you sign in again in Settings'. CANCEL_WAIT_EXPLAIN now reads 'Cancel: nothing starts when Claude is back; its tasks wait for your Start.'. startsWaitOf reports 'queued' with goesOn: 'Goes on after the session on \"Map notes\"'. Start refusals carry details.reason 'start_refused' and answer 400 'validation', in the fake daemon too.",
+      "check_in_the_app": "Refuse the subscription's sign-in while a session waits to go on. From the session page press Continue: 'Nothing can run until you save a new Claude sign-in in Settings.'. The session page's wait reads 'Your session of HH:MM goes on by itself once you sign in again in Settings.'"
+     },
+     {
+      "problem": "L4-creds-25 (By credential line never cut): Costs said 'Your API key: CHF 0.00' for three API rows of 1665+181+189 micro CHF. The refused Use API key line was 108 characters. Settings under ask said 'the work waits for it'.",
+      "u_ids": [
+       "U-074",
+       "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'L4-creds-25: GET /costs' By credential reads ...'; credential-policy-view.test.ts 'the refused Use API key line is at most 100 characters ...' and 'Settings' now line under ask ...'",
+      "how": "views.ts byCredential words pass moneyWords: 'Your API key: less than CHF 0.01'. useApiKeyExplain has a refused form: 'Runs now on your API key until you sign in again, about CHF 0.90.'. stoppedNowLine under ask: '...; you are asked before your API key is used.'",
+      "check_in_the_app": "Project > Costs after a few tiny API calls: By credential reads 'Your API key: less than CHF 0.01'. With the sign-in refused, the Start dialog's Use API key line reads 'Runs now on your API key until you sign in again, about CHF N.'. Settings under 'then ask me' with the subscription out reads '...; you are asked before your API key is used.'"
+     },
+     {
+      "problem": "L4-creds-26: the plan card said 'Press Start' on a card whose button is 'Approve and start'. The header under ask said 'nothing runs until 02:51' beside Use API key. A wait result ended 'CHF 0.00.'. A kept person start read '...; then your session goes on.'",
+      "u_ids": [
+       "U-074",
+       "U-078"
+      ],
+      "failing_test_before": "credential-policy-view.test.ts 'words that agree with the buttons (L4-creds-26)' (4 cases); apps/ui/test/real-daemon.test.ts 'L4-creds-26: under ask the header ...' and the CS-4/CS-10 plan card assertions; credential-start.test.tsx 'a kept person Start in the Start dialog'",
+      "how": "waitThenStartSentence({on:'plan', ask}): '...; Approve and start keeps it for then.' or '...; Approve and start asks before your API key is used.'. waits.now returns askFirst, and the line reads 'Ready: 2 tasks; your subscription is at its limit until 02:51; Start asks first' (80 characters at most). result.ts drops the cost line for a credential wait that spent nothing. startBlocked shows startsAt: 'Starts at 04:28 (your subscription's limit).' with Cancel the wait.",
+      "check_in_the_app": "Under 'then ask me' with the subscription out and the key saved: the project line reads 'Ready: N tasks; your subscription is at its limit until HH:MM; Start asks first'. A plan card's task lines say 'Approve and start asks before your API key is used.'. Press 'Start at HH:MM', then open Start again: 'Starts at HH:MM (your subscription's limit).' with Cancel the wait."
+     },
+     {
+      "problem": "L4-creds-19: chat's one-off Use API key sent the held question again. It showed twice, stayed twice after a reload, and reached the model twice with 'so I have not answered' between.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'L4-creds-19: chat's one-off Use API key answers the held question in its place ...' (2 turns instead of 1); credential-chat.test.tsx 'the one-off press answers the held turn in place' (Chat tab and Talk)",
+      "how": "ChatRequestBody.heldTurn (append-only) names the held turn the press answers. The agent records `replaces` on the new chat.human row when it is the newest held turn with the same words. readTranscript leaves a replaced turn out, so the view and the history match, also after a restart. The UI hides the held turn while the answer comes. The fake daemon drops it.",
+      "check_in_the_app": "Subscription at its limit under 'then wait'. In Chat ask 'what is left?': a hold reply with Use API key appears. Press it: the question shows once with the answer under it ('Answered with your API key: ...'). Reload: still once."
+     },
+     {
+      "problem": "L4-creds-20: the session page, the Sessions row and Files wrote times in the computer's zone beside the daemon's sentences in the person's zone.",
+      "u_ids": [
+       "U-096"
+      ],
+      "failing_test_before": "apps/ui/test/person-zone.test.tsx (computer on UTC, person in Zurich: header 'session at 21:00', log rows, Sessions row, formatClock across midnight '18 Nov, 00:30')",
+      "how": "lib/time.ts keeps the person's zone (setPersonZone, set by the store's 'me' action and the phone's store). Every helper writes in it and takes an optional zone. formatClock compares days in that zone. Files' copyUpdatedWords uses formatClock.",
+      "check_in_the_app": "Set the computer's zone to UTC and Settings' zone to Europe/Zurich. Open a session page: 'session at HH:MM' and the log rows match the daemon's 'Waits until HH:MM' in Zurich time. Do the same for the Sessions list row and Files."
+     },
+     {
+      "problem": "L4-creds-29: the intake card wrote '2 milestone(s), 5 task(s), 3 doc(s)'. Its steps, its audit lines and the calibration summary did the same.",
+      "u_ids": [
+       "U-074"
+      ],
+      "failing_test_before": "packages/runtime/test/intake.test.ts 'files one blocking approval ...' and 'in small-project mode ...'; calibration-job.test.ts 'runs calibrate() ...'; new plural-words.test.ts",
+      "how": "countWords and tasksWords in intake.ts give '2 milestones, 5 tasks, 3 docs'. calibration.ts says '4 eval tasks'. plural-words.test.ts greps both files' string literals for '(s)'.",
+      "check_in_the_app": "New project with a brief: the plan card in the Inbox reads 'Intake for \"X\": 2 milestones, 5 tasks, 3 docs and a first-session plan of ...', with no '(s)'."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "L4-creds-21 part 1: an unanswered Settings read-back ('Set which Claude does the work') stays in the Inbox under Needs you after leaving Settings.",
+      "why": "Cut line (part 1 may be not_done). Not changed: the root cause is the generic change card in packages/commands/src/commands/settings.ts, which other areas share; the time went to the never-cut items. Part 2 (400 validation) is done."
+     },
+     {
+      "problem": "L4-creds-24: no Playwright cases for the credential section and the Start dialog at 390 and 1280 px.",
+      "why": "Cut line. No new e2e spec was written. The existing Playwright suite (38 tests) passes on the branch; the credential section and dialog are covered by vitest UI tests only."
+     },
+     {
+      "problem": "L4-creds-29 acceptance's wider grep: other '(s)' literals remain in runtime log, CLI and audit strings outside the intake card.",
+      "why": "Outside the root causes the item named. Examples: jobs/cli.ts:111 'stuck place(s)', voice/install.ts:1448 'folder(s)', compose.ts:3648/5891 'instruction-like passage(s)' audit summaries, voice/speak.ts:544, wiring/model-config.ts:75, local-profile.ts:278. plural-words.test.ts covers intake.ts and calibration.ts only."
+     },
+     {
+      "problem": "Bench 'before' screenshots of this area are lost.",
+      "why": "The after walk restarted the bench with scripts/bench/start.mjs --fresh, which emptied /tmp/frbench/fix-l4-cred-screens/steps/. The before evidence is the failing-first tests listed per item, each checked by reverting the source."
+     }
+    ],
+    "validation": [
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm check (DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0)",
+      "result": "exit 0: lint, lint:paths and typecheck clean; unit 559 files, 6045 passed, 7 skipped; docs-check ok (56 files); link-check ok (213 files); secret-scan clean (2257 files). The first run failed one test (daemon.test.ts expected 409); it was fixed in 40c9abf and the full re-run is green."
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped (Postgres-backed, no FORERUNNER_TEST_PG); 30 tests passed, 81 skipped"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "exit 0: 13 files, 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts",
+      "result": "103 files, 1434 passed, 3 failed. The 3 failures were real-daemon start refusals still expecting 409 'conflict'; they were updated to 400 'validation' in 3e0a8b1 and pass when re-run (3 passed)."
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+      "result": "exit 0: 38 passed (the local config is not committed)"
+     },
+     {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "empty"
+     },
+     {
+      "command": "bench after walk (scratchpad walk.cjs after, zone.cjs after; --provider bench-api --api-key ok --subscription)",
+      "result": "Header under ask: 'Ready: 1 task; your subscription is at its limit until 03:53; Start asks first'. Settings: '...; you are asked before your API key is used.'. Kept start dialog: 'Starts at 03:53 (your subscription's limit).'. Key-first line and refused one-off line as designed. Chat one-off: question shown once, once after reload, model got it once with no hold reply. Session page in a UTC browser: 'session at 01:58' (Zurich). Bench stopped with stop.mjs; home and browser profile deleted."
+     }
+    ],
+    "new_problems": [
+     "Run L4a's 'one-wait rule' and L4a-left-1 interact: with no session kept, POST /sessions on a refused credential still starts a session that meets the refusal and ends to wait. This keeps the refused-key case's 'starts both by itself' from real-daemon.test.ts line ~8508. The dialog never offers that Start, but the API and phone can. Owner question: should a start under a refused credential be refused in words outright?",
+     "The status-line sentence the spec suggested for L4-creds-26 ('Ready: 2 tasks; your subscription is at its limit until 02:51. Start asks about your API key.') is 93 characters, past design §5's 80. I built 'Ready: N tasks; your subscription is at its limit until HH:MM; Start asks first', falling back to 'Ready: N tasks; Start asks about your API key until HH:MM' when longer.",
+     "The Start dialog plan sentence and the Use API key figure come from different sums: on the bench, two tasks at about CHF 0.06 each, and Use API key 'about CHF 0.11'. They are consistent but rounded separately, so a person may read 0.06 + 0.06 beside 0.11.",
+     "Pre-existing lint warnings remain (StartSessionDialog.tsx:244 noUselessFragments from 170859f4; capabilities tests noNonNullAssertion). They are not from this area."
+    ],
+    "notes_for_other_areas": [
+     "start-check.ts: inFlightWork(deps, projectId) and waitingWorkUsdMicro(check, inFlight) give the one figure for the waiting work (review parts included, capped at the work budget). Use them wherever a screen prices waiting work.",
+     "grant-readmit.ts: waitedForCredential(store, projectId) lists the ready tasks that waited for a credential (CREDENTIAL_WAIT_REASON). onGrant readmits only those.",
+     "WaitEntry.needs (billing-pick) and executor's billing.noteNeeds?(sourceId, projectId, needs) persist why a task waits for one credential. credential-wait.ts: needsWaitWords(kind, needs) returns {label, line, why}, and canDoWords is exported.",
+     "waits.now(projectId) can now return askFirst (the stop in a few words) under 'ask'. projectStatusLine reads it. startBlocked's credentialWait takes startsAt (a kept person Start).",
+     "waitThenStartSentence(wait, {on: 'plan'|'new_task', ask}). The chooser's forTask/batch input takes `on`, and the plan card passes on:'plan'.",
+     "POST /sessions: refusals in words carry details.reason 'start_refused' and answer 400 'validation' (was 409 'conflict'); the fake daemon matches. The refused credential is checked first only while a session is kept.",
+     "StartsWait 'queued' has goesOn (a continuation behind another project's session: 'Goes on after the session on \"X\"').",
+     "CANCEL_WAIT_EXPLAIN now reads 'Cancel: nothing starts when Claude is back; its tasks wait for your Start.'",
+     "ChatRequestBody.heldTurn (with oneOff) and ChatRequest.heldTurn: the answer replaces the held turn (chat.human 'replaces'). readTranscript leaves replaced turns out of the view and the history.",
+     "apps/ui lib/time.ts: setPersonZone(zone) / personTimeZone(). Every time helper takes an optional zone and writes in the person's zone by default; the store's 'me' action and the phone's store set it. UI tests that build times must use the person's zone (the fixture's person is Europe/Zurich).",
+     "Owner question default kept: ONE_OFF_UNDER_WAIT = true (Use API key is offered under 'then wait' too).",
+     "Suggested UPDATE-LOG line: 'l4-cred-screens (run L4d): one figure for the waiting work on the ask card, the Start dialog and the plan card, and the yes runs only that work; a task only the API key can do says why it waits; key-first Start dialog line; Start on 1 Dec keeps the start; Change the allowance where the share's wait shows; chat's one-off answers the held question in place; every clock in the person's zone; By credential never CHF 0.00; plan card names Approve and start; start refusals are 400 validation; intake plurals (U-074, U-078, U-096).'"
+    ],
+    "screenshots": {
+     "before": [],
+     "after": [
+      "/tmp/frbench/fix-l4-cred-screens/steps/01-after-a-start-dialog-ask.png",
+      "/tmp/frbench/fix-l4-cred-screens/steps/04-after-a-settings-under-ask.png",
+      "/tmp/frbench/fix-l4-cred-screens/steps/07-after-b-start-dialog-key-rests.png",
+      "/tmp/frbench/fix-l4-cred-screens/steps/08-after-c-start-dialog-sub-refused.png",
+      "/tmp/frbench/fix-l4-cred-screens/steps/09-after-d-chat-held.png",
+      "/tmp/frbench/fix-l4-cred-screens/steps/10-after-d-chat-after-one-off.png",
+      "/tmp/frbench/fix-l4-cred-screens/steps/11-after-d-chat-after-reload.png",
+      "/tmp/frbench/fix-l4-cred-screens/steps/12-after-z-session-page-zone.png",
+      "/tmp/frbench/fix-l4-cred-screens/steps/13-after-z-sessions-tab-zone.png",
+      "/tmp/frbench/fix-l4-cred-screens/steps/14-after-z-costs-by-credential.png"
+     ]
+    },
+    "tests_changed_for_design": [
+     {
+      "test": "apps/ui/test/real-daemon.test.ts: three CS-4 assertions",
+      "why": "The plan card's foot line now carries the waiting work's one figure (L4-creds-15); the assertions match it with a regex."
+     },
+     {
+      "test": "apps/ui/test/real-daemon.test.ts: CS-7 share part and the L4-creds-16 case use rt.runner.start",
+      "why": "A plain POST /sessions at a share stop is now kept for the month's start (L4-creds-18), so these cases start the run directly to reach the wait."
+     },
+     {
+      "test": "apps/ui/test/run-indicator.test.tsx and the real-daemon run-visible case",
+      "why": "CANCEL_WAIT_EXPLAIN reworded to name the button (L4a-left-3)."
+     },
+     {
+      "test": "apps/ui/test/fake-daemon.ts, client.test.ts, packages/runtime/test/daemon.test.ts, real-daemon 'start session: answers ...', 'POST /sessions on a project with nothing to run ...', 'POST /sessions, the Start dialog and the chat refuse it ...'",
+      "why": "Start refusals in words are now 400 'validation', not 409 'conflict' (L4-creds-21); the sentences are unchanged."
+     },
+     {
+      "test": "real-daemon CS-1 case and credential-policy.test.tsx",
+      "why": "The Settings now line under ask says '...; you are asked before your API key is used.' (L4-creds-25)."
+     },
+     {
+      "test": "real-daemon CS-9 case and packages/runtime/test/credential-switch.test.ts",
+      "why": "They now assert the exact By credential words (moneyWords) instead of a regex or a bare formatChf (L4-creds-25)."
+     },
+     {
+      "test": "real-daemon TR-2 case",
+      "why": "A kept person Start reads 'Starts at 09:30 (your API key's limit).' instead of '...; then your session goes on.' (L4-creds-26)."
+     },
+     {
+      "test": "apps/ui/test/polish-screens.test.tsx, project-overview.test.tsx (Files), sessions-tab.test.tsx (just after midnight)",
+      "why": "Times are written in the person's zone, and the fixture's person is in Zurich, so the instants are built on Zurich's clock (L4-creds-20)."
+     },
+     {
+      "test": "packages/runtime/test/intake.test.ts and calibration-job.test.ts",
+      "why": "The plurals follow the number instead of '(s)' (L4-creds-29)."
+     }
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "Bench \"review-l4-cred-screens\" (daemon 49030, UI 2630) ran from the worktree at fix/l4-cred-screens 3e0a8b1, using --provider bench-api --api-key ok --subscription. I set the person's zone to Europe/Zurich through POST /setup/profile. The browser ran on UTC (TZ=UTC; the machine is UTC). Nothing was routed to Claude Code: whenever the subscription could have been picked, I kept it resting. Screenshots are in /tmp/frbench/review-l4-cred-screens/steps/, JSON evidence in /tmp/frbench/review-l4-cred-screens/evidence/. The bench is stopped and its home and browser profile are deleted.\n\nW1, L4-creds-15/25/26 under ask:\n- I picked \"Subscription first, then ask me\" in Settings by clicking it. Read-back: \"...? When your subscription runs out, you are asked first ...\", with Change and Cancel. I confirmed. The subscription then rested for 40 minutes.\n- Settings now line (02): \"Your subscription is at its limit until 03:36; you are asked before your API key is used.\" This is correct.\n- Overview header (03/04): \"Ready: 1 task; your subscription is at its limit until 03:36; Start asks first\" (78 characters).\n- Start dialog (04): the plan sentence \"This session runs \"Write the intro in intro.md\" (about CHF 0.07) and continues with up to 1 more ... (about CHF 0.07)\", then the stop line. Use API key reads \"Runs now on your API key until 03:36, about CHF 0.14; ...\", which equals 0.07 + 0.07. Start at 03:36 is offered.\n- I pressed Start at 03:36. No session row was made. Header: \"Starts at 03:36 (your subscription's limit)\" with Cancel. Dialog (07): \"Starts at 03:36 (your subscription's limit).\" with Cancel the wait. In this kept state the plan sentence is gone while the Use API key figure is still shown (non-blocking).\n- Cancel the wait, then Use API key. Both tasks ran on the key for CHF 0.03, below the CHF 0.14 figure.\n- Session page (11): \"Quote page · session at 02:58\" and log rows at 02:58. 01:58 UTC is 02:58 Zurich, so L4-creds-20 holds. Sessions row (13): \"02:58 · under a minute ...\". Costs (12): \"Your API key: CHF 0.03\".\n\nW2, plan card under ask with the subscription resting and the yes ended through Stop using it:\n- Foot line: \"Your subscription is at its limit until 03:36: you are asked before your API key is used (about CHF 0.26).\" This matches \"About CHF 0.26 for the 2 tasks\".\n- Task line: \"Waits until 03:36 (your subscription's limit); Approve and start asks before your API key is used.\"\n- Under wait: \"...; Approve and start keeps it for then.\" No \"Press Start\" appears.\n- Under subscription_then_key: \"... your API key does the work meanwhile (about CHF 0.26).\"\n\nW3, L4-creds-17 (key first, key resting, subscription free):\n- Dialog: \"Your API key is at its limit until 03:24, so this runs on your subscription (about CHF 0.07).\"\n- Plan card line has no \"(costs money)\". Start was not pressed, because the subscription does not run on the bench.\n\nW6, L4-creds-16 and a sibling of L4-creds-17:\n- Setup: \"Code tasks that need commands: the API key\", key_then_subscription, key resting, subscription free, one coder task.\n- The Start dialog (28) shows two lines that contradict each other: \"Your API key is at its limit until 03:24, so this runs on your subscription (about CHF 0.06).\" beside \"Nothing can run until 03:24 (your API key's limit). Press Start at 03:24 ...\". This is blocking #3.\n- W6b/W6c: the subscription rested for an hour. I restarted the daemon with FORERUNNER_BENCH_API_LIMIT=ok so the key would get a 429 on its first call. Project with two coder tasks, Start pressed in the UI. The key met its limit, and the second pick threw the needs wait.\n- Tasks tab (32): both rows read \"Waits for your API key: only it can run commands here.\" Status line: \"Waiting for your API key (only it can run commands here), then it goes on\". GET /running's explain, shown on the bar: \"Only your API key can run commands here.\" Session page: \"Tool notes · session at 03:05\". The wait result has no CHF 0.00.\n- After a daemon restart, the row, the status line and the bar read the same (w6c-after.json). L4-creds-16 holds, including across a restart.\n\nW4, L4-creds-19 (subscription resting under 'then wait'):\n- One held question, then Use API key (\"Answers this question on your API key: less than CHF 0.01.\"): the question shows once, and once after a reload. The model's request held it once, with no hold reply. This passes.\n- Two held questions, then the press on the newest. The UI shows each once (26). But the model's request (model-calls.jsonl, 02:00:51) contained \"assistant: Your Claude subscription is at its limit until 03:30, so I have not answered. I can still add and change tasks.\" This is blocking #2.\n\nW7: I picked a preset in Settings and went to the Inbox. No read-back card appeared; the result is inconclusive because no read-back was rendered.\n\nTests and validation, each under the heavy lock:\n- Fail on base: I put the 29 changed source files back to claude/nifty-knuth-f9udt0 and kept the new tests. All 11 new real-daemon cases in 'l4-cred-screens, run L4' fail. So do credential-ask-figure L4 (card CHF 0.10 against dialog CHF 0.08), 12 credential-policy-view cases, project-status, the 2 intake cases, and 10 UI cases (credential-chat in Chat tab and Talk, person-zone ×3, tasks, run-indicator ×3, credential-start). All pass on the branch.\n- Mutation on compose.ts onGrant: I put back `handle.readmit(every ready task)`. credential-grant-readmit, credential-ask, credential-ask-figure, credential-policy-session, credential-wait-session, credential-continuation-queue, credential-ask-words and the real-daemon cred cases all stay green. This is blocking #1.\n- Full UI vitest: 103 files, 1437 passed.\n- Playwright (local config): 38 passed.\n- pnpm test (unit): 559 files, 6045 passed, 7 skipped.\n- The runtime tests the fixer named: 9 files, 110 passed.",
+    "blocking": [
+     {
+      "issue": "L4-creds-15 is a never-cut item, and its half 'the yes lets in only what waited' (C5L-6) has no test at the person's boundary. If the composed fix is reverted, every test stays green (validation rules 1 and 8).",
+      "where": "packages/runtime/src/daemon/compose.ts:5249 (onGrant readmit); packages/runtime/test/credential-grant-readmit.test.ts",
+      "evidence": "I reverted the one line in onGrant to `handle.readmit(readyTasks(...).map(t=>t.id))`. Then credential-grant-readmit, credential-ask, credential-ask-figure, credential-policy-session, credential-wait-session, credential-continuation-queue and credential-ask-words (25 tests) all pass, and so do the real-daemon cred cases (17 tests). credential-grant-readmit.test.ts drives SessionRunner with a scripted executor and calls waitedForCredential() itself inside the executor. It never answers the ask card with requestView(row).options[0] and never runs compose's onGrant. On base the test fails only because the import does not exist.",
+      "expected": "Add a composed case, as the spec and acceptance say: a running session at the stop, plus a third ready task that did not wait and does not fit. Answer the ask card with requestView(row).options[0] through POST /inbox, then assert that only the waiting tasks run on the key and the third stays ready for the next Start. The case must fail when onGrant readmits every ready task."
+     },
+     {
+      "issue": "L4-creds-19 is only half done. The app's own hold replies still reach the model as assistant turns. The fix_scope step 'historyMessages skips hold replies (a notice with oneOff), since the model never wrote them' was not built, and it is not listed in not_done. The shared_files rule gives this area exactly that filter in transcript.ts. Instead the change went into readTranscript, as a 'replaces' set.",
+      "where": "packages/runtime/src/conversation/transcript.ts:473-520 (historyMessages, no hold-reply filter); packages/runtime/src/conversation/agent.ts:1117-1128 (replaces only the newest held turn)",
+      "evidence": "On the bench, with the subscription resting under 'then wait', I asked 'which task is next?' (held) and then 'how much has this project cost?' (held), and pressed Use API key on the newest. The model's last request (home/bench/model-calls.jsonl, 02:00:51) has the message `assistant: Your Claude subscription is at its limit until 03:30, so I have not answered. I can still add and change tasks.` The acceptance line requires 'no assistant so I have not answered' in that request. The UI itself shows each question once (steps/26-w4b-...png).",
+      "expected": "historyMessages, or replyInHistory with l4-chat-answers' agreement, leaves out any reply that is the app's hold notice (reply.oneOff). Add a case with two held questions: the stand-in's last request has no assistant 'so I have not answered', and the question the press answers appears once."
+     },
+     {
+      "issue": "A new false sentence on the Start dialog (L4-creds-17's nextServes). Under 'API key first, then subscription', with the key resting and runnable work that only the key can do, the dialog says the work runs on the subscription and, beside it, that nothing can run until the key is back. Before this branch the line was null. This breaks design §1 ('What the app says is true now') and §5 rule 9. The user guide and the ADR 0120 amendment repeat the promise that 'Start runs it there'.",
+      "where": "packages/runtime/src/daemon/credential-start.ts:138-151 (nextServes checks only the subscription's availability, not whether it can do the runnable tasks' hard needs)",
+      "evidence": "On the bench: 'Code tasks that need commands' set to the API key, key_then_subscription, the key resting, one coder task. GET /projects/:id/start-check returned credential.line \"Your API key is at its limit until 03:24, so this runs on your subscription (about CHF 0.06).\" together with blocked.sentence \"Nothing can run until 03:24 (your API key's limit). Press Start at 03:24 and the work starts then.\" Both show in the dialog (steps/28-w6-start-dialog-key-resting-task-only-the-key-can-do.png). A session for such work waits for the key; it does not run on the subscription. W6c shows the needs wait. The same holds for a task that needs the person's answers (askPerson), even with the default settings.",
+      "expected": "nextServes, or the 'next' branch, says the subscription runs the start only when it can do the runnable work's hard needs. Otherwise the dialog keeps one true line (the key's stop, as in the blocked sentence). Add a real-daemon case with a task only the key can do, and correct the user-guide and ADR sentence."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "L4-creds-15: the ask card, the Start dialog's Use API key line and the plan card's foot line give one figure (the A+B promise with review parts)",
+      "holds": true,
+      "note": "The composed and real-daemon cases fail on base (card CHF 0.10 against dialog CHF 0.08) and pass on the branch. Bench: dialog plan 0.07+0.07, Use API key 0.14; plan card foot 0.26 = card total."
+     },
+     {
+      "claim": "L4-creds-15: after a yes, only the tasks that waited are readmitted into a running session",
+      "holds": false,
+      "note": "The code looks right, but no test covers compose's onGrant. Reverting it leaves every test green (blocking #1)."
+     },
+     {
+      "claim": "L4-creds-16: a task only one credential can do says why it waits on the row, the status line and the run bar, also after a restart",
+      "holds": true,
+      "note": "Bench, with the commands need: all three forms shown, and the same after restart-daemon. The real-daemon case fails on base."
+     },
+     {
+      "claim": "L4-creds-17: key-first Start dialog line; planCardLine says '(costs money)' only for the key",
+      "holds": false,
+      "note": "Correct when the subscription can do the work (bench W3). False beside the blocked line when only the key can (blocking #3)."
+     },
+     {
+      "claim": "L4-creds-18: Start on 1 Dec is kept with no session row, exactly one session at the month's start after a restart, and Change the allowance on the status line and the session page",
+      "holds": true,
+      "note": "The real-daemon cases fail on base and pass now. Not walked on the bench (no share stop there)."
+     },
+     {
+      "claim": "L4a-left-1/2/3/4 and L4-creds-21 part 2: refused-credential sentence first while a session is kept, the step named, Cancel's line, queued continuation line, 400 validation",
+      "holds": true,
+      "note": "Real-daemon cases fail on base (409, 'once its Claude credential is back'). Bench bar: 'Cancel: nothing starts when Claude is back; ...'. The queued 'Goes on after' line is covered only by a pure function test, not by a real-daemon case."
+     },
+     {
+      "claim": "L4-creds-25: By credential never reads CHF 0.00; the refused Use API key line is at most 100 characters; Settings under ask says you are asked",
+      "holds": true,
+      "note": "Bench Settings now line verified. Real-daemon CostsTab case fails on base."
+     },
+     {
+      "claim": "L4-creds-26: words agree with the buttons (plan card names Approve and start, header under ask, wait result with no CHF 0.00, kept start words)",
+      "holds": true,
+      "note": "Bench W1, W2 and W6c."
+     },
+     {
+      "claim": "L4-creds-19: chat's one-off Use API key answers the held question in its place; it shows once and reaches the model once",
+      "holds": false,
+      "note": "Holds for one held question. With two, the model still gets the app's hold reply as an assistant turn (blocking #2)."
+     },
+     {
+      "claim": "L4-creds-20: every time on the screens is in the person's zone",
+      "holds": true,
+      "note": "Bench with a UTC browser and a Zurich person: session page, log rows and Sessions row all read Zurich time. The person-zone tests fail on base."
+     },
+     {
+      "claim": "L4-creds-29: intake card counts say their plural, never '(s)'",
+      "holds": true,
+      "note": "intake.ts and calibration.ts only. The wider grep is in not_done (cut line allows it)."
+     },
+     {
+      "claim": "Validation: pnpm check, the UI suite and Playwright are green",
+      "holds": true,
+      "note": "Re-run by me: unit 6045 passed; UI 1437 passed (103 files, including the 3 the fixer fixed after its last full run); Playwright 38 passed."
+     }
+    ],
+    "non_blocking": [
+     "Start dialog in the kept state ('Starts at 03:36 ...' with Cancel the wait): Use API key and its CHF 0.14 are still offered, but the plan sentence is gone, so the figure names no task. runOutOffered requires blocked.startable. This is a sibling of the decision that 'the dialog keeps the plan sentence beside the stop line' (steps/07).",
+     "L4a-left-4: the server's queued-continuation detection (startsWaitOf, startByOf === 'continuation') changed GET /projects/:id's status line but has no real-daemon case. Only project-status.test.ts tests the words.",
+     "456b374 (L4-creds-18) changed POST /sessions (kept result for share and key_month) and the session view's waitBlock.answer without a fake-daemon change in the same commit. dbb4d97 switched 409 to 400 and left client, daemon and real-daemon tests red until 3299b0f, 40c9abf and 3e0a8b1. The final state is green, but intermediate commits fail.",
+     "run-indicator.ts is listed under 'Not to touch' in fix_scope (l4-cred-engine's) and was edited anyway: a small additive `explain: w.why`. In transcript.ts the change landed in readTranscript instead of the historyMessages filter that shared_files gives this area.",
+     "User guide: 'If Anthropic refused your key or sign-in, every Start (the dialog, Continue, the phone) says the same ...' overstates. Without a kept session, POST /sessions still starts a session that meets the refusal; the fixer flagged this as an owner question.",
+     "The plan card foot line is now about 104 characters under ask ('... you are asked before your API key is used (about CHF 0.26).') and about 117 with a yes standing. Card body lines have no hard §5 limit, but this is long.",
+     "GET /inbox now calls rt.startCheck(planProject.id) for each open plan card, only to read workBudgetUsdMicro. This adds per-request work on a route that R-inboxperf optimised.",
+     "setPersonZone is called inside the store reducer, which is a side effect. A screen rendered before /me answers (Files) is not re-rendered when the zone arrives. A zone changed in Settings is not re-read until a restart or a project switch, though the spec asked for a refresh after setup or Settings saves it. polish-screens.test.tsx calls setPersonZone('Europe/Zurich') and never resets it.",
+     "L4-creds-21 part 1 (not_done) gives no evidence that it still fails. My bench try was inconclusive: no read-back was rendered after the click.",
+     "Pre-existing, not this area: task rows show 'CHF 0.00' for unspent tasks; the stand-in's chat offered 'a stronger model, about CHF 0.28' under the one-off answer.",
+     "Live check for the session lead (final_check): under 'ask' with the real subscription at its limit mid-session, compare the ask card's 'about CHF N' with the Start dialog's Use API key figure, then the actual spend after the yes. Then add a third ready task after the stop and confirm it waits for the next Start."
+    ]
+   },
+   "fixup": {
+    "area": "l4-cred-screens",
+    "branch": "fix/l4-cred-screens",
+    "head_sha": "be2108ac3cc8a51955bac4909cd19ef762868b66",
+    "commits": [
+     {
+      "sha": "6ec6945",
+      "subject": "credential screens: the Inbox's yes is tested through compose's onGrant (L4-creds-15, U-078)"
+     },
+     {
+      "sha": "7d0ac82",
+      "subject": "chat: the app's hold replies never reach the model as its own words (L4-creds-19, U-078)"
+     },
+     {
+      "sha": "223b930",
+      "subject": "credential screens: key first and resting, work only the key can do is never said to run on the subscription (L4-creds-17, U-078)"
+     },
+     {
+      "sha": "741d981",
+      "subject": "credential screens: a kept Start keeps the plan sentence beside Use API key; guide and zone reset (L4-creds-15, U-078)"
+     },
+     {
+      "sha": "be2108a",
+      "subject": "credential screens: the key-first line's waitsNow check typechecks (L4-creds-17)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "Blocking #1 (L4-creds-15, C5L-6, never cut): 'the yes lets in only what waited' had no test at the person's boundary. Putting compose's onGrant back to readmitting every ready task left every test green, because the scripted-runner test called waitedForCredential() itself and never ran onGrant.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/credential-grant-readmit.test.ts 'fixup-l4-cred-screens, run L4: the Inbox's yes lets in only the work that waited ...'. It fails with onGrant mutated to readmit every ready task: the large task ran on the key and ended 'done' instead of 'ready'. It passes with the fixer's onGrant.",
+      "how": "No source change: onGrant was right. A new composed case uses credWorld with no injected provider. Policy is subscription_then_ask, the subscription is at its limit, and the Start gives a budget of USD 1.00. A code task waits for the subscription. A task that needs the person's answers runs on the key and holds its first key call. While that call is held, a task priced at about USD 3 becomes ready (more than the USD 0.80 work budget). The ask card is answered through POST /requests/:id/answer with requestView(row).options[0] ('Use API key'). Then: the waiting task runs on the key in the same session; the large task stays ready with no run, and its row reads 'Ready'.",
+      "check_in_the_app": "Live check (session lead, real subscription). 1) Settings > Which Claude does the work: 'Subscription first, then ask me'. 2) A project with task A, a normal code task, and task B, whose outcome says it needs your decision (only the API key can ask you). 3) Press Start while the subscription is at or near its limit. A waits ('Waits for your answer: use your API key?') and the ask card is in the Inbox, while B runs on the API key. 4) While B runs, add task C with a budget larger than the session's (or one the dialog says does not fit). 5) Press Use API key on the card. Expected: A runs on the API key in the same session; C stays 'Ready' and waits for the next Start; the spend is close to the card's 'about CHF N'."
+     },
+     {
+      "problem": "Blocking #2 (L4-creds-19): the app's own hold replies still reached the model as assistant turns. With two held questions and the one-off press on the newest, the model's request held 'assistant: Your Claude subscription is at its limit until 03:30, so I have not answered. I can still add and change tasks.'",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'L4-creds-19: with two held questions, the press on the newest reaches the model with no hold reply in its history, after composing again too'. It failed on the assistant hold line and passes now.",
+      "how": "Both hold forms in agent.ts now write hold: true on their chat.reply row: held before the model call (finish meta) and held on the way (heldAfter). transcript.ts reads TranscriptReply.hold; isHoldReply also counts a notice that has the one-off press, so older rows read the same. historyMessages treats a held turn as the person's line alone, like a turn without a reply: it is merged with the next line, or dropped when it is last. This is the filter that shared_files gives this area. The conversation view still shows the hold reply. The server maps reply fields one by one, so no new API field appears.",
+      "check_in_the_app": "Live check: Settings 'Subscription first, then wait' with the subscription at its limit. In Chat ask 'which task is next?', then 'how much has this project cost?'. Both get the hold reply with Use API key. Press Use API key under the second. The answer comes once ('Answered with your API key: ...'), and the first question still shows with its hold reply. In the model-call log or proxy log, the answer's request has no assistant message containing 'so I have not answered', and the second question appears in exactly one user message. Reload: each question shows once."
+     },
+     {
+      "problem": "Blocking #3 (L4-creds-17): a new false sentence on the Start dialog. The setting was 'API key first, then subscription', the key was resting, and the runnable work could only run on the key (commands set to the API key, or a task that needs the person's answers). The dialog said 'Your API key is at its limit until 03:24, so this runs on your subscription (about CHF 0.06).' beside 'Nothing can run until 03:24 (your API key's limit). ...'. A sibling: New task and the plan card's task lines said 'Runs on your Claude subscription, where commands cannot run: this task's tests will not run.' for work that the pick holds for the key.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'L4-creds-17: key first with the key resting and work only the key can do: the dialog says only that nothing can run until the key is back'. It failed on credential.line (the subscription sentence), and once that was fixed, on New task's runsOn line ('Runs on your Claude subscription, where commands cannot run ...'). It passes now.",
+      "how": "credential-start.ts: StartRunsFacts gains waitsNow. server.ts' credentialAtStart answers it with rt.billing.waits.now(projectId), which runs each ready task's own pick, read only, the same way the blocked sentence is decided. Under 'then the other one', the line is said only when the other credential serves and the work can run now. Otherwise the dialog keeps only the blocked sentence. compose.ts' chooserBatch, in the 'next' branch, now hands the line to the next credential only when it can do every hard need the resting one does here (capabilitiesOf against needsOf); otherwise the line stays the wait. A plain task the subscription can do still reads '..., so this runs on your subscription (about CHF N).'. The user guide and the ADR 0120 amendment's item 4 are corrected.",
+      "check_in_the_app": "Live check: Settings 'API key first, then subscription' and 'Code tasks that need commands: the API key'. Bring the key to its limit. Use a project with one code task. Open Start: only 'Nothing can run until HH:MM (your API key's limit). Press Start at HH:MM and the work starts then.', with no 'runs on your subscription'. New task (coder): 'Waits until HH:MM (your API key's limit). Press Start and the work starts then.'. Switch commands back to 'my first choice anyway': Start says 'Your API key is at its limit until HH:MM, so this runs on your subscription (about CHF N).' and Start runs on the subscription."
+     },
+     {
+      "problem": "Non-blocking (the review's first note, a sibling of L4-creds-15): with a Start kept for the reset ('Starts at 03:36 (your subscription's limit).'), Use API key and its CHF figure were still offered, but the plan sentence was gone, so the figure named no task.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "apps/ui/test/credential-start.test.tsx 'with a Start kept and Use API key offered, the plan sentence names the tasks beside the figure' (no start-session-plan). It passes now.",
+      "how": "StartSessionDialog's runOutOffered also holds for blocked.kept. The user guide's refused-credential sentence is narrowed to what holds: the dialog offers no Start, and Continue and the phone say the same while a session waits. polish-screens.test.tsx now resets the person's zone after its test.",
+      "check_in_the_app": "Under 'Subscription first, then ask me' with the subscription out, open Start and press 'Start at HH:MM', then open Start again. You see 'This session runs \"X\" (about CHF N).' above 'Starts at HH:MM (your subscription's limit).' with Cancel the wait, and Use API key with 'Runs now on your API key until HH:MM, about CHF N; ...' (same N)."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Review non-blocking: L4a-left-4's queued-continuation status line ('Goes on after the session on \"X\"') still has no real-daemon case; only project-status.test.ts tests the words.",
+      "why": "Not blocking, and time went to the three blocking findings and their siblings."
+     },
+     {
+      "problem": "Review non-blocking: GET /inbox calls rt.startCheck once for each open plan card (a performance concern on the route R-inboxperf optimised).",
+      "why": "Not blocking. Changing it touches the plan-card pricing path that L4-creds-15's one figure relies on; left for a separate measured change."
+     },
+     {
+      "problem": "Review non-blocking: setPersonZone runs inside the store reducer. A screen rendered before /me answers (Files) is not re-rendered when the zone arrives, and a zone saved in Settings is read again only after a restart or a project switch.",
+      "why": "Not blocking. Only the test leak (polish-screens.test.tsx never reset the zone) was fixed."
+     },
+     {
+      "problem": "Review non-blocking: intermediate commits 456b374 and dbb4d97 fail tests, and 456b374 changed POST /sessions without a fake-daemon change in the same commit.",
+      "why": "History is not rewritten (no force rewrites of the area branch); the final head is green."
+     },
+     {
+      "problem": "L4-creds-21 part 1, L4-creds-24 and the wider '(s)' grep from the fixer's not_done.",
+      "why": "Unchanged: they are on the cut line, and the fixup's scope is the blocking findings."
+     }
+    ],
+    "validation": [
+     {
+      "command": "DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+      "result": "exit 0. Lint (pre-existing warnings only), typecheck, unit 559 files with 6046 passed and 7 skipped, docs-check ok (56 files), link-check ok (213 files), secret-scan clean (2257 files). The first run failed typecheck on credential-start.ts ('false' has no catch); that was fixed in be2108a and the full re-run is green."
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "exit 0: 5 files passed, 6 skipped (Postgres-backed); 30 tests passed, 81 skipped"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "exit 0: 13 files, 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts",
+      "result": "exit 0: 103 files, 1440 passed"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+      "result": "exit 0: 38 passed (local config not committed)"
+     },
+     {
+      "command": "mutation: compose.ts onGrant put back to readmit every ready task, then npx vitest run --project unit packages/runtime/test/credential-grant-readmit.test.ts",
+      "result": "The new composed case fails (large task 'done', expected 'ready'). With the fix restored it passes (2/2)."
+     },
+     {
+      "command": "npx vitest run --project unit packages/runtime/test/credential- packages/runtime/test/plan-tasks packages/runtime/test/code-commands packages/runtime/test/start-check; and packages/runtime/test/conversation, credential-chat, chat",
+      "result": "26 files, 142 passed; 17 files, 314 passed"
+     },
+     {
+      "command": "bench fixup-l4-cred-screens (daemon 49040, UI 2640, --provider bench-api --api-key ok --subscription, person zone Europe/Zurich): scratchpad fxcs/walk.cjs b2, b3, kept",
+      "result": "B2: two held questions, press on the newest. The model's last chat request held one user message with the pressed question and no assistant 'so I have not answered' (the stand-in said 'I was given no earlier turn'). After reload each question shows once. B3: key first, key resting, commands on the key. credential.line null; blocked 'Nothing can run until 04:50 (your API key's limit). Press Start at 04:50 and the work starts then.'; New task line {api_key, 'Waits until 04:50 (your API key's limit). Press Start and the work starts then.'}. A plain task still reads '..., so this runs on your subscription (about CHF 0.06).'. Kept: after 'Start at 04:50', the reopened dialog shows the plan sentence (about CHF 0.06), 'Starts at 04:50 (your subscription's limit).', and Use API key 'about CHF 0.06'; no session row. Bench stopped with stop.mjs; home and browser profile deleted. Evidence is in /tmp/frbench/fixup-l4-cred-screens/evidence/walk-{b2,b3,kept}.json."
+     },
+     {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "empty"
+     }
+    ],
+    "new_problems": [
+     "Mixed work under 'API key first, then subscription' with the key resting: when some ready tasks can run on the subscription and others only on the key, the Start dialog still says '..., so this runs on your subscription (about CHF N)', and the figure covers all of the work. The key-only tasks' rows say why they wait (L4-creds-16). waits.now only says whether any ready task can run. A per-task answer needs compose's runNowProbe to report each task (l4-cred-engine's region).",
+     "The plan card's foot line (planCardLine) under key-first with the key resting still says 'Your API key is at its limit until HH:MM: your subscription does the work meanwhile.' for a plan whose tasks only the key can do. Its task lines now say the wait (chooserBatch fix), but the card-level line does not yet read the tasks' needs.",
+     "isHoldReply recognises rows written before this fix only when they carry the one-off press. A hold reply stored without one (no other credential could answer) and before hold:true existed still reaches the history as an assistant turn. New rows are marked."
+    ],
+    "notes_for_other_areas": [
+     "transcript.ts: TranscriptReply.hold (set only when true) and the exported isHoldReply(reply). agent.ts writes hold: true on the chat.reply row of both hold forms (held before the model call, held on the way). historyMessages leaves hold replies out, so the held question is the person's line alone. The conversation view is unchanged.",
+     "credential-start.ts: StartRunsFacts.waitsNow?: () => Promise<boolean>. server.ts' credentialAtStart passes () => !!rt.billing.waits.now(projectId). Under 'then the other one', the Start dialog's line needs the work to run now.",
+     "compose.ts chooserBatch, 'next' branch: the next credential takes a task's line only when it can do every hard need the resting one does here (capabilitiesOf against needsOf); otherwise the line stays waitThenStartSentence's wait. The plan card's task lines and New task read it.",
+     "StartSessionDialog: runOutOffered also holds for a kept Start (blocked.kept), so the plan sentence stays beside Use API key there too.",
+     "Suggested UPDATE-LOG addition for the l4-cred-screens line: '...; the yes on the ask card is tested through the Inbox (only the work that waited runs on the key); chat's hold replies never reach the model as its own words; under API key first with the key resting, work only the key can do is never said to run on the subscription (Start dialog, New task, plan card task lines); a kept Start keeps the plan sentence beside Use API key (U-078).'"
+    ],
+    "screenshots": {
+     "before": [],
+     "after": [
+      "/tmp/frbench/fixup-l4-cred-screens/steps/02-b2-second-held.png",
+      "/tmp/frbench/fixup-l4-cred-screens/steps/03-b2-after-press.png",
+      "/tmp/frbench/fixup-l4-cred-screens/steps/04-b2-after-reload.png",
+      "/tmp/frbench/fixup-l4-cred-screens/steps/05-b3-start-dialog-key-only-work.png",
+      "/tmp/frbench/fixup-l4-cred-screens/steps/08-kept-start-dialog-reopened.png"
+     ]
+    },
+    "tests_changed_for_design": []
+   }
+  }
+ ],
+ "missing": [],
+ "merge": {
+  "merged": [
+   "l4-cred-screens (fix/l4-cred-screens at be2108a: 13 fix commits and 5 fixup commits) merged into claude/nifty-knuth-f9udt0 as merge commit 0288a46 (--no-ff, signed)"
+  ],
+  "head_sha": "0288a46f96283c9a3ee61b003b97883e1d45757a",
+  "pushed": true,
+  "conflicts_resolved": [
+   "None. fix/l4-cred-screens was based on d526f40, the current tip of claude/nifty-knuth-f9udt0, so the merge applied cleanly (56 files, +3124/-199). git grep -n '^<<<<<<< ' found nothing."
+  ],
+  "integration_fixes": [
+   "None were needed. Every suite passed on the merged tree as it was."
+  ],
+  "validation": [
+   {
+    "command": "pnpm install --frozen-lockfile",
+    "result": "ok; the lockfile was unchanged"
+   },
+   {
+    "command": "DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+    "result": "exit 0. lint (42 warnings, all from before this merge), lint:paths ok (1615 files), typecheck clean, unit 559 files with 6046 passed and 7 skipped, docs-check ok (56 files), link-check ok (213 files), secret-scan clean (2257 files)"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+    "result": "exit 0: 5 files passed, 6 skipped (Postgres-backed, no FORERUNNER_TEST_PG); 30 tests passed, 81 skipped"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+    "result": "exit 0: 13 files, 25 passed, 1 skipped"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/live test",
+    "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+    "result": "exit 0: PASS, 82 cases (59 hostile, 23 controls), 82 passed, 0 failed"
+   },
+   {
+    "command": "HOME=<empty dir, no git identity> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm test (CI-style unit suite)",
+    "result": "exit 0: 559 files, 6046 passed, 7 skipped"
+   },
+   {
+    "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts (CI-style UI suite)",
+    "result": "exit 0: 103 files, 1440 passed"
+   },
+   {
+    "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+    "result": "exit 0: 38 passed. The local config was deleted afterwards and never committed"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/approvals-web test (also a CI step)",
+    "result": "exit 0: 11 files, 59 passed"
+   },
+   {
+    "command": "pnpm docs:schema && git diff --exit-code -- docs/maintainers/data-model.md (CI step)",
+    "result": "the schema doc is current"
+   },
+   {
+    "command": "pnpm secrets:scan --logs (CI step)",
+    "result": "clean"
+   },
+   {
+    "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+    "result": "not run: the merge does not touch apps/desktop"
+   },
+   {
+    "command": "git rev-list origin/claude/nifty-knuth-f9udt0..HEAD | gpgsig check",
+    "result": "all 19 commits are signed (18 from the area branch plus the merge commit); none unsigned"
+   },
+   {
+    "command": "git push -u origin claude/nifty-knuth-f9udt0",
+    "result": "fast-forward d526f40..0288a46, succeeded on the first try"
+   }
+  ],
+  "smoke": "25/25 checks passed, 0 findings, 0 recorded problems. Command: node scripts/bench/start.mjs --name merge-w28 --daemon-port 49050 --ui-port 2650 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w28. Model calls: intake 1, specialist 9, critic 6, chat 1, all on the stand-in at USD 0.000. Approve and start wrote 2 tasks and started a session, the session completed with 2 of 2 tasks done, and index.html links styles.css and script.js. The Overview and Files tabs show the work, the chat named a task, and the critic reviewed the work. The journey script was not changed. The bench was stopped with stop.mjs, and its home, steps and temporary folders were deleted. The result is kept at /tmp/frbench/merge-w28/smoke-result.json, and logs of every validation run are in /tmp/frbench/merge-w28/.",
+  "problems_left": [
+   "Nothing broke in the merge. These items carry over from the area's own report (not_done and new_problems) and are still open:",
+   "Not done by the area: the open Settings read-back stays in the Inbox after leaving Settings (L4-creds-21 part 1); no Playwright cases for the credential section and the Start dialog (L4-creds-24); other '(s)' literals remain outside intake.ts and calibration.ts (L4-creds-29 wider grep).",
+   "Review notes left open by the fixup: the queued-continuation status line (L4a-left-4) has no real-daemon case; GET /inbox calls startCheck once for each open plan card (performance); setPersonZone runs inside the store reducer, so a zone saved in Settings is read again only after a restart or a project switch; intermediate commits 456b374 and dbb4d97 fail tests (the final head is green).",
+   "Mixed work under 'API key first, then subscription' with the key resting: the Start dialog still says the work runs on the subscription, and its figure covers work that only the key can do.",
+   "Under key-first with the key resting, the plan card's foot line still says the subscription does the work meanwhile, even for tasks that only the key can do.",
+   "isHoldReply misses hold replies stored before this fix without the one-off press. Those still reach the model's history as assistant turns.",
+   "Open owner question: should a start under a refused credential, with no session kept, be refused in words outright? The default built is ONE_OFF_UNDER_WAIT = true.",
+   "The smoke journey's own log line '2 task(s)' is the journey script's wording, not the product's. The product's intake card now says 'tasks'."
+  ]
+ }
+}

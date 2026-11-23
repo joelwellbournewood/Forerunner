@@ -1,0 +1,88 @@
+{
+ "branch": "fixup-l4c-workstate",
+ "head_sha": "82a84700f3e1dbfe8ec7dd53c4741553b03b9891",
+ "commits": [
+  "6f75e64 budget-pause: a reason after 'nothing' counts only when each part says done (fixup-l4c-workstate)",
+  "ad7eb10 critic: a session review's cause within 200 characters is whole (fixup-l4c-workstate)",
+  "a743cca docs: ADR 0112's l4c-workstate amendment says what the parse reads (fixup-l4c-workstate)",
+  "63e9751 budget-pause: a hedge or the main part only is work left (fixup-l4c-workstate)",
+  "82a8470 budget-pause: wrap a comment line (fixup-l4c-workstate)"
+ ],
+ "fixed": [
+  {
+   "item": "B1 [blocking] A reason after punctuation that says work remains still read as nothing left, because reasonSaysDone was a blocklist (a done word, minus STILL_TO_COME, NOT_NOTHING and ORDER). Through the whole-set rule, such a line also turned the next listed item, real work, into a note. The ADR 0112 amendment point 3, runtime.md and the code comment claimed a rule the code did not hold.",
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts, describe \"fixup-l4c-workstate, run L4: a reason after a 'nothing' counts only when each part says the work is done\". On fb20d1e, 9 of its parse cases failed (log: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fx3/failing-first-budget-pause.log). They hold the reviewer's 60 reason lines, each checked as a list item and on the heading line, sorted into qualified, exception, condition and work worded without a listed word, plus my own siblings. The demotion case covers the reviewer's 3 lines and 'Nothing for the criteria: the page is written; the tests come next' over 'Add the tests for the parser'. Its first failure: 'Nothing for the task: partly done' read as []. Both composed cases failed with the task status 'done' where 'needs_human' was expected. In the first, the report is that demoting line plus 'Add the tests for the parser'. The second is described under B2. A later sibling search found that hedges and part words also read as nothing ('Nothing for the criteria: probably done', 'seems done', 'hopefully met', 'the main parts are done', 'the core is done', 'the happy path is tested'). I added them to the qualifier case and it failed before 63e9751 ('probably done' read as []).",
+   "how": "In packages/runtime/src/session/budget-pause.ts, reasonSaysDone is now an allowlist. The reason is split at punctuation and 'and'. Each part must match one closed form. IS_DONE: an optional subject, is/are/was/were/has been, then a DONE_STATE word ('both are met', 'notes.md is written', 'each part of it was checked', 'all met', 'complete'). DOES_ALL: a subject that does it to all of it ('hosts.md covers each of them', 'each listed page gives its address', 'the file lists every page it names', 'I checked each one'). ALL_PASS: 'all tests pass', 'the tests pass'. NONE_LEFT: 'nothing remains', 'so nothing is left', 'no work left', 'no further work needed', 'no outstanding items'. A part fails if it holds any of these: a qualifier or hedge (QUALIFIED: partly, mostly, half, N%, some, most, 'two of the three', only, first, draft, main, core, happy, probably, seems, hopefully, I think, so far, and 'part(s)' unless each/every/all stands before it); an exception or condition (apart from, other than, save for, bar, besides, aside, short of, minus, without, once, after, when, if, until, unless, as soon as); a future (to be, will, can, next, later, awaiting, an infinitive 'to add'); work still to come; 'nothing', 'none' or 'nobody' as what is done; an order. Anything else is work. aboutWholeSet still requires isNothing, so a whole-set 'nothing' makes other items notes only when its reason passes this form. The ADR 0112 amendment point 3 was corrected in place and dated 2026-11-23. runtime.md, the code comment and the user guide were updated. Every W15-14, L3-research-1, L4-money-101 and l4c-workstate case stays green: the live F4, L3 and LC-C7 reports, the bench stand-in's note line, including one with a path ('src/pairing.js is written and each part of it was checked'), and all of the fixer's positive cases. On the reviewer's probe (head-only copy at /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fx3/probe-head.mts): 0 of 80 work lines read as nothing, against 68 of 80 on fb20d1e. Of its 35 nothing lines, 34 still read as nothing.",
+   "check_in_the_app": "Live, with the real model: give a researcher or writer task a budget below its estimate, so it hears the wrap-up. If its report ends 'Left to do:' with '- Nothing for the criteria: the page is written; the tests come next' and '- Add the tests for the parser', the session page says '\"<task>\" paused before its budget of CHF x ran out: it spent CHF y and listed 2 things left to do; CHF z is kept for its review.' The task is not reviewed, and its Inbox card offers 'Continue (CHF w more)' and 'Cancel task'. A report ending 'Left to do: nothing the criteria require.' or '- Nothing for the criteria: all done, no work left' is still reviewed and done in the same session, with no card. The stand-in cannot word these lines, so the composed cases go through the runtime's routes (GET /sessions/:id/events and /inbox)."
+  },
+  {
+   "item": "B2 [blocking] Removing WORK_STATE also removed its '^none of' guard. 'None of <the whole set> <participle>' lines such as 'None of the deliverables included' read as nothing on fb20d1e. They were work on d526f40.",
+   "failing_test_before": "Same describe, case \"'None of' the whole set with a participle is work, as on d526f40 (B2)\". It holds the reviewer's 24 probe2 lines plus 'Nothing of the deliverables included' and 'Nothing the deliverables included', which also read as nothing on d526f40. It failed on fb20d1e: 'None of the deliverables included' read as []. The composed case \"'None of the deliverables included' pauses with one thing left and its Continue card; it is not reviewed\" failed with 'done' where 'needs_human' was expected. A sibling case, \"what the brief lists, covers or names, or a 'nothing' in, on or from it, is work unless a word says left\", failed with 'Nothing the task covers' read as []. It covers 'Nothing the brief lists', 'Nothing the task names', 'Nothing on the task', 'None from the task', 'None in the brief', 'Nothing in the brief' and 'None under the brief'. All of these read as nothing on fb20d1e. Most were nothing on d526f40 too, and 'None in the brief' already before L4-money-101.",
+   "how": "SAYS_ONLY_NOTHING_LEFT now has a guard, (?!\\s+of\\b), so a line that starts 'none of' or 'nothing of' never reads through the general rule. No positive case needs 'None of the criteria need ...', so it was not kept. The rule now reads named groups through saysOnlyNothingLeft. What a line is about says nothing of it is left on its own only in two cases: its verb says what the set needs (NEEDS: require, ask for, call for, want, expect), or its preposition is 'for' or 'to meet'. Two kinds need a LEFT word before or after: a verb that only says what the set holds (HOLDS: lists, names, covers, included, mentions, describes, specifies, sets out), and a place (in, by, under, within, against, on, from, or NAMED_BY + in). The older NOTHING form follows the same rule: a bare 'nothing' or 'none' with 'in', 'by' or 'under' needs a LEFT word. 'within', 'for' and 'to meet' still read as nothing on their own, so W15-14's 'Nothing within the scope of the brief' is unchanged. These still read as nothing: 'Nothing the brief lists is outstanding', 'Nothing the brief names is needed', 'Nothing on the task is left to do', 'Nothing listed in the brief is left to be done', 'Nothing outstanding against the criteria', 'Nothing left in the brief' and 'None required by the criteria.'. Both composed cases now pause with exactly the sentences 'Write the round robin page ... listed 2 things left to do; CHF 0.04 is kept for its review.' and 'Write the standings page ... listed one thing left to do ...', both 'paused before its budget of CHF 0.15 ran out: it spent CHF 0.10', with cards 'Continue (CHF 0.16 more)' and 'Cancel task'. Neither task is reviewed.",
+   "check_in_the_app": "Live: a run that heard the wrap-up and ends 'Left to do: - None of the deliverables included' pauses with '... listed one thing left to do ...' and its Continue card, unreviewed. Same stand-in limit as B1."
+  },
+  {
+   "item": "Non-blocking (taken): items under a heading line that reads as nothing were dropped. 'Left to do: nothing the criteria require.' over '- Add the tests for the parser' kept neither the work nor a note.",
+   "failing_test_before": "Case \"items under a 'nothing' on the heading line are read: a note beside a whole-set 'nothing', work beside a bare one\" failed on fb20d1e: got { stopped, leftToDo: [] } with no optional.",
+   "how": "parseHandoff now always reads the items under the heading, and a 'nothing' on the heading line is treated like a 'nothing' item. Beside a whole-set nothing, an item becomes a note (optional). Beside a bare 'nothing' ('Left to do: nothing' over '- write the tests'), it is work. Text on the heading line starts the list, so a blank line after it ends the list. A list after 'Left to do: nothing' and a blank line is another part of the report and still reads as []."
+  },
+  {
+   "item": "Non-blocking (taken): positive cases for clearly finished lines that fb20d1e read as work: 'all done, no work left', 'all met; no steps remain', 'complete; no outstanding items'.",
+   "failing_test_before": "Case \"a reason whose every part says the work is done is still nothing\" failed on fb20d1e: 'Nothing for the criteria: all done, no work left' was read as work. The case also pins the earlier positives and 15 more of the reviewer's nothing lines.",
+   "how": "NONE_LEFT accepts 'no (further|outstanding|more) work/steps/items ... (left|remain|needed)'. ORDER now counts a part as an order only when more words follow the verb, so 'complete' alone is a state and 'complete the tests' is an order."
+  },
+  {
+   "item": "Non-blocking (taken): reviseCause used quotedWords, which keeps at most two sentences and strips '*', '#' and backticks. A three-sentence finding under 200 characters lost its third sentence with no ellipsis.",
+   "failing_test_before": "packages/critic/test/session-review.test.ts, \"a finding within 200 characters is whole, every sentence and every mark of it (fixup-l4c-workstate)\". Expected 'The plan ran over. One task was tried twice. The `#2` estimate was low.' and received 'The plan ran over. One task was tried twice.'",
+   "how": "packages/critic/src/followup.ts exports wordsWithin(text, max), the word cut a card's title already used (titleOf now calls it). It folds spaces, keeps the text whole when it fits, and otherwise cuts at a word with '…'. reviseCause uses it. The l4c-workstate long case and the event-lines session-log case read exactly as before, and a 207-character, three-sentence case is cut inside its third sentence with '…'. critic.md is updated.",
+   "check_in_the_app": "Live: a session review that notes a finding of several sentences under 200 characters. Under Details, the 'Session review: ...' line shows every sentence, backticks included."
+  },
+  {
+   "item": "Non-blocking (noted in the test): the exact 'Members page' summary pins two lines that disagree ('paused before ... ran out', then 'Stopped at this month's cap'). That is the known outer-limit sibling.",
+   "failing_test_before": "None: comment only.",
+   "how": "A comment above the exact assertion in budget-pause.test.ts says that its two lines disagree today (design section 5 rule 4), that this is the review's known outer-limit sibling left for its own round, and that the exact text changes when that sibling is fixed. Nothing was weakened."
+  }
+ ],
+ "validation": [
+  {
+   "command": "DOCS_CHECK_BASE=d526f40 FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm check (on 63e9751; 82a8470 only re-wraps a comment, linted separately with biome)",
+   "result": "exit 0. Lint 0 errors (42 warnings), path lint ok (1610 files), typecheck pass. Unit: 557 files, 6050 tests passed, 7 skipped. docs-check ok (14 files) against d526f40. link-check ok (213 files). secret-scan clean (2252 files)."
+  },
+  {
+   "command": "cd apps/ui && FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts (apps/ui untouched, but real-daemon cases run the changed parser)",
+   "result": "exit 0: 101 files, 1413 tests passed."
+  },
+  {
+   "command": "FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped by their own guards (FORERUNNER_TEST_PG is unset on this machine); 30 tests passed, 81 skipped."
+  },
+  {
+   "command": "FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 tests passed, 1 skipped."
+  },
+  {
+   "command": "flock ... npx vitest run --project unit on the 13 files that read Left-to-do lines (budget-pause, w15-words, oversize-pause, where-last-run-stopped, session-list, loop-cache, review-sources, session-budget-card, task-budget-all, wrap-up, loop-web-search, bench-role-player, pr-executor)",
+   "result": "286 passed, both after 6f75e64 and after 63e9751."
+  },
+  {
+   "command": "Failing-first runs, each under the lock: budget-pause.test.ts -t fixup-l4c-workstate on fb20d1e; the qualifier case after adding the hedge siblings, before 63e9751; session-review.test.ts -t fixup-l4c-workstate before ad7eb10",
+   "result": "11 of 11 new budget-pause cases failed on fb20d1e (9 parse cases and 2 composed cases, both 'done' instead of 'needs_human'). The hedge case failed ('probably done' read as []). The reviseCause case failed (third sentence dropped). All pass after the fixes."
+  },
+  {
+   "command": "Probe: npx tsx on the reviewer's probe.mts and probe2.mts, repointed at this worktree (head-only copy: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/fx3/probe-head.mts)",
+   "result": "Before the fix: 68 of 80 work lines and 20 of 24 'None of' lines read as nothing, and all 3 demotions turned 'Add the tests for the parser' into a note. After: 0 of 80, 0 of 24 and 0 demotions. Of the 35 nothing lines, 34 still read as nothing; 'wrote the tests and the README' reads as work (the safe side). The temporary copies of the base parser were deleted."
+  },
+  {
+   "command": "git status; git grep -n '^<<<<<<< '; git log --format=raw fb20d1e..HEAD | grep -c 'BEGIN SSH SIGNATURE'",
+   "result": "Tree clean, no conflict markers. All 5 commits carry an SSH signature and end with the two required trailers. %G? reads N because no gpg.ssh.allowedSignersFile is configured, the same as for the base. fixup-l4c-workstate = HEAD = 82a8470. fix/l4c-workstate stays at the fixer's fb20d1e: I moved it once by mistake and put it back."
+  }
+ ],
+ "not_done": [
+  "The reason allowlist keeps a free subject slot (up to 5 words), guarded by word lists (QUALIFIED, EXCEPT_OR_IF, FUTURE, NOBODY, STILL_TO_COME, ORDER). A hedge or partial word that is not listed (for example 'allegedly', 'the visible parts' is caught but 'the visible ones' is not) could still pass inside a subject that ends in a done word. The clause shapes are closed; the subject's words are not.",
+  "'Nothing for the criteria: wrote the tests and the README' still reads as work, on the safe side. A first-person past verb with an object joined by 'and' is not one of the closed forms, because splitting at 'and' breaks the object.",
+  "No bench walk with screenshots. The stand-in cannot word these Left-to-do lines (testenv/src/bench/role-player.ts writes fixed lines), so the evidence is the composed cases through the runtime's routes plus the live check steps above. Playwright was not run because apps/ui was not touched.",
+  "Left as reported by the fixer and the reviewer, outside this area. Task reviews' 'fixed' and 'closed' findings still show 'To fix'. The phone's ReviewsScreen.tsx shows the raw verdict. Bare slices remain in tier0.ts:230, measured.ts:37,39 and runner.ts:1115,3155,3677. The outer-limit status/result sibling is unfixed (the 'Members page' summary's two lines disagree; the test now says so).",
+  "The worktree keeps its node_modules (hard links from the shared pnpm store; free disk stayed at 12 GB), so the merge can rerun tests here."
+ ],
+ "update_log_suggestion": "2026-11-23 fixup-l4c-workstate (run L4, after the review of l4c-workstate): a 'Left to do' line that says nothing is left now counts only when every part of its reason says the work is done, whole ('Nothing for the criteria: both are met', '... all done, no work left'). A reason with a qualifier, a hedge, an exception, a condition or work still to come is work left, and the task pauses with its Continue card. Examples: 'Nothing for the task: mostly done', '... done apart from the tests', '... done once the tests are added', '... the code is written, docs next', '... probably done'. 'None of the deliverables included', 'Nothing the brief lists' and 'None in the brief' are work. A false whole-set 'nothing' never turns the next item into a note, and the items under a 'Left to do: nothing ...' heading line are read. ADR 0112's l4c-workstate amendment was corrected 2026-11-23. A session review's cause within 200 characters is shown whole. U-089 'Check in the app' addition: a run whose Left to do is '- Nothing for the criteria: the page is written; the tests come next' and '- Add the tests for the parser' pauses ('... listed 2 things left to do ...') with 'Continue (CHF x more)' and 'Cancel task', unreviewed."
+}

@@ -1,0 +1,86 @@
+{
+ "merged": [
+  "l4-cred-screens (fix/l4-cred-screens at be2108a: 13 fix commits and 5 fixup commits) merged into claude/nifty-knuth-f9udt0 as merge commit 0288a46 (--no-ff, signed)"
+ ],
+ "head_sha": "0288a46f96283c9a3ee61b003b97883e1d45757a",
+ "pushed": true,
+ "conflicts_resolved": [
+  "None. fix/l4-cred-screens was based on d526f40, the current tip of claude/nifty-knuth-f9udt0, so the merge applied cleanly (56 files, +3124/-199). git grep -n '^<<<<<<< ' found nothing."
+ ],
+ "integration_fixes": [
+  "None were needed. Every suite passed on the merged tree as it was."
+ ],
+ "validation": [
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok; the lockfile was unchanged"
+  },
+  {
+   "command": "DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. lint (42 warnings, all from before this merge), lint:paths ok (1615 files), typecheck clean, unit 559 files with 6046 passed and 7 skipped, docs-check ok (56 files), link-check ok (213 files), secret-scan clean (2257 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 6 skipped (Postgres-backed, no FORERUNNER_TEST_PG); 30 tests passed, 81 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/live test",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0: PASS, 82 cases (59 hostile, 23 controls), 82 passed, 0 failed"
+  },
+  {
+   "command": "HOME=<empty dir, no git identity> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm test (CI-style unit suite)",
+   "result": "exit 0: 559 files, 6046 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts (CI-style UI suite)",
+   "result": "exit 0: 103 files, 1440 passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 38 passed. The local config was deleted afterwards and never committed"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/approvals-web test (also a CI step)",
+   "result": "exit 0: 11 files, 59 passed"
+  },
+  {
+   "command": "pnpm docs:schema && git diff --exit-code -- docs/maintainers/data-model.md (CI step)",
+   "result": "the schema doc is current"
+  },
+  {
+   "command": "pnpm secrets:scan --logs (CI step)",
+   "result": "clean"
+  },
+  {
+   "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+   "result": "not run: the merge does not touch apps/desktop"
+  },
+  {
+   "command": "git rev-list origin/claude/nifty-knuth-f9udt0..HEAD | gpgsig check",
+   "result": "all 19 commits are signed (18 from the area branch plus the merge commit); none unsigned"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "fast-forward d526f40..0288a46, succeeded on the first try"
+  }
+ ],
+ "smoke": "25/25 checks passed, 0 findings, 0 recorded problems. Command: node scripts/bench/start.mjs --name merge-w28 --daemon-port 49050 --ui-port 2650 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w28. Model calls: intake 1, specialist 9, critic 6, chat 1, all on the stand-in at USD 0.000. Approve and start wrote 2 tasks and started a session, the session completed with 2 of 2 tasks done, and index.html links styles.css and script.js. The Overview and Files tabs show the work, the chat named a task, and the critic reviewed the work. The journey script was not changed. The bench was stopped with stop.mjs, and its home, steps and temporary folders were deleted. The result is kept at /tmp/frbench/merge-w28/smoke-result.json, and logs of every validation run are in /tmp/frbench/merge-w28/.",
+ "problems_left": [
+  "Nothing broke in the merge. These items carry over from the area's own report (not_done and new_problems) and are still open:",
+  "Not done by the area: the open Settings read-back stays in the Inbox after leaving Settings (L4-creds-21 part 1); no Playwright cases for the credential section and the Start dialog (L4-creds-24); other '(s)' literals remain outside intake.ts and calibration.ts (L4-creds-29 wider grep).",
+  "Review notes left open by the fixup: the queued-continuation status line (L4a-left-4) has no real-daemon case; GET /inbox calls startCheck once for each open plan card (performance); setPersonZone runs inside the store reducer, so a zone saved in Settings is read again only after a restart or a project switch; intermediate commits 456b374 and dbb4d97 fail tests (the final head is green).",
+  "Mixed work under 'API key first, then subscription' with the key resting: the Start dialog still says the work runs on the subscription, and its figure covers work that only the key can do.",
+  "Under key-first with the key resting, the plan card's foot line still says the subscription does the work meanwhile, even for tasks that only the key can do.",
+  "isHoldReply misses hold replies stored before this fix without the one-off press. Those still reach the model's history as assistant turns.",
+  "Open owner question: should a start under a refused credential, with no session kept, be refused in words outright? The default built is ONE_OFF_UNDER_WAIT = true.",
+  "The smoke journey's own log line '2 task(s)' is the journey script's wording, not the product's. The product's intake card now says 'tasks'."
+ ]
+}
