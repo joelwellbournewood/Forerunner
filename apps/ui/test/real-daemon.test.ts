@@ -2343,6 +2343,9 @@ describe("the UI client against the real daemon: the task drawer after a session
           FORERUNNER_BENCH_DELAY_MS: "0",
           FORERUNNER_BENCH_FAIL: "Broken",
           FORERUNNER_BENCH_FAIL_TIMES: "1",
+          // fixup-l4-github-merge (L4-money-301): "Write the guide" writes one part per call
+          // until it hears the wrap-up, so its first run pauses and a Continue goes on with it.
+          FORERUNNER_BENCH_LONG: "Write the guide",
         },
         new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
       ),
@@ -2476,10 +2479,96 @@ describe("the UI client against the real daemon: the task drawer after a session
     // Runs are the task's work runs (one), not the ledger's entries per model call.
     expect(licence).toMatchObject({ runs: 1, accepted: 1 });
     const broken = costs.byTask.find((b) => b.label === "Broken page check");
-    expect(broken).toMatchObject({ runs: 2, accepted: 1 });
+    // fixup-l4-github-merge (L4-money-301): a run that failed is a try of its own: 1 / 2.
+    expect(broken).toMatchObject({ runs: 2, accepted: 1, tries: 2 });
+    expect(licence).toMatchObject({ tries: 1 });
+    expect(coder).toMatchObject({ runs: 3, accepted: 2, tries: 3 });
     expect(costs.from).not.toBe("");
     expect(costs.to >= costs.from).toBe(true);
   });
+
+  it("fixup-l4-github-merge (L4-money-301): Costs reads a run that paused and the run a Continue started as one try, for the task, its specialist and its model; no CHF figure moves", async () => {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const project = await client.createProject({ name: "Paused costs", goal: "A guide" });
+    // What New task sends with a budget of CHF 0.036 (USD 0.045): about three times the reserve
+    // of two stand-in calls, so the run hears the wrap-up and pauses (budget-stop's journey).
+    const task = await client.createTask(project.id, {
+      title: "Write the guide in guide.md",
+      outcome: "guide.md explains the club",
+      acceptanceCriteria: ["guide.md exists"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 45_000,
+      specialist: "coder",
+      riskTier: 1,
+    });
+    const statuses = async () =>
+      (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", ");
+    const idle = async () =>
+      (await client.sessions({ projectId: project.id })).every(
+        (s) => !["running", "paused", "planned"].includes(s.status),
+      );
+    const started = await client.startSession({ agentId, projectId: project.id });
+    expect(started.session?.id, JSON.stringify(started)).toBeTruthy();
+    await eventually(idle, "the first session to end", statuses, 30_000);
+    const paused = await client.task(task.id);
+    expect(paused.runs.filter((r) => r.kind === "work").map((r) => r.outcome)).toEqual(["Paused"]);
+    // Before Continue: one run, paused, never reviewed.
+    const before = await client.costs({ projectId: project.id });
+    expect(before.byTask.find((b) => b.key === task.id)).toMatchObject({ runs: 1, accepted: 0 });
+    // Continue, as the Inbox sends it: a session starts at once and the run goes on.
+    const me = await client.me();
+    const card = (await client.inbox(me.id)).requests.find(
+      (r) => r.taskId === task.id && r.status === "open",
+    );
+    const labels = (card?.choices ?? []).map((c) => c.label);
+    expect(labels[0]).toMatch(/^Continue \(CHF \d+\.\d\d more\)$/);
+    const sessionsBefore = (await client.sessions({ projectId: project.id })).length;
+    await client.answerRequest(card?.id ?? "", {
+      version: card?.version ?? 0,
+      answer: labels[0] ?? "",
+    });
+    await eventually(
+      async () => (await client.sessions({ projectId: project.id })).length > sessionsBefore,
+      "a session to start after Continue",
+      statuses,
+      15_000,
+    );
+    await eventually(idle, "the continuing session to end", statuses, 30_000);
+    const done = await client.task(task.id);
+    expect(done.task.status, await statuses()).toBe("done");
+    expect(done.runs.filter((r) => r.kind === "work").map((r) => r.outcome)).toEqual([
+      "Finished",
+      "Paused",
+    ]);
+    const costs = await client.costs({ projectId: project.id });
+    // Two work runs, one try (the pause and the run that continued it), and the critic's one
+    // review accepted it: "1 / 1 (100%)", never "1 / 2 (50%)" (live check 4, L4-pause-4).
+    expect(costs.byTask.find((b) => b.key === task.id)).toMatchObject({
+      label: "Write the guide in guide.md",
+      runs: 2,
+      accepted: 1,
+      tries: 1,
+    });
+    // The specialist's and the model's rows leave the paused run out of their tries too.
+    expect(costs.bySpecialist.find((b) => b.key === "coder")).toMatchObject({
+      runs: 2,
+      accepted: 1,
+      tries: 1,
+    });
+    const critic = costs.bySpecialist.find((b) => b.key === "critic");
+    expect(critic?.accepted ?? null).toBeNull();
+    expect(critic?.tries).toBeUndefined();
+    const models = costs.byModel.filter((b) => b.accepted !== null);
+    expect(models.map((b) => [b.runs, b.accepted, b.tries])).toEqual([[2, 1, 1]]);
+    // No CHF figure moves: each grouping still adds up to the project's total.
+    const sum = (rows: readonly { cost: { usdMicro: number } }[]) =>
+      rows.reduce((n, b) => n + b.cost.usdMicro, 0);
+    expect(sum(costs.byTask)).toBe(costs.totals.usdMicro);
+    expect(sum(costs.bySpecialist)).toBe(costs.totals.usdMicro);
+    expect(sum(costs.byModel)).toBe(costs.totals.usdMicro);
+  }, 120_000);
 
   it("the session log: person lines by default with names and no type names, the internals under Details (design §3.7)", async () => {
     const agentId = (await client.agents())[0]?.id ?? "";

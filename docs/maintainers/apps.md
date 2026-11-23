@@ -3104,3 +3104,12 @@ Overview's Your files of a joined project reads 'Its files are in "<kept>".' wit
 (`joined-files`). Costs' Accepted column reads `accepted / tries` (`CostBucket.tries`, `runs`
 from an older daemon), titled "Accepted by the critic / tries; a run paused and continued is one
 try". The fake daemon gives a joined project no folder, as the daemon does.
+
+fixup-l4-github-merge (2026-11-23, L4-money-301): the fake daemon's Costs fixture (`COSTS` in
+`test/fixtures.ts`) carries `tries` as the daemon gives it: every bucket the critic judges has
+it, one with `accepted: null` has none. "Write the members guide" paused once and a later run
+continued it (runs 2, tries 1, accepted 1), so the coder's and Sonnet's runs are one more than
+their tries and the Accepted column ("7 / 9 (78%)", "5 / 6 (83%)") is read against the tries.
+`project.test.tsx` ("l4-github-merge, run L4") reads those rows from the fake; the real daemon's
+rule is pinned in `real-daemon.test.ts` beside "Costs: tasks by title ..." (a paused run and the
+run a Continue started read runs 2, accepted 1, tries 1 for the task, the coder and the model).
