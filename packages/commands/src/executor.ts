@@ -832,7 +832,8 @@ export class CommandExecutor {
       try {
         outcome = await step.def.run(
           step.params,
-          person && step.persons ? { ...working, actor: person } : working,
+          // Marked as on the person's words: a note the model passed stays the agent's.
+          person && step.persons ? { ...working, actor: person, onPersonsWords: true } : working,
         );
       } catch (e) {
         const rollbackFailures = await this.rollback(done, working);

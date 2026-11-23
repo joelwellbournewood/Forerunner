@@ -109,8 +109,38 @@ const taskRef = {
   task: z.string().min(1),
   project: z.string().optional(),
 };
-/** A person's note for the agent: it goes into the task's next brief. */
-const noteParam = z.string().trim().max(2000).optional();
+/**
+ * A note for the specialist: it goes into the task's next brief. l4-selftasks-chat
+ * (L4-selftasks-120; live check 4, L4-chat-20: the chat model wrote "Put on hold by the person."
+ * on a pause the person never noted): its description tells the chat model to pass only the
+ * person's own words, and a note the model passes is read back before it is made.
+ */
+export const NOTE_PARAM_DESCRIPTION =
+  "Only words the person gave for the specialist, quoted as they said them; leave it out when they gave none. Never a summary of the move.";
+const noteParam = z.string().trim().max(2000).optional().describe(NOTE_PARAM_DESCRIPTION);
+
+/**
+ * L4-selftasks-120: a note is the person's only when the person wrote it: their own command (the
+ * Tasks tab, the drawer, chat's patterns), never one the chat's model passed, also after their
+ * yes (the executor runs that yes as them and marks it `onPersonsWords`).
+ */
+function personsNote(ctx: CommandContext): boolean {
+  return ctx.actor.kind === "human" && ctx.onPersonsWords !== true;
+}
+
+/** The note a read-back shows when the model passed it ('Note for its next brief: "…"'). */
+function noteClause(ctx: CommandContext, note: string | undefined): string {
+  const text = note?.trim();
+  return text && !personsNote(ctx) ? ` Note for its next brief: ${quote(text)}.` : "";
+}
+
+/** The note's end of a sentence: the person's own, or one the agent passed. */
+function noteGoes(ctx: CommandContext, cancelled = false): string {
+  const whose = personsNote(ctx) ? "Your note" : "The note";
+  return cancelled
+    ? ` ${whose} goes into its brief if you reopen it.`
+    : ` ${whose} goes into its next brief.`;
+}
 
 /** A title as two tasks are compared by it: trimmed, lower case, one space between words. */
 const sameTitle = (title: string) => title.trim().toLowerCase().replace(/\s+/g, " ");
@@ -335,7 +365,10 @@ async function queueNote(
     text: taskNoteText(task, text),
     priority: 0,
     status: "queued",
-    author_human: ctx.actor.kind === "human" ? ctx.actor.id : ctx.humanId,
+    // L4-selftasks-120: the person's note is theirs; one the chat's model passed is the agent's.
+    ...(personsNote(ctx)
+      ? { author_human: ctx.actor.id }
+      : { author_agent: ctx.actor.kind === "agent" ? ctx.actor.id : (ctx.agentId ?? null) }),
   });
   return row.id;
 }
@@ -567,6 +600,8 @@ export function moveSentence(
   extra: {
     withdrawn?: number;
     noted?: boolean;
+    /** L4-selftasks-120: whose note it is ("Your note" only for the person's own). */
+    notedByAgent?: boolean;
     stuck?: readonly string[];
     redo?: boolean;
     /** W15-04: the redo answered the task's merge card, so the next run starts from main. */
@@ -606,11 +641,13 @@ export function moveSentence(
       extra.stuck.length === 1 ? "is" : "are"
     } stuck now.`;
   // A cancelled task has a next brief only once it is reopened (design §5 rule 9).
-  if (extra.noted)
+  if (extra.noted) {
+    const whose = extra.notedByAgent ? "The note" : "Your note";
     s +=
       to === "cancelled"
-        ? " Your note goes into its brief if you reopen it."
-        : " Your note goes into its next brief.";
+        ? ` ${whose} goes into its brief if you reopen it.`
+        : ` ${whose} goes into its next brief.`;
+  }
   return s;
 }
 
@@ -716,6 +753,7 @@ async function personMove(
     sentence: moveSentence(task, from, moved.status, {
       withdrawn: withdrawn.length,
       noted: noteId !== null,
+      notedByAgent: !personsNote(ctx),
       stuck,
       redo: from === "done",
       fromMain: redone.ids.length > 0,
@@ -1655,12 +1693,21 @@ async function moveCard(
     newValue: statusWords(to),
     scope: "project",
     risk: "low",
-    sentence: moveSentence(task, task.status, to, { noted: !!params.note?.trim() }),
+    sentence: moveSentence(task, task.status, to, {
+      noted: !!params.note?.trim(),
+      notedByAgent: !personsNote(ctx),
+    }),
     reversible: true,
     projectId: project.id,
     projectName: project.name,
     usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-    ask: await withPreview(ctx, moveAsk(task, task.status, to), task, to),
+    // L4-selftasks-120: a note the model passed is read back, so the yes covers it.
+    ask: await withPreview(
+      ctx,
+      `${moveAsk(task, task.status, to)}${noteClause(ctx, params.note)}`,
+      task,
+      to,
+    ),
   });
 }
 
@@ -1825,7 +1872,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-      ask: `Change ${quote(task.title)}: ${(await editWords(ctx, patch)) || "nothing"}?`,
+      ask: `Change ${quote(task.title)}: ${(await editWords(ctx, patch)) || "nothing"}?${noteClause(ctx, params.note)}`,
     });
   },
   async run(params, ctx) {
@@ -1871,7 +1918,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
         ...(noteId ? { note_id: noteId } : {}),
       },
       sentence: `${fields.length ? `Changed ${quote(task.title)}: ${words}.` : `Noted for ${quote(task.title)}.`}${
-        noteId ? " Your note goes into its next brief." : ""
+        noteId ? noteGoes(ctx) : ""
       }`,
       projectId: task.project_id,
       reversible: true,
@@ -2072,7 +2119,7 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-      ask: await dependenciesAsk(ctx, task, params, titles),
+      ask: `${await dependenciesAsk(ctx, task, params, titles)}${noteClause(ctx, params.note)}`,
     });
   },
   async run(params, ctx) {
@@ -2116,7 +2163,7 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
     );
     return {
       ...said,
-      sentence: `${said.sentence}${noteId ? " Your note goes into its next brief." : ""}`,
+      sentence: `${said.sentence}${noteId ? noteGoes(ctx) : ""}`,
     };
   },
   async undoBlocked(_params, _before, after, ctx) {

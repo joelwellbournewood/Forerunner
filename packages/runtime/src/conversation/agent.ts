@@ -727,7 +727,7 @@ No; to offer a start, say "say run it now or press Start".`;
  * their own instruction, read back together. In the stable system part beside the rules above.
  */
 export const CHAT_TASK_RULES = `# The task list
-When the person asks you to fix, tidy, clean up or check the task list, call fix_tasks once with their words. For changes the person names themselves, call each change's tool; they are read back together. Never say a task changed unless a tool said so.`;
+When the person asks you to fix, tidy, clean up or check the task list, call fix_tasks once with their words. For changes the person names themselves, call each change's tool; they are read back together. Give a note only with words the person said for the specialist; never write one yourself. Never say a task changed unless a tool said so.`;
 
 /**
  * A pause this long ends a conversation: the next turn starts a new one, in which an open

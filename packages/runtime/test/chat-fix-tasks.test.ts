@@ -532,7 +532,7 @@ describe("d1109-selftasks-chat, run C: the model-facing texts of 'fix the tasks'
     expect(Object.keys(shape)).toEqual(["project"]);
     expect(shape.project?.description).toBe("The project's name when it is not the one on screen.");
     expect(CHAT_TASK_RULES).toBe(
-      "# The task list\nWhen the person asks you to fix, tidy, clean up or check the task list, call fix_tasks once with their words. For changes the person names themselves, call each change's tool; they are read back together. Never say a task changed unless a tool said so.",
+      "# The task list\nWhen the person asks you to fix, tidy, clean up or check the task list, call fix_tasks once with their words. For changes the person names themselves, call each change's tool; they are read back together. Give a note only with words the person said for the specialist; never write one yourself. Never say a task changed unless a tool said so.",
     );
   });
 
@@ -954,5 +954,56 @@ describe("l4-selftasks-chat, run L4: a change the person names is theirs, and ev
       [],
     );
     expect((await publishOf(w)).priority).toBe(w.tasks.publish?.priority);
+  });
+});
+
+describe("l4-selftasks-chat, run L4: a note is the person's only when they wrote it (L4-selftasks-120)", () => {
+  // Live check 4 (L4-chat-20): the chat model passed "Put on hold by the person." with a pause
+  // the person gave no note for; the app said "Your note goes into its next brief." and queued it
+  // as the person's.
+  it("a note the chat model passes is read back; after yes it is 'The note' and the agent's; the parameter says to pass only the person's words", async () => {
+    const w = await setup({
+      level: 2,
+      replies: [
+        toolReply("task_pause", { task: "Publish the page", note: "Put on hold by the person." }),
+        textReply(""),
+      ],
+    });
+    const r = await w.chat("the logo is late, so publishing must wait");
+    expect(r.pendingConfirmation?.readback).toBe(
+      'Pause "Publish the page"? No session runs it until you press Resume. Note for its next brief: "Put on hold by the person.".',
+    );
+    const yes = await w.chat("yes");
+    expect(yes.reply).toBe(
+      'Paused "Publish the page": no session runs it until you press Resume. The note goes into its next brief.',
+    );
+    const notes = await w.store.queue.list({ project_id: w.quote } as never, { limit: 10 });
+    expect(notes.map((n) => [n.author_human, n.author_agent])).toEqual([[null, w.alice]]);
+    const pause = w.commands.registry.mustGet("task.pause");
+    const shape = (pause.params as unknown as { shape: Record<string, { description?: string }> })
+      .shape;
+    expect(shape.note?.description).toBe(
+      "Only words the person gave for the specialist, quoted as they said them; leave it out when they gave none. Never a summary of the move.",
+    );
+  });
+
+  it("the person's own pause with a typed note (the drawer, source ui) still says 'Your note' and queues it as theirs", async () => {
+    const w = await setup({ level: 2 });
+    const r = await w.commands.execute(
+      { name: "task.pause", params: { task: "Publish the page", note: "Wait for the logo." } },
+      {
+        humanId: w.human,
+        agentId: w.alice,
+        activeProjectId: w.quote,
+        sessionId: (await w.store.session.list({} as never, { limit: 1 }))[0]?.id ?? "",
+        source: "ui",
+        wordsUsed: "",
+      },
+    );
+    expect(r.sentence).toBe(
+      'Paused "Publish the page": no session runs it until you press Resume. Your note goes into its next brief.',
+    );
+    const notes = await w.store.queue.list({ project_id: w.quote } as never, { limit: 10 });
+    expect(notes.map((n) => [n.author_human, n.author_agent])).toEqual([[w.human, null]]);
   });
 });
