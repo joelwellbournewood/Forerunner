@@ -180,8 +180,8 @@ A project that joined another is closed: its page says 'Joined into "Site" on 9 
 **Open it**, and nothing starts from it. It takes no new work: its Tasks tab has no New task
 and says 'Its tasks are in "Site".' with **Open it**, its Chat is kept to read ('This chat is
 kept to read; ask about its work in the Chat of "Site".'), and so is Talk on its pages (the same
-line with **Open it**, no message box and no Talk button), and its Overview has no note for a
-next session. A task, a note or a change asked for it anyway is answered '"Kite club" joined
+line with **Open it**, no message box and no Talk button; the hotkey and the palette's Talk
+start no voice turn there), and its Overview has no note for a next session. A task, a note or a change asked for it anyway is answered '"Kite club" joined
 "Site", so its work runs there.' and nothing is written. "Site"'s Overview says 'Includes the work of "Kite
 club".', its Sessions tab '"Kite club" had 3 sessions before it joined.' with Open, and its
 Costs tab 'Spent in "Kite club" before it joined: CHF 3.20'. Chat answers about "Site" with

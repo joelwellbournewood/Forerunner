@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
@@ -532,5 +532,151 @@ describe("hotkey press: the conversation and a push-to-talk turn", () => {
     expect(view.getInt16(0, true)).toBe(0);
     expect(view.getInt16(2, true)).toBe(32767);
     expect(view.getInt16(4, true)).toBe(-32768);
+  });
+});
+
+/**
+ * l4-chat-carried, run L4 (C4-left-9, review of 2026-11-23): Talk on a project closed into
+ * another keeps its chat to read (design section 3.9). The header's Talk said so, but the global
+ * hotkey and the palette's Talk still started a voice turn: the microphone recorded with no
+ * Listening badge and no Send, the second press sent the words to the closed project's chat, and
+ * without voice the panel said "or type below" with nothing to type into. A voice request there
+ * starts nothing; a turn that listens when the project closes is ended, its words never sent.
+ */
+describe("l4-chat-carried, run L4: the hotkey and the palette's Talk on a joined project (C4-left-9)", () => {
+  const CLOSED = 'This chat is kept to read; ask about its work in the Chat of "Atlas".';
+  const joinedBeacon = (opts: Parameters<typeof createHarness>[0] = {}) => {
+    const harness = createHarness(opts);
+    const { state } = harness.daemon;
+    state.joined.proj_beacon = {
+      projectId: "proj_atlas",
+      name: "Atlas",
+      at: "2026-11-09T10:00:00.000Z",
+      text: 'Joined into "Atlas" on 9 Nov.',
+    };
+    for (const p of state.projects) if (p.id === "proj_beacon") p.status = "archived";
+    return harness;
+  };
+
+  it("the hotkey on the joined project's page opens Talk with the kept-to-read line and starts no capture and no voice session; on Atlas's page it starts the turn", async () => {
+    const user = userEvent.setup();
+    const shell = fakeBridge();
+    const mic = fakeCapture();
+    const harness = joinedBeacon();
+    harness.daemon.state.nextVoiceLine = "add a task: write the faq";
+    renderDesktop("/projects/proj_beacon/summary", shell.bridge, mic.factory, harness);
+    await screen.findByTestId("project-joined");
+    await waitFor(() => expect(shell.listeners()).toBe(1));
+
+    shell.press();
+    const talk = await screen.findByTestId("conversation");
+    const line = await within(talk).findByTestId("conversation-closed");
+    expect(line).toHaveTextContent(CLOSED);
+    // A second press (the one that would send a listening turn) sends nothing either.
+    shell.press();
+    expect(within(talk).queryByTestId("voice-phase")).toBeNull();
+    expect(within(talk).queryByTestId("voice-reason")).toBeNull();
+    expect(within(talk).queryByTestId("conversation-input")).toBeNull();
+
+    // On the project that takes the work, the same hotkey starts the turn: the only voice
+    // session of this test is about Atlas, so the presses on Beacon's page started none.
+    await user.click(within(line).getByRole("link", { name: "Open it" }));
+    expect(await within(talk).findByTestId("conversation-input")).toBeEnabled();
+    shell.press();
+    await waitFor(() =>
+      expect(within(talk).getByTestId("voice-phase").textContent).toMatch(/^Listening/),
+    );
+    expect(mic.log).toEqual(["start"]);
+    expect(postedCalls(harness, "/voice/sessions").map((c) => c.body)).toEqual([
+      { mode: "push_to_talk", replyMode: "voice", projectId: "proj_atlas" },
+    ]);
+    const session = [...harness.daemon.state.voiceSessions.keys()][0] ?? "";
+    expect(postedCalls(harness, `/voice/sessions/${session}/press`).map((c) => c.body)).toEqual([
+      { pressed: true, replyMode: "voice" },
+    ]);
+    expect(within(talk).queryAllByTestId("conversation-human")).toEqual([]);
+  });
+
+  it("the palette's Talk on the joined project with voice not installed says no 'type below' and reads no voice status; on Atlas's page it says it", async () => {
+    const user = userEvent.setup();
+    const shell = fakeBridge();
+    const mic = fakeCapture();
+    const harness = joinedBeacon({
+      voice: { available: false, reason: "no speech-to-text provider is configured" },
+    });
+    const status = harness.client.voiceStatus.bind(harness.client);
+    let statusReads = 0;
+    harness.client.voiceStatus = async (...args) => {
+      statusReads += 1;
+      return status(...args);
+    };
+    renderDesktop("/projects/proj_beacon/summary", shell.bridge, mic.factory, harness);
+    await screen.findByTestId("project-joined");
+    const palette = async () => {
+      fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+      const box = await screen.findByTestId("command-palette");
+      await user.type(within(box).getByTestId("command-input"), "talk to your agent");
+      await user.keyboard("{Enter}");
+    };
+
+    await palette();
+    const talk = await screen.findByTestId("conversation");
+    const line = await within(talk).findByTestId("conversation-closed");
+    expect(line).toHaveTextContent(CLOSED);
+    expect(within(talk).queryByTestId("voice-reason")).toBeNull();
+    expect(within(talk).queryByTestId("conversation-input")).toBeNull();
+
+    await user.click(within(line).getByRole("link", { name: "Open it" }));
+    expect(await within(talk).findByTestId("conversation-input")).toBeEnabled();
+    await user.click(within(talk).getByTestId("voice-talk"));
+    expect((await within(talk).findByTestId("voice-reason")).textContent).toBe(
+      "Voice is not installed. Install it in Settings → Voice, or type below.",
+    );
+    // Only Atlas's press read the voice status: the palette's Talk on Beacon started nothing.
+    expect(statusReads).toBe(1);
+    expect(mic.log).toEqual([]);
+    expect(postedCalls(harness, "/voice/sessions")).toEqual([]);
+  });
+
+  it("a turn that listens when its project is closed into another is ended: the microphone stops, the voice session ends and nothing is sent", async () => {
+    const shell = fakeBridge();
+    const mic = fakeCapture();
+    const harness = createHarness();
+    renderDesktop("/projects/proj_beacon/summary", shell.bridge, mic.factory, harness);
+    await waitFor(() => expect(shell.listeners()).toBe(1));
+    await waitFor(() =>
+      expect(harness.store.getState().projects.some((p) => p.id === "proj_beacon")).toBe(true),
+    );
+    shell.press();
+    const talk = await screen.findByTestId("conversation");
+    await waitFor(() =>
+      expect(within(talk).getByTestId("voice-phase").textContent).toMatch(/^Listening/),
+    );
+    const session = [...harness.daemon.state.voiceSessions.keys()][0] ?? "";
+    // Beacon is made one project with Atlas (from the phone, or chat) while the turn listens.
+    const { state } = harness.daemon;
+    state.joined.proj_beacon = {
+      projectId: "proj_atlas",
+      name: "Atlas",
+      at: "2026-11-09T10:00:00.000Z",
+      text: 'Joined into "Atlas" on 9 Nov.',
+    };
+    for (const p of state.projects) if (p.id === "proj_beacon") p.status = "archived";
+    act(() => {
+      harness.store.dispatch({
+        type: "projects",
+        projects: harness.store.getState().projects.filter((p) => p.id !== "proj_beacon"),
+      });
+    });
+    expect(await within(talk).findByTestId("conversation-closed")).toHaveTextContent(CLOSED);
+    await waitFor(() =>
+      expect(postedCalls(harness, `/voice/sessions/${session}/stop`)).toHaveLength(1),
+    );
+    expect(mic.log).toEqual(["start", "stop"]);
+    // The release was never sent: the words heard so far go to no chat.
+    expect(postedCalls(harness, `/voice/sessions/${session}/press`).map((c) => c.body)).toEqual([
+      { pressed: true, replyMode: "voice" },
+    ]);
+    expect(within(talk).queryByTestId("voice-phase")).toBeNull();
   });
 });
