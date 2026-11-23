@@ -140,6 +140,21 @@ export interface ExpiredConfirmation {
 }
 
 /**
+ * l4-selftasks-carried (L4f-left-1): a card that left the executor (`ExecutorOptions.onClosed`):
+ * answered yes or no (here, in the Inbox, on the phone or by email), a Yes the app refused because
+ * what it named changed, or one that lapsed. `sessionId` is the conversation session a chat or
+ * voice read-back was said in (its context), so the daemon can tell that conversation's screens.
+ */
+export interface ClosedConfirmation {
+  id: string;
+  humanId: string;
+  projectId: string | null;
+  source: CommandSource;
+  sessionId: string | null;
+  how: "yes" | "no" | "refused" | "expired";
+}
+
+/**
  * The executor's plan of the same request again on the state now: today's decision and the card
  * it would read back now, which the Yes compares with the card as it was read back.
  */
@@ -163,6 +178,8 @@ interface PendingEntry extends PendingConfirmation {
   cancelTimer: () => void;
   /** An answer is being checked (a device lookup is in flight); a second answer is refused. */
   inFlight: boolean;
+  /** l4-selftasks-carried (L4f-left-1): an answer took the card out (`confirm` tells it). */
+  answered?: boolean;
 }
 
 interface Gate {
@@ -341,6 +358,14 @@ export interface ExecutorOptions {
    * tells the open screens and the person (`inbox.changed`, `conversation.changed`, one Update).
    */
   onExpired?: (card: ExpiredConfirmation) => void | Promise<void>;
+  /**
+   * l4-selftasks-carried (L4f-left-1): a card left the executor, however it closed (a yes, a no,
+   * a Yes refused because what it named changed, a lapse), whatever route answered it. The
+   * daemon tells the open screens once (`inbox.changed`, `project.changed`, and the conversation
+   * it was read back in); before, only some routes did, and the header kept "Waiting for you: 1
+   * change to confirm" until a reload.
+   */
+  onClosed?: (card: ClosedConfirmation) => void | Promise<void>;
 }
 
 const NO_RE = /^\s*(no|nope|cancel|stop|nein|non|abbrechen)\b/i;
@@ -364,6 +389,7 @@ export class CommandExecutor {
   private readonly clock: Clock;
   private readonly ttlMs: number;
   private readonly onExpired: ExecutorOptions["onExpired"];
+  private readonly onClosed: ExecutorOptions["onClosed"];
   private readonly logger = log("commands");
   private readonly pendings = new Map<string, PendingEntry>();
   /** The undo of a change made in this process; it returns the sentences its steps added. */
@@ -378,6 +404,7 @@ export class CommandExecutor {
     this.policy = opts.policy ?? new ConfirmationPolicy();
     this.ttlMs = opts.pendingTtlMs ?? PENDING_TTL_MS;
     this.onExpired = opts.onExpired;
+    this.onClosed = opts.onClosed;
   }
 
   // -------------------------------------------------------------------------------------
@@ -1149,6 +1176,23 @@ export class CommandExecutor {
    * run, because the card may be ten minutes old; a risk that rose since is refused.
    */
   async confirm(pendingId: string, answer: ConfirmationAnswer): Promise<ExecuteResult> {
+    const p = this.pendings.get(pendingId);
+    const r = await this.answerPending(pendingId, answer);
+    // l4-selftasks-carried (L4f-left-1): an answer that took the card out (a yes made or
+    // refused, a no) is told once, whatever route gave it.
+    if (p?.answered)
+      await this.tellClosed(
+        p,
+        r.status === "cancelled" ? "no" : r.status === "refused" ? "refused" : "yes",
+      );
+    return r;
+  }
+
+  /** The answer to a pending card (`confirm`): checked, then made, refused or declined. */
+  private async answerPending(
+    pendingId: string,
+    answer: ConfirmationAnswer,
+  ): Promise<ExecuteResult> {
     this.sweepPending();
     const p = this.pendings.get(pendingId);
     if (!p) return noPending(pendingId);
@@ -1181,6 +1225,7 @@ export class CommandExecutor {
     }
     // Nothing has awaited since the check passed: the entry is taken before anyone else can.
     this.pendings.delete(pendingId);
+    p.answered = true;
     p.cancelTimer();
     const by: Actor =
       answer.kind === "device"
@@ -1336,6 +1381,31 @@ export class CommandExecutor {
     }
   }
 
+  /**
+   * l4-selftasks-carried (L4f-left-1): a card that left the executor, told to `onClosed` once,
+   * with where it was read back (its stored context: the source and the conversation session).
+   * A failure to tell never changes the answer.
+   */
+  private async tellClosed(p: PendingEntry, how: ClosedConfirmation["how"]): Promise<void> {
+    if (!this.onClosed) return;
+    try {
+      const row = await this.store.humanRequest.get(p.id).catch(() => undefined);
+      const context = (
+        row?.change_card as { context?: { source?: CommandSource; sessionId?: string | null } }
+      )?.context;
+      await this.onClosed({
+        id: p.id,
+        humanId: p.humanId,
+        projectId: p.card.projectId ?? row?.project_id ?? null,
+        source: context?.source ?? "ui",
+        sessionId: context?.sessionId ?? row?.session_id ?? null,
+        how,
+      });
+    } catch (e) {
+      this.logger.warn("could not tell about the closed card", { id: p.id, error: errorMessage(e) });
+    }
+  }
+
   private sweepPending(): void {
     const now = this.clock.now();
     for (const [id, p] of this.pendings) {
@@ -1359,6 +1429,7 @@ export class CommandExecutor {
     } catch (e) {
       this.logger.warn("could not expire the request", { id, error: errorMessage(e) });
     }
+    if (expired) await this.tellClosed(p, "expired");
     // L4-selftasks-117: an expiry that remains is told (before, the card left the Inbox with
     // no event, no message and a Yes still drawn in the open chat).
     if (!expired || !this.onExpired) return;

@@ -28280,3 +28280,139 @@ describe("l4-starts-sessions, run L4", () => {
     }
   }, 120_000);
 });
+
+describe("l4-selftasks-carried, run L4", () => {
+  // The owner, 2026-11-17: every chat read-back "stays open in chat and the Inbox until the
+  // person presses Yes or No" (design section 3.9); session lead decision 2026-11-23 (L4f-left-2):
+  // a 'fix the tasks' Yes is judged on the tasks its set names and the list's membership.
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  async function open(
+    prefix: string,
+    opts: { clock?: SystemClock | SimulatedClock; home?: string } = {},
+  ) {
+    const dir = opts.home ?? mkdtempSync(join(tmpdir(), prefix));
+    if (!opts.home) homes.push(dir);
+    const log = new ModelCallLog({ file: join(dir, "model-calls.jsonl") });
+    const provider = createRolePlayer(benchOptionsFromEnv({ FORERUNNER_BENCH_DELAY_MS: "0" }, log));
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: dir },
+      dirs: appDirs({ env: { FORERUNNER_HOME: dir } }),
+      config: null,
+      clock: opts.clock ?? new SystemClock(),
+      stateUrl: `sqlite:${join(dir, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const chat = (projectId: string, text: string) =>
+      client.chat({ humanId: me.id, agentId, projectId, projectTab: true, text, source: "text" });
+    // What the open screens hear: inbox.changed, project.changed and conversation.changed.
+    const heard = { inbox: 0, projects: [] as string[], conversations: [] as (string | null)[] };
+    rt.events.on("inbox", () => {
+      heard.inbox++;
+    });
+    rt.events.on("project", (p: { id: string }) => heard.projects.push(p.id));
+    rt.conversation?.turnsOf().on((projectId) => heard.conversations.push(projectId));
+    const reset = () => {
+      heard.inbox = 0;
+      heard.projects.length = 0;
+      heard.conversations.length = 0;
+    };
+    return { rt, client, me, agentId, chat, home: dir, heard, reset };
+  }
+
+  const taskBody = (title: string) => ({
+    title,
+    outcome: `${title} is done`,
+    acceptanceCriteria: ["it is done"],
+    riskTier: 1,
+    specialist: "coder",
+    status: "ready" as const,
+  });
+
+  it("L4f-left-1: every close of a chat read-back (the Inbox's No and Yes, a chat No, a refused Yes) tells the screens: inbox.changed, project.changed, its conversation once when no turn of it runs, and the header and the Inbox count follow", async () => {
+    const a = await open("fr-ui-real-l4-stcar-close-");
+    try {
+      const project = await a.client.createProject({ name: "Help", goal: "A help page" });
+      const faq = (await a.client.createTask(project.id, taskBody("Write the FAQ"))).id;
+      const status = async () => (await a.client.project(project.id)).statusLine?.text;
+      const readBack = async (title: string) => {
+        await a.chat(project.id, `tool: task_pause {"task": "${title}"}`);
+        expect(await status()).toBe("Waiting for you: 1 change to confirm");
+        expect((await a.client.inbox(a.me.id)).needsYouCount).toBe(1);
+        a.reset();
+      };
+      const closedNow = async () => {
+        expect(a.heard.inbox).toBeGreaterThan(0);
+        expect(a.heard.projects).toContain(project.id);
+        expect((await a.client.inbox(a.me.id)).needsYouCount).toBe(0);
+        expect(await status()).not.toMatch(/^Waiting for you/);
+      };
+
+      // 1. The Inbox's No (the Changes and settings screens' route): the open chat is told once.
+      await readBack("Write the FAQ");
+      const [first] = await a.client.pendingCommands();
+      await a.client.cancelCommand(first?.id ?? "");
+      await closedNow();
+      expect(a.heard.conversations).toEqual([project.id]);
+      expect(await status()).toBe("Ready: 1 task waits for your Start");
+
+      // 2. The Inbox's Yes (the Inbox page answers the card's request): the change is made, the
+      // open chat is told once.
+      await readBack("Write the FAQ");
+      const card = (await a.client.inbox(a.me.id)).requests.find((r) => r.status === "open");
+      await a.client.answerRequest(card?.id ?? "", {
+        version: card?.version ?? 0,
+        answer: "yes",
+      });
+      await closedNow();
+      expect(a.heard.conversations).toEqual([project.id]);
+      expect((await a.client.task(faq)).task.status).toBe("needs_human");
+
+      // 3. A No in the chat: its own turn tells the conversation (the close adds no second one).
+      const menu = (await a.client.createTask(project.id, taskBody("Write the menu"))).id;
+      await readBack("Write the menu");
+      expect((await a.chat(project.id, "no")).reply).toBe("Cancelled; nothing was changed.");
+      await closedNow();
+      expect(a.heard.conversations.length).toBeGreaterThan(0);
+      expect(a.heard.conversations.every((p) => p === project.id)).toBe(true);
+
+      // 4. A Yes the app refuses because the task changed since the read-back.
+      await readBack("Write the menu");
+      const row = await a.client.task(menu);
+      await a.client.transitionTask(menu, {
+        version: row.task.version,
+        to: "cancelled",
+        reason: "not needed",
+      });
+      a.reset();
+      expect((await a.chat(project.id, "yes")).reply).toBe(
+        '"Write the menu" changed since I asked: it is cancelled now. Nothing was changed; ask again if you still want it.',
+      );
+      await closedNow();
+    } finally {
+      await settleSessions(a.rt);
+      await a.rt.close();
+    }
+  }, 90_000);
+});
