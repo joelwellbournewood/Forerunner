@@ -5023,6 +5023,11 @@ in one project cancelled a task in another. Now:
   said after a lookup stands, and an absence is never replaced by a "Nothing changed" line: the
   answer after the nudge is the reply (with no call left the first one stays; the guard is on the
   row as `claimGuard.kind: "absent"`). "There is no ready task" names no record and stays free.
+  l4-chat-carried (L4c-left-8): so does "I don't see" before a state about now and nothing more
+  ("any failed tasks", "any open questions in Quote Page", "anything waiting for your answer";
+  `NOW_STATE`), so a 'what is left?' answer costs no nudge and no recall call; "… any failed
+  tasks about the FAQ" or "… a task called …" names what was looked for and is still nudged
+  (chat-recall.test.ts "an absence about now is no claim").
   The facts' task line names a renamed task's earlier title ('"Write the guide" (earlier "Write
   the README"): Done'; `earlierTitlesOf`, moved from `read-tools.ts` to `project-facts.ts`), and
   the rules say a lookup needs no yes (`CHAT_RECALL_RULES`, the prompt's "What you look up" and

@@ -1865,3 +1865,45 @@ describe("l4-chat-answers, run L4", () => {
     ).toEqual(["card"]);
   });
 });
+
+/**
+ * l4-chat-carried, run L4 (L4c-left-8): "I don't see any failed tasks." in a 'what is left?'
+ * answer is about now, from the facts, like "there is no ready task": it names no record. It was
+ * read as an absence claim and cost a nudge and a recall call. A sentence that says it sees no
+ * task, card or session in a state (any failed tasks, any open questions, anything waiting) stays
+ * free; one that names what it looked for ("a task about a pizza oven", "a licence choice") is
+ * still nudged to look it up.
+ */
+describe("l4-chat-carried, run L4: an absence about now is no claim (L4c-left-8)", () => {
+  it("'what is left?' answered 'I don't see any failed tasks.' is one call with no nudge and no lookup", async () => {
+    const w = await setup();
+    const LEFT = 'Two tasks are left: "Check the page" is ready. I don\'t see any failed tasks.';
+    w.reply([textReply(LEFT)]);
+    const res = await w.chat("what is left?");
+    expect(w.provider.calls).toHaveLength(1);
+    expect(res.reply).toBe(LEFT);
+    expect(w.steps).not.toContain("Looking through everything recorded…");
+    await w.store.close();
+  });
+
+  it("claimOf: a state about now stays free; a named record not seen is still an absence", async () => {
+    const { claimOf } = await import("../src/conversation/claims.ts");
+    for (const said of [
+      "I don't see any failed tasks.",
+      "I don't see any failed tasks right now.",
+      "I can't see any open questions in Quote Page.",
+      "I do not see any tasks waiting for you.",
+      "I don't see anything waiting for your answer.",
+      "I see no running session.",
+    ])
+      expect(claimOf(said), said).toBeNull();
+    for (const said of [
+      "I don't see a task about a pizza oven.",
+      "I can't find any task called Write the guide.",
+      "I can't see a licence choice in what I have for Quote Page.",
+      "I couldn't find anything about a pizza oven.",
+      "I don't see any failed tasks about the FAQ.",
+    ])
+      expect(claimOf(said)?.kind, said).toBe("absent");
+  });
+});

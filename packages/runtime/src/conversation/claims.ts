@@ -238,6 +238,16 @@ const ABSENT: RegExp[] = [
 ];
 
 /**
+ * l4-chat-carried, run L4 (L4c-left-8): what follows "I don't see" when the sentence is about now,
+ * from the facts ("any failed tasks", "any open questions in Quote Page", "anything waiting for
+ * your answer"): no record named, so no absence claim ("There is no ready task" stays free the
+ * same way). Anything after the state ("… about the FAQ", "… called …") names what was looked for
+ * and is still a claim.
+ */
+const NOW_STATE =
+  /^\s*(?:(?:any|no)\s+(?:(?:failed|open|ready|running|waiting|paused|blocked|queued|cancelled|done|finished|new|other|more|unanswered)\s+)*(?:tasks?|cards?|sessions?|questions?|changes?|problems?|errors?|failures?|work)|anything\s+(?:waiting|open|running|left|failed|paused|blocked))(?:\s+(?:right\s+now|now|at\s+the\s+moment|today|yet|left|here|open|running|waiting|for\s+(?:you|your\s+(?:yes|answer))|in\s+(?:this|the)\s+project|in\s+[A-Z][\w-]*(?:\s+[A-Z][\w-]*){0,3}))*\s*[.!]?$/;
+
+/**
  * Review of l4-chat-answers (blocking 2): a clarifying question asks which, who, where or what
  * ("Which task should I add it to?", "Where should I put the new page?") or offers a choice ("Add
  * it to Notes or to Site?", "Start it now or wait for the next session?"). It asks for no yes and
@@ -295,6 +305,7 @@ export function claimsOf(text: string): ReplyClaim[] {
   absent: for (const s of own)
     for (const re of ABSENT)
       for (const m of s.matchAll(re)) {
+        if (NOW_STATE.test(s.slice((m.index ?? 0) + m[0].length))) continue;
         out.push({ kind: "absent", phrase: m[0].trim() });
         break absent;
       }
