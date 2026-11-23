@@ -10,7 +10,7 @@ import type {
   TaskRow,
 } from "@forerunner/state";
 import { fingerprintOf } from "./fingerprint.ts";
-import { quotedWords } from "./followup.ts";
+import { wordsWithin } from "./followup.ts";
 import { patternsFor } from "./patterns.ts";
 import { applyVerdictRules, isBlocking } from "./rules.ts";
 import type { ReviewFinding, ReviewOutput, ReviewTier, Severity, Verdict } from "./types.ts";
@@ -925,13 +925,15 @@ export async function reviewSession(opts: ReviewSessionOptions): Promise<ReviewO
  * over their estimate of CHF 0.07 by 51%, with one task tried twice"), for the line the person
  * reads; null when it found none. A session review sends nothing back, so its line names this
  * cause, never a task review's "sent back for changes". l4c-workstate, run L4 (the review of
- * l4-money-pause): a long one is cut at a word with "…", within 200 characters, as a card quotes
- * a report (`quotedWords`); before, slice(0, 200) cut it inside a word with no ellipsis ("... the
- * critic asked for a result").
+ * l4-money-pause): a long one is cut at a word with "…", within 200 characters; before,
+ * slice(0, 200) cut it inside a word with no ellipsis ("... the critic asked for a result").
+ * fixup-l4c-workstate (the review of l4c-workstate): it is cut by `wordsWithin`, so one within
+ * 200 characters is whole; `quotedWords` (how a card quotes a report) kept only its first two
+ * sentences, with no ellipsis, and dropped its backticks and "#".
  */
 export function reviseCause(
   findings: readonly { severity: string; description: string }[],
 ): string | null {
   const f = findings.find((x) => x.severity !== "low" && x.description.trim() !== "");
-  return f ? quotedWords(f.description, 200) : null;
+  return f ? wordsWithin(f.description, 200) : null;
 }

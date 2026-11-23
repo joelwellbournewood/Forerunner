@@ -1116,4 +1116,27 @@ describe("l4-money-pause, run L4: a session review's revise names its cause (L4-
       "The plan ran over.",
     );
   });
+
+  /**
+   * fixup-l4c-workstate, run L4 (the review of l4c-workstate, a non-blocking note): `quotedWords`
+   * keeps at most two sentences and drops "*", "#" and backticks, so a finding of three short
+   * sentences lost its third with no ellipsis, and "`#2`" read "2".
+   */
+  it("a finding within 200 characters is whole, every sentence and every mark of it (fixup-l4c-workstate)", () => {
+    expect(
+      reviseCause([
+        {
+          severity: "medium",
+          description: "The plan ran over. One task was tried twice. The `#2` estimate was low.",
+        },
+      ]),
+    ).toBe("The plan ran over. One task was tried twice. The `#2` estimate was low.");
+    // A long one of several sentences is cut at a word inside its third, with the ellipsis.
+    const long =
+      "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%. One task was tried twice. Its second try rewrote the pairing rules, the tests and the README after the critic asked for a results table.";
+    expect(long.length).toBe(207);
+    expect(reviseCause([{ severity: "medium", description: long }])).toBe(
+      "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%. One task was tried twice. Its second try rewrote the pairing rules, the tests and the README after the critic asked for a…",
+    );
+  });
 });

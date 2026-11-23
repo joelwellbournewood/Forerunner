@@ -451,9 +451,12 @@ task tried twice (grade 85, 1 finding).' (`sessionReviewWords` in the runtime's
 `daemon/event-lines.ts`; "noted" without a cause), never a task review's "sent back for changes";
 the Reviews tab words a session check "accepted", "noted" or "needs you" and its findings "noted".
 l4c-workstate, run L4 (the review of l4-money-pause): a long cause is cut at a word with "…",
-within 200 characters, by `quotedWords` (followup.ts, one or two sentences as a card quotes them);
-before, `slice(0, 200)` cut it inside a word with no ellipsis ("... the critic asked for a
-result").
+within 200 characters; before, `slice(0, 200)` cut it inside a word with no ellipsis ("... the
+critic asked for a result"). fixup-l4c-workstate (the review of l4c-workstate): the cut is
+`wordsWithin` (followup.ts, also what a card's title uses), so a cause within 200 characters is
+whole, every sentence and mark of it; `quotedWords`, how a card quotes a report, kept only the
+first two sentences, with no ellipsis, and dropped backticks and "#" ("The `#2` estimate was
+low." was lost from a three-sentence finding).
 
 l4-money-pause, run L4 (L4-money-104, L4-selftasks-107): the session's size is its promise.
 `plannedItemsOf(plan)` is the planned set: the plan's items and each promised task they do not
