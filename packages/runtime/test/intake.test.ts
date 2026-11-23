@@ -1380,6 +1380,22 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     // An earlier version's form, still read: the whole id.
     expect(legacyIntakeDocsBranch(a)).toBe(`fr/intake-${a}-docs`);
   });
+
+  it("the docs branch of a name with dots is one git accepts: dots become dashes, as the scaffold's branch does (review of L4-github-111)", async () => {
+    // Before: "Wait... what" gave fr/intake-f66a6f86-wait...-what-docs, which git refuses ("..").
+    const a = "019cbd02-c000-7141-af6d-7c62f66a6f86";
+    expect(intakeDocsBranch({ id: a, name: "Wait... what" })).toBe(
+      "fr/intake-f66a6f86-wait--what-docs",
+    );
+    for (const name of ["Wait... what", "a..b", "site.lock", "v1.2 notes.", "..."]) {
+      const branch = intakeDocsBranch({ id: a, name });
+      const checked = await run(["git", "check-ref-format", "--branch", branch], {
+        allowFailure: true,
+      });
+      expect({ name, branch, code: checked.code }).toEqual({ name, branch, code: 0 });
+      expect(branch).toMatch(/^fr\/intake-f66a6f86-[\w-]+-docs$/);
+    }
+  });
 });
 
 describe("PM intake: a restart closes the session a dead daemon left running", () => {

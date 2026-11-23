@@ -1838,7 +1838,8 @@ an overlapping sync) exactly one writes the plan and the other's transaction rol
 (`repoRefOf(repos[0])`, `owner/name` or a URL) the executor's branch-and-PR flow (`GitOps`
 clone or fetch into `<worktrees>/intake/<project>`, branch `intakeDocsBranch`:
 `fr/intake-<8 characters of the id's random end>-<the name>-docs` (L4-github-111, R-branch's
-form; `intakeBranchFor` takes it when GitHub has no such branch or it is this project's, by a
+form; the name's dots become dashes, as in `scaffoldBranchesOf`, since git refuses ".." and a
+component ending ".lock"; `intakeBranchFor` takes it when GitHub has no such branch or it is this project's, by a
 pull request on it whose hidden mark names the project or by its marker file, else the whole
 id's `legacyIntakeDocsBranch`), push, `createPullRequest` with the hidden mark
 `forerunnerMarker({ project })` at the end of its body), else the project's workspace

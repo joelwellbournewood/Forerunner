@@ -176,7 +176,10 @@ export function intakeDocsBranch(project: Pick<ProjectRow, "id" | "name">): stri
     hex.length === 32
       ? hex.slice(-8)
       : safeSegment(project.id.toLowerCase(), "project").slice(0, 8);
+  // Dots become dashes, as in the scaffold's branch (`scaffoldBranchesOf`): git refuses ".." and
+  // a component ending ".lock", which a name such as "Wait... what" would otherwise give.
   const name = safeSegment(project.name.toLowerCase(), "project")
+    .replace(/\.+/g, "-")
     .slice(0, 40)
     .replace(/[-._]+$/, "");
   return `fr/intake-${own}-${name || "project"}-docs`;

@@ -146,8 +146,11 @@ on GitHub.' In chat,
 itself. When the docs pull request that names your project could not be opened (GitHub
 refused it, or this computer's copy could not be made), the take-over says so: 'Took over
 o/kite from "Kite club" here, but the docs pull request that names this project could not be
-opened, so GitHub still names "Kite club".' The project's Overview and Docs tab say the same
-until that pull request is on GitHub, also when the project was made with Take it over. The docs
+opened, so GitHub still names "Kite club".' The project's Overview and Docs tab say the same,
+also when the project was made with Take it over, until the default branch on GitHub names your
+project. Forerunner does not try that pull request again by itself: the line ends once a pull
+request that puts your project in `.forerunner/project.json` is merged, or when you Undo the
+take-over on Changes (for a project made with Take it over, the Undo of its New project). The docs
 pull request always starts from the default branch: when GitHub still has an old
 `fr/docs-scaffold` branch that is not your project's (a closed pull request's, another project's
 or a person's), Forerunner leaves it as it is and opens its pull request on
