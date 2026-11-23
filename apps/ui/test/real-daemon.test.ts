@@ -7148,9 +7148,26 @@ describe("the UI client against the real daemon: Quit during 'Being reviewed', t
       expect(updates.join("\n")).not.toContain("Nothing was left half done.");
       const check = await second.client.startCheck(projectId);
       expect(check.runnable.map((t) => t.taskId)).toContain(taskId);
-      // The next Start runs it and the critic reviews it.
+      // l4-starts-sessions (L4-money-207, design §5's crash example): the Update offers Continue
+      // (before: only Mark read), the person's Start that goes on with the interrupted session.
+      const crashUpdate = (await second.client.inbox(me.id)).messages.find((m) =>
+        m.body.startsWith("Your last session was interrupted when Forerunner closed."),
+      );
+      expect(crashUpdate?.action).toMatchObject({
+        kind: "continue",
+        label: "Continue",
+        projectId,
+        explain: expect.stringMatching(
+          /^Opens Start with the rest of your last session and the CHF \d+\.\d{2} left of its budget\.$/,
+        ),
+      });
+      // The next Start, through that Continue, runs it and the critic reviews it.
       const agentId = (await second.client.agents())[0]?.id ?? "";
-      const started = await second.client.startSession({ agentId, projectId });
+      const started = await second.client.startSession({
+        agentId,
+        projectId,
+        continues: crashUpdate?.action?.sessionId ?? "",
+      });
       await eventually(
         async () => (await second.client.session(started.session?.id ?? "")).status !== "running",
         "the next session to end",
@@ -7161,6 +7178,17 @@ describe("the UI client against the real daemon: Quit during 'Being reviewed', t
       expect(done.task.status).toBe("done");
       expect(done.runs.some((r) => r.kind === "review")).toBe(true);
       expect(second.criticCalls.length).toBeGreaterThan(0);
+      // The Continue goes on with the interrupted session; once its task is done it is gone.
+      expect(
+        (await second.client.sessionEvents(started.session?.id ?? "")).some(
+          (e) =>
+            e.type === "session.started" &&
+            (e.payload as { continues?: string }).continues === crashUpdate?.action?.sessionId,
+        ),
+      ).toBe(true);
+      expect(
+        (await second.client.inbox(me.id)).messages.find((m) => m.id === crashUpdate?.id)?.action,
+      ).toBeUndefined();
     } finally {
       await second.rt.close();
     }

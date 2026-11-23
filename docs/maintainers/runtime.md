@@ -1243,7 +1243,13 @@ one-session rule then refused every later start ("agent Alice already has an act
 on with the services, never in a CLI one-shot that composes beside a live daemon), after
 `intake.closeExpired`: every running or paused work session of this human's agents (not an
 intake session, not a cloud runner's, not another device's) with no live kill-switch
-registration is ended `stopped` with the stop reason `interrupted` and the summary
+registration is ended `stopped` with the stop reason `interrupted` (its one Update starts with
+`INTERRUPTED_UPDATE_LEAD`, `session/recovery-words.ts`; GET /inbox's `messages[].action` offers
+Continue on it through `crashContinueOf` in `daemon/views.ts`, l4-starts-sessions L4-money-207,
+derived from the rows with no column of its own: the project's newest session ended `interrupted`
+by the Update's time, offered while a task it released is ready, its budget has something left and
+no session of the project works; the press is POST /sessions with `continues` through the Start
+dialog) and the summary
 "Interrupted: Forerunner closed while this session ran. "X" is ready again.", its running runs
 are closed (`killed`), the tasks its agent holds go back to ready with the reason "Forerunner
 closed while it ran", and so do the tasks its runs left in review, claimed or not (L-1, live

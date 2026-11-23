@@ -53,7 +53,11 @@ import { aboutWords, moneyWords } from "../session/money-words.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import type { PreparedContext } from "../session/prepared-work.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
-import { isIntakeSession } from "../session/recovery.ts";
+import {
+  INTERRUPTED_STOP_REASON,
+  INTERRUPTED_UPDATE_LEAD,
+  isIntakeSession,
+} from "../session/recovery.ts";
 import type { LastSessionOutcome } from "../session/result.ts";
 import {
   blockedOfHandoff,
@@ -950,6 +954,61 @@ export function messageView(m: MessageRow, fromName: string): MessageView {
     readAt: m.read_at,
     actedAt: m.acted_at,
     createdAt: m.created_at,
+  };
+}
+
+/**
+ * l4-starts-sessions (L4-money-207): the Continue a restart's Update offers (design §5: 'Your last
+ * session was interrupted when Forerunner closed. "Create the page skeleton" is ready again.
+ * [Continue]'). Derived from the rows, no column of its own: the Update names its project, and
+ * the interrupted session is that project's newest one the restart ended (stop reason
+ * `interrupted`) by the Update's time. Offered only while it can do something: a task it released
+ * is still ready, its budget has something left and no session of the project works now. The
+ * press is the person's Start that goes on with it (POST /sessions with `continues`, ADR 0118),
+ * through the Start dialog.
+ */
+export async function crashContinueOf(
+  store: StateStore,
+  m: Pick<MessageRow, "type" | "project_id" | "body" | "created_at">,
+  opts: { chfPerUsd: number; projectWorks: (projectId: string) => Promise<boolean> },
+): Promise<MessageView["action"] | undefined> {
+  if (m.type !== "info" || !m.project_id || !m.body.startsWith(INTERRUPTED_UPDATE_LEAD))
+    return undefined;
+  if (await opts.projectWorks(m.project_id)) return undefined;
+  const sessions = await store.session.forProject(m.project_id, { orderBy: "created_at desc" });
+  const at = Date.parse(m.created_at);
+  const ended = sessions.find((s) => {
+    const h = (s.handoff ?? {}) as { stop_reason?: unknown };
+    return (
+      h.stop_reason === INTERRUPTED_STOP_REASON &&
+      !!s.ended_at &&
+      Date.parse(s.ended_at) <= at + 60_000
+    );
+  });
+  if (!ended) return undefined;
+  const left = ended.budget_cap_usd_micro - ended.spent_usd_micro;
+  if (left <= 0) return undefined;
+  const released = ((ended.handoff ?? {}) as { released?: unknown }).released;
+  const ids = Array.isArray(released)
+    ? released.filter((x): x is string => typeof x === "string")
+    : [];
+  let ready = false;
+  for (const id of ids) {
+    const t = await store.task.get(id).catch(() => undefined);
+    if (t?.status === "ready") {
+      ready = true;
+      break;
+    }
+  }
+  if (!ready) return undefined;
+  const budgetLeft = money(left, opts.chfPerUsd);
+  return {
+    kind: "continue",
+    label: "Continue",
+    explain: `Opens Start with the rest of your last session and the ${formatChf(budgetLeft.chfMicro)} left of its budget.`,
+    projectId: m.project_id,
+    sessionId: ended.id,
+    budgetLeft,
   };
 }
 

@@ -937,6 +937,22 @@ export const MessageView = z.object({
   readAt: z.string().nullable(),
   actedAt: z.string().nullable(),
   createdAt: z.string(),
+  /**
+   * l4-starts-sessions (L4-money-207, design §5's crash example): the restart's Update about an
+   * interrupted session offers Continue while its released work can still run: the person's
+   * Start that goes on with that session (POST /sessions with `continues`, the Start dialog
+   * first), with what is left of its budget. Absent on other Updates and from an older daemon.
+   */
+  action: z
+    .object({
+      kind: z.literal("continue"),
+      label: z.string(),
+      explain: z.string(),
+      projectId: z.string(),
+      sessionId: z.string(),
+      budgetLeft: Money,
+    })
+    .optional(),
 });
 export type MessageView = z.infer<typeof MessageView>;
 

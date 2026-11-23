@@ -24,6 +24,10 @@ import type { LastSessionOutcome } from "./result.ts";
 /** The stop reason an interrupted session carries (handoff `stop_reason`, `session.ended`). */
 export const INTERRUPTED_STOP_REASON = "interrupted";
 
+import { INTERRUPTED_UPDATE_LEAD } from "./recovery-words.ts";
+
+export { INTERRUPTED_UPDATE_LEAD };
+
 /** What a task a dead session held reads after the recovery (the task's reason). */
 export const INTERRUPTED_TASK_REASON = "Forerunner closed while it ran";
 
@@ -308,10 +312,10 @@ export async function recoverInterruptedSessions(deps: RecoveryDeps): Promise<Re
     const projectIds = [...new Set(theirs.map((r) => r.session.project_id))];
     const body =
       titles.length > 0
-        ? `Your last session was interrupted when Forerunner closed. ${namesOf(titles)} ${
+        ? `${INTERRUPTED_UPDATE_LEAD} ${namesOf(titles)} ${
             titles.length === 1 ? "is" : "are"
           } ready again.`
-        : "Your last session was interrupted when Forerunner closed. Nothing was left half done.";
+        : `${INTERRUPTED_UPDATE_LEAD} Nothing was left half done.`;
     await store.message.send({
       from_agent_id: deps.principalId,
       to_human_id: deps.humanId,

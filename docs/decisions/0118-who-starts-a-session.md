@@ -236,3 +236,13 @@ Start; the hands-off setting starts one as built): it never starts a session by 
 change's sentence says what became of the tasks ("1 paused task is ready again: it runs at your
 next Start.").
 
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-207): the crash Update's Continue
+
+Design §5's crash example ends with [Continue]; live check 4 (LC-C6) showed the Update with only
+Mark read. The Update now offers **Continue** while it can do something (a task the interrupted
+session released is still ready, its budget has something left, no session of the project
+works). Continue is the person's own Start that goes on with the interrupted session (point S-10's
+`continues`): it opens the Start dialog with what is left of that session's budget, never more,
+and starts nothing by itself. It is derived from the rows (the Update names its project; the
+interrupted session is that project's newest one the restart ended), so no migration was needed.
+

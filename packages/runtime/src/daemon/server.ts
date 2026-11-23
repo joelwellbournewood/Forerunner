@@ -231,6 +231,7 @@ import {
   agentView,
   commandDefView,
   costView,
+  crashContinueOf,
   effortCapsOf,
   eventView,
   eventViews,
@@ -2619,7 +2620,16 @@ export function createDaemonApp(
       const body = await resultAfterWait(rt.store, m.project_id, m.created_at, m.body).catch(
         () => m.body,
       );
-      msgViews.push(messageView({ ...m, body }, names.get(m.from_agent_id) ?? m.from_agent_id));
+      // L4-money-207: a restart's Update about an interrupted session offers Continue.
+      const action = await crashContinueOf(rt.store, m, {
+        chfPerUsd: chf(),
+        projectWorks: async (projectId) =>
+          (await rt.store.session.active(rt.agent.id)).some((s) => s.project_id === projectId),
+      }).catch(() => undefined);
+      msgViews.push({
+        ...messageView({ ...m, body }, names.get(m.from_agent_id) ?? m.from_agent_id),
+        ...(action ? { action } : {}),
+      });
     }
     return c.json({
       requests: reqViews,

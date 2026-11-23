@@ -2389,3 +2389,72 @@ describe("l4-starts-sessions, run L4: the questions card says what Send answers 
     );
   });
 });
+
+describe("l4-starts-sessions, run L4: the crash Update offers Continue (L4-money-207)", () => {
+  // Live check 4 (LC-C6): 'Your last session was interrupted when Forerunner closed. "Write a
+  // two-sentence welcome note for the bakery in welcome.md" is ready again.' with only Mark read;
+  // design §5's example ends with [Continue].
+  const setUp = () => {
+    const harness = createHarness();
+    const s = harness.daemon.state.sessions[0];
+    if (s) {
+      s.status = "stopped";
+      s.stopReason = "interrupted";
+      s.projectId = "proj_atlas";
+      s.endedAt = "2026-11-17T08:36:56.000Z";
+      // What is left of its budget: CHF 4.20.
+      s.spent = { usdMicro: 1_000_000, chfMicro: s.budgetCap.chfMicro - 4_200_000 };
+    }
+    const t1 = harness.daemon.state.tasks.find((t) => t.id === "task_1");
+    if (t1) t1.status = "ready";
+    harness.daemon.state.messages.unshift({
+      id: "msg_crash",
+      fromAgentId: "agent_alice",
+      fromAgentName: "Alice",
+      toAgentId: null,
+      toHumanId: "human_1",
+      projectId: "proj_atlas",
+      taskId: null,
+      type: "info",
+      body: 'Your last session was interrupted when Forerunner closed. "Index the documentation pages" is ready again.',
+      requiresAck: false,
+      deliveredAt: null,
+      readAt: null,
+      actedAt: null,
+      createdAt: "2026-11-17T08:36:56.000Z",
+    });
+    return { harness, sessionId: s?.id ?? "" };
+  };
+
+  it("the Update shows Continue with what it does; the press opens Start, which goes on with the interrupted session", async () => {
+    const user = userEvent.setup();
+    const { harness, sessionId } = setUp();
+    renderApp("/inbox", harness);
+    const row = (await screen.findAllByTestId("message")).find((m) =>
+      m.textContent?.includes("Your last session was interrupted"),
+    ) as HTMLElement;
+    const button = within(row).getByTestId("message-continue");
+    expect(button).toHaveTextContent("Continue");
+    expect(within(row).getByTestId("message-continue-explain")).toHaveTextContent(
+      "Opens Start with the rest of your last session and the CHF 4.20 left of its budget.",
+    );
+    await user.click(button);
+    const dialog = await screen.findByTestId("start-session-dialog");
+    await user.click(within(dialog).getByTestId("confirm-start-session"));
+    await waitFor(() => expect(postedCalls(harness, "/sessions")).toHaveLength(1));
+    expect(postedCalls(harness, "/sessions")[0]?.body).toMatchObject({
+      projectId: "proj_atlas",
+      continues: sessionId,
+    });
+  });
+
+  it("with nothing ready any more the Update offers no Continue", async () => {
+    const { harness } = setUp();
+    for (const t of harness.daemon.state.tasks) if (t.projectId === "proj_atlas") t.status = "done";
+    renderApp("/inbox", harness);
+    const row = (await screen.findAllByTestId("message")).find((m) =>
+      m.textContent?.includes("Your last session was interrupted"),
+    ) as HTMLElement;
+    expect(within(row).queryByTestId("message-continue")).toBeNull();
+  });
+});

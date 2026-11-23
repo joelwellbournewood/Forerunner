@@ -200,6 +200,7 @@ import {
   needsOf,
 } from "@forerunner/runtime/session/credential-choice";
 import { nothingRunsYetSentence } from "@forerunner/runtime/session/credential-wait";
+import { INTERRUPTED_UPDATE_LEAD } from "@forerunner/runtime/session/recovery-words";
 import { NO_MODEL_CHAT_REPLY, SETUP_ASSISTANT_PATH } from "@forerunner/runtime/setup/no-model";
 import { type ChooserFacts, DEFAULT_CHOOSER_FACTS } from "@forerunner/runtime/wiring/billing-pick";
 import {
@@ -3972,7 +3973,41 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     return c.json({
       requests,
-      messages: state.messages,
+      // L4-money-207, as the daemon's `crashContinueOf`: a restart's Update about an interrupted
+      // session offers Continue while a task of its project is ready, its budget has something
+      // left and no session of the project works now.
+      messages: state.messages.map((m) => {
+        if (m.type !== "info" || !m.projectId || !m.body.startsWith(INTERRUPTED_UPDATE_LEAD))
+          return m;
+        if (
+          state.sessions.some(
+            (s) =>
+              s.projectId === m.projectId && ["running", "paused", "planned"].includes(s.status),
+          )
+        )
+          return m;
+        const ended = state.sessions.find(
+          (s) => s.projectId === m.projectId && s.stopReason === "interrupted",
+        );
+        const left = ended ? ended.budgetCap.chfMicro - ended.spent.chfMicro : 0;
+        const ready = state.tasks.some((t) => t.projectId === m.projectId && t.status === "ready");
+        if (!ended || left <= 0 || !ready) return m;
+        const budgetLeft = {
+          usdMicro: ended.budgetCap.usdMicro - ended.spent.usdMicro,
+          chfMicro: left,
+        };
+        return {
+          ...m,
+          action: {
+            kind: "continue" as const,
+            label: "Continue",
+            explain: `Opens Start with the rest of your last session and the ${formatChf(left)} left of its budget.`,
+            projectId: m.projectId,
+            sessionId: ended.id,
+            budgetLeft,
+          },
+        };
+      }),
       blockingCount: blockingCount(),
       needsYouCount: needsYouCount(),
     });

@@ -186,6 +186,40 @@ export function intakeDecisionLine(card: IntakeCardView): string | null {
 }
 
 /**
+ * l4-starts-sessions (L4-money-207, design §5's crash example): a restart's Update about an
+ * interrupted session offers Continue, the daemon's words: the Start dialog opens, and its Start
+ * goes on with that session (POST /sessions with `continues`) with what is left of its budget.
+ */
+function CrashContinue({ action }: { action: NonNullable<MessageView["action"]> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <Button
+        variant="primary"
+        onClick={() => setOpen(true)}
+        title={action.explain}
+        data-testid="message-continue"
+      >
+        {action.label}
+      </Button>
+      <span
+        className="text-xs text-neutral-600 dark:text-neutral-400"
+        data-testid="message-continue-explain"
+      >
+        {action.explain}
+      </span>
+      <StartSessionDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        projectId={action.projectId}
+        reference={action.budgetLeft}
+        continues={{ sessionId: action.sessionId, budget: action.budgetLeft }}
+      />
+    </span>
+  );
+}
+
+/**
  * The card key of questions only the person can answer (U-022): the runtime's
  * `PERSON_QUESTIONS_KEY_PREFIX` (`session/person-questions.ts`), which `test/inbox.test.tsx`
  * checks this equals; the runtime module itself needs Node and is not imported here.
@@ -744,6 +778,7 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
             <span className="ml-auto text-xs text-neutral-500">
               {m.fromAgentName} · {relativeTime(m.createdAt)}
             </span>
+            {m.action ? <CrashContinue action={m.action} /> : null}
             {m.readAt ? null : (
               <Button variant="ghost" onClick={() => void markRead(m)} data-testid="mark-read">
                 Mark read
