@@ -1138,3 +1138,73 @@ describe("l4-selftasks-check, run L4: an edit that changes nothing never enters 
     expect(r.status).toBe("completed");
   });
 });
+
+describe("l4-chat-carried, run L4: a kept suggestion is not filed again that session (C4-left-3)", () => {
+  // ST-11 (ADR 0119 point 7): after "Keep the tasks" the same suggestion is not filed again in the
+  // same session (fileTaskProposal's fingerprint check); another suggestion, or the same one in
+  // another session, is filed. Run C built the check and left it without a test.
+  const fenceOf = (parts: string[]) =>
+    ({
+      changes: [
+        {
+          change: {
+            kind: "split",
+            task: "Style the page",
+            parts: parts.map((title) => ({ title, acceptanceCriteria: [] })),
+            order: "in_turn",
+          },
+          why: "It is two jobs.",
+          taskIds: [],
+        },
+      ],
+      quotes: [],
+      askFirst: [],
+    }) as never;
+
+  it("Keep the tasks, then the same set: no second card; a different set: a card", async () => {
+    const w = await world({ level: 1 });
+    const project = await w.store.project.mustGet(w.seeded.project);
+    const session = await w.store.session.insert({
+      agent_id: w.seeded.agent,
+      project_id: project.id,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 1_000_000,
+      step_cap: 10,
+      spent_usd_micro: 0,
+      steps: 0,
+      started_at: w.clock.nowIso(),
+      status: "running",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+      reason: "test",
+      author_agent: w.seeded.agent,
+    } as never);
+    const file = (sessionId: string, parts: string[]) =>
+      fileTaskProposal(w.store, {
+        project,
+        humanId: w.seeded.human,
+        agentId: w.seeded.agent,
+        sessionId,
+        notes: [],
+        fence: fenceOf(parts),
+        callsOf: async () => [{ name: "task.split", params: { task: "t1", parts: [] } }],
+      } as never);
+    const first = await file(session.id, ["Style the layout", "Style the colours"]);
+    expect(first).toBeTruthy();
+    const row = await w.store.humanRequest.mustGet(first ?? "");
+    await w.store.humanRequest.answer(row.id, row.version, "Keep the tasks", w.seeded.human);
+    // The same set again in the same session: no card.
+    expect(await file(session.id, ["Style the layout", "Style the colours"])).toBeNull();
+    const open = async () =>
+      (await w.store.humanRequest.list({ status: "open" } as never, { limit: 50 })).filter(
+        (r) => (r.change_card as { key?: unknown } | null)?.key === TASK_PROPOSAL_KEY,
+      );
+    expect(await open()).toEqual([]);
+    // Another set is a new suggestion.
+    const other = await file(session.id, ["Style the grid", "Style the colours"]);
+    expect(other).toBeTruthy();
+    expect((await open()).map((r) => r.id)).toEqual([other]);
+  });
+});
