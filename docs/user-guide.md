@@ -515,7 +515,7 @@ them as you left them; an open file or task stays on its own tab.
   these 3 changes to the tasks of Quote page? …"), naming what each change does ('change "Publish
   the page": priority to High'). The line under the reply says what the check
   cost in CHF, booked to the project. Nothing starts a session. It says so instead when it cannot
-  run: "Fixing the tasks needs Claude.", "Fixing the tasks would pass this project's budget;
+  run: "Fixing the tasks needs Claude: connect it in Settings, Basics.", "Fixing the tasks would pass this project's budget;
   nothing changed.", "The agent is checking the tasks of Quote page now; ask again in a moment."
   or, when your rule for Claude waits, "Fixing the tasks waits for Claude: your subscription is at
   its limit until 15:40. Nothing changed." In Talk with no project on screen it asks which

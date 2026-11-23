@@ -8276,7 +8276,21 @@ hiding what it left out. What changed, item by item:
   (`task-fix-tool.ts`) puts "Asks you first: <reason>." in its footer only when the ask-first
   rule caused the read-back (`askFirst && makesFixesAtOnce(level) && !recordsRead`); at
   Advisor and Assisted, or after records were read, the footer is the cost line alone. The
-  session's suggestion card keeps its reasons as steps of their own, after the changes.
+  session's suggestion card says its reasons in its body, before "Nothing changes until you say
+  yes." (`proposalBody(notes, quotes, reasons)`; fixup-l4-selftasks-chat, L4-selftasks-129: they
+  were steps after the changes, so the Inbox's open list showed "Asks you first: ..." as one more
+  change); its steps are the changes only, and `change_card.reasons` keeps them as before.
+- **What waits on a decision** (fixup-l4-selftasks-chat, L4-selftasks-130): the result's line 1
+  says right after a task that needs the person or failed which tasks wait on it
+  (`RESULT_LINE_BUILDERS` "waits on what needs you", `waitsOnBlockerSentences`: '"B" waits on
+  it.' with one such task, '"C" waits on "A".' with two or more, never "it"); line 3 counts only
+  tasks that wait on something else ("1 task waits on other tasks."), a task waiting on a ready
+  one left for next time among them. `LastSessionOutcome.waiting[].waitsOnIds` (from `waitingOf`)
+  names what each waits on; an outcome kept before it is matched by title. The Update drops the
+  card's sentence together with the clause after it. Before (live check 4): "1 task waits on it."
+  on line 3, two sentences after what "it" was. "fix the tasks" with no Claude says "Fixing the
+  tasks needs Claude: connect it in Settings, Basics." (`FIX_NEEDS_CLAUDE`, L4-selftasks-127; a
+  Connect button under the reply is not built: chat replies have no link offer yet).
 - **Specialists and plans in the person's words** (L4-selftasks-111): the fence's reasons name a
   specialist through `saidByName` ("the writer", "the deployment specialist", never
   "writer-marketing" or "ops-deploy"); "the plan you approved has no task for the writer" only

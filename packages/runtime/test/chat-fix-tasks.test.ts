@@ -393,9 +393,12 @@ describe("d1109-selftasks-chat, run C: 'fix the tasks' with the autonomy rule (S
 });
 
 describe("d1109-selftasks-chat, run C: what stops a check (SC-1, SC-4)", () => {
-  it("without Claude: 'Fixing the tasks needs Claude.' and nothing changes", async () => {
+  it("without Claude: 'Fixing the tasks needs Claude: connect it in Settings, Basics.' and nothing changes", async () => {
     const w = await setup({ check: false });
-    expect((await w.chat("fix the tasks")).reply).toBe("Fixing the tasks needs Claude.");
+    // fixup-l4-selftasks-chat (L4-selftasks-127): it says what to do.
+    expect((await w.chat("fix the tasks")).reply).toBe(
+      "Fixing the tasks needs Claude: connect it in Settings, Basics.",
+    );
     expect(w.provider.calls).toHaveLength(0);
   });
 

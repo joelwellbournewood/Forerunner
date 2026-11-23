@@ -25,12 +25,10 @@ function suggestion() {
     taskTitle: null,
     sessionId: "sess_1",
     kind: "decision",
-    why: `The coder's report on "Index the documentation pages" says: "'Decide the versioning scheme' is two jobs, the numbers and the tags". Nothing changes until you say yes.`,
-    steps: [
-      SPLIT_LINE,
-      ADD_LINE,
-      'Asks you first: "Decide the versioning scheme" is a task you added or changed yourself.',
-    ],
+    // fixup-l4-selftasks-chat (L4-selftasks-129): why it asks first is in the body, as the
+    // daemon files it; the list holds the changes only.
+    why: `The coder's report on "Index the documentation pages" says: "'Decide the versioning scheme' is two jobs, the numbers and the tags". Asks you first: "Decide the versioning scheme" is a task you added or changed yourself. Nothing changes until you say yes.`,
+    steps: [SPLIT_LINE, ADD_LINE],
     options: ["Make these changes", "Keep the tasks"],
     blocking: false,
     risk: "low" as const,
@@ -107,7 +105,7 @@ describe("d1109-selftasks-run, run C: the agent's suggested task changes in the 
       "Atlas: the agent suggests 2 changes to the tasks",
     );
     expect(within(card).getByTestId("request-body")).toHaveTextContent(
-      `The coder's report on "Index the documentation pages" says: "'Decide the versioning scheme' is two jobs, the numbers and the tags". Nothing changes until you say yes.`,
+      `The coder's report on "Index the documentation pages" says: "'Decide the versioning scheme' is two jobs, the numbers and the tags". Asks you first: "Decide the versioning scheme" is a task you added or changed yourself. Nothing changes until you say yes.`,
     );
     expect(
       within(card)
@@ -125,7 +123,9 @@ describe("d1109-selftasks-run, run C: the agent's suggested task changes in the 
     expect(within(card).queryByTestId("request-details")).not.toBeInTheDocument();
     expect(details).toHaveTextContent(SPLIT_LINE);
     expect(details).toHaveTextContent(ADD_LINE);
-    expect(details).toHaveTextContent(
+    // L4-selftasks-129: the reason is said once, in the card's words, never as a change.
+    expect(details).not.toHaveTextContent("Asks you first");
+    expect(card).toHaveTextContent(
       'Asks you first: "Decide the versioning scheme" is a task you added or changed yourself.',
     );
     expect(card).not.toHaveTextContent(/task_proposal|fingerprint|task\.split|plan_fix/);

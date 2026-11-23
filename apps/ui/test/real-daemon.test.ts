@@ -20627,8 +20627,10 @@ describe("d1109-selftasks-run, run C", () => {
         status: "open",
         blocking: false,
         title: "Quote page: the agent suggests 2 changes to the tasks",
-        body: `The coder's report on "Create the page in index.html" says: "'Style the page' is two jobs, the layout and the colours". Nothing changes until you say yes.`,
-        details: [SPLIT_LINE, ADD_LINE, ASKS_LINE],
+        // fixup-l4-selftasks-chat (L4-selftasks-129): why it asks first is said in the body; the
+        // list holds the changes only.
+        body: `The coder's report on "Create the page in index.html" says: "'Style the page' is two jobs, the layout and the colours". ${ASKS_LINE} Nothing changes until you say yes.`,
+        details: [SPLIT_LINE, ADD_LINE],
         options: ["Make these changes", "Keep the tasks"],
         choices: [
           {
@@ -20787,7 +20789,7 @@ describe("d1109-selftasks-run, run C", () => {
       });
       await runSession(a, w.project.id, footer.id);
       const second = (await proposals(a, w.project.id)).find((r) => r.status === "open");
-      expect(second?.details).toEqual([SPLIT_LINE, ADD_LINE, ASKS_LINE]);
+      expect(second?.details).toEqual([SPLIT_LINE, ADD_LINE]);
       const header = await a.client.createTask(w.project.id, {
         title: "Create the page header",
         outcome: "index.html has a header",
@@ -23803,9 +23805,11 @@ describe("l4-selftasks-check, run L4", () => {
       const card = (await a.client.inbox(me.id)).requests.find(
         (r) => r.projectId === project.id && r.status === "open",
       );
+      // fixup-l4-selftasks-chat (L4-selftasks-129): why it asks first is in the body.
       expect(card?.why).toBe(
-        'The agent\'s check noted: "Please confirm the phone number on contact.html". Nothing changes until you say yes.',
+        'The agent\'s check noted: "Please confirm the phone number on contact.html". Asks you first: "Write the FAQ" is a task you added or changed yourself. Nothing changes until you say yes.',
       );
+      expect(card?.steps).toHaveLength(1);
       expect(card?.steps[0]).toBe(
         'Change "Write the FAQ": what done looks like to "The FAQ links to contact.html" and the criteria to "faq.html exists; the FAQ links to contact.html".',
       );
@@ -23869,9 +23873,10 @@ describe("l4-selftasks-check, run L4", () => {
           (r.changeCard as { key?: unknown } | null)?.key === "task_proposal",
       );
       expect(card?.why).toBe(
-        `The coder's report on "Add a word-count CLI in wc.js" says: "nothing checks the README's usage section, for the writer-marketing". Nothing changes until you say yes.`,
+        `The coder's report on "Add a word-count CLI in wc.js" says: "nothing checks the README's usage section, for the writer-marketing". Asks you first: no task of Word count is for the writer yet. Nothing changes until you say yes.`,
       );
-      expect(card?.steps).toContain("Asks you first: no task of Word count is for the writer yet.");
+      // fixup-l4-selftasks-chat (L4-selftasks-129): the reason is no line of the change list.
+      expect(JSON.stringify(card?.steps)).not.toContain("Asks you first");
       expect(JSON.stringify(card?.steps)).not.toMatch(
         /plan you approved|writer-marketing|ops-deploy/,
       );
@@ -27319,4 +27324,92 @@ describe("l4-selftasks-chat, run L4", () => {
       await b.rt.close();
     }
   }, 90_000);
+
+  it("L4-selftasks-127 (real daemon, no Claude credential): 'fix the tasks' says what to do, and nothing is spent", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4-stc-noclaude-"));
+    homes.push(home);
+    // No provider and an empty vault: the install before the setup assistant ran.
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock: new SimulatedClock("2026-11-17T09:00:00Z"),
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    try {
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Docs", goal: "A README" });
+      await client.createTask(project.id, taskBody("Write the README"));
+      const r = await client.chat({
+        humanId: me.id,
+        agentId,
+        projectId: project.id,
+        projectTab: true,
+        text: "fix the tasks",
+        source: "text",
+      });
+      expect(r.reply).toBe("Fixing the tasks needs Claude: connect it in Settings, Basics.");
+      expect(r.pendingConfirmation).toBeNull();
+      expect(r.actions).toEqual([]);
+      expect((await client.tasks(project.id)).map((t) => t.title)).toEqual(["Write the README"]);
+    } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("L4-selftasks-130 (real daemon): the Overview's Last result names what waits on the decision right after it", async () => {
+    const a = await open("fr-ui-real-l4-stc-waits-");
+    try {
+      const project = await a.client.createProject({ name: "Tea shop", goal: "A tea shop site" });
+      // A specialist this install does not have: the run refuses before any call, and the task
+      // needs the person's decision (its card in the Inbox).
+      const menu = await a.client.createTask(project.id, {
+        ...taskBody("Write menu.html with five teas in CHF"),
+        specialist: "illustrator",
+      });
+      await a.client.createTask(project.id, {
+        ...taskBody("Write styles.css and link it from every page"),
+        dependsOn: [menu.id],
+      });
+      const started = await a.client.startSession({
+        agentId: a.agentId,
+        projectId: project.id,
+        trigger: "manual",
+      });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () => (await a.client.session(sessionId)).status !== "running",
+        "the session to end",
+        async () => (await a.client.session(sessionId)).status,
+        30_000,
+      );
+      await settleSessions(a.rt);
+      const summary = (await a.client.projectSummary(project.id)).lastSession?.summary ?? "";
+      expect(summary.split("\n")[0]).toBe(
+        '"Write menu.html with five teas in CHF" needs your decision (Inbox). "Write styles.css and link it from every page" waits on it.',
+      );
+      expect(summary).not.toMatch(/\d+ tasks? waits? on it/);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });
