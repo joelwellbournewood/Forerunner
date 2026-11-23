@@ -108,6 +108,8 @@ export interface SessionRecord {
   paused: PausedTask[];
   needsYou: NamedTask[];
   cancelled: NamedTask[];
+  /** L4-money-214: what the person paused while it ran (`LastSessionOutcome.pausedByYou`). */
+  pausedByYou?: NamedTask[];
   /** An older row's tasks left waiting for the person, counted, never named by id. */
   leftForYou: number;
 }
@@ -141,6 +143,7 @@ export function recordOfOutcome(o: LastSessionOutcome): SessionRecord {
     paused: named(o.paused) as PausedTask[],
     needsYou: named(o.needsYou),
     cancelled: named(o.cancelled),
+    ...(named(o.pausedByYou).length ? { pausedByYou: named(o.pausedByYou) } : {}),
     leftForYou: 0,
   };
 }
@@ -232,6 +235,9 @@ export function sessionGist(r: SessionRecord): string {
     return fitted(titles(r.needsYou), (names) => `${names} needed your answer.`);
   if (r.cancelled.length)
     return fitted(titles(r.cancelled), (names) => `You cancelled ${names}; nothing else ran.`);
+  // L4-money-214: before, "Nothing finished." for a session whose only task the person paused.
+  if (r.pausedByYou?.length)
+    return fitted(titles(r.pausedByYou), (names) => `${names} paused by you.`);
   return "Nothing finished.";
 }
 
@@ -774,6 +780,7 @@ function hereOf(
     };
   if (has(record.needsYou)) return { words: "Needed your answer", key: "answer" };
   if (has(record.cancelled)) return { words: "Cancelled", key: "cancelled" };
+  if (has(record.pausedByYou ?? [])) return { words: "Paused by you", key: "paused" };
   return { words: "Worked on", key: null };
 }
 
@@ -805,6 +812,7 @@ export async function sessionTasksView(
       ...(outcome.paused ?? []),
       ...outcome.needsYou,
       ...(outcome.cancelled ?? []),
+      ...(outcome.pausedByYou ?? []),
     ])
       if (!order.includes(t.id)) order.push(t.id);
   const runningId = working ? await runningTaskIdOf(store, row.id) : null;

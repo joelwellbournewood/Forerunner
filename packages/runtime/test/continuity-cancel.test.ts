@@ -14,7 +14,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import { projectWorkspaceDir } from "../src/loop/docs.ts";
 import { fileReviewFailedRequest } from "../src/session/findings.ts";
-import { ScriptedProvider, type ScriptReply } from "./helpers.ts";
+import { removeHomes, ScriptedProvider, type ScriptReply, settleSessions } from "./helpers.ts";
 
 /**
  * Live walk 2 part 3 (C1, real model, 2026-11-01): "Skip the About page task" in chat, Yes,
@@ -860,5 +860,111 @@ describe("w15-run, wave 15: the result of a session whose only task you cancelle
     expect(summary).toMatch(
       /^You cancelled "About page"; nothing else ran\.\n(?:Less than )?CHF \d+\.\d{2}\.$/,
     );
+  }, 60_000);
+});
+
+/**
+ * l4-starts-sessions, run L4 (L4-money-214, live check 4 L4-l3-8): Redo a task, Start, then Stop
+ * it from its drawer while it runs: the session's result was "CHF 0.01." and nothing else, the
+ * Sessions row read "Nothing finished." and the status note "Ended: 1 task needs you." The
+ * person's own pause is said as theirs, is no news, and needs nobody.
+ */
+describe("l4-starts-sessions, run L4: the result of a session whose only task you paused (L4-money-214)", () => {
+  const clock = new SimulatedClock("2026-11-17T10:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-l4starts-214-"));
+  // "About page" writes about.html, then its run waits (an hour of simulated time that never
+  // passes) until the person stops it.
+  const provider = new ScriptedProvider(
+    [write("about.html", "<p>The club.</p>\n"), { ttftMs: HOUR, text: "never sent" }],
+    clock,
+  );
+  let rt: RuntimeApp;
+  let req: Awaited<ReturnType<typeof compose>>["req"];
+  beforeAll(async () => {
+    ({ rt, req } = await compose(home, clock, provider));
+  }, 120_000);
+  afterAll(async () => {
+    if (rt) await settleSessions(rt);
+    await rt?.close();
+    removeHomes([home]);
+  });
+
+  it("says 'You paused \"About page\"; nothing else ran.' with its cost; no Update, no 'needs you', and the row says it", async () => {
+    const project = await rt.store.project.insert({
+      name: "About club",
+      goal: "An about page",
+      autonomy_level: 2,
+    });
+    const task = await rt.store.task.insert({
+      project_id: project.id,
+      title: "About page",
+      outcome: "about.html says what the club is",
+      acceptance_criteria: ["about.html exists"],
+      risk_tier: 1,
+      status: "ready",
+      priority: 5,
+      specialist: "writer",
+      est_cost_usd_micro: 100_000,
+      reason: "seed",
+    });
+    const started = await req("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agentId: rt.agent.id, projectId: project.id, trigger: "manual" }),
+    });
+    const startedView = (await started.json()) as Json;
+    expect(startedView.result, JSON.stringify(startedView)).toBe("started");
+    const sessionId = (startedView.session as Json).id as string;
+    await waitFor(
+      async () =>
+        provider.calls.length === 2 &&
+        (await rt.store.task.mustGet(task.id)).status === "in_progress"
+          ? true
+          : undefined,
+      async () => `the run to wait mid-work (${provider.calls.length} calls)`,
+    );
+    // The drawer's Stop, as the Tasks tab sends it.
+    const shownTask = (await (await req(`/tasks/${task.id}`)).json()) as Json;
+    const stop = await req(`/tasks/${task.id}/action`, {
+      method: "POST",
+      body: JSON.stringify({
+        version: (shownTask.task as Json).version,
+        action: "stop",
+      }),
+    });
+    expect(stop.status).toBe(200);
+    const ended = await waitFor(
+      async () => {
+        const s = (await (await req(`/sessions/${sessionId}`)).json()) as Json;
+        return isEnded(s) ? s : undefined;
+      },
+      async () => `the session to end (task ${(await rt.store.task.mustGet(task.id)).status})`,
+    );
+    await settleSessions(rt);
+    const summary = String(ended.summary ?? "");
+    expect(summary).toMatch(
+      /^You paused "About page"; nothing else ran\.\n(?:Less than )?CHF \d+\.\d{2}\.$/,
+    );
+    // Its own click is not news: no Update for the session in the Inbox.
+    const inbox = (await (await req("/inbox")).json()) as Json;
+    const updates = (inbox.messages as Json[]).filter((m) => m.projectId === project.id);
+    expect(updates.map((m) => m.body)).toEqual([]);
+    // The status note in the project's folder does not say the task needs the person.
+    const status = readFileSync(
+      join(projectWorkspaceDir(join(rt.dirs.data, "projects"), project.id), "docs", "status.md"),
+      "utf8",
+    );
+    expect(status).toContain("- Note: Done. Spent CHF");
+    expect(status).not.toMatch(/needs? you/);
+    // The session page's badge and the Sessions row say it as the person's pause.
+    expect(String(ended.statusText)).not.toMatch(/needs? you/);
+    const list = (await (await req(`/projects/${project.id}/sessions`)).json()) as Json;
+    const row = (list.rows as Json[]).find((r) => r.id === sessionId);
+    expect(row?.gist).toBe('"About page" paused by you.');
+    expect(String(row?.endedWords ?? "")).not.toMatch(/needs? you/);
+    // The session page's "Tasks in this session" says it too (before: "Worked on").
+    const tasks = (await (await req(`/sessions/${sessionId}/tasks`)).json()) as Json;
+    expect((tasks.tasks as Json[]).map((t) => [t.title, t.here, t.now])).toEqual([
+      ["About page", "Paused by you", null],
+    ]);
   }, 60_000);
 });

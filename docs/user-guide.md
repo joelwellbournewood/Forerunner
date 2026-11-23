@@ -316,7 +316,8 @@ them as you left them; an open file or task stays on its own tab.
   specialist says so and the task asks you in the Inbox. The rows follow a running session
   by themselves. Each task offers what fits its status, each with a line saying what it does:
   **Make ready** (a draft), **Pause** / **Resume**, **Stop** (a running task: its run stops now
-  and it is paused; the session goes on with the rest), **Try again** (a failed task), **Answer**
+  and it is paused; the session goes on with the rest, and if nothing else ran its result says
+  'You paused "X"; nothing else ran.' with no Inbox line about your own click), **Try again** (a failed task), **Answer**
   (opens its card in the Inbox) or **Go ahead without** (the specialist decides and says what it
   assumed; not offered on a task only you can do), **Redo** (a done task: say what is wrong),
   **Take this work out** (a task whose pull request is merged; see below),

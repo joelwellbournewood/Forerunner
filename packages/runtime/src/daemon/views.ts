@@ -144,7 +144,7 @@ import {
   spentOf,
 } from "./session-list.ts";
 import { loadTaskDisplayContext, runOrder, taskDisplay, taskHeldWork } from "./task-display.ts";
-import { agentChangeLine, plainPlurals, withoutIds } from "./task-words.ts";
+import { agentChangeLine, isPausedByPerson, plainPlurals, withoutIds } from "./task-words.ts";
 
 /** An agent as `GET /agents` lists it and `POST /agents/:id/rename` answers it. */
 export function agentView(a: AgentRow): AgentView {
@@ -663,10 +663,13 @@ export async function stillBlocked(store: StateStore, handoff: unknown): Promise
       ? ((handoff as { paused: unknown[] }).paused.filter((x) => typeof x === "string") as string[])
       : [],
   );
+  // L4-money-214: a task the person paused while it ran waits on nobody while it is still theirs.
+  const pausedByYou = new Set((outcomeOfHandoff(handoff)?.pausedByYou ?? []).map((t) => t.id));
   const out: EndedWaits = { needYou: 0, paused: 0 };
   for (const id of new Set(ids)) {
     const t = await store.task.get(id);
     if (!t || (t.status !== "needs_human" && t.status !== "failed")) continue;
+    if (pausedByYou.has(id) && isPausedByPerson(t, false)) continue;
     if (pausedIds.has(id) && t.status === "needs_human") out.paused += 1;
     else out.needYou += 1;
   }

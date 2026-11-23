@@ -3991,6 +3991,10 @@ export class SessionRunner {
       waitingForDocker: waitingForSandbox
         .filter((t) => endState.readyNow.some((r) => r.id === t.id))
         .map((t) => ({ id: t.id, title: t.title })),
+      // L4-money-214: what the person paused while it ran (Pause or Stop), still paused by them.
+      ...(uniq(needsHuman).some(pausedByYou)
+        ? { pausedByYou: uniq(needsHuman).filter(pausedByYou).map(named) }
+        : {}),
       // W15-59: what the person cancelled while it ran or was reviewed, still cancelled now.
       ...(uniq(cancelled).some((id) => endState.rows.get(id)?.status === "cancelled")
         ? {
@@ -4135,7 +4139,9 @@ export class SessionRunner {
         // How it ended, as the Sessions list says it (the handoff's blocked and paused), never
         // the raw stop reason (L3-github-6: "Note: stop reason completed; spent CHF 0.09").
         const pausedIds = new Set((outcome.paused ?? []).map((t) => t.id));
-        const waits = uniq([...needsHuman, ...failed]);
+        // L4-money-214: a task the person paused waits on nobody (as `needsYouNow` reads it);
+        // before, the note said "Ended: 1 task needs you." for their own Stop.
+        const waits = uniq([...needsHuman, ...failed]).filter((id) => !pausedByYou(id));
         const endedNote = `${endedStatusText(status, stopReason, {
           needYou: waits.filter((id) => !pausedIds.has(id)).length,
           paused: waits.filter((id) => pausedIds.has(id)).length,

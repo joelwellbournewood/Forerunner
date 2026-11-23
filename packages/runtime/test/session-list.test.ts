@@ -77,6 +77,10 @@ describe("d1109-sessions, run C: the words of the Sessions list (SL-3)", () => {
     expect(plain(sessionGist(record({ cancelled: [task("Draft the FAQ")] })))).toBe(
       'You cancelled "Draft the FAQ"; nothing else ran.',
     );
+    // l4-starts-sessions, run L4 (L4-money-214): a task the person paused while it ran.
+    expect(plain(sessionGist(record({ pausedByYou: [task("About page")] })))).toBe(
+      '"About page" paused by you.',
+    );
     expect(plain(sessionGist(record()))).toBe("Nothing finished.");
     expect(plain(sessionGist(record({ leftForYou: 2 })))).toBe("Nothing finished.");
   });

@@ -70,6 +70,13 @@ export interface LastSessionOutcome {
    * only task they cancelled said only its cost ("CHF 0.01.").
    */
   cancelled?: NamedTask[];
+  /**
+   * l4-starts-sessions (L4-money-214): tasks the person paused (the Tasks tab's Pause or Stop)
+   * while the session ran them, still paused by them at its end: no card, needing nobody (design
+   * §2 "Paused by you"), so not in `needsYou`. A session whose only task they paused said only its
+   * cost ("CHF 0.01."), as W15-59's cancel did.
+   */
+  pausedByYou?: NamedTask[];
   spentChfMicro: number;
 }
 
@@ -402,11 +409,14 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     },
   },
   {
-    // W15-59: a session whose only work the person cancelled says so, not only its cost.
+    // W15-59: a session whose only work the person cancelled says so, not only its cost;
+    // l4-starts-sessions (L4-money-214): the same for what they paused while it ran, in one
+    // sentence with a cancel ('You cancelled "A" and paused "B"; nothing else ran.').
     name: "cancelled by you",
     line: 2,
     build: (f, o) => {
       const gone = o.cancelled ?? [];
+      const paused = o.pausedByYou ?? [];
       const did =
         o.done.length ||
         o.failed.length ||
@@ -414,9 +424,12 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
         (o.paused?.length ?? 0) ||
         f.inReview.length ||
         f.mergedPrs;
-      return gone.length && !did
-        ? [`You cancelled ${namesOf(titlesOf(gone))}; nothing else ran.`]
-        : [];
+      if (did || (!gone.length && !paused.length)) return [];
+      const what = [
+        gone.length ? `cancelled ${namesOf(titlesOf(gone))}` : null,
+        paused.length ? `paused ${namesOf(titlesOf(paused))}` : null,
+      ].filter(Boolean);
+      return [`You ${what.join(" and ")}; nothing else ran.`];
     },
   },
   {
@@ -767,7 +780,7 @@ export function needsYouSentence(titles: readonly string[]): string {
  * of polish-words: the Update read "Guides: Less than CHF 0.01." and nothing else).
  */
 const NOT_NEWS =
-  /^(?:(?:(?:Less than )?CHF \d+\.\d{2}\.|Stopped by you\.|Stopped: [^.]+\.|Stopped after the task, as asked\.|\d+ tasks? waits? on (?:it|other tasks)\.|You cancelled .+?; nothing else ran\.)\s*)+$/;
+  /^(?:(?:(?:Less than )?CHF \d+\.\d{2}\.|Stopped by you\.|Stopped: [^.]+\.|Stopped after the task, as asked\.|\d+ tasks? waits? on (?:it|other tasks)\.|You (?:cancelled|paused) .+?; nothing else ran\.)\s*)+$/;
 
 /**
  * Whether a result line is news on its own (design §3.8, §5.10): more than money, how the

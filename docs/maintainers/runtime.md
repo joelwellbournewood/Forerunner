@@ -3847,7 +3847,16 @@ requests for you to merge." counts only what waits for the person (`openPrs`). A
 only work the person cancelled while it ran or was reviewed says 'You cancelled "X"; nothing else
 ran.' before its cost (W15-59: `LastSessionOutcome.cancelled`, the builder "cancelled by you";
 it said only "CHF 0.01."); the Update leaves it out (`NOT_NEWS`: the person's own click is no
-news, design §5 rule 11). The Overview's Last result gets "Since then: merged #2, #3
+news, design §5 rule 11). The same for a task the person paused (Pause or Stop on the Tasks tab)
+while the session ran it, still paused by them at its end (l4-starts-sessions, L4-money-214, live
+check 4 L4-l3-8: "CHF 0.01." alone, the Sessions row "Nothing finished." and the status note
+"Ended: 1 task needs you."): `LastSessionOutcome.pausedByYou` (the runner's `pausedByYou`, which
+also keeps it out of `needsYou`), 'You paused "X"; nothing else ran.' (with a cancel in one
+sentence: 'You cancelled "A" and paused "B"; nothing else ran.'), not news; the status note's
+count and `stillBlocked` (the session page's badge, the Sessions row's end words) leave it out,
+`sessionGist` reads '"X" paused by you.' and the session's task list "Paused by you" (tests:
+`writing-rules.test.ts`, `session-list.test.ts` and the composed `continuity-cancel.test.ts`,
+each "l4-starts-sessions, run L4"). The Overview's Last result gets "Since then: merged #2, #3
 and #4." (`mergedSinceLine` in `views.ts`) for the pull requests the session left open whose record
 says merged now.
 
