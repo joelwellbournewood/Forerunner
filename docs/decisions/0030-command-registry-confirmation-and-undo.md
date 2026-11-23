@@ -100,3 +100,9 @@ The change log gains the source `session`, and `CommandContext.planFix` (`{ leve
   state then, applying only what it read back while that is unchanged (the named tasks' fields, a
   value's old value, a fix set's task-list fingerprint); else one line says what changed. Every
   other confirmation keeps ten minutes, and its lapse is told (events and one Update).
+- (fix-up, same day) Across a restart every chat, Talk or voice read-back is armed again, also one
+  whose request no longer plans (its task was cancelled or finished meanwhile) and an Undo read
+  back in chat (`change_card.undo_of`); its Yes then says what changed and applies nothing. The
+  orphan sweep closes only cards nothing can arm again and says why truthfully: "Its card closed
+  after 10 minutes without your yes" for one whose ten minutes passed while Forerunner was closed,
+  else "Its card could not be opened again after Forerunner restarted".

@@ -1223,8 +1223,11 @@ export class CommandExecutor {
       // fixup-l4-selftasks-chat: the request can no longer be planned (the task it named was
       // cancelled, finished or removed since). What it named is read as it is now, so the Yes
       // says in one line what changed ('"Write the FAQ" changed since I asked: it is cancelled
-      // now. ...'); a refusal with nothing named that moved keeps the command's own words.
-      const named = await subjectsNow(this.store, p.shown).catch(() => null);
+      // now. ...'); a refusal with nothing named that moved keeps the command's own words, and
+      // so does one that already says in words what the task is and that nothing changed
+      // (C-38's '"Write the FAQ" is already done; nothing changed.').
+      const said = /nothing changed\.$/.test(errorMessage(e));
+      const named = said ? null : await subjectsNow(this.store, p.shown).catch(() => null);
       const gone = named ? changedSince(p.shown, named) : null;
       const reason = gone ?? errorMessage(e);
       await this.answerRequest(pendingId, { verdict: "refused", reason, ...answered }, by.id);
