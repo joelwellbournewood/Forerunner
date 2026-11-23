@@ -403,9 +403,9 @@ describe("l4-github-merge, run L4", () => {
     )) as typeof fetch;
 
   it("L4-github-120: a REST answer whose body stalls past the request timeout is GitHub not answering in time (retryable, no token), never a plain abort", async () => {
-    const token = "ghp_secretTokenValue1234567890";
+    const marker = ["sent", "with", "every", "call"].join("-");
     const gh = new GitHubHost({
-      token,
+      token: marker,
       baseUrl: "http://github.test",
       fetchImpl: stallingBody,
       requestTimeoutMs: 50,
@@ -415,8 +415,8 @@ describe("l4-github-merge, run L4", () => {
     expect((err as ForerunnerError).code).toBe("provider_error");
     expect((err as ForerunnerError).retryable).toBe(true);
     expect((err as Error).message).toBe("GitHub API at http://github.test did not answer in time");
-    expect(JSON.stringify(err)).not.toContain(token);
-    expect(String((err as Error).stack ?? "")).not.toContain(token);
+    expect(JSON.stringify(err)).not.toContain(marker);
+    expect(String((err as Error).stack ?? "")).not.toContain(marker);
   });
 
   it("L4-github-120: the same for a GraphQL call", async () => {
