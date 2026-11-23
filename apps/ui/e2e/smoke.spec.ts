@@ -79,3 +79,60 @@ for (const width of [1280, 375])
       await holdSessions(request, false);
     }
   });
+
+// l4-starts-sessions (L4-money-208; D8, design §5 rule 10): a person's session waiting to go on
+// is said once beside the bar. Live check 4 (LC-C31) showed 'waiting until' three times and
+// Cancel three times on the Overview at 1280 and 375 px (the bar, Working now and the header).
+for (const width of [1280, 375])
+  test(`a waiting session's Overview has one Cancel outside the bar at ${width} px, with no sideways scroll`, async ({
+    page,
+    request,
+  }) => {
+    const res = await request.post(`${daemonUrl()}/__test/waiting`, {
+      headers: { Authorization: `Bearer ${process.env.FORERUNNER_UI_FAKE_TOKEN ?? ""}` },
+      data: {
+        projectId: "proj_beacon",
+        head: "Waiting until 15:40 (your subscription's limit)",
+        view: {
+          key: "wait:proj_beacon",
+          sessionId: "sess_1",
+          projectId: "proj_beacon",
+          projectName: "Beacon",
+          state: "waiting",
+          what: "waiting until 15:40, then it goes on",
+          text: "Beacon · waiting until 15:40, then it goes on",
+          since: new Date().toISOString(),
+          stop: [],
+          cancel: true,
+          nextProject: null,
+          explain: null,
+        },
+      },
+    });
+    expect(res.ok()).toBe(true);
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/projects/proj_beacon");
+    await expect(page.getByTestId("project-status").first()).toHaveText(
+      "Waiting until 15:40 (your subscription's limit), then it goes on",
+    );
+    const bar = page.getByTestId("run-indicator-bar");
+    await expect(bar.getByTestId("run-text")).toHaveText(
+      "Beacon · waiting until 15:40, then it goes on",
+    );
+    await expect(bar.getByTestId("run-cancel")).toBeVisible();
+    const working = page.getByTestId("overview-working");
+    await expect(working.getByTestId("run-cancel")).toBeVisible();
+    await expect(working.getByTestId("run-cancel-explain")).toHaveText(
+      "Cancel: nothing starts when Claude is back; its tasks wait for your Start.",
+    );
+    // Every Cancel on the page: the bar's and Working now's, none on the header's line.
+    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(2);
+    await expect(
+      page.getByTestId("project-header").getByRole("button", { name: "Cancel" }),
+    ).toHaveCount(0);
+    const scroll = await page.evaluate(() => ({
+      width: document.documentElement.scrollWidth,
+      client: document.documentElement.clientWidth,
+    }));
+    expect(scroll.width).toBeLessThanOrEqual(scroll.client);
+  });

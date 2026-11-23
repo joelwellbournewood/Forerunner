@@ -563,7 +563,18 @@ session. While a session runs `document.title` is "● Quote page · Forerunner"
 session first; the monthly check alone: "● The critic's monthly check · Forerunner"; a waiting
 one leaves it "Forerunner"). The same element in its **block** form is Home's and the Overview's
 **Working now**, and in its **compact** form the first line of Talk (`ConversationPanel`, whose
-modal covers the header). The Inbox's Done line offers **Start** (V-6, `DoneStart`) when the
+modal covers the header). One place per fact (l4-starts-sessions, L4-money-208, D8): a wait
+that goes on by itself keeps its Cancel and the Cancel's line on the bar and Working now only,
+the project's line (`ProjectStatus`) says the wait with no button of its own; a working
+project's line is the bar's `what` with the count (the daemon's `statusLine`); the session
+page's Current task reads the bar's entry for the session while no task's run is in flight
+(`currentWords`: 'The critic checks "X"', "Plans the session", "Picks the next task"; it read
+"Choosing the next task…" during a review); the Overview's Last result during a project's first
+session reads "Running now: Open the session" (`last-result-running`, from the card's `working`),
+not "No session yet.". Tests: `test/run-indicator.test.tsx` "l4-starts-sessions, run L4",
+`e2e/smoke.spec.ts` (one Cancel outside the bar at 1280 and 375 px; the fake daemon's
+`POST /__test/waiting` seeds the wait, its `runReview` the critic's review).
+The Inbox's Done line offers **Start** (V-6, `DoneStart`) when the
 answer readied work for the person's next Start (`HumanRequestView.startOffer`) and no session of
 that project runs or waits (the same `running` list); it opens that project's Start dialog.
 The page of a session that ended to wait for its credential shows the daemon's

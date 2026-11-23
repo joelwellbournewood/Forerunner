@@ -208,6 +208,18 @@ function SummaryCard({ projectId, project }: { projectId: string; project?: Proj
               ) : null}
             </p>
           </div>
+        ) : project?.working ? (
+          // l4-starts-sessions (L4-money-208): the first session runs now; "No session yet."
+          // read beside the bar that said it works (live check 4).
+          <p className="text-sm" data-testid="last-result-running">
+            Running now:{" "}
+            <Link
+              to={`/sessions/${encodeURIComponent(project.working.sessionId)}`}
+              className="text-blue-700 hover:underline dark:text-blue-300"
+            >
+              Open the session
+            </Link>
+          </p>
         ) : (
           <p className="text-sm text-neutral-500">No session yet.</p>
         )}

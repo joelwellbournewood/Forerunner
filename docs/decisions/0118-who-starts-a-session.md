@@ -246,3 +246,19 @@ works). Continue is the person's own Start that goes on with the interrupted ses
 and starts nothing by itself. It is derived from the rows (the Update names its project; the
 interrupted session is that project's newest one the restart ended), so no migration was needed.
 
+
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-208): a running or waiting session is said once beside the bar
+
+D8 made the run indicator the one source of what runs now ("it should at least be very clear to
+a user when a run is ongoing"); design §5 rule 10 says one place per fact. Live check 4 showed
+one wait three times with three Cancels on the Overview (the bar, Working now and the project's
+line), 'Working on "X"' on the header beside the bar's 'the coder works on "X"', "Choosing the
+next task…" on the session page while the bar said the critic checks, and "Last result: No
+session yet." during the first session. Now the wait's Cancel, with its line in view, is on the
+bar and Working now only; the project's line says the wait without a button ("Waiting until
+15:40 (your subscription's limit), then it goes on"; a refused credential's line keeps Save a
+new key, which is what lets it go on; a Start kept for the reset keeps its Cancel, since the bar
+does not show it). A working project's line is the bar's `what` with the count ('The coder works
+on "Create index.html" (0 of 7 done)'); the session page's Current task reads the bar's entry
+while no task's run is in flight; the Overview's Last result during the first session reads
+"Running now: Open the session". The engine does nothing new: the words come from the bar.

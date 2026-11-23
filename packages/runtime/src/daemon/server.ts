@@ -1070,6 +1070,10 @@ export function createDaemonApp(
       sharesRepositoryWith: (project) => sharesRepositoryWith(rt.joinDeps, project),
       // d1109-run-visible (V-3): what waits to start, said with when.
       startsWait: startsWaitOf,
+      // l4-starts-sessions (L4-money-208): the working line in the run indicator's words.
+      workingWhat: async (sessionId) =>
+        (await rt.running.views()).find((v) => v.sessionId === sessionId && v.state !== "waiting")
+          ?.what ?? null,
     });
   app.get("/projects", async (c) => {
     const rows = await rt.store.project.active({ limit: 100 });

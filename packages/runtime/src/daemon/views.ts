@@ -215,6 +215,11 @@ export interface ProjectCardFacts {
    * sentence says it.
    */
   startsWait?: (projectId: string) => Promise<StartsWait | null>;
+  /**
+   * l4-starts-sessions (L4-money-208): what a working session does now in the run indicator's
+   * words (its entry's `what`), for the status sentence; null when the bar has no entry for it.
+   */
+  workingWhat?: (sessionId: string) => Promise<string | null>;
 }
 
 export async function projectCard(
@@ -282,6 +287,10 @@ export async function projectCard(
     hasModel: facts?.hasModel ?? null,
     stopped: facts?.stopped ?? null,
     working,
+    workingWhat:
+      working && facts?.workingWhat
+        ? await facts.workingWhat(working.sessionId).catch(() => null)
+        : null,
     folder,
     joinedInto: joined ? { text: joined.text, projectId: joined.projectId } : null,
     startsWait:

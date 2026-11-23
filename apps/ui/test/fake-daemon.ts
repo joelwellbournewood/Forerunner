@@ -591,6 +591,11 @@ export interface FakeDaemonState {
    */
   runCredential: Record<string, { on?: string; asking?: { count: number; to: string } }>;
   /**
+   * l4-starts-sessions (L4-money-208), as the daemon's run fold: the task the critic checks in a
+   * running session, by session id (the bar's 'the critic checks "X"'; no task is in flight).
+   */
+  runReview: Record<string, string>;
+  /**
    * d1109-run-visible (V-3): what waits to start for a project, as the daemon's `startsWaitOf`
    * reads it (the person's session going on, a kept Start, a held hands-off start, a person start
    * behind another session); its status line says it. Cancel drops a continuation or kept start.
@@ -1457,6 +1462,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     sessions: clone(SESSIONS),
     runningExtra: [],
     runCredential: {},
+    runReview: {},
     startsWait: {},
     waitBlockAfterCancel: {},
     projectSessions: clone(PROJECT_SESSIONS),
@@ -1590,15 +1596,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const project = state.projects.find((p) => p.id === s.projectId);
       if (!project) continue;
       busy.add(project.id);
-      const task = s.currentTask;
+      const review = state.runReview[s.id];
+      const task = review ? null : s.currentTask;
       const runState: RunningView["state"] =
-        s.status === "paused" ? "stopping" : task ? "working" : "between";
+        s.status === "paused" ? "stopping" : review ? "reviewing" : task ? "working" : "between";
       // CS-7, as the daemon: the running task on the credential its choice puts second, and
       // the tasks that wait for the person's answer on the ask card.
       const credential = state.runCredential[s.id];
       const words = {
         state: runState,
-        taskTitle: task?.title ?? null,
+        taskTitle: review ?? task?.title ?? null,
         specialist: task?.specialist ?? null,
         ...(runState === "working" && credential?.on ? { on: credential.on } : {}),
         ...(credential?.asking ? { asking: credential.asking.count } : {}),
@@ -1842,6 +1849,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.desktop = { revoked: false, revokedReason: null, control: { ...DESKTOP_OFF } };
     state.speedQuality = {};
     state.holdSessions = false;
+    state.runningExtra = [];
+    state.runCredential = {};
+    state.runReview = {};
+    state.startsWait = {};
+    return c.json({ ok: true });
+  });
+  // l4-starts-sessions (L4-money-208): a person's session waiting to go on, for a browser test:
+  // its project's line (`startsWait`) and the run indicator's entry, as the daemon has them.
+  app.post("/__test/waiting", async (c) => {
+    const body = (await c.req.json()) as { projectId: string; head: string; view: RunningView };
+    state.startsWait[body.projectId] = { kind: "continuation", head: body.head };
+    state.runningExtra = [
+      ...state.runningExtra.filter((r) => r.projectId !== body.projectId),
+      body.view,
+    ];
+    emitRunning();
     return c.json({ ok: true });
   });
   app.post("/__test/hold-sessions", async (c) => {
@@ -2179,6 +2202,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       hasModel: me.provider === undefined ? null : me.provider !== null,
       stopped: state.killActive,
       working,
+      // l4-starts-sessions (L4-money-208), as the daemon: the working line in the bar's words.
+      workingWhat: session
+        ? (fakeRunning().find((v) => v.sessionId === session.id && v.state !== "waiting")?.what ??
+          null)
+        : null,
       folder,
       // OJ-06, as the daemon: a project closed into another reads where its work went.
       joinedInto: state.joined[p.id]

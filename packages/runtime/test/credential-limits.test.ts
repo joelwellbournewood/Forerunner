@@ -460,12 +460,13 @@ describe("a key at its usage limit (U-078)", () => {
     const order = await json<BillingOrderView>(first.req("/settings/billing-order"));
     expect(order.sources[0]?.blocked).toBe("resting");
     // Home and the project header: what the project waits for; nothing is to be done, and
-    // d1109-run-visible (V-3): it goes on by itself, with Cancel for a person who does not want it.
+    // d1109-run-visible (V-3): it goes on by itself; Cancel for a person who does not want it is
+    // the run indicator's (l4-starts-sessions, L4-money-208: one Cancel per wait, D8).
     const card = await json<{ statusLine: StatusLine }>(first.req(`/projects/${project.id}`));
     expect(card.statusLine).toEqual({
       kind: "paused",
       text: "Waiting until 16:40 (your API key's limit), then it goes on",
-      action: { kind: "cancel", label: "Cancel", to: null },
+      action: null,
     });
     // No card: a limit is nothing the person must do.
     const inbox = await json<InboxView>(first.req("/inbox"));

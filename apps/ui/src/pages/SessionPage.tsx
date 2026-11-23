@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import {
   describeError,
   type EventView,
+  type RunningView,
   type SessionTasksView,
   type SessionView,
 } from "../api/client.ts";
@@ -132,6 +133,23 @@ export function pullRequestsFromLog(events: readonly EventView[]): SessionPullRe
 }
 
 /** Live session view (design §3.7, spec K.3). */
+/**
+ * Current task's words when no task's run is in flight, from the run indicator's entry for the
+ * session (l4-starts-sessions, L4-money-208): its `what` with the first letter up ('The critic
+ * checks "Write the README"', 'Plans the session', 'Picks the next task'); without an entry,
+ * the bar's words for between tasks. `review`: the critic checks the task the log last ran.
+ */
+export function currentWords(run: Pick<RunningView, "state" | "what"> | null): {
+  text: string;
+  review: boolean;
+} {
+  const what = run && run.state !== "waiting" ? run.what.trim() : "";
+  return {
+    text: what ? `${what.charAt(0).toUpperCase()}${what.slice(1)}` : "Picks the next task",
+    review: run?.state === "reviewing",
+  };
+}
+
 export function SessionPage() {
   const { id = "" } = useParams();
   const client = useClient();
@@ -155,6 +173,9 @@ export function SessionPage() {
   const projectName = useUiState(
     (s) => s.projects.find((p) => p.id === session?.projectId)?.name ?? null,
   );
+  // l4-starts-sessions (L4-money-208, D8): the run indicator's entry for this session, so
+  // Current task says what the bar says (the critic checks "X", picks the next task).
+  const runNow = useUiState((s) => s.running.find((r) => r.sessionId === id) ?? null);
   const [follow, setFollow] = useState(true);
   const [stopBusy, setStopBusy] = useState(false);
   /** Stop now asks once (design §3.7). */
@@ -384,6 +405,9 @@ export function SessionPage() {
     (session.currentTask && !ended
       ? { title: session.currentTask.title, specialist: session.currentTask.specialist, steps: [] }
       : null);
+  // L4-money-208: no task in flight (planning, a review, between tasks) reads the bar's words;
+  // live check 4 showed "Choosing the next task…" while the bar said the critic checks.
+  const between = currentWords(runNow);
 
   return (
     <section aria-labelledby="session-title" className="flex h-full flex-col gap-3">
@@ -475,7 +499,7 @@ export function SessionPage() {
             <div className="rounded border border-neutral-200 p-2 text-sm md:col-span-2 dark:border-neutral-800">
               <div className="text-xs text-neutral-500">Current task</div>
               <div data-testid="current-task">
-                {current ? (
+                {current && !between.review ? (
                   <>
                     <span className="font-medium">"{current.title}"</span>
                     {current.specialist ? (
@@ -486,10 +510,10 @@ export function SessionPage() {
                     ) : null}
                   </>
                 ) : (
-                  "Choosing the next task…"
+                  between.text
                 )}
               </div>
-              {current && current.steps.length > 0 ? (
+              {current && !between.review && current.steps.length > 0 ? (
                 <ul
                   className="mt-1 space-y-0.5 text-xs text-neutral-700 dark:text-neutral-300"
                   data-testid="current-steps"

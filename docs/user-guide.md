@@ -65,7 +65,8 @@ Home shows, top to bottom:
   session that works until nothing more can run), **Set up Docker** or **Open Tasks**.
 
 The sentence says, first match first: "Waiting for you: approve the plan" or "Waiting for you:
-2 questions"; 'Working on "Style the page" (3 of 7 done)'; 'Stuck: "Style the page" failed; 2
+2 questions"; 'The coder works on "Style the page" (3 of 7 done)', in the words of the bar at the
+top; 'Stuck: "Style the page" failed; 2
 tasks wait on it' or "Waiting for Docker: 1 task"; "Ready to continue: 3 tasks ready" (without
 a Claude key "Ready: 3 tasks. Claude is not connected." with **Connect Claude**, and while
 sessions are stopped "Ready: 3 tasks. Sessions are stopped.", the bar at the top having
@@ -1644,9 +1645,12 @@ month's report is then not written.
 When a session of yours stopped to wait for Claude (a usage limit, a refused key) and goes on by
 itself when Claude is back, the bar reads **Quote page · waiting until 15:40, then it goes on**
 with **Cancel** instead of Stop; Cancel means nothing starts when Claude is back and its tasks
-wait for your Start. The same wait shows on the project's line and on that session's page (with
+wait for your Start. The same wait shows on the project's line (without a Cancel of its own: the
+bar's and the Overview's Working now are the place for it) and on that session's page (with
 Cancel, or once cancelled **Continue**, which opens Start with the rest of that session and what
-is left of its budget). After Cancel, the session's result on its page, on the Overview (and in
+is left of its budget). While a session works, the session page's Current task says what the bar
+says ('The critic checks "Style the page"', "Picks the next task"), and during a project's first
+session the Overview's Last result reads "Running now: Open the session". After Cancel, the session's result on its page, on the Overview (and in
 Read aloud), its Update line in the Inbox and Chat ("summary", or a question about the last
 session) say "...; then it runs at your next Start." instead of "then your session goes on",
 at once, with no reload of the page. The project's line also says what waits to start: "Starts at

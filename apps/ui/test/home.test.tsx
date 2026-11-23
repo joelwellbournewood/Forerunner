@@ -82,13 +82,14 @@ describe("Home", () => {
     );
     expect(within(working).getByTestId("run-open")).toHaveAttribute("href", "/sessions/sess_live");
     expect(within(working).getByTestId("run-stop")).toBeInTheDocument();
-    // The project's row says it too, and offers no second Start.
+    // The project's row says it too, in the bar's words (l4-starts-sessions, L4-money-208: it
+    // read 'Working on "X"' beside the bar's 'the coder works on "X"'), and offers no second Start.
     await waitFor(() =>
       expect(
         within(screen.getAllByTestId("project-card")[1] as HTMLElement).getByTestId(
           "project-status",
         ),
-      ).toHaveTextContent(`Working on "${draft.title}" (0 of 1 done)`),
+      ).toHaveTextContent(`The coder works on "${draft.title}" (0 of 1 done)`),
     );
   });
 

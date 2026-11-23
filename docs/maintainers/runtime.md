@@ -7534,7 +7534,11 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   you: "X"', "Waiting for you: 2 questions", or the kinds of the cards, "Waiting for you: 1
   sign-off and 1 paused task" (L-13a; up to three kinds named, then "and N more"; W15-77: a change waiting for a yes, the registry's card with a `command` and no card key, is "1 change to confirm", "2 changes to confirm", never a question), with Answer opening the oldest card,
   `/inbox#card-<id>` (later #55); the Docker card asks nothing, `holdsTask`); a
-  session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
+  session working on it, in the run indicator's words with the count (l4-starts-sessions,
+  L4-money-208: `ProjectStatusInput.workingWhat`, the entry's `what` from `rt.running.views()`
+  through `ProjectCardFacts.workingWhat`; 'The coder works on "X" (3 of 7 done)', 'The critic
+  checks "X" (3 of 7 done)', a long title shortened inside its quotes by `withProgress`; without
+  it, 'Working on "X" (3 of 7 done)'; action Open running session); a task
   `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks
   waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready"; W15-67: while no
   ready task can run because its credential rests or was refused, kept or not, the line names
@@ -8127,7 +8131,8 @@ sentences from it); `daemon/run-indicator.ts` reads the store and re-exports the
 - **Elsewhere**: the Sessions list's working row says `sessionRunText` (d1109-sessions'
   `workingWords` re-pointed; the same kept fold as the bar); the project status line gains rule 2b from `startsWaitOf`
   (`ProjectCardFacts.startsWait`): "Waiting until 15:40 (your subscription's limit), then it
-  goes on" with Cancel (action kind `cancel`), "Starts at 15:40 (your subscription's limit)"
+  goes on" (its Cancel is the run indicator entry's since l4-starts-sessions, L4-money-208, D8:
+  one Cancel per wait beside the bar; it had action kind `cancel`), "Starts at 15:40 (your subscription's limit)"
   with Cancel (a kept Start), "Starts after your quiet hours" (a held hands-off start), 'Starts
   after the session on "Quote page"' (a waiting person start), and rule 4 reads "Ready: 3 tasks
   wait for your Start"; a session that ended to wait has `SessionView.waitBlock` (`{state:

@@ -21790,11 +21790,12 @@ describe("d1109-run-visible, run C: a person's session waiting to go on", () => 
         text: "Quote page · waiting until 11:40, then it goes on",
         waiting: true,
       });
-      // V-3: the project's line says it too, with Cancel.
+      // V-3: the project's line says it too; its Cancel is the run indicator's entry's
+      // (l4-starts-sessions, L4-money-208, D8: one wait, one Cancel beside the bar).
       expect((await client.project(project.id)).statusLine).toEqual({
         kind: "paused",
         text: "Waiting until 11:40 (your subscription's limit), then it goes on",
-        action: { kind: "cancel", label: "Cancel", to: null },
+        action: null,
       });
       // The person's quiet hours cover the reset: it goes on when they end.
       const me = await rt.store.human.mustGet(rt.human.id);
@@ -27948,6 +27949,71 @@ describe("l4-starts-sessions, run L4", () => {
       expect(rt.scheduler.pendingFor(rt.agent.id)).toBeUndefined();
       expect(await client.sessions({ projectId: project.id })).toEqual([]);
     } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("L4-money-208: while a session works, the project's line is the bar's words with the count, and nothing has ended yet", async () => {
+    // Live check 4 (C5L-12): 'Working on "Create index.html" (0 of 7 done)' on the header beside
+    // the bar's 'the coder works on "Create index.html"'; one fact, the bar's words.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4starts-208-"));
+    homes.push(home);
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    let release = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const stream = model.stream.bind(model);
+    // The specialist's calls wait until the case has read the line: the session is mid-task.
+    model.stream = (req) =>
+      detectRole(req).role === "specialist"
+        ? (async function* () {
+            await gate;
+            yield* stream(req);
+          })()
+        : stream(req);
+    const { rt, client } = await composeWithRolePlayer({}, { provider: model });
+    let sessionId = "";
+    try {
+      const project = await client.createProject({ name: "Club site", goal: "A note" });
+      await readyTask(client, project.id, "Write the club motto");
+      await readyTask(client, project.id, "Write the club rules");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      expect(started.result, JSON.stringify(started)).toBe("started");
+      sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          (await client.running()).some((v) => v.sessionId === sessionId && v.state === "working"),
+        "the session to work on its first task (20 s)",
+        async () => JSON.stringify(await client.running()),
+        20_000,
+      );
+      const entry = (await client.running()).find((v) => v.sessionId === sessionId);
+      expect(entry?.what).toMatch(/^the coder works on "Write the club (motto|rules)"$/);
+      const what = entry?.what ?? "";
+      const card = await client.project(project.id);
+      expect(card.statusLine).toEqual({
+        kind: "working",
+        text: `${what.charAt(0).toUpperCase()}${what.slice(1)} (0 of 2 done)`,
+        action: {
+          kind: "link",
+          label: "Open running session",
+          to: `/sessions/${encodeURIComponent(sessionId)}`,
+        },
+      });
+      // The Overview's Last result reads "Running now: Open the session" from these two.
+      expect(card.working?.sessionId).toBe(sessionId);
+      expect((await client.projectSummary(project.id)).lastSession ?? null).toBeNull();
+    } finally {
+      release();
+      if (sessionId) await ended(client, sessionId, "the held session");
       await settleSessions(rt);
       await rt.close();
     }
