@@ -73,3 +73,26 @@ specialist writes no file (decided from its registry tools, `writesNoFile`) is h
 report: its brief and its review read "The report shows this outcome (this specialist writes no
 file, so a file named here is met by its report): <outcome>". No prompt changed. validation.md's
 gap (the planner only plans work the specialist can do, U-022) stays open.
+
+## Amendment 2026-11-23 (l4-selftasks-carried, run L4, L4-other-1 D-3, D-5, D-6)
+
+Decision 1's line names the file the task's words ask for, and says the same wherever a task
+for a specialist that writes no file is made or changed:
+
+- **The line names the file** (D-3): when the outcome or a criterion asks for a file ("review.md
+  lists the gaps"), the line reads "The reviewer writes no file, so review.md is not written: its
+  findings are its report, which you read in the task's drawer." (`writesNoFileLine` with
+  `fileTheWordsWrite`, registry/tools.ts). Words that name no file keep the plain line. New task
+  and Edit ask `GET /settings/models` with the words typed so far (`?title=`, `?outcome=`,
+  `?criteria=`), so the line follows them while the person types.
+- **Edit asks with its words** (D-5): the drawer's Edit passes the task's title, outcome and
+  criteria, so its line names the same file New task names.
+- **Chat says it too** (D-6): chat's read-back of a task.create for such a specialist, and of a
+  task.update that gives a task to one or changes such a task's words, ends with the same line
+  ("Add "Review the plan" to PharmaWatch? The reviewer writes no file, so review.md is not
+  written: ..."), and so does the sentence after the yes. The commands ask the registry through
+  `CommandPorts.modelSettings.writesNoFile`. An edit of only the priority, and every other
+  specialist, read as before.
+
+Nothing is refused and no prompt changed. On the bench the stand-in critic holds such a
+specialist to its report (scripts/bench/README.md), so a reviewer run can be walked there.

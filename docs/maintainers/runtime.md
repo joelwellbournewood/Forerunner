@@ -8384,7 +8384,7 @@ hiding what it left out. What changed, item by item:
   the change runs (`fillRefs`). The card path keeps the titles: `task.create` resolves them when
   it runs, a `task.dependencies` that names a new task is left out at the Yes with its reason.
   What the fence and the commands refused is a Details line of its own
-  (`session.task_check_left_out`, `taskCheckLeftOutLine`: 'Left out (and 1 more): the add of
+  (`session.task_check_left_out`, `taskCheckLeftOutLine`: 'Left out (and 1 more): adding
   "X": ….'), the words chat's `fixLeftOut` says.
 
 - **An edit that changes nothing** (L4-selftasks-105 (a)): the fence keeps only the fields of an
@@ -10002,3 +10002,27 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   every other specialist keeps 'The work itself shows this outcome (a file, a page or an output,
   not only the report): <outcome>'. `GET /settings/models` adds `specialists[].writesNoFile`
   (`writesNoFileLine`).
+
+## l4-selftasks-carried (run L4, 2026-11-23): closes told once, change rows by two, the reviewer's file
+
+- **compose.ts `onClosed` (L4f-left-1).** Every close of a confirmation (commands.md) emits
+  `inbox` and `project` (the card's project), and `conversation` for the conversation the card
+  was read back in (`conversationOfCard`, transcript.ts) unless a turn of it is in flight
+  (`ChatTurns.inFlight`: that turn tells it itself). `onExpired` files its Update first, then
+  emits inbox. server.ts `heardChat` no longer emits for a card the turn answered; it still
+  tells a card the turn filed and the projects its changes touched.
+- **Change rows by the person and the agent (L4f-left-4).** `ChangeLogView.byYouAndAgent`
+  (change-rows.ts) when a row has `author_human` and `author_agent`; recall's `whoOf` says "You
+  and Alice" (before, a row by the agent alone read "You").
+- **The reviewer's line names the file (L4-other-1 D-3, D-5).** registry/tools.ts
+  `writesNoFileLine(specialist, file)` and `fileTheWordsWrite(words)` (a file the outcome or a
+  criterion names as what is written or what lists, shows or holds: "review.md lists the
+  gaps", "The review.md file lists ..."); `GET /settings/models` passes the typed words
+  (`model-settings-view.ts` `input.words`), so `writesNoFile` reads "The reviewer writes no
+  file, so review.md is not written: its findings are its report, which you read in the task's
+  drawer." compose's `modelSettings.writesNoFile` answers the commands' port.
+- **Others' words (L4b-left-4).** `quotesOthersWords` counts a `task_proposal` card: a chat
+  turn that lists it in full reads every change back first (ADR 0114).
+- **A task check's left-out words (L4b-left-3).** `changeWhat` (task-check.ts) says
+  'adding "X"', 'splitting "X"', 'dropping "X"', 'the change to "X"', 'the order of "X"', and
+  "a change" for a kind it does not know, in Details' "Left out: ..." and chat's `fixLeftOut`.

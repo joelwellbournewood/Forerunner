@@ -3152,3 +3152,23 @@ L4 (fixup)").
   limitation line; nothing is refused.
 - The store reads every shown conversation with a waiting card again on `inbox.changed`, so a
   card answered in the Inbox (or one that lapsed) drops its Yes and No in an open chat.
+
+## l4-selftasks-carried (run L4, 2026-11-23)
+
+- **An open chat is read again only for its own card (L4f-left-6).** store/context.tsx reloads
+  the conversations that show a waiting card on inbox.changed only in polling mode, and only
+  when the count moved; on the live stream it waits for the conversation.changed the daemon
+  sends for the conversation whose card closed. Before, every inbox.changed (and every periodic
+  count) read GET /conversation again while a chat card waited, which is now as long as it is
+  unanswered. Tests: apps/ui/test/selftasks-carried.test.tsx.
+- **A closed chat card leaves no stale header (L4f-left-1).** The header and the Inbox badge
+  follow at once after Yes or No in chat and after the Inbox's answer in another window.
+- **Changes names both who asked (L4f-left-4).** ChangesPage's `whoOf` reads `byYouAndAgent` as
+  "<your name> and <the agent's name>".
+- **Edit's reviewer line (L4-other-1 D-5).** TaskDrawer's Edit calls `useWhoChoices(true,
+  projectId, { title, outcome, criteria })`, as New task does, so its line names the file the
+  words ask for.
+- The fake daemon (apps/ui/test/fake-daemon.ts) follows: `state.gets` lists the paths read;
+  `heardChat(reply, projectId, closed)` emits for a closed card; `/requests/:id/answer` closes a
+  chat read-back and emits; change rows carry `byYouAndAgent`; `GET /settings/models` names the
+  file.

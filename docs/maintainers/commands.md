@@ -1079,3 +1079,40 @@ l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserv
 - **The chat's tool result (L4-selftasks-126).** `ToolBinding.pendingNote` (the chat's
   `CHAT_PENDING_NOTE`) follows "Needs confirmation. The person is asked: ...".
 - `CommandDef.undo` returns `Promise<unknown>` (noConfusingVoidType, L4-selftasks-125).
+
+## l4-selftasks-carried (run L4, 2026-11-23): every close tells, fix sets judged per task
+
+- **Every close tells the screens once (L4f-left-1).** `ExecutorOptions.onClosed` gets a
+  `ClosedConfirmation` (`id`, `humanId`, `projectId`, `source`, `sessionId` from the card's
+  stored context, `how`: `yes`, `no`, `refused` or `expired`) after `confirm` answers a card
+  (`confirmByText`, `confirmFromDevice`, `cancel`, the Inbox's answer, the phone, email: all go
+  through `answerPending`, which marks the entry `answered`) and after `expirePending` (the
+  timer, and `sweepPending` on any later call). The daemon turns it into inbox.changed,
+  project.changed and, when no turn of that conversation runs, conversation.changed
+  (runtime.md). Before, only the chat route told the screens, so a card answered in the Inbox
+  left the chat's header on "Waiting for you".
+- **A fix set's Yes is judged per task (L4f-left-2, ADR 0119 amended 2026-11-23).**
+  `taskListFingerprint` is `v2|<id>=<hash>,...` with one short hash per task of its status,
+  title, outcome and dependencies (`fixFields`); `fixListMoved(store, projectId, print, named)`
+  is true when a task was added or removed or a task the set names (`namedTaskIds`: the
+  `NAMING_PARAMS` of its calls, and the card's subjects) changed. `PendingEntry.fingerprint`
+  keeps `{ projectId, value, named }`; a failure to read the list counts as moved. A stored
+  fingerprint without `v2|` is compared whole (`wholeListFingerprint`), as before.
+- **The redirect guards judge a note by its author (L4-selftasks-120).** `ownNote(ctx, note)`
+  in task.ts: a note is the person's only when `ctx.onPersonsWords` or the actor is the human;
+  task.transition and task.resume's answer-the-card redirect uses it, also when the card is
+  armed again after a restart (the stored actor).
+- **An Undo read back in chat says what is back (L4f-left-3).** `performUndo(changeLogId, ctx,
+  shown)` builds the sentence from the card as read back ('Undone: the monthly cap is back to
+  CHF 150.00.'), also after a restart (`UNDO_UNKNOWN_BEFORE` when the card holds no value).
+- **A merged card names both who asked (L4f-left-4).** `record()`'s `alsoPerson` writes
+  `author_human` beside `author_agent` when a person's own change and the agent's ride one
+  card; the change row's `byYouAndAgent` (runtime.md) says "J and Alice".
+- **A reviewer task in chat (L4-other-1 D-6, ADR 0109 amended).** `CommandPorts.modelSettings.
+  writesNoFile(specialist)`; `noFileClause` ends task.create's ask and sentence, and the ask of
+  a task.update that gives a task to such a specialist or changes such a task's words, with
+  `writesNoFileLine(specialist, fileTheWordsWrite(words))`.
+- **Value cards (L4f-left-5).** A budget, setting, autonomy, model, capability or email card
+  read back in chat compares the card's `oldValue` at the Yes (`changedSince`), with and
+  without a restart (the stored card is `shown`): 'The monthly cap is CHF 120.00 now, not
+  CHF 150.00 as I read it back. ...'. Tests: packages/commands/test/selftasks-carried.test.ts.

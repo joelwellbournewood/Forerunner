@@ -1846,9 +1846,20 @@ Changes names you as the one who made it, and the Inbox does not repeat it. A re
 waits until you answer it, also for days and after Forerunner restarts; if what it names changed
 meanwhile (another change, or the task was cancelled or finished), your Yes changes nothing and
 Chat says what changed, so you can ask again. When you answer it, in Chat or in the Inbox, the
-header's count and the Inbox follow at once. A note
-for a task's next brief is read back too when Chat wrote it for you.
+header's count and the Inbox follow at once, and an open Chat drops its Yes and No; a question
+still waiting in the same project stays in the header ('Waiting for you: "Confirm the
+stack"'). The same holds for a setting or a budget you asked for in Chat: if it was changed in
+Settings meanwhile, your Yes says so ("The monthly cap is CHF 120.00 now, not CHF 150.00 as I
+read it back. Nothing was changed; ask again if you still want it."). After "fix the tasks",
+your Yes still makes the changes when a session finished another task meanwhile; it says "The
+tasks changed since I checked them" only when a task the changes name changed, or a task was
+added or removed. An Undo you confirm in Chat says what is back ("Undone: the monthly cap is
+back to CHF 150.00."). A change made with your yes beside one the agent asked for is listed on
+Changes under both names ("J and Alice"). A note for a task's next brief is read back too when
+Chat wrote it for you, and only your own note is ever read as your instruction.
 
 The reviewer reads and runs checks but writes no file: its findings are its report, which you
-read in the task's drawer. New task and Edit say so when you pick it; to have a file written,
-pick another specialist or let the agent choose.
+read in the task's drawer. New task and Edit say so when you pick it, naming the file your
+words ask for ("The reviewer writes no file, so review.md is not written: ..."), and so does
+Chat when it reads back a task for the reviewer; to have a file written, pick another
+specialist or let the agent choose.
